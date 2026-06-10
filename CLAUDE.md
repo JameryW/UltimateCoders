@@ -64,8 +64,8 @@ cargo run -p uc-grpc-server  # Start standalone gRPC server
 - ✅ PR4: 语义检索 + 混合检索 API (BLAKE3 fallback embeddings, hybrid search engine)
 - ✅ PR5: gRPC + PyO3 桥接层 (tonic server/client, proto compilation, PyEngine wired)
 - ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
-- 🔲 PR7: 容错机制 (Event Sourcing, conflict resolution, LLM rate limiting)
-- 🔲 PR8: Docker Compose + CI + 文档
+- ✅ PR7: 容错机制 (Event Sourcing, Checkpoint/Resume, Conflict Detection, Rate Limiting, Circuit Breaker)
+- ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
 
 ## Repository
 
