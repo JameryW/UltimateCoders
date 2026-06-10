@@ -1,0 +1,62 @@
+version: "3.8"
+
+# Development overrides for UltimateCoders.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Adds:
+#   - pgAdmin for PostgreSQL inspection
+#   - Qdrant dashboard
+#   - NATS monitoring UI
+
+services:
+  # ── pgAdmin ───────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:8
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ultimatecoders.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - tools
+
+  # ── NATS Box (CLI client for debugging) ───────────────────────
+  nats-box:
+    image: nats:2.10
+    entrypoint: ["nats-box"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    profiles:
+      - tools
+
+  # ── Engine gRPC server ────────────────────────────────────────
+  grpc-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.grpc
+    ports:
+      - "50051:50051"
+    environment:
+      UC_GRPC_ADDR: "[::]:50051"
+      UC_TIKV_PD_ENDPOINTS: "pd:2379"
+      UC_QDRANT_URL: "http://qdrant:6333"
+      UC_POSTGRES_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_NATS_URL: "nats://nats:4222"
+      RUST_LOG: "info"
+    depends_on:
+      pd:
+        condition: service_healthy
+      tikv:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    profiles:
+      - engine

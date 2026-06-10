@@ -31,6 +31,17 @@ from ultimate_coders.agent.types import (
     SubtaskStatus,
     WorkerInfo,
 )
+from ultimate_coders.agent.conflict import (
+    ConflictDetector,
+    ConflictResult,
+    EditIntent,
+    EditType,
+    LineRange,
+)
+from ultimate_coders.agent.rate_limiter import (
+    CircuitBreaker,
+    RateLimiter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +93,9 @@ class Worker:
         llm_client: Optional[LLMClient] = None,
         capabilities: Optional[List[str]] = None,
         max_capacity: int = 3,
+        conflict_detector: Optional[ConflictDetector] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        circuit_breaker: Optional[CircuitBreaker] = None,
     ):
         """Initialize the Worker.
 
@@ -91,6 +105,9 @@ class Worker:
             llm_client: LLM client for subtask execution.
             capabilities: List of capability strings (e.g., "code", "search").
             max_capacity: Maximum concurrent subtasks.
+            conflict_detector: Conflict detector for edit intent tracking.
+            rate_limiter: Rate limiter for LLM API calls.
+            circuit_breaker: Circuit breaker for LLM API fault tolerance.
         """
         import uuid
         self.worker_id = worker_id or str(uuid.uuid4())
@@ -102,6 +119,9 @@ class Worker:
         self._active_count = 0
         self.tools = self._build_tools()
         self._tool_definitions = self._build_tool_definitions()
+        self.conflict_detector = conflict_detector or ConflictDetector()
+        self.rate_limiter = rate_limiter or RateLimiter()
+        self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
     def get_info(self) -> WorkerInfo:
         """Get the current WorkerInfo for registration."""
@@ -569,3 +589,82 @@ class Worker:
                     ))
 
         return modified
+
+    # ── Fault Tolerance Methods ────────────────────────────────────
+
+    def declare_edit_intent(
+        self,
+        file_path: str,
+        edit_type: EditType = EditType.MODIFY,
+        regions: Optional[List[Tuple[int, int]]] = None,
+    ) -> Tuple[ConflictResult, Optional[dict]]:
+        """Declare an intent to edit a file.
+
+        Should be called before modifying a file to check for conflicts
+        with other workers.
+
+        Args:
+            file_path: Path to the file being edited.
+            edit_type: Type of edit (create, modify, delete).
+            regions: List of (start, end) line range tuples.
+
+        Returns:
+            A tuple of (ConflictResult, optional conflict info dict).
+        """
+        line_ranges = [LineRange(start=s, end=e) for s, e in (regions or [])]
+        intent = EditIntent(
+            worker_id=self.worker_id,
+            file_path=file_path,
+            edit_type=edit_type,
+            regions=line_ranges,
+        )
+        result, info = self.conflict_detector.declare_intent(intent)
+
+        if result != ConflictResult.NO_CONFLICT:
+            logger.warning(
+                "Conflict detected for %s: %s (workers: %s)",
+                file_path,
+                result.value,
+                info.conflicting_workers if info else [],
+            )
+
+        return result, info
+
+    def release_edit_intent(self, file_path: str) -> None:
+        """Release an edit intent after the edit is completed.
+
+        Args:
+            file_path: Path to the file that was edited.
+        """
+        self.conflict_detector.remove_intent(file_path, self.worker_id)
+
+    def acquire_rate_limit(self, estimated_tokens: float = 1000.0) -> bool:
+        """Try to acquire LLM rate limit capacity.
+
+        Args:
+            estimated_tokens: Estimated token consumption.
+
+        Returns:
+            True if capacity is available.
+        """
+        return self.rate_limiter.try_acquire(estimated_tokens)
+
+    def release_rate_limit(self) -> None:
+        """Release rate limit capacity after an LLM request completes."""
+        self.rate_limiter.release()
+
+    def check_circuit_breaker(self) -> bool:
+        """Check if the circuit breaker allows a request.
+
+        Returns:
+            True if the request can proceed.
+        """
+        return self.circuit_breaker.allow_request()
+
+    def record_llm_success(self) -> None:
+        """Record a successful LLM API call."""
+        self.circuit_breaker.record_success()
+
+    def record_llm_failure(self) -> None:
+        """Record a failed LLM API call."""
+        self.circuit_breaker.record_failure()

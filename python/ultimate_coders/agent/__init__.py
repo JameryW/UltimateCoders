@@ -14,6 +14,29 @@ from ultimate_coders.agent.types import (
     WorkerInfo,
 )
 from ultimate_coders.agent.llm import LLMClient, LLMResponse, ToolCall, ToolDefinition
+from ultimate_coders.agent.rate_limiter import (
+    CircuitBreaker,
+    CircuitState,
+    ModelFallbackChain,
+    RateLimiter,
+    RateLimiterConfig,
+    RequestPriority,
+    RetryPolicy,
+    TaskComplexity,
+    TokenBucket,
+)
+from ultimate_coders.agent.conflict import (
+    ConflictDetector,
+    ConflictInfo,
+    ConflictMarker,
+    ConflictResolver,
+    ConflictResult,
+    EditIntent,
+    EditType,
+    LineRange,
+    MergeResult,
+    ResolutionTier,
+)
 
 __all__ = [
     "Orchestrator",
@@ -31,4 +54,25 @@ __all__ = [
     "LLMResponse",
     "ToolCall",
     "ToolDefinition",
+    # Rate limiter
+    "CircuitBreaker",
+    "CircuitState",
+    "ModelFallbackChain",
+    "RateLimiter",
+    "RateLimiterConfig",
+    "RequestPriority",
+    "RetryPolicy",
+    "TaskComplexity",
+    "TokenBucket",
+    # Conflict detection
+    "ConflictDetector",
+    "ConflictInfo",
+    "ConflictMarker",
+    "ConflictResolver",
+    "ConflictResult",
+    "EditIntent",
+    "EditType",
+    "LineRange",
+    "MergeResult",
+    "ResolutionTier",
 ]

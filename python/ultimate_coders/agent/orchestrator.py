@@ -25,6 +25,19 @@ from ultimate_coders.agent.types import (
     TaskStatus,
     WorkerInfo,
 )
+from ultimate_coders.agent.conflict import (
+    ConflictDetector,
+    ConflictResolver,
+    ConflictResult,
+    EditIntent,
+    EditType,
+    LineRange,
+    ResolutionTier,
+)
+from ultimate_coders.agent.rate_limiter import (
+    CircuitBreaker,
+    RateLimiter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +97,9 @@ class Orchestrator:
         engine: Any = None,
         llm_client: Optional[LLMClient] = None,
         config: Optional[OrchestratorConfig] = None,
+        conflict_detector: Optional[ConflictDetector] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        circuit_breaker: Optional[CircuitBreaker] = None,
     ):
         """Initialize the Orchestrator.
 
@@ -91,12 +107,18 @@ class Orchestrator:
             engine: Engine instance for memory/search operations.
             llm_client: LLM client for task decomposition.
             config: Orchestrator configuration.
+            conflict_detector: Conflict detector for edit intent tracking.
+            rate_limiter: Rate limiter for LLM API calls.
+            circuit_breaker: Circuit breaker for LLM API fault tolerance.
         """
         self.engine = engine
         self.llm_client = llm_client
         self.config = config or OrchestratorConfig()
         self.workers: Dict[str, WorkerInfo] = {}
         self.tasks: Dict[str, Task] = {}
+        self.conflict_detector = conflict_detector or ConflictDetector()
+        self.rate_limiter = rate_limiter or RateLimiter()
+        self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
     async def submit_task(
         self,
@@ -536,3 +558,139 @@ class Orchestrator:
                 parts.append(f"  - {st.description}: {summary}")
 
         return "\n".join(parts)
+
+    # ── Fault Tolerance Methods ───────────────────────────────────────
+
+    async def checkpoint_task(self, task_id: str) -> Optional[str]:
+        """Create a checkpoint (snapshot) of a task's current state.
+
+        Uses the engine's checkpoint system to persist the task state
+        for recovery.
+
+        Args:
+            task_id: The task ID to checkpoint.
+
+        Returns:
+            The snapshot ID, or None if checkpointing failed.
+        """
+        if self.engine is None:
+            logger.warning("No engine available for checkpoint")
+            return None
+
+        try:
+            snapshot_id = self.engine.checkpoint_task(task_id)
+            logger.info("Created checkpoint for task %s: %s", task_id, snapshot_id)
+            return snapshot_id
+        except Exception:
+            logger.warning("Failed to checkpoint task %s", task_id, exc_info=True)
+            return None
+
+    async def recover_task(self, task_id: str) -> Optional[dict]:
+        """Recover a task from the latest checkpoint.
+
+        Args:
+            task_id: The task ID to recover.
+
+        Returns:
+            The recovered task state dict, or None if recovery failed.
+        """
+        if self.engine is None:
+            logger.warning("No engine available for recovery")
+            return None
+
+        try:
+            state = self.engine.recover_task(task_id)
+            logger.info("Recovered task %s", task_id)
+            return state
+        except Exception:
+            logger.warning("Failed to recover task %s", task_id, exc_info=True)
+            return None
+
+    def check_edit_conflict(
+        self,
+        worker_id: str,
+        file_path: str,
+        regions: List[Tuple[int, int]],
+    ) -> Tuple[ConflictResult, Optional[dict]]:
+        """Check if a worker's edit would conflict with existing intents.
+
+        Args:
+            worker_id: The worker making the edit.
+            file_path: Path to the file being edited.
+            regions: List of (start, end) line range tuples.
+
+        Returns:
+            A tuple of (ConflictResult, optional conflict info dict).
+        """
+        line_ranges = [LineRange(start=s, end=e) for s, e in regions]
+        result, info = self.conflict_detector.check_conflict(
+            file_path, worker_id, line_ranges,
+        )
+        return result, info
+
+    def resolve_conflict(
+        self,
+        base: str,
+        ours: str,
+        theirs: str,
+        tier: ResolutionTier = ResolutionTier.AUTO_MERGE,
+    ) -> dict:
+        """Resolve a conflict using the resolution pipeline.
+
+        Args:
+            base: The original content.
+            ours: Content from "ours" side.
+            theirs: Content from "theirs" side.
+            tier: The resolution tier to start with.
+
+        Returns:
+            A dict with 'success', 'merged', and 'conflicts' keys.
+        """
+        resolver = ConflictResolver(llm_client=self.llm_client)
+        result = resolver.resolve(base, ours, theirs, tier)
+        return {
+            "success": result.success,
+            "merged": result.merged,
+            "conflicts": [
+                {
+                    "start_line": c.start_line,
+                    "end_line": c.end_line,
+                    "ours": c.ours,
+                    "theirs": c.theirs,
+                    "base": c.base,
+                }
+                for c in result.conflicts
+            ],
+            "tier": result.tier.value,
+        }
+
+    def acquire_rate_limit(self, estimated_tokens: float = 1000.0) -> bool:
+        """Try to acquire LLM rate limit capacity.
+
+        Args:
+            estimated_tokens: Estimated token consumption.
+
+        Returns:
+            True if capacity is available.
+        """
+        return self.rate_limiter.try_acquire(estimated_tokens)
+
+    def release_rate_limit(self) -> None:
+        """Release rate limit capacity after an LLM request completes."""
+        self.rate_limiter.release()
+
+    def check_circuit_breaker(self) -> bool:
+        """Check if the circuit breaker allows a request.
+
+        Returns:
+            True if the request can proceed.
+        """
+        return self.circuit_breaker.allow_request()
+
+    def record_llm_success(self) -> None:
+        """Record a successful LLM API call."""
+        self.circuit_breaker.record_success()
+
+    def record_llm_failure(self) -> None:
+        """Record a failed LLM API call."""
+        self.circuit_breaker.record_failure()

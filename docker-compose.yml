@@ -1,0 +1,100 @@
+version: "3.8"
+
+# Development environment for UltimateCoders.
+# Starts all storage backends needed for the engine:
+#   TiKV (PD + KV)    — short-term memory, task state, snapshots
+#   Qdrant             — semantic vector search, long-term memory
+#   PostgreSQL         — structured metadata (symbols, references, repos)
+#   NATS JetStream     — async event stream (agent events, indexing jobs)
+
+services:
+  # ── TiKV cluster: Placement Driver ────────────────────────────
+  pd:
+    image: pingcap/pd:7.5
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - pd_data:/data
+    command:
+      - --name=pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --data-dir=/data
+      - --initial-cluster=pd=http://pd:2380
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2379/health"]
+      interval: 10s
+      retries: 5
+
+  # ── TiKV cluster: KV store ────────────────────────────────────
+  tikv:
+    image: pingcap/tikv:7.5
+    depends_on:
+      pd:
+        condition: service_healthy
+    volumes:
+      - tikv_data:/data
+    command:
+      - --pd-endpoints=pd:2379
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --data-dir=/data
+    healthcheck:
+      test: ["CMD-SHELL", "tikv-ctl --host tikv:20160 health || exit 1"]
+      interval: 15s
+      retries: 5
+
+  # ── Qdrant vector database ────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      retries: 5
+
+  # ── PostgreSQL ────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ultimate_coders
+      POSTGRES_PASSWORD: ultimate_coders
+      POSTGRES_DB: ultimate_coders
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ultimate_coders"]
+      interval: 10s
+      retries: 5
+
+  # ── NATS with JetStream ───────────────────────────────────────
+  nats:
+    image: nats:2.10
+    ports:
+      - "4222:4222"   # Client connections
+      - "8222:8222"   # Management / monitoring
+    command: --js --store_dir /data --max_mem_store 256MB
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
+      interval: 10s
+      retries: 5
+
+volumes:
+  pd_data:
+  tikv_data:
+  qdrant_data:
+  pg_data:
+  nats_data:

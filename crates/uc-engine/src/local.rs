@@ -3,6 +3,12 @@
 //! Directly calls core components (indexer, memory, scheduler, search)
 //! without any network overhead. Used in single-machine deployments
 //! via PyO3 FFI.
+//!
+//! Also includes fault tolerance components:
+//! - `CheckpointManager` for event sourcing + snapshot recovery
+//! - `ConflictDetector` for intent-based conflict detection
+//! - `LlmRateLimiter` for dual-dimension API rate limiting
+//! - `CircuitBreaker` for protecting against cascading failures
 
 use uc_types::{
     async_trait, EngineApi, EngineError, HealthStatus,
@@ -21,6 +27,11 @@ use crate::indexer::IndexPipeline;
 use crate::indexer::semantic::EmbeddingService;
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
+use crate::checkpoint::{CheckpointManager, CheckpointConfig};
+use crate::conflict::{ConflictDetector, EditIntent, ConflictResult};
+use crate::rate_limiter::LlmRateLimiter;
+use crate::circuit_breaker::CircuitBreaker;
+use crate::events::{InMemoryEventStore, AgentEventType, TaskSnapshot};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,6 +42,14 @@ pub struct LocalEngine {
     metadata_store: Arc<PostgresMetadataStore>,
     index_pipeline: Arc<IndexPipeline>,
     search_engine: Arc<HybridSearchEngine>,
+    /// Checkpoint manager for event sourcing + snapshot recovery.
+    checkpoint_manager: Arc<CheckpointManager>,
+    /// Conflict detector for intent-based conflict detection.
+    conflict_detector: Arc<ConflictDetector>,
+    /// Rate limiter for LLM API calls.
+    rate_limiter: Arc<LlmRateLimiter>,
+    /// Circuit breaker for LLM API fault tolerance.
+    circuit_breaker: Arc<CircuitBreaker>,
     #[allow(dead_code)]
     config: EngineConfig,
     start_time: Instant,
@@ -95,11 +114,25 @@ impl LocalEngine {
             semantic_search,
         ));
 
+        // Create fault tolerance components
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            event_store,
+            CheckpointConfig::default(),
+        ));
+        let conflict_detector = Arc::new(ConflictDetector::new());
+        let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
+        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
+
         Ok(Self {
             memory_store,
             metadata_store,
             index_pipeline,
             search_engine,
+            checkpoint_manager,
+            conflict_detector,
+            rate_limiter,
+            circuit_breaker,
             config,
             start_time: Instant::now(),
         })
@@ -145,11 +178,25 @@ impl LocalEngine {
             semantic_search,
         ));
 
+        // Fault tolerance components
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            event_store,
+            CheckpointConfig::default(),
+        ));
+        let conflict_detector = Arc::new(ConflictDetector::new());
+        let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
+        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
+
         Self {
             memory_store,
             metadata_store,
             index_pipeline,
             search_engine,
+            checkpoint_manager,
+            conflict_detector,
+            rate_limiter,
+            circuit_breaker,
             config: EngineConfig::default(),
             start_time: Instant::now(),
         }
@@ -186,11 +233,25 @@ impl LocalEngine {
             semantic_search,
         ));
 
+        // Fault tolerance components
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            event_store,
+            CheckpointConfig::default(),
+        ));
+        let conflict_detector = Arc::new(ConflictDetector::new());
+        let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
+        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
+
         Self {
             memory_store,
             metadata_store,
             index_pipeline,
             search_engine,
+            checkpoint_manager,
+            conflict_detector,
+            rate_limiter,
+            circuit_breaker,
             config,
             start_time: Instant::now(),
         }
@@ -214,6 +275,102 @@ impl LocalEngine {
     /// Get the search engine (for direct access).
     pub fn search_engine(&self) -> &Arc<HybridSearchEngine> {
         &self.search_engine
+    }
+
+    /// Get the checkpoint manager (for direct access).
+    pub fn checkpoint_manager(&self) -> &Arc<CheckpointManager> {
+        &self.checkpoint_manager
+    }
+
+    /// Get the conflict detector (for direct access).
+    pub fn conflict_detector(&self) -> &Arc<ConflictDetector> {
+        &self.conflict_detector
+    }
+
+    /// Get the rate limiter (for direct access).
+    pub fn rate_limiter(&self) -> &Arc<LlmRateLimiter> {
+        &self.rate_limiter
+    }
+
+    /// Get the circuit breaker (for direct access).
+    pub fn circuit_breaker(&self) -> &Arc<CircuitBreaker> {
+        &self.circuit_breaker
+    }
+
+    // ── Fault Tolerance Operations ──────────────────────────────
+
+    /// Record an event to the event sourcing system.
+    ///
+    /// Events are appended to the event store. If the event count
+    /// reaches the snapshot interval, a checkpoint is automatically created.
+    pub async fn record_event(
+        &self,
+        subject: &str,
+        event: AgentEventType,
+    ) -> Result<u64, EngineError> {
+        self.checkpoint_manager.record_event(subject, event).await
+    }
+
+    /// Create a checkpoint (snapshot) of a task's current state.
+    pub async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
+        self.checkpoint_manager.create_snapshot(task_id).await
+    }
+
+    /// Recover a task from the latest checkpoint + event replay.
+    pub async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
+        self.checkpoint_manager.recover(task_id).await
+    }
+
+    /// Declare an edit intent for conflict detection.
+    ///
+    /// Workers should call this before modifying a file to declare
+    /// their intent. The conflict detector will check for overlapping
+    /// edits and return a conflict result.
+    pub fn declare_edit_intent(&self, intent: EditIntent) -> ConflictResult {
+        self.conflict_detector.declare_intent(intent)
+    }
+
+    /// Check for conflicts without declaring an intent.
+    pub fn check_conflict(
+        &self,
+        file_path: &str,
+        worker_id: &str,
+        regions: &[crate::events::LineRange],
+    ) -> ConflictResult {
+        self.conflict_detector.check_conflict(file_path, worker_id, regions)
+    }
+
+    /// Resolve a conflict using three-way merge.
+    pub fn resolve_conflict(&self, base: &str, ours: &str, theirs: &str) -> crate::conflict::MergeResult {
+        crate::conflict::merger::three_way_merge(base, ours, theirs)
+    }
+
+    /// Try to acquire LLM rate limit capacity.
+    ///
+    /// Call before making an LLM API request. Returns Ok if capacity
+    /// is available, Err(RateLimited) otherwise.
+    pub fn acquire_rate_limit(&self, estimated_tokens: f64) -> Result<(), EngineError> {
+        self.rate_limiter.try_acquire(estimated_tokens)
+    }
+
+    /// Release rate limit capacity after a request completes.
+    pub fn release_rate_limit(&self) {
+        self.rate_limiter.release();
+    }
+
+    /// Check if the circuit breaker allows a request.
+    pub fn check_circuit_breaker(&self) -> Result<(), EngineError> {
+        self.circuit_breaker.allow_request()
+    }
+
+    /// Record a successful LLM API call (for circuit breaker).
+    pub fn record_llm_success(&self) {
+        self.circuit_breaker.record_success();
+    }
+
+    /// Record a failed LLM API call (for circuit breaker).
+    pub fn record_llm_failure(&self) {
+        self.circuit_breaker.record_failure();
     }
 }
 
@@ -327,6 +484,38 @@ impl EngineApi for LocalEngine {
                 "Embedding service not configured".into()
             }),
         });
+        components.push(uc_types::engine::ComponentHealth {
+            name: "checkpoint_manager".into(),
+            status: "ok".into(),
+            details: Some("Event sourcing + checkpoint ready".into()),
+        });
+        components.push(uc_types::engine::ComponentHealth {
+            name: "conflict_detector".into(),
+            status: "ok".into(),
+            details: Some("Intent-based conflict detection ready".into()),
+        });
+        components.push(uc_types::engine::ComponentHealth {
+            name: "rate_limiter".into(),
+            status: "ok".into(),
+            details: Some(format!(
+                "RPM: {:.0} available, TPM: {:.0} available",
+                self.rate_limiter.rpm_available(),
+                self.rate_limiter.tpm_available(),
+            )),
+        });
+        components.push(uc_types::engine::ComponentHealth {
+            name: "circuit_breaker".into(),
+            status: match self.circuit_breaker.state() {
+                crate::circuit_breaker::CircuitState::Closed => "ok",
+                crate::circuit_breaker::CircuitState::HalfOpen => "degraded",
+                crate::circuit_breaker::CircuitState::Open => "error",
+            }.into(),
+            details: Some(format!(
+                "State: {:?}, failures: {}",
+                self.circuit_breaker.state(),
+                self.circuit_breaker.failure_count(),
+            )),
+        });
 
         Ok(HealthStatus {
             status: overall_status.into(),
@@ -352,8 +541,10 @@ mod tests {
         let engine = LocalEngine::new_fallback();
         let health = engine.health().await.unwrap();
         assert_eq!(health.status, "degraded"); // Using fallbacks
-        // Now has 6 components: short_term, long_term, metadata, index_pipeline, search_engine, embedding_service
-        assert_eq!(health.components.len(), 6);
+        // Now has 10 components: short_term, long_term, metadata, index_pipeline,
+        // search_engine, embedding_service, checkpoint_manager, conflict_detector,
+        // rate_limiter, circuit_breaker
+        assert_eq!(health.components.len(), 10);
     }
 
     #[tokio::test]
@@ -373,6 +564,15 @@ mod tests {
         assert_eq!(health.components[4].status, "ok");
         assert_eq!(health.components[5].name, "embedding_service");
         assert_eq!(health.components[5].status, "ok");
+        // Fault tolerance components
+        assert_eq!(health.components[6].name, "checkpoint_manager");
+        assert_eq!(health.components[6].status, "ok");
+        assert_eq!(health.components[7].name, "conflict_detector");
+        assert_eq!(health.components[7].status, "ok");
+        assert_eq!(health.components[8].name, "rate_limiter");
+        assert_eq!(health.components[8].status, "ok");
+        assert_eq!(health.components[9].name, "circuit_breaker");
+        assert_eq!(health.components[9].status, "ok");
     }
 
     #[tokio::test]
@@ -571,5 +771,112 @@ fn load_index() -> Index { Index::new() }"#,
         assert!(!hybrid_result.items.is_empty(), "hybrid search should return results");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn local_engine_event_sourcing_and_recovery() {
+        let engine = LocalEngine::new_fallback();
+        let task_id = "ft-test-task-1";
+
+        // Record events
+        engine
+            .record_event(
+                &format!("agent.events.{}", task_id),
+                AgentEventType::TaskCreated {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    description: "Fault tolerance test".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        engine
+            .record_event(
+                &format!("agent.events.{}", task_id),
+                AgentEventType::SubtaskAssigned {
+                    subtask_id: uc_types::TaskId::new(),
+                    worker_id: uc_types::WorkerId::new(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Create checkpoint
+        let snapshot_id = engine.checkpoint_task(task_id).await.unwrap();
+        assert!(!snapshot_id.is_empty());
+
+        // Recover from checkpoint
+        let state = engine.recover_task(task_id).await.unwrap();
+        assert_eq!(state.task_id, task_id);
+    }
+
+    #[test]
+    fn local_engine_conflict_detection() {
+        let engine = LocalEngine::new_fallback();
+
+        // Declare first intent
+        let intent1 = EditIntent::new(
+            "worker-1".to_string(),
+            "src/main.rs".to_string(),
+            crate::conflict::EditType::Modify,
+            vec![crate::events::LineRange::new(1, 20)],
+        );
+        let result1 = engine.declare_edit_intent(intent1);
+        assert!(matches!(result1, ConflictResult::NoConflict));
+
+        // Declare overlapping intent
+        let intent2 = EditIntent::new(
+            "worker-2".to_string(),
+            "src/main.rs".to_string(),
+            crate::conflict::EditType::Modify,
+            vec![crate::events::LineRange::new(10, 30)],
+        );
+        let result2 = engine.declare_edit_intent(intent2);
+        assert!(matches!(result2, ConflictResult::Conflicting { .. }));
+    }
+
+    #[test]
+    fn local_engine_three_way_merge() {
+        let engine = LocalEngine::new_fallback();
+
+        let base = "line1\nline2\nline3";
+        let ours = "line1-modified\nline2\nline3";
+        let theirs = "line1\nline2\nline3-modified";
+
+        let result = engine.resolve_conflict(base, ours, theirs);
+        assert!(result.success);
+        let merged = result.merged.as_ref().unwrap();
+        assert!(merged.contains("line1-modified"));
+        assert!(merged.contains("line3-modified"));
+    }
+
+    #[test]
+    fn local_engine_rate_limiting() {
+        let engine = LocalEngine::new_fallback();
+
+        // Should be able to acquire with reasonable token estimate
+        assert!(engine.acquire_rate_limit(1000.0).is_ok());
+
+        // Release after use
+        engine.release_rate_limit();
+    }
+
+    #[test]
+    fn local_engine_circuit_breaker() {
+        let engine = LocalEngine::new_fallback();
+
+        // Circuit should be closed initially
+        assert!(engine.check_circuit_breaker().is_ok());
+
+        // Record some failures
+        for _ in 0..5 {
+            engine.record_llm_failure();
+        }
+
+        // Circuit should now be open
+        assert!(engine.check_circuit_breaker().is_err());
+
+        // Force close for cleanup
+        engine.circuit_breaker().force_state(crate::circuit_breaker::CircuitState::Closed);
     }
 }
