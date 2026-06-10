@@ -66,6 +66,7 @@ cargo run -p uc-grpc-server  # Start standalone gRPC server
 - ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
 - ✅ PR7: 容错机制 (Event Sourcing, Checkpoint/Resume, Conflict Detection, Rate Limiting, Circuit Breaker)
 - ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
+- ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
 
 ## Repository
 
