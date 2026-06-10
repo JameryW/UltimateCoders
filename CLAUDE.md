@@ -59,12 +59,12 @@ cargo run -p uc-grpc-server  # Start standalone gRPC server
 ## Development Progress
 
 - ✅ PR1: Rust workspace + uc-types + uc-engine skeleton
-- 🔲 PR2: 存储客户端集成 + Memory 读写
-- 🔲 PR3: 文本检索 + AST 索引引擎
-- 🔲 PR4: 语义检索 + 混合检索 API
-- 🔲 PR5: gRPC + PyO3 桥接层
-- 🔲 PR6: Python Agent 层
-- 🔲 PR7: 容错机制
+- ✅ PR2: 存储客户端集成 + Memory 读写 (in-memory fallback; TiKV/Qdrant/PostgreSQL clients coded, need infra)
+- ✅ PR3: 文本检索 + AST 索引引擎 (language-aware tokenization, tree-sitter AST, text search)
+- ✅ PR4: 语义检索 + 混合检索 API (BLAKE3 fallback embeddings, hybrid search engine)
+- ✅ PR5: gRPC + PyO3 桥接层 (tonic server/client, proto compilation, PyEngine wired)
+- ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
+- 🔲 PR7: 容错机制 (Event Sourcing, conflict resolution, LLM rate limiting)
 - 🔲 PR8: Docker Compose + CI + 文档
 
 ## Repository
