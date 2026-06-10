@@ -1,0 +1,168 @@
+syntax = "proto3";
+package ultimate_coders;
+
+service EngineService {
+    rpc Search(SearchRequest) returns (SearchResponse);
+    rpc IndexRepo(IndexRepoRequest) returns (IndexRepoResponse);
+    rpc GetIndexState(GetIndexStateRequest) returns (GetIndexStateResponse);
+    rpc RemoveIndex(RemoveIndexRequest) returns (RemoveIndexResponse);
+    rpc ReadMemory(ReadMemoryRequest) returns (ReadMemoryResponse);
+    rpc WriteMemory(WriteMemoryRequest) returns (WriteMemoryResponse);
+    rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
+    rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse);
+    rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ── Search ──────────────────────────────────────────────
+
+message SearchRequest {
+    string query = 1;
+    repeated string modes = 2;
+    repeated string repo_ids = 3;
+    repeated string languages = 4;
+    repeated string path_patterns = 5;
+    uint32 max_results = 6;
+}
+
+message SearchResponse {
+    repeated SearchResultItem items = 1;
+}
+
+message SearchResultItem {
+    string repo_id = 1;
+    string file_path = 2;
+    uint32 start_line = 3;
+    uint32 end_line = 4;
+    string content_snippet = 5;
+    string match_type = 6;
+    float score = 7;
+    optional string symbol_name = 8;
+    optional string symbol_kind = 9;
+    optional string parent_symbol = 10;
+}
+
+// ── Index ───────────────────────────────────────────────
+
+message IndexRepoRequest {
+    string repo_id = 1;
+    string remote_url = 2;
+    string default_branch = 3;
+    optional string local_path = 4;
+    bool force_full = 5;
+}
+
+message IndexRepoResponse {
+    string repo_id = 1;
+    uint32 files_indexed = 2;
+    uint32 symbols_extracted = 3;
+    uint32 chunks_embedded = 4;
+    uint64 duration_ms = 5;
+}
+
+message GetIndexStateRequest {
+    string repo_id = 1;
+}
+
+message GetIndexStateResponse {
+    string repo_id = 1;
+    bool indexed = 2;
+    optional string last_indexed_sha = 3;
+    uint32 files_count = 4;
+    uint32 symbols_count = 5;
+    uint32 chunks_count = 6;
+}
+
+message RemoveIndexRequest {
+    string repo_id = 1;
+}
+
+message RemoveIndexResponse {}
+
+// ── Memory ──────────────────────────────────────────────
+
+message ReadMemoryRequest {
+    string key_scope = 1;   // "task", "project", "global"
+    string task_id = 2;
+    string project_id = 3;
+    string key = 4;
+    bool include_semantic = 5;
+}
+
+message ReadMemoryResponse {
+    optional MemoryEntryProto entry = 1;
+}
+
+message WriteMemoryRequest {
+    string key_scope = 1;
+    string task_id = 2;
+    string project_id = 3;
+    string key = 4;
+    string content_type = 5;  // "text", "structured", "code", "diff", "reference"
+    string content = 6;
+    string source_agent = 7;
+    float importance = 8;
+    repeated string tags = 9;
+}
+
+message WriteMemoryResponse {
+    MemoryEntryProto entry = 1;
+}
+
+message DeleteMemoryRequest {
+    string key_scope = 1;
+    string task_id = 2;
+    string project_id = 3;
+    string key = 4;
+}
+
+message DeleteMemoryResponse {}
+
+message SearchMemoryRequest {
+    string query = 1;
+    string scope_type = 2;   // "project", "global", "all"
+    string project_id = 3;
+    uint32 max_results = 4;
+    float min_score = 5;
+}
+
+message SearchMemoryResponse {
+    repeated MemorySearchResultProto results = 1;
+}
+
+message MemoryEntryProto {
+    string id = 1;
+    string content_type = 2;
+    string content = 3;
+    string source_agent = 4;
+    float importance = 5;
+    repeated string tags = 6;
+    int64 created_at = 7;
+    int64 updated_at = 8;
+    // Key fields for reconstructing MemoryKey on the client side
+    string key_scope = 9;
+    string key_task_id = 10;
+    string key_project_id = 11;
+    string key = 12;
+}
+
+message MemorySearchResultProto {
+    MemoryEntryProto entry = 1;
+    float score = 2;
+}
+
+// ── Health ──────────────────────────────────────────────
+
+message HealthRequest {}
+
+message HealthResponse {
+    string status = 1;
+    string version = 2;
+    uint64 uptime_seconds = 3;
+    repeated ComponentHealthProto components = 4;
+}
+
+message ComponentHealthProto {
+    string name = 1;
+    string status = 2;
+    optional string details = 3;
+}

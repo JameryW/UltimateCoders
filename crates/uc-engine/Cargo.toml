@@ -1,0 +1,44 @@
+[package]
+name = "uc-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uc-types = { path = "../uc-types" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+dashmap = { workspace = true }
+blake3 = { workspace = true }
+toml = "0.8"
+
+# Storage clients (feature-gated)
+tikv-client = { workspace = true, optional = true }
+qdrant-client = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+
+# Code indexing (feature-gated)
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+imara-diff = { workspace = true, optional = true }
+git2 = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true }
+
+# NATS
+async-nats = { workspace = true, optional = true }
+
+[features]
+default = ["storage", "indexing", "messaging"]
+storage = ["tikv-client", "qdrant-client", "sqlx"]
+indexing = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "imara-diff", "git2", "regex", "reqwest"]
+messaging = ["async-nats"]

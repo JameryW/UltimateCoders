@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/prd.md", "reason": "PRD: acceptance criteria to verify against, architecture decisions to validate compliance"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/rust-python-bridge.md", "reason": "Verify EngineApi trait implementation, PyO3 async correctness, GIL handling, error normalization"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/code-indexing-pipeline.md", "reason": "Verify indexing pipeline correctness: incremental diff logic, tree-sitter integration, Qdrant upsert, consistency checks"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/agent-orchestration.md", "reason": "Verify orchestration correctness: event sourcing, conflict resolution tiers, LLM rate limiting, circuit breaker"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for code review checks"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns to check against"}

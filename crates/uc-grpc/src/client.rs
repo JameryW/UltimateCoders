@@ -1,0 +1,252 @@
+//! gRPC client implementing EngineApi via tonic.
+//!
+//! Connects to a remote UltimateCoders gRPC server and delegates
+//! all EngineApi calls over the network.
+
+use uc_types::{
+    async_trait, EngineApi, EngineError,
+    HealthStatus, IndexRequest, IndexResponse,
+    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest,
+    MemorySearchResponse, MemoryWriteRequest,
+    RepoIndexState, SearchResult, SearchQuery,
+};
+
+use crate::conversions::memory_key_to_parts;
+use crate::ultimate_coders::engine_service_client::EngineServiceClient;
+use crate::ultimate_coders::*;
+
+/// gRPC client that implements EngineApi by calling a remote server.
+pub struct GrpcEngineClient {
+    inner: EngineServiceClient<tonic::transport::Channel>,
+}
+
+impl GrpcEngineClient {
+    /// Connect to a remote gRPC server.
+    pub async fn connect(endpoint: &str) -> Result<Self, EngineError> {
+        let channel = tonic::transport::Channel::from_shared(endpoint.to_string())
+            .map_err(|e| EngineError::ConnectionError(format!("Invalid endpoint: {}", e)))?
+            .connect()
+            .await
+            .map_err(|e| EngineError::ConnectionError(format!("Connection failed: {}", e)))?;
+        let inner = EngineServiceClient::new(channel);
+        Ok(Self { inner })
+    }
+
+    /// Create a client from an already-connected channel.
+    pub fn from_channel(channel: tonic::transport::Channel) -> Self {
+        Self {
+            inner: EngineServiceClient::new(channel),
+        }
+    }
+}
+
+fn from_status(status: tonic::Status) -> EngineError {
+    use tonic::Code::*;
+    match status.code() {
+        NotFound => EngineError::IndexError(status.message().to_string()),
+        DeadlineExceeded => EngineError::TimeoutError(status.message().to_string()),
+        Unavailable => EngineError::ConnectionError(status.message().to_string()),
+        ResourceExhausted => {
+            // Try to parse "retry after Ns" from message
+            let msg = status.message();
+            EngineError::RateLimited(
+                msg.split("retry after ")
+                    .nth(1)
+                    .and_then(|s| s.trim_end_matches('s').parse().ok())
+                    .unwrap_or(0),
+            )
+        }
+        Aborted => {
+            EngineError::ConflictError {
+                path: String::new(),
+                details: status.message().to_string(),
+            }
+        }
+        InvalidArgument => EngineError::ConfigError(status.message().to_string()),
+        PermissionDenied => EngineError::SandboxError(status.message().to_string()),
+        FailedPrecondition => EngineError::TaskError(status.message().to_string()),
+        _ => EngineError::InternalError(status.message().to_string()),
+    }
+}
+
+#[async_trait]
+impl EngineApi for GrpcEngineClient {
+    async fn search(&self, query: SearchQuery) -> Result<SearchResult, EngineError> {
+        let mut client = self.inner.clone();
+        let req = SearchRequest {
+            query: query.query,
+            modes: query.modes.iter().map(|m| match m {
+                uc_types::SearchMode::Text => "text".to_string(),
+                uc_types::SearchMode::Semantic => "semantic".to_string(),
+                uc_types::SearchMode::Ast => "ast".to_string(),
+                uc_types::SearchMode::Hybrid => "hybrid".to_string(),
+            }).collect(),
+            repo_ids: query.repo_ids,
+            languages: query.languages,
+            path_patterns: query.path_patterns,
+            max_results: query.max_results,
+        };
+        let response = client.search(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    async fn index_repo(&self, request: IndexRequest) -> Result<IndexResponse, EngineError> {
+        let mut client = self.inner.clone();
+        let req = IndexRepoRequest {
+            repo_id: request.repo.repo_id,
+            remote_url: request.repo.remote_url,
+            default_branch: request.repo.default_branch,
+            local_path: request.repo.local_path,
+            force_full: request.force_full,
+        };
+        let response = client.index_repo(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    async fn get_index_state(&self, repo_id: &str) -> Result<RepoIndexState, EngineError> {
+        let mut client = self.inner.clone();
+        let req = GetIndexStateRequest {
+            repo_id: repo_id.to_string(),
+        };
+        let response = client.get_index_state(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    async fn remove_index(&self, repo_id: &str) -> Result<(), EngineError> {
+        let mut client = self.inner.clone();
+        let req = RemoveIndexRequest {
+            repo_id: repo_id.to_string(),
+        };
+        client.remove_index(req).await.map_err(from_status)?;
+        Ok(())
+    }
+
+    async fn read_memory(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError> {
+        let mut client = self.inner.clone();
+        let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
+        let req = ReadMemoryRequest {
+            key_scope: key_scope.to_string(),
+            task_id: task_id.to_string(),
+            project_id: project_id.to_string(),
+            key: key.to_string(),
+            include_semantic: request.include_semantic,
+        };
+        let response = client.read_memory(req).await.map_err(from_status)?;
+        Ok(response.into_inner().entry.map(Into::into))
+    }
+
+    async fn write_memory(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
+        let mut client = self.inner.clone();
+        let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
+        let (content_type, content) = match &request.content {
+            uc_types::MemoryContent::Text(s) => ("text".to_string(), s.clone()),
+            uc_types::MemoryContent::Structured(v) => ("structured".to_string(), v.to_string()),
+            uc_types::MemoryContent::Code { language, code } => {
+                ("code".to_string(), format!("{}:{}", language, code))
+            }
+            uc_types::MemoryContent::Diff { file_path, diff } => {
+                ("diff".to_string(), format!("{}:{}", file_path, diff))
+            }
+            uc_types::MemoryContent::Reference { uri, description } => {
+                ("reference".to_string(), format!("{}:{}", uri, description))
+            }
+        };
+        let req = WriteMemoryRequest {
+            key_scope: key_scope.to_string(),
+            task_id: task_id.to_string(),
+            project_id: project_id.to_string(),
+            key: key.to_string(),
+            content_type,
+            content,
+            source_agent: request.metadata.source_agent,
+            importance: request.metadata.importance,
+            tags: request.metadata.tags,
+        };
+        let response = client.write_memory(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    async fn delete_memory(&self, key: &MemoryKey) -> Result<(), EngineError> {
+        let mut client = self.inner.clone();
+        let (key_scope, task_id, project_id, k) = memory_key_to_parts(key);
+        let req = DeleteMemoryRequest {
+            key_scope: key_scope.to_string(),
+            task_id: task_id.to_string(),
+            project_id: project_id.to_string(),
+            key: k.to_string(),
+        };
+        client.delete_memory(req).await.map_err(from_status)?;
+        Ok(())
+    }
+
+    async fn search_memory(
+        &self,
+        request: MemorySearchRequest,
+    ) -> Result<MemorySearchResponse, EngineError> {
+        let mut client = self.inner.clone();
+        let (scope_type, project_id) = match &request.scope {
+            uc_types::MemorySearchScope::Project { project_id } => {
+                ("project".to_string(), project_id.clone())
+            }
+            uc_types::MemorySearchScope::Global => ("global".to_string(), String::new()),
+            uc_types::MemorySearchScope::All => ("all".to_string(), String::new()),
+        };
+        let req = SearchMemoryRequest {
+            query: request.query,
+            scope_type,
+            project_id,
+            max_results: request.max_results,
+            min_score: request.min_score,
+        };
+        let response = client.search_memory(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    async fn health(&self) -> Result<HealthStatus, EngineError> {
+        let mut client = self.inner.clone();
+        let req = HealthRequest {};
+        let response = client.health(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Status;
+
+    #[test]
+    fn from_status_not_found() {
+        let status = Status::not_found("repo not found");
+        let err = from_status(status);
+        assert!(matches!(err, EngineError::IndexError(_)));
+    }
+
+    #[test]
+    fn from_status_unavailable() {
+        let status = Status::unavailable("connection refused");
+        let err = from_status(status);
+        assert!(matches!(err, EngineError::ConnectionError(_)));
+    }
+
+    #[test]
+    fn from_status_deadline_exceeded() {
+        let status = Status::deadline_exceeded("30s");
+        let err = from_status(status);
+        assert!(matches!(err, EngineError::TimeoutError(_)));
+    }
+
+    #[test]
+    fn from_status_resource_exhausted() {
+        let status = Status::resource_exhausted("retry after 5s");
+        let err = from_status(status);
+        assert!(matches!(err, EngineError::RateLimited(5)));
+    }
+
+    #[test]
+    fn from_status_aborted() {
+        let status = Status::aborted("conflict in src/main.rs");
+        let err = from_status(status);
+        assert!(matches!(err, EngineError::ConflictError { .. }));
+    }
+}

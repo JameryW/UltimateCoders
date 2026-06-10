@@ -1,0 +1,19 @@
+[package]
+name = "uc-grpc-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "uc-grpc-server"
+path = "src/main.rs"
+
+[dependencies]
+uc-types = { path = "../uc-types" }
+uc-engine = { path = "../uc-engine" }
+uc-grpc = { path = "../uc-grpc" }
+tokio = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }

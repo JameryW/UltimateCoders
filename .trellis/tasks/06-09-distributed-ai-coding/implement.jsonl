@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/prd.md", "reason": "PRD: full requirements, architecture decisions, acceptance criteria, technical approach, project structure"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/rust-python-bridge.md", "reason": "Rust-Python bridge patterns: EngineApi trait, PyO3 async, gRPC dual-mode, monorepo layout, error handling"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/code-indexing-pipeline.md", "reason": "Code indexing: Sourcegraph/Zoekt/Blackbird architecture, tree-sitter AST, Voyage Code 3 embedding, Qdrant schema, incremental indexing, index consistency"}
+{"file": ".trellis/tasks/06-09-distributed-ai-coding/research/agent-orchestration.md", "reason": "Agent orchestration: OpenHands event stream, Event Sourcing checkpoint/resume, Intent-based locking conflict resolution, LLM rate limiting/fallback, Circuit Breaker"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index: coding conventions and guidelines"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Database conventions for PostgreSQL schema design"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling conventions for EngineError design"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for Rust/Python code"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Directory structure conventions"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Code reuse patterns for Rust crate decomposition"}
