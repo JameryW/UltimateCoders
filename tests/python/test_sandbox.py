@@ -1,0 +1,371 @@
+"""Unit tests for the sandbox agent executor module."""
+
+from __future__ import annotations
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from ultimate_coders.agent.sandbox import (
+    AgentOutput,
+    ClaudeCodeAdapter,
+    CodexAdapter,
+    ExecResult,
+    NetworkMode,
+    SandboxConfig,
+    SandboxHandle,
+    SandboxManager,
+    TokenUsage,
+    available_agents,
+    create_adapter,
+)
+from ultimate_coders.agent.types import ChangeType, FileChange
+
+
+# ── SandboxConfig tests ─────────────────────────────────────────
+
+class TestSandboxConfig:
+    """Tests for SandboxConfig."""
+
+    def test_defaults(self):
+        config = SandboxConfig()
+        assert config.agent == "claude-code"
+        assert config.backend == "subprocess"
+        assert config.project_path == ""
+        assert config.api_key is None
+        assert config.max_cpu_seconds == 300
+        assert config.max_memory_mb == 2048
+        assert config.max_output_bytes == 10 * 1024 * 1024
+        assert config.max_file_size_mb == 50
+        assert config.network == NetworkMode.RESTRICTED
+        assert config.warm_pool_size == 2
+        assert config.max_pool_size == 10
+
+    def test_custom(self):
+        config = SandboxConfig(
+            agent="codex",
+            backend="docker",
+            project_path="/tmp/project",
+            api_key="sk-test",
+            max_cpu_seconds=600,
+            network=NetworkMode.NONE,
+        )
+        assert config.agent == "codex"
+        assert config.backend == "docker"
+        assert config.project_path == "/tmp/project"
+        assert config.api_key == "sk-test"
+        assert config.max_cpu_seconds == 600
+        assert config.network == NetworkMode.NONE
+
+    def test_to_engine_config(self):
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            agent="claude-code",
+            api_key="sk-test",
+        )
+        engine_config = config.to_engine_config()
+        assert engine_config["project_path"] == "/tmp/project"
+        assert "ANTHROPIC_API_KEY" in engine_config["env_vars"]
+        assert engine_config["env_vars"]["ANTHROPIC_API_KEY"] == "sk-test"
+        assert engine_config["network"] == NetworkMode.RESTRICTED
+
+    def test_to_engine_config_codex(self):
+        config = SandboxConfig(
+            agent="codex",
+            api_key="sk-openai",
+        )
+        engine_config = config.to_engine_config()
+        assert "OPENAI_API_KEY" in engine_config["env_vars"]
+
+    def test_build_env_vars_no_key(self):
+        config = SandboxConfig(agent="claude-code")
+        env = config._build_env_vars()
+        assert "ANTHROPIC_API_KEY" not in env
+
+    def test_build_env_vars_with_extra(self):
+        config = SandboxConfig(
+            env_vars={"CUSTOM_VAR": "value"},
+            api_key="sk-test",
+        )
+        env = config._build_env_vars()
+        assert env["CUSTOM_VAR"] == "value"
+        assert env["ANTHROPIC_API_KEY"] == "sk-test"
+
+
+# ── ExecResult tests ────────────────────────────────────────────
+
+class TestExecResult:
+    """Tests for ExecResult."""
+
+    def test_is_success(self):
+        result = ExecResult(exit_code=0, timed_out=False)
+        assert result.is_success()
+
+    def test_is_success_nonzero(self):
+        result = ExecResult(exit_code=1, timed_out=False)
+        assert not result.is_success()
+
+    def test_is_success_timed_out(self):
+        result = ExecResult(exit_code=0, timed_out=True)
+        assert not result.is_success()
+
+
+# ── AgentOutput tests ────────────────────────────────────────────
+
+class TestAgentOutput:
+    """Tests for AgentOutput."""
+
+    def test_defaults(self):
+        output = AgentOutput()
+        assert output.summary == ""
+        assert output.file_changes == []
+        assert output.token_usage is None
+        assert output.success is True
+
+    def test_with_changes(self):
+        changes = [FileChange(file_path="main.rs", change_type=ChangeType.MODIFIED)]
+        output = AgentOutput(
+            summary="Fixed bug",
+            file_changes=changes,
+            success=True,
+        )
+        assert len(output.file_changes) == 1
+        assert output.file_changes[0].file_path == "main.rs"
+
+
+# ── ClaudeCodeAdapter tests ─────────────────────────────────────
+
+class TestClaudeCodeAdapter:
+    """Tests for ClaudeCodeAdapter."""
+
+    def test_name(self):
+        adapter = ClaudeCodeAdapter()
+        assert adapter.name() == "claude-code"
+
+    def test_build_request(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Fix the bug", "/tmp/project", config)
+
+        assert request["command"] == "claude"
+        assert "-p" in request["args"]
+        assert "Fix the bug" in request["args"]
+        assert "--output-format" in request["args"]
+        assert "json" in request["args"]
+        assert request["working_dir"] == "/tmp/project"
+
+    def test_parse_output_success(self):
+        adapter = ClaudeCodeAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout='{"result": "Fixed the bug"}',
+        )
+        output = adapter.parse_output(result)
+        assert output.success
+        assert "Fixed the bug" in output.summary
+
+    def test_parse_output_timeout(self):
+        adapter = ClaudeCodeAdapter()
+        result = ExecResult(exit_code=-1, timed_out=True)
+        output = adapter.parse_output(result)
+        assert not output.success
+        assert "timed out" in output.summary
+
+    def test_parse_output_failure(self):
+        adapter = ClaudeCodeAdapter()
+        result = ExecResult(exit_code=1, stderr="API error")
+        output = adapter.parse_output(result)
+        assert not output.success
+        assert "exited with code 1" in output.summary
+
+    def test_parse_output_non_json(self):
+        adapter = ClaudeCodeAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout="I fixed the bug by editing main.rs",
+        )
+        output = adapter.parse_output(result)
+        assert output.success
+        assert "fixed the bug" in output.summary
+
+
+# ── CodexAdapter tests ──────────────────────────────────────────
+
+class TestCodexAdapter:
+    """Tests for CodexAdapter."""
+
+    def test_name(self):
+        adapter = CodexAdapter()
+        assert adapter.name() == "codex"
+
+    def test_build_request(self):
+        adapter = CodexAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Implement feature", "/tmp/project", config)
+
+        assert request["command"] == "codex"
+        assert "Implement feature" in request["args"]
+        assert "--full-auto" in request["args"]
+
+    def test_parse_output_success(self):
+        adapter = CodexAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout="Implemented feature.\nCreated: src/feature.rs",
+        )
+        output = adapter.parse_output(result)
+        assert output.success
+        assert len(output.file_changes) == 1
+        assert output.file_changes[0].file_path == "src/feature.rs"
+        assert output.file_changes[0].change_type == ChangeType.CREATED
+
+    def test_parse_output_timeout(self):
+        adapter = CodexAdapter()
+        result = ExecResult(exit_code=-1, timed_out=True)
+        output = adapter.parse_output(result)
+        assert not output.success
+
+    def test_parse_output_failure(self):
+        adapter = CodexAdapter()
+        result = ExecResult(exit_code=1, stderr="Error")
+        output = adapter.parse_output(result)
+        assert not output.success
+
+
+# ── SandboxManager tests ────────────────────────────────────────
+
+class TestSandboxManager:
+    """Tests for SandboxManager."""
+
+    def test_init(self):
+        config = SandboxConfig(project_path="/tmp/project")
+        manager = SandboxManager(config)
+        assert manager.config.project_path == "/tmp/project"
+        assert manager._pool == []
+        assert manager._active == {}
+
+    def test_init_invalid_agent(self):
+        config = SandboxConfig(agent="invalid-agent")
+        with pytest.raises(ValueError, match="Unknown agent"):
+            SandboxManager(config)
+
+    @pytest.mark.asyncio
+    async def test_acquire_creates_handle(self):
+        config = SandboxConfig(project_path="/tmp/project")
+        manager = SandboxManager(config)
+        handle = await manager.acquire()
+        assert handle.id
+        assert handle.status == "busy"
+        assert handle.id in manager._active
+
+    @pytest.mark.asyncio
+    async def test_release_returns_to_pool(self):
+        config = SandboxConfig(project_path="/tmp/project", warm_pool_size=2)
+        manager = SandboxManager(config)
+        handle = await manager.acquire()
+        await manager.release(handle)
+        assert len(manager._pool) == 1
+        assert handle.id not in manager._active
+
+    @pytest.mark.asyncio
+    async def test_release_respects_warm_size(self):
+        config = SandboxConfig(project_path="/tmp/project", warm_pool_size=1)
+        manager = SandboxManager(config)
+
+        # Acquire and release 3 handles
+        handles = []
+        for _ in range(3):
+            h = await manager.acquire()
+            handles.append(h)
+
+        for h in handles:
+            await manager.release(h)
+
+        # Only warm_pool_size should remain in pool
+        assert len(manager._pool) == 1
+
+    @pytest.mark.asyncio
+    async def test_pool_reuse(self):
+        config = SandboxConfig(project_path="/tmp/project", warm_pool_size=2)
+        manager = SandboxManager(config)
+
+        # Acquire and release
+        handle1 = await manager.acquire()
+        await manager.release(handle1)
+
+        # Acquire again -- should reuse
+        handle2 = await manager.acquire()
+        assert handle2.id == handle1.id
+
+
+# ── create_adapter and available_agents tests ───────────────────
+
+class TestAdapterFactory:
+    """Tests for adapter factory functions."""
+
+    def test_available_agents(self):
+        agents = available_agents()
+        assert "claude-code" in agents
+        assert "codex" in agents
+
+    def test_create_adapter_claude_code(self):
+        adapter = create_adapter("claude-code")
+        assert isinstance(adapter, ClaudeCodeAdapter)
+
+    def test_create_adapter_codex(self):
+        adapter = create_adapter("codex")
+        assert isinstance(adapter, CodexAdapter)
+
+    def test_create_adapter_unknown(self):
+        with pytest.raises(ValueError, match="Unknown agent"):
+            create_adapter("unknown")
+
+
+# ── Worker sandbox mode integration test ─────────────────────────
+
+class TestWorkerSandboxMode:
+    """Tests for Worker sandbox execution mode."""
+
+    def test_worker_init_sandbox_mode(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(
+            agent="claude-code",
+            project_path="/tmp/project",
+        )
+        worker = Worker(
+            worker_id="w-sandbox",
+            execution_mode="sandbox",
+            sandbox_config=config,
+        )
+        assert worker.execution_mode == "sandbox"
+        assert worker._sandbox_manager is not None
+
+    def test_worker_init_llm_mode_default(self):
+        from ultimate_coders.agent.worker import Worker
+        worker = Worker(worker_id="w-llm")
+        assert worker.execution_mode == "llm"
+        assert worker._sandbox_manager is None
+
+    @pytest.mark.asyncio
+    async def test_worker_sandbox_execute_no_manager(self):
+        """Test that sandbox execution fails gracefully without sandbox manager."""
+        from ultimate_coders.agent.worker import Worker
+        from ultimate_coders.agent.types import Subtask
+
+        worker = Worker(worker_id="w-llm", execution_mode="llm")
+        subtask = Subtask(id="s1", description="Fix bug")
+
+        # LLM mode worker should not have sandbox manager
+        result = await worker._execute_in_sandbox(subtask)
+        assert not result.success
+        assert "not configured" in result.summary
+
+
+# ── NetworkMode tests ────────────────────────────────────────────
+
+class TestNetworkMode:
+    """Tests for NetworkMode."""
+
+    def test_values(self):
+        assert NetworkMode.NONE == "none"
+        assert NetworkMode.RESTRICTED == "restricted"
+        assert NetworkMode.FULL == "full"

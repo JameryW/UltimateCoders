@@ -37,6 +37,20 @@ from ultimate_coders.agent.conflict import (
     MergeResult,
     ResolutionTier,
 )
+from ultimate_coders.agent.sandbox import (
+    AgentAdapter,
+    AgentOutput,
+    ClaudeCodeAdapter,
+    CodexAdapter,
+    ExecResult,
+    NetworkMode,
+    SandboxConfig,
+    SandboxHandle,
+    SandboxManager,
+    TokenUsage,
+    available_agents,
+    create_adapter,
+)
 
 __all__ = [
     "Orchestrator",
@@ -75,4 +89,17 @@ __all__ = [
     "LineRange",
     "MergeResult",
     "ResolutionTier",
+    # Sandbox
+    "AgentAdapter",
+    "AgentOutput",
+    "ClaudeCodeAdapter",
+    "CodexAdapter",
+    "ExecResult",
+    "NetworkMode",
+    "SandboxConfig",
+    "SandboxHandle",
+    "SandboxManager",
+    "TokenUsage",
+    "available_agents",
+    "create_adapter",
 ]

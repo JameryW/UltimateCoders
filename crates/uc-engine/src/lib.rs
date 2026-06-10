@@ -16,6 +16,7 @@ pub mod checkpoint;
 pub mod conflict;
 pub mod rate_limiter;
 pub mod circuit_breaker;
+pub mod sandbox;
 
 pub use local::LocalEngine;
 pub use config::{EngineConfig, StorageConfig, MemoryConfig, EmbeddingConfig};
@@ -32,3 +33,21 @@ pub use rate_limiter::{
     RequestPriority, ModelFallbackChain, TaskComplexity,
 };
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryPolicy};
+
+// Sandbox module re-exports
+pub use sandbox::{
+    Sandbox, SandboxConfig, SandboxHandle, SandboxStatus, SandboxHealth,
+    ExecRequest, ExecResult, NetworkMode, ResourceLimits,
+    AgentOutput, TokenUsage,
+};
+pub use sandbox::subprocess::SubprocessSandbox;
+pub use sandbox::pool::SandboxPool;
+pub use sandbox::file_tracker::FileTracker;
+pub use sandbox::agents::{
+    AgentAdapter, create_adapter, available_agents,
+};
+pub use sandbox::agents::claude_code::ClaudeCodeAgent;
+pub use sandbox::agents::codex::CodexAgent;
+
+#[cfg(feature = "docker")]
+pub use sandbox::docker::DockerSandbox;

@@ -42,6 +42,11 @@ from ultimate_coders.agent.rate_limiter import (
     CircuitBreaker,
     RateLimiter,
 )
+from ultimate_coders.agent.sandbox import (
+    AgentOutput,
+    SandboxConfig,
+    SandboxManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,8 @@ class Worker:
         conflict_detector: Optional[ConflictDetector] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
+        execution_mode: str = "llm",
+        sandbox_config: Optional[SandboxConfig] = None,
     ):
         """Initialize the Worker.
 
@@ -108,6 +115,8 @@ class Worker:
             conflict_detector: Conflict detector for edit intent tracking.
             rate_limiter: Rate limiter for LLM API calls.
             circuit_breaker: Circuit breaker for LLM API fault tolerance.
+            execution_mode: Execution mode ("llm" or "sandbox").
+            sandbox_config: Configuration for sandbox execution (required if execution_mode="sandbox").
         """
         import uuid
         self.worker_id = worker_id or str(uuid.uuid4())
@@ -123,6 +132,15 @@ class Worker:
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
 
+        # Sandbox execution mode
+        self.execution_mode = execution_mode
+        if execution_mode == "sandbox":
+            self._sandbox_config = sandbox_config or SandboxConfig()
+            self._sandbox_manager = SandboxManager(self._sandbox_config, engine)
+        else:
+            self._sandbox_config = None
+            self._sandbox_manager = None
+
     def get_info(self) -> WorkerInfo:
         """Get the current WorkerInfo for registration."""
         return WorkerInfo(
@@ -133,9 +151,10 @@ class Worker:
         )
 
     async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
-        """Execute a subtask using LLM + tools.
+        """Execute a subtask using LLM + tools or sandbox mode.
 
-        Implements the tool-calling loop:
+        If execution_mode is "sandbox", delegates to the sandbox manager.
+        Otherwise, implements the tool-calling loop:
         1. Build context from memory and search
         2. Create LLM prompt with subtask + context + tools
         3. Execute LLM with tool calling loop
@@ -153,40 +172,11 @@ class Worker:
         subtask.status = SubtaskStatus.IN_PROGRESS
 
         try:
-            # Gather prior context from completed dependencies
-            prior_context = await self._gather_prior_context(subtask)
+            if self.execution_mode == "sandbox":
+                return await self._execute_in_sandbox(subtask)
 
-            # Build messages
-            messages = self._build_messages(subtask, prior_context)
-
-            # Execute LLM with tool calling loop
-            if self.llm_client is None:
-                return SubtaskResult(
-                    subtask_id=subtask.id,
-                    worker_id=self.worker_id,
-                    summary="No LLM client available",
-                    success=False,
-                )
-
-            response, tool_log = await self.llm_client.complete_with_tools(
-                messages=messages,
-                tools=self._tool_definitions,
-                system=_WORKER_SYSTEM_PROMPT,
-                max_tokens=4096,
-                tool_executor=self._execute_tool,
-            )
-
-            # Build result
-            modified_files = self._collect_modified_files(tool_log)
-            summary = response.text or "Subtask completed"
-
-            return SubtaskResult(
-                subtask_id=subtask.id,
-                worker_id=self.worker_id,
-                modified_files=modified_files,
-                summary=summary,
-                success=True,
-            )
+            # Default: LLM tool-calling loop
+            return await self._execute_with_llm(subtask)
 
         except Exception as e:
             logger.error(
@@ -203,6 +193,89 @@ class Worker:
         finally:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
+
+    async def _execute_with_llm(self, subtask: Subtask) -> SubtaskResult:
+        """Execute a subtask using LLM + tools (existing tool-calling loop).
+
+        Args:
+            subtask: The subtask to execute.
+
+        Returns:
+            SubtaskResult with execution outcome.
+        """
+        # Gather prior context from completed dependencies
+        prior_context = await self._gather_prior_context(subtask)
+
+        # Build messages
+        messages = self._build_messages(subtask, prior_context)
+
+        # Execute LLM with tool calling loop
+        if self.llm_client is None:
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary="No LLM client available",
+                success=False,
+            )
+
+        response, tool_log = await self.llm_client.complete_with_tools(
+            messages=messages,
+            tools=self._tool_definitions,
+            system=_WORKER_SYSTEM_PROMPT,
+            max_tokens=4096,
+            tool_executor=self._execute_tool,
+        )
+
+        # Build result
+        modified_files = self._collect_modified_files(tool_log)
+        summary = response.text or "Subtask completed"
+
+        return SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id=self.worker_id,
+            modified_files=modified_files,
+            summary=summary,
+            success=True,
+        )
+
+    async def _execute_in_sandbox(self, subtask: Subtask) -> SubtaskResult:
+        """Execute a subtask using the sandbox agent executor.
+
+        Runs the coding agent (Claude Code or Codex) in an isolated
+        sandbox environment with resource limits and file change tracking.
+
+        Args:
+            subtask: The subtask to execute.
+
+        Returns:
+            SubtaskResult with execution outcome.
+        """
+        if self._sandbox_manager is None:
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary="Sandbox manager not configured (set execution_mode='sandbox')",
+                success=False,
+            )
+
+        # Build the prompt from subtask description
+        prompt = _SUBTASK_USER_TEMPLATE.format(
+            description=subtask.description,
+            expected_output=subtask.expected_output or "Complete the described task",
+            file_constraints=", ".join(subtask.file_constraints) or "none",
+            prior_context="(sandbox mode: prior context not gathered)",
+        )
+
+        # Execute in sandbox
+        output: AgentOutput = await self._sandbox_manager.execute(prompt)
+
+        return SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id=self.worker_id,
+            modified_files=output.file_changes,
+            summary=output.summary,
+            success=output.success,
+        )
 
     async def send_heartbeat(self) -> Dict[str, Any]:
         """Send heartbeat to indicate the worker is alive.

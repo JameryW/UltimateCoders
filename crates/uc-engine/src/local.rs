@@ -32,6 +32,10 @@ use crate::conflict::{ConflictDetector, EditIntent, ConflictResult};
 use crate::rate_limiter::LlmRateLimiter;
 use crate::circuit_breaker::CircuitBreaker;
 use crate::events::{InMemoryEventStore, AgentEventType, TaskSnapshot};
+use crate::sandbox::{
+    Sandbox, SandboxConfig, SandboxHandle, ExecRequest, ExecResult,
+};
+use crate::sandbox::subprocess::SubprocessSandbox;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -50,6 +54,8 @@ pub struct LocalEngine {
     rate_limiter: Arc<LlmRateLimiter>,
     /// Circuit breaker for LLM API fault tolerance.
     circuit_breaker: Arc<CircuitBreaker>,
+    /// Sandbox for executing coding agents in isolated environments.
+    sandbox: Arc<dyn Sandbox>,
     #[allow(dead_code)]
     config: EngineConfig,
     start_time: Instant,
@@ -133,6 +139,7 @@ impl LocalEngine {
             conflict_detector,
             rate_limiter,
             circuit_breaker,
+            sandbox: Arc::new(SubprocessSandbox::new()),
             config,
             start_time: Instant::now(),
         })
@@ -197,6 +204,7 @@ impl LocalEngine {
             conflict_detector,
             rate_limiter,
             circuit_breaker,
+            sandbox: Arc::new(SubprocessSandbox::new()),
             config: EngineConfig::default(),
             start_time: Instant::now(),
         }
@@ -252,6 +260,7 @@ impl LocalEngine {
             conflict_detector,
             rate_limiter,
             circuit_breaker,
+            sandbox: Arc::new(SubprocessSandbox::new()),
             config,
             start_time: Instant::now(),
         }
@@ -371,6 +380,48 @@ impl LocalEngine {
     /// Record a failed LLM API call (for circuit breaker).
     pub fn record_llm_failure(&self) {
         self.circuit_breaker.record_failure();
+    }
+
+    // ── Sandbox Operations ──────────────────────────────────────
+
+    /// Create a sandbox environment.
+    ///
+    /// Returns a handle to the created sandbox that can be used
+    /// for executing commands.
+    pub async fn create_sandbox(&self, config: &SandboxConfig) -> Result<SandboxHandle, EngineError> {
+        self.sandbox.create(config).await
+    }
+
+    /// Execute a command in a sandbox.
+    ///
+    /// The command runs in the isolated environment specified by
+    /// the sandbox handle, with resource limits enforced.
+    pub async fn execute_in_sandbox(
+        &self,
+        handle: &SandboxHandle,
+        request: ExecRequest,
+    ) -> Result<ExecResult, EngineError> {
+        self.sandbox.execute(handle, request).await
+    }
+
+    /// Stop a sandbox environment.
+    ///
+    /// Cleans up any resources (containers, processes) associated
+    /// with the sandbox.
+    pub async fn stop_sandbox(&self, handle: &SandboxHandle) -> Result<(), EngineError> {
+        self.sandbox.stop(handle).await
+    }
+
+    /// Get the sandbox implementation (for direct access).
+    pub fn sandbox(&self) -> &Arc<dyn Sandbox> {
+        &self.sandbox
+    }
+
+    /// Replace the sandbox implementation.
+    ///
+    /// Useful for switching from subprocess to Docker mode at runtime.
+    pub fn set_sandbox(&mut self, sandbox: Arc<dyn Sandbox>) {
+        self.sandbox = sandbox;
     }
 }
 
@@ -516,6 +567,11 @@ impl EngineApi for LocalEngine {
                 self.circuit_breaker.failure_count(),
             )),
         });
+        components.push(uc_types::engine::ComponentHealth {
+            name: "sandbox".into(),
+            status: "ok".into(),
+            details: Some("Sandbox execution ready".into()),
+        });
 
         Ok(HealthStatus {
             status: overall_status.into(),
@@ -541,10 +597,10 @@ mod tests {
         let engine = LocalEngine::new_fallback();
         let health = engine.health().await.unwrap();
         assert_eq!(health.status, "degraded"); // Using fallbacks
-        // Now has 10 components: short_term, long_term, metadata, index_pipeline,
+        // Now has 11 components: short_term, long_term, metadata, index_pipeline,
         // search_engine, embedding_service, checkpoint_manager, conflict_detector,
-        // rate_limiter, circuit_breaker
-        assert_eq!(health.components.len(), 10);
+        // rate_limiter, circuit_breaker, sandbox
+        assert_eq!(health.components.len(), 11);
     }
 
     #[tokio::test]
@@ -573,6 +629,9 @@ mod tests {
         assert_eq!(health.components[8].status, "ok");
         assert_eq!(health.components[9].name, "circuit_breaker");
         assert_eq!(health.components[9].status, "ok");
+        // Sandbox component
+        assert_eq!(health.components[10].name, "sandbox");
+        assert_eq!(health.components[10].status, "ok");
     }
 
     #[tokio::test]
@@ -878,5 +937,51 @@ fn load_index() -> Index { Index::new() }"#,
 
         // Force close for cleanup
         engine.circuit_breaker().force_state(crate::circuit_breaker::CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn local_engine_sandbox_create_and_execute() {
+        let engine = LocalEngine::new_fallback();
+
+        let config = crate::sandbox::SandboxConfig {
+            project_path: "/tmp".to_string(),
+            working_dir: "/tmp".to_string(),
+            ..Default::default()
+        };
+
+        let handle = engine.create_sandbox(&config).await.unwrap();
+        assert_eq!(handle.status, crate::sandbox::SandboxStatus::Ready);
+
+        let request = crate::sandbox::ExecRequest::new("echo", vec!["hello sandbox".to_string()]);
+        let result = engine.execute_in_sandbox(&handle, request).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("hello sandbox"));
+
+        engine.stop_sandbox(&handle).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_engine_sandbox_execute_timeout() {
+        let engine = LocalEngine::new_fallback();
+
+        let config = crate::sandbox::SandboxConfig {
+            project_path: "/tmp".to_string(),
+            working_dir: "/tmp".to_string(),
+            ..Default::default()
+        };
+
+        let handle = engine.create_sandbox(&config).await.unwrap();
+
+        let request = crate::sandbox::ExecRequest {
+            command: "sleep".to_string(),
+            args: vec!["60".to_string()],
+            timeout_secs: 1,
+            ..Default::default()
+        };
+
+        let result = engine.execute_in_sandbox(&handle, request).await.unwrap();
+        assert!(result.timed_out);
+
+        engine.stop_sandbox(&handle).await.unwrap();
     }
 }
