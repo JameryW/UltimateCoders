@@ -64,6 +64,9 @@ impl EngineError {
 
     /// Whether this error suggests model fallback.
     pub fn should_fallback(&self) -> bool {
-        matches!(self, EngineError::RateLimited(_) | EngineError::TimeoutError(_))
+        matches!(
+            self,
+            EngineError::RateLimited(_) | EngineError::TimeoutError(_)
+        )
     }
 }

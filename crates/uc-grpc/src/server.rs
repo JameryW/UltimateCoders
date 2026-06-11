@@ -36,7 +36,10 @@ fn to_status(err: uc_types::EngineError) -> Status {
         IndexingError(m) => (tonic::Code::Internal, m.clone()),
         ConnectionError(m) => (tonic::Code::Unavailable, m.clone()),
         TimeoutError(m) => (tonic::Code::DeadlineExceeded, m.clone()),
-        RateLimited(secs) => (tonic::Code::ResourceExhausted, format!("retry after {}s", secs)),
+        RateLimited(secs) => (
+            tonic::Code::ResourceExhausted,
+            format!("retry after {}s", secs),
+        ),
         ConflictError { path, details } => (tonic::Code::Aborted, format!("{}: {}", path, details)),
         TaskError(m) => (tonic::Code::FailedPrecondition, m.clone()),
         WorkerUnavailable(m) => (tonic::Code::Unavailable, m.clone()),
@@ -75,7 +78,11 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
     ) -> Result<Response<GetIndexStateResponse>, Status> {
         let req = request.into_inner();
         let repo_id = req.repo_id.clone();
-        let result = self.engine.get_index_state(&repo_id).await.map_err(to_status)?;
+        let result = self
+            .engine
+            .get_index_state(&repo_id)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(result.into()))
     }
 
@@ -84,7 +91,10 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         request: Request<RemoveIndexRequest>,
     ) -> Result<Response<RemoveIndexResponse>, Status> {
         let req = request.into_inner();
-        self.engine.remove_index(&req.repo_id).await.map_err(to_status)?;
+        self.engine
+            .remove_index(&req.repo_id)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(RemoveIndexResponse {}))
     }
 
@@ -141,7 +151,11 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
                 embedding: None,
             },
         };
-        let result = self.engine.write_memory(write_req).await.map_err(to_status)?;
+        let result = self
+            .engine
+            .write_memory(write_req)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(result.into()))
     }
 
@@ -162,7 +176,11 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
     ) -> Result<Response<SearchMemoryResponse>, Status> {
         let req = request.into_inner();
         let search_req: uc_types::MemorySearchRequest = req.into();
-        let result = self.engine.search_memory(search_req).await.map_err(to_status)?;
+        let result = self
+            .engine
+            .search_memory(search_req)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(result.into()))
     }
 

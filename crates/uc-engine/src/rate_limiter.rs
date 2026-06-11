@@ -193,7 +193,8 @@ impl LlmRateLimiter {
         // Record the request
         self.active_count.fetch_add(1, Ordering::SeqCst);
         self.total_requests.fetch_add(1, Ordering::SeqCst);
-        self.total_tokens.fetch_add(estimated_tokens as u64, Ordering::SeqCst);
+        self.total_tokens
+            .fetch_add(estimated_tokens as u64, Ordering::SeqCst);
 
         Ok(())
     }
@@ -307,7 +308,12 @@ impl ModelFallbackChain {
     /// - Medium complexity + secondary available -> secondary
     /// - Medium complexity + secondary unavailable -> tertiary
     /// - Low complexity -> tertiary
-    pub fn select_model(&self, complexity: TaskComplexity, primary_available: bool, secondary_available: bool) -> String {
+    pub fn select_model(
+        &self,
+        complexity: TaskComplexity,
+        primary_available: bool,
+        secondary_available: bool,
+    ) -> String {
         match complexity {
             TaskComplexity::High => {
                 if primary_available {
@@ -423,7 +429,7 @@ mod tests {
     #[test]
     fn rate_limiter_concurrent_limit() {
         let config = LlmRateLimiterConfig {
-            rpm: 10000.0, // High RPM to avoid hitting it
+            rpm: 10000.0,      // High RPM to avoid hitting it
             tpm: 10_000_000.0, // High TPM to avoid hitting it
             max_concurrent: 2,
         };
@@ -449,8 +455,14 @@ mod tests {
     fn model_fallback_chain() {
         let chain = ModelFallbackChain::default();
 
-        assert_eq!(chain.fallback(&chain.primary), Some(chain.secondary.clone()));
-        assert_eq!(chain.fallback(&chain.secondary), Some(chain.tertiary.clone()));
+        assert_eq!(
+            chain.fallback(&chain.primary),
+            Some(chain.secondary.clone())
+        );
+        assert_eq!(
+            chain.fallback(&chain.secondary),
+            Some(chain.tertiary.clone())
+        );
         assert_eq!(chain.fallback(&chain.tertiary), None);
     }
 

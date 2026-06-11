@@ -167,10 +167,7 @@ impl CircuitBreaker {
                 if failures >= self.failure_threshold {
                     *state = CircuitState::Open;
                     *self.last_failure_time.lock().unwrap() = Some(Instant::now());
-                    tracing::warn!(
-                        "Circuit breaker opened after {} failures",
-                        failures
-                    );
+                    tracing::warn!("Circuit breaker opened after {} failures", failures);
                 }
             }
             CircuitState::HalfOpen => {

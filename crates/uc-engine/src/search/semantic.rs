@@ -83,7 +83,12 @@ impl SemanticSearchEngine {
         let mut results: Vec<SearchResultItem> = memory_results
             .into_iter()
             .filter_map(|mr| {
-                if !mr.entry.metadata.tags.contains(&"code_embedding".to_string()) {
+                if !mr
+                    .entry
+                    .metadata
+                    .tags
+                    .contains(&"code_embedding".to_string())
+                {
                     return None;
                 }
 
@@ -91,9 +96,12 @@ impl SemanticSearchEngine {
                     crate::indexer::semantic::parse_embedding_key(&mr.entry.key)?;
 
                 if !languages.is_empty() {
-                    let lang_match = mr.entry.metadata.tags.iter().any(|tag| {
-                        languages.iter().any(|lang| tag == lang)
-                    });
+                    let lang_match = mr
+                        .entry
+                        .metadata
+                        .tags
+                        .iter()
+                        .any(|tag| languages.iter().any(|lang| tag == lang));
                     if !lang_match {
                         return None;
                     }
@@ -161,22 +169,20 @@ mod tests {
         let engine = SemanticSearchEngine::new(semantic_indexer, long_term);
 
         // Index some chunks first
-        let chunks = vec![
-            CodeChunk {
-                id: "test-chunk-1".to_string(),
-                repo_id: "sem-test".to_string(),
-                file_path: "src/search.rs".to_string(),
-                start_line: 1,
-                end_line: 10,
-                content: "fn search_by_keyword(query: &str) -> Vec<Result>".to_string(),
-                language: "rust".to_string(),
-                symbol_name: Some("search_by_keyword".to_string()),
-                symbol_kind: Some("function".to_string()),
-                parent_symbol: None,
-                chunk_type: ChunkType::Symbol,
-                content_hash: "h1".to_string(),
-            },
-        ];
+        let chunks = vec![CodeChunk {
+            id: "test-chunk-1".to_string(),
+            repo_id: "sem-test".to_string(),
+            file_path: "src/search.rs".to_string(),
+            start_line: 1,
+            end_line: 10,
+            content: "fn search_by_keyword(query: &str) -> Vec<Result>".to_string(),
+            language: "rust".to_string(),
+            symbol_name: Some("search_by_keyword".to_string()),
+            symbol_kind: Some("function".to_string()),
+            parent_symbol: None,
+            chunk_type: ChunkType::Symbol,
+            content_hash: "h1".to_string(),
+        }];
 
         engine
             .semantic_indexer

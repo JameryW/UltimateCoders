@@ -9,9 +9,9 @@
 //!
 //! Supports both full reindex and incremental indexing via git diff.
 
-pub mod text;
-pub mod semantic;
 pub mod ast;
+pub mod semantic;
+pub mod text;
 
 use uc_types::error::EngineError;
 use uc_types::index::{IndexHealth, IndexRequest, IndexResponse, IndexState, RepoSpec};
@@ -131,7 +131,9 @@ impl IndexPipeline {
                     let mut text_idx = self.text_index.write().await;
                     text_idx.remove_repo(&repo_spec.repo_id);
                 }
-                self.metadata.delete_symbols_for_repo(&repo_spec.repo_id).await?;
+                self.metadata
+                    .delete_symbols_for_repo(&repo_spec.repo_id)
+                    .await?;
 
                 // Also clear existing semantic embeddings for this repo
                 if let Some(semantic) = &self.semantic_indexer {
@@ -182,7 +184,10 @@ impl IndexPipeline {
 
         let repo_dir = std::path::Path::new(local_path);
         if !repo_dir.exists() {
-            return Err(EngineError::IndexingError(format!("path not found: {}", local_path)));
+            return Err(EngineError::IndexingError(format!(
+                "path not found: {}",
+                local_path
+            )));
         }
 
         // 1. Open the git repo and get current HEAD SHA
@@ -200,7 +205,9 @@ impl IndexPipeline {
         }
 
         // 2. Compute diff between last indexed SHA and HEAD
-        let diffs = self.compute_diff(repo_spec, &existing_state.last_indexed_sha, &head_sha).await?;
+        let diffs = self
+            .compute_diff(repo_spec, &existing_state.last_indexed_sha, &head_sha)
+            .await?;
 
         // If diff computation returns empty (e.g., old SHA is not ancestor of new),
         // fall back to full index
@@ -218,26 +225,30 @@ impl IndexPipeline {
         let mut chunks_embedded: u32 = 0;
 
         // Set index state to Indexing
-        self.metadata.update_index_state(&IndexState {
-            repo_id: repo_spec.repo_id.clone(),
-            last_indexed_sha: existing_state.last_indexed_sha.clone(),
-            last_indexed_at: chrono::Utc::now(),
-            last_full_reindex: existing_state.last_full_reindex,
-            index_version: existing_state.index_version,
-            health: IndexHealth::Indexing,
-        }).await?;
+        self.metadata
+            .update_index_state(&IndexState {
+                repo_id: repo_spec.repo_id.clone(),
+                last_indexed_sha: existing_state.last_indexed_sha.clone(),
+                last_indexed_at: chrono::Utc::now(),
+                last_full_reindex: existing_state.last_full_reindex,
+                index_version: existing_state.index_version,
+                health: IndexHealth::Indexing,
+            })
+            .await?;
 
         for diff in &diffs {
             match diff.kind {
                 crate::git::repo_manager::DiffKind::Deleted => {
                     // Remove from all indexes
-                    self.remove_file_from_index(&repo_spec.repo_id, &diff.path).await?;
+                    self.remove_file_from_index(&repo_spec.repo_id, &diff.path)
+                        .await?;
                 }
-                crate::git::repo_manager::DiffKind::Added | crate::git::repo_manager::DiffKind::Modified => {
+                crate::git::repo_manager::DiffKind::Added
+                | crate::git::repo_manager::DiffKind::Modified => {
                     // Re-index just this file
-                    let result = self.index_single_file(
-                        &repo_spec.repo_id, repo_dir, &diff.path,
-                    ).await?;
+                    let result = self
+                        .index_single_file(&repo_spec.repo_id, repo_dir, &diff.path)
+                        .await?;
                     files_indexed += result.files_indexed;
                     symbols_extracted += result.symbols_extracted;
                     chunks_embedded += result.chunks_embedded;
@@ -247,9 +258,9 @@ impl IndexPipeline {
                     // Since FileDiff only has the new path, treat as add.
                     // The old path content will be stale but gets cleaned up
                     // on the next full reindex.
-                    let result = self.index_single_file(
-                        &repo_spec.repo_id, repo_dir, &diff.path,
-                    ).await?;
+                    let result = self
+                        .index_single_file(&repo_spec.repo_id, repo_dir, &diff.path)
+                        .await?;
                     files_indexed += result.files_indexed;
                     symbols_extracted += result.symbols_extracted;
                     chunks_embedded += result.chunks_embedded;
@@ -258,14 +269,16 @@ impl IndexPipeline {
         }
 
         // 4. Update index state with new SHA
-        self.metadata.update_index_state(&IndexState {
-            repo_id: repo_spec.repo_id.clone(),
-            last_indexed_sha: head_sha,
-            last_indexed_at: chrono::Utc::now(),
-            last_full_reindex: existing_state.last_full_reindex,
-            index_version: CURRENT_INDEX_VERSION,
-            health: IndexHealth::Healthy,
-        }).await?;
+        self.metadata
+            .update_index_state(&IndexState {
+                repo_id: repo_spec.repo_id.clone(),
+                last_indexed_sha: head_sha,
+                last_indexed_at: chrono::Utc::now(),
+                last_full_reindex: existing_state.last_full_reindex,
+                index_version: CURRENT_INDEX_VERSION,
+                health: IndexHealth::Healthy,
+            })
+            .await?;
 
         Ok(IndexResponse {
             repo_id: repo_spec.repo_id.clone(),
@@ -277,7 +290,11 @@ impl IndexPipeline {
     }
 
     /// Remove a single file from all indexes.
-    async fn remove_file_from_index(&self, repo_id: &str, file_path: &str) -> Result<(), EngineError> {
+    async fn remove_file_from_index(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
         // Remove from text index
         {
             let mut text_idx = self.text_index.write().await;
@@ -285,7 +302,9 @@ impl IndexPipeline {
         }
 
         // Remove AST symbols for this file
-        self.metadata.delete_symbols_for_file(repo_id, file_path).await?;
+        self.metadata
+            .delete_symbols_for_file(repo_id, file_path)
+            .await?;
 
         // Remove semantic embeddings for this file
         if let Some(semantic) = &self.semantic_indexer {
@@ -334,15 +353,28 @@ impl IndexPipeline {
         // AST index
         if ast::should_parse(file_path) {
             let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
-            let result = self.ast_indexer
-                .index_file(&self.metadata, repo_id, file_path, &content, lang, &content_hash)
+            let result = self
+                .ast_indexer
+                .index_file(
+                    &self.metadata,
+                    repo_id,
+                    file_path,
+                    &content,
+                    lang,
+                    &content_hash,
+                )
                 .await?;
             symbols_extracted += result.symbols.len() as u32;
 
             // Semantic index
             if let (Some(semantic), Some(ltm)) = (&self.semantic_indexer, &self.long_term_memory) {
                 let chunks = semantic::create_chunks_from_ast(
-                    repo_id, file_path, lang, &content, &content_hash, &result.symbols,
+                    repo_id,
+                    file_path,
+                    lang,
+                    &content,
+                    &content_hash,
+                    &result.symbols,
                 );
                 if !chunks.is_empty() {
                     let count = semantic.index_chunks(&chunks, ltm).await?;
@@ -369,9 +401,11 @@ impl IndexPipeline {
             })?;
             let repo_dir = std::path::Path::new(local_path);
             let repo_manager = crate::git::repo_manager::RepoManager::new(repo_dir.to_path_buf());
-            let repo = repo_manager.clone_or_open(repo_spec)
+            let repo = repo_manager
+                .clone_or_open(repo_spec)
                 .map_err(|e| EngineError::IndexingError(format!("failed to open repo: {}", e)))?;
-            repo_manager.head_sha(&repo)
+            repo_manager
+                .head_sha(&repo)
                 .map_err(|e| EngineError::IndexingError(format!("failed to get HEAD SHA: {}", e)))
         }
         #[cfg(not(feature = "indexing"))]
@@ -395,9 +429,11 @@ impl IndexPipeline {
             })?;
             let repo_dir = std::path::Path::new(local_path);
             let repo_manager = crate::git::repo_manager::RepoManager::new(repo_dir.to_path_buf());
-            let repo = repo_manager.clone_or_open(repo_spec)
+            let repo = repo_manager
+                .clone_or_open(repo_spec)
                 .map_err(|e| EngineError::IndexingError(format!("failed to open repo: {}", e)))?;
-            repo_manager.diff_between(&repo, old_sha, new_sha)
+            repo_manager
+                .diff_between(&repo, old_sha, new_sha)
                 .map_err(|e| EngineError::IndexingError(format!("failed to compute diff: {}", e)))
         }
         #[cfg(not(feature = "indexing"))]
@@ -447,12 +483,21 @@ impl IndexPipeline {
                 let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
                 let result = self
                     .ast_indexer
-                    .index_file(&self.metadata, repo_id, &file_path, &content, lang, &content_hash)
+                    .index_file(
+                        &self.metadata,
+                        repo_id,
+                        &file_path,
+                        &content,
+                        lang,
+                        &content_hash,
+                    )
                     .await?;
                 symbols_extracted += result.symbols.len() as u32;
 
                 // Semantic index: create AST-aware chunks and embed them
-                if let (Some(semantic), Some(ltm)) = (&self.semantic_indexer, &self.long_term_memory) {
+                if let (Some(semantic), Some(ltm)) =
+                    (&self.semantic_indexer, &self.long_term_memory)
+                {
                     let chunks = semantic::create_chunks_from_ast(
                         repo_id,
                         &file_path,
@@ -561,8 +606,8 @@ fn walk_dir_recursive(
         .map_err(|e| EngineError::IndexingError(format!("Failed to read directory: {}", e)))?;
 
     for entry in read_dir {
-        let entry = entry
-            .map_err(|e| EngineError::IndexingError(format!("Dir entry error: {}", e)))?;
+        let entry =
+            entry.map_err(|e| EngineError::IndexingError(format!("Dir entry error: {}", e)))?;
 
         let file_name = entry.file_name();
         let file_name_str = file_name.to_string_lossy();
@@ -573,7 +618,10 @@ fn walk_dir_recursive(
         }
 
         // Skip common non-code directories
-        if file_name_str == "target" || file_name_str == "node_modules" || file_name_str == "__pycache__" {
+        if file_name_str == "target"
+            || file_name_str == "node_modules"
+            || file_name_str == "__pycache__"
+        {
             continue;
         }
 
@@ -731,11 +779,7 @@ impl Database {
         let embedding_service = Arc::new(EmbeddingService::new_fallback());
         let long_term_memory = Arc::new(LongTermMemory::new_fallback());
 
-        let pipeline = IndexPipeline::with_semantic(
-            metadata,
-            embedding_service,
-            long_term_memory,
-        );
+        let pipeline = IndexPipeline::with_semantic(metadata, embedding_service, long_term_memory);
 
         let request = IndexRequest {
             repo: RepoSpec {
@@ -795,14 +839,9 @@ impl Database {
 
         let parents: Vec<&git2::Commit> = parent_commit.as_ref().map(|c| c).into_iter().collect();
 
-        let commit_id = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            message,
-            &tree,
-            parents.as_slice(),
-        ).unwrap();
+        let commit_id = repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, parents.as_slice())
+            .unwrap();
 
         commit_id.to_string()
     }
@@ -828,14 +867,9 @@ impl Database {
         let head = repo.head().unwrap();
         let parent_commit = head.peel_to_commit().unwrap();
 
-        let commit_id = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            message,
-            &tree,
-            &[&parent_commit],
-        ).unwrap();
+        let commit_id = repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent_commit])
+            .unwrap();
 
         commit_id.to_string()
     }
@@ -860,20 +894,30 @@ impl Database {
         };
 
         // Full index first
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Verify the SHA was stored
-        let state = metadata.get_index_state("test-inc-nochange").await.unwrap().unwrap();
+        let state = metadata
+            .get_index_state("test-inc-nochange")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(state.last_indexed_sha, sha1);
 
         // Incremental index with no changes — should report 0 files indexed
-        let response = pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: false,
-        }).await.unwrap();
+        let response = pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: false,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response.files_indexed, 0);
 
@@ -900,19 +944,25 @@ impl Database {
         };
 
         // Full index first
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Add a new file and commit
         commit_file(&repo, &temp_dir, "lib.rs", "fn helper() {}", "add lib");
 
         // Incremental index should pick up the new file
-        let response = pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: false,
-        }).await.unwrap();
+        let response = pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: false,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response.files_indexed, 1);
 
@@ -938,7 +988,13 @@ impl Database {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let repo = create_git_repo(&temp_dir);
-        commit_file(&repo, &temp_dir, "main.rs", "fn original_routine() {}", "initial");
+        commit_file(
+            &repo,
+            &temp_dir,
+            "main.rs",
+            "fn original_routine() {}",
+            "initial",
+        );
 
         let metadata = Arc::new(PostgresMetadataStore::new_fallback());
         let pipeline = IndexPipeline::new(Arc::clone(&metadata));
@@ -951,19 +1007,31 @@ impl Database {
         };
 
         // Full index first
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Modify the file and commit
-        commit_file(&repo, &temp_dir, "main.rs", "fn updated_handler() {}", "modify main");
+        commit_file(
+            &repo,
+            &temp_dir,
+            "main.rs",
+            "fn updated_handler() {}",
+            "modify main",
+        );
 
         // Incremental index should re-index the modified file
-        let response = pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: false,
-        }).await.unwrap();
+        let response = pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: false,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response.files_indexed, 1);
 
@@ -1003,7 +1071,13 @@ impl Database {
 
         let repo = create_git_repo(&temp_dir);
         commit_file(&repo, &temp_dir, "main.rs", "fn hello() {}", "initial");
-        commit_file(&repo, &temp_dir, "removeme.rs", "fn will_be_deleted() {}", "add removeme");
+        commit_file(
+            &repo,
+            &temp_dir,
+            "removeme.rs",
+            "fn will_be_deleted() {}",
+            "add removeme",
+        );
 
         let metadata = Arc::new(PostgresMetadataStore::new_fallback());
         let pipeline = IndexPipeline::new(Arc::clone(&metadata));
@@ -1016,10 +1090,13 @@ impl Database {
         };
 
         // Full index first
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Verify the file is searchable
         let query_before = SearchQuery {
@@ -1037,10 +1114,13 @@ impl Database {
         commit_delete(&repo, &temp_dir, "removeme.rs", "delete removeme");
 
         // Incremental index should remove the deleted file
-        let response = pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: false,
-        }).await.unwrap();
+        let response = pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: false,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(response.files_indexed, 0); // No new files indexed
 
@@ -1079,13 +1159,19 @@ impl Database {
         };
 
         // Full index
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Remove a single file
-        pipeline.remove_file_from_index("test-rm-file", "file2.rs").await.unwrap();
+        pipeline
+            .remove_file_from_index("test-rm-file", "file2.rs")
+            .await
+            .unwrap();
 
         // file2 content should be gone
         let query = SearchQuery {
@@ -1125,11 +1211,10 @@ impl Database {
         let metadata = Arc::new(PostgresMetadataStore::new_fallback());
         let pipeline = IndexPipeline::new(metadata);
 
-        let result = pipeline.index_single_file(
-            "test-single",
-            &temp_dir,
-            "solo.rs",
-        ).await.unwrap();
+        let result = pipeline
+            .index_single_file("test-single", &temp_dir, "solo.rs")
+            .await
+            .unwrap();
 
         assert_eq!(result.files_indexed, 1);
         assert_eq!(result.repo_id, "test-single");
@@ -1169,13 +1254,20 @@ impl Database {
             local_path: Some(temp_dir.to_string_lossy().to_string()),
         };
 
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
         // Verify the HEAD SHA was stored
-        let state = metadata.get_index_state("test-sha-save").await.unwrap().unwrap();
+        let state = metadata
+            .get_index_state("test-sha-save")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(state.last_indexed_sha, sha);
         assert_eq!(state.health, IndexHealth::Healthy);
 
@@ -1202,12 +1294,19 @@ impl Database {
         };
 
         // Full index first
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec.clone(),
-            force_full: true,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec.clone(),
+                force_full: true,
+            })
+            .await
+            .unwrap();
 
-        let state_after_full = metadata.get_index_state("test-inc-sha").await.unwrap().unwrap();
+        let state_after_full = metadata
+            .get_index_state("test-inc-sha")
+            .await
+            .unwrap()
+            .unwrap();
         let sha_after_full = state_after_full.last_indexed_sha.clone();
         assert!(!sha_after_full.is_empty());
 
@@ -1215,13 +1314,20 @@ impl Database {
         let sha2 = commit_file(&repo, &temp_dir, "lib.rs", "fn world() {}", "add lib");
 
         // Incremental index
-        pipeline.index_repo(&IndexRequest {
-            repo: repo_spec,
-            force_full: false,
-        }).await.unwrap();
+        pipeline
+            .index_repo(&IndexRequest {
+                repo: repo_spec,
+                force_full: false,
+            })
+            .await
+            .unwrap();
 
         // Verify the SHA was updated
-        let state_after_inc = metadata.get_index_state("test-inc-sha").await.unwrap().unwrap();
+        let state_after_inc = metadata
+            .get_index_state("test-inc-sha")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(state_after_inc.last_indexed_sha, sha2);
         assert_ne!(state_after_inc.last_indexed_sha, sha_after_full);
 

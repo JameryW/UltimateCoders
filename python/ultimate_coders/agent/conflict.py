@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class ResolutionTier(Enum):
     REASSIGN = "reassign"
     HUMAN = "human"
 
-    def escalate(self) -> "ResolutionTier":
+    def escalate(self) -> ResolutionTier:
         """Get the next tier up (more expensive resolution)."""
         escalation = {
             ResolutionTier.AUTO_MERGE: ResolutionTier.LLM_ASSISTED,
@@ -67,7 +66,7 @@ class LineRange:
     start: int = 0
     end: int = 0
 
-    def overlaps(self, other: "LineRange") -> bool:
+    def overlaps(self, other: LineRange) -> bool:
         """Check if two line ranges overlap."""
         return self.start < other.end and other.start < self.end
 
@@ -90,7 +89,7 @@ class EditIntent:
     worker_id: str = ""
     file_path: str = ""
     edit_type: EditType = EditType.MODIFY
-    regions: List[LineRange] = field(default_factory=list)
+    regions: list[LineRange] = field(default_factory=list)
     timestamp: float = 0.0
 
     def __post_init__(self) -> None:
@@ -111,9 +110,9 @@ class ConflictInfo:
     """
 
     file_path: str = ""
-    conflicting_workers: List[str] = field(default_factory=list)
+    conflicting_workers: list[str] = field(default_factory=list)
     resolution_tier: ResolutionTier = ResolutionTier.AUTO_MERGE
-    overlapping_regions: List[LineRange] = field(default_factory=list)
+    overlapping_regions: list[LineRange] = field(default_factory=list)
 
 
 @dataclass
@@ -146,8 +145,8 @@ class MergeResult:
         tier: The resolution tier that was applied.
     """
 
-    merged: Optional[str] = None
-    conflicts: List[ConflictMarker] = field(default_factory=list)
+    merged: str | None = None
+    conflicts: list[ConflictMarker] = field(default_factory=list)
     success: bool = False
     tier: ResolutionTier = ResolutionTier.AUTO_MERGE
 
@@ -174,14 +173,14 @@ class ConflictDetector:
     """
 
     def __init__(self) -> None:
-        self._baseline_hashes: Dict[str, str] = {}
-        self._active_intents: Dict[str, List[EditIntent]] = {}
+        self._baseline_hashes: dict[str, str] = {}
+        self._active_intents: dict[str, list[EditIntent]] = {}
 
     def register_baseline(self, file_path: str, hash_value: str) -> None:
         """Register the baseline hash for a file at task start."""
         self._baseline_hashes[file_path] = hash_value
 
-    def declare_intent(self, intent: EditIntent) -> Tuple[ConflictResult, Optional[ConflictInfo]]:
+    def declare_intent(self, intent: EditIntent) -> tuple[ConflictResult, ConflictInfo | None]:
         """Declare an edit intent and check for conflicts.
 
         Args:
@@ -205,8 +204,8 @@ class ConflictDetector:
         self,
         file_path: str,
         worker_id: str,
-        regions: List[LineRange],
-    ) -> Tuple[ConflictResult, Optional[ConflictInfo]]:
+        regions: list[LineRange],
+    ) -> tuple[ConflictResult, ConflictInfo | None]:
         """Check if an edit would conflict with existing intents.
 
         Does NOT record the intent; use declare_intent for that.
@@ -223,8 +222,8 @@ class ConflictDetector:
         if not existing:
             return ConflictResult.NO_CONFLICT, None
 
-        conflicting_workers: List[str] = []
-        overlapping_regions: List[LineRange] = []
+        conflicting_workers: list[str] = []
+        overlapping_regions: list[LineRange] = []
 
         for intent in existing:
             if intent.worker_id == worker_id:
@@ -286,7 +285,7 @@ class ConflictDetector:
         """Clear all intents (e.g., when a task completes)."""
         self._active_intents.clear()
 
-    def get_intents(self, file_path: str) -> List[EditIntent]:
+    def get_intents(self, file_path: str) -> list[EditIntent]:
         """Get all active intents for a file."""
         return list(self._active_intents.get(file_path, []))
 

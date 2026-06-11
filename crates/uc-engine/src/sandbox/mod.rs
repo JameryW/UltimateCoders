@@ -22,22 +22,22 @@
 //! ```
 
 pub mod agents;
+pub mod file_tracker;
 pub mod pool;
 pub mod subprocess;
-pub mod file_tracker;
 
 #[cfg(feature = "docker")]
 pub mod docker;
 
 // Re-export agent adapter types for convenience
-pub use agents::{AgentAdapter, create_adapter, available_agents};
 pub use agents::claude_code::ClaudeCodeAgent;
 pub use agents::codex::CodexAgent;
+pub use agents::{available_agents, create_adapter, AgentAdapter};
 
-use uc_types::EngineError;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uc_types::EngineError;
 
 // ── Sandbox Trait ──────────────────────────────────────────────
 
@@ -260,7 +260,8 @@ pub(crate) fn truncate_str(s: &str, max_len: usize) -> &str {
         s
     } else {
         // Find a good break point near max_len that doesn't split a char
-        let end = s.char_indices()
+        let end = s
+            .char_indices()
             .take_while(|(i, _)| *i < max_len)
             .last()
             .map(|(i, c)| i + c.len_utf8())
@@ -339,9 +340,7 @@ mod tests {
     fn sandbox_config_serialization() {
         let config = SandboxConfig {
             project_path: "/tmp/project".to_string(),
-            env_vars: HashMap::from([
-                ("KEY".to_string(), "VALUE".to_string()),
-            ]),
+            env_vars: HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
             resource_limits: ResourceLimits::default(),
             network: NetworkMode::None,
             working_dir: "/workspace".to_string(),

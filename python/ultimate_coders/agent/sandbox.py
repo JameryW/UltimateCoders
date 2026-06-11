@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, SubtaskResult
+from ultimate_coders.agent.types import ChangeType, FileChange
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class SandboxConfig:
     agent: str = "claude-code"
     backend: str = "subprocess"
     project_path: str = ""
-    api_key: Optional[str] = None
+    api_key: str | None = None
     max_cpu_seconds: int = 3600
     max_memory_mb: int = 8192
     max_output_bytes: int = 50 * 1024 * 1024  # 50 MB
@@ -53,9 +53,9 @@ class SandboxConfig:
     warm_pool_size: int = 2
     max_pool_size: int = 10
     working_dir: str = ""
-    env_vars: Dict[str, str] = field(default_factory=dict)
+    env_vars: dict[str, str] = field(default_factory=dict)
 
-    def to_engine_config(self) -> Dict[str, Any]:
+    def to_engine_config(self) -> dict[str, Any]:
         """Convert to a dict suitable for passing to the Rust engine."""
         return {
             "project_path": self.project_path,
@@ -70,7 +70,7 @@ class SandboxConfig:
             "network": self.network,
         }
 
-    def _build_env_vars(self) -> Dict[str, str]:
+    def _build_env_vars(self) -> dict[str, str]:
         """Build environment variables including API keys."""
         env = dict(self.env_vars)
         if self.api_key:
@@ -107,8 +107,8 @@ class ExecResult:
 class AgentOutput:
     """Structured output from an agent adapter."""
     summary: str = ""
-    file_changes: List[FileChange] = field(default_factory=list)
-    token_usage: Optional[TokenUsage] = None
+    file_changes: list[FileChange] = field(default_factory=list)
+    token_usage: TokenUsage | None = None
     success: bool = True
 
 
@@ -117,7 +117,7 @@ class TokenUsage:
     """Token usage from an LLM API call."""
     input_tokens: int = 0
     output_tokens: int = 0
-    total_cost_usd: Optional[float] = None
+    total_cost_usd: float | None = None
 
 
 class SandboxManager:
@@ -152,8 +152,8 @@ class SandboxManager:
         """
         self.config = config
         self.engine = engine
-        self._pool: List[SandboxHandle] = []
-        self._active: Dict[str, SandboxHandle] = {}
+        self._pool: list[SandboxHandle] = []
+        self._active: dict[str, SandboxHandle] = {}
         self._adapter = self._create_adapter(config.agent)
 
     def _create_adapter(self, agent: str) -> AgentAdapter:
@@ -199,7 +199,7 @@ class SandboxManager:
         self._active[handle.id] = handle
         return handle
 
-    async def execute(self, prompt: str, working_dir: Optional[str] = None) -> AgentOutput:
+    async def execute(self, prompt: str, working_dir: str | None = None) -> AgentOutput:
         """Execute an agent prompt in a sandbox.
 
         Args:
@@ -289,7 +289,7 @@ class SandboxManager:
                 logger.warning("Failed to warm up sandbox: %s", e)
                 break
 
-    async def _execute_subprocess(self, request: Dict[str, Any]) -> ExecResult:
+    async def _execute_subprocess(self, request: dict[str, Any]) -> ExecResult:
         """Execute a command as a subprocess (pure Python fallback).
 
         Args:
@@ -362,7 +362,7 @@ class AgentAdapter:
     def name(self) -> str:
         raise NotImplementedError
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> Dict[str, Any]:
+    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
         raise NotImplementedError
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
@@ -375,7 +375,7 @@ class ClaudeCodeAdapter(AgentAdapter):
     def name(self) -> str:
         return "claude-code"
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> Dict[str, Any]:
+    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
         return {
             "command": "claude",
             "args": [
@@ -457,7 +457,7 @@ class CodexAdapter(AgentAdapter):
     def name(self) -> str:
         return "codex"
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> Dict[str, Any]:
+    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
         return {
             "command": "codex",
             "args": [prompt, "--full-auto"],
@@ -514,7 +514,7 @@ class CodexAdapter(AgentAdapter):
         )
 
 
-def available_agents() -> List[str]:
+def available_agents() -> list[str]:
     """List available agent adapter names."""
     return ["claude-code", "codex"]
 

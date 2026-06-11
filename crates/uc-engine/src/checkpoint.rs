@@ -95,7 +95,10 @@ impl CheckpointManager {
         let subject = format!("agent.events.{}", task_id);
         let latest_offset = self.event_store.latest_offset(&subject).await?;
 
-        let snapshot_id = format!("{}:{}:{}", self.config.snapshot_prefix, task_id, latest_offset);
+        let snapshot_id = format!(
+            "{}:{}:{}",
+            self.config.snapshot_prefix, task_id, latest_offset
+        );
 
         // Collect subtask states by replaying events
         let subtasks = self.collect_subtask_states(task_id).await?;
@@ -111,7 +114,8 @@ impl CheckpointManager {
         };
 
         // Store snapshot in the DashMap (in production, this would go to TiKV)
-        self.snapshot_store.insert(snapshot_id.clone(), snapshot.clone());
+        self.snapshot_store
+            .insert(snapshot_id.clone(), snapshot.clone());
 
         // Also record the checkpoint event
         let checkpoint_event = AgentEventType::CheckpointCreated {
@@ -184,10 +188,7 @@ impl CheckpointManager {
                     apply_event_to_snapshot(&mut state, &event.event);
                 }
 
-                state.last_event_offset = events
-                    .last()
-                    .map(|e| e.offset)
-                    .unwrap_or(0);
+                state.last_event_offset = events.last().map(|e| e.offset).unwrap_or(0);
 
                 tracing::info!(
                     "Recovered task {} from scratch, replayed {} events",
@@ -211,14 +212,20 @@ impl CheckpointManager {
     }
 
     /// Collect subtask states by replaying events for a task.
-    async fn collect_subtask_states(&self, task_id: &str) -> Result<Vec<SubtaskSnapshot>, EngineError> {
+    async fn collect_subtask_states(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<SubtaskSnapshot>, EngineError> {
         let subject = format!("agent.events.{}", task_id);
         let events = self.event_store.read_from(&subject, 0).await?;
 
         let mut subtasks: Vec<SubtaskSnapshot> = Vec::new();
         for event in &events {
             match &event.event {
-                AgentEventType::SubtaskAssigned { subtask_id, worker_id } => {
+                AgentEventType::SubtaskAssigned {
+                    subtask_id,
+                    worker_id,
+                } => {
                     subtasks.push(SubtaskSnapshot {
                         subtask_id: subtask_id.0.clone(),
                         status: "assigned".to_string(),
@@ -231,15 +238,28 @@ impl CheckpointManager {
                         st.status = "in_progress".to_string();
                     }
                 }
-                AgentEventType::SubtaskCompleted { subtask_id, summary, success } => {
+                AgentEventType::SubtaskCompleted {
+                    subtask_id,
+                    summary,
+                    success,
+                } => {
                     if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
                         st.status = if *success { "completed" } else { "failed" }.to_string();
                         st.result_summary = Some(summary.clone());
                     }
                 }
-                AgentEventType::SubtaskFailed { subtask_id, error, recoverable } => {
+                AgentEventType::SubtaskFailed {
+                    subtask_id,
+                    error,
+                    recoverable,
+                } => {
                     if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
-                        st.status = if *recoverable { "recoverable_failed" } else { "failed" }.to_string();
+                        st.status = if *recoverable {
+                            "recoverable_failed"
+                        } else {
+                            "failed"
+                        }
+                        .to_string();
                         st.result_summary = Some(error.clone());
                     }
                 }
@@ -274,15 +294,17 @@ impl CheckpointManager {
     }
 
     /// Find the latest snapshot for a task from the in-memory store.
-    async fn find_latest_snapshot(&self, task_id: &str) -> Result<Option<TaskSnapshot>, EngineError> {
+    async fn find_latest_snapshot(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<TaskSnapshot>, EngineError> {
         let prefix = format!("{}:{}:", self.config.snapshot_prefix, task_id);
 
         let mut latest: Option<TaskSnapshot> = None;
         let mut latest_offset: u64 = 0;
 
         for entry in self.snapshot_store.iter() {
-            if entry.key().starts_with(&prefix)
-                && entry.value().last_event_offset >= latest_offset
+            if entry.key().starts_with(&prefix) && entry.value().last_event_offset >= latest_offset
             {
                 latest_offset = entry.value().last_event_offset;
                 latest = Some(entry.value().clone());
@@ -315,7 +337,10 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
         AgentEventType::TaskCreated { .. } => {
             snapshot.status = "created".to_string();
         }
-        AgentEventType::SubtaskAssigned { subtask_id, worker_id } => {
+        AgentEventType::SubtaskAssigned {
+            subtask_id,
+            worker_id,
+        } => {
             let sid = subtask_id.0.clone();
             if !snapshot.subtasks.iter().any(|s| s.subtask_id == sid) {
                 snapshot.subtasks.push(SubtaskSnapshot {
@@ -328,19 +353,44 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             snapshot.status = "in_progress".to_string();
         }
         AgentEventType::SubtaskStarted { subtask_id, .. } => {
-            if let Some(st) = snapshot.subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
+            if let Some(st) = snapshot
+                .subtasks
+                .iter_mut()
+                .find(|s| s.subtask_id == subtask_id.0)
+            {
                 st.status = "in_progress".to_string();
             }
         }
-        AgentEventType::SubtaskCompleted { subtask_id, summary, success } => {
-            if let Some(st) = snapshot.subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
+        AgentEventType::SubtaskCompleted {
+            subtask_id,
+            summary,
+            success,
+        } => {
+            if let Some(st) = snapshot
+                .subtasks
+                .iter_mut()
+                .find(|s| s.subtask_id == subtask_id.0)
+            {
                 st.status = if *success { "completed" } else { "failed" }.to_string();
                 st.result_summary = Some(summary.clone());
             }
         }
-        AgentEventType::SubtaskFailed { subtask_id, error, recoverable } => {
-            if let Some(st) = snapshot.subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
-                st.status = if *recoverable { "recoverable_failed" } else { "failed" }.to_string();
+        AgentEventType::SubtaskFailed {
+            subtask_id,
+            error,
+            recoverable,
+        } => {
+            if let Some(st) = snapshot
+                .subtasks
+                .iter_mut()
+                .find(|s| s.subtask_id == subtask_id.0)
+            {
+                st.status = if *recoverable {
+                    "recoverable_failed"
+                } else {
+                    "failed"
+                }
+                .to_string();
                 st.result_summary = Some(error.clone());
             }
         }

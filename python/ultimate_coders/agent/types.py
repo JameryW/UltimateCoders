@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
-import uuid
 
 
 class TaskStatus(Enum):
@@ -49,7 +48,7 @@ class SubtaskResult:
     """Result from a completed subtask."""
     subtask_id: str = ""
     worker_id: str = ""
-    modified_files: List[FileChange] = field(default_factory=list)
+    modified_files: list[FileChange] = field(default_factory=list)
     summary: str = ""
     success: bool = True
     completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -62,11 +61,11 @@ class Subtask:
     parent_id: str = ""
     description: str = ""
     status: SubtaskStatus = SubtaskStatus.PENDING
-    assigned_worker: Optional[str] = None
-    depends_on: List[str] = field(default_factory=list)
-    file_constraints: List[str] = field(default_factory=list)
+    assigned_worker: str | None = None
+    depends_on: list[str] = field(default_factory=list)
+    file_constraints: list[str] = field(default_factory=list)
     expected_output: str = ""
-    result: Optional[SubtaskResult] = None
+    result: SubtaskResult | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -91,8 +90,8 @@ class Task:
     description: str = ""
     project_id: str = ""
     status: TaskStatus = TaskStatus.CREATED
-    subtasks: List[Subtask] = field(default_factory=list)
-    result: Optional[str] = None
+    subtasks: list[Subtask] = field(default_factory=list)
+    result: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -114,7 +113,7 @@ class Task:
         return any(st.is_failed for st in self.subtasks)
 
     @property
-    def ready_subtasks(self) -> List[Subtask]:
+    def ready_subtasks(self) -> list[Subtask]:
         """Subtasks that are pending and have all dependencies met."""
         completed_ids = {st.id for st in self.subtasks if st.is_complete}
         return [
@@ -127,7 +126,7 @@ class Task:
 class WorkerInfo:
     """Information about a registered worker."""
     id: str = ""
-    capabilities: List[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
     current_load: int = 0
     max_capacity: int = 3
     last_heartbeat: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

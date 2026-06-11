@@ -101,8 +101,9 @@ impl ShortTermMemory {
 
             match value {
                 Some(bytes) => {
-                    let stored: StoredEntry = serde_json::from_slice(&bytes)
-                        .map_err(|e| EngineError::MemoryReadError(format!("Deserialization error: {}", e)))?;
+                    let stored: StoredEntry = serde_json::from_slice(&bytes).map_err(|e| {
+                        EngineError::MemoryReadError(format!("Deserialization error: {}", e))
+                    })?;
                     Ok(Some(stored.to_entry(key.clone())))
                 }
                 None => Ok(None),
@@ -195,12 +196,7 @@ impl ShortTermMemory {
             // Scan range: prefix to prefix + 0xFF (next byte after prefix)
             let end_key = prefix.to_string() + "\u{00ff}";
             let pairs = client
-                .scan(
-                    tikv_client::BoundRange::from(
-                        start_key..end_key,
-                    ),
-                    1024,
-                )
+                .scan(tikv_client::BoundRange::from(start_key..end_key), 1024)
                 .await
                 .map_err(|e| EngineError::MemoryReadError(format!("TiKV scan error: {}", e)))?;
 
@@ -261,10 +257,16 @@ impl ShortTermMemory {
 /// - Global scope: `memory:global:{key}`
 pub fn encode_key(key: &MemoryKey) -> String {
     match key {
-        MemoryKey::Task { task_id, key: inner } => {
+        MemoryKey::Task {
+            task_id,
+            key: inner,
+        } => {
             format!("memory:task:{}:{}", task_id, inner)
         }
-        MemoryKey::Project { project_id, key: inner } => {
+        MemoryKey::Project {
+            project_id,
+            key: inner,
+        } => {
             format!("memory:project:{}:{}", project_id, inner)
         }
         MemoryKey::Global { key: inner } => {
@@ -324,14 +326,8 @@ impl StoredEntry {
             key,
             content: self.content.clone(),
             metadata: self.metadata.clone(),
-            created_at: self
-                .created_at
-                .parse()
-                .unwrap_or(chrono::Utc::now()),
-            updated_at: self
-                .updated_at
-                .parse()
-                .unwrap_or(chrono::Utc::now()),
+            created_at: self.created_at.parse().unwrap_or(chrono::Utc::now()),
+            updated_at: self.updated_at.parse().unwrap_or(chrono::Utc::now()),
         }
     }
 }

@@ -127,7 +127,11 @@ pub trait EventStore: Send + Sync {
     async fn append(&self, subject: &str, event: &AgentEventType) -> Result<u64, EngineError>;
 
     /// Read events from the given offset (inclusive) for a subject.
-    async fn read_from(&self, subject: &str, offset: u64) -> Result<Vec<RecordedEvent>, EngineError>;
+    async fn read_from(
+        &self,
+        subject: &str,
+        offset: u64,
+    ) -> Result<Vec<RecordedEvent>, EngineError>;
 
     /// Get the latest offset for a subject. Returns 0 if no events exist.
     async fn latest_offset(&self, subject: &str) -> Result<u64, EngineError>;
@@ -175,7 +179,11 @@ impl EventStore for InMemoryEventStore {
         Ok(offset)
     }
 
-    async fn read_from(&self, subject: &str, offset: u64) -> Result<Vec<RecordedEvent>, EngineError> {
+    async fn read_from(
+        &self,
+        subject: &str,
+        offset: u64,
+    ) -> Result<Vec<RecordedEvent>, EngineError> {
         let stream = self.streams.get(subject);
         match stream {
             Some(events) => Ok(events
@@ -227,7 +235,9 @@ impl NatsEventStore {
                 ..Default::default()
             })
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("NATS stream create failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("NATS stream create failed: {}", e))
+            })?;
 
         Ok(Self { client, jetstream })
     }
@@ -237,8 +247,9 @@ impl NatsEventStore {
 #[async_trait::async_trait]
 impl EventStore for NatsEventStore {
     async fn append(&self, subject: &str, event: &AgentEventType) -> Result<u64, EngineError> {
-        let payload = serde_json::to_vec(event)
-            .map_err(|e| EngineError::InternalError(format!("Event serialization failed: {}", e)))?;
+        let payload = serde_json::to_vec(event).map_err(|e| {
+            EngineError::InternalError(format!("Event serialization failed: {}", e))
+        })?;
 
         let subject_owned = subject.to_string();
         let ack = self
@@ -255,7 +266,11 @@ impl EventStore for NatsEventStore {
         Ok(sequence)
     }
 
-    async fn read_from(&self, subject: &str, offset: u64) -> Result<Vec<RecordedEvent>, EngineError> {
+    async fn read_from(
+        &self,
+        subject: &str,
+        offset: u64,
+    ) -> Result<Vec<RecordedEvent>, EngineError> {
         let stream = self
             .jetstream
             .get_stream("AGENT_EVENTS")
@@ -271,18 +286,20 @@ impl EventStore for NatsEventStore {
                 ..Default::default()
             })
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("NATS consumer create failed: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("NATS consumer create failed: {}", e))
+            })?;
 
         let mut results = Vec::new();
-        let mut messages = consumer
-            .messages()
-            .await
-            .map_err(|e| EngineError::ConnectionError(format!("NATS message stream failed: {}", e)))?;
+        let mut messages = consumer.messages().await.map_err(|e| {
+            EngineError::ConnectionError(format!("NATS message stream failed: {}", e))
+        })?;
 
         // Read up to 1000 messages or until no more are available
         use futures::StreamExt;
         for _ in 0..1000 {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), messages.next()).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(100), messages.next()).await
+            {
                 Ok(Some(Ok(message))) => {
                     let event: AgentEventType = serde_json::from_slice(&message.payload)
                         .unwrap_or_else(|_| AgentEventType::TaskCreated {
@@ -364,7 +381,10 @@ mod tests {
         assert_eq!(events.len(), 2);
 
         // Read from offset (should only get the second event)
-        let events = store.read_from("agent.events.task1", offset2).await.unwrap();
+        let events = store
+            .read_from("agent.events.task1", offset2)
+            .await
+            .unwrap();
         assert_eq!(events.len(), 1);
     }
 

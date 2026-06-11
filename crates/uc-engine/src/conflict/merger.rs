@@ -31,7 +31,13 @@ pub fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
     let theirs_changes = compute_line_changes(&base_lines, &theirs_lines);
 
     // Check for overlapping changes
-    let conflicts = find_conflicts(&ours_changes, &theirs_changes, &base_lines, ours_lines, theirs_lines);
+    let conflicts = find_conflicts(
+        &ours_changes,
+        &theirs_changes,
+        &base_lines,
+        ours_lines,
+        theirs_lines,
+    );
 
     if conflicts.is_empty() {
         // No conflicts, apply all changes
@@ -44,7 +50,8 @@ pub fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
         }
     } else {
         // Has conflicts, produce a merged output with conflict markers
-        let merged = apply_merge_with_conflicts(&base_lines, &ours_changes, &theirs_changes, &conflicts);
+        let merged =
+            apply_merge_with_conflicts(&base_lines, &ours_changes, &theirs_changes, &conflicts);
         MergeResult {
             merged: Some(merged),
             conflicts,
@@ -109,10 +116,8 @@ fn compute_line_changes(base: &[&str], modified: &[&str]) -> Vec<LineChange> {
             None => {
                 // Remaining lines are all changes
                 if base_idx < base.len() || mod_idx < modified.len() {
-                    let new_lines: Vec<String> = modified[mod_idx..]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect();
+                    let new_lines: Vec<String> =
+                        modified[mod_idx..].iter().map(|s| s.to_string()).collect();
 
                     changes.push(LineChange {
                         start: base_idx as u32,
@@ -211,8 +216,8 @@ fn find_conflicts(
     for our_change in ours {
         for their_change in theirs {
             // Check if the changed regions overlap in the base
-            let overlaps = our_change.start < their_change.end
-                && their_change.start < our_change.end;
+            let overlaps =
+                our_change.start < their_change.end && their_change.start < our_change.end;
 
             if overlaps {
                 let start = our_change.start.min(their_change.start);
@@ -290,15 +295,15 @@ fn apply_merge_with_conflicts(
         }
 
         // Check if this change is in a conflict region
-        let in_conflict = conflicts.iter().any(|c| {
-            change.start + 1 >= c.start_line && change.start < c.end_line
-        });
+        let in_conflict = conflicts
+            .iter()
+            .any(|c| change.start + 1 >= c.start_line && change.start < c.end_line);
 
         if in_conflict {
             // Output conflict markers
-            let conflict = conflicts.iter().find(|c| {
-                change.start + 1 >= c.start_line && change.start < c.end_line
-            });
+            let conflict = conflicts
+                .iter()
+                .find(|c| change.start + 1 >= c.start_line && change.start < c.end_line);
 
             if let Some(c) = conflict {
                 // Only output conflict markers once for this region

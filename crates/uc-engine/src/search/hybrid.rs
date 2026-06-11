@@ -93,10 +93,7 @@ impl HybridSearchEngine {
     }
 
     /// Execute an AST-based search by tokenizing the query and searching symbols.
-    async fn search_ast(
-        &self,
-        query: &SearchQuery,
-    ) -> Result<Vec<SearchResultItem>, EngineError> {
+    async fn search_ast(&self, query: &SearchQuery) -> Result<Vec<SearchResultItem>, EngineError> {
         // For AST search via the generic SearchQuery, we do a symbol search
         // using the query text as the symbol name.
         let ast_query = uc_types::search::AstQuery::SymbolSearch {
@@ -112,7 +109,9 @@ impl HybridSearchEngine {
             20
         };
 
-        let mut results = ast_indexer.search(metadata, &ast_query, max_results).await?;
+        let mut results = ast_indexer
+            .search(metadata, &ast_query, max_results)
+            .await?;
 
         // Apply filters
         if !query.repo_ids.is_empty() {
@@ -142,7 +141,11 @@ fn merge_results(items: Vec<SearchResultItem>, max_results: u32) -> Vec<SearchRe
     let mut merged: HashMap<(String, String, u32), SearchResultItem> = HashMap::new();
 
     for item in items {
-        let key = (item.repo_id.clone(), item.file_path.clone(), item.start_line);
+        let key = (
+            item.repo_id.clone(),
+            item.file_path.clone(),
+            item.start_line,
+        );
 
         match merged.get_mut(&key) {
             Some(existing) => {
@@ -175,7 +178,11 @@ fn merge_results(items: Vec<SearchResultItem>, max_results: u32) -> Vec<SearchRe
     let mut result: Vec<SearchResultItem> = merged.into_values().collect();
 
     // Sort by score descending
-    result.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    result.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Truncate
     result.truncate(max_results as usize);
@@ -189,9 +196,9 @@ mod tests {
     use uc_types::search::SearchMode;
 
     #[cfg(feature = "indexing")]
-    use uc_types::index::{IndexRequest, RepoSpec};
-    #[cfg(feature = "indexing")]
     use crate::metadata::postgres::PostgresMetadataStore;
+    #[cfg(feature = "indexing")]
+    use uc_types::index::{IndexRequest, RepoSpec};
 
     #[test]
     fn test_merge_results_dedup() {

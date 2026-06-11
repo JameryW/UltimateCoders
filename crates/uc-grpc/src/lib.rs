@@ -5,9 +5,9 @@
 //! - `GrpcEngineClient` — implements `EngineApi` by calling a remote gRPC server
 //! - `conversions` — bidirectional type mapping between proto and uc-types
 
-pub mod server;
 pub mod client;
 pub mod conversions;
+pub mod server;
 
 /// Generated protobuf types and service definitions.
 pub mod ultimate_coders {

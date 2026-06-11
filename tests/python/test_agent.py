@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
+import pytest
+from ultimate_coders.agent.llm import (
+    LLMClient,
+    LLMResponse,
+    ToolCall,
+    make_tool_definition,
+)
+from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
-    ChangeType,
-    FileChange,
-    OrchestratorConfig,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -18,17 +21,8 @@ from ultimate_coders.agent.types import (
     TaskStatus,
     WorkerInfo,
 )
-from ultimate_coders.agent.llm import (
-    LLMClient,
-    LLMResponse,
-    ToolCall,
-    ToolDefinition,
-    make_tool_definition,
-)
-from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.worker import Worker
-from ultimate_coders.memory.memory import MemoryEntry, MemoryKey, ShortTermMemory, LongTermMemory
-
+from ultimate_coders.memory.memory import LongTermMemory, MemoryEntry, MemoryKey, ShortTermMemory
 
 # ── Types tests ──────────────────────────────────────────────────
 
@@ -423,7 +417,11 @@ class TestOrchestrator:
     def test_parse_decomposition_with_markdown(self):
         orch = Orchestrator()
         response = LLMResponse(
-            text='```json\n[{"description": "Task 1", "depends_on": [], "file_constraints": [], "expected_output": "Done"}]\n```',
+            text=(
+                '```json\n[{"description": "Task 1", '
+                '"depends_on": [], "file_constraints": [], '
+                '"expected_output": "Done"}]\n```'
+            ),
         )
 
         subtasks = orch._parse_decomposition(response, "task-1")

@@ -24,7 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         }
         Err(err) => {
-            tracing::warn!("Failed to create LocalEngine with storage: {}. Using fallback.", err);
+            tracing::warn!(
+                "Failed to create LocalEngine with storage: {}. Using fallback.",
+                err
+            );
             LocalEngine::new_fallback()
         }
     };
@@ -40,10 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("UltimateCoders gRPC server listening on {}", addr);
 
-    Server::builder()
-        .add_service(service)
-        .serve(addr)
-        .await?;
+    Server::builder().add_service(service).serve(addr).await?;
 
     Ok(())
 }

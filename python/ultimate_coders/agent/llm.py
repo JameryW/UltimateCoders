@@ -6,12 +6,11 @@ for Orchestrator decomposition. Defaults to the Anthropic API.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ class ToolDefinition:
     """Definition of a tool available for LLM function calling."""
     name: str
     description: str
-    input_schema: Dict[str, Any] = field(default_factory=dict)
+    input_schema: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -29,17 +28,17 @@ class ToolCall:
     """A tool call requested by the LLM."""
     id: str
     name: str
-    input: Dict[str, Any]
+    input: dict[str, Any]
 
 
 @dataclass
 class LLMResponse:
     """Response from an LLM completion."""
     text: str = ""
-    tool_calls: List[ToolCall] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"
     model: str = ""
-    usage: Dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -61,8 +60,8 @@ class LLMClient:
     def __init__(
         self,
         provider: str = "anthropic",
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
+        api_key: str | None = None,
+        model: str | None = None,
         max_retries: int = 5,
         rpm_limit: int = 60,
         tpm_limit: int = 100000,
@@ -73,7 +72,7 @@ class LLMClient:
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     def _get_client(self) -> Any:
         """Lazily initialize the Anthropic client."""
@@ -88,7 +87,7 @@ class LLMClient:
 
         try:
             import anthropic
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
             if self.api_key:
                 kwargs["api_key"] = self.api_key
             self._client = anthropic.AsyncAnthropic(**kwargs)
@@ -101,8 +100,8 @@ class LLMClient:
 
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
-        system: Optional[str] = None,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 1.0,
         **kwargs: Any,
@@ -121,7 +120,7 @@ class LLMClient:
         """
         client = self._get_client()
 
-        request_params: Dict[str, Any] = {
+        request_params: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -136,14 +135,14 @@ class LLMClient:
 
     async def complete_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[ToolDefinition],
-        system: Optional[str] = None,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition],
+        system: str | None = None,
         max_tokens: int = 4096,
         max_tool_rounds: int = 20,
-        tool_executor: Optional[Any] = None,
+        tool_executor: Any | None = None,
         **kwargs: Any,
-    ) -> Tuple[LLMResponse, List[Dict[str, Any]]]:
+    ) -> tuple[LLMResponse, list[dict[str, Any]]]:
         """Complete with tool calling loop.
 
         Executes the standard tool-calling loop:
@@ -165,7 +164,7 @@ class LLMClient:
             Tuple of (final LLMResponse, tool_calls_log) where tool_calls_log
             is a list of dicts with 'tool_call' and 'result' entries.
         """
-        tool_calls_log: List[Dict[str, Any]] = []
+        tool_calls_log: list[dict[str, Any]] = []
         working_messages = list(messages)
 
         # Format tools for Anthropic API
@@ -174,7 +173,7 @@ class LLMClient:
         for _ in range(max_tool_rounds):
             client = self._get_client()
 
-            request_params: Dict[str, Any] = {
+            request_params: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
                 "messages": working_messages,
@@ -231,7 +230,7 @@ class LLMClient:
         # Max rounds reached; return the last response
         return llm_response, tool_calls_log
 
-    async def _call_with_retry(self, client: Any, params: Dict[str, Any]) -> Any:
+    async def _call_with_retry(self, client: Any, params: dict[str, Any]) -> Any:
         """Call the LLM API with exponential backoff and jitter retry."""
         base_delay = 1.0
         max_delay = 60.0
@@ -266,8 +265,8 @@ class LLMClient:
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse an Anthropic API response into LLMResponse."""
-        text_parts: List[str] = []
-        tool_calls: List[ToolCall] = []
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
 
         for block in response.content:
             if block.type == "text":
@@ -295,7 +294,7 @@ class LLMClient:
         )
 
     @staticmethod
-    def _format_tool(tool: ToolDefinition) -> Dict[str, Any]:
+    def _format_tool(tool: ToolDefinition) -> dict[str, Any]:
         """Format a ToolDefinition for the Anthropic API."""
         return {
             "name": tool.name,
@@ -310,7 +309,7 @@ class LLMClient:
 def make_tool_definition(
     name: str,
     description: str,
-    parameters: Optional[Dict[str, Any]] = None,
+    parameters: dict[str, Any] | None = None,
 ) -> ToolDefinition:
     """Helper to build a ToolDefinition with a JSON Schema input_schema.
 

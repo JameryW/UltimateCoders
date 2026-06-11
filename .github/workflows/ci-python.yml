@@ -1,18 +1,21 @@
 name: Python CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "python/**"
       - "tests/**"
       - "pyproject.toml"
+      - ".github/workflows/ci-python.yml"
   pull_request:
     branches: [main]
     paths:
       - "python/**"
       - "tests/**"
       - "pyproject.toml"
+      - ".github/workflows/ci-python.yml"
 
 jobs:
   lint:
@@ -23,7 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff pyyaml
       - run: ruff check python/ tests/
 
   test:
@@ -38,5 +41,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python-version }}"
-      - run: pip install pytest pytest-asyncio
-      - run: PYTHONPATH=python pytest tests/python/ -v
+      - run: pip install pytest pytest-asyncio pyyaml maturin
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Build Rust extension
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install pytest pytest-asyncio pyyaml
+          maturin develop --release --manifest-path crates/uc-python/Cargo.toml
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          PYTHONPATH=python pytest tests/python/ -v

@@ -14,29 +14,20 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
-from ultimate_coders.agent.llm import (
-    LLMClient,
-    LLMResponse,
-    ToolCall,
-    ToolDefinition,
-    make_tool_definition,
-)
-from ultimate_coders.agent.types import (
-    ChangeType,
-    FileChange,
-    Subtask,
-    SubtaskResult,
-    SubtaskStatus,
-    WorkerInfo,
-)
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictResult,
     EditIntent,
     EditType,
     LineRange,
+)
+from ultimate_coders.agent.llm import (
+    LLMClient,
+    ToolCall,
+    ToolDefinition,
+    make_tool_definition,
 )
 from ultimate_coders.agent.rate_limiter import (
     CircuitBreaker,
@@ -46,6 +37,14 @@ from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
     SandboxManager,
+)
+from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
+    Subtask,
+    SubtaskResult,
+    SubtaskStatus,
+    WorkerInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,14 +94,14 @@ class Worker:
         self,
         worker_id: str = "",
         engine: Any = None,
-        llm_client: Optional[LLMClient] = None,
-        capabilities: Optional[List[str]] = None,
+        llm_client: LLMClient | None = None,
+        capabilities: list[str] | None = None,
         max_capacity: int = 3,
-        conflict_detector: Optional[ConflictDetector] = None,
-        rate_limiter: Optional[RateLimiter] = None,
-        circuit_breaker: Optional[CircuitBreaker] = None,
+        conflict_detector: ConflictDetector | None = None,
+        rate_limiter: RateLimiter | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
         execution_mode: str = "sandbox",
-        sandbox_config: Optional[SandboxConfig] = None,
+        sandbox_config: SandboxConfig | None = None,
     ):
         """Initialize the Worker.
 
@@ -116,7 +115,8 @@ class Worker:
             rate_limiter: Rate limiter for LLM API calls.
             circuit_breaker: Circuit breaker for LLM API fault tolerance.
             execution_mode: Execution mode ("sandbox" or "llm").
-            sandbox_config: Configuration for sandbox execution (required if execution_mode="sandbox").
+            sandbox_config: Configuration for sandbox execution
+                (required if execution_mode="sandbox").
         """
         import uuid
         self.worker_id = worker_id or str(uuid.uuid4())
@@ -124,7 +124,7 @@ class Worker:
         self.llm_client = llm_client
         self.capabilities = capabilities or ["code", "search", "memory", "test"]
         self.max_capacity = max_capacity
-        self.current_task: Optional[Subtask] = None
+        self.current_task: Subtask | None = None
         self._active_count = 0
         self.tools = self._build_tools()
         self._tool_definitions = self._build_tool_definitions()
@@ -277,7 +277,7 @@ class Worker:
             success=output.success,
         )
 
-    async def send_heartbeat(self) -> Dict[str, Any]:
+    async def send_heartbeat(self) -> dict[str, Any]:
         """Send heartbeat to indicate the worker is alive.
 
         Returns:
@@ -426,7 +426,7 @@ class Worker:
 
             # Limit file size to avoid overwhelming the context
             max_bytes = 100_000  # 100KB
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 content = f.read(max_bytes)
                 if len(content) == max_bytes:
                     content += "\n... (truncated)"
@@ -476,7 +476,7 @@ class Worker:
 
     # ── Private helpers ─────────────────────────────────────────
 
-    def _build_tools(self) -> Dict[str, Callable]:
+    def _build_tools(self) -> dict[str, Callable]:
         """Build available tools for LLM function calling."""
         return {
             "search": self._tool_search,
@@ -486,12 +486,15 @@ class Worker:
             "list_files": self._tool_list_files,
         }
 
-    def _build_tool_definitions(self) -> List[ToolDefinition]:
+    def _build_tool_definitions(self) -> list[ToolDefinition]:
         """Build tool definitions for the LLM API."""
         return [
             make_tool_definition(
                 name="search",
-                description="Search code across indexed repositories. Returns matching code snippets.",
+                description=(
+                    "Search code across indexed repositories. "
+                    "Returns matching code snippets."
+                ),
                 parameters={
                     "query": {
                         "type": "string",
@@ -501,7 +504,10 @@ class Worker:
             ),
             make_tool_definition(
                 name="read_memory",
-                description="Read from the shared memory system. Memory stores task context, decisions, and project knowledge.",
+                description=(
+                    "Read from the shared memory system. Memory stores "
+                    "task context, decisions, and project knowledge."
+                ),
                 parameters={
                     "key_scope": {
                         "type": "string",
@@ -515,7 +521,10 @@ class Worker:
             ),
             make_tool_definition(
                 name="write_memory",
-                description="Write to the shared memory system. Use this to store findings, decisions, and context for other agents.",
+                description=(
+                    "Write to the shared memory system. Use this to store "
+                    "findings, decisions, and context for other agents."
+                ),
                 parameters={
                     "key_scope": {
                         "type": "string",
@@ -533,7 +542,10 @@ class Worker:
             ),
             make_tool_definition(
                 name="read_file",
-                description="Read a file from the local filesystem. Use this to understand existing code before making changes.",
+                description=(
+                    "Read a file from the local filesystem. Use this to "
+                    "understand existing code before making changes."
+                ),
                 parameters={
                     "file_path": {
                         "type": "string",
@@ -543,7 +555,10 @@ class Worker:
             ),
             make_tool_definition(
                 name="list_files",
-                description="List files in a directory using a glob pattern. Use this to explore the project structure.",
+                description=(
+                    "List files in a directory using a glob pattern. "
+                    "Use this to explore the project structure."
+                ),
                 parameters={
                     "directory": {
                         "type": "string",
@@ -614,7 +629,7 @@ class Worker:
         self,
         subtask: Subtask,
         prior_context: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Build the LLM messages for subtask execution.
 
         Args:
@@ -635,8 +650,8 @@ class Worker:
 
     def _collect_modified_files(
         self,
-        tool_log: List[Dict[str, Any]],
-    ) -> List[FileChange]:
+        tool_log: list[dict[str, Any]],
+    ) -> list[FileChange]:
         """Extract file modifications from the tool call log.
 
         Looks for write_file or edit_file tool calls in the log
@@ -673,8 +688,8 @@ class Worker:
         self,
         file_path: str,
         edit_type: EditType = EditType.MODIFY,
-        regions: Optional[List[Tuple[int, int]]] = None,
-    ) -> Tuple[ConflictResult, Optional[dict]]:
+        regions: list[tuple[int, int]] | None = None,
+    ) -> tuple[ConflictResult, dict | None]:
         """Declare an intent to edit a file.
 
         Should be called before modifying a file to check for conflicts

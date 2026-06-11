@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -16,9 +15,9 @@ class SearchResultItem:
     content_snippet: str
     match_type: str
     score: float
-    symbol_name: Optional[str] = None
-    symbol_kind: Optional[str] = None
-    parent_symbol: Optional[str] = None
+    symbol_name: str | None = None
+    symbol_kind: str | None = None
+    parent_symbol: str | None = None
 
     @property
     def location(self) -> str:
@@ -28,7 +27,7 @@ class SearchResultItem:
 @dataclass
 class SearchResult:
     """Collection of search results."""
-    items: List[SearchResultItem] = field(default_factory=list)
+    items: list[SearchResultItem] = field(default_factory=list)
 
     @property
     def count(self) -> int:

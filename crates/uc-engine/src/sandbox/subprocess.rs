@@ -8,8 +8,8 @@
 //! stdout/stderr, and enforces a timeout.
 
 use super::{
-    Sandbox, SandboxConfig, SandboxHandle, SandboxStatus, SandboxHealth,
-    ExecRequest, ExecResult, EngineError,
+    EngineError, ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle, SandboxHealth,
+    SandboxStatus,
 };
 use async_trait::async_trait;
 use std::process::Stdio;
@@ -69,9 +69,10 @@ impl Sandbox for SubprocessSandbox {
         request: ExecRequest,
     ) -> Result<ExecResult, EngineError> {
         if handle.status == SandboxStatus::Stopped {
-            return Err(EngineError::SandboxError(
-                format!("Sandbox {} is stopped", handle.id),
-            ));
+            return Err(EngineError::SandboxError(format!(
+                "Sandbox {} is stopped",
+                handle.id
+            )));
         }
 
         let start = Instant::now();
@@ -148,17 +149,19 @@ impl Sandbox for SubprocessSandbox {
             let status = child.wait().await;
 
             // Propagate I/O errors
-            stdout_result.map_err(|e| EngineError::SandboxError(format!("stdout read error: {}", e)))?;
-            stderr_result.map_err(|e| EngineError::SandboxError(format!("stderr read error: {}", e)))?;
+            stdout_result
+                .map_err(|e| EngineError::SandboxError(format!("stdout read error: {}", e)))?;
+            stderr_result
+                .map_err(|e| EngineError::SandboxError(format!("stderr read error: {}", e)))?;
 
-            let exit_status = status.map_err(|e| {
-                EngineError::SandboxError(format!("process wait error: {}", e))
-            })?;
+            let exit_status = status
+                .map_err(|e| EngineError::SandboxError(format!("process wait error: {}", e)))?;
 
             let exit_code = exit_status.code().unwrap_or(-1);
 
             Ok::<(i32, Vec<u8>, Vec<u8>), EngineError>((exit_code, stdout_buf, stderr_buf))
-        }).await;
+        })
+        .await;
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -275,8 +278,8 @@ pub(crate) fn truncate_output(bytes: &[u8], max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{NetworkMode, ResourceLimits};
     use super::*;
-    use super::super::{ResourceLimits, NetworkMode};
     use std::collections::HashMap;
 
     fn test_config() -> SandboxConfig {
@@ -347,9 +350,7 @@ mod tests {
             stdin: None,
             timeout_secs: 10,
             working_dir: String::new(),
-            env_vars: HashMap::from([
-                ("UC_TEST_VAR".to_string(), "test_value_12345".to_string()),
-            ]),
+            env_vars: HashMap::from([("UC_TEST_VAR".to_string(), "test_value_12345".to_string())]),
         };
 
         let result = sandbox.execute(&handle, request).await.unwrap();

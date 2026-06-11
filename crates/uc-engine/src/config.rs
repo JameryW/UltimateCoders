@@ -34,10 +34,10 @@ impl EngineConfig {
 
     /// Load configuration from a TOML file.
     pub fn from_toml(path: &std::path::Path) -> Result<Self, crate::config::ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::IoError(e.to_string()))?;
-        let config: EngineConfig = toml::from_str(&content)
-            .map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| ConfigError::IoError(e.to_string()))?;
+        let config: EngineConfig =
+            toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         Ok(config)
     }
 }
@@ -78,7 +78,11 @@ impl StorageConfig {
         Self {
             tikv_pd_endpoints: std::env::var("UC_TIKV_ENDPOINT")
                 .ok()
-                .map(|e| e.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())
+                .map(|e| {
+                    e.split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_else(|| vec!["127.0.0.1:2379".into()]),
             qdrant_url: std::env::var("UC_QDRANT_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6334".into()),

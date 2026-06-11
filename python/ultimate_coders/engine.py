@@ -6,7 +6,7 @@ Switches between local (PyO3 FFI) and remote (gRPC) at construction time.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 try:
     from ultimate_coders._uc_core import PyEngine, PySearchQuery
@@ -45,7 +45,7 @@ class Engine:
     def __init__(
         self,
         mode: str = "local",
-        grpc_endpoint: Optional[str] = None,
+        grpc_endpoint: str | None = None,
     ):
         if PyEngine is None:
             raise ImportError(
@@ -122,7 +122,7 @@ class Engine:
         self,
         repo_id: str,
         local_path: str,
-        remote_url: Optional[str] = None,
+        remote_url: str | None = None,
         default_branch: str = "main",
         force_full: bool = False,
     ) -> object:
@@ -165,10 +165,10 @@ class Engine:
         self,
         key_scope: str,
         key: str,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
         include_semantic: bool = False,
-    ) -> Optional[object]:
+    ) -> object | None:
         """Read a memory entry.
 
         Args:
@@ -193,13 +193,13 @@ class Engine:
         content_type: str = "text",
         source_agent: str = "python",
         importance: float = 0.5,
-        tags: Optional[list] = None,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        language: Optional[str] = None,
-        file_path: Optional[str] = None,
-        uri: Optional[str] = None,
-        description: Optional[str] = None,
+        tags: list | None = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        language: str | None = None,
+        file_path: str | None = None,
+        uri: str | None = None,
+        description: str | None = None,
     ) -> object:
         """Write a memory entry.
 
@@ -231,8 +231,8 @@ class Engine:
         self,
         key_scope: str,
         key: str,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Delete a memory entry.
 
@@ -248,7 +248,7 @@ class Engine:
         self,
         query: str,
         scope_type: str = "all",
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         max_results: int = 20,
         min_score: float = 0.5,
     ) -> list:
@@ -295,7 +295,7 @@ class Engine:
         self,
         repo_id: str,
         local_path: str,
-        remote_url: Optional[str] = None,
+        remote_url: str | None = None,
         default_branch: str = "main",
         force_full: bool = False,
     ) -> object:
@@ -319,10 +319,10 @@ class Engine:
         self,
         key_scope: str,
         key: str,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
         include_semantic: bool = False,
-    ) -> Optional[object]:
+    ) -> object | None:
         """Async version of read_memory().
 
         Args:
@@ -347,13 +347,13 @@ class Engine:
         content_type: str = "text",
         source_agent: str = "python",
         importance: float = 0.5,
-        tags: Optional[list] = None,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
-        language: Optional[str] = None,
-        file_path: Optional[str] = None,
-        uri: Optional[str] = None,
-        description: Optional[str] = None,
+        tags: list | None = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        language: str | None = None,
+        file_path: str | None = None,
+        uri: str | None = None,
+        description: str | None = None,
     ) -> object:
         """Async version of write_memory().
 
@@ -387,8 +387,8 @@ class Engine:
         self,
         key_scope: str,
         key: str,
-        task_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
         """Async version of delete_memory().
 
@@ -407,7 +407,7 @@ class Engine:
         self,
         query: str,
         scope_type: str = "all",
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         max_results: int = 20,
         min_score: float = 0.5,
     ) -> list:
@@ -452,7 +452,7 @@ class Engine:
 
 def create_engine(
     mode: str = "local",
-    grpc_endpoint: Optional[str] = None,
+    grpc_endpoint: str | None = None,
 ) -> Engine:
     """Factory function to create an Engine instance.
 

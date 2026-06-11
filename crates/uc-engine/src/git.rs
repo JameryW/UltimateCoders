@@ -56,11 +56,15 @@ pub mod repo_manager {
         }
 
         pub fn clone_or_open(&self, _spec: &RepoSpec) -> Result<(), EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
 
         pub fn head_sha(&self, _repo: &()) -> Result<String, EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
 
         pub fn diff_between(
@@ -69,15 +73,21 @@ pub mod repo_manager {
             _old_sha: &str,
             _new_sha: &str,
         ) -> Result<Vec<FileDiff>, EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
 
         pub fn walk_files(&self, _repo: &()) -> Result<Vec<FileEntry>, EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
 
         pub fn read_file(&self, _repo: &(), _file_path: &str) -> Result<String, EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
 
         pub fn read_file_at_commit(
@@ -86,7 +96,9 @@ pub mod repo_manager {
             _file_path: &str,
             _sha: &str,
         ) -> Result<String, EngineError> {
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
     }
 }

@@ -10,7 +10,9 @@
 //! If NATS is not available, falls back to logging (graceful degradation).
 //! Feature-gated behind `messaging` (NATS dependency).
 
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(feature = "messaging")]
+use tracing::warn;
 use uc_types::{EngineError, ScheduledTask};
 
 use super::service::ScheduleDispatcher;

@@ -11,8 +11,8 @@ and pattern accumulation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -26,8 +26,8 @@ class MemoryKey:
     """
     scope: str
     key: str
-    task_id: Optional[str] = None
-    project_id: Optional[str] = None
+    task_id: str | None = None
+    project_id: str | None = None
 
     def validate(self) -> None:
         """Validate that required scope qualifiers are present."""
@@ -54,9 +54,9 @@ class MemoryEntry:
     content_type: str = "text"
     source_agent: str = ""
     importance: float = 0.5
-    tags: List[str] = field(default_factory=list)
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    tags: list[str] = field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_rust(cls, raw: Any) -> MemoryEntry:
@@ -111,7 +111,7 @@ class MemoryEntry:
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> MemoryEntry:
+    def from_dict(cls, data: dict[str, Any]) -> MemoryEntry:
         """Create a MemoryEntry from a dict.
 
         Args:
@@ -169,8 +169,8 @@ class ShortTermMemory:
         self,
         key: str,
         task_id: str,
-        project_id: Optional[str] = None,
-    ) -> Optional[MemoryEntry]:
+        project_id: str | None = None,
+    ) -> MemoryEntry | None:
         """Read a value from short-term memory.
 
         Args:
@@ -199,8 +199,8 @@ class ShortTermMemory:
         content_type: str = "text",
         source_agent: str = "python",
         importance: float = 0.5,
-        tags: Optional[List[str]] = None,
-        project_id: Optional[str] = None,
+        tags: list[str] | None = None,
+        project_id: str | None = None,
     ) -> MemoryEntry:
         """Write a value to short-term memory.
 
@@ -234,7 +234,7 @@ class ShortTermMemory:
         self,
         key: str,
         task_id: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
     ) -> None:
         """Delete a value from short-term memory.
 
@@ -286,8 +286,8 @@ class LongTermMemory:
     def read(
         self,
         key: str,
-        project_id: Optional[str] = None,
-    ) -> Optional[MemoryEntry]:
+        project_id: str | None = None,
+    ) -> MemoryEntry | None:
         """Read a value from long-term memory.
 
         Args:
@@ -313,11 +313,11 @@ class LongTermMemory:
         self,
         key: str,
         content: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         content_type: str = "text",
         source_agent: str = "python",
         importance: float = 0.8,
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
     ) -> MemoryEntry:
         """Write a value to long-term memory.
 
@@ -350,10 +350,10 @@ class LongTermMemory:
     def search(
         self,
         query: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         max_results: int = 20,
         min_score: float = 0.5,
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """Search long-term memory semantically.
 
         Args:
@@ -388,7 +388,7 @@ class LongTermMemory:
     def delete(
         self,
         key: str,
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
     ) -> None:
         """Delete a value from long-term memory.
 
