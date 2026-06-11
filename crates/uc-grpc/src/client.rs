@@ -138,17 +138,17 @@ impl EngineApi for GrpcEngineClient {
     async fn write_memory(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
         let mut client = self.inner.clone();
         let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
-        let (content_type, content) = match &request.content {
-            uc_types::MemoryContent::Text(s) => ("text".to_string(), s.clone()),
-            uc_types::MemoryContent::Structured(v) => ("structured".to_string(), v.to_string()),
-            uc_types::MemoryContent::Code { language, code } => {
-                ("code".to_string(), format!("{}:{}", language, code))
+        let (content_type, content, language, file_path, uri, description) = match &request.content {
+            uc_types::MemoryContent::Text(s) => ("text".to_string(), s.clone(), None, None, None, None),
+            uc_types::MemoryContent::Structured(v) => ("structured".to_string(), v.to_string(), None, None, None, None),
+            uc_types::MemoryContent::Code { language: lang, code } => {
+                ("code".to_string(), code.clone(), Some(lang.clone()), None, None, None)
             }
-            uc_types::MemoryContent::Diff { file_path, diff } => {
-                ("diff".to_string(), format!("{}:{}", file_path, diff))
+            uc_types::MemoryContent::Diff { file_path: fp, diff } => {
+                ("diff".to_string(), diff.clone(), None, Some(fp.clone()), None, None)
             }
-            uc_types::MemoryContent::Reference { uri, description } => {
-                ("reference".to_string(), format!("{}:{}", uri, description))
+            uc_types::MemoryContent::Reference { uri: u, description: d } => {
+                ("reference".to_string(), String::new(), None, None, Some(u.clone()), Some(d.clone()))
             }
         };
         let req = WriteMemoryRequest {
@@ -161,6 +161,10 @@ impl EngineApi for GrpcEngineClient {
             source_agent: request.metadata.source_agent,
             importance: request.metadata.importance,
             tags: request.metadata.tags,
+            language,
+            file_path,
+            uri,
+            description,
         };
         let response = client.write_memory(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())

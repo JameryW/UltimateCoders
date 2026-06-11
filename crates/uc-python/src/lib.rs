@@ -13,12 +13,20 @@ use pyo3::prelude::*;
 #[pymodule]
 fn _uc_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<engine::PyEngine>()?;
+    // Health types
+    m.add_class::<types::PyHealthStatus>()?;
+    m.add_class::<types::PyComponentHealth>()?;
+    // Search types
     m.add_class::<types::PySearchQuery>()?;
     m.add_class::<types::PySearchResult>()?;
     m.add_class::<types::PySearchResultItem>()?;
+    m.add_class::<types::PyAstQuery>()?;
+    // Memory types
     m.add_class::<types::PyMemoryEntry>()?;
     m.add_class::<types::PyMemorySearchResult>()?;
+    // Index types
     m.add_class::<types::PyIndexResponse>()?;
     m.add_class::<types::PyRepoIndexState>()?;
+    m.add_class::<types::PyIndexState>()?;
     Ok(())
 }

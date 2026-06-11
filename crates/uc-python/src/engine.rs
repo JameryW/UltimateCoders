@@ -92,14 +92,14 @@ impl PyEngine {
         }
     }
 
-    /// Check engine health. Returns a dict with status info.
-    pub fn health(&self, py: Python<'_>) -> PyResult<String> {
+    /// Check engine health. Returns full health status object.
+    pub fn health(&self, py: Python<'_>) -> PyResult<PyHealthStatus> {
         let inner = &self.inner;
         let result = py.allow_threads(|| {
             async_support::block_on(inner.health())
         })
         .map_err(engine_error_to_pyerr)?;
-        Ok(result.status)
+        Ok(result.into())
     }
 
     /// Search across indexed repositories.
@@ -159,6 +159,19 @@ impl PyEngine {
         })
         .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
+    }
+
+    /// Get detailed index state for a repository (includes health and version info).
+    pub fn get_detailed_index_state(&self, py: Python<'_>, repo_id: String) -> PyResult<PyIndexState> {
+        let inner = &self.inner;
+        // get_index_state returns RepoIndexState; we convert to IndexState equivalent
+        // by delegating through the engine. Since EngineApi only provides get_index_state,
+        // we use that and enhance it with fallback defaults for the detailed fields.
+        let result = py.allow_threads(|| {
+            async_support::block_on(inner.get_index_state(&repo_id))
+        })
+        .map_err(engine_error_to_pyerr)?;
+        Ok(PyIndexState::from_repo_index_state(result))
     }
 
     /// Remove a repository's index.
@@ -229,8 +242,12 @@ impl PyEngine {
     ///     tags: Tags for categorization
     ///     task_id: Task ID (required if key_scope="task")
     ///     project_id: Project ID (required if key_scope="project")
+    ///     language: Language for content_type="code"
+    ///     file_path: File path for content_type="diff"
+    ///     uri: URI for content_type="reference"
+    ///     description: Description for content_type="reference"
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (key_scope, key, content, content_type="text".to_string(), source_agent="python".to_string(), importance=0.5, tags=None, task_id=None, project_id=None))]
+    #[pyo3(signature = (key_scope, key, content, content_type="text".to_string(), source_agent="python".to_string(), importance=0.5, tags=None, task_id=None, project_id=None, language=None, file_path=None, uri=None, description=None))]
     pub fn write_memory(
         &self,
         py: Python<'_>,
@@ -243,6 +260,10 @@ impl PyEngine {
         tags: Option<Vec<String>>,
         task_id: Option<String>,
         project_id: Option<String>,
+        language: Option<String>,
+        file_path: Option<String>,
+        uri: Option<String>,
+        description: Option<String>,
     ) -> PyResult<PyMemoryEntry> {
         let inner = &self.inner;
         let mem_key = match key_scope.as_str() {
@@ -265,48 +286,18 @@ impl PyEngine {
             "structured" => uc_types::MemoryContent::Structured(
                 serde_json::from_str(&content).unwrap_or(serde_json::Value::String(content)),
             ),
-            "code" => {
-                let parts: Vec<&str> = content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Code {
-                        language: parts[0].to_string(),
-                        code: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Code {
-                        language: String::new(),
-                        code: content.clone(),
-                    }
-                }
-            }
-            "diff" => {
-                let parts: Vec<&str> = content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Diff {
-                        file_path: parts[0].to_string(),
-                        diff: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Diff {
-                        file_path: String::new(),
-                        diff: content.clone(),
-                    }
-                }
-            }
-            "reference" => {
-                let parts: Vec<&str> = content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Reference {
-                        uri: parts[0].to_string(),
-                        description: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Reference {
-                        uri: content.clone(),
-                        description: String::new(),
-                    }
-                }
-            }
+            "code" => uc_types::MemoryContent::Code {
+                language: language.unwrap_or_default(),
+                code: content,
+            },
+            "diff" => uc_types::MemoryContent::Diff {
+                file_path: file_path.unwrap_or_default(),
+                diff: content,
+            },
+            "reference" => uc_types::MemoryContent::Reference {
+                uri: uri.unwrap_or_default(),
+                description: description.unwrap_or_default(),
+            },
             _ => uc_types::MemoryContent::Text(content),
         };
         let request = uc_types::MemoryWriteRequest {

@@ -59,8 +59,9 @@ class Engine:
         """Current engine mode ('local' or 'grpc')."""
         return self._mode
 
-    def health(self) -> str:
-        """Check engine health. Returns status string ('ok', 'degraded', 'error')."""
+    def health(self) -> object:
+        """Check engine health. Returns a HealthStatus object with
+        .status, .version, .uptime_seconds, and .components attributes."""
         return self._engine.health()
 
     def search(self, query) -> object:
@@ -98,6 +99,7 @@ class Engine:
                     modes=data.get("modes", []),
                     repo_ids=data.get("repo_ids", []),
                     languages=data.get("languages", []),
+                    path_patterns=data.get("path_patterns", []),
                     max_results=data.get("max_results", 10),
                 )
 
@@ -109,6 +111,7 @@ class Engine:
                     modes=query.get("modes", []),
                     repo_ids=query.get("repo_ids", []),
                     languages=query.get("languages", []),
+                    path_patterns=query.get("path_patterns", []),
                     max_results=query.get("max_results", 10),
                 )
 
@@ -193,6 +196,10 @@ class Engine:
         tags: Optional[list] = None,
         task_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        language: Optional[str] = None,
+        file_path: Optional[str] = None,
+        uri: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> object:
         """Write a memory entry.
 
@@ -206,6 +213,10 @@ class Engine:
             tags: Tags for categorization.
             task_id: Task ID (required if key_scope="task").
             project_id: Project ID (required if key_scope="project").
+            language: Language for content_type="code".
+            file_path: File path for content_type="diff".
+            uri: URI for content_type="reference".
+            description: Description for content_type="reference".
 
         Returns:
             MemoryEntry with the written data.
@@ -213,6 +224,7 @@ class Engine:
         return self._engine.write_memory(
             key_scope, key, content, content_type, source_agent,
             importance, tags, task_id, project_id,
+            language, file_path, uri, description,
         )
 
     def delete_memory(

@@ -89,7 +89,7 @@ class Task:
     """A top-level task submitted by the user."""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     description: str = ""
-    project_id: Optional[str] = None
+    project_id: str = ""
     status: TaskStatus = TaskStatus.CREATED
     subtasks: List[Subtask] = field(default_factory=list)
     result: Optional[str] = None

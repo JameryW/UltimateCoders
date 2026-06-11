@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"source": ".trellis/tasks/06-11-task-scheduling/prd.md", "role": "spec", "priority": 1}
+{"source": ".trellis/tasks/06-11-task-scheduling/research/rust-scheduling-libraries.md", "role": "research", "priority": 2}
+{"source": ".trellis/tasks/06-11-task-scheduling/research/nighttime-orchestration-patterns.md", "role": "research", "priority": 2}
+{"source": ".trellis/tasks/06-11-task-scheduling/research/python-scheduling-libraries.md", "role": "research", "priority": 3}
+{"source": ".trellis/tasks/06-11-task-scheduling/research/nats-jetstream-delayed-delivery.md", "role": "research", "priority": 3}

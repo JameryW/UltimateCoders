@@ -102,6 +102,11 @@ message WriteMemoryRequest {
     string source_agent = 7;
     float importance = 8;
     repeated string tags = 9;
+    // Structured content sub-fields
+    optional string language = 10;     // For content_type="code"
+    optional string file_path = 11;    // For content_type="diff"
+    optional string uri = 12;          // For content_type="reference"
+    optional string description = 13;  // For content_type="reference"
 }
 
 message WriteMemoryResponse {
@@ -143,6 +148,11 @@ message MemoryEntryProto {
     string key_task_id = 10;
     string key_project_id = 11;
     string key = 12;
+    // Structured content sub-fields
+    optional string language = 13;     // For content_type="code"
+    optional string file_path = 14;    // For content_type="diff"
+    optional string uri = 15;          // For content_type="reference"
+    optional string description = 16;  // For content_type="reference"
 }
 
 message MemorySearchResultProto {

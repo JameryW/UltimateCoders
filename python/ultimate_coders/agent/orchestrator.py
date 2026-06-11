@@ -123,7 +123,7 @@ class Orchestrator:
     async def submit_task(
         self,
         description: str,
-        project_id: Optional[str] = None,
+        project_id: str = "",
     ) -> Task:
         """Submit a new task for orchestration.
 
@@ -132,7 +132,7 @@ class Orchestrator:
 
         Args:
             description: The task description.
-            project_id: Optional project/repository context.
+            project_id: Project/repository context (default: empty string).
 
         Returns:
             The created Task with subtasks.

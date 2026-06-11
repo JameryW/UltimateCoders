@@ -217,48 +217,18 @@ impl From<WriteMemoryRequest> for MemoryWriteRequest {
             "structured" => MemoryContent::Structured(
                 serde_json::from_str(&req.content).unwrap_or(serde_json::Value::String(req.content)),
             ),
-            "code" => {
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    MemoryContent::Code {
-                        language: parts[0].to_string(),
-                        code: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Code {
-                        language: String::new(),
-                        code: req.content,
-                    }
-                }
-            }
-            "diff" => {
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    MemoryContent::Diff {
-                        file_path: parts[0].to_string(),
-                        diff: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Diff {
-                        file_path: String::new(),
-                        diff: req.content,
-                    }
-                }
-            }
-            "reference" => {
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    MemoryContent::Reference {
-                        uri: parts[0].to_string(),
-                        description: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Reference {
-                        uri: req.content,
-                        description: String::new(),
-                    }
-                }
-            }
+            "code" => MemoryContent::Code {
+                language: req.language.unwrap_or_default(),
+                code: req.content,
+            },
+            "diff" => MemoryContent::Diff {
+                file_path: req.file_path.unwrap_or_default(),
+                diff: req.content,
+            },
+            "reference" => MemoryContent::Reference {
+                uri: req.uri.unwrap_or_default(),
+                description: req.description.unwrap_or_default(),
+            },
             _ => MemoryContent::Text(req.content),
         };
         Self {
@@ -276,17 +246,17 @@ impl From<WriteMemoryRequest> for MemoryWriteRequest {
 
 impl From<MemoryEntry> for MemoryEntryProto {
     fn from(entry: MemoryEntry) -> Self {
-        let (content_type, content) = match entry.content {
-            MemoryContent::Text(s) => ("text".to_string(), s),
-            MemoryContent::Structured(v) => ("structured".to_string(), v.to_string()),
-            MemoryContent::Code { language, code } => {
-                ("code".to_string(), format!("{}:{}", language, code))
+        let (content_type, content, language, file_path, uri, description) = match entry.content {
+            MemoryContent::Text(s) => ("text".to_string(), s, None, None, None, None),
+            MemoryContent::Structured(v) => ("structured".to_string(), v.to_string(), None, None, None, None),
+            MemoryContent::Code { language: lang, code } => {
+                ("code".to_string(), code, Some(lang), None, None, None)
             }
-            MemoryContent::Diff { file_path, diff } => {
-                ("diff".to_string(), format!("{}:{}", file_path, diff))
+            MemoryContent::Diff { file_path: fp, diff } => {
+                ("diff".to_string(), diff, None, Some(fp), None, None)
             }
-            MemoryContent::Reference { uri, description } => {
-                ("reference".to_string(), format!("{}:{}", uri, description))
+            MemoryContent::Reference { uri: u, description: d } => {
+                ("reference".to_string(), String::new(), None, None, Some(u), Some(d))
             }
         };
         let (key_scope, key_task_id, key_project_id, key) = memory_key_to_parts(&entry.key);
@@ -303,6 +273,10 @@ impl From<MemoryEntry> for MemoryEntryProto {
             key_task_id: key_task_id.to_string(),
             key_project_id: key_project_id.to_string(),
             key: key.to_string(),
+            language,
+            file_path,
+            uri,
+            description,
         }
     }
 }
@@ -460,49 +434,18 @@ impl From<MemoryEntryProto> for MemoryEntry {
             "structured" => MemoryContent::Structured(
                 serde_json::from_str(&proto.content).unwrap_or(serde_json::Value::String(proto.content)),
             ),
-            "code" => {
-                // Parse "language:code" format
-                let parts: Vec<&str> = proto.content.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    MemoryContent::Code {
-                        language: parts[0].to_string(),
-                        code: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Code {
-                        language: String::new(),
-                        code: proto.content,
-                    }
-                }
-            }
-            "diff" => {
-                let parts: Vec<&str> = proto.content.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    MemoryContent::Diff {
-                        file_path: parts[0].to_string(),
-                        diff: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Diff {
-                        file_path: String::new(),
-                        diff: proto.content,
-                    }
-                }
-            }
-            "reference" => {
-                let parts: Vec<&str> = proto.content.splitn(2, ':').collect();
-                if parts.len() == 2 {
-                    MemoryContent::Reference {
-                        uri: parts[0].to_string(),
-                        description: parts[1].to_string(),
-                    }
-                } else {
-                    MemoryContent::Reference {
-                        uri: proto.content,
-                        description: String::new(),
-                    }
-                }
-            }
+            "code" => MemoryContent::Code {
+                language: proto.language.unwrap_or_default(),
+                code: proto.content,
+            },
+            "diff" => MemoryContent::Diff {
+                file_path: proto.file_path.unwrap_or_default(),
+                diff: proto.content,
+            },
+            "reference" => MemoryContent::Reference {
+                uri: proto.uri.unwrap_or_default(),
+                description: proto.description.unwrap_or_default(),
+            },
             _ => MemoryContent::Text(proto.content),
         };
         // Reconstruct key from proto fields

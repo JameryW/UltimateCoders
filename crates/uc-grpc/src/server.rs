@@ -117,51 +117,18 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
                 serde_json::from_str(&req.content)
                     .unwrap_or(serde_json::Value::String(req.content.clone())),
             ),
-            "code" => {
-                // Parse "language:code" format (as produced by the client)
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Code {
-                        language: parts[0].to_string(),
-                        code: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Code {
-                        language: String::new(),
-                        code: req.content,
-                    }
-                }
-            }
-            "diff" => {
-                // Parse "file_path:diff" format (as produced by the client)
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Diff {
-                        file_path: parts[0].to_string(),
-                        diff: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Diff {
-                        file_path: String::new(),
-                        diff: req.content,
-                    }
-                }
-            }
-            "reference" => {
-                // Parse "uri:description" format (as produced by the client)
-                let parts: Vec<&str> = req.content.splitn(2, ':').collect();
-                if parts.len() == 2 && !parts[0].is_empty() {
-                    uc_types::MemoryContent::Reference {
-                        uri: parts[0].to_string(),
-                        description: parts[1].to_string(),
-                    }
-                } else {
-                    uc_types::MemoryContent::Reference {
-                        uri: req.content,
-                        description: String::new(),
-                    }
-                }
-            }
+            "code" => uc_types::MemoryContent::Code {
+                language: req.language.unwrap_or_default(),
+                code: req.content,
+            },
+            "diff" => uc_types::MemoryContent::Diff {
+                file_path: req.file_path.unwrap_or_default(),
+                diff: req.content,
+            },
+            "reference" => uc_types::MemoryContent::Reference {
+                uri: req.uri.unwrap_or_default(),
+                description: req.description.unwrap_or_default(),
+            },
             _ => uc_types::MemoryContent::Text(req.content),
         };
         let write_req = uc_types::MemoryWriteRequest {
