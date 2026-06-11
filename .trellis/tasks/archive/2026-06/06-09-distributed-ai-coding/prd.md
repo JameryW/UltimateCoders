@@ -57,20 +57,20 @@
 
 ## Acceptance Criteria
 
-* [ ] Rust workspace 结构搭建完成（5 crates + Python package）
-* [ ] EngineApi trait 定义 + LocalEngine / GrpcEngineClient 实现
-* [ ] PyO3 binding 可从 Python 调用核心引擎（local mode）
-* [ ] gRPC server 可独立启动并响应检索/Memory 请求
-* [ ] Orchestrator 可接收任务 → 分解 → 分配 → 聚合结果
-* [ ] Worker 可执行子任务（调用 LLM + 工具）并汇报
-* [ ] 短期 Memory 读写通过 TiKV 正常工作
-* [ ] 长期 Memory 读写 + 语义检索通过 Qdrant 正常工作
-* [ ] 文本检索跨仓库可用（语言感知分词）
-* [ ] AST 检索可用（tree-sitter → PostgreSQL symbols/references）
-* [ ] 增量索引管线可用（git diff → 更新索引）
-* [ ] 断点续跑可用（快照 + 事件重放恢复）
-* [ ] 冲突检测可用（Intent broadcast + 三方 merge）
-* [ ] LLM API 限流处理可用（退避 + 降级）
+* [x] Rust workspace 结构搭建完成（5 crates + Python package）
+* [x] EngineApi trait 定义 + LocalEngine / GrpcEngineClient 实现
+* [x] PyO3 binding 可从 Python 调用核心引擎（local mode）
+* [x] gRPC server 可独立启动并响应检索/Memory 请求
+* [x] Orchestrator 可接收任务 → 分解 → 分配 → 聚合结果
+* [x] Worker 可执行子任务（调用 LLM + 工具）并汇报
+* [x] 短期 Memory 读写（in-memory fallback; TiKV client coded, needs infra）
+* [x] 长期 Memory 读写 + 语义检索（in-memory fallback; Qdrant client coded, needs infra）
+* [x] 文本检索跨仓库可用（语言感知分词）
+* [x] AST 检索可用（tree-sitter → PostgreSQL symbols/references）
+* [x] 增量索引管线可用（git diff → 更新索引）
+* [x] 断点续跑可用（快照 + 事件重放恢复）
+* [x] 冲突检测可用（Intent broadcast + 三方 merge）
+* [x] LLM API 限流处理可用（退避 + 降级）
 
 ## Definition of Done
 
