@@ -13,9 +13,20 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
-from ultimate_coders.agent.llm import LLMClient, LLMResponse, make_tool_definition
+from ultimate_coders.agent.conflict import (
+    ConflictDetector,
+    ConflictResolver,
+    ConflictResult,
+    LineRange,
+    ResolutionTier,
+)
+from ultimate_coders.agent.llm import LLMClient, LLMResponse
+from ultimate_coders.agent.rate_limiter import (
+    CircuitBreaker,
+    RateLimiter,
+)
 from ultimate_coders.agent.types import (
     OrchestratorConfig,
     Subtask,
@@ -24,19 +35,6 @@ from ultimate_coders.agent.types import (
     Task,
     TaskStatus,
     WorkerInfo,
-)
-from ultimate_coders.agent.conflict import (
-    ConflictDetector,
-    ConflictResolver,
-    ConflictResult,
-    EditIntent,
-    EditType,
-    LineRange,
-    ResolutionTier,
-)
-from ultimate_coders.agent.rate_limiter import (
-    CircuitBreaker,
-    RateLimiter,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,11 +93,11 @@ class Orchestrator:
     def __init__(
         self,
         engine: Any = None,
-        llm_client: Optional[LLMClient] = None,
-        config: Optional[OrchestratorConfig] = None,
-        conflict_detector: Optional[ConflictDetector] = None,
-        rate_limiter: Optional[RateLimiter] = None,
-        circuit_breaker: Optional[CircuitBreaker] = None,
+        llm_client: LLMClient | None = None,
+        config: OrchestratorConfig | None = None,
+        conflict_detector: ConflictDetector | None = None,
+        rate_limiter: RateLimiter | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
         scheduler: Any = None,
     ):
         """Initialize the Orchestrator.
@@ -117,15 +115,15 @@ class Orchestrator:
         self.engine = engine
         self.llm_client = llm_client
         self.config = config or OrchestratorConfig()
-        self.workers: Dict[str, WorkerInfo] = {}
-        self.tasks: Dict[str, Task] = {}
+        self.workers: dict[str, WorkerInfo] = {}
+        self.tasks: dict[str, Task] = {}
         self.conflict_detector = conflict_detector or ConflictDetector()
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
         # Night-window exclusive mode
         self.scheduler = scheduler
         self._night_window_active: bool = False
-        self._pending_tasks: List[Task] = []
+        self._pending_tasks: list[Task] = []
 
     async def submit_task(
         self,
@@ -204,7 +202,7 @@ class Orchestrator:
         task.update_timestamp()
         return task
 
-    async def decompose_task(self, task: Task) -> List[Subtask]:
+    async def decompose_task(self, task: Task) -> list[Subtask]:
         """Use LLM to decompose a task into subtasks.
 
         Args:
@@ -248,8 +246,8 @@ class Orchestrator:
     async def assign_subtask(
         self,
         subtask: Subtask,
-        worker_id: Optional[str] = None,
-    ) -> Optional[str]:
+        worker_id: str | None = None,
+    ) -> str | None:
         """Assign a subtask to a worker.
 
         If worker_id is specified, assigns directly. Otherwise, selects
@@ -409,7 +407,7 @@ class Orchestrator:
             del self.workers[worker_id]
             logger.info("Unregistered worker %s", worker_id)
 
-    async def get_task_status(self, task_id: str) -> Optional[Task]:
+    async def get_task_status(self, task_id: str) -> Task | None:
         """Get current task status.
 
         Args:
@@ -420,13 +418,13 @@ class Orchestrator:
         """
         return self.tasks.get(task_id)
 
-    def get_available_workers(self) -> List[WorkerInfo]:
+    def get_available_workers(self) -> list[WorkerInfo]:
         """Get all currently available workers."""
         return [w for w in self.workers.values() if w.is_available]
 
     # ── Private helpers ─────────────────────────────────────────
 
-    def _select_worker(self, subtask: Subtask) -> Optional[str]:
+    def _select_worker(self, subtask: Subtask) -> str | None:
         """Select the best available worker for a subtask.
 
         Strategy: pick the worker with the lowest current load that
@@ -454,7 +452,7 @@ class Orchestrator:
         self,
         response: LLMResponse,
         parent_task_id: str,
-    ) -> List[Subtask]:
+    ) -> list[Subtask]:
         """Parse LLM decomposition response into Subtask objects.
 
         Args:
@@ -495,7 +493,7 @@ class Orchestrator:
             )
 
         # First pass: create subtasks with temporary index-based deps
-        subtask_map: Dict[int, Subtask] = {}
+        subtask_map: dict[int, Subtask] = {}
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
@@ -614,7 +612,7 @@ class Orchestrator:
         self._night_window_active = active
         logger.info("Night window active: %s", active)
 
-    async def flush_pending_tasks(self) -> List[Task]:
+    async def flush_pending_tasks(self) -> list[Task]:
         """Execute all tasks that were queued during the night window.
 
         Called when the night window closes. Processes all deferred
@@ -626,7 +624,7 @@ class Orchestrator:
         """
         pending = self._pending_tasks.copy()
         self._pending_tasks.clear()
-        executed: List[Task] = []
+        executed: list[Task] = []
 
         for task in pending:
             logger.info(
@@ -654,11 +652,11 @@ class Orchestrator:
     def schedule_task(
         self,
         description: str,
-        cron: Optional[str] = None,
-        execute_after: Optional[str] = None,
-        project_id: Optional[str] = None,
-        night_window_start: Optional[str] = None,
-        night_window_end: Optional[str] = None,
+        cron: str | None = None,
+        execute_after: str | None = None,
+        project_id: str | None = None,
+        night_window_start: str | None = None,
+        night_window_end: str | None = None,
         timezone: str = "UTC",
     ) -> Any:
         """Convenience method to schedule a task via the Scheduler.
@@ -711,7 +709,7 @@ class Orchestrator:
 
     # ── Fault Tolerance Methods ───────────────────────────────────────
 
-    async def checkpoint_task(self, task_id: str) -> Optional[str]:
+    async def checkpoint_task(self, task_id: str) -> str | None:
         """Create a checkpoint (snapshot) of a task's current state.
 
         Uses the engine's checkpoint system to persist the task state
@@ -735,7 +733,7 @@ class Orchestrator:
             logger.warning("Failed to checkpoint task %s", task_id, exc_info=True)
             return None
 
-    async def recover_task(self, task_id: str) -> Optional[dict]:
+    async def recover_task(self, task_id: str) -> dict | None:
         """Recover a task from the latest checkpoint.
 
         Args:
@@ -760,8 +758,8 @@ class Orchestrator:
         self,
         worker_id: str,
         file_path: str,
-        regions: List[Tuple[int, int]],
-    ) -> Tuple[ConflictResult, Optional[dict]]:
+        regions: list[tuple[int, int]],
+    ) -> tuple[ConflictResult, dict | None]:
         """Check if a worker's edit would conflict with existing intents.
 
         Args:

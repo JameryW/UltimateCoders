@@ -25,6 +25,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [Error Handling](./error-handling.md) | EngineError enum, triple mapping, wrapping patterns | Filled |
 | [Quality Guidelines](./quality-guidelines.md) | Rust/Python test patterns, naming conventions | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | tracing crate, Python logging, log levels | Filled |
+| [Scheduler Spec](./scheduler-spec.md) | Task scheduling, night-window guard, persistence contracts | Filled |
 
 ---
 

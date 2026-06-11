@@ -133,7 +133,10 @@ impl SchedulerService {
     }
 
     /// Set the night window configuration.
-    pub async fn set_night_window(&self, config: &uc_types::NightWindowConfig) -> Result<(), EngineError> {
+    pub async fn set_night_window(
+        &self,
+        config: &uc_types::NightWindowConfig,
+    ) -> Result<(), EngineError> {
         let window = NightWindow::from_config(config)
             .map_err(|e| EngineError::ConfigError(format!("Invalid night window config: {}", e)))?;
         let mut nw = self.night_window.write().await;
@@ -157,12 +160,14 @@ impl SchedulerService {
     ///
     /// The task is persisted to the store and registered with the job scheduler.
     pub async fn add_cron_job(&self, task: ScheduledTask) -> Result<AddJobResult, EngineError> {
-        let cron_expr = task.cron_expression.clone()
-            .ok_or_else(|| EngineError::ConfigError("Cron expression required for cron job".to_string()))?;
+        let cron_expr = task.cron_expression.clone().ok_or_else(|| {
+            EngineError::ConfigError("Cron expression required for cron job".to_string())
+        })?;
 
         // Validate the cron expression using croner
-        croner::Cron::from_str(&cron_expr)
-            .map_err(|e| EngineError::ConfigError(format!("Invalid cron expression '{}': {:?}", cron_expr, e)))?;
+        croner::Cron::from_str(&cron_expr).map_err(|e| {
+            EngineError::ConfigError(format!("Invalid cron expression '{}': {:?}", cron_expr, e))
+        })?;
 
         let task_id = task.id;
 
@@ -202,8 +207,9 @@ impl SchedulerService {
     ///
     /// The task is persisted to the store and registered with the job scheduler.
     pub async fn add_one_shot_job(&self, task: ScheduledTask) -> Result<AddJobResult, EngineError> {
-        let execute_after = task.execute_after
-            .ok_or_else(|| EngineError::ConfigError("execute_after required for one-shot job".to_string()))?;
+        let execute_after = task.execute_after.ok_or_else(|| {
+            EngineError::ConfigError("execute_after required for one-shot job".to_string())
+        })?;
 
         let task_id = task.id;
 
@@ -215,7 +221,8 @@ impl SchedulerService {
         {
             let js = self.job_scheduler.read().await;
             if let Some(scheduler) = js.as_ref() {
-                self.register_one_shot_with_scheduler(scheduler, &task).await?;
+                self.register_one_shot_with_scheduler(scheduler, &task)
+                    .await?;
             }
         }
 
@@ -312,7 +319,9 @@ impl SchedulerService {
     pub async fn dispatch_with_guard(&self, task_id: &Uuid) -> Result<(), EngineError> {
         let task = {
             let metadata = self.job_metadata.read().await;
-            metadata.get(task_id).map(|m| m.task.clone())
+            metadata
+                .get(task_id)
+                .map(|m| m.task.clone())
                 .ok_or_else(|| EngineError::TaskError(format!("Job {} not found", task_id)))?
         };
 
@@ -412,10 +421,13 @@ impl SchedulerService {
         let persisted_tasks = self.store.list_tasks(true).await?;
         let mut metadata = self.job_metadata.write().await;
         for task in &persisted_tasks {
-            metadata.insert(task.id, JobMetadata {
-                task: task.clone(),
-                enforce_night_window: true,
-            });
+            metadata.insert(
+                task.id,
+                JobMetadata {
+                    task: task.clone(),
+                    enforce_night_window: true,
+                },
+            );
         }
         drop(metadata); // Release lock before starting scheduler
 
@@ -423,12 +435,17 @@ impl SchedulerService {
         {
             let job_scheduler = tokio_cron_scheduler::JobScheduler::new()
                 .await
-                .map_err(|e| EngineError::InternalError(format!("Failed to create job scheduler: {:?}", e)))?;
+                .map_err(|e| {
+                    EngineError::InternalError(format!("Failed to create job scheduler: {:?}", e))
+                })?;
 
             // Register all persisted tasks with the job scheduler
             for task in &persisted_tasks {
                 if task.cron_expression.is_some() {
-                    if let Err(e) = self.register_cron_with_scheduler(&job_scheduler, task).await {
+                    if let Err(e) = self
+                        .register_cron_with_scheduler(&job_scheduler, task)
+                        .await
+                    {
                         warn!(
                             task_id = %task.id,
                             error = %e,
@@ -436,7 +453,10 @@ impl SchedulerService {
                         );
                     }
                 } else if task.execute_after.is_some() {
-                    if let Err(e) = self.register_one_shot_with_scheduler(&job_scheduler, task).await {
+                    if let Err(e) = self
+                        .register_one_shot_with_scheduler(&job_scheduler, task)
+                        .await
+                    {
                         warn!(
                             task_id = %task.id,
                             error = %e,
@@ -447,9 +467,9 @@ impl SchedulerService {
             }
 
             // Start the job scheduler
-            job_scheduler.start()
-                .await
-                .map_err(|e| EngineError::InternalError(format!("Failed to start job scheduler: {:?}", e)))?;
+            job_scheduler.start().await.map_err(|e| {
+                EngineError::InternalError(format!("Failed to start job scheduler: {:?}", e))
+            })?;
 
             let mut js = self.job_scheduler.write().await;
             *js = Some(job_scheduler);
@@ -476,10 +496,9 @@ impl SchedulerService {
             let mut js = self.job_scheduler.write().await;
             if let Some(scheduler) = js.take() {
                 let mut scheduler = scheduler;
-                scheduler
-                    .shutdown()
-                    .await
-                    .map_err(|e| EngineError::InternalError(format!("Failed to stop job scheduler: {:?}", e)))?;
+                scheduler.shutdown().await.map_err(|e| {
+                    EngineError::InternalError(format!("Failed to stop job scheduler: {:?}", e))
+                })?;
             }
         }
 
@@ -521,7 +540,9 @@ impl SchedulerService {
         scheduler: &tokio_cron_scheduler::JobScheduler,
         task: &ScheduledTask,
     ) -> Result<(), EngineError> {
-        let cron_expr = task.cron_expression.as_ref()
+        let cron_expr = task
+            .cron_expression
+            .as_ref()
             .ok_or_else(|| EngineError::ConfigError("Cron expression missing".to_string()))?;
 
         let cron_6field = Self::cron_to_6field(cron_expr);
@@ -529,29 +550,26 @@ impl SchedulerService {
         let task_id = task.id;
         let task_description = task.description.clone();
 
-        let job = tokio_cron_scheduler::Job::new_async(
-            cron_6field,
-            move |uuid, _l| {
-                let task_id = task_id;
-                let description = task_description.clone();
-                Box::pin(async move {
-                    tracing::info!(
-                        job_uuid = %uuid,
-                        task_id = %task_id,
-                        description = %description,
-                        "Cron job triggered by scheduler"
-                    );
-                    // The actual dispatch happens via dispatch_with_guard
-                    // which is called externally. This callback serves as
-                    // the trigger notification.
-                })
-            },
-        )
+        let job = tokio_cron_scheduler::Job::new_async(cron_6field, move |uuid, _l| {
+            let task_id = task_id;
+            let description = task_description.clone();
+            Box::pin(async move {
+                tracing::info!(
+                    job_uuid = %uuid,
+                    task_id = %task_id,
+                    description = %description,
+                    "Cron job triggered by scheduler"
+                );
+                // The actual dispatch happens via dispatch_with_guard
+                // which is called externally. This callback serves as
+                // the trigger notification.
+            })
+        })
         .map_err(|e| EngineError::InternalError(format!("Failed to create cron job: {:?}", e)))?;
 
-        scheduler.add(job)
-            .await
-            .map_err(|e| EngineError::InternalError(format!("Failed to add cron job to scheduler: {:?}", e)))?;
+        scheduler.add(job).await.map_err(|e| {
+            EngineError::InternalError(format!("Failed to add cron job to scheduler: {:?}", e))
+        })?;
 
         Ok(())
     }
@@ -567,7 +585,8 @@ impl SchedulerService {
         scheduler: &tokio_cron_scheduler::JobScheduler,
         task: &ScheduledTask,
     ) -> Result<(), EngineError> {
-        let execute_after = task.execute_after
+        let execute_after = task
+            .execute_after
             .ok_or_else(|| EngineError::ConfigError("execute_after missing".to_string()))?;
 
         let now = Utc::now();
@@ -585,28 +604,27 @@ impl SchedulerService {
         let task_id = task.id;
         let task_description = task.description.clone();
 
-        let job = tokio_cron_scheduler::Job::new_one_shot_async(
-            duration_std,
-            move |uuid, _l| {
-                let task_id = task_id;
-                let description = task_description.clone();
-                Box::pin(async move {
-                    tracing::info!(
-                        job_uuid = %uuid,
-                        task_id = %task_id,
-                        description = %description,
-                        "One-shot job triggered by scheduler"
-                    );
-                    // The actual dispatch happens via dispatch_with_guard
-                    // which is called externally.
-                })
-            },
-        )
-        .map_err(|e| EngineError::InternalError(format!("Failed to create one-shot job: {:?}", e)))?;
+        let job = tokio_cron_scheduler::Job::new_one_shot_async(duration_std, move |uuid, _l| {
+            let task_id = task_id;
+            let description = task_description.clone();
+            Box::pin(async move {
+                tracing::info!(
+                    job_uuid = %uuid,
+                    task_id = %task_id,
+                    description = %description,
+                    "One-shot job triggered by scheduler"
+                );
+                // The actual dispatch happens via dispatch_with_guard
+                // which is called externally.
+            })
+        })
+        .map_err(|e| {
+            EngineError::InternalError(format!("Failed to create one-shot job: {:?}", e))
+        })?;
 
-        scheduler.add(job)
-            .await
-            .map_err(|e| EngineError::InternalError(format!("Failed to add one-shot job to scheduler: {:?}", e)))?;
+        scheduler.add(job).await.map_err(|e| {
+            EngineError::InternalError(format!("Failed to add one-shot job to scheduler: {:?}", e))
+        })?;
 
         Ok(())
     }
@@ -846,15 +864,27 @@ mod tests {
     #[cfg(feature = "scheduler")]
     #[test]
     fn cron_5field_to_6field() {
-        assert_eq!(SchedulerService::cron_to_6field("0 22 * * *"), "0 0 22 * * *");
-        assert_eq!(SchedulerService::cron_to_6field("30 4 * * 1"), "0 30 4 * * 1");
+        assert_eq!(
+            SchedulerService::cron_to_6field("0 22 * * *"),
+            "0 0 22 * * *"
+        );
+        assert_eq!(
+            SchedulerService::cron_to_6field("30 4 * * 1"),
+            "0 30 4 * * 1"
+        );
     }
 
     #[cfg(feature = "scheduler")]
     #[test]
     fn cron_6field_unchanged() {
-        assert_eq!(SchedulerService::cron_to_6field("0 0 22 * * *"), "0 0 22 * * *");
-        assert_eq!(SchedulerService::cron_to_6field("0 30 4 * * 1"), "0 30 4 * * 1");
+        assert_eq!(
+            SchedulerService::cron_to_6field("0 0 22 * * *"),
+            "0 0 22 * * *"
+        );
+        assert_eq!(
+            SchedulerService::cron_to_6field("0 30 4 * * 1"),
+            "0 30 4 * * 1"
+        );
     }
 
     // ── Store integration tests ──────────────────────────────────
@@ -967,7 +997,10 @@ mod tests {
         service.dispatch_with_guard(&result.task_id).await.unwrap();
 
         // Get from store
-        let history = service.get_execution_history_from_store(&result.task_id, 10).await.unwrap();
+        let history = service
+            .get_execution_history_from_store(&result.task_id, 10)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].status, ExecutionStatus::Completed);
     }

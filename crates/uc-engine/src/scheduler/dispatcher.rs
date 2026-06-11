@@ -10,8 +10,8 @@
 //! If NATS is not available, falls back to logging (graceful degradation).
 //! Feature-gated behind `messaging` (NATS dependency).
 
-use uc_types::{EngineError, ScheduledTask};
 use tracing::{info, warn};
+use uc_types::{EngineError, ScheduledTask};
 
 use super::service::ScheduleDispatcher;
 
@@ -55,11 +55,12 @@ impl OrchestratorDispatcher {
 impl ScheduleDispatcher for OrchestratorDispatcher {
     fn dispatch(&self, task: &ScheduledTask) -> Result<(), EngineError> {
         let subject = format!("{}.{}", self.subject_prefix, task.id);
-        let payload = serde_json::to_vec(task)
-            .map_err(|e| EngineError::InternalError(format!(
+        let payload = serde_json::to_vec(task).map_err(|e| {
+            EngineError::InternalError(format!(
                 "Failed to serialize scheduled task {}: {}",
                 task.id, e
-            )))?;
+            ))
+        })?;
 
         // Publish is async; we use a blocking approach here since
         // ScheduleDispatcher::dispatch is currently a sync trait method.
@@ -74,9 +75,8 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
         // Try to publish synchronously via tokio runtime
         let client = self.nats_client.clone();
         let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                client.publish(subject, payload.into()).await
-            })
+            tokio::runtime::Handle::current()
+                .block_on(async { client.publish(subject, payload.into()).await })
         });
 
         match result {
@@ -182,10 +182,9 @@ pub async fn publish_window_event(
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    let payload_bytes = serde_json::to_vec(&payload)
-        .map_err(|e| EngineError::InternalError(format!(
-            "Failed to serialize window event: {}", e
-        )))?;
+    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
+        EngineError::InternalError(format!("Failed to serialize window event: {}", e))
+    })?;
 
     nats_client
         .publish(subject.to_string(), payload_bytes.into())
@@ -214,7 +213,8 @@ pub enum WindowEventType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveTime, Utc};
+    use crate::scheduler::LoggingDispatcher;
+    use chrono::NaiveTime;
     use uc_types::ScheduledTask;
 
     fn make_cron_task() -> ScheduledTask {

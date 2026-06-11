@@ -26,8 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
-
+from typing import Any
 
 try:
     import yaml
@@ -58,19 +57,19 @@ class ScheduledTaskConfig:
     description: str
     """Human-readable description of the task."""
 
-    cron_expression: Optional[str] = None
+    cron_expression: str | None = None
     """Cron expression for recurring tasks (e.g., "0 22 * * *")."""
 
-    execute_after: Optional[str] = None
+    execute_after: str | None = None
     """ISO 8601 datetime for one-shot delayed tasks (e.g., "2024-01-15T22:00:00Z")."""
 
-    project_id: Optional[str] = None
+    project_id: str | None = None
     """Project/repository context for the task."""
 
-    night_window_start: Optional[str] = None
+    night_window_start: str | None = None
     """Override night window start time in HH:MM format."""
 
-    night_window_end: Optional[str] = None
+    night_window_end: str | None = None
     """Override night window end time in HH:MM format."""
 
     timezone: str = "UTC"
@@ -84,7 +83,7 @@ class ScheduledTaskConfig:
 class SchedulerConfig:
     """Top-level scheduler configuration parsed from YAML."""
 
-    night_window: Optional[NightWindowConfig] = None
+    night_window: NightWindowConfig | None = None
     """Global night window configuration."""
 
     tasks: list[ScheduledTaskConfig] = field(default_factory=list)
@@ -174,7 +173,7 @@ def load_scheduler_config(path: str) -> SchedulerConfig:
             "Install it with: pip install pyyaml"
         )
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     if raw is None:

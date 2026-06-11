@@ -33,7 +33,11 @@ pub trait ScheduleStore: Send + Sync {
     async fn save_execution(&self, history: &ExecutionHistory) -> Result<(), EngineError>;
 
     /// List execution history for a task, limited to the most recent entries.
-    async fn list_executions(&self, task_id: &Uuid, limit: i64) -> Result<Vec<ExecutionHistory>, EngineError>;
+    async fn list_executions(
+        &self,
+        task_id: &Uuid,
+        limit: i64,
+    ) -> Result<Vec<ExecutionHistory>, EngineError>;
 }
 
 // ── In-memory implementation ─────────────────────────────────────
@@ -125,7 +129,11 @@ impl ScheduleStore for InMemoryScheduleStore {
         Ok(())
     }
 
-    async fn list_executions(&self, task_id: &Uuid, limit: i64) -> Result<Vec<ExecutionHistory>, EngineError> {
+    async fn list_executions(
+        &self,
+        task_id: &Uuid,
+        limit: i64,
+    ) -> Result<Vec<ExecutionHistory>, EngineError> {
         let executions = self.executions.read().await;
         Ok(executions
             .iter()
@@ -184,17 +192,31 @@ mod postgres {
             .bind(task.updated_at)
             .execute(self.pool.as_ref())
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to save scheduled task: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to save scheduled task: {}", e))
+            })?;
             Ok(())
         }
 
         async fn load_task(&self, id: &Uuid) -> Result<Option<ScheduledTask>, EngineError> {
-            let row = sqlx::query_as::<_, (
-                Uuid, String, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>,
-                chrono::NaiveTime, chrono::NaiveTime, String, bool,
-                Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>,
-                chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>,
-            )>(
+            let row = sqlx::query_as::<
+                _,
+                (
+                    Uuid,
+                    String,
+                    String,
+                    Option<String>,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    chrono::NaiveTime,
+                    chrono::NaiveTime,
+                    String,
+                    bool,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    chrono::DateTime<chrono::Utc>,
+                    chrono::DateTime<chrono::Utc>,
+                ),
+            >(
                 r#"
                 SELECT id, description, project_id, cron_expression, execute_after,
                        night_window_start, night_window_end, timezone, enabled,
@@ -205,7 +227,9 @@ mod postgres {
             .bind(id)
             .fetch_optional(self.pool.as_ref())
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to load scheduled task: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to load scheduled task: {}", e))
+            })?;
 
             Ok(row.map(|r| ScheduledTask {
                 id: r.0,
@@ -226,12 +250,24 @@ mod postgres {
 
         async fn list_tasks(&self, enabled_only: bool) -> Result<Vec<ScheduledTask>, EngineError> {
             let rows = if enabled_only {
-                sqlx::query_as::<_, (
-                    Uuid, String, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>,
-                    chrono::NaiveTime, chrono::NaiveTime, String, bool,
-                    Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>,
-                    chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>,
-                )>(
+                sqlx::query_as::<
+                    _,
+                    (
+                        Uuid,
+                        String,
+                        String,
+                        Option<String>,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        chrono::NaiveTime,
+                        chrono::NaiveTime,
+                        String,
+                        bool,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        chrono::DateTime<chrono::Utc>,
+                        chrono::DateTime<chrono::Utc>,
+                    ),
+                >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
@@ -242,12 +278,24 @@ mod postgres {
                 .fetch_all(self.pool.as_ref())
                 .await
             } else {
-                sqlx::query_as::<_, (
-                    Uuid, String, String, Option<String>, Option<chrono::DateTime<chrono::Utc>>,
-                    chrono::NaiveTime, chrono::NaiveTime, String, bool,
-                    Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>,
-                    chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>,
-                )>(
+                sqlx::query_as::<
+                    _,
+                    (
+                        Uuid,
+                        String,
+                        String,
+                        Option<String>,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        chrono::NaiveTime,
+                        chrono::NaiveTime,
+                        String,
+                        bool,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        Option<chrono::DateTime<chrono::Utc>>,
+                        chrono::DateTime<chrono::Utc>,
+                        chrono::DateTime<chrono::Utc>,
+                    ),
+                >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
@@ -258,7 +306,9 @@ mod postgres {
                 .fetch_all(self.pool.as_ref())
                 .await
             }
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to list scheduled tasks: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to list scheduled tasks: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()
@@ -305,7 +355,9 @@ mod postgres {
             .bind(task.updated_at)
             .execute(self.pool.as_ref())
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to update scheduled task: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to update scheduled task: {}", e))
+            })?;
 
             if result.rows_affected() == 0 {
                 return Err(EngineError::TaskError(format!(
@@ -322,7 +374,9 @@ mod postgres {
                 .bind(id)
                 .execute(self.pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Failed to delete scheduled task: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Failed to delete scheduled task: {}", e))
+                })?;
 
             if result.rows_affected() == 0 {
                 return Err(EngineError::TaskError(format!(
@@ -352,16 +406,29 @@ mod postgres {
             .bind(chrono::Utc::now())
             .execute(self.pool.as_ref())
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to save execution history: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to save execution history: {}", e))
+            })?;
             Ok(())
         }
 
-        async fn list_executions(&self, task_id: &Uuid, limit: i64) -> Result<Vec<ExecutionHistory>, EngineError> {
-            let rows = sqlx::query_as::<_, (
-                Uuid, Uuid, chrono::DateTime<chrono::Utc>,
-                Option<chrono::DateTime<chrono::Utc>>,
-                String, Option<String>, Option<String>,
-            )>(
+        async fn list_executions(
+            &self,
+            task_id: &Uuid,
+            limit: i64,
+        ) -> Result<Vec<ExecutionHistory>, EngineError> {
+            let rows = sqlx::query_as::<
+                _,
+                (
+                    Uuid,
+                    Uuid,
+                    chrono::DateTime<chrono::Utc>,
+                    Option<chrono::DateTime<chrono::Utc>>,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                ),
+            >(
                 r#"
                 SELECT id, scheduled_task_id, started_at, completed_at,
                        status, result_summary, deferred_reason
@@ -375,7 +442,9 @@ mod postgres {
             .bind(limit)
             .fetch_all(self.pool.as_ref())
             .await
-            .map_err(|e| EngineError::ConnectionError(format!("Failed to list execution history: {}", e)))?;
+            .map_err(|e| {
+                EngineError::ConnectionError(format!("Failed to list execution history: {}", e))
+            })?;
 
             Ok(rows
                 .into_iter()

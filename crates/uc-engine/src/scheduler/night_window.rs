@@ -273,7 +273,10 @@ mod tests {
         // At 18:00, next window starts at 22:00 today
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -282,7 +285,10 @@ mod tests {
         // At 23:00 (within window), next window starts tomorrow 22:00
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 23, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 16, 22, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 16, 22, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -292,7 +298,10 @@ mod tests {
         // (we are in the window that started yesterday, so the next one is tonight)
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 3, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -301,7 +310,10 @@ mod tests {
         // At 12:00 (after window ended), next window starts today 22:00
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 12, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 15, 22, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -310,7 +322,10 @@ mod tests {
         // At 18:00, next window starts at 20:00 today
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 15, 20, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 15, 20, 0, 0).unwrap()
+        );
     }
 
     #[test]
@@ -319,7 +334,10 @@ mod tests {
         // At 21:00 (within window), next window starts tomorrow 20:00
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 21, 0, 0).unwrap();
         let next = window.next_window_start(now);
-        assert_eq!(next, Tz::UTC.with_ymd_and_hms(2024, 1, 16, 20, 0, 0).unwrap());
+        assert_eq!(
+            next,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 16, 20, 0, 0).unwrap()
+        );
     }
 
     // ── Next window end tests ──────────────────────────────────────
@@ -348,7 +366,10 @@ mod tests {
         // At 18:00, next window ends today 23:00
         let now = Tz::UTC.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
         let end = window.next_window_end(now);
-        assert_eq!(end, Tz::UTC.with_ymd_and_hms(2024, 1, 15, 23, 0, 0).unwrap());
+        assert_eq!(
+            end,
+            Tz::UTC.with_ymd_and_hms(2024, 1, 15, 23, 0, 0).unwrap()
+        );
     }
 
     // ── Timezone tests ──────────────────────────────────────────────
@@ -357,7 +378,9 @@ mod tests {
     fn timezone_aware_shanghai() {
         let window = make_window(22, 0, 6, 0, Tz::Asia__Shanghai);
         // 23:00 CST is within 22:00-06:00
-        let now = Tz::Asia__Shanghai.with_ymd_and_hms(2024, 1, 15, 23, 0, 0).unwrap();
+        let now = Tz::Asia__Shanghai
+            .with_ymd_and_hms(2024, 1, 15, 23, 0, 0)
+            .unwrap();
         assert!(window.is_within_window(now));
     }
 
@@ -365,7 +388,9 @@ mod tests {
     fn timezone_aware_new_york() {
         let window = make_window(22, 0, 6, 0, Tz::America__New_York);
         // 10:00 EST is NOT within 22:00-06:00
-        let now = Tz::America__New_York.with_ymd_and_hms(2024, 1, 15, 10, 0, 0).unwrap();
+        let now = Tz::America__New_York
+            .with_ymd_and_hms(2024, 1, 15, 10, 0, 0)
+            .unwrap();
         assert!(!window.is_within_window(now));
     }
 

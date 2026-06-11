@@ -3,10 +3,10 @@
 //! Exposes a single `Engine` class that switches between
 //! LocalEngine (PyO3 FFI) and GrpcEngineClient (tonic) at construction time.
 
+mod async_support;
 mod engine;
 mod scheduler;
 mod types;
-mod async_support;
 
 use pyo3::prelude::*;
 

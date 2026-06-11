@@ -41,13 +41,15 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from ultimate_coders.agent.scheduler_config import (
     SchedulerConfig,
-    ScheduledTaskConfig,
     load_scheduler_config,
 )
+
+if TYPE_CHECKING:
+    from ultimate_coders._uc_core import PyScheduledTask as ScheduledTask
 
 try:
     from ultimate_coders._uc_core import PySchedulerService as _PySchedulerService
@@ -80,9 +82,9 @@ class Scheduler:
         description: str,
         cron_expression: str,
         *,
-        project_id: Optional[str] = None,
-        night_window_start: Optional[str] = None,
-        night_window_end: Optional[str] = None,
+        project_id: str | None = None,
+        night_window_start: str | None = None,
+        night_window_end: str | None = None,
         timezone: str = "UTC",
     ) -> ScheduledTask:
         """Create a cron-based recurring job.
@@ -112,9 +114,9 @@ class Scheduler:
         description: str,
         execute_after: datetime | str,
         *,
-        project_id: Optional[str] = None,
-        night_window_start: Optional[str] = None,
-        night_window_end: Optional[str] = None,
+        project_id: str | None = None,
+        night_window_start: str | None = None,
+        night_window_end: str | None = None,
         timezone: str = "UTC",
     ) -> ScheduledTask:
         """Create a one-shot delayed job.
@@ -164,7 +166,7 @@ class Scheduler:
         """
         return self._service.list_jobs()
 
-    def get_job(self, task_id: str) -> Optional[Any]:
+    def get_job(self, task_id: str) -> Any | None:
         """Get a specific job by ID.
 
         Args:

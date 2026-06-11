@@ -16,10 +16,10 @@ pub mod night_window;
 pub mod service;
 pub mod store;
 
-pub use night_window::{NightWindow, NightWindowError};
-pub use service::{SchedulerService, ScheduleDispatcher, LoggingDispatcher, AddJobResult};
-pub use store::{ScheduleStore, InMemoryScheduleStore};
 pub use dispatcher::{OrchestratorDispatcher, WindowEventType};
+pub use night_window::{NightWindow, NightWindowError};
+pub use service::{AddJobResult, LoggingDispatcher, ScheduleDispatcher, SchedulerService};
+pub use store::{InMemoryScheduleStore, ScheduleStore};
 
 #[cfg(feature = "storage")]
 pub use store::PostgresScheduleStore;

@@ -38,7 +38,9 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
     )
     .execute(pool.as_ref())
     .await
-    .map_err(|e| EngineError::ConnectionError(format!("Migration error (scheduled_tasks): {}", e)))?;
+    .map_err(|e| {
+        EngineError::ConnectionError(format!("Migration error (scheduled_tasks): {}", e))
+    })?;
 
     // Create execution_history table
     sqlx::query(
@@ -57,7 +59,9 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
     )
     .execute(pool.as_ref())
     .await
-    .map_err(|e| EngineError::ConnectionError(format!("Migration error (execution_history): {}", e)))?;
+    .map_err(|e| {
+        EngineError::ConnectionError(format!("Migration error (execution_history): {}", e))
+    })?;
 
     // Create indexes
     let indexes = [

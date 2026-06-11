@@ -82,7 +82,13 @@ impl ScheduledTask {
         night_window_end: NaiveTime,
         timezone: String,
     ) -> Self {
-        let mut task = Self::new(description, project_id, night_window_start, night_window_end, timezone);
+        let mut task = Self::new(
+            description,
+            project_id,
+            night_window_start,
+            night_window_end,
+            timezone,
+        );
         task.cron_expression = Some(cron_expression);
         task
     }
@@ -96,7 +102,13 @@ impl ScheduledTask {
         night_window_end: NaiveTime,
         timezone: String,
     ) -> Self {
-        let mut task = Self::new(description, project_id, night_window_start, night_window_end, timezone);
+        let mut task = Self::new(
+            description,
+            project_id,
+            night_window_start,
+            night_window_end,
+            timezone,
+        );
         task.execute_after = Some(execute_after);
         task
     }
@@ -204,7 +216,11 @@ pub struct NightWindowConfig {
 impl NightWindowConfig {
     /// Create a new night window configuration.
     pub fn new(start: NaiveTime, end: NaiveTime, timezone: String) -> Self {
-        Self { start, end, timezone }
+        Self {
+            start,
+            end,
+            timezone,
+        }
     }
 
     /// Default night window: 22:00-06:00 in UTC.
@@ -298,7 +314,10 @@ mod tests {
         let task_id = Uuid::new_v4();
         let history = ExecutionHistory::deferred(task_id, "Outside night window".to_string());
         assert_eq!(history.status, ExecutionStatus::Deferred);
-        assert_eq!(history.deferred_reason, Some("Outside night window".to_string()));
+        assert_eq!(
+            history.deferred_reason,
+            Some("Outside night window".to_string())
+        );
         assert!(history.completed_at.is_some());
     }
 

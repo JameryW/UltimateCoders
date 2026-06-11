@@ -3,58 +3,58 @@
 //! Implements the `EngineApi` trait with local (in-process) components.
 //! Depends on uc-types for the trait and data definitions.
 
-pub mod local;
+pub mod checkpoint;
+pub mod circuit_breaker;
+pub mod config;
+pub mod conflict;
+pub mod events;
+pub mod git;
 pub mod indexer;
+pub mod local;
 pub mod memory;
+pub mod metadata;
+pub mod rate_limiter;
+pub mod sandbox;
 pub mod scheduler;
 pub mod search;
-pub mod git;
-pub mod config;
-pub mod metadata;
-pub mod events;
-pub mod checkpoint;
-pub mod conflict;
-pub mod rate_limiter;
-pub mod circuit_breaker;
-pub mod sandbox;
 
-pub use local::LocalEngine;
-pub use config::{EngineConfig, StorageConfig, MemoryConfig, EmbeddingConfig};
-pub use indexer::IndexPipeline;
+pub use checkpoint::{CheckpointConfig, CheckpointManager};
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryPolicy};
+pub use config::{EmbeddingConfig, EngineConfig, MemoryConfig, StorageConfig};
+pub use conflict::merger::three_way_merge;
+pub use conflict::{
+    ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
+    ResolutionTier,
+};
+pub use events::{
+    AgentEventType, EventStore, InMemoryEventStore, LineRange, RecordedEvent, TaskSnapshot,
+};
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
+pub use indexer::IndexPipeline;
+pub use local::LocalEngine;
+pub use rate_limiter::{
+    LlmRateLimiter, LlmRateLimiterConfig, ModelFallbackChain, RequestPriority, TaskComplexity,
+    TokenBucket,
+};
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
-pub use events::{EventStore, InMemoryEventStore, AgentEventType, RecordedEvent, TaskSnapshot, LineRange};
-pub use checkpoint::{CheckpointManager, CheckpointConfig};
-pub use conflict::{ConflictDetector, EditIntent, EditType, ConflictResult, ResolutionTier, MergeResult, ConflictMarker};
-pub use conflict::merger::three_way_merge;
-pub use rate_limiter::{
-    LlmRateLimiter, LlmRateLimiterConfig, TokenBucket,
-    RequestPriority, ModelFallbackChain, TaskComplexity,
-};
-pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryPolicy};
 
 // Sandbox module re-exports
-pub use sandbox::{
-    Sandbox, SandboxConfig, SandboxHandle, SandboxStatus, SandboxHealth,
-    ExecRequest, ExecResult, NetworkMode, ResourceLimits,
-    AgentOutput, TokenUsage,
-};
-pub use sandbox::subprocess::SubprocessSandbox;
-pub use sandbox::pool::SandboxPool;
-pub use sandbox::file_tracker::FileTracker;
-pub use sandbox::agents::{
-    AgentAdapter, create_adapter, available_agents,
-};
 pub use sandbox::agents::claude_code::ClaudeCodeAgent;
 pub use sandbox::agents::codex::CodexAgent;
+pub use sandbox::agents::{available_agents, create_adapter, AgentAdapter};
+pub use sandbox::file_tracker::FileTracker;
+pub use sandbox::pool::SandboxPool;
+pub use sandbox::subprocess::SubprocessSandbox;
+pub use sandbox::{
+    AgentOutput, ExecRequest, ExecResult, NetworkMode, ResourceLimits, Sandbox, SandboxConfig,
+    SandboxHandle, SandboxHealth, SandboxStatus, TokenUsage,
+};
 
 // Scheduler module re-exports
 pub use scheduler::{
-    NightWindow, NightWindowError,
-    SchedulerService, ScheduleDispatcher, LoggingDispatcher, AddJobResult,
-    ScheduleStore, InMemoryScheduleStore,
-    OrchestratorDispatcher, WindowEventType,
+    AddJobResult, InMemoryScheduleStore, LoggingDispatcher, NightWindow, NightWindowError,
+    OrchestratorDispatcher, ScheduleDispatcher, ScheduleStore, SchedulerService, WindowEventType,
 };
 
 #[cfg(feature = "storage")]

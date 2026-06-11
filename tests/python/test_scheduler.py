@@ -11,15 +11,11 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from ultimate_coders.agent.scheduler import Scheduler
 from ultimate_coders.agent.scheduler_config import (
-    NightWindowConfig,
-    ScheduledTaskConfig,
     SchedulerConfig,
     load_scheduler_config,
 )
-
 
 # ── Scheduler tests ────────────────────────────────────────────────
 
@@ -110,10 +106,10 @@ class TestScheduler:
 
     def test_list_jobs(self, scheduler):
         """list_jobs should return all registered tasks."""
-        task1 = scheduler.create_cron_job(
+        scheduler.create_cron_job(
             "Task 1", "0 22 * * *", project_id="p1"
         )
-        task2 = scheduler.create_cron_job(
+        scheduler.create_cron_job(
             "Task 2", "0 23 * * *", project_id="p2"
         )
         jobs = scheduler.list_jobs()
@@ -189,10 +185,10 @@ class TestScheduler:
 
     def test_start_recovers_persisted_tasks(self, scheduler):
         """start should recover tasks from the store."""
-        task1 = scheduler.create_cron_job(
+        scheduler.create_cron_job(
             "Task 1", "0 22 * * *", project_id="p1"
         )
-        task2 = scheduler.create_one_shot_job(
+        scheduler.create_one_shot_job(
             "Task 2", "2025-01-01T00:00:00Z", project_id="p2"
         )
         assert len(scheduler.list_jobs()) == 2

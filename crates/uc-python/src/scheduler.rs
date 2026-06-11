@@ -30,9 +30,10 @@ fn engine_error_to_pyerr(err: uc_types::EngineError) -> PyErr {
         IndexingError(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
         ConnectionError(msg) => pyo3::exceptions::PyConnectionError::new_err(msg),
         TimeoutError(msg) => pyo3::exceptions::PyTimeoutError::new_err(msg),
-        RateLimited(secs) => {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Rate limited, retry after {}s", secs))
-        }
+        RateLimited(secs) => pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "Rate limited, retry after {}s",
+            secs
+        )),
         ConflictError { path, details } => {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Conflict in {}: {}", path, details))
         }
@@ -55,21 +56,16 @@ fn parse_time_str(s: &str) -> PyResult<chrono::NaiveTime> {
     }
     let hour: u32 = parts[0]
         .parse()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-            "Invalid hour in '{}'",
-            s
-        )))?;
-    let minute: u32 = parts[1]
-        .parse()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-            "Invalid minute in '{}'",
-            s
-        )))?;
-    chrono::NaiveTime::from_hms_opt(hour, minute, 0)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!(
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!("Invalid hour in '{}'", s)))?;
+    let minute: u32 = parts[1].parse().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid minute in '{}'", s))
+    })?;
+    chrono::NaiveTime::from_hms_opt(hour, minute, 0).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
             "Invalid time '{}'. Hour must be 0-23, minute must be 0-59",
             s
-        )))
+        ))
+    })
 }
 
 /// Parse an ISO 8601 datetime string to a `chrono::DateTime<Utc>`.
@@ -202,7 +198,10 @@ impl PyScheduledTask {
         let kind = if self.is_cron() {
             format!("cron={}", self.cron_expression().unwrap_or("?"))
         } else {
-            format!("one_shot_after={}", self.execute_after().unwrap_or_else(|| "N/A".to_string()))
+            format!(
+                "one_shot_after={}",
+                self.execute_after().unwrap_or_else(|| "N/A".to_string())
+            )
         };
         format!(
             "ScheduledTask(id={}, description={}, {})",
@@ -340,7 +339,9 @@ impl PySchedulerService {
     ///     PyScheduledTask with the created task details.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (description, cron_expression, project_id=None, night_window_start=None, night_window_end=None, timezone="UTC".to_string()))]
-    #[pyo3(text_signature = "(description, cron_expression, project_id=None, night_window_start=None, night_window_end=None, timezone='UTC')")]
+    #[pyo3(
+        text_signature = "(description, cron_expression, project_id=None, night_window_start=None, night_window_end=None, timezone='UTC')"
+    )]
     pub fn create_cron_job(
         &self,
         py: Python<'_>,
@@ -370,17 +371,18 @@ impl PySchedulerService {
 
         // Fetch the task back from the scheduler to return full details
         let inner2 = self.inner.clone();
-        let fetched = py
-            .allow_threads(|| async_support::block_on(inner2.get_job(&result.task_id)));
+        let fetched = py.allow_threads(|| async_support::block_on(inner2.get_job(&result.task_id)));
         Ok(fetched
             .map(PyScheduledTask::from)
-            .unwrap_or_else(|| PyScheduledTask { inner: uc_types::ScheduledTask::new(
-                "unknown".to_string(),
-                "".to_string(),
-                nw_start,
-                nw_end,
-                "UTC".to_string(),
-            ) }))
+            .unwrap_or_else(|| PyScheduledTask {
+                inner: uc_types::ScheduledTask::new(
+                    "unknown".to_string(),
+                    "".to_string(),
+                    nw_start,
+                    nw_end,
+                    "UTC".to_string(),
+                ),
+            }))
     }
 
     /// Create a one-shot delayed job.
@@ -397,7 +399,9 @@ impl PySchedulerService {
     ///     PyScheduledTask with the created task details.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (description, execute_after, project_id=None, night_window_start=None, night_window_end=None, timezone="UTC".to_string()))]
-    #[pyo3(text_signature = "(description, execute_after, project_id=None, night_window_start=None, night_window_end=None, timezone='UTC')")]
+    #[pyo3(
+        text_signature = "(description, execute_after, project_id=None, night_window_start=None, night_window_end=None, timezone='UTC')"
+    )]
     pub fn create_one_shot_job(
         &self,
         py: Python<'_>,
@@ -428,17 +432,18 @@ impl PySchedulerService {
 
         // Fetch the task back from the scheduler to return full details
         let inner2 = self.inner.clone();
-        let fetched = py
-            .allow_threads(|| async_support::block_on(inner2.get_job(&result.task_id)));
+        let fetched = py.allow_threads(|| async_support::block_on(inner2.get_job(&result.task_id)));
         Ok(fetched
             .map(PyScheduledTask::from)
-            .unwrap_or_else(|| PyScheduledTask { inner: uc_types::ScheduledTask::new(
-                "unknown".to_string(),
-                "".to_string(),
-                nw_start,
-                nw_end,
-                "UTC".to_string(),
-            ) }))
+            .unwrap_or_else(|| PyScheduledTask {
+                inner: uc_types::ScheduledTask::new(
+                    "unknown".to_string(),
+                    "".to_string(),
+                    nw_start,
+                    nw_end,
+                    "UTC".to_string(),
+                ),
+            }))
     }
 
     /// Cancel (remove) a scheduled job.
@@ -449,11 +454,9 @@ impl PySchedulerService {
     /// Returns:
     ///     True if the job was successfully cancelled.
     pub fn cancel_job(&self, py: Python<'_>, task_id: String) -> PyResult<bool> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         py.allow_threads(|| async_support::block_on(inner.remove_job(&uuid)))
             .map_err(engine_error_to_pyerr)?;
@@ -478,11 +481,9 @@ impl PySchedulerService {
     /// Returns:
     ///     PyScheduledTask if found, None otherwise.
     pub fn get_job(&self, py: Python<'_>, task_id: String) -> PyResult<Option<PyScheduledTask>> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         let job = py.allow_threads(|| async_support::block_on(inner.get_job(&uuid)));
         Ok(job.map(PyScheduledTask::from))
@@ -504,14 +505,14 @@ impl PySchedulerService {
         task_id: String,
         limit: i64,
     ) -> PyResult<Vec<PyExecutionHistory>> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         let history = py
-            .allow_threads(|| async_support::block_on(inner.get_execution_history_from_store(&uuid, limit)))
+            .allow_threads(|| {
+                async_support::block_on(inner.get_execution_history_from_store(&uuid, limit))
+            })
             .map_err(engine_error_to_pyerr)?;
         Ok(history.into_iter().map(PyExecutionHistory::from).collect())
     }
@@ -600,18 +601,23 @@ impl PySchedulerService {
 
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            let result = inner.add_cron_job(task).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .add_cron_job(task)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             // Fetch back to get full details
             let fetched = inner.get_job(&result.task_id).await;
             Ok(fetched
                 .map(PyScheduledTask::from)
-                .unwrap_or_else(|| PyScheduledTask { inner: uc_types::ScheduledTask::new(
-                    "unknown".to_string(),
-                    "".to_string(),
-                    nw_start,
-                    nw_end,
-                    "UTC".to_string(),
-                ) }))
+                .unwrap_or_else(|| PyScheduledTask {
+                    inner: uc_types::ScheduledTask::new(
+                        "unknown".to_string(),
+                        "".to_string(),
+                        nw_start,
+                        nw_end,
+                        "UTC".to_string(),
+                    ),
+                }))
         })
     }
 
@@ -643,17 +649,22 @@ impl PySchedulerService {
 
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            let result = inner.add_one_shot_job(task).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .add_one_shot_job(task)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             let fetched = inner.get_job(&result.task_id).await;
             Ok(fetched
                 .map(PyScheduledTask::from)
-                .unwrap_or_else(|| PyScheduledTask { inner: uc_types::ScheduledTask::new(
-                    "unknown".to_string(),
-                    "".to_string(),
-                    nw_start,
-                    nw_end,
-                    "UTC".to_string(),
-                ) }))
+                .unwrap_or_else(|| PyScheduledTask {
+                    inner: uc_types::ScheduledTask::new(
+                        "unknown".to_string(),
+                        "".to_string(),
+                        nw_start,
+                        nw_end,
+                        "UTC".to_string(),
+                    ),
+                }))
         })
     }
 
@@ -663,27 +674,28 @@ impl PySchedulerService {
         py: Python<'py>,
         task_id: String,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            inner.remove_job(&uuid).await.map_err(engine_error_to_pyerr)?;
+            inner
+                .remove_job(&uuid)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(true)
         })
     }
 
     /// Async version of list_jobs().
-    pub fn list_jobs_async<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn list_jobs_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let jobs = inner.list_jobs().await;
-            Ok(jobs.into_iter().map(PyScheduledTask::from).collect::<Vec<_>>())
+            Ok(jobs
+                .into_iter()
+                .map(PyScheduledTask::from)
+                .collect::<Vec<_>>())
         })
     }
 
@@ -693,11 +705,9 @@ impl PySchedulerService {
         py: Python<'py>,
         task_id: String,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             Ok(inner.get_job(&uuid).await.map(PyScheduledTask::from))
@@ -712,18 +722,19 @@ impl PySchedulerService {
         task_id: String,
         limit: i64,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let uuid = uuid::Uuid::parse_str(&task_id)
-            .map_err(|_| pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid UUID: '{}'",
-                task_id
-            )))?;
+        let uuid = uuid::Uuid::parse_str(&task_id).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID: '{}'", task_id))
+        })?;
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let history = inner
                 .get_execution_history_from_store(&uuid, limit)
                 .await
                 .map_err(engine_error_to_pyerr)?;
-            Ok(history.into_iter().map(PyExecutionHistory::from).collect::<Vec<_>>())
+            Ok(history
+                .into_iter()
+                .map(PyExecutionHistory::from)
+                .collect::<Vec<_>>())
         })
     }
 
@@ -741,16 +752,16 @@ impl PySchedulerService {
         let config = uc_types::NightWindowConfig::new(start, end, timezone);
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            inner.set_night_window(&config).await.map_err(engine_error_to_pyerr)?;
+            inner
+                .set_night_window(&config)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(())
         })
     }
 
     /// Async version of clear_night_window().
-    pub fn clear_night_window_async<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn clear_night_window_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             inner.clear_night_window().await;
@@ -759,10 +770,7 @@ impl PySchedulerService {
     }
 
     /// Async version of start().
-    pub fn start_async<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn start_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             inner.start().await.map_err(engine_error_to_pyerr)?;
@@ -771,10 +779,7 @@ impl PySchedulerService {
     }
 
     /// Async version of stop().
-    pub fn stop_async<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn stop_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             inner.stop().await.map_err(engine_error_to_pyerr)?;
@@ -783,13 +788,8 @@ impl PySchedulerService {
     }
 
     /// Async version of is_running().
-    pub fn is_running_async<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    pub fn is_running_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        future_into_py(py, async move {
-            Ok(inner.is_running().await)
-        })
+        future_into_py(py, async move { Ok(inner.is_running().await) })
     }
 }
