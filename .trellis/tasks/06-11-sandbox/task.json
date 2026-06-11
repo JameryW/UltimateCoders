@@ -3,7 +3,7 @@
   "name": "sandbox",
   "title": "默认启用 sandbox 执行模式并赋予完整权限",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

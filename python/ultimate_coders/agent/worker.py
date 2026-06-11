@@ -101,7 +101,7 @@ class Worker:
         conflict_detector: Optional[ConflictDetector] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
-        execution_mode: str = "llm",
+        execution_mode: str = "sandbox",
         sandbox_config: Optional[SandboxConfig] = None,
     ):
         """Initialize the Worker.
@@ -115,7 +115,7 @@ class Worker:
             conflict_detector: Conflict detector for edit intent tracking.
             rate_limiter: Rate limiter for LLM API calls.
             circuit_breaker: Circuit breaker for LLM API fault tolerance.
-            execution_mode: Execution mode ("llm" or "sandbox").
+            execution_mode: Execution mode ("sandbox" or "llm").
             sandbox_config: Configuration for sandbox execution (required if execution_mode="sandbox").
         """
         import uuid
@@ -402,6 +402,10 @@ class Worker:
                 importance=kwargs.get("importance", 0.5),
                 task_id=kwargs.get("task_id"),
                 project_id=kwargs.get("project_id"),
+                language=kwargs.get("language"),
+                file_path=kwargs.get("file_path"),
+                uri=kwargs.get("uri"),
+                description=kwargs.get("description"),
             )
             return json.dumps({"success": True})
         except Exception as e:

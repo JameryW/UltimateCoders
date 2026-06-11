@@ -70,6 +70,7 @@ impl AgentAdapter for ClaudeCodeAgent {
                 "json".to_string(),
                 "--max-turns".to_string(),
                 self.max_turns.to_string(),
+                "--dangerously-skip-permissions".to_string(),
             ],
             stdin: None,
             timeout_secs: config.resource_limits.max_cpu_seconds,
@@ -281,6 +282,7 @@ mod tests {
         assert!(request.args.contains(&"json".to_string()));
         assert!(request.args.contains(&"--max-turns".to_string()));
         assert!(request.args.contains(&"20".to_string()));
+        assert!(request.args.contains(&"--dangerously-skip-permissions".to_string()));
         assert_eq!(request.working_dir, "/tmp/test");
     }
 

@@ -32,11 +32,11 @@ class TestSandboxConfig:
         assert config.backend == "subprocess"
         assert config.project_path == ""
         assert config.api_key is None
-        assert config.max_cpu_seconds == 300
-        assert config.max_memory_mb == 2048
-        assert config.max_output_bytes == 10 * 1024 * 1024
-        assert config.max_file_size_mb == 50
-        assert config.network == NetworkMode.RESTRICTED
+        assert config.max_cpu_seconds == 3600
+        assert config.max_memory_mb == 8192
+        assert config.max_output_bytes == 50 * 1024 * 1024
+        assert config.max_file_size_mb == 500
+        assert config.network == NetworkMode.FULL
         assert config.warm_pool_size == 2
         assert config.max_pool_size == 10
 
@@ -66,7 +66,7 @@ class TestSandboxConfig:
         assert engine_config["project_path"] == "/tmp/project"
         assert "ANTHROPIC_API_KEY" in engine_config["env_vars"]
         assert engine_config["env_vars"]["ANTHROPIC_API_KEY"] == "sk-test"
-        assert engine_config["network"] == NetworkMode.RESTRICTED
+        assert engine_config["network"] == NetworkMode.FULL
 
     def test_to_engine_config_codex(self):
         config = SandboxConfig(
@@ -151,6 +151,7 @@ class TestClaudeCodeAdapter:
         assert "Fix the bug" in request["args"]
         assert "--output-format" in request["args"]
         assert "json" in request["args"]
+        assert "--dangerously-skip-permissions" in request["args"]
         assert request["working_dir"] == "/tmp/project"
 
     def test_parse_output_success(self):
@@ -341,9 +342,9 @@ class TestWorkerSandboxMode:
 
     def test_worker_init_llm_mode_default(self):
         from ultimate_coders.agent.worker import Worker
-        worker = Worker(worker_id="w-llm")
-        assert worker.execution_mode == "llm"
-        assert worker._sandbox_manager is None
+        worker = Worker(worker_id="w-sandbox")
+        assert worker.execution_mode == "sandbox"
+        assert worker._sandbox_manager is not None
 
     @pytest.mark.asyncio
     async def test_worker_sandbox_execute_no_manager(self):
