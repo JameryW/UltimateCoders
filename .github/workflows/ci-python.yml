@@ -1,18 +1,21 @@
 name: Python CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - "python/**"
       - "tests/**"
       - "pyproject.toml"
+      - ".github/workflows/ci-python.yml"
   pull_request:
     branches: [main]
     paths:
       - "python/**"
       - "tests/**"
       - "pyproject.toml"
+      - ".github/workflows/ci-python.yml"
 
 jobs:
   lint:
