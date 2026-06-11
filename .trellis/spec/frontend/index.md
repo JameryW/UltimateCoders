@@ -1,12 +1,21 @@
-# Frontend Development Guidelines
+# Python Agent Layer Guidelines
 
-> Best practices for frontend development in this project.
+> Conventions for the Python agent layer -- Orchestrator, Worker, Memory, and Search.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
+The "frontend" in this project is the **Python Agent Layer** -- the Orchestrator-Worker system that decomposes tasks, coordinates workers, and interacts with the Rust engine via the Engine abstraction.
+
+**Architecture**:
+- **Orchestrator**: Task decomposition + worker coordination (LLM-powered)
+- **Worker**: Subtask execution with LLM tool-calling + sandbox mode
+- **Memory**: `ShortTermMemory` / `LongTermMemory` wrappers delegating to Engine
+- **Search**: `SearchQuery` builder + `SearchResult` dataclasses
+- **Engine**: Factory class that switches between local (PyO3) and remote (gRPC) mode
+
+The Python layer does not access storage backends directly. All storage operations go through the Engine, which delegates to the Rust core.
 
 ---
 
@@ -14,26 +23,13 @@ This directory contains guidelines for frontend development. Fill in each file w
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [Directory Structure](./directory-structure.md) | Python package layout | Filled |
+| [Component Guidelines](./component-guidelines.md) | Dataclass, Enum, Builder, Adapter patterns | Filled |
+| [Hook Guidelines](./hook-guidelines.md) | Callback, event sourcing, checkpoint patterns | Filled |
+| [State Management](./state-management.md) | Task state machine, in-memory state, computed properties | Filled |
+| [Quality Guidelines](./quality-guidelines.md) | pytest patterns, mocking, test organization | Filled |
+| [Type Safety](./type-safety.md) | Type annotations, Optional/List/Dict, Any for engine | Filled |
 
 ---
 
-## How to Fill These Guidelines
-
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+**Language**: All documentation is written in **English**.
