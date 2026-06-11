@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = "0.10"
 uuid = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
@@ -37,9 +38,16 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true
 # NATS
 async-nats = { workspace = true, optional = true }
 
+# Scheduler dependencies (some always needed for night_window / cron validation)
+croner = "3"
+
+# Scheduler (feature-gated — enables tokio-cron-scheduler runtime)
+tokio-cron-scheduler = { version = "0.15", optional = true }
+
 [features]
 default = ["storage", "indexing", "messaging"]
 storage = ["tikv-client", "qdrant-client", "sqlx"]
 indexing = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "imara-diff", "git2", "regex", "reqwest"]
 messaging = ["async-nats"]
+scheduler = ["tokio-cron-scheduler"]
 docker = []

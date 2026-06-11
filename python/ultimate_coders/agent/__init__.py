@@ -51,6 +51,13 @@ from ultimate_coders.agent.sandbox import (
     available_agents,
     create_adapter,
 )
+from ultimate_coders.agent.scheduler import Scheduler
+from ultimate_coders.agent.scheduler_config import (
+    SchedulerConfig,
+    ScheduledTaskConfig,
+    NightWindowConfig,
+    load_scheduler_config,
+)
 
 __all__ = [
     "Orchestrator",
@@ -102,4 +109,10 @@ __all__ = [
     "TokenUsage",
     "available_agents",
     "create_adapter",
+    # Scheduler
+    "Scheduler",
+    "SchedulerConfig",
+    "ScheduledTaskConfig",
+    "NightWindowConfig",
+    "load_scheduler_config",
 ]

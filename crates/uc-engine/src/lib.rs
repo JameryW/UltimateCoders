@@ -49,5 +49,15 @@ pub use sandbox::agents::{
 pub use sandbox::agents::claude_code::ClaudeCodeAgent;
 pub use sandbox::agents::codex::CodexAgent;
 
+// Scheduler module re-exports
+pub use scheduler::{
+    NightWindow, NightWindowError,
+    SchedulerService, ScheduleDispatcher, LoggingDispatcher, AddJobResult,
+    ScheduleStore, InMemoryScheduleStore,
+};
+
+#[cfg(feature = "storage")]
+pub use scheduler::PostgresScheduleStore;
+
 #[cfg(feature = "docker")]
 pub use sandbox::docker::DockerSandbox;

@@ -4,6 +4,7 @@
 //! LocalEngine (PyO3 FFI) and GrpcEngineClient (tonic) at construction time.
 
 mod engine;
+mod scheduler;
 mod types;
 mod async_support;
 
@@ -28,5 +29,9 @@ fn _uc_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::PyIndexResponse>()?;
     m.add_class::<types::PyRepoIndexState>()?;
     m.add_class::<types::PyIndexState>()?;
+    // Scheduler types
+    m.add_class::<scheduler::PySchedulerService>()?;
+    m.add_class::<scheduler::PyScheduledTask>()?;
+    m.add_class::<scheduler::PyExecutionHistory>()?;
     Ok(())
 }

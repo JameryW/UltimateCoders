@@ -268,6 +268,187 @@ class Engine:
             query, scope_type, project_id, max_results, min_score
         )
 
+    # ── Async methods ──────────────────────────────────────────
+
+    async def health_async(self) -> object:
+        """Async version of health(). Returns full HealthStatus object.
+
+        Usage:
+            status = await engine.health_async()
+        """
+        return await self._engine.health_async()
+
+    async def search_async(self, query) -> object:
+        """Async version of search().
+
+        Args:
+            query: A SearchQuery object (builder), PySearchQuery (Rust type),
+                   or dict with search parameters.
+
+        Usage:
+            result = await engine.search_async(query)
+        """
+        py_query = self._convert_search_query(query)
+        return await self._engine.search_async(py_query)
+
+    async def index_repo_async(
+        self,
+        repo_id: str,
+        local_path: str,
+        remote_url: Optional[str] = None,
+        default_branch: str = "main",
+        force_full: bool = False,
+    ) -> object:
+        """Async version of index_repo().
+
+        Args:
+            repo_id: Repository identifier.
+            local_path: Local path to the repository clone.
+            remote_url: Git remote URL (optional).
+            default_branch: Default branch name (default: "main").
+            force_full: Force full reindex (default: False).
+
+        Usage:
+            response = await engine.index_repo_async("my-repo", "/path/to/repo")
+        """
+        return await self._engine.index_repo_async(
+            repo_id, local_path, remote_url, default_branch, force_full
+        )
+
+    async def read_memory_async(
+        self,
+        key_scope: str,
+        key: str,
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        include_semantic: bool = False,
+    ) -> Optional[object]:
+        """Async version of read_memory().
+
+        Args:
+            key_scope: "task", "project", or "global"
+            key: The memory key name.
+            task_id: Task ID (required if key_scope="task").
+            project_id: Project ID (required if key_scope="project").
+            include_semantic: Also search long-term memory semantically.
+
+        Usage:
+            entry = await engine.read_memory_async("task", "decisions", task_id="t1")
+        """
+        return await self._engine.read_memory_async(
+            key_scope, key, task_id, project_id, include_semantic
+        )
+
+    async def write_memory_async(
+        self,
+        key_scope: str,
+        key: str,
+        content: str,
+        content_type: str = "text",
+        source_agent: str = "python",
+        importance: float = 0.5,
+        tags: Optional[list] = None,
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        language: Optional[str] = None,
+        file_path: Optional[str] = None,
+        uri: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> object:
+        """Async version of write_memory().
+
+        Args:
+            key_scope: "task", "project", or "global"
+            key: The memory key name.
+            content: The content to store.
+            content_type: "text", "structured", "code", "diff", or "reference".
+            source_agent: Agent that created this memory.
+            importance: Importance score (0.0-1.0).
+            tags: Tags for categorization.
+            task_id: Task ID (required if key_scope="task").
+            project_id: Project ID (required if key_scope="project").
+            language: Language for content_type="code".
+            file_path: File path for content_type="diff".
+            uri: URI for content_type="reference".
+            description: Description for content_type="reference".
+
+        Usage:
+            entry = await engine.write_memory_async(
+                "task", "decisions", "Use PostgreSQL", task_id="t1"
+            )
+        """
+        return await self._engine.write_memory_async(
+            key_scope, key, content, content_type, source_agent,
+            importance, tags, task_id, project_id,
+            language, file_path, uri, description,
+        )
+
+    async def delete_memory_async(
+        self,
+        key_scope: str,
+        key: str,
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> None:
+        """Async version of delete_memory().
+
+        Args:
+            key_scope: "task", "project", or "global"
+            key: The memory key name.
+            task_id: Task ID (required if key_scope="task").
+            project_id: Project ID (required if key_scope="project").
+
+        Usage:
+            await engine.delete_memory_async("task", "decisions", task_id="t1")
+        """
+        await self._engine.delete_memory_async(key_scope, key, task_id, project_id)
+
+    async def search_memory_async(
+        self,
+        query: str,
+        scope_type: str = "all",
+        project_id: Optional[str] = None,
+        max_results: int = 20,
+        min_score: float = 0.5,
+    ) -> list:
+        """Async version of search_memory().
+
+        Args:
+            query: Search query text.
+            scope_type: "project", "global", or "all".
+            project_id: Project ID (required if scope_type="project").
+            max_results: Maximum number of results.
+            min_score: Minimum similarity score (0.0-1.0).
+
+        Usage:
+            results = await engine.search_memory_async("database patterns")
+        """
+        return await self._engine.search_memory_async(
+            query, scope_type, project_id, max_results, min_score
+        )
+
+    async def get_index_state_async(self, repo_id: str) -> object:
+        """Async version of get_index_state().
+
+        Args:
+            repo_id: Repository identifier.
+
+        Usage:
+            state = await engine.get_index_state_async("my-repo")
+        """
+        return await self._engine.get_index_state_async(repo_id)
+
+    async def remove_index_async(self, repo_id: str) -> None:
+        """Async version of remove_index().
+
+        Args:
+            repo_id: Repository identifier.
+
+        Usage:
+            await engine.remove_index_async("my-repo")
+        """
+        await self._engine.remove_index_async(repo_id)
+
 
 def create_engine(
     mode: str = "local",

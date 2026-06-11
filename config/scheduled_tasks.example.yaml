@@ -1,0 +1,33 @@
+# Scheduled tasks configuration for UltimateCoders
+#
+# This file defines system maintenance tasks that are loaded at startup.
+# Tasks are scheduled using cron expressions and executed within the
+# configured night window.
+#
+# Usage:
+#   scheduler = Scheduler()
+#   scheduler.load_config("config/scheduled_tasks.yaml")
+
+night_window:
+  start: "22:00"
+  end: "06:00"
+  timezone: "Asia/Shanghai"
+
+tasks:
+  - description: "Rebuild search index for project-alpha"
+    cron_expression: "0 22 * * *"  # Every day at 22:00
+    project_id: "project-alpha"
+
+  - description: "Run code review for project-beta"
+    cron_expression: "0 23 * * 1-5"  # Weekdays at 23:00
+    project_id: "project-beta"
+
+  - description: "Consolidate knowledge base"
+    cron_expression: "0 2 * * 0"  # Sunday at 02:00
+
+  - description: "Weekly dependency audit"
+    cron_expression: "0 3 * * 1"  # Monday at 03:00
+    project_id: "project-alpha"
+    night_window_start: "02:00"
+    night_window_end: "07:00"
+    timezone: "UTC"

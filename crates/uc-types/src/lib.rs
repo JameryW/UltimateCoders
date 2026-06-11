@@ -9,6 +9,7 @@ pub mod search;
 pub mod index;
 pub mod agent;
 pub mod engine;
+pub mod scheduler;
 
 // Re-exports for convenience
 pub use async_trait::async_trait;
@@ -26,4 +27,7 @@ pub use search::{
 pub use agent::{
     AgentEvent, AgentEventPayload, ChangeType, FileChange, Subtask, SubtaskResult,
     SubtaskStatus, Task, TaskId, TaskStatus, WorkerId, WorkerInfo,
+};
+pub use scheduler::{
+    ExecutionHistory, ExecutionStatus, NightWindowConfig, ScheduledTask,
 };

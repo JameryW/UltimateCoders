@@ -4,7 +4,10 @@
 //! Uses pyo3-async-runtimes for async methods and py.allow_threads() for
 //! sync wrappers that block on the tokio runtime.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
+use pyo3_async_runtimes::tokio::future_into_py;
 
 use uc_types::EngineApi;
 
@@ -19,7 +22,7 @@ use crate::types::*;
 #[pyclass]
 pub struct PyEngine {
     mode: String,
-    inner: Box<dyn EngineApi + Send + Sync>,
+    inner: Arc<dyn EngineApi + Send + Sync>,
 }
 
 /// Convert EngineError to a Python exception.
@@ -48,6 +51,62 @@ fn engine_error_to_pyerr(err: uc_types::EngineError) -> PyErr {
     }
 }
 
+/// Build a MemoryKey from scope parameters.
+///
+/// Shared by both sync and async read/write/delete methods.
+fn build_memory_key(
+    key_scope: &str,
+    key: String,
+    task_id: Option<String>,
+    project_id: Option<String>,
+) -> PyResult<uc_types::MemoryKey> {
+    match key_scope {
+        "task" => Ok(uc_types::MemoryKey::Task {
+            task_id: task_id.unwrap_or_default(),
+            key,
+        }),
+        "project" => Ok(uc_types::MemoryKey::Project {
+            project_id: project_id.unwrap_or_default(),
+            key,
+        }),
+        "global" => Ok(uc_types::MemoryKey::Global { key }),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "key_scope must be 'task', 'project', or 'global'",
+        )),
+    }
+}
+
+/// Build MemoryContent from content type and value parameters.
+///
+/// Shared by both sync and async write methods.
+fn build_memory_content(
+    content_type: &str,
+    content: String,
+    language: Option<String>,
+    file_path: Option<String>,
+    uri: Option<String>,
+    description: Option<String>,
+) -> uc_types::MemoryContent {
+    match content_type {
+        "structured" => uc_types::MemoryContent::Structured(
+            serde_json::from_str(&content).unwrap_or(serde_json::Value::String(content)),
+        ),
+        "code" => uc_types::MemoryContent::Code {
+            language: language.unwrap_or_default(),
+            code: content,
+        },
+        "diff" => uc_types::MemoryContent::Diff {
+            file_path: file_path.unwrap_or_default(),
+            diff: content,
+        },
+        "reference" => uc_types::MemoryContent::Reference {
+            uri: uri.unwrap_or_default(),
+            description: description.unwrap_or_default(),
+        },
+        _ => uc_types::MemoryContent::Text(content),
+    }
+}
+
 #[pymethods]
 impl PyEngine {
     /// Create a new engine instance.
@@ -61,7 +120,7 @@ impl PyEngine {
         match mode {
             "local" => {
                 let engine = uc_engine::LocalEngine::new_fallback();
-                let inner: Box<dyn EngineApi + Send + Sync> = Box::new(engine);
+                let inner: Arc<dyn EngineApi + Send + Sync> = Arc::new(engine);
                 Ok(PyEngine {
                     mode: mode.to_string(),
                     inner,
@@ -79,7 +138,7 @@ impl PyEngine {
                     uc_grpc::client::GrpcEngineClient::connect(endpoint),
                 )
                 .map_err(engine_error_to_pyerr)?;
-                let inner: Box<dyn EngineApi + Send + Sync> = Box::new(client);
+                let inner: Arc<dyn EngineApi + Send + Sync> = Arc::new(client);
                 Ok(PyEngine {
                     mode: mode.to_string(),
                     inner,
@@ -92,13 +151,14 @@ impl PyEngine {
         }
     }
 
+    // ── Sync methods ──────────────────────────────────────────
+
     /// Check engine health. Returns full health status object.
     pub fn health(&self, py: Python<'_>) -> PyResult<PyHealthStatus> {
-        let inner = &self.inner;
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.health())
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.health()))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
 
@@ -107,12 +167,11 @@ impl PyEngine {
     /// Args:
     ///     query: SearchQuery object
     pub fn search(&self, py: Python<'_>, query: PySearchQuery) -> PyResult<PySearchResult> {
-        let inner = &self.inner;
+        let inner = self.inner.clone();
         let uc_query: uc_types::SearchQuery = query.into();
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.search(uc_query))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.search(uc_query)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
 
@@ -134,7 +193,7 @@ impl PyEngine {
         default_branch: String,
         force_full: bool,
     ) -> PyResult<PyIndexResponse> {
-        let inner = &self.inner;
+        let inner = self.inner.clone();
         let request = uc_types::IndexRequest {
             repo: uc_types::RepoSpec {
                 repo_id,
@@ -144,43 +203,39 @@ impl PyEngine {
             },
             force_full,
         };
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.index_repo(request))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.index_repo(request)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
 
     /// Get the current index state for a repository.
     pub fn get_index_state(&self, py: Python<'_>, repo_id: String) -> PyResult<PyRepoIndexState> {
-        let inner = &self.inner;
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.get_index_state(&repo_id))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.get_index_state(&repo_id)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
 
     /// Get detailed index state for a repository (includes health and version info).
-    pub fn get_detailed_index_state(&self, py: Python<'_>, repo_id: String) -> PyResult<PyIndexState> {
-        let inner = &self.inner;
-        // get_index_state returns RepoIndexState; we convert to IndexState equivalent
-        // by delegating through the engine. Since EngineApi only provides get_index_state,
-        // we use that and enhance it with fallback defaults for the detailed fields.
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.get_index_state(&repo_id))
-        })
-        .map_err(engine_error_to_pyerr)?;
+    pub fn get_detailed_index_state(
+        &self,
+        py: Python<'_>,
+        repo_id: String,
+    ) -> PyResult<PyIndexState> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.get_index_state(&repo_id)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(PyIndexState::from_repo_index_state(result))
     }
 
     /// Remove a repository's index.
     pub fn remove_index(&self, py: Python<'_>, repo_id: String) -> PyResult<()> {
-        let inner = &self.inner;
-        py.allow_threads(|| {
-            async_support::block_on(inner.remove_index(&repo_id))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let inner = self.inner.clone();
+        py.allow_threads(|| async_support::block_on(inner.remove_index(&repo_id)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(())
     }
 
@@ -202,31 +257,15 @@ impl PyEngine {
         project_id: Option<String>,
         include_semantic: bool,
     ) -> PyResult<Option<PyMemoryEntry>> {
-        let inner = &self.inner;
-        let mem_key = match key_scope.as_str() {
-            "task" => uc_types::MemoryKey::Task {
-                task_id: task_id.unwrap_or_default(),
-                key,
-            },
-            "project" => uc_types::MemoryKey::Project {
-                project_id: project_id.unwrap_or_default(),
-                key,
-            },
-            "global" => uc_types::MemoryKey::Global { key },
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "key_scope must be 'task', 'project', or 'global'",
-                ))
-            }
-        };
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
         let request = uc_types::MemoryReadRequest {
             key: mem_key,
             include_semantic,
         };
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.read_memory(request))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.read_memory(request)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.map(Into::into))
     }
 
@@ -265,41 +304,9 @@ impl PyEngine {
         uri: Option<String>,
         description: Option<String>,
     ) -> PyResult<PyMemoryEntry> {
-        let inner = &self.inner;
-        let mem_key = match key_scope.as_str() {
-            "task" => uc_types::MemoryKey::Task {
-                task_id: task_id.unwrap_or_default(),
-                key,
-            },
-            "project" => uc_types::MemoryKey::Project {
-                project_id: project_id.unwrap_or_default(),
-                key,
-            },
-            "global" => uc_types::MemoryKey::Global { key },
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "key_scope must be 'task', 'project', or 'global'",
-                ))
-            }
-        };
-        let mem_content = match content_type.as_str() {
-            "structured" => uc_types::MemoryContent::Structured(
-                serde_json::from_str(&content).unwrap_or(serde_json::Value::String(content)),
-            ),
-            "code" => uc_types::MemoryContent::Code {
-                language: language.unwrap_or_default(),
-                code: content,
-            },
-            "diff" => uc_types::MemoryContent::Diff {
-                file_path: file_path.unwrap_or_default(),
-                diff: content,
-            },
-            "reference" => uc_types::MemoryContent::Reference {
-                uri: uri.unwrap_or_default(),
-                description: description.unwrap_or_default(),
-            },
-            _ => uc_types::MemoryContent::Text(content),
-        };
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        let mem_content = build_memory_content(&content_type, content, language, file_path, uri, description);
         let request = uc_types::MemoryWriteRequest {
             key: mem_key,
             content: mem_content,
@@ -310,10 +317,9 @@ impl PyEngine {
                 embedding: None,
             },
         };
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.write_memory(request))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.write_memory(request)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
 
@@ -333,27 +339,10 @@ impl PyEngine {
         task_id: Option<String>,
         project_id: Option<String>,
     ) -> PyResult<()> {
-        let inner = &self.inner;
-        let mem_key = match key_scope.as_str() {
-            "task" => uc_types::MemoryKey::Task {
-                task_id: task_id.unwrap_or_default(),
-                key,
-            },
-            "project" => uc_types::MemoryKey::Project {
-                project_id: project_id.unwrap_or_default(),
-                key,
-            },
-            "global" => uc_types::MemoryKey::Global { key },
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "key_scope must be 'task', 'project', or 'global'",
-                ))
-            }
-        };
-        py.allow_threads(|| {
-            async_support::block_on(inner.delete_memory(&mem_key))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        py.allow_threads(|| async_support::block_on(inner.delete_memory(&mem_key)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(())
     }
 
@@ -375,7 +364,7 @@ impl PyEngine {
         max_results: u32,
         min_score: f32,
     ) -> PyResult<Vec<PyMemorySearchResult>> {
-        let inner = &self.inner;
+        let inner = self.inner.clone();
         let scope = match scope_type.as_str() {
             "project" => uc_types::MemorySearchScope::Project {
                 project_id: project_id.unwrap_or_default(),
@@ -389,10 +378,9 @@ impl PyEngine {
             max_results,
             min_score,
         };
-        let result = py.allow_threads(|| {
-            async_support::block_on(inner.search_memory(request))
-        })
-        .map_err(engine_error_to_pyerr)?;
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.search_memory(request)))
+            .map_err(engine_error_to_pyerr)?;
         Ok(result.results.into_iter().map(Into::into).collect())
     }
 
@@ -400,5 +388,199 @@ impl PyEngine {
     #[getter]
     pub fn mode(&self) -> &str {
         &self.mode
+    }
+
+    // ── Async methods ─────────────────────────────────────────
+
+    /// Async version of health(). Returns full HealthStatus.
+    pub fn health_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner.health().await.map_err(engine_error_to_pyerr)?;
+            Ok(PyHealthStatus::from(result))
+        })
+    }
+
+    /// Async version of search().
+    pub fn search_async<'py>(
+        &self,
+        py: Python<'py>,
+        query: PySearchQuery,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let uc_query: uc_types::SearchQuery = query.into();
+        future_into_py(py, async move {
+            let result = inner.search(uc_query).await.map_err(engine_error_to_pyerr)?;
+            Ok(PySearchResult::from(result))
+        })
+    }
+
+    /// Async version of index_repo().
+    #[pyo3(signature = (repo_id, local_path, remote_url=None, default_branch="main".to_string(), force_full=false))]
+    pub fn index_repo_async<'py>(
+        &self,
+        py: Python<'py>,
+        repo_id: String,
+        local_path: String,
+        remote_url: Option<String>,
+        default_branch: String,
+        force_full: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let request = uc_types::IndexRequest {
+                repo: uc_types::RepoSpec {
+                    repo_id,
+                    remote_url: remote_url.unwrap_or_default(),
+                    default_branch,
+                    local_path: Some(local_path),
+                },
+                force_full,
+            };
+            let result = inner.index_repo(request).await.map_err(engine_error_to_pyerr)?;
+            Ok(PyIndexResponse::from(result))
+        })
+    }
+
+    /// Async version of read_memory().
+    #[pyo3(signature = (key_scope, key, task_id=None, project_id=None, include_semantic=false))]
+    pub fn read_memory_async<'py>(
+        &self,
+        py: Python<'py>,
+        key_scope: String,
+        key: String,
+        task_id: Option<String>,
+        project_id: Option<String>,
+        include_semantic: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        let request = uc_types::MemoryReadRequest {
+            key: mem_key,
+            include_semantic,
+        };
+        future_into_py(py, async move {
+            let result = inner.read_memory(request).await.map_err(engine_error_to_pyerr)?;
+            Ok(result.map(PyMemoryEntry::from))
+        })
+    }
+
+    /// Async version of write_memory().
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (key_scope, key, content, content_type="text".to_string(), source_agent="python".to_string(), importance=0.5, tags=None, task_id=None, project_id=None, language=None, file_path=None, uri=None, description=None))]
+    pub fn write_memory_async<'py>(
+        &self,
+        py: Python<'py>,
+        key_scope: String,
+        key: String,
+        content: String,
+        content_type: String,
+        source_agent: String,
+        importance: f32,
+        tags: Option<Vec<String>>,
+        task_id: Option<String>,
+        project_id: Option<String>,
+        language: Option<String>,
+        file_path: Option<String>,
+        uri: Option<String>,
+        description: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        let mem_content =
+            build_memory_content(&content_type, content, language, file_path, uri, description);
+        let request = uc_types::MemoryWriteRequest {
+            key: mem_key,
+            content: mem_content,
+            metadata: uc_types::MemoryMetadata {
+                source_agent,
+                importance,
+                tags: tags.unwrap_or_default(),
+                embedding: None,
+            },
+        };
+        future_into_py(py, async move {
+            let result = inner.write_memory(request).await.map_err(engine_error_to_pyerr)?;
+            Ok(PyMemoryEntry::from(result))
+        })
+    }
+
+    /// Async version of delete_memory().
+    #[pyo3(signature = (key_scope, key, task_id=None, project_id=None))]
+    pub fn delete_memory_async<'py>(
+        &self,
+        py: Python<'py>,
+        key_scope: String,
+        key: String,
+        task_id: Option<String>,
+        project_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        future_into_py(py, async move {
+            inner.delete_memory(&mem_key).await.map_err(engine_error_to_pyerr)?;
+            Ok(())
+        })
+    }
+
+    /// Async version of search_memory().
+    #[pyo3(signature = (query, scope_type="all".to_string(), project_id=None, max_results=20, min_score=0.5))]
+    pub fn search_memory_async<'py>(
+        &self,
+        py: Python<'py>,
+        query: String,
+        scope_type: String,
+        project_id: Option<String>,
+        max_results: u32,
+        min_score: f32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let scope = match scope_type.as_str() {
+            "project" => uc_types::MemorySearchScope::Project {
+                project_id: project_id.unwrap_or_default(),
+            },
+            "global" => uc_types::MemorySearchScope::Global,
+            _ => uc_types::MemorySearchScope::All,
+        };
+        let request = uc_types::MemorySearchRequest {
+            query,
+            scope,
+            max_results,
+            min_score,
+        };
+        future_into_py(py, async move {
+            let result = inner.search_memory(request).await.map_err(engine_error_to_pyerr)?;
+            Ok(result
+                .results
+                .into_iter()
+                .map(PyMemorySearchResult::from)
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// Async version of get_index_state().
+    pub fn get_index_state_async<'py>(
+        &self,
+        py: Python<'py>,
+        repo_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner.get_index_state(&repo_id).await.map_err(engine_error_to_pyerr)?;
+            Ok(PyRepoIndexState::from(result))
+        })
+    }
+
+    /// Async version of remove_index().
+    pub fn remove_index_async<'py>(
+        &self,
+        py: Python<'py>,
+        repo_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            inner.remove_index(&repo_id).await.map_err(engine_error_to_pyerr)?;
+            Ok(())
+        })
     }
 }

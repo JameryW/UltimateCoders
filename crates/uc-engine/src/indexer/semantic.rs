@@ -350,6 +350,7 @@ fn blake3_embedding(text: &str, dimensions: usize) -> Vec<f32> {
 }
 
 /// Generate a small random jitter for backoff (0-500ms).
+#[allow(dead_code)]
 fn rand_jitter_ms() -> u64 {
     // Simple deterministic jitter based on current time
     // (good enough for backoff; no need for a full RNG dependency)
