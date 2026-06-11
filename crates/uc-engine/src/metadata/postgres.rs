@@ -778,6 +778,40 @@ impl PostgresMetadataStore {
         Ok(count)
     }
 
+    /// Delete all symbols and references for a specific file within a repository.
+    pub async fn delete_symbols_for_file(&self, repo_id: &str, file_path: &str) -> Result<(), EngineError> {
+        #[cfg(feature = "storage")]
+        if let Some(pool) = &self.pool {
+            // Delete references first (they reference symbols)
+            sqlx::query("DELETE FROM references WHERE repo_id = $1 AND file_path = $2")
+                .bind(repo_id)
+                .bind(file_path)
+                .execute(pool.as_ref())
+                .await
+                .map_err(|e| EngineError::ConnectionError(format!("References delete for file error: {}", e)))?;
+
+            sqlx::query("DELETE FROM symbols WHERE repo_id = $1 AND file_path = $2")
+                .bind(repo_id)
+                .bind(file_path)
+                .execute(pool.as_ref())
+                .await
+                .map_err(|e| EngineError::ConnectionError(format!("Symbols delete for file error: {}", e)))?;
+        } else {
+            let mut fallback = self.fallback.write().await;
+            fallback.references.retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
+            fallback.symbols.retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
+        }
+
+        #[cfg(not(feature = "storage"))]
+        {
+            let mut fallback = self.fallback.write().await;
+            fallback.references.retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
+            fallback.symbols.retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
+        }
+
+        Ok(())
+    }
+
     /// Delete all symbols for a repository (used during reindex).
     pub async fn delete_symbols_for_repo(&self, repo_id: &str) -> Result<(), EngineError> {
         #[cfg(feature = "storage")]
@@ -1049,5 +1083,55 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Config");
+    }
+
+    #[tokio::test]
+    async fn test_fallback_delete_symbols_for_file() {
+        let store = PostgresMetadataStore::new_fallback();
+
+        let symbols = vec![
+            SymbolInsert {
+                file_path: "src/main.rs".to_string(),
+                name: "main".to_string(),
+                kind: SymbolKind::Function,
+                start_line: 1,
+                start_col: 0,
+                end_line: 10,
+                end_col: 1,
+                language: "rust".to_string(),
+                content_hash: "abc".to_string(),
+            },
+            SymbolInsert {
+                file_path: "src/lib.rs".to_string(),
+                name: "Config".to_string(),
+                kind: SymbolKind::Struct,
+                start_line: 5,
+                start_col: 0,
+                end_line: 20,
+                end_col: 1,
+                language: "rust".to_string(),
+                content_hash: "def".to_string(),
+            },
+        ];
+
+        store.insert_symbols("test-repo", symbols).await.unwrap();
+
+        // Delete symbols for just main.rs
+        store.delete_symbols_for_file("test-repo", "src/main.rs").await.unwrap();
+
+        // main.rs symbols should be gone
+        let results_main = store
+            .search_symbols("main", Some("test-repo"), None, 10)
+            .await
+            .unwrap();
+        assert!(results_main.is_empty());
+
+        // lib.rs symbols should remain
+        let results_lib = store
+            .search_symbols("Config", Some("test-repo"), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(results_lib.len(), 1);
+        assert_eq!(results_lib[0].file_path, "src/lib.rs");
     }
 }

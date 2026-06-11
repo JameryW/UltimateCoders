@@ -628,6 +628,13 @@ impl SemanticIndexer {
         Ok(results)
     }
 
+    /// Remove all embeddings for a specific file within a repository.
+    pub async fn remove_file(&self, repo_id: &str, file_path: &str) -> Result<(), EngineError> {
+        let mut fallback = self.fallback.write().await;
+        fallback.retain(|f| !(f.repo_id == repo_id && f.file_path == file_path));
+        Ok(())
+    }
+
     /// Remove all embeddings for a repository.
     pub async fn remove_repo(&self, repo_id: &str) -> Result<(), EngineError> {
         let mut fallback = self.fallback.write().await;
@@ -996,6 +1003,90 @@ mod tests {
         // After removal, fallback should be empty for that repo
         let fallback = indexer.fallback.read().await;
         assert!(fallback.iter().all(|f| f.repo_id != "rm-repo"));
+    }
+
+    #[tokio::test]
+    async fn test_semantic_indexer_remove_file() {
+        let embedding_service = Arc::new(EmbeddingService::new_fallback());
+        let indexer = SemanticIndexer::new(embedding_service);
+        let long_term = crate::memory::long_term::LongTermMemory::new_fallback();
+
+        let chunks = vec![
+            CodeChunk {
+                id: "chunk-f1".to_string(),
+                repo_id: "rm-repo".to_string(),
+                file_path: "lib.rs".to_string(),
+                start_line: 1,
+                end_line: 5,
+                content: "fn helper() {}".to_string(),
+                language: "rust".to_string(),
+                symbol_name: Some("helper".to_string()),
+                symbol_kind: Some("function".to_string()),
+                parent_symbol: None,
+                chunk_type: ChunkType::Symbol,
+                content_hash: "abc".to_string(),
+            },
+            CodeChunk {
+                id: "chunk-f2".to_string(),
+                repo_id: "rm-repo".to_string(),
+                file_path: "main.rs".to_string(),
+                start_line: 1,
+                end_line: 3,
+                content: "fn main() {}".to_string(),
+                language: "rust".to_string(),
+                symbol_name: Some("main".to_string()),
+                symbol_kind: Some("function".to_string()),
+                parent_symbol: None,
+                chunk_type: ChunkType::Symbol,
+                content_hash: "def".to_string(),
+            },
+        ];
+
+        indexer.index_chunks(&chunks, &long_term).await.unwrap();
+
+        // Manually add entries to the local fallback store to verify remove_file works.
+        // (index_chunks may store data in LongTermMemory instead of fallback, so we
+        // inject fallback entries directly to test the removal logic.)
+        {
+            let mut fallback = indexer.fallback.write().await;
+            fallback.push(FallbackCodeEmbedding {
+                point_id: "fb-1".to_string(),
+                vector: vec![0.1; 1024],
+                repo_id: "rm-repo".to_string(),
+                file_path: "lib.rs".to_string(),
+                start_line: 1,
+                end_line: 5,
+                language: "rust".to_string(),
+                symbol_name: Some("helper".to_string()),
+                symbol_kind: Some("function".to_string()),
+                parent_symbol: None,
+                chunk_type: "symbol".to_string(),
+                content_hash: "abc".to_string(),
+                content: "fn helper() {}".to_string(),
+            });
+            fallback.push(FallbackCodeEmbedding {
+                point_id: "fb-2".to_string(),
+                vector: vec![0.2; 1024],
+                repo_id: "rm-repo".to_string(),
+                file_path: "main.rs".to_string(),
+                start_line: 1,
+                end_line: 3,
+                language: "rust".to_string(),
+                symbol_name: Some("main".to_string()),
+                symbol_kind: Some("function".to_string()),
+                parent_symbol: None,
+                chunk_type: "symbol".to_string(),
+                content_hash: "def".to_string(),
+                content: "fn main() {}".to_string(),
+            });
+        }
+
+        indexer.remove_file("rm-repo", "lib.rs").await.unwrap();
+
+        // After removal, lib.rs should be gone but main.rs should remain
+        let fallback = indexer.fallback.read().await;
+        assert!(fallback.iter().all(|f| !(f.repo_id == "rm-repo" && f.file_path == "lib.rs")));
+        assert!(fallback.iter().any(|f| f.repo_id == "rm-repo" && f.file_path == "main.rs"));
     }
 
     #[cfg(feature = "indexing")]
