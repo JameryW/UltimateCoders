@@ -462,22 +462,11 @@ mod postgres {
     }
 
     fn execution_status_to_str(status: &uc_types::ExecutionStatus) -> &'static str {
-        match status {
-            uc_types::ExecutionStatus::Completed => "Completed",
-            uc_types::ExecutionStatus::Failed => "Failed",
-            uc_types::ExecutionStatus::Skipped => "Skipped",
-            uc_types::ExecutionStatus::Deferred => "Deferred",
-        }
+        super::execution_status_to_str(status)
     }
 
     fn parse_execution_status(s: &str) -> uc_types::ExecutionStatus {
-        match s {
-            "Completed" => uc_types::ExecutionStatus::Completed,
-            "Failed" => uc_types::ExecutionStatus::Failed,
-            "Skipped" => uc_types::ExecutionStatus::Skipped,
-            "Deferred" => uc_types::ExecutionStatus::Deferred,
-            _ => uc_types::ExecutionStatus::Failed,
-        }
+        super::parse_execution_status(s)
     }
 }
 
