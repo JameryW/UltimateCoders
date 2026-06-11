@@ -41,7 +41,7 @@ class TestTask:
         assert task.status == TaskStatus.CREATED
         assert task.subtasks == []
         assert task.description == ""
-        assert task.project_id is None
+        assert task.project_id == ""
 
     def test_task_is_complete(self):
         task = Task()
@@ -521,7 +521,7 @@ class TestWorker:
 
     @pytest.mark.asyncio
     async def test_execute_subtask_no_llm(self):
-        worker = Worker(worker_id="w1")
+        worker = Worker(worker_id="w1", execution_mode="llm")
         subtask = Subtask(id="s1", parent_id="t1", description="Do something")
 
         result = await worker.execute_subtask(subtask)
