@@ -49,10 +49,10 @@ impl NightWindow {
 
 // dispatcher.rs
 pub trait ScheduleDispatcher: Send + Sync {
-    fn dispatch(&self, task: &ScheduledTask) -> Pin<Box<dyn Future<Output = Result<(), EngineError>> + Send + '_>>;
+    fn dispatch(&self, task: &ScheduledTask) -> Result<(), EngineError>;
 }
 pub struct OrchestratorDispatcher { ... }  // feature-gated: messaging
-pub struct LoggingDispatcher { ... }       // always available
+pub struct LoggingDispatcher;              // always available, no-op
 
 // store.rs
 #[async_trait]
@@ -272,3 +272,52 @@ Validation rules:
 - Either `cron_expression` or `execute_after` must be set (not both, not neither)
 - Time format: `HH:MM` (24-hour)
 - `execute_after` format: ISO 8601 datetime string
+
+---
+
+## Orchestrator Night-Window Exclusive Mode
+
+When the night window is active, the Orchestrator enters **exclusive mode**: scheduled tasks bypass the queue and execute immediately, while real-time tasks are deferred to `_pending_tasks` until the window closes.
+
+### Python API (`python/ultimate_coders/agent/orchestrator.py`)
+
+```python
+class Orchestrator:
+    # Properties
+    night_window_active: bool          # Read-only property
+    pending_task_count: int            # Number of deferred tasks
+
+    # Methods
+    def set_night_window_active(self, active: bool) -> None
+    async def flush_pending_tasks(self) -> list[Task]
+
+    # Scheduling delegation (requires scheduler= in __init__)
+    def schedule_task(self, description: str, *,
+                      cron: str | None = None,
+                      execute_after: str | None = None,
+                      project_id: str | None = None,
+                      night_window_start: str | None = None,
+                      night_window_end: str | None = None,
+                      timezone: str = "UTC") -> ScheduledTask
+```
+
+### Contracts
+
+| Condition | Behavior |
+|-----------|----------|
+| `night_window_active=True` + `_scheduled=False` | Task status → `PAUSED`, appended to `_pending_tasks` |
+| `night_window_active=True` + `_scheduled=True` | Task executes normally (bypasses queue) |
+| `night_window_active=False` | All tasks execute normally |
+| `flush_pending_tasks()` called | All pending tasks re-submitted, `_pending_tasks` cleared |
+| `schedule_task()` with no scheduler | `RuntimeError("No scheduler configured")` |
+| `schedule_task()` with neither cron nor execute_after | `ValueError("Must specify either cron or execute_after")` |
+
+### Event Flow
+
+```
+NATS schedule.window.opened → Orchestrator.set_night_window_active(True)
+NATS schedule.window.closed → Orchestrator.set_night_window_active(False)
+                              → Orchestrator.flush_pending_tasks()
+```
+
+> **Gotcha**: The `_scheduled` flag is an internal parameter on `submit_task()`. It should **never** be set by external callers — only by the scheduler dispatch path. Setting it incorrectly will bypass the night-window queue for real-time tasks.

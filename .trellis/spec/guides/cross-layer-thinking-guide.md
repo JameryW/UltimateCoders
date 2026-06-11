@@ -160,3 +160,17 @@ Create detailed flow docs when:
 - Multiple teams are involved
 - Data format is complex
 - Feature has caused bugs before
+
+---
+
+## Scheduler Cross-Layer Checklist
+
+When modifying the scheduler or its integration points, verify:
+
+- [ ] **ScheduleDispatcher trait is sync** — `fn dispatch(&self, task: &ScheduledTask) -> Result<(), EngineError>`. If you need async dispatch, wrap in `tokio::task::block_in_place` (see `OrchestratorDispatcher` in `dispatcher.rs`).
+- [ ] **Night-window guard before dispatch** — `dispatch_with_guard()` checks `is_within_window()` before calling `dispatcher.dispatch()`. Outside window → `Deferred` execution history recorded, dispatch skipped.
+- [ ] **`_scheduled` flag is internal** — Never set `_scheduled=True` from external Python code. It bypasses the night-window queue in Orchestrator.
+- [ ] **PostgreSQL helpers not duplicated** — `execution_status_to_str` / `parse_execution_status` exist at module level in `store.rs`. The `postgres` module delegates to `super::`, not copies.
+- [ ] **Feature gates** — `OrchestratorDispatcher` + `publish_window_event` behind `messaging`; `PostgresScheduleStore` behind `storage`; `SchedulerService` always available.
+- [ ] **Timezone evaluation** — Store UTC, evaluate in config timezone: `Utc::now().with_timezone(&window.tz)`. Never use `chrono::Local::now()`.
+- [ ] **DST ambiguity** — Use `.earliest()` / `.latest()`, never `.single()` for timezone-aware time construction.
