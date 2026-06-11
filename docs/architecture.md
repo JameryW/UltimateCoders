@@ -453,6 +453,150 @@ fn state(&self) -> CircuitState;
 
 ---
 
+## Task Scheduling & Night-time Orchestration
+
+### Overview
+
+UltimateCoders 支持任务调度能力，允许在夜间低负载时段自动执行批量任务（如代码审查、索引重建、知识库整理等），最大化资源利用率。
+
+### Architecture
+
+```
+[YAML Config] ──load──> [Python Scheduler API] ──PyO3──> [Rust SchedulerService]
+[User API call] ───────> [Python Scheduler API] ──PyO3──> [Rust SchedulerService]
+                                                              |
+                                                      [tokio-cron-scheduler]
+                                                              |
+                                                    [NightWindow Guard]
+                                                              |
+                                                    [ScheduleDispatcher]
+                                                       /            \
+                                          [OrchestratorDispatcher]  [LoggingDispatcher]
+                                               (NATS publish)       (log only)
+                                                       |
+                                              [NATS: schedule.trigger.{id}]
+                                                       |
+                                              [Python Orchestrator]
+                                                       |
+                                              [Orchestrator.submit_task()]
+                                                       |
+                                              [Worker execution]
+                                                       |
+                                              [PostgreSQL: execution_history]
+```
+
+### Supported Task Types
+
+| Type | Trigger | Definition | Example |
+|------|---------|-----------|---------|
+| System maintenance (cron) | Cron expression | YAML config file, loaded at startup | "每天 22:00 重建索引" |
+| User deferred (one-shot) | execute_after timestamp | Python API | "今晚执行此审查" |
+
+### Night-Window Guard
+
+调度器内置 Night-Window Guard 逻辑：当任务触发时，检查当前时间是否在配置的夜间窗口内。如果不在窗口内，任务被延迟到下一个窗口起始时间。
+
+- 支持跨午夜窗口（如 `22:00-06:00`）
+- 时区感知（基于 IANA 时区名，如 `Asia/Shanghai`）
+- 窗口配置存储在 PostgreSQL，支持运行时修改
+
+```rust
+// NightWindow API
+fn is_within_window(&self, now: DateTime<Tz>) -> bool;
+fn next_window_start(&self, now: DateTime<Tz>) -> DateTime<Tz>;
+fn next_window_end(&self, now: DateTime<Tz>) -> DateTime<Tz>;
+```
+
+### Night-Window Exclusive Mode
+
+夜间窗口激活时，调度任务独占 Worker 资源：
+
+1. Orchestrator 维护 `night_window_active` 状态标志
+2. 当 `night_window_active=True` 时，实时任务（非调度任务）进入 `_pending_tasks` 队列
+3. 调度任务（带 `_scheduled` 标记）绕过队列，立即执行
+4. 夜间窗口关闭时，调用 `flush_pending_tasks()` 执行所有排队的实时任务
+5. 窗口状态通过 NATS 事件 `schedule.window.opened` / `schedule.window.closed` 传递
+
+```python
+# Orchestrator night-window integration
+orchestrator.set_night_window_active(True)   # 窗口打开
+orchestrator.submit_task("实时任务")           # 排队等待
+orchestrator.submit_task("调度任务", _scheduled=True)  # 立即执行
+orchestrator.set_night_window_active(False)   # 窗口关闭
+await orchestrator.flush_pending_tasks()      # 执行排队的实时任务
+```
+
+### ScheduleDispatcher
+
+调度触发后，通过 `ScheduleDispatcher` trait 分发任务：
+
+| 实现 | 说明 | Feature Gate |
+|------|------|-------------|
+| `OrchestratorDispatcher` | 通过 NATS 发布 `schedule.trigger.{task_id}` 消息 | `messaging` |
+| `LoggingDispatcher` | 仅记录日志（测试/无 NATS 环境） | 无 |
+
+当 NATS 不可用时，`OrchestratorDispatcher` 优雅降级为日志记录，不会导致调度失败。
+
+### Configuration
+
+#### YAML 配置文件（系统维护任务）
+
+```yaml
+# config/scheduled_tasks.yaml
+night_window:
+  start: "22:00"
+  end: "06:00"
+  timezone: "Asia/Shanghai"
+
+tasks:
+  - description: "Rebuild search index for project-alpha"
+    cron_expression: "0 22 * * *"
+    project_id: "project-alpha"
+
+  - description: "Run code review for project-beta"
+    cron_expression: "0 23 * * 1-5"
+    project_id: "project-beta"
+```
+
+#### Python API（用户延迟任务）
+
+```python
+from ultimate_coders.agent.scheduler import Scheduler
+from ultimate_coders.agent.orchestrator import Orchestrator
+
+scheduler = Scheduler()
+scheduler.set_night_window("22:00", "06:00", "Asia/Shanghai")
+
+# Cron 任务
+scheduler.create_cron_job("每日索引重建", "0 22 * * *", project_id="my-project")
+
+# 一次性延迟任务
+scheduler.create_one_shot_job("代码审查", "2024-01-15T22:00:00Z", project_id="my-project")
+
+# Orchestrator 集成
+orchestrator = Orchestrator(scheduler=scheduler)
+orchestrator.schedule_task("每周审查", cron="0 3 * * 1", project_id="my-project")
+```
+
+### Persistence and Recovery
+
+- 调度配置持久化到 PostgreSQL（`scheduled_tasks` 表）
+- 执行历史持久化到 PostgreSQL（`execution_history` 表）
+- 系统重启后自动加载调度配置并恢复调度
+- `tokio-cron-scheduler` 在 `scheduler` feature 启用时提供运行时调度
+
+### Feature Gates
+
+| Feature | 说明 | 依赖 |
+|---------|------|------|
+| `scheduler` | 启用 tokio-cron-scheduler 运行时 | `tokio-cron-scheduler` |
+| `messaging` | 启用 NATS 分发（OrchestratorDispatcher） | `async-nats` |
+| `storage` | 启用 PostgreSQL 持久化（PostgresScheduleStore） | `sqlx` |
+
+无 feature 启用时，调度器仍可工作（InMemoryStore + LoggingDispatcher），适合测试和开发环境。
+
+---
+
 ## Bridge Layer: PyO3 FFI + gRPC Dual-Mode
 
 The `Engine` class in the Python ergonomic layer switches between local and remote at construction time:

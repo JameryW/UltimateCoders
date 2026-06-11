@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ultimate_coders.agent.llm import LLMClient, LLMResponse, make_tool_definition
 from ultimate_coders.agent.types import (
@@ -100,6 +100,7 @@ class Orchestrator:
         conflict_detector: Optional[ConflictDetector] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
+        scheduler: Any = None,
     ):
         """Initialize the Orchestrator.
 
@@ -110,6 +111,8 @@ class Orchestrator:
             conflict_detector: Conflict detector for edit intent tracking.
             rate_limiter: Rate limiter for LLM API calls.
             circuit_breaker: Circuit breaker for LLM API fault tolerance.
+            scheduler: Optional Scheduler instance for scheduling tasks
+                via the night-window orchestration system.
         """
         self.engine = engine
         self.llm_client = llm_client
@@ -119,24 +122,52 @@ class Orchestrator:
         self.conflict_detector = conflict_detector or ConflictDetector()
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+        # Night-window exclusive mode
+        self.scheduler = scheduler
+        self._night_window_active: bool = False
+        self._pending_tasks: List[Task] = []
 
     async def submit_task(
         self,
         description: str,
         project_id: str = "",
+        _scheduled: bool = False,
     ) -> Task:
         """Submit a new task for orchestration.
 
         Creates the task, decomposes it into subtasks via LLM,
         and schedules ready subtasks.
 
+        When the night window is active (night_window_active=True),
+        real-time (non-scheduled) tasks are queued instead of
+        immediately executed. Scheduled tasks (from the scheduler)
+        bypass the queue and execute immediately, giving them
+        exclusive access to Worker resources.
+
         Args:
             description: The task description.
             project_id: Project/repository context (default: empty string).
+            _scheduled: Internal flag — True if this task comes from the
+                scheduler and should bypass the night-window queue.
 
         Returns:
             The created Task with subtasks.
         """
+        # Night-window exclusive mode: queue non-scheduled tasks
+        if self._night_window_active and not _scheduled:
+            task = Task(
+                description=description,
+                project_id=project_id,
+                status=TaskStatus.PAUSED,
+            )
+            self._pending_tasks.append(task)
+            self.tasks[task.id] = task
+            logger.info(
+                "Task %s queued (night window active): %s",
+                task.id, description,
+            )
+            return task
+
         # Create task
         task = Task(
             description=description,
@@ -558,6 +589,125 @@ class Orchestrator:
                 parts.append(f"  - {st.description}: {summary}")
 
         return "\n".join(parts)
+
+    # ── Night-Window Exclusive Mode ─────────────────────────────────
+
+    @property
+    def night_window_active(self) -> bool:
+        """Whether the night window is currently active.
+
+        When active, real-time tasks are queued and only scheduled
+        tasks (from the scheduler) are executed immediately.
+        """
+        return self._night_window_active
+
+    def set_night_window_active(self, active: bool) -> None:
+        """Set the night window active state.
+
+        Called when the scheduler publishes a window.opened or
+        window.closed event via NATS.
+
+        Args:
+            active: True if the night window is now open (scheduled
+                tasks have exclusive access), False if it has closed.
+        """
+        self._night_window_active = active
+        logger.info("Night window active: %s", active)
+
+    async def flush_pending_tasks(self) -> List[Task]:
+        """Execute all tasks that were queued during the night window.
+
+        Called when the night window closes. Processes all deferred
+        real-time tasks that were queued while scheduled tasks had
+        exclusive access.
+
+        Returns:
+            List of tasks that were executed.
+        """
+        pending = self._pending_tasks.copy()
+        self._pending_tasks.clear()
+        executed: List[Task] = []
+
+        for task in pending:
+            logger.info(
+                "Flushing pending task %s: %s",
+                task.id, task.description,
+            )
+            # Re-submit the task for immediate execution
+            # (night window is now closed, so it won't be re-queued)
+            result = await self.submit_task(
+                task.description,
+                project_id=task.project_id,
+            )
+            executed.append(result)
+
+        logger.info("Flushed %d pending tasks", len(executed))
+        return executed
+
+    @property
+    def pending_task_count(self) -> int:
+        """Number of tasks queued waiting for the night window to close."""
+        return len(self._pending_tasks)
+
+    # ── Scheduler Integration ──────────────────────────────────────
+
+    def schedule_task(
+        self,
+        description: str,
+        cron: Optional[str] = None,
+        execute_after: Optional[str] = None,
+        project_id: Optional[str] = None,
+        night_window_start: Optional[str] = None,
+        night_window_end: Optional[str] = None,
+        timezone: str = "UTC",
+    ) -> Any:
+        """Convenience method to schedule a task via the Scheduler.
+
+        Requires that the Orchestrator was initialized with a scheduler.
+
+        Args:
+            description: Human-readable task description.
+            cron: Cron expression for recurring tasks (e.g., "0 22 * * *").
+            execute_after: ISO 8601 datetime for one-shot tasks.
+            project_id: Project/repository context.
+            night_window_start: Night window start time in HH:MM.
+            night_window_end: Night window end time in HH:MM.
+            timezone: IANA timezone name (default: "UTC").
+
+        Returns:
+            The ScheduledTask created by the scheduler.
+
+        Raises:
+            RuntimeError: If no scheduler is configured.
+            ValueError: If neither cron nor execute_after is specified.
+        """
+        if self.scheduler is None:
+            raise RuntimeError(
+                "No scheduler configured. Pass scheduler= to Orchestrator.__init__()."
+            )
+
+        if cron is not None:
+            return self.scheduler.create_cron_job(
+                description,
+                cron,
+                project_id=project_id,
+                night_window_start=night_window_start,
+                night_window_end=night_window_end,
+                timezone=timezone,
+            )
+        elif execute_after is not None:
+            return self.scheduler.create_one_shot_job(
+                description,
+                execute_after,
+                project_id=project_id,
+                night_window_start=night_window_start,
+                night_window_end=night_window_end,
+                timezone=timezone,
+            )
+        else:
+            raise ValueError(
+                "Must specify either cron (for recurring) or execute_after (for one-shot)"
+            )
 
     # ── Fault Tolerance Methods ───────────────────────────────────────
 

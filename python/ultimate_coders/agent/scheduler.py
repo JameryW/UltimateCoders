@@ -50,7 +50,7 @@ from ultimate_coders.agent.scheduler_config import (
 )
 
 try:
-    from ultimate_coders._uc_core import SchedulerService as _PySchedulerService
+    from ultimate_coders._uc_core import PySchedulerService as _PySchedulerService
 except ImportError:  # pragma: no cover
     _PySchedulerService = None  # Rust extension not built yet
 
