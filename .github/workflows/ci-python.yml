@@ -50,7 +50,7 @@ jobs:
           python -m venv .venv
           source .venv/bin/activate
           pip install pytest pytest-asyncio pyyaml
-          maturin develop --release
+          maturin develop --release --manifest-path crates/uc-python/Cargo.toml
       - name: Run tests
         run: |
           source .venv/bin/activate
