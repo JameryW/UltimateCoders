@@ -36,7 +36,12 @@ pub struct EditIntent {
 }
 
 impl EditIntent {
-    pub fn new(worker_id: String, file_path: String, edit_type: EditType, regions: Vec<LineRange>) -> Self {
+    pub fn new(
+        worker_id: String,
+        file_path: String,
+        edit_type: EditType,
+        regions: Vec<LineRange>,
+    ) -> Self {
         Self {
             worker_id,
             file_path,
@@ -53,9 +58,7 @@ pub enum ConflictResult {
     /// No conflict detected.
     NoConflict,
     /// Potential conflict (same file, different regions).
-    PotentialConflict {
-        conflicting_workers: Vec<String>,
-    },
+    PotentialConflict { conflicting_workers: Vec<String> },
     /// Conflicting edit (overlapping regions on same file).
     Conflicting {
         conflicting_workers: Vec<String>,
@@ -141,7 +144,8 @@ impl ConflictDetector {
     /// This is used to detect if a file has been modified by another
     /// worker between the time the task started and the edit is applied.
     pub fn register_baseline(&self, file_path: &str, hash: &str) {
-        self.baseline_hashes.insert(file_path.to_string(), hash.to_string());
+        self.baseline_hashes
+            .insert(file_path.to_string(), hash.to_string());
     }
 
     /// Declare an edit intent.
@@ -184,7 +188,9 @@ impl ConflictDetector {
 
                     // Check if any regions overlap
                     let has_overlap = intent.regions.iter().any(|existing_region| {
-                        regions.iter().any(|new_region| existing_region.overlaps(new_region))
+                        regions
+                            .iter()
+                            .any(|new_region| existing_region.overlaps(new_region))
                     });
 
                     // Also flag if editing the same file with no specific regions
@@ -339,7 +345,10 @@ mod tests {
         let result = detector.declare_intent(intent2);
 
         match result {
-            ConflictResult::Conflicting { conflicting_workers, resolution_tier } => {
+            ConflictResult::Conflicting {
+                conflicting_workers,
+                resolution_tier,
+            } => {
                 assert!(conflicting_workers.contains(&"worker-1".to_string()));
                 assert_eq!(resolution_tier, ResolutionTier::AutoMerge);
             }
@@ -402,8 +411,14 @@ mod tests {
 
     #[test]
     fn resolution_tier_escalation() {
-        assert_eq!(ResolutionTier::AutoMerge.escalate(), ResolutionTier::LlmAssisted);
-        assert_eq!(ResolutionTier::LlmAssisted.escalate(), ResolutionTier::Reassign);
+        assert_eq!(
+            ResolutionTier::AutoMerge.escalate(),
+            ResolutionTier::LlmAssisted
+        );
+        assert_eq!(
+            ResolutionTier::LlmAssisted.escalate(),
+            ResolutionTier::Reassign
+        );
         assert_eq!(ResolutionTier::Reassign.escalate(), ResolutionTier::Human);
         assert_eq!(ResolutionTier::Human.escalate(), ResolutionTier::Human);
     }

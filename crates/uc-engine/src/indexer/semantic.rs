@@ -56,8 +56,13 @@ impl EmbeddingService {
 
     /// Embed a single text string.
     pub async fn embed_single(&self, text: &str) -> Result<Vec<f32>, EngineError> {
-        let results = self.embed_batch(std::slice::from_ref(&text.to_string())).await?;
-        Ok(results.into_iter().next().unwrap_or_else(|| vec![0.0f32; self.config.dimensions]))
+        let results = self
+            .embed_batch(std::slice::from_ref(&text.to_string()))
+            .await?;
+        Ok(results
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| vec![0.0f32; self.config.dimensions]))
     }
 
     /// Embed a batch of text strings.
@@ -157,9 +162,7 @@ impl EmbeddingService {
         let batch_size = self.config.batch_size;
 
         for chunk in texts.chunks(batch_size) {
-            let embeddings = self
-                .call_voyage_api_with_retry(api_key, chunk)
-                .await?;
+            let embeddings = self.call_voyage_api_with_retry(api_key, chunk).await?;
             all_embeddings.extend(embeddings);
         }
 
@@ -187,7 +190,9 @@ impl EmbeddingService {
                     let delay = std::time::Duration::from_secs(retry_after);
                     tracing::warn!(
                         "Rate limited by Voyage AI, retrying in {:?} (attempt {}/{})",
-                        delay, attempt + 1, self.config.max_retries
+                        delay,
+                        attempt + 1,
+                        self.config.max_retries
                     );
                     tokio::time::sleep(delay).await;
                     attempt += 1;
@@ -198,10 +203,16 @@ impl EmbeddingService {
                     }
                     let exp_delay = base_delay * 2u32.pow(attempt);
                     let jitter = rand_jitter_ms();
-                    let delay = std::cmp::min(exp_delay + std::time::Duration::from_millis(jitter), max_delay);
+                    let delay = std::cmp::min(
+                        exp_delay + std::time::Duration::from_millis(jitter),
+                        max_delay,
+                    );
                     tracing::warn!(
                         "Retryable error from Voyage AI: {}, retrying in {:?} (attempt {}/{})",
-                        e, delay, attempt + 1, self.config.max_retries
+                        e,
+                        delay,
+                        attempt + 1,
+                        self.config.max_retries
                     );
                     tokio::time::sleep(delay).await;
                     attempt += 1;
@@ -262,22 +273,23 @@ impl EmbeddingService {
         }
 
         if status.is_server_error() {
-            return Err(EngineError::ConnectionError(
-                format!("Voyage AI server error: {}", status),
-            ));
+            return Err(EngineError::ConnectionError(format!(
+                "Voyage AI server error: {}",
+                status
+            )));
         }
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(EngineError::SearchError(
-                format!("Voyage API error ({}): {}", status, body),
-            ));
+            return Err(EngineError::SearchError(format!(
+                "Voyage API error ({}): {}",
+                status, body
+            )));
         }
 
-        let embedding_response: EmbeddingResponse = response
-            .json()
-            .await
-            .map_err(|e| EngineError::SearchError(format!("Voyage AI response parse error: {}", e)))?;
+        let embedding_response: EmbeddingResponse = response.json().await.map_err(|e| {
+            EngineError::SearchError(format!("Voyage AI response parse error: {}", e))
+        })?;
 
         Ok(embedding_response
             .data
@@ -520,7 +532,12 @@ impl SemanticIndexer {
                 .into_iter()
                 .filter_map(|mr| {
                     // Only include code embeddings (not other memory entries)
-                    if !mr.entry.metadata.tags.contains(&"code_embedding".to_string()) {
+                    if !mr
+                        .entry
+                        .metadata
+                        .tags
+                        .contains(&"code_embedding".to_string())
+                    {
                         return None;
                     }
 
@@ -529,9 +546,12 @@ impl SemanticIndexer {
 
                     // Apply language filter
                     if !languages.is_empty() {
-                        let lang_match = mr.entry.metadata.tags.iter().any(|tag| {
-                            languages.iter().any(|lang| tag == lang)
-                        });
+                        let lang_match = mr
+                            .entry
+                            .metadata
+                            .tags
+                            .iter()
+                            .any(|tag| languages.iter().any(|lang| tag == lang));
                         if !lang_match {
                             return None;
                         }
@@ -539,7 +559,9 @@ impl SemanticIndexer {
 
                     Some(uc_types::search::SearchResultItem {
                         repo_id: match &mr.entry.key {
-                            uc_types::memory::MemoryKey::Project { project_id, .. } => project_id.clone(),
+                            uc_types::memory::MemoryKey::Project { project_id, .. } => {
+                                project_id.clone()
+                            }
                             _ => return None,
                         },
                         file_path,
@@ -623,7 +645,11 @@ impl SemanticIndexer {
         }
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(max_results as usize);
 
         Ok(results)
@@ -940,22 +966,20 @@ mod tests {
         let indexer = SemanticIndexer::new(embedding_service);
         let long_term = crate::memory::long_term::LongTermMemory::new_fallback();
 
-        let chunks = vec![
-            CodeChunk {
-                id: "chunk1".to_string(),
-                repo_id: "test-repo".to_string(),
-                file_path: "src/main.rs".to_string(),
-                start_line: 1,
-                end_line: 10,
-                content: "fn process_data(data: &str) -> Result<String>".to_string(),
-                language: "rust".to_string(),
-                symbol_name: Some("process_data".to_string()),
-                symbol_kind: Some("function".to_string()),
-                parent_symbol: None,
-                chunk_type: ChunkType::Symbol,
-                content_hash: "abc".to_string(),
-            },
-        ];
+        let chunks = vec![CodeChunk {
+            id: "chunk1".to_string(),
+            repo_id: "test-repo".to_string(),
+            file_path: "src/main.rs".to_string(),
+            start_line: 1,
+            end_line: 10,
+            content: "fn process_data(data: &str) -> Result<String>".to_string(),
+            language: "rust".to_string(),
+            symbol_name: Some("process_data".to_string()),
+            symbol_kind: Some("function".to_string()),
+            parent_symbol: None,
+            chunk_type: ChunkType::Symbol,
+            content_hash: "abc".to_string(),
+        }];
 
         let count = indexer.index_chunks(&chunks, &long_term).await.unwrap();
         assert_eq!(count, 1);
@@ -1086,8 +1110,12 @@ mod tests {
 
         // After removal, lib.rs should be gone but main.rs should remain
         let fallback = indexer.fallback.read().await;
-        assert!(fallback.iter().all(|f| !(f.repo_id == "rm-repo" && f.file_path == "lib.rs")));
-        assert!(fallback.iter().any(|f| f.repo_id == "rm-repo" && f.file_path == "main.rs"));
+        assert!(fallback
+            .iter()
+            .all(|f| !(f.repo_id == "rm-repo" && f.file_path == "lib.rs")));
+        assert!(fallback
+            .iter()
+            .any(|f| f.repo_id == "rm-repo" && f.file_path == "main.rs"));
     }
 
     #[cfg(feature = "indexing")]

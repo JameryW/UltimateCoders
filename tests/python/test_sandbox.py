@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     ClaudeCodeAdapter,
@@ -12,14 +10,11 @@ from ultimate_coders.agent.sandbox import (
     ExecResult,
     NetworkMode,
     SandboxConfig,
-    SandboxHandle,
     SandboxManager,
-    TokenUsage,
     available_agents,
     create_adapter,
 )
 from ultimate_coders.agent.types import ChangeType, FileChange
-
 
 # ── SandboxConfig tests ─────────────────────────────────────────
 
@@ -349,8 +344,8 @@ class TestWorkerSandboxMode:
     @pytest.mark.asyncio
     async def test_worker_sandbox_execute_no_manager(self):
         """Test that sandbox execution fails gracefully without sandbox manager."""
-        from ultimate_coders.agent.worker import Worker
         from ultimate_coders.agent.types import Subtask
+        from ultimate_coders.agent.worker import Worker
 
         worker = Worker(worker_id="w-llm", execution_mode="llm")
         subtask = Subtask(id="s1", description="Fix bug")

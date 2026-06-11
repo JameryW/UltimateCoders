@@ -26,7 +26,10 @@ impl PyHealthStatus {
     fn __repr__(&self) -> String {
         format!(
             "HealthStatus(status={}, version={}, uptime={}s, components={})",
-            self.status, self.version, self.uptime_seconds, self.components.len()
+            self.status,
+            self.version,
+            self.uptime_seconds,
+            self.components.len()
         )
     }
 }
@@ -58,8 +61,14 @@ pub struct PyComponentHealth {
 impl PyComponentHealth {
     fn __repr__(&self) -> String {
         match &self.details {
-            Some(d) => format!("ComponentHealth(name={}, status={}, details={})", self.name, self.status, d),
-            None => format!("ComponentHealth(name={}, status={})", self.name, self.status),
+            Some(d) => format!(
+                "ComponentHealth(name={}, status={}, details={})",
+                self.name, self.status, d
+            ),
+            None => format!(
+                "ComponentHealth(name={}, status={})",
+                self.name, self.status
+            ),
         }
     }
 }
@@ -121,12 +130,16 @@ impl From<PySearchQuery> for uc_types::SearchQuery {
     fn from(q: PySearchQuery) -> Self {
         Self {
             query: q.query,
-            modes: q.modes.iter().map(|m| match m.as_str() {
-                "text" => uc_types::SearchMode::Text,
-                "semantic" => uc_types::SearchMode::Semantic,
-                "ast" => uc_types::SearchMode::Ast,
-                _ => uc_types::SearchMode::Hybrid,
-            }).collect(),
+            modes: q
+                .modes
+                .iter()
+                .map(|m| match m.as_str() {
+                    "text" => uc_types::SearchMode::Text,
+                    "semantic" => uc_types::SearchMode::Semantic,
+                    "ast" => uc_types::SearchMode::Ast,
+                    _ => uc_types::SearchMode::Hybrid,
+                })
+                .collect(),
             repo_ids: q.repo_ids,
             languages: q.languages,
             path_patterns: q.path_patterns,
@@ -345,13 +358,15 @@ impl PyMemoryEntry {
     fn __repr__(&self) -> String {
         format!(
             "MemoryEntry(id={}, key={}:{}:{}, content_type={})",
-            self.id, self.key_scope,
+            self.id,
+            self.key_scope,
             match (&self.task_id, &self.project_id) {
                 (Some(t), _) => t.as_str(),
                 (_, Some(p)) => p.as_str(),
                 _ => "",
             },
-            self.key, self.content_type
+            self.key,
+            self.content_type
         )
     }
 }
@@ -362,29 +377,59 @@ impl From<uc_types::MemoryEntry> for PyMemoryEntry {
             uc_types::MemoryContent::Text(s) => {
                 ("text".to_string(), s.clone(), None, None, None, None)
             }
-            uc_types::MemoryContent::Structured(v) => {
-                ("structured".to_string(), v.to_string(), None, None, None, None)
-            }
-            uc_types::MemoryContent::Code { language: lang, code } => {
-                ("code".to_string(), code.clone(), Some(lang.clone()), None, None, None)
-            }
-            uc_types::MemoryContent::Diff { file_path: fp, diff } => {
-                ("diff".to_string(), diff.clone(), None, Some(fp.clone()), None, None)
-            }
-            uc_types::MemoryContent::Reference { uri: u, description: d } => {
-                ("reference".to_string(), String::new(), None, None, Some(u.clone()), Some(d.clone()))
-            }
+            uc_types::MemoryContent::Structured(v) => (
+                "structured".to_string(),
+                v.to_string(),
+                None,
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Code {
+                language: lang,
+                code,
+            } => (
+                "code".to_string(),
+                code.clone(),
+                Some(lang.clone()),
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Diff {
+                file_path: fp,
+                diff,
+            } => (
+                "diff".to_string(),
+                diff.clone(),
+                None,
+                Some(fp.clone()),
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Reference {
+                uri: u,
+                description: d,
+            } => (
+                "reference".to_string(),
+                String::new(),
+                None,
+                None,
+                Some(u.clone()),
+                Some(d.clone()),
+            ),
         };
         let (key_scope, task_id, project_id, key) = match &entry.key {
             uc_types::MemoryKey::Task { task_id, key } => {
                 ("task".to_string(), Some(task_id.clone()), None, key.clone())
             }
-            uc_types::MemoryKey::Project { project_id, key } => {
-                ("project".to_string(), None, Some(project_id.clone()), key.clone())
-            }
-            uc_types::MemoryKey::Global { key } => {
-                ("global".to_string(), None, None, key.clone())
-            }
+            uc_types::MemoryKey::Project { project_id, key } => (
+                "project".to_string(),
+                None,
+                Some(project_id.clone()),
+                key.clone(),
+            ),
+            uc_types::MemoryKey::Global { key } => ("global".to_string(), None, None, key.clone()),
         };
         Self {
             id: entry.id.0,
@@ -525,7 +570,11 @@ impl PyIndexState {
             last_indexed_at: 0,
             last_full_reindex: 0,
             index_version: 0,
-            health: if s.indexed { "healthy".to_string() } else { "stale".to_string() },
+            health: if s.indexed {
+                "healthy".to_string()
+            } else {
+                "stale".to_string()
+            },
         }
     }
 }

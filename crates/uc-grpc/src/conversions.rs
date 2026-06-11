@@ -14,10 +14,10 @@ use uc_types::{
 
 use crate::ultimate_coders::{
     ComponentHealthProto, DeleteMemoryRequest, GetIndexStateRequest, GetIndexStateResponse,
-    HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto,
-    MemorySearchResultProto, ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest,
-    SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
-    SearchResultItem as ProtoSearchResultItem, WriteMemoryRequest, WriteMemoryResponse,
+    HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto, MemorySearchResultProto,
+    ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest, SearchMemoryRequest,
+    SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
+    WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -26,12 +26,16 @@ impl From<SearchRequest> for SearchQuery {
     fn from(req: SearchRequest) -> Self {
         Self {
             query: req.query,
-            modes: req.modes.iter().map(|m| match m.as_str() {
-                "text" => SearchMode::Text,
-                "semantic" => SearchMode::Semantic,
-                "ast" => SearchMode::Ast,
-                _ => SearchMode::Hybrid,
-            }).collect(),
+            modes: req
+                .modes
+                .iter()
+                .map(|m| match m.as_str() {
+                    "text" => SearchMode::Text,
+                    "semantic" => SearchMode::Semantic,
+                    "ast" => SearchMode::Ast,
+                    _ => SearchMode::Hybrid,
+                })
+                .collect(),
             repo_ids: req.repo_ids,
             languages: req.languages,
             path_patterns: req.path_patterns,
@@ -154,7 +158,10 @@ pub fn memory_key_from_proto(
         "global" => Ok(MemoryKey::Global {
             key: key.to_string(),
         }),
-        _ => Err(format!("Invalid key_scope: '{}'. Must be 'task', 'project', or 'global'", key_scope)),
+        _ => Err(format!(
+            "Invalid key_scope: '{}'. Must be 'task', 'project', or 'global'",
+            key_scope
+        )),
     }
 }
 
@@ -162,7 +169,9 @@ pub fn memory_key_from_proto(
 pub fn memory_key_to_parts(key: &MemoryKey) -> (&str, &str, &str, &str) {
     match key {
         MemoryKey::Task { task_id, key } => ("task", task_id.as_str(), "", key.as_str()),
-        MemoryKey::Project { project_id, key } => ("project", "", project_id.as_str(), key.as_str()),
+        MemoryKey::Project { project_id, key } => {
+            ("project", "", project_id.as_str(), key.as_str())
+        }
         MemoryKey::Global { key } => ("global", "", "", key.as_str()),
     }
 }
@@ -179,9 +188,7 @@ impl From<ReadMemoryRequest> for MemoryReadRequest {
                 project_id: req.project_id,
                 key: req.key,
             },
-            _ => MemoryKey::Global {
-                key: req.key,
-            },
+            _ => MemoryKey::Global { key: req.key },
         };
         Self {
             key,
@@ -209,13 +216,12 @@ impl From<WriteMemoryRequest> for MemoryWriteRequest {
                 project_id: req.project_id,
                 key: req.key,
             },
-            _ => MemoryKey::Global {
-                key: req.key,
-            },
+            _ => MemoryKey::Global { key: req.key },
         };
         let content = match req.content_type.as_str() {
             "structured" => MemoryContent::Structured(
-                serde_json::from_str(&req.content).unwrap_or(serde_json::Value::String(req.content)),
+                serde_json::from_str(&req.content)
+                    .unwrap_or(serde_json::Value::String(req.content)),
             ),
             "code" => MemoryContent::Code {
                 language: req.language.unwrap_or_default(),
@@ -248,16 +254,33 @@ impl From<MemoryEntry> for MemoryEntryProto {
     fn from(entry: MemoryEntry) -> Self {
         let (content_type, content, language, file_path, uri, description) = match entry.content {
             MemoryContent::Text(s) => ("text".to_string(), s, None, None, None, None),
-            MemoryContent::Structured(v) => ("structured".to_string(), v.to_string(), None, None, None, None),
-            MemoryContent::Code { language: lang, code } => {
-                ("code".to_string(), code, Some(lang), None, None, None)
-            }
-            MemoryContent::Diff { file_path: fp, diff } => {
-                ("diff".to_string(), diff, None, Some(fp), None, None)
-            }
-            MemoryContent::Reference { uri: u, description: d } => {
-                ("reference".to_string(), String::new(), None, None, Some(u), Some(d))
-            }
+            MemoryContent::Structured(v) => (
+                "structured".to_string(),
+                v.to_string(),
+                None,
+                None,
+                None,
+                None,
+            ),
+            MemoryContent::Code {
+                language: lang,
+                code,
+            } => ("code".to_string(), code, Some(lang), None, None, None),
+            MemoryContent::Diff {
+                file_path: fp,
+                diff,
+            } => ("diff".to_string(), diff, None, Some(fp), None, None),
+            MemoryContent::Reference {
+                uri: u,
+                description: d,
+            } => (
+                "reference".to_string(),
+                String::new(),
+                None,
+                None,
+                Some(u),
+                Some(d),
+            ),
         };
         let (key_scope, key_task_id, key_project_id, key) = memory_key_to_parts(&entry.key);
         Self {
@@ -300,9 +323,7 @@ impl From<DeleteMemoryRequest> for MemoryKey {
                 project_id: req.project_id,
                 key: req.key,
             },
-            _ => MemoryKey::Global {
-                key: req.key,
-            },
+            _ => MemoryKey::Global { key: req.key },
         }
     }
 }
@@ -432,7 +453,8 @@ impl From<MemoryEntryProto> for MemoryEntry {
     fn from(proto: MemoryEntryProto) -> Self {
         let content = match proto.content_type.as_str() {
             "structured" => MemoryContent::Structured(
-                serde_json::from_str(&proto.content).unwrap_or(serde_json::Value::String(proto.content)),
+                serde_json::from_str(&proto.content)
+                    .unwrap_or(serde_json::Value::String(proto.content)),
             ),
             "code" => MemoryContent::Code {
                 language: proto.language.unwrap_or_default(),
@@ -458,9 +480,7 @@ impl From<MemoryEntryProto> for MemoryEntry {
                 project_id: proto.key_project_id,
                 key: proto.key,
             },
-            _ => MemoryKey::Global {
-                key: proto.key,
-            },
+            _ => MemoryKey::Global { key: proto.key },
         };
         Self {
             id: MemoryId(proto.id),
@@ -511,7 +531,8 @@ impl From<SearchMemoryResponse> for MemorySearchResponse {
 impl From<MemorySearchResultProto> for MemorySearchResult {
     fn from(proto: MemorySearchResultProto) -> Self {
         Self {
-            entry: proto.entry
+            entry: proto
+                .entry
                 .map(MemoryEntry::from)
                 .unwrap_or_else(|| MemoryEntry {
                     id: MemoryId::new(),
@@ -576,27 +597,36 @@ mod tests {
     #[test]
     fn memory_key_from_proto_task() {
         let key = memory_key_from_proto("task", "t1", "", "decisions").unwrap();
-        assert_eq!(key, MemoryKey::Task {
-            task_id: "t1".to_string(),
-            key: "decisions".to_string(),
-        });
+        assert_eq!(
+            key,
+            MemoryKey::Task {
+                task_id: "t1".to_string(),
+                key: "decisions".to_string(),
+            }
+        );
     }
 
     #[test]
     fn memory_key_from_proto_project() {
         let key = memory_key_from_proto("project", "", "p1", "architecture").unwrap();
-        assert_eq!(key, MemoryKey::Project {
-            project_id: "p1".to_string(),
-            key: "architecture".to_string(),
-        });
+        assert_eq!(
+            key,
+            MemoryKey::Project {
+                project_id: "p1".to_string(),
+                key: "architecture".to_string(),
+            }
+        );
     }
 
     #[test]
     fn memory_key_from_proto_global() {
         let key = memory_key_from_proto("global", "", "", "conventions").unwrap();
-        assert_eq!(key, MemoryKey::Global {
-            key: "conventions".to_string(),
-        });
+        assert_eq!(
+            key,
+            MemoryKey::Global {
+                key: "conventions".to_string(),
+            }
+        );
     }
 
     #[test]

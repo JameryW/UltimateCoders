@@ -7,8 +7,8 @@ coroutines that resolve to the same types as their sync counterparts.
 from __future__ import annotations
 
 import asyncio
-import pytest
 
+import pytest
 from ultimate_coders.engine import Engine
 
 

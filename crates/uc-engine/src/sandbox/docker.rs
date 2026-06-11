@@ -7,8 +7,8 @@
 //! the Docker API (bollard) to keep dependencies minimal.
 
 use super::{
-    Sandbox, SandboxConfig, SandboxHandle, SandboxStatus, SandboxHealth,
-    ExecRequest, ExecResult, EngineError, NetworkMode,
+    EngineError, ExecRequest, ExecResult, NetworkMode, Sandbox, SandboxConfig, SandboxHandle,
+    SandboxHealth, SandboxStatus,
 };
 use async_trait::async_trait;
 use std::process::Stdio;
@@ -152,9 +152,10 @@ impl Sandbox for DockerSandbox {
         }
 
         if handle.status == SandboxStatus::Stopped {
-            return Err(EngineError::SandboxError(
-                format!("Sandbox {} is stopped", handle.id),
-            ));
+            return Err(EngineError::SandboxError(format!(
+                "Sandbox {} is stopped",
+                handle.id
+            )));
         }
 
         let start = Instant::now();
@@ -219,9 +220,9 @@ impl Sandbox for DockerSandbox {
             .kill_on_drop(true);
 
         // Spawn the docker process
-        let mut child = cmd.spawn().map_err(|e| {
-            EngineError::SandboxError(format!("Failed to spawn docker: {}", e))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| EngineError::SandboxError(format!("Failed to spawn docker: {}", e)))?;
 
         // Wait with timeout
         let result = timeout(timeout_duration, async {
@@ -242,8 +243,10 @@ impl Sandbox for DockerSandbox {
 
             let status = child.wait().await;
 
-            stdout_result.map_err(|e| EngineError::SandboxError(format!("stdout read error: {}", e)))?;
-            stderr_result.map_err(|e| EngineError::SandboxError(format!("stderr read error: {}", e)))?;
+            stdout_result
+                .map_err(|e| EngineError::SandboxError(format!("stdout read error: {}", e)))?;
+            stderr_result
+                .map_err(|e| EngineError::SandboxError(format!("stderr read error: {}", e)))?;
 
             let exit_status = status.map_err(|e| {
                 EngineError::SandboxError(format!("docker process wait error: {}", e))
@@ -252,7 +255,8 @@ impl Sandbox for DockerSandbox {
             let exit_code = exit_status.code().unwrap_or(-1);
 
             Ok::<(i32, Vec<u8>, Vec<u8>), EngineError>((exit_code, stdout_buf, stderr_buf))
-        }).await;
+        })
+        .await;
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -357,9 +361,18 @@ mod tests {
 
     #[test]
     fn docker_sandbox_network_flag() {
-        assert_eq!(DockerSandbox::network_flag(&NetworkMode::None), "--network=none");
-        assert_eq!(DockerSandbox::network_flag(&NetworkMode::Restricted), "--network=bridge");
-        assert_eq!(DockerSandbox::network_flag(&NetworkMode::Full), "--network=host");
+        assert_eq!(
+            DockerSandbox::network_flag(&NetworkMode::None),
+            "--network=none"
+        );
+        assert_eq!(
+            DockerSandbox::network_flag(&NetworkMode::Restricted),
+            "--network=bridge"
+        );
+        assert_eq!(
+            DockerSandbox::network_flag(&NetworkMode::Full),
+            "--network=host"
+        );
     }
 
     #[test]

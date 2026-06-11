@@ -102,10 +102,7 @@ impl TextSearchIndex {
                         line_number: line_num,
                         tf,
                     };
-                    self.inverted_index
-                        .entry(token)
-                        .or_default()
-                        .push(posting);
+                    self.inverted_index.entry(token).or_default().push(posting);
                 }
             }
 
@@ -126,7 +123,9 @@ impl TextSearchIndex {
         #[cfg(not(feature = "indexing"))]
         {
             let _ = (repo_id, file_path, language, content);
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
     }
 
@@ -202,7 +201,9 @@ impl TextSearchIndex {
         #[cfg(not(feature = "indexing"))]
         {
             let _ = query;
-            Err(EngineError::SearchError("Indexing feature is disabled".into()))
+            Err(EngineError::SearchError(
+                "Indexing feature is disabled".into(),
+            ))
         }
     }
 
@@ -272,13 +273,18 @@ impl TextSearchIndex {
             }
         }
 
-        let mut items = build_result_items(doc_scores, doc_lines, uc_types::search::SearchMode::Text);
+        let mut items =
+            build_result_items(doc_scores, doc_lines, uc_types::search::SearchMode::Text);
         // Normalize by query length for keyword search
         for item in &mut items {
             item.score /= query_tokens.len() as f32;
         }
 
-        items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         items.truncate(query.max_results as usize);
 
         Ok(SearchResult { items })
@@ -320,8 +326,13 @@ impl TextSearchIndex {
             }
         }
 
-        let mut items = build_result_items(doc_scores, doc_lines, uc_types::search::SearchMode::Text);
-        items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut items =
+            build_result_items(doc_scores, doc_lines, uc_types::search::SearchMode::Text);
+        items.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         items.truncate(query.max_results as usize);
 
         Ok(SearchResult { items })
@@ -474,7 +485,10 @@ fn tokenize_line(line: &str) -> Vec<String> {
                 }
             }
 
-            (CharType::Separator | CharType::Other, CharType::Lower | CharType::Upper | CharType::Digit) => {
+            (
+                CharType::Separator | CharType::Other,
+                CharType::Lower | CharType::Upper | CharType::Digit,
+            ) => {
                 current = ch.to_string();
             }
 
@@ -540,12 +554,45 @@ fn classify_char(ch: char) -> CharType {
 fn is_stop_word(token: &str) -> bool {
     matches!(
         token,
-        "if" | "in" | "of" | "on" | "to" | "or" | "as" | "at"
-            | "by" | "do" | "go" | "no" | "so" | "up" | "an"
-            | "be" | "is" | "it" | "we" | "he" | "me"
-            | "fn" | "let" | "var" | "for" | "and" | "not" | "but"
-            | "the" | "was" | "are" | "has" | "had" | "use" | "pub"
-            | "mod" | "ref" | "mut" | "out" | "nil"
+        "if" | "in"
+            | "of"
+            | "on"
+            | "to"
+            | "or"
+            | "as"
+            | "at"
+            | "by"
+            | "do"
+            | "go"
+            | "no"
+            | "so"
+            | "up"
+            | "an"
+            | "be"
+            | "is"
+            | "it"
+            | "we"
+            | "he"
+            | "me"
+            | "fn"
+            | "let"
+            | "var"
+            | "for"
+            | "and"
+            | "not"
+            | "but"
+            | "the"
+            | "was"
+            | "are"
+            | "has"
+            | "had"
+            | "use"
+            | "pub"
+            | "mod"
+            | "ref"
+            | "mut"
+            | "out"
+            | "nil"
     )
 }
 
@@ -729,8 +776,12 @@ impl Config {
     fn test_search_with_repo_filter() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "main.rs", "rust", "fn hello() {}").unwrap();
-        index.index_file("repo2", "main.rs", "rust", "fn hello() {}").unwrap();
+        index
+            .index_file("repo1", "main.rs", "rust", "fn hello() {}")
+            .unwrap();
+        index
+            .index_file("repo2", "main.rs", "rust", "fn hello() {}")
+            .unwrap();
 
         let query = SearchQuery {
             query: "hello".to_string(),
@@ -751,8 +802,12 @@ impl Config {
     fn test_search_with_language_filter() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "main.rs", "rust", "fn process_data() {}").unwrap();
-        index.index_file("repo1", "main.py", "python", "def process_data(): pass").unwrap();
+        index
+            .index_file("repo1", "main.rs", "rust", "fn process_data() {}")
+            .unwrap();
+        index
+            .index_file("repo1", "main.py", "python", "def process_data(): pass")
+            .unwrap();
 
         let query = SearchQuery {
             query: "process data".to_string(),
@@ -773,8 +828,12 @@ impl Config {
     fn test_search_with_path_filter() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "src/main.rs", "rust", "fn database_connect() {}").unwrap();
-        index.index_file("repo1", "tests/main.rs", "rust", "fn database_connect() {}").unwrap();
+        index
+            .index_file("repo1", "src/main.rs", "rust", "fn database_connect() {}")
+            .unwrap();
+        index
+            .index_file("repo1", "tests/main.rs", "rust", "fn database_connect() {}")
+            .unwrap();
 
         let query = SearchQuery {
             query: "database connect".to_string(),
@@ -795,7 +854,9 @@ impl Config {
     fn test_remove_file() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "main.rs", "rust", "fn unique_function() {}").unwrap();
+        index
+            .index_file("repo1", "main.rs", "rust", "fn unique_function() {}")
+            .unwrap();
         assert_eq!(index.doc_count(), 1);
 
         index.remove_file("repo1", "main.rs");
@@ -818,9 +879,15 @@ impl Config {
     fn test_remove_repo() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "a.rs", "rust", "fn alpha() {}").unwrap();
-        index.index_file("repo1", "b.rs", "rust", "fn beta() {}").unwrap();
-        index.index_file("repo2", "c.rs", "rust", "fn gamma() {}").unwrap();
+        index
+            .index_file("repo1", "a.rs", "rust", "fn alpha() {}")
+            .unwrap();
+        index
+            .index_file("repo1", "b.rs", "rust", "fn beta() {}")
+            .unwrap();
+        index
+            .index_file("repo2", "c.rs", "rust", "fn gamma() {}")
+            .unwrap();
 
         index.remove_repo("repo1");
         assert_eq!(index.doc_count(), 1);
@@ -831,7 +898,14 @@ impl Config {
     fn test_regex_search() {
         let mut index = TextSearchIndex::new();
 
-        index.index_file("repo1", "main.rs", "rust", "fn get_user() {} fn get_item() {} fn set_value() {}").unwrap();
+        index
+            .index_file(
+                "repo1",
+                "main.rs",
+                "rust",
+                "fn get_user() {} fn get_item() {} fn set_value() {}",
+            )
+            .unwrap();
 
         // Regex search matches against individual tokens in the inverted index.
         // Tokens are: "get", "user", "item", "set", "value", etc.

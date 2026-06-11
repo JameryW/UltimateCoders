@@ -4,10 +4,10 @@
 //! by creating a baseline commit before execution and computing
 //! the diff afterward.
 
-use uc_types::{ChangeType, EngineError, FileChange};
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::io::AsyncReadExt;
+use tokio::process::Command;
+use uc_types::{ChangeType, EngineError, FileChange};
 
 /// File change tracker using git operations.
 ///
@@ -88,11 +88,14 @@ impl FileTracker {
 
         let mut stdout = Vec::new();
         if let Some(mut pipe) = child.stdout.take() {
-            pipe.read_to_end(&mut stdout).await
+            pipe.read_to_end(&mut stdout)
+                .await
                 .map_err(|e| EngineError::SandboxError(format!("git diff read failed: {}", e)))?;
         }
 
-        let status = child.wait().await
+        let status = child
+            .wait()
+            .await
             .map_err(|e| EngineError::SandboxError(format!("git diff wait failed: {}", e)))?;
 
         if !status.success() {

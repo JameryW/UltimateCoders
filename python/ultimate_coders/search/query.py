@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 
 class SearchQuery:
     """Builder for search queries.
@@ -18,21 +16,21 @@ class SearchQuery:
 
     def __init__(self, query: str):
         self._query = query
-        self._modes: List[str] = ["hybrid"]
-        self._repo_ids: List[str] = []
-        self._languages: List[str] = []
-        self._path_patterns: List[str] = []
+        self._modes: list[str] = ["hybrid"]
+        self._repo_ids: list[str] = []
+        self._languages: list[str] = []
+        self._path_patterns: list[str] = []
         self._max_results: int = 10
 
-    def in_repos(self, repo_ids: List[str]) -> SearchQuery:
+    def in_repos(self, repo_ids: list[str]) -> SearchQuery:
         self._repo_ids = repo_ids
         return self
 
-    def in_languages(self, languages: List[str]) -> SearchQuery:
+    def in_languages(self, languages: list[str]) -> SearchQuery:
         self._languages = languages
         return self
 
-    def with_modes(self, modes: List[str]) -> SearchQuery:
+    def with_modes(self, modes: list[str]) -> SearchQuery:
         self._modes = modes
         return self
 

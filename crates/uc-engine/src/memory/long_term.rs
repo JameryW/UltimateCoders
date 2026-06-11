@@ -4,17 +4,17 @@
 //! pattern accumulation) as vector points for semantic retrieval.
 //! Collection: "memory_embeddings" with payload indexes on scope, source_agent, tags.
 
+use uc_types::error::EngineError;
 #[allow(unused_imports)]
 use uc_types::memory::{
-    MemoryContent, MemoryEntry, MemoryId, MemoryKey, MemoryMetadata,
-    MemorySearchResult, MemorySearchScope,
+    MemoryContent, MemoryEntry, MemoryId, MemoryKey, MemoryMetadata, MemorySearchResult,
+    MemorySearchScope,
 };
-use uc_types::error::EngineError;
 
 #[cfg(feature = "storage")]
 use qdrant_client::qdrant::{
-    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter,
-    PointStruct, SearchPointsBuilder, VectorParamsBuilder,
+    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance, Filter, PointStruct,
+    SearchPointsBuilder, VectorParamsBuilder,
 };
 #[cfg(feature = "storage")]
 use std::collections::HashMap;
@@ -114,14 +114,14 @@ impl LongTermMemory {
     /// Ensure the memory_embeddings collection exists in Qdrant.
     #[cfg(feature = "storage")]
     async fn ensure_collection(&self) -> Result<(), EngineError> {
-        let client = self.client.as_ref().ok_or_else(|| {
-            EngineError::ConnectionError("Qdrant client not available".into())
-        })?;
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| EngineError::ConnectionError("Qdrant client not available".into()))?;
 
-        let collections = client
-            .list_collections()
-            .await
-            .map_err(|e| EngineError::ConnectionError(format!("Qdrant list collections error: {}", e)))?;
+        let collections = client.list_collections().await.map_err(|e| {
+            EngineError::ConnectionError(format!("Qdrant list collections error: {}", e))
+        })?;
 
         let exists = collections
             .collections
@@ -131,11 +131,14 @@ impl LongTermMemory {
         if !exists {
             client
                 .create_collection(
-                    CreateCollectionBuilder::new(COLLECTION_NAME)
-                        .vectors_config(VectorParamsBuilder::new(VECTOR_SIZE as u64, Distance::Cosine)),
+                    CreateCollectionBuilder::new(COLLECTION_NAME).vectors_config(
+                        VectorParamsBuilder::new(VECTOR_SIZE as u64, Distance::Cosine),
+                    ),
                 )
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Qdrant create collection error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Qdrant create collection error: {}", e))
+                })?;
 
             tracing::info!("Created Qdrant collection: {}", COLLECTION_NAME);
         }
@@ -160,7 +163,11 @@ impl LongTermMemory {
             let qdrant_payload = entry_to_payload(entry);
             let point_id = entry_id_to_point_id(&entry.id);
 
-            let point = PointStruct::new(point_id, vector.clone(), qdrant_client::Payload::from(qdrant_payload));
+            let point = PointStruct::new(
+                point_id,
+                vector.clone(),
+                qdrant_client::Payload::from(qdrant_payload),
+            );
 
             client
                 .upsert_points(
@@ -217,18 +224,14 @@ impl LongTermMemory {
         } else {
             let mut fallback = self.fallback.write().await;
             let key_str = encode_key_for_payload(key);
-            fallback.retain(|f| {
-                encode_key_for_payload(&f.entry.key) != key_str
-            });
+            fallback.retain(|f| encode_key_for_payload(&f.entry.key) != key_str);
         }
 
         #[cfg(not(feature = "storage"))]
         {
             let mut fallback = self.fallback.write().await;
             let key_str = encode_key_for_payload(key);
-            fallback.retain(|f| {
-                encode_key_for_payload(&f.entry.key) != key_str
-            });
+            fallback.retain(|f| encode_key_for_payload(&f.entry.key) != key_str);
         }
 
         Ok(())
@@ -247,13 +250,10 @@ impl LongTermMemory {
     ) -> Result<Vec<MemorySearchResult>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(client) = &self.client {
-            let mut search_builder = SearchPointsBuilder::new(
-                COLLECTION_NAME,
-                query_embedding,
-                max_results as u64,
-            )
-            .score_threshold(min_score)
-            .with_payload(true);
+            let mut search_builder =
+                SearchPointsBuilder::new(COLLECTION_NAME, query_embedding, max_results as u64)
+                    .score_threshold(min_score)
+                    .with_payload(true);
 
             if let Some(filter) = scope_to_filter(scope) {
                 search_builder = search_builder.filter(filter);
@@ -262,9 +262,7 @@ impl LongTermMemory {
             let response = client
                 .search_points(search_builder)
                 .await
-                .map_err(|e| {
-                    EngineError::MemoryReadError(format!("Qdrant search error: {}", e))
-                })?;
+                .map_err(|e| EngineError::MemoryReadError(format!("Qdrant search error: {}", e)))?;
 
             let results = response
                 .result
@@ -301,7 +299,11 @@ impl LongTermMemory {
                 })
                 .collect();
 
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(max_results as usize);
             Ok(results)
         }
@@ -328,7 +330,11 @@ impl LongTermMemory {
                 })
                 .collect();
 
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(max_results as usize);
             Ok(results)
         }
@@ -362,7 +368,10 @@ fn entry_to_payload(entry: &MemoryEntry) -> HashMap<String, qdrant_client::qdran
 
     // Content as JSON string
     let content_json = serde_json::to_string(&entry.content).unwrap_or_default();
-    payload.insert("content".into(), qdrant_client::qdrant::Value::from(content_json));
+    payload.insert(
+        "content".into(),
+        qdrant_client::qdrant::Value::from(content_json),
+    );
 
     // Source agent
     payload.insert(
@@ -397,14 +406,19 @@ fn entry_to_payload(entry: &MemoryEntry) -> HashMap<String, qdrant_client::qdran
     );
 
     // Store the entry ID for reconstruction
-    payload.insert("entry_id".into(), qdrant_client::qdrant::Value::from(entry.id.0.clone()));
+    payload.insert(
+        "entry_id".into(),
+        qdrant_client::qdrant::Value::from(entry.id.0.clone()),
+    );
 
     payload
 }
 
 /// Convert a Qdrant payload (HashMap) back to a MemoryEntry.
 #[cfg(feature = "storage")]
-fn payload_to_entry(payload: &HashMap<String, qdrant_client::qdrant::Value>) -> Option<MemoryEntry> {
+fn payload_to_entry(
+    payload: &HashMap<String, qdrant_client::qdrant::Value>,
+) -> Option<MemoryEntry> {
     let key_str = payload.get("key")?.as_string()?;
     let key = decode_key_from_payload(&key_str)?;
 
@@ -421,11 +435,7 @@ fn payload_to_entry(payload: &HashMap<String, qdrant_client::qdrant::Value>) -> 
     let tags: Vec<String> = payload
         .get("tags")
         .and_then(|v| v.as_list())
-        .map(|list| {
-            list.iter()
-                .filter_map(|v| v.as_string())
-                .collect()
-        })
+        .map(|list| list.iter().filter_map(|v| v.as_string()).collect())
         .unwrap_or_default();
 
     let created_at: chrono::DateTime<chrono::Utc> = payload
@@ -472,15 +482,14 @@ fn key_to_filter(key: &MemoryKey) -> Filter {
 #[cfg(feature = "storage")]
 fn scope_to_filter(scope: &MemorySearchScope) -> Option<Filter> {
     match scope {
-        MemorySearchScope::Project { project_id } => {
-            Some(Filter::must([Condition::matches(
-                "key",
-                format!("project:{}:", project_id),
-            )]))
-        }
-        MemorySearchScope::Global => {
-            Some(Filter::must([Condition::matches("key", "global:".to_string())]))
-        }
+        MemorySearchScope::Project { project_id } => Some(Filter::must([Condition::matches(
+            "key",
+            format!("project:{}:", project_id),
+        )])),
+        MemorySearchScope::Global => Some(Filter::must([Condition::matches(
+            "key",
+            "global:".to_string(),
+        )])),
         MemorySearchScope::All => None,
     }
 }
@@ -538,8 +547,14 @@ impl ValueExt for qdrant_client::qdrant::Value {
 /// Encode a MemoryKey to a string for payload storage.
 fn encode_key_for_payload(key: &MemoryKey) -> String {
     match key {
-        MemoryKey::Task { task_id, key: inner } => format!("task:{}:{}", task_id, inner),
-        MemoryKey::Project { project_id, key: inner } => format!("project:{}:{}", project_id, inner),
+        MemoryKey::Task {
+            task_id,
+            key: inner,
+        } => format!("task:{}:{}", task_id, inner),
+        MemoryKey::Project {
+            project_id,
+            key: inner,
+        } => format!("project:{}:{}", project_id, inner),
         MemoryKey::Global { key: inner } => format!("global:{}", inner),
     }
 }
@@ -665,10 +680,22 @@ mod tests {
             project_id: "p1".to_string(),
             key: "k".to_string(),
         };
-        let global_key = MemoryKey::Global { key: "k".to_string() };
+        let global_key = MemoryKey::Global {
+            key: "k".to_string(),
+        };
 
-        assert!(matches_scope(&project_key, &MemorySearchScope::Project { project_id: "p1".to_string() }));
-        assert!(!matches_scope(&project_key, &MemorySearchScope::Project { project_id: "p2".to_string() }));
+        assert!(matches_scope(
+            &project_key,
+            &MemorySearchScope::Project {
+                project_id: "p1".to_string()
+            }
+        ));
+        assert!(!matches_scope(
+            &project_key,
+            &MemorySearchScope::Project {
+                project_id: "p2".to_string()
+            }
+        ));
         assert!(matches_scope(&global_key, &MemorySearchScope::Global));
         assert!(!matches_scope(&task_key, &MemorySearchScope::Global));
         assert!(matches_scope(&task_key, &MemorySearchScope::All));
@@ -701,12 +728,17 @@ mod tests {
 
         // Search with a vector similar to entry1
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let results = store.search(
-            query,
-            &MemorySearchScope::Project { project_id: "p1".to_string() },
-            10,
-            0.0,
-        ).await.unwrap();
+        let results = store
+            .search(
+                query,
+                &MemorySearchScope::Project {
+                    project_id: "p1".to_string(),
+                },
+                10,
+                0.0,
+            )
+            .await
+            .unwrap();
 
         assert_eq!(results.len(), 2);
         // First result should be entry1 (cosine similarity = 1.0)
@@ -714,12 +746,17 @@ mod tests {
 
         // Delete entry1
         store.delete(&entry1.key).await.unwrap();
-        let results = store.search(
-            vec![1.0, 0.0, 0.0, 0.0],
-            &MemorySearchScope::Project { project_id: "p1".to_string() },
-            10,
-            0.0,
-        ).await.unwrap();
+        let results = store
+            .search(
+                vec![1.0, 0.0, 0.0, 0.0],
+                &MemorySearchScope::Project {
+                    project_id: "p1".to_string(),
+                },
+                10,
+                0.0,
+            )
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -728,28 +765,33 @@ mod tests {
         let store = LongTermMemory::new_fallback();
 
         let entry = make_entry(
-            MemoryKey::Global { key: "conventions".to_string() },
+            MemoryKey::Global {
+                key: "conventions".to_string(),
+            },
             0.5,
             Some(vec![1.0, 0.0]),
         );
         store.write(&entry).await.unwrap();
 
         // Should not match project scope
-        let results = store.search(
-            vec![1.0, 0.0],
-            &MemorySearchScope::Project { project_id: "p1".to_string() },
-            10,
-            0.0,
-        ).await.unwrap();
+        let results = store
+            .search(
+                vec![1.0, 0.0],
+                &MemorySearchScope::Project {
+                    project_id: "p1".to_string(),
+                },
+                10,
+                0.0,
+            )
+            .await
+            .unwrap();
         assert!(results.is_empty());
 
         // Should match global scope
-        let results = store.search(
-            vec![1.0, 0.0],
-            &MemorySearchScope::Global,
-            10,
-            0.0,
-        ).await.unwrap();
+        let results = store
+            .search(vec![1.0, 0.0], &MemorySearchScope::Global, 10, 0.0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 }

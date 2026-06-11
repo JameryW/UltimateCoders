@@ -4,10 +4,7 @@
 //! without waiting for container startup. Supports configurable pool
 //! sizes and automatic warming.
 
-use super::{
-    Sandbox, SandboxConfig, SandboxHandle, SandboxStatus,
-    EngineError,
-};
+use super::{EngineError, Sandbox, SandboxConfig, SandboxHandle, SandboxStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -61,9 +58,7 @@ impl SandboxPool {
         max_pool_size: usize,
         warm_pool_size: usize,
     ) -> Self {
-        let factory = Arc::new(DefaultSandboxFactory {
-            sandbox,
-        });
+        let factory = Arc::new(DefaultSandboxFactory { sandbox });
         Self {
             factory,
             config,
@@ -125,13 +120,11 @@ impl SandboxPool {
         }
 
         // 3. Pool is at capacity
-        Err(EngineError::SandboxError(
-            format!(
-                "Sandbox pool at capacity ({}/{}). Wait for a sandbox to be released.",
-                active_count + idle_count,
-                self.max_pool_size,
-            ),
-        ))
+        Err(EngineError::SandboxError(format!(
+            "Sandbox pool at capacity ({}/{}). Wait for a sandbox to be released.",
+            active_count + idle_count,
+            self.max_pool_size,
+        )))
     }
 
     /// Release a sandbox back to the pool.
@@ -296,9 +289,11 @@ mod tests {
         let pool = SandboxPool::new(sandbox, config, 10, 2);
 
         // Acquire 4 sandboxes
-        let handles: Vec<_> = futures::future::join_all(
-            (0..4).map(|_| pool.acquire())
-        ).await.into_iter().map(|r| r.unwrap()).collect();
+        let handles: Vec<_> = futures::future::join_all((0..4).map(|_| pool.acquire()))
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
 
         assert_eq!(pool.active_count().await, 4);
 

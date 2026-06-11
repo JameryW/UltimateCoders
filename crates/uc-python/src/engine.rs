@@ -37,9 +37,10 @@ fn engine_error_to_pyerr(err: uc_types::EngineError) -> PyErr {
         IndexingError(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
         ConnectionError(msg) => pyo3::exceptions::PyConnectionError::new_err(msg),
         TimeoutError(msg) => pyo3::exceptions::PyTimeoutError::new_err(msg),
-        RateLimited(secs) => {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("Rate limited, retry after {}s", secs))
-        }
+        RateLimited(secs) => pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "Rate limited, retry after {}s",
+            secs
+        )),
         ConflictError { path, details } => {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Conflict in {}: {}", path, details))
         }
@@ -134,10 +135,9 @@ impl PyEngine {
                 })?;
                 // For gRPC mode, we need to connect asynchronously.
                 // We'll block the current thread to do so (acceptable at construction time).
-                let client = async_support::block_on(
-                    uc_grpc::client::GrpcEngineClient::connect(endpoint),
-                )
-                .map_err(engine_error_to_pyerr)?;
+                let client =
+                    async_support::block_on(uc_grpc::client::GrpcEngineClient::connect(endpoint))
+                        .map_err(engine_error_to_pyerr)?;
                 let inner: Arc<dyn EngineApi + Send + Sync> = Arc::new(client);
                 Ok(PyEngine {
                     mode: mode.to_string(),
@@ -306,7 +306,14 @@ impl PyEngine {
     ) -> PyResult<PyMemoryEntry> {
         let inner = self.inner.clone();
         let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
-        let mem_content = build_memory_content(&content_type, content, language, file_path, uri, description);
+        let mem_content = build_memory_content(
+            &content_type,
+            content,
+            language,
+            file_path,
+            uri,
+            description,
+        );
         let request = uc_types::MemoryWriteRequest {
             key: mem_key,
             content: mem_content,
@@ -410,7 +417,10 @@ impl PyEngine {
         let inner = self.inner.clone();
         let uc_query: uc_types::SearchQuery = query.into();
         future_into_py(py, async move {
-            let result = inner.search(uc_query).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .search(uc_query)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(PySearchResult::from(result))
         })
     }
@@ -437,7 +447,10 @@ impl PyEngine {
                 },
                 force_full,
             };
-            let result = inner.index_repo(request).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .index_repo(request)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(PyIndexResponse::from(result))
         })
     }
@@ -460,7 +473,10 @@ impl PyEngine {
             include_semantic,
         };
         future_into_py(py, async move {
-            let result = inner.read_memory(request).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .read_memory(request)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(result.map(PyMemoryEntry::from))
         })
     }
@@ -487,8 +503,14 @@ impl PyEngine {
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
-        let mem_content =
-            build_memory_content(&content_type, content, language, file_path, uri, description);
+        let mem_content = build_memory_content(
+            &content_type,
+            content,
+            language,
+            file_path,
+            uri,
+            description,
+        );
         let request = uc_types::MemoryWriteRequest {
             key: mem_key,
             content: mem_content,
@@ -500,7 +522,10 @@ impl PyEngine {
             },
         };
         future_into_py(py, async move {
-            let result = inner.write_memory(request).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .write_memory(request)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(PyMemoryEntry::from(result))
         })
     }
@@ -518,7 +543,10 @@ impl PyEngine {
         let inner = self.inner.clone();
         let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
         future_into_py(py, async move {
-            inner.delete_memory(&mem_key).await.map_err(engine_error_to_pyerr)?;
+            inner
+                .delete_memory(&mem_key)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(())
         })
     }
@@ -549,7 +577,10 @@ impl PyEngine {
             min_score,
         };
         future_into_py(py, async move {
-            let result = inner.search_memory(request).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .search_memory(request)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(result
                 .results
                 .into_iter()
@@ -566,7 +597,10 @@ impl PyEngine {
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            let result = inner.get_index_state(&repo_id).await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .get_index_state(&repo_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(PyRepoIndexState::from(result))
         })
     }
@@ -579,7 +613,10 @@ impl PyEngine {
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            inner.remove_index(&repo_id).await.map_err(engine_error_to_pyerr)?;
+            inner
+                .remove_index(&repo_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(())
         })
     }

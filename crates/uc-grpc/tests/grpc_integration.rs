@@ -192,7 +192,9 @@ async fn grpc_search_memory() {
     client
         .write_memory(uc_types::MemoryWriteRequest {
             key: key.clone(),
-            content: uc_types::MemoryContent::Text("We chose PostgreSQL for structured metadata".to_string()),
+            content: uc_types::MemoryContent::Text(
+                "We chose PostgreSQL for structured metadata".to_string(),
+            ),
             metadata: uc_types::MemoryMetadata {
                 source_agent: "grpc-test".to_string(),
                 importance: 0.9, // High importance -> stored in long-term

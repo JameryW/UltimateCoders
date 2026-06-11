@@ -11,7 +11,6 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +114,7 @@ class RateLimiter:
             wait_time = limiter.wait_time(1000)
     """
 
-    def __init__(self, config: Optional[RateLimiterConfig] = None):
+    def __init__(self, config: RateLimiterConfig | None = None):
         self.config = config or RateLimiterConfig()
         self.rpm_bucket = TokenBucket(
             capacity=self.config.rpm,
@@ -163,7 +162,10 @@ class RateLimiter:
         """Check if a request can be made without consuming tokens."""
         if self._active_count >= self.max_concurrent:
             return False
-        return self.rpm_bucket.available() >= 1.0 and self.tpm_bucket.available() >= estimated_tokens
+        return (
+            self.rpm_bucket.available() >= 1.0
+            and self.tpm_bucket.available() >= estimated_tokens
+        )
 
     def wait_time(self, estimated_tokens: float = 1000.0) -> float:
         """Get the estimated wait time (seconds) until a request can be made."""
@@ -209,7 +211,7 @@ class ModelFallbackChain:
     secondary: str = "claude-sonnet-4-6"
     tertiary: str = "claude-haiku-4-5-20251001"
 
-    def fallback(self, current: str) -> Optional[str]:
+    def fallback(self, current: str) -> str | None:
         """Get the next model in the fallback chain.
 
         Args:
@@ -282,7 +284,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
         self._total_calls = 0
         self._total_rejected = 0
 

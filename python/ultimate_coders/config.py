@@ -7,21 +7,20 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
 class EngineConfig:
     """Engine configuration."""
     mode: str = "local"  # "local" or "grpc"
-    grpc_endpoint: Optional[str] = None
+    grpc_endpoint: str | None = None
     grpc_timeout_seconds: int = 30
 
 
 @dataclass
 class StorageConfig:
     """Storage configuration."""
-    tikv_endpoints: List[str] = field(default_factory=lambda: ["127.0.0.1:2379"])
+    tikv_endpoints: list[str] = field(default_factory=lambda: ["127.0.0.1:2379"])
     qdrant_url: str = "http://127.0.0.1:6333"
     postgres_url: str = "postgresql://localhost:5432/ultimatecoders"
 
@@ -37,7 +36,7 @@ class NatsConfig:
 class LlmConfig:
     """LLM API configuration."""
     provider: str = "anthropic"
-    api_key: Optional[str] = None
+    api_key: str | None = None
     model: str = "claude-sonnet-4-6"
     fallback_model: str = "claude-haiku-4-5-20251001"
     max_retries: int = 5
@@ -54,7 +53,7 @@ class Config:
     llm: LlmConfig = field(default_factory=LlmConfig)
 
 
-def load_config(path: Optional[str] = None) -> Config:
+def load_config(path: str | None = None) -> Config:
     """Load configuration from file or environment.
 
     Priority: file > environment > defaults.

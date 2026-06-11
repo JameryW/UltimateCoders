@@ -100,10 +100,14 @@ impl AstIndexer {
             match language {
                 "rust" => parser
                     .set_language(&tree_sitter_rust::LANGUAGE.into())
-                    .map_err(|e| EngineError::IndexingError(format!("Rust grammar error: {}", e)))?,
+                    .map_err(|e| {
+                        EngineError::IndexingError(format!("Rust grammar error: {}", e))
+                    })?,
                 "python" => parser
                     .set_language(&tree_sitter_python::LANGUAGE.into())
-                    .map_err(|e| EngineError::IndexingError(format!("Python grammar error: {}", e)))?,
+                    .map_err(|e| {
+                        EngineError::IndexingError(format!("Python grammar error: {}", e))
+                    })?,
                 _ => {
                     return Ok(AstParseResult {
                         file_path: file_path.to_string(),
@@ -134,7 +138,9 @@ impl AstIndexer {
         #[cfg(not(feature = "indexing"))]
         {
             let _ = (file_path, content, language);
-            Err(EngineError::IndexingError("Indexing feature is disabled".into()))
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled".into(),
+            ))
         }
     }
 
@@ -204,7 +210,10 @@ impl AstIndexer {
                     .collect())
             }
 
-            AstQuery::References { symbol_name, repo_id } => {
+            AstQuery::References {
+                symbol_name,
+                repo_id,
+            } => {
                 let results = metadata
                     .search_references(symbol_name, repo_id.as_deref(), max_results)
                     .await?;
@@ -273,7 +282,12 @@ impl AstIndexer {
 
             AstQuery::Imports { repo_id } => {
                 let results = metadata
-                    .search_symbols("import", Some(repo_id), Some(&SymbolKind::Import), max_results)
+                    .search_symbols(
+                        "import",
+                        Some(repo_id),
+                        Some(&SymbolKind::Import),
+                        max_results,
+                    )
                     .await?;
 
                 Ok(results
@@ -721,9 +735,7 @@ fn walk_python_node(
 
 #[cfg(feature = "indexing")]
 fn node_text(node: &tree_sitter::Node, source: &str) -> String {
-    node.utf8_text(source.as_bytes())
-        .unwrap_or("")
-        .to_string()
+    node.utf8_text(source.as_bytes()).unwrap_or("").to_string()
 }
 
 #[cfg(feature = "indexing")]
@@ -827,9 +839,7 @@ import os
 from collections import defaultdict
 "#;
 
-        let result = indexer
-            .parse_file("src/main.py", source, "python")
-            .unwrap();
+        let result = indexer.parse_file("src/main.py", source, "python").unwrap();
 
         assert!(!result.symbols.is_empty());
 
@@ -844,7 +854,9 @@ from collections import defaultdict
     #[test]
     fn test_parse_unsupported_language() {
         let indexer = AstIndexer::new();
-        let result = indexer.parse_file("test.brainfuck", "+++", "brainfuck").unwrap();
+        let result = indexer
+            .parse_file("test.brainfuck", "+++", "brainfuck")
+            .unwrap();
         assert!(result.symbols.is_empty());
         assert!(result.references.is_empty());
     }

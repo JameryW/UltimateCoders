@@ -7,8 +7,7 @@
 //! API key: `OPENAI_API_KEY` env var
 
 use crate::sandbox::{
-    AgentAdapter, ExecRequest, ExecResult, AgentOutput, SandboxConfig,
-    truncate_str,
+    truncate_str, AgentAdapter, AgentOutput, ExecRequest, ExecResult, SandboxConfig,
 };
 use uc_types::{ChangeType, FileChange};
 
@@ -50,10 +49,7 @@ impl AgentAdapter for CodexAgent {
 
         ExecRequest {
             command: "codex".to_string(),
-            args: vec![
-                prompt.to_string(),
-                "--full-auto".to_string(),
-            ],
+            args: vec![prompt.to_string(), "--full-auto".to_string()],
             stdin: None,
             timeout_secs: config.resource_limits.max_cpu_seconds,
             working_dir: if working_dir.is_empty() {
@@ -142,7 +138,11 @@ fn parse_codex_output(output: &str) -> (String, Vec<FileChange>) {
         "Codex completed execution".to_string()
     } else {
         // Take the first few non-empty lines as summary
-        summary_lines.into_iter().take(5).collect::<Vec<_>>().join("\n")
+        summary_lines
+            .into_iter()
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("\n")
     };
 
     (summary, file_changes)
@@ -158,7 +158,7 @@ fn extract_file_path_from_line(line: &str, keyword: &str) -> Option<String> {
         }
         // Also handle paths with spaces if quoted
         if path.starts_with('"') && path.ends_with('"') && path.len() > 1 {
-            return Some(path[1..path.len()-1].to_string());
+            return Some(path[1..path.len() - 1].to_string());
         }
     }
 
@@ -177,7 +177,7 @@ fn extract_file_path_from_line(line: &str, keyword: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::{ResourceLimits, NetworkMode};
+    use crate::sandbox::{NetworkMode, ResourceLimits};
     use std::collections::HashMap;
 
     fn test_config() -> SandboxConfig {
@@ -213,7 +213,8 @@ mod tests {
         let adapter = CodexAgent::new();
         let result = ExecResult {
             exit_code: 0,
-            stdout: "I implemented feature X by creating a new module.\nCreated: src/feature.rs".to_string(),
+            stdout: "I implemented feature X by creating a new module.\nCreated: src/feature.rs"
+                .to_string(),
             stderr: String::new(),
             duration_ms: 10000,
             timed_out: false,

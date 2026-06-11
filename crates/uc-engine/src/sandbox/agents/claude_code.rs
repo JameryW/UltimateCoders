@@ -7,8 +7,7 @@
 //! API key: `ANTHROPIC_API_KEY` env var
 
 use crate::sandbox::{
-    AgentAdapter, ExecRequest, ExecResult, AgentOutput, SandboxConfig, TokenUsage,
-    truncate_str,
+    truncate_str, AgentAdapter, AgentOutput, ExecRequest, ExecResult, SandboxConfig, TokenUsage,
 };
 use uc_types::{ChangeType, FileChange};
 
@@ -157,7 +156,8 @@ fn extract_summary(parsed: &serde_json::Value) -> String {
                 }
                 // Content might be an array of blocks
                 if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
-                    let text_parts: Vec<&str> = blocks.iter()
+                    let text_parts: Vec<&str> = blocks
+                        .iter()
                         .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
                         .collect();
                     if !text_parts.is_empty() {
@@ -176,14 +176,15 @@ fn extract_token_usage(parsed: &serde_json::Value) -> Option<TokenUsage> {
     let usage = parsed.get("usage")?;
 
     Some(TokenUsage {
-        input_tokens: usage.get("input_tokens")
+        input_tokens: usage
+            .get("input_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
-        output_tokens: usage.get("output_tokens")
+        output_tokens: usage
+            .get("output_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
-        total_cost_usd: usage.get("total_cost_usd")
-            .and_then(|v| v.as_f64()),
+        total_cost_usd: usage.get("total_cost_usd").and_then(|v| v.as_f64()),
     })
 }
 
@@ -250,7 +251,7 @@ fn extract_file_changes(parsed: &serde_json::Value) -> Vec<FileChange> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::{ResourceLimits, NetworkMode};
+    use crate::sandbox::{NetworkMode, ResourceLimits};
     use std::collections::HashMap;
 
     fn test_config() -> SandboxConfig {
@@ -282,7 +283,9 @@ mod tests {
         assert!(request.args.contains(&"json".to_string()));
         assert!(request.args.contains(&"--max-turns".to_string()));
         assert!(request.args.contains(&"20".to_string()));
-        assert!(request.args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(request
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
         assert_eq!(request.working_dir, "/tmp/test");
     }
 
@@ -406,7 +409,8 @@ mod tests {
                         ]
                     }
                 ]
-            }"#.to_string(),
+            }"#
+            .to_string(),
             stderr: String::new(),
             duration_ms: 5000,
             timed_out: false,

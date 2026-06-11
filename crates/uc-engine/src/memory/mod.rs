@@ -5,13 +5,13 @@
 //!             to long-term (with embedding if available).
 //! Search path: semantic search in long-term via Qdrant.
 
-pub mod short_term;
 pub mod long_term;
+pub mod short_term;
 
 use uc_types::error::EngineError;
 use uc_types::memory::{
-    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest,
-    MemorySearchResponse, MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
+    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse,
+    MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
 };
 
 use crate::config::MemoryConfig;
@@ -60,7 +60,10 @@ impl MemoryStore {
     ///
     /// Checks short-term memory first. If not found and `include_semantic` is true,
     /// falls back to long-term memory (exact key match, not semantic search).
-    pub async fn read(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError> {
+    pub async fn read(
+        &self,
+        request: MemoryReadRequest,
+    ) -> Result<Option<MemoryEntry>, EngineError> {
         // Always check short-term first
         let result = self.short_term.read(&request.key).await?;
         if result.is_some() {
@@ -182,7 +185,11 @@ impl MemoryStore {
             self.config.max_search_results
         };
 
-        let min_score = if min_score > 0.0 { min_score } else { self.config.min_search_score };
+        let min_score = if min_score > 0.0 {
+            min_score
+        } else {
+            self.config.min_search_score
+        };
 
         self.long_term
             .search(query_embedding, &scope, max_results, min_score)
@@ -285,7 +292,10 @@ mod tests {
             key: "config".to_string(),
         };
 
-        store.write(make_write_request(key.clone(), 0.5)).await.unwrap();
+        store
+            .write(make_write_request(key.clone(), 0.5))
+            .await
+            .unwrap();
 
         let read_result = store
             .read(MemoryReadRequest {
@@ -393,7 +403,9 @@ mod tests {
         let results = store
             .search_with_embedding(
                 vec![1.0, 0.0, 0.0, 0.0],
-                MemorySearchScope::Project { project_id: "p1".to_string() },
+                MemorySearchScope::Project {
+                    project_id: "p1".to_string(),
+                },
                 10,
                 0.0,
             )

@@ -7,14 +7,13 @@
 //! Python consumers switch between modes at construction time via the
 //! `uc-python` binding layer.
 
-use async_trait::async_trait;
 use crate::error::EngineError;
 use crate::index::{IndexRequest, IndexResponse};
 use crate::memory::{
-    MemoryEntry, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse,
-    MemoryWriteRequest,
+    MemoryEntry, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
 };
 use crate::search::{SearchQuery, SearchResult};
+use async_trait::async_trait;
 
 /// The core engine API — all operations the system supports.
 ///
@@ -42,7 +41,10 @@ pub trait EngineApi: Send + Sync {
     // ── Memory ──────────────────────────────────────────────
 
     /// Read a memory entry.
-    async fn read_memory(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError>;
+    async fn read_memory(
+        &self,
+        request: MemoryReadRequest,
+    ) -> Result<Option<MemoryEntry>, EngineError>;
 
     /// Write a memory entry.
     async fn write_memory(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError>;

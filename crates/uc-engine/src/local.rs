@@ -11,31 +11,27 @@
 //! - `CircuitBreaker` for protecting against cascading failures
 
 use uc_types::{
-    async_trait, EngineApi, EngineError, HealthStatus,
-    IndexRequest, IndexResponse,
-    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest,
-    MemorySearchResponse, MemoryWriteRequest,
-    RepoIndexState, SearchResult, SearchQuery,
+    async_trait, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse, MemoryEntry,
+    MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
+    RepoIndexState, SearchQuery, SearchResult,
 };
 
+use crate::checkpoint::{CheckpointConfig, CheckpointManager};
+use crate::circuit_breaker::CircuitBreaker;
 use crate::config::EngineConfig;
-use crate::memory::short_term::ShortTermMemory;
+use crate::conflict::{ConflictDetector, ConflictResult, EditIntent};
+use crate::events::{AgentEventType, InMemoryEventStore, TaskSnapshot};
+use crate::indexer::semantic::EmbeddingService;
+use crate::indexer::IndexPipeline;
 use crate::memory::long_term::LongTermMemory;
+use crate::memory::short_term::ShortTermMemory;
 use crate::memory::MemoryStore;
 use crate::metadata::postgres::PostgresMetadataStore;
-use crate::indexer::IndexPipeline;
-use crate::indexer::semantic::EmbeddingService;
+use crate::rate_limiter::LlmRateLimiter;
+use crate::sandbox::subprocess::SubprocessSandbox;
+use crate::sandbox::{ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle};
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
-use crate::checkpoint::{CheckpointManager, CheckpointConfig};
-use crate::conflict::{ConflictDetector, EditIntent, ConflictResult};
-use crate::rate_limiter::LlmRateLimiter;
-use crate::circuit_breaker::CircuitBreaker;
-use crate::events::{InMemoryEventStore, AgentEventType, TaskSnapshot};
-use crate::sandbox::{
-    Sandbox, SandboxConfig, SandboxHandle, ExecRequest, ExecResult,
-};
-use crate::sandbox::subprocess::SubprocessSandbox;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -87,9 +83,7 @@ impl LocalEngine {
         );
 
         // Initialize metadata store (PostgreSQL)
-        let metadata_store = Arc::new(
-            PostgresMetadataStore::new(&config.storage.pg_url).await?,
-        );
+        let metadata_store = Arc::new(PostgresMetadataStore::new(&config.storage.pg_url).await?);
 
         // Create unified memory store
         let memory_store = Arc::new(MemoryStore::new(
@@ -213,7 +207,9 @@ impl LocalEngine {
     /// Create a new local engine for testing with all in-memory fallbacks and custom config.
     #[cfg(not(feature = "storage"))]
     fn new_fallback_with_config(config: EngineConfig) -> Self {
-        let short_term = Arc::new(ShortTermMemory::new_fallback(config.memory.task_ttl_seconds));
+        let short_term = Arc::new(ShortTermMemory::new_fallback(
+            config.memory.task_ttl_seconds,
+        ));
         let long_term = Arc::new(LongTermMemory::new_fallback());
         let metadata_store = Arc::new(PostgresMetadataStore::new_fallback());
 
@@ -346,11 +342,17 @@ impl LocalEngine {
         worker_id: &str,
         regions: &[crate::events::LineRange],
     ) -> ConflictResult {
-        self.conflict_detector.check_conflict(file_path, worker_id, regions)
+        self.conflict_detector
+            .check_conflict(file_path, worker_id, regions)
     }
 
     /// Resolve a conflict using three-way merge.
-    pub fn resolve_conflict(&self, base: &str, ours: &str, theirs: &str) -> crate::conflict::MergeResult {
+    pub fn resolve_conflict(
+        &self,
+        base: &str,
+        ours: &str,
+        theirs: &str,
+    ) -> crate::conflict::MergeResult {
         crate::conflict::merger::three_way_merge(base, ours, theirs)
     }
 
@@ -388,7 +390,10 @@ impl LocalEngine {
     ///
     /// Returns a handle to the created sandbox that can be used
     /// for executing commands.
-    pub async fn create_sandbox(&self, config: &SandboxConfig) -> Result<SandboxHandle, EngineError> {
+    pub async fn create_sandbox(
+        &self,
+        config: &SandboxConfig,
+    ) -> Result<SandboxHandle, EngineError> {
         self.sandbox.create(config).await
     }
 
@@ -461,7 +466,10 @@ impl EngineApi for LocalEngine {
         self.index_pipeline.remove_index(repo_id).await
     }
 
-    async fn read_memory(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError> {
+    async fn read_memory(
+        &self,
+        request: MemoryReadRequest,
+    ) -> Result<Option<MemoryEntry>, EngineError> {
         self.memory_store.read(request).await
     }
 
@@ -493,17 +501,16 @@ impl EngineApi for LocalEngine {
             Some("Using in-memory fallback".into())
         };
 
-        let overall_status = if memory_health.iter().all(|c| c.status == "ok")
-            && metadata_status == "ok"
-        {
-            "ok"
-        } else if memory_health.iter().any(|c| c.status == "fallback")
-            || metadata_status == "fallback"
-        {
-            "degraded"
-        } else {
-            "error"
-        };
+        let overall_status =
+            if memory_health.iter().all(|c| c.status == "ok") && metadata_status == "ok" {
+                "ok"
+            } else if memory_health.iter().any(|c| c.status == "fallback")
+                || metadata_status == "fallback"
+            {
+                "degraded"
+            } else {
+                "error"
+            };
 
         let mut components = memory_health;
         components.push(uc_types::engine::ComponentHealth {
@@ -560,7 +567,8 @@ impl EngineApi for LocalEngine {
                 crate::circuit_breaker::CircuitState::Closed => "ok",
                 crate::circuit_breaker::CircuitState::HalfOpen => "degraded",
                 crate::circuit_breaker::CircuitState::Open => "error",
-            }.into(),
+            }
+            .into(),
             details: Some(format!(
                 "State: {:?}, failures: {}",
                 self.circuit_breaker.state(),
@@ -597,9 +605,9 @@ mod tests {
         let engine = LocalEngine::new_fallback();
         let health = engine.health().await.unwrap();
         assert_eq!(health.status, "degraded"); // Using fallbacks
-        // Now has 11 components: short_term, long_term, metadata, index_pipeline,
-        // search_engine, embedding_service, checkpoint_manager, conflict_detector,
-        // rate_limiter, circuit_breaker, sandbox
+                                               // Now has 11 components: short_term, long_term, metadata, index_pipeline,
+                                               // search_engine, embedding_service, checkpoint_manager, conflict_detector,
+                                               // rate_limiter, circuit_breaker, sandbox
         assert_eq!(health.components.len(), 11);
     }
 
@@ -643,23 +651,29 @@ mod tests {
             key: "decisions".to_string(),
         };
 
-        let write_result = engine.write_memory(MemoryWriteRequest {
-            key: key.clone(),
-            content: MemoryContent::Text("Use PostgreSQL for metadata".to_string()),
-            metadata: MemoryMetadata {
-                source_agent: "test".to_string(),
-                importance: 0.5,
-                tags: vec!["test".to_string()],
-                embedding: None,
-            },
-        }).await.unwrap();
+        let write_result = engine
+            .write_memory(MemoryWriteRequest {
+                key: key.clone(),
+                content: MemoryContent::Text("Use PostgreSQL for metadata".to_string()),
+                metadata: MemoryMetadata {
+                    source_agent: "test".to_string(),
+                    importance: 0.5,
+                    tags: vec!["test".to_string()],
+                    embedding: None,
+                },
+            })
+            .await
+            .unwrap();
 
         assert_eq!(write_result.key, key);
 
-        let read_result = engine.read_memory(MemoryReadRequest {
-            key: key.clone(),
-            include_semantic: false,
-        }).await.unwrap();
+        let read_result = engine
+            .read_memory(MemoryReadRequest {
+                key: key.clone(),
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
 
         assert!(read_result.is_some());
         let entry = read_result.unwrap();
@@ -670,25 +684,33 @@ mod tests {
     async fn local_engine_fallback_memory_delete() {
         let engine = LocalEngine::new_fallback();
 
-        let key = MemoryKey::Global { key: "config".to_string() };
+        let key = MemoryKey::Global {
+            key: "config".to_string(),
+        };
 
-        engine.write_memory(MemoryWriteRequest {
-            key: key.clone(),
-            content: MemoryContent::Text("v1".to_string()),
-            metadata: MemoryMetadata {
-                source_agent: "test".to_string(),
-                importance: 0.5,
-                tags: vec!["test".to_string()],
-                embedding: None,
-            },
-        }).await.unwrap();
+        engine
+            .write_memory(MemoryWriteRequest {
+                key: key.clone(),
+                content: MemoryContent::Text("v1".to_string()),
+                metadata: MemoryMetadata {
+                    source_agent: "test".to_string(),
+                    importance: 0.5,
+                    tags: vec!["test".to_string()],
+                    embedding: None,
+                },
+            })
+            .await
+            .unwrap();
 
         engine.delete_memory(&key).await.unwrap();
 
-        let read_result = engine.read_memory(MemoryReadRequest {
-            key: key.clone(),
-            include_semantic: false,
-        }).await.unwrap();
+        let read_result = engine
+            .read_memory(MemoryReadRequest {
+                key: key.clone(),
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
         assert!(read_result.is_none());
     }
 
@@ -814,7 +836,10 @@ fn load_index() -> Index { Index::new() }"#,
 
         let result = engine.search(query).await.unwrap();
         // Semantic search should find results (exact content match with BLAKE3 fallback)
-        assert!(!result.items.is_empty(), "semantic search should return results for exact content match");
+        assert!(
+            !result.items.is_empty(),
+            "semantic search should return results for exact content match"
+        );
 
         // Hybrid search should include results from all modes
         let hybrid_query = SearchQuery {
@@ -827,7 +852,10 @@ fn load_index() -> Index { Index::new() }"#,
         };
 
         let hybrid_result = engine.search(hybrid_query).await.unwrap();
-        assert!(!hybrid_result.items.is_empty(), "hybrid search should return results");
+        assert!(
+            !hybrid_result.items.is_empty(),
+            "hybrid search should return results"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -936,7 +964,9 @@ fn load_index() -> Index { Index::new() }"#,
         assert!(engine.check_circuit_breaker().is_err());
 
         // Force close for cleanup
-        engine.circuit_breaker().force_state(crate::circuit_breaker::CircuitState::Closed);
+        engine
+            .circuit_breaker()
+            .force_state(crate::circuit_breaker::CircuitState::Closed);
     }
 
     #[tokio::test]

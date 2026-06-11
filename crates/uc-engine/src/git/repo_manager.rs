@@ -80,8 +80,9 @@ impl RepoManager {
 
         // Ensure parent directory exists
         if let Some(parent) = local_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| EngineError::IndexingError(format!("Failed to create directory: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                EngineError::IndexingError(format!("Failed to create directory: {}", e))
+            })?;
         }
 
         // Shallow clone
@@ -91,7 +92,8 @@ impl RepoManager {
         fetch_options.depth(1);
         builder.fetch_options(fetch_options);
 
-        builder.clone(&spec.remote_url, &local_path)
+        builder
+            .clone(&spec.remote_url, &local_path)
             .map_err(|e| EngineError::IndexingError(format!("Failed to clone repo: {}", e)))
     }
 
@@ -102,7 +104,11 @@ impl RepoManager {
             .and_then(|mut remote| {
                 let mut fetch_options = git2::FetchOptions::new();
                 fetch_options.depth(1);
-                remote.fetch(&["refs/heads/*:refs/heads/*"], Some(&mut fetch_options), None)
+                remote.fetch(
+                    &["refs/heads/*:refs/heads/*"],
+                    Some(&mut fetch_options),
+                    None,
+                )
             })
             .map_err(|e| EngineError::IndexingError(format!("Failed to fetch: {}", e)))?;
 
@@ -115,9 +121,9 @@ impl RepoManager {
             .head()
             .map_err(|e| EngineError::IndexingError(format!("Failed to get HEAD: {}", e)))?;
 
-        let commit = head
-            .peel_to_commit()
-            .map_err(|e| EngineError::IndexingError(format!("Failed to peel HEAD to commit: {}", e)))?;
+        let commit = head.peel_to_commit().map_err(|e| {
+            EngineError::IndexingError(format!("Failed to peel HEAD to commit: {}", e))
+        })?;
 
         Ok(commit.id().to_string())
     }
@@ -136,32 +142,44 @@ impl RepoManager {
             return Ok(vec![]);
         }
 
-        let old_oid = git2::Oid::from_str(old_sha)
-            .map_err(|e| EngineError::IndexingError(format!("Invalid old SHA '{}': {}", old_sha, e)))?;
-        let new_oid = git2::Oid::from_str(new_sha)
-            .map_err(|e| EngineError::IndexingError(format!("Invalid new SHA '{}': {}", new_sha, e)))?;
+        let old_oid = git2::Oid::from_str(old_sha).map_err(|e| {
+            EngineError::IndexingError(format!("Invalid old SHA '{}': {}", old_sha, e))
+        })?;
+        let new_oid = git2::Oid::from_str(new_sha).map_err(|e| {
+            EngineError::IndexingError(format!("Invalid new SHA '{}': {}", new_sha, e))
+        })?;
 
         // Check if old is ancestor of new (for incremental)
-        let old_commit = repo.find_commit(old_oid)
+        let old_commit = repo
+            .find_commit(old_oid)
             .map_err(|e| EngineError::IndexingError(format!("Old commit not found: {}", e)))?;
-        let new_commit = repo.find_commit(new_oid)
+        let new_commit = repo
+            .find_commit(new_oid)
             .map_err(|e| EngineError::IndexingError(format!("New commit not found: {}", e)))?;
 
         // If old is not an ancestor of new, we need a full reindex
-        if repo.merge_base(old_oid, new_oid).map(|base| base != old_oid).unwrap_or(true) {
+        if repo
+            .merge_base(old_oid, new_oid)
+            .map(|base| base != old_oid)
+            .unwrap_or(true)
+        {
             tracing::warn!(
                 "Old SHA {} is not an ancestor of new SHA {}; full reindex recommended",
-                old_sha, new_sha
+                old_sha,
+                new_sha
             );
             return Ok(vec![]);
         }
 
-        let old_tree = old_commit.tree()
+        let old_tree = old_commit
+            .tree()
             .map_err(|e| EngineError::IndexingError(format!("Failed to get old tree: {}", e)))?;
-        let new_tree = new_commit.tree()
+        let new_tree = new_commit
+            .tree()
             .map_err(|e| EngineError::IndexingError(format!("Failed to get new tree: {}", e)))?;
 
-        let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
+        let diff = repo
+            .diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
             .map_err(|e| EngineError::IndexingError(format!("Failed to compute diff: {}", e)))?;
 
         let mut result = Vec::new();
@@ -191,9 +209,9 @@ impl RepoManager {
     ///
     /// Returns file paths and sizes. Skips `.git` directory.
     pub fn walk_files(&self, repo: &git2::Repository) -> Result<Vec<FileEntry>, EngineError> {
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| EngineError::IndexingError("Repository has no working directory".into()))?;
+        let workdir = repo.workdir().ok_or_else(|| {
+            EngineError::IndexingError("Repository has no working directory".into())
+        })?;
 
         let mut entries = Vec::new();
         walk_dir_recursive(workdir, workdir, &mut entries)?;
@@ -207,13 +225,14 @@ impl RepoManager {
         repo: &git2::Repository,
         file_path: &str,
     ) -> Result<String, EngineError> {
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| EngineError::IndexingError("Repository has no working directory".into()))?;
+        let workdir = repo.workdir().ok_or_else(|| {
+            EngineError::IndexingError("Repository has no working directory".into())
+        })?;
 
         let full_path = workdir.join(file_path);
-        std::fs::read_to_string(&full_path)
-            .map_err(|e| EngineError::IndexingError(format!("Failed to read file {}: {}", file_path, e)))
+        std::fs::read_to_string(&full_path).map_err(|e| {
+            EngineError::IndexingError(format!("Failed to read file {}: {}", file_path, e))
+        })
     }
 
     /// Read the content of a file at a specific commit.
@@ -226,17 +245,20 @@ impl RepoManager {
         let oid = git2::Oid::from_str(sha)
             .map_err(|e| EngineError::IndexingError(format!("Invalid SHA '{}': {}", sha, e)))?;
 
-        let commit = repo.find_commit(oid)
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| EngineError::IndexingError(format!("Commit not found: {}", e)))?;
 
-        let tree = commit.tree()
+        let tree = commit
+            .tree()
             .map_err(|e| EngineError::IndexingError(format!("Failed to get tree: {}", e)))?;
 
         let entry = tree
             .get_path(Path::new(file_path))
             .map_err(|e| EngineError::IndexingError(format!("File not found in tree: {}", e)))?;
 
-        let blob = repo.find_blob(entry.id())
+        let blob = repo
+            .find_blob(entry.id())
             .map_err(|e| EngineError::IndexingError(format!("Failed to read blob: {}", e)))?;
 
         let content = std::str::from_utf8(blob.content())
@@ -268,7 +290,8 @@ fn walk_dir_recursive(
         }
 
         let path = entry.path();
-        let metadata = entry.metadata()
+        let metadata = entry
+            .metadata()
             .map_err(|e| EngineError::IndexingError(format!("Failed to read metadata: {}", e)))?;
 
         if metadata.is_dir() {
@@ -297,7 +320,10 @@ mod tests {
     #[test]
     fn test_repo_manager_new_default() {
         let manager = RepoManager::new_default();
-        assert!(manager.clone_base_dir.to_string_lossy().contains("uc-repos"));
+        assert!(manager
+            .clone_base_dir
+            .to_string_lossy()
+            .contains("uc-repos"));
     }
 
     #[test]

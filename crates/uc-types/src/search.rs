@@ -62,9 +62,15 @@ pub struct SearchResultItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AstQuery {
     /// Find symbol definitions by name.
-    SymbolSearch { name: String, kind: Option<SymbolKind> },
+    SymbolSearch {
+        name: String,
+        kind: Option<SymbolKind>,
+    },
     /// Find all references to a symbol.
-    References { symbol_name: String, repo_id: Option<String> },
+    References {
+        symbol_name: String,
+        repo_id: Option<String>,
+    },
     /// Find all call sites of a function.
     CallChain { function_name: String },
     /// Find all implementations of an interface/trait.

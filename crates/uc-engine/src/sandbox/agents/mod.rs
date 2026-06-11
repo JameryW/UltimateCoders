@@ -7,7 +7,7 @@
 pub mod claude_code;
 pub mod codex;
 
-use crate::sandbox::{ExecRequest, ExecResult, AgentOutput, SandboxConfig};
+use crate::sandbox::{AgentOutput, ExecRequest, ExecResult, SandboxConfig};
 
 /// Adapter trait for coding agents (Claude Code, Codex, etc.).
 ///
@@ -18,12 +18,8 @@ pub trait AgentAdapter: Send + Sync {
     fn name(&self) -> &str;
 
     /// Build an execution request for the given prompt.
-    fn build_request(
-        &self,
-        prompt: &str,
-        working_dir: &str,
-        config: &SandboxConfig,
-    ) -> ExecRequest;
+    fn build_request(&self, prompt: &str, working_dir: &str, config: &SandboxConfig)
+        -> ExecRequest;
 
     /// Parse the execution result into a structured agent output.
     fn parse_output(&self, result: &ExecResult) -> AgentOutput;

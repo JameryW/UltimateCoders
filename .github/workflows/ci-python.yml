@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff pyyaml
       - run: ruff check python/ tests/
 
   test:
@@ -38,5 +38,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python-version }}"
-      - run: pip install pytest pytest-asyncio
+      - run: pip install pytest pytest-asyncio pyyaml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: pip install maturin
+      - run: maturin develop --release
       - run: PYTHONPATH=python pytest tests/python/ -v

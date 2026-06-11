@@ -4,11 +4,9 @@
 //! all EngineApi calls over the network.
 
 use uc_types::{
-    async_trait, EngineApi, EngineError,
-    HealthStatus, IndexRequest, IndexResponse,
-    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest,
-    MemorySearchResponse, MemoryWriteRequest,
-    RepoIndexState, SearchResult, SearchQuery,
+    async_trait, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse, MemoryEntry,
+    MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
+    RepoIndexState, SearchQuery, SearchResult,
 };
 
 use crate::conversions::memory_key_to_parts;
@@ -56,12 +54,10 @@ fn from_status(status: tonic::Status) -> EngineError {
                     .unwrap_or(0),
             )
         }
-        Aborted => {
-            EngineError::ConflictError {
-                path: String::new(),
-                details: status.message().to_string(),
-            }
-        }
+        Aborted => EngineError::ConflictError {
+            path: String::new(),
+            details: status.message().to_string(),
+        },
         InvalidArgument => EngineError::ConfigError(status.message().to_string()),
         PermissionDenied => EngineError::SandboxError(status.message().to_string()),
         FailedPrecondition => EngineError::TaskError(status.message().to_string()),
@@ -75,12 +71,16 @@ impl EngineApi for GrpcEngineClient {
         let mut client = self.inner.clone();
         let req = SearchRequest {
             query: query.query,
-            modes: query.modes.iter().map(|m| match m {
-                uc_types::SearchMode::Text => "text".to_string(),
-                uc_types::SearchMode::Semantic => "semantic".to_string(),
-                uc_types::SearchMode::Ast => "ast".to_string(),
-                uc_types::SearchMode::Hybrid => "hybrid".to_string(),
-            }).collect(),
+            modes: query
+                .modes
+                .iter()
+                .map(|m| match m {
+                    uc_types::SearchMode::Text => "text".to_string(),
+                    uc_types::SearchMode::Semantic => "semantic".to_string(),
+                    uc_types::SearchMode::Ast => "ast".to_string(),
+                    uc_types::SearchMode::Hybrid => "hybrid".to_string(),
+                })
+                .collect(),
             repo_ids: query.repo_ids,
             languages: query.languages,
             path_patterns: query.path_patterns,
@@ -121,7 +121,10 @@ impl EngineApi for GrpcEngineClient {
         Ok(())
     }
 
-    async fn read_memory(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError> {
+    async fn read_memory(
+        &self,
+        request: MemoryReadRequest,
+    ) -> Result<Option<MemoryEntry>, EngineError> {
         let mut client = self.inner.clone();
         let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
         let req = ReadMemoryRequest {
@@ -138,18 +141,52 @@ impl EngineApi for GrpcEngineClient {
     async fn write_memory(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
         let mut client = self.inner.clone();
         let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
-        let (content_type, content, language, file_path, uri, description) = match &request.content {
-            uc_types::MemoryContent::Text(s) => ("text".to_string(), s.clone(), None, None, None, None),
-            uc_types::MemoryContent::Structured(v) => ("structured".to_string(), v.to_string(), None, None, None, None),
-            uc_types::MemoryContent::Code { language: lang, code } => {
-                ("code".to_string(), code.clone(), Some(lang.clone()), None, None, None)
+        let (content_type, content, language, file_path, uri, description) = match &request.content
+        {
+            uc_types::MemoryContent::Text(s) => {
+                ("text".to_string(), s.clone(), None, None, None, None)
             }
-            uc_types::MemoryContent::Diff { file_path: fp, diff } => {
-                ("diff".to_string(), diff.clone(), None, Some(fp.clone()), None, None)
-            }
-            uc_types::MemoryContent::Reference { uri: u, description: d } => {
-                ("reference".to_string(), String::new(), None, None, Some(u.clone()), Some(d.clone()))
-            }
+            uc_types::MemoryContent::Structured(v) => (
+                "structured".to_string(),
+                v.to_string(),
+                None,
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Code {
+                language: lang,
+                code,
+            } => (
+                "code".to_string(),
+                code.clone(),
+                Some(lang.clone()),
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Diff {
+                file_path: fp,
+                diff,
+            } => (
+                "diff".to_string(),
+                diff.clone(),
+                None,
+                Some(fp.clone()),
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Reference {
+                uri: u,
+                description: d,
+            } => (
+                "reference".to_string(),
+                String::new(),
+                None,
+                None,
+                Some(u.clone()),
+                Some(d.clone()),
+            ),
         };
         let req = WriteMemoryRequest {
             key_scope: key_scope.to_string(),

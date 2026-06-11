@@ -10,7 +10,7 @@
 
 use uc_types::error::EngineError;
 use uc_types::index::{IndexHealth, IndexState, RepoSpec};
-use uc_types::search::{SymbolKind};
+use uc_types::search::SymbolKind;
 
 #[cfg(feature = "storage")]
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -133,9 +133,10 @@ impl PostgresMetadataStore {
     /// Run database migrations to create required tables.
     #[cfg(feature = "storage")]
     pub async fn run_migrations(&self) -> Result<(), EngineError> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            EngineError::ConnectionError("PostgreSQL pool not available".into())
-        })?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| EngineError::ConnectionError("PostgreSQL pool not available".into()))?;
 
         // Create repos table
         sqlx::query(
@@ -172,7 +173,9 @@ impl PostgresMetadataStore {
         )
         .execute(pool.as_ref())
         .await
-        .map_err(|e| EngineError::ConnectionError(format!("Migration error (index_state): {}", e)))?;
+        .map_err(|e| {
+            EngineError::ConnectionError(format!("Migration error (index_state): {}", e))
+        })?;
 
         // Create symbols table
         sqlx::query(
@@ -218,7 +221,9 @@ impl PostgresMetadataStore {
         )
         .execute(pool.as_ref())
         .await
-        .map_err(|e| EngineError::ConnectionError(format!("Migration error (references): {}", e)))?;
+        .map_err(|e| {
+            EngineError::ConnectionError(format!("Migration error (references): {}", e))
+        })?;
 
         // Create indexes
         let indexes = [
@@ -236,7 +241,9 @@ impl PostgresMetadataStore {
             sqlx::query(idx_sql)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Index creation error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Index creation error: {}", e))
+                })?;
         }
 
         tracing::info!("PostgreSQL migrations completed");
@@ -275,7 +282,11 @@ impl PostgresMetadataStore {
             .map_err(|e| EngineError::ConnectionError(format!("Repo insert error: {}", e)))?;
         } else {
             let mut fallback = self.fallback.write().await;
-            if let Some(existing) = fallback.repos.iter_mut().find(|r| r.repo_id == spec.repo_id) {
+            if let Some(existing) = fallback
+                .repos
+                .iter_mut()
+                .find(|r| r.repo_id == spec.repo_id)
+            {
                 *existing = spec.clone();
             } else {
                 fallback.repos.push(spec.clone());
@@ -285,7 +296,11 @@ impl PostgresMetadataStore {
         #[cfg(not(feature = "storage"))]
         {
             let mut fallback = self.fallback.write().await;
-            if let Some(existing) = fallback.repos.iter_mut().find(|r| r.repo_id == spec.repo_id) {
+            if let Some(existing) = fallback
+                .repos
+                .iter_mut()
+                .find(|r| r.repo_id == spec.repo_id)
+            {
                 *existing = spec.clone();
             } else {
                 fallback.repos.push(spec.clone());
@@ -307,21 +322,31 @@ impl PostgresMetadataStore {
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Repo fetch error: {}", e)))?;
 
-            Ok(row.map(|(repo_id, remote_url, default_branch, local_path)| RepoSpec {
-                repo_id,
-                remote_url,
-                default_branch,
-                local_path,
-            }))
+            Ok(row.map(
+                |(repo_id, remote_url, default_branch, local_path)| RepoSpec {
+                    repo_id,
+                    remote_url,
+                    default_branch,
+                    local_path,
+                },
+            ))
         } else {
             let fallback = self.fallback.read().await;
-            Ok(fallback.repos.iter().find(|r| r.repo_id == repo_id).cloned())
+            Ok(fallback
+                .repos
+                .iter()
+                .find(|r| r.repo_id == repo_id)
+                .cloned())
         }
 
         #[cfg(not(feature = "storage"))]
         {
             let fallback = self.fallback.read().await;
-            Ok(fallback.repos.iter().find(|r| r.repo_id == repo_id).cloned())
+            Ok(fallback
+                .repos
+                .iter()
+                .find(|r| r.repo_id == repo_id)
+                .cloned())
         }
     }
 
@@ -338,12 +363,14 @@ impl PostgresMetadataStore {
 
             Ok(rows
                 .into_iter()
-                .map(|(repo_id, remote_url, default_branch, local_path)| RepoSpec {
-                    repo_id,
-                    remote_url,
-                    default_branch,
-                    local_path,
-                })
+                .map(
+                    |(repo_id, remote_url, default_branch, local_path)| RepoSpec {
+                        repo_id,
+                        remote_url,
+                        default_branch,
+                        local_path,
+                    },
+                )
                 .collect())
         } else {
             let fallback = self.fallback.read().await;
@@ -366,19 +393,25 @@ impl PostgresMetadataStore {
                 .bind(repo_id)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("References delete error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("References delete error: {}", e))
+                })?;
 
             sqlx::query("DELETE FROM symbols WHERE repo_id = $1")
                 .bind(repo_id)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Symbols delete error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Symbols delete error: {}", e))
+                })?;
 
             sqlx::query("DELETE FROM index_state WHERE repo_id = $1")
                 .bind(repo_id)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Index state delete error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Index state delete error: {}", e))
+                })?;
 
             sqlx::query("DELETE FROM repos WHERE repo_id = $1")
                 .bind(repo_id)
@@ -419,23 +452,40 @@ impl PostgresMetadataStore {
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Index state fetch error: {}", e)))?;
 
-            Ok(row.map(|(repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health)| IndexState {
-                repo_id,
-                last_indexed_sha,
-                last_indexed_at,
-                last_full_reindex,
-                index_version: index_version as u32,
-                health: parse_health(&health),
-            }))
+            Ok(row.map(
+                |(
+                    repo_id,
+                    last_indexed_sha,
+                    last_indexed_at,
+                    last_full_reindex,
+                    index_version,
+                    health,
+                )| IndexState {
+                    repo_id,
+                    last_indexed_sha,
+                    last_indexed_at,
+                    last_full_reindex,
+                    index_version: index_version as u32,
+                    health: parse_health(&health),
+                },
+            ))
         } else {
             let fallback = self.fallback.read().await;
-            Ok(fallback.index_states.iter().find(|i| i.repo_id == repo_id).cloned())
+            Ok(fallback
+                .index_states
+                .iter()
+                .find(|i| i.repo_id == repo_id)
+                .cloned())
         }
 
         #[cfg(not(feature = "storage"))]
         {
             let fallback = self.fallback.read().await;
-            Ok(fallback.index_states.iter().find(|i| i.repo_id == repo_id).cloned())
+            Ok(fallback
+                .index_states
+                .iter()
+                .find(|i| i.repo_id == repo_id)
+                .cloned())
         }
     }
 
@@ -468,7 +518,11 @@ impl PostgresMetadataStore {
             .map_err(|e| EngineError::ConnectionError(format!("Index state upsert error: {}", e)))?;
         } else {
             let mut fallback = self.fallback.write().await;
-            if let Some(existing) = fallback.index_states.iter_mut().find(|i| i.repo_id == state.repo_id) {
+            if let Some(existing) = fallback
+                .index_states
+                .iter_mut()
+                .find(|i| i.repo_id == state.repo_id)
+            {
                 *existing = state.clone();
             } else {
                 fallback.index_states.push(state.clone());
@@ -479,7 +533,11 @@ impl PostgresMetadataStore {
         {
             let _ = health_str; // suppress unused warning
             let mut fallback = self.fallback.write().await;
-            if let Some(existing) = fallback.index_states.iter_mut().find(|i| i.repo_id == state.repo_id) {
+            if let Some(existing) = fallback
+                .index_states
+                .iter_mut()
+                .find(|i| i.repo_id == state.repo_id)
+            {
                 *existing = state.clone();
             } else {
                 fallback.index_states.push(state.clone());
@@ -535,19 +593,32 @@ impl PostgresMetadataStore {
 
             Ok(rows
                 .into_iter()
-                .map(|(repo_id, file_path, name, kind, start_line, start_col, end_line, end_col, _parent, language)| {
-                    SymbolSearchResult {
+                .map(
+                    |(
                         repo_id,
                         file_path,
                         name,
-                        kind: parse_symbol_kind(&kind),
-                        start_line: start_line as u32,
-                        start_col: start_col as u32,
-                        end_line: end_line as u32,
-                        end_col: end_col as u32,
+                        kind,
+                        start_line,
+                        start_col,
+                        end_line,
+                        end_col,
+                        _parent,
                         language,
-                    }
-                })
+                    )| {
+                        SymbolSearchResult {
+                            repo_id,
+                            file_path,
+                            name,
+                            kind: parse_symbol_kind(&kind),
+                            start_line: start_line as u32,
+                            start_col: start_col as u32,
+                            end_line: end_line as u32,
+                            end_col: end_col as u32,
+                            language,
+                        }
+                    },
+                )
                 .collect())
         } else {
             // Fallback: simple linear scan
@@ -638,18 +709,29 @@ impl PostgresMetadataStore {
 
             Ok(rows
                 .into_iter()
-                .map(|(repo_id, file_path, source_symbol_id, target_name, reference_kind, start_line, start_col, language)| {
-                    ReferenceSearchResult {
+                .map(
+                    |(
                         repo_id,
                         file_path,
                         source_symbol_id,
                         target_name,
                         reference_kind,
-                        start_line: start_line as u32,
-                        start_col: start_col as u32,
+                        start_line,
+                        start_col,
                         language,
-                    }
-                })
+                    )| {
+                        ReferenceSearchResult {
+                            repo_id,
+                            file_path,
+                            source_symbol_id,
+                            target_name,
+                            reference_kind,
+                            start_line: start_line as u32,
+                            start_col: start_col as u32,
+                            language,
+                        }
+                    },
+                )
                 .collect())
         } else {
             let fallback = self.fallback.read().await;
@@ -657,8 +739,7 @@ impl PostgresMetadataStore {
                 .references
                 .iter()
                 .filter(|r| {
-                    r.target_name == target_name
-                        && repo_id.is_none_or(|rid| r.repo_id == rid)
+                    r.target_name == target_name && repo_id.is_none_or(|rid| r.repo_id == rid)
                 })
                 .take(limit as usize)
                 .map(|r| ReferenceSearchResult {
@@ -682,8 +763,7 @@ impl PostgresMetadataStore {
                 .references
                 .iter()
                 .filter(|r| {
-                    r.target_name == target_name
-                        && repo_id.is_none_or(|rid| r.repo_id == rid)
+                    r.target_name == target_name && repo_id.is_none_or(|rid| r.repo_id == rid)
                 })
                 .take(limit as usize)
                 .map(|r| ReferenceSearchResult {
@@ -779,7 +859,11 @@ impl PostgresMetadataStore {
     }
 
     /// Delete all symbols and references for a specific file within a repository.
-    pub async fn delete_symbols_for_file(&self, repo_id: &str, file_path: &str) -> Result<(), EngineError> {
+    pub async fn delete_symbols_for_file(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
             // Delete references first (they reference symbols)
@@ -788,25 +872,37 @@ impl PostgresMetadataStore {
                 .bind(file_path)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("References delete for file error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("References delete for file error: {}", e))
+                })?;
 
             sqlx::query("DELETE FROM symbols WHERE repo_id = $1 AND file_path = $2")
                 .bind(repo_id)
                 .bind(file_path)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::ConnectionError(format!("Symbols delete for file error: {}", e)))?;
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!("Symbols delete for file error: {}", e))
+                })?;
         } else {
             let mut fallback = self.fallback.write().await;
-            fallback.references.retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
-            fallback.symbols.retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
+            fallback
+                .references
+                .retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
+            fallback
+                .symbols
+                .retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
         }
 
         #[cfg(not(feature = "storage"))]
         {
             let mut fallback = self.fallback.write().await;
-            fallback.references.retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
-            fallback.symbols.retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
+            fallback
+                .references
+                .retain(|r| !(r.repo_id == repo_id && r.file_path == file_path));
+            fallback
+                .symbols
+                .retain(|s| !(s.repo_id == repo_id && s.file_path == file_path));
         }
 
         Ok(())
@@ -1117,7 +1213,10 @@ mod tests {
         store.insert_symbols("test-repo", symbols).await.unwrap();
 
         // Delete symbols for just main.rs
-        store.delete_symbols_for_file("test-repo", "src/main.rs").await.unwrap();
+        store
+            .delete_symbols_for_file("test-repo", "src/main.rs")
+            .await
+            .unwrap();
 
         // main.rs symbols should be gone
         let results_main = store

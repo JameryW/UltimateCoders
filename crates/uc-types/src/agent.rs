@@ -144,15 +144,51 @@ pub struct AgentEvent {
 /// Payload of an agent event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEventPayload {
-    TaskCreated { task: Task },
-    SubtaskAssigned { subtask_id: TaskId, worker_id: WorkerId },
-    WorkerStarted { subtask_id: TaskId, worker_id: WorkerId },
-    ToolInvoked { subtask_id: TaskId, tool_name: String, tool_input: String },
-    ToolResult { subtask_id: TaskId, tool_output: String, exit_code: i32 },
-    FileModified { subtask_id: TaskId, file_path: String, diff: String },
-    SubtaskCompleted { result: SubtaskResult },
-    SubtaskFailed { subtask_id: TaskId, error: String, recoverable: bool },
-    CheckpointCreated { task_id: TaskId, snapshot_id: String },
-    EditIntent { worker_id: WorkerId, file_path: String, regions: Vec<(u32, u32)> },
-    ConflictDetected { file_path: String, workers: Vec<WorkerId> },
+    TaskCreated {
+        task: Task,
+    },
+    SubtaskAssigned {
+        subtask_id: TaskId,
+        worker_id: WorkerId,
+    },
+    WorkerStarted {
+        subtask_id: TaskId,
+        worker_id: WorkerId,
+    },
+    ToolInvoked {
+        subtask_id: TaskId,
+        tool_name: String,
+        tool_input: String,
+    },
+    ToolResult {
+        subtask_id: TaskId,
+        tool_output: String,
+        exit_code: i32,
+    },
+    FileModified {
+        subtask_id: TaskId,
+        file_path: String,
+        diff: String,
+    },
+    SubtaskCompleted {
+        result: SubtaskResult,
+    },
+    SubtaskFailed {
+        subtask_id: TaskId,
+        error: String,
+        recoverable: bool,
+    },
+    CheckpointCreated {
+        task_id: TaskId,
+        snapshot_id: String,
+    },
+    EditIntent {
+        worker_id: WorkerId,
+        file_path: String,
+        regions: Vec<(u32, u32)>,
+    },
+    ConflictDetected {
+        file_path: String,
+        workers: Vec<WorkerId>,
+    },
 }

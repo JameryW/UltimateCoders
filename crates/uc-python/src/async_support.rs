@@ -11,9 +11,8 @@ use tokio::runtime::Runtime;
 /// This runtime is created once and reused across all sync method calls.
 /// It allows us to call async EngineApi methods from synchronous Python
 /// code by blocking on them with `py.allow_threads()`.
-static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
-    Runtime::new().expect("Failed to create tokio runtime for PyO3 sync wrappers")
-});
+static TOKIO_RUNTIME: Lazy<Runtime> =
+    Lazy::new(|| Runtime::new().expect("Failed to create tokio runtime for PyO3 sync wrappers"));
 
 /// Run an async future to completion on the shared runtime.
 ///
