@@ -1,12 +1,18 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
+> Conventions for the Rust core engine and its Python/Go bridging layers.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+The backend is a **Rust + Python hybrid** architecture:
+
+- **Rust core** (5 crates): `uc-types`, `uc-engine`, `uc-grpc`, `uc-grpc-server`, `uc-python`
+- **Python agent layer**: Orchestrator + Worker with LLM tool-calling
+- **Bridging**: PyO3 FFI (local) + gRPC (distributed), runtime switchable
+
+The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contract. Both `LocalEngine` (uc-engine) and `GrpcEngineClient` (uc-grpc) implement it. The Python `Engine` class delegates to whichever is active.
 
 ---
 
@@ -14,25 +20,12 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Directory Structure](./directory-structure.md) | Crate layout, sub-module organization | Filled |
+| [Database Guidelines](./database-guidelines.md) | Storage fallback pattern, key encoding, migrations | Filled |
+| [Error Handling](./error-handling.md) | EngineError enum, triple mapping, wrapping patterns | Filled |
+| [Quality Guidelines](./quality-guidelines.md) | Rust/Python test patterns, naming conventions | Filled |
+| [Logging Guidelines](./logging-guidelines.md) | tracing crate, Python logging, log levels | Filled |
 
 ---
 
-## How to Fill These Guidelines
-
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+**Language**: All documentation is written in **English**.
