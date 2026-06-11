@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for project conventions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns to follow when modifying sandbox defaults"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Logging patterns for sandbox permission changes"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for test updates after default changes"}
+{"file": ".trellis/tasks/06-11-sandbox/prd.md", "reason": "Task PRD with complete requirements and acceptance criteria"}

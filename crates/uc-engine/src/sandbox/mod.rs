@@ -88,7 +88,7 @@ impl Default for SandboxConfig {
             project_path: String::new(),
             env_vars: HashMap::new(),
             resource_limits: ResourceLimits::default(),
-            network: NetworkMode::Restricted,
+            network: NetworkMode::Full,
             working_dir: String::new(),
         }
     }
@@ -97,23 +97,23 @@ impl Default for SandboxConfig {
 /// Resource limits for sandbox execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceLimits {
-    /// Maximum CPU time in seconds (default: 300 = 5 min).
+    /// Maximum CPU time in seconds (default: 3600 = 1 hour).
     pub max_cpu_seconds: u64,
-    /// Maximum memory in MB (default: 2048 = 2 GB).
+    /// Maximum memory in MB (default: 8192 = 8 GB).
     pub max_memory_mb: u64,
-    /// Maximum output size in bytes (default: 10 MB).
+    /// Maximum output size in bytes (default: 50 MB).
     pub max_output_bytes: u64,
-    /// Maximum file size in MB (default: 50 MB).
+    /// Maximum file size in MB (default: 500 MB).
     pub max_file_size_mb: u64,
 }
 
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_cpu_seconds: 300,
-            max_memory_mb: 2048,
-            max_output_bytes: 10 * 1024 * 1024,
-            max_file_size_mb: 50,
+            max_cpu_seconds: 3600,
+            max_memory_mb: 8192,
+            max_output_bytes: 50 * 1024 * 1024,
+            max_file_size_mb: 500,
         }
     }
 }
@@ -124,9 +124,9 @@ pub enum NetworkMode {
     /// No network access.
     None,
     /// Only specific hosts allowed (API endpoints).
-    #[default]
     Restricted,
-    /// Unrestricted network (development only).
+    /// Unrestricted network access — allows all commands and connections.
+    #[default]
     Full,
 }
 
@@ -280,18 +280,18 @@ mod tests {
         let config = SandboxConfig::default();
         assert!(config.project_path.is_empty());
         assert!(config.env_vars.is_empty());
-        assert_eq!(config.network, NetworkMode::Restricted);
-        assert_eq!(config.resource_limits.max_cpu_seconds, 300);
-        assert_eq!(config.resource_limits.max_memory_mb, 2048);
-        assert_eq!(config.resource_limits.max_output_bytes, 10 * 1024 * 1024);
-        assert_eq!(config.resource_limits.max_file_size_mb, 50);
+        assert_eq!(config.network, NetworkMode::Full);
+        assert_eq!(config.resource_limits.max_cpu_seconds, 3600);
+        assert_eq!(config.resource_limits.max_memory_mb, 8192);
+        assert_eq!(config.resource_limits.max_output_bytes, 50 * 1024 * 1024);
+        assert_eq!(config.resource_limits.max_file_size_mb, 500);
     }
 
     #[test]
     fn resource_limits_default() {
         let limits = ResourceLimits::default();
-        assert_eq!(limits.max_cpu_seconds, 300);
-        assert_eq!(limits.max_memory_mb, 2048);
+        assert_eq!(limits.max_cpu_seconds, 3600);
+        assert_eq!(limits.max_memory_mb, 8192);
     }
 
     #[test]
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn network_mode_default() {
-        assert_eq!(NetworkMode::default(), NetworkMode::Restricted);
+        assert_eq!(NetworkMode::default(), NetworkMode::Full);
     }
 
     #[test]

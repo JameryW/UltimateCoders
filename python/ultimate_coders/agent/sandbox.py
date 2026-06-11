@@ -45,11 +45,11 @@ class SandboxConfig:
     backend: str = "subprocess"
     project_path: str = ""
     api_key: Optional[str] = None
-    max_cpu_seconds: int = 300
-    max_memory_mb: int = 2048
-    max_output_bytes: int = 10 * 1024 * 1024  # 10 MB
-    max_file_size_mb: int = 50
-    network: str = NetworkMode.RESTRICTED
+    max_cpu_seconds: int = 3600
+    max_memory_mb: int = 8192
+    max_output_bytes: int = 50 * 1024 * 1024  # 50 MB
+    max_file_size_mb: int = 500
+    network: str = NetworkMode.FULL
     warm_pool_size: int = 2
     max_pool_size: int = 10
     working_dir: str = ""
@@ -382,6 +382,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                 "-p", prompt,
                 "--output-format", "json",
                 "--max-turns", "20",
+                "--dangerously-skip-permissions",
             ],
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,

@@ -28,6 +28,8 @@
 * SandboxConfig 默认 `network=NetworkMode.Full`（完整网络权限）
 * Rust 端 SandboxConfig/ResourceLimits 默认值同步调整
 * Python 端 SandboxConfig 默认值同步调整
+* **Claude Code adapter 加 `--dangerously-skip-permissions` 标志**，跳过所有命令执行权限确认
+* Codex adapter 已有 `--full-auto`，无需改动
 * 所有相关测试断言同步更新
 
 ## Acceptance Criteria (evolving)
@@ -54,8 +56,15 @@
 
 * 涉及文件：
   - `python/ultimate_coders/agent/worker.py` — 默认 execution_mode
-  - `python/ultimate_coders/agent/sandbox.py` — Python SandboxConfig 默认值
+  - `python/ultimate_coders/agent/sandbox.py` — Python SandboxConfig 默认值 + ClaudeCodeAdapter 加 `--dangerously-skip-permissions`
   - `crates/uc-engine/src/sandbox/mod.rs` — Rust SandboxConfig/ResourceLimits/NetworkMode 默认值
+  - `crates/uc-engine/src/sandbox/agents/claude_code.rs` — 加 `--dangerously-skip-permissions` 标志
   - `crates/uc-engine/src/sandbox/subprocess.rs` — 测试中的 test_config
   - `crates/uc-engine/src/sandbox/docker.rs` — 测试中的 test_config
   - `crates/uc-engine/src/sandbox/pool.rs` — 测试中的 test_config
+
+* Claude Code CLI 权限跳过：
+  - `--dangerously-skip-permissions` — 跳过所有 Bash/Read/Write 等工具的权限确认
+  - 参考：https://docs.anthropic.com/en/docs/claude-code/cli-usage#dangerously-skip-permissions
+
+* Codex CLI 已有 `--full-auto` — 全自动执行模式，无需额外改动
