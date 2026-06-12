@@ -26,6 +26,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [Quality Guidelines](./quality-guidelines.md) | Rust/Python test patterns, naming conventions | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | tracing crate, Python logging, log levels | Filled |
 | [Scheduler Spec](./scheduler-spec.md) | Task scheduling, night-window guard, persistence contracts | Filled |
+| [Dashboard Spec](./dashboard-spec.md) | FastAPI + SSE monitoring, API endpoints, fallback contracts | Filled |
 
 ---
 

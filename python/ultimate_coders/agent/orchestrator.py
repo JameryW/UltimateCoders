@@ -842,3 +842,46 @@ class Orchestrator:
     def record_llm_failure(self) -> None:
         """Record a failed LLM API call."""
         self.circuit_breaker.record_failure()
+
+    # ── Dashboard ──────────────────────────────────────────────────
+
+    def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None:
+        """Start the embedded web dashboard for monitoring.
+
+        Launches a FastAPI server in a background thread that serves
+        the dashboard UI and SSE stream. The dashboard reads
+        Orchestrator state directly from memory for zero-latency
+        updates.
+
+        Args:
+            host: Bind address (default: "0.0.0.0").
+            port: Bind port (default: 8080).
+
+        Raises:
+            ImportError: If dashboard dependencies are not installed.
+        """
+        try:
+            from ultimate_coders.dashboard.app import DashboardApp
+        except ImportError as e:
+            raise ImportError(
+                "Dashboard dependencies not installed. "
+                "Install with: pip install fastapi uvicorn jinja2 sse-starlette"
+            ) from e
+
+        if hasattr(self, "_dashboard_app") and self._dashboard_app is not None:
+            logger.warning("Dashboard is already running")
+            return
+
+        self._dashboard_app = DashboardApp(self)
+        self._dashboard_app.start(host=host, port=port)
+
+    def stop_dashboard(self) -> None:
+        """Stop the embedded web dashboard.
+
+        Gracefully shuts down the FastAPI server.
+        """
+        if hasattr(self, "_dashboard_app") and self._dashboard_app is not None:
+            self._dashboard_app.stop()
+            self._dashboard_app = None
+        else:
+            logger.warning("Dashboard is not running")
