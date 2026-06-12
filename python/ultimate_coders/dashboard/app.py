@@ -13,14 +13,14 @@ import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import uvicorn
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ class DashboardApp:
         """
         self.orchestrator = orchestrator
         self._app = FastAPI(title="UltimateCoders Dashboard")
-        self._server: Optional[uvicorn.Server] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: uvicorn.Server | None = None
+        self._thread: threading.Thread | None = None
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -184,7 +184,10 @@ class DashboardApp:
                 "capabilities": w.capabilities,
                 "current_load": w.current_load,
                 "max_capacity": w.max_capacity,
-                "load_percent": round(w.current_load / w.max_capacity * 100) if w.max_capacity > 0 else 0,
+                "load_percent": (
+                    round(w.current_load / w.max_capacity * 100)
+                    if w.max_capacity > 0 else 0
+                ),
                 "last_heartbeat": w.last_heartbeat.isoformat(),
                 "heartbeat_age_seconds": round(heartbeat_age, 1),
                 "heartbeat_stale": heartbeat_age > heartbeat_timeout,
@@ -314,14 +317,32 @@ class DashboardApp:
         orch = self.orchestrator
         if orch is None:
             return {
-                "circuit_breaker": {"available": False},
-                "rate_limiter": {"available": False},
+                "circuit_breaker": {
+                    "available": False,
+                    "state": "Unknown",
+                    "failure_count": 0,
+                    "total_calls": 0,
+                    "total_rejected": 0,
+                },
+                "rate_limiter": {
+                    "available": False,
+                    "rpm_available": 0,
+                    "tpm_available": 0,
+                    "active_count": 0,
+                    "total_requests": 0,
+                },
                 "engine_circuit_breaker": {},
                 "engine_rate_limiter": {},
             }
 
         # Python-side circuit breaker
-        cb_data: dict[str, Any] = {"available": False}
+        cb_data: dict[str, Any] = {
+            "available": False,
+            "state": "Unknown",
+            "failure_count": 0,
+            "total_calls": 0,
+            "total_rejected": 0,
+        }
         if hasattr(orch, "circuit_breaker") and orch.circuit_breaker is not None:
             cb = orch.circuit_breaker
             try:
@@ -334,10 +355,16 @@ class DashboardApp:
                 }
             except Exception as e:
                 logger.warning("Failed to read circuit breaker: %s", e)
-                cb_data = {"available": False, "error": str(e)}
+                cb_data["error"] = str(e)
 
         # Python-side rate limiter
-        rl_data: dict[str, Any] = {"available": False}
+        rl_data: dict[str, Any] = {
+            "available": False,
+            "rpm_available": 0,
+            "tpm_available": 0,
+            "active_count": 0,
+            "total_requests": 0,
+        }
         if hasattr(orch, "rate_limiter") and orch.rate_limiter is not None:
             rl = orch.rate_limiter
             try:
@@ -350,7 +377,7 @@ class DashboardApp:
                 }
             except Exception as e:
                 logger.warning("Failed to read rate limiter: %s", e)
-                rl_data = {"available": False, "error": str(e)}
+                rl_data["error"] = str(e)
 
         # Also extract from engine health components for Rust-side metrics
         engine_cb = {}

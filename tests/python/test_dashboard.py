@@ -12,15 +12,12 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
-    OrchestratorConfig,
     Task,
     TaskStatus,
     WorkerInfo,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -251,7 +248,7 @@ class TestDashboardApp:
 
     def test_get_circuit_breaker_data(self):
         """Circuit breaker data includes state and metrics."""
-        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState, RateLimiter
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker, RateLimiter
 
         orch = _make_orchestrator()
         orch.circuit_breaker = CircuitBreaker()
@@ -274,7 +271,7 @@ class TestDashboardApp:
 
     def test_get_circuit_breaker_data_open_state(self):
         """Circuit breaker data shows open state after failures."""
-        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker
 
         orch = _make_orchestrator()
         cb = CircuitBreaker(failure_threshold=3)
