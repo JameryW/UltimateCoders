@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/06-11-dashboard-monitoring/prd.md", "reason": "Dashboard PRD — FastAPI + Jinja2 + SSE, API endpoints, UI layout, acceptance criteria"}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Scheduler code-spec — API signatures, night window contracts, Orchestrator exclusive mode"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError mapping — how health errors propagate from Rust to Python"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Orchestrator — workers/tasks/pending state, start_dashboard() will be added here"}
+{"file": "python/ultimate_coders/agent/scheduler.py", "reason": "Scheduler API — create_cron_job, list_jobs, get_execution_history, is_running"}
+{"file": "python/ultimate_coders/engine.py", "reason": "Python Engine.health() — HealthStatus with 11 components"}
+{"file": "python/ultimate_coders/agent/types.py", "reason": "WorkerInfo, TaskStatus, SubtaskStatus, Task dataclasses"}
+{"file": "crates/uc-engine/src/local.rs", "reason": "LocalEngine health() — 11 component names and status values reference"}
+{"file": "crates/uc-python/src/engine.rs", "reason": "PyEngine PyO3 health() binding, PyHealthStatus type"}
+{"file": "pyproject.toml", "reason": "Python deps — need fastapi, uvicorn, jinja2, sse-starlette"}
+{"file": "docker-compose.yml", "reason": "Docker services — dashboard port mapping"}
