@@ -843,6 +843,70 @@ class Orchestrator:
         """Record a failed LLM API call."""
         self.circuit_breaker.record_failure()
 
+    def reset_circuit_breaker(self) -> bool:
+        """Reset the circuit breaker to closed state.
+
+        Returns:
+            True if the circuit breaker was reset, False if not available.
+        """
+        if self.circuit_breaker is not None:
+            self.circuit_breaker.reset()
+            return True
+        return False
+
+    def pause_task(self, task_id: str) -> bool:
+        """Pause a running task.
+
+        Sets the task status to PAUSED. Paused tasks will not have
+        their subtasks assigned to workers until resumed.
+
+        Args:
+            task_id: The task ID to pause.
+
+        Returns:
+            True if the task was paused, False if not found or not pausable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for pause", task_id)
+            return False
+        if task.status not in (TaskStatus.IN_PROGRESS, TaskStatus.PLANNING):
+            logger.warning(
+                "Task %s cannot be paused (current status: %s)",
+                task_id, task.status.value,
+            )
+            return False
+        task.status = TaskStatus.PAUSED
+        task.update_timestamp()
+        logger.info("Task %s paused", task_id)
+        return True
+
+    def resume_task(self, task_id: str) -> bool:
+        """Resume a paused task.
+
+        Sets the task status back to IN_PROGRESS.
+
+        Args:
+            task_id: The task ID to resume.
+
+        Returns:
+            True if the task was resumed, False if not found or not resumable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for resume", task_id)
+            return False
+        if task.status != TaskStatus.PAUSED:
+            logger.warning(
+                "Task %s cannot be resumed (current status: %s)",
+                task_id, task.status.value,
+            )
+            return False
+        task.status = TaskStatus.IN_PROGRESS
+        task.update_timestamp()
+        logger.info("Task %s resumed", task_id)
+        return True
+
     # ── Dashboard ──────────────────────────────────────────────────
 
     def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None:

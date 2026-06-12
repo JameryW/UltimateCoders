@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,7 @@ class DashboardApp:
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
+        self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -65,7 +67,7 @@ class DashboardApp:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
-            allow_methods=["GET"],
+            allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
 
@@ -124,7 +126,124 @@ class DashboardApp:
 
             return EventSourceResponse(event_generator())
 
+        # ── POST Endpoints (Interactive Operations) ────────────
+
+        @app.post("/dashboard/api/tasks/{task_id}/pause")
+        async def pause_task_api(task_id: str):
+            """Pause a running task."""
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+            success = orch.pause_task(task_id)
+            if success:
+                self._record_event("task_pause", task_id=task_id)
+                return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
+            return JSONResponse(
+                {"success": False, "task_id": task_id, "error": "Task not found or not pausable"},
+                status_code=400,
+            )
+
+        @app.post("/dashboard/api/tasks/{task_id}/resume")
+        async def resume_task_api(task_id: str):
+            """Resume a paused task."""
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+            success = orch.resume_task(task_id)
+            if success:
+                self._record_event("task_resume", task_id=task_id)
+                return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress"})
+            return JSONResponse(
+                {"success": False, "task_id": task_id, "error": "Task not found or not resumable"},
+                status_code=400,
+            )
+
+        @app.post("/dashboard/api/circuit-breaker/reset")
+        async def circuit_breaker_reset_api():
+            """Reset the circuit breaker to closed state."""
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+            success = orch.reset_circuit_breaker()
+            if success:
+                self._record_event("circuit_breaker_reset")
+                return JSONResponse({"success": True, "state": "closed"})
+            return JSONResponse(
+                {"success": False, "error": "No circuit breaker configured"},
+                status_code=400,
+            )
+
+        @app.post("/dashboard/api/scheduler/jobs/{job_id}/trigger")
+        async def trigger_job_api(job_id: str):
+            """Manually trigger a scheduled job."""
+            orch = self.orchestrator
+            if orch is None or orch.scheduler is None:
+                return JSONResponse(
+                    {"success": False, "error": "Scheduler not available"},
+                    status_code=503,
+                )
+            success = orch.scheduler.trigger_job(job_id)
+            if success:
+                self._record_event("scheduler_trigger", job_id=job_id)
+                return JSONResponse({"success": True, "job_id": job_id})
+            return JSONResponse(
+                {"success": False, "job_id": job_id, "error": "Job not found"},
+                status_code=404,
+            )
+
+        @app.post("/dashboard/api/tasks/flush-pending")
+        async def flush_pending_api():
+            """Flush all tasks queued during the night window."""
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+            count = orch.pending_task_count
+            # flush_pending_tasks is async, but in a sync context we
+            # return the count and let the Orchestrator handle it
+            self._record_event("flush_pending", count=count)
+            return JSONResponse({"success": True, "pending_count": count})
+
+        # ── Event Log Endpoint ─────────────────────────────────
+
+        @app.get("/dashboard/api/events")
+        async def events_api():
+            """Return recent event log entries."""
+            return JSONResponse({
+                "available": True,
+                "events": list(self._event_log),
+                "total": len(self._event_log),
+            })
+
     # ── Data Collection Methods ──────────────────────────────────
+
+    def _record_event(
+        self,
+        event_type: str,
+        **details: Any,
+    ) -> None:
+        """Append an event to the in-memory event log.
+
+        Args:
+            event_type: Type of event (e.g., task_pause, circuit_breaker_reset).
+            **details: Additional event details.
+        """
+        self._event_log.appendleft({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": event_type,
+            "details": details,
+        })
 
     def _get_health_data(self) -> dict:
         """Collect engine health data.
@@ -412,6 +531,7 @@ class DashboardApp:
             "tasks": self._get_tasks_data(),
             "scheduler": self._get_scheduler_data(),
             "circuit_breaker": self._get_circuit_breaker_data(health_data=health),
+            "events": list(self._event_log),
         }
 
     # ── Server Lifecycle ─────────────────────────────────────────

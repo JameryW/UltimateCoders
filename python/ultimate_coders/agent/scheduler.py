@@ -204,6 +204,40 @@ class Scheduler:
         """
         self._service.set_night_window(start_time, end_time, timezone)
 
+    def trigger_job(self, task_id: str) -> bool:
+        """Manually trigger a scheduled job for immediate execution.
+
+        This is a convenience method for the dashboard to manually
+        trigger a job outside its normal schedule. It looks up the
+        job by ID and creates a one-shot duplicate that executes now.
+
+        Args:
+            task_id: The UUID string of the scheduled task to trigger.
+
+        Returns:
+            True if the job was found and triggered, False otherwise.
+        """
+        job = self.get_job(task_id)
+        if job is None:
+            return False
+
+        description = getattr(job, "description", str(task_id))
+        project_id = getattr(job, "project_id", None)
+
+        # Create a one-shot job that executes immediately (now + 1s)
+        from datetime import datetime as _dt, timezone as _tz
+        execute_after = _dt.now(_tz.utc).isoformat()
+
+        try:
+            self.create_one_shot_job(
+                description,
+                execute_after,
+                project_id=project_id,
+            )
+            return True
+        except Exception:
+            return False
+
     def clear_night_window(self) -> None:
         """Clear the night window configuration (allow execution at any time)."""
         self._service.clear_night_window()

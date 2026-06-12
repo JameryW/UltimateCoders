@@ -680,15 +680,22 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 | `/dashboard/api/scheduler` | GET | Scheduler status JSON (jobs, history) |
 | `/dashboard/api/circuit-breaker` | GET | Circuit breaker + rate limiter JSON |
 | `/dashboard/api/stream` | GET | SSE event stream (full snapshot every 5s) |
+| `/dashboard/api/events` | GET | Recent event log JSON (last 200 entries) |
+| `/dashboard/api/tasks/{id}/pause` | POST | Pause a running task |
+| `/dashboard/api/tasks/{id}/resume` | POST | Resume a paused task |
+| `/dashboard/api/circuit-breaker/reset` | POST | Reset circuit breaker to closed |
+| `/dashboard/api/scheduler/jobs/{id}/trigger` | POST | Manually trigger a scheduled job |
+| `/dashboard/api/tasks/flush-pending` | POST | Flush night-window pending queue |
 
 ### Panels
 
 1. **Engine Health** -- 11 component status indicators from `LocalEngine.health()`, overall status (ok/degraded/error), version, uptime
 2. **Workers** -- Registered worker list with load bars, heartbeat staleness warnings
-3. **Tasks** -- Active tasks with status badges, status counts, night-window pending count
-4. **Scheduler** -- Running state, night window status, registered jobs, recent execution history
-5. **Circuit Breaker** -- State (Closed/Open/HalfOpen), failure count, total calls, rejected
+3. **Tasks** -- Active tasks with status badges, status counts, night-window pending count, click-to-expand subtask DAG (Mermaid.js), pause/resume buttons
+4. **Scheduler** -- Running state, night window status, registered jobs with trigger buttons, recent execution history
+5. **Circuit Breaker** -- State (Closed/Open/HalfOpen), failure count, total calls, rejected, reset button (visible when open/half_open)
 6. **Rate Limiter** -- RPM available, TPM available, active requests
+7. **Event Log** -- Recent operational events (task pause/resume, CB reset, scheduler trigger, flush), color-coded by type, newest first
 
 ### Startup
 

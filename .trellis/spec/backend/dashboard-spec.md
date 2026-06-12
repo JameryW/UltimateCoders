@@ -21,7 +21,7 @@ class DashboardApp:
     def start(self, host: str = "0.0.0.0", port: int = 8080) -> None
     def stop(self) -> None
 
-    # REST API endpoints
+    # REST API endpoints (GET)
     GET /dashboard/              → HTMLResponse  (Jinja2 template)
     GET /dashboard/api/health    → JSONResponse  (engine health)
     GET /dashboard/api/workers   → JSONResponse  (worker list)
@@ -29,6 +29,14 @@ class DashboardApp:
     GET /dashboard/api/scheduler → JSONResponse  (scheduler state)
     GET /dashboard/api/circuit-breaker → JSONResponse (CB + rate limiter)
     GET /dashboard/api/stream    → EventSourceResponse (SSE every 5s)
+    GET /dashboard/api/events    → JSONResponse  (event log)
+
+    # REST API endpoints (POST — interactive operations)
+    POST /dashboard/api/tasks/{id}/pause          → JSONResponse (pause task)
+    POST /dashboard/api/tasks/{id}/resume         → JSONResponse (resume task)
+    POST /dashboard/api/circuit-breaker/reset     → JSONResponse (reset CB)
+    POST /dashboard/api/scheduler/jobs/{id}/trigger → JSONResponse (trigger job)
+    POST /dashboard/api/tasks/flush-pending       → JSONResponse (flush night-window queue)
 
     # Internal data collectors
     def _get_health_data(self) -> dict
@@ -37,6 +45,7 @@ class DashboardApp:
     def _get_scheduler_data(self) -> dict
     def _get_circuit_breaker_data(self, health_data: dict | None = None) -> dict
     def _get_full_snapshot(self) -> dict
+    def _record_event(self, event_type: str, **details) -> None
 ```
 
 #### Orchestrator Integration (`python/ultimate_coders/agent/orchestrator.py`)
@@ -47,9 +56,46 @@ class Orchestrator:
 
     def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None
     def stop_dashboard(self) -> None
+    def pause_task(self, task_id: str) -> bool
+    def resume_task(self, task_id: str) -> bool
+    def reset_circuit_breaker(self) -> bool
+```
+
+#### CircuitBreaker (`python/ultimate_coders/agent/rate_limiter.py`)
+
+```python
+class CircuitBreaker:
+    # Existing methods ...
+    def reset(self) -> None  # Reset to CLOSED state, clear counts
+```
+
+#### Scheduler (`python/ultimate_coders/agent/scheduler.py`)
+
+```python
+class Scheduler:
+    # Existing methods ...
+    def trigger_job(self, task_id: str) -> bool  # Manually trigger a scheduled job
 ```
 
 ### 3. Contracts
+
+#### POST Endpoint Contracts
+
+| Endpoint | Success Response | Error Conditions |
+|----------|-----------------|------------------|
+| `POST /tasks/{id}/pause` | `{"success": true, "task_id": ..., "status": "paused"}` | 400: task not found or not pausable, 503: no orchestrator |
+| `POST /tasks/{id}/resume` | `{"success": true, "task_id": ..., "status": "in_progress"}` | 400: task not found or not resumable, 503: no orchestrator |
+| `POST /circuit-breaker/reset` | `{"success": true, "state": "closed"}` | 400: no CB configured, 503: no orchestrator |
+| `POST /scheduler/jobs/{id}/trigger` | `{"success": true, "job_id": ...}` | 404: job not found, 503: no scheduler |
+| `POST /tasks/flush-pending` | `{"success": true, "pending_count": N}` | 503: no orchestrator |
+
+#### Event Log Contract
+
+- In-memory ring buffer: `deque(maxlen=200)`, newest first (`appendleft`)
+- Events recorded on every POST operation via `_record_event(event_type, **details)`
+- Event structure: `{"timestamp": "...", "type": "event_type", "details": {...}}`
+- Available via `GET /dashboard/api/events` and in SSE snapshot `events` field
+- Events are lost on restart (no persistence)
 
 #### SSE Event Format
 
@@ -94,7 +140,11 @@ Each SSE event payload is a JSON string with this structure:
     "rate_limiter": {"available": true|false, "rpm_available": 60, "tpm_available": 100000, "active_count": 2, "total_requests": 15},
     "engine_circuit_breaker": {},
     "engine_rate_limiter": {}
-  }
+  },
+  "events": [
+    {"timestamp": "2026-06-12T08:30:00Z", "type": "task_pause", "details": {"task_id": "..."}},
+    {"timestamp": "2026-06-12T08:29:00Z", "type": "circuit_breaker_reset", "details": {}}
+  ]
 }
 ```
 
@@ -166,6 +216,29 @@ orch.start_dashboard(port=80)  # privileged port
 | Fallback: no orchestrator | Unit | All panels return `available: false` with consistent structure |
 | Fallback: no engine | Unit | Health returns `status: "unavailable"` |
 | start_dashboard idempotent | Unit | Second call is no-op |
+
+### 6b. Tests Required (Interactive + Event Log)
+
+| Test | Type | Assertion |
+|------|------|-----------|
+| POST pause task | Unit | Status 200, `success=true`, `status=paused` |
+| POST pause not found | Unit | Status 400 |
+| POST resume task | Unit | Status 200, `success=true`, `status=in_progress` |
+| POST resume not paused | Unit | Status 400 |
+| POST CB reset | Unit | Status 200, `success=true`, `state=closed` |
+| POST CB reset no CB | Unit | Status 400 |
+| POST flush pending | Unit | Status 200, `success=true`, has `pending_count` |
+| POST trigger job no scheduler | Unit | Status 503 |
+| POST pause no orchestrator | Unit | Status 503 |
+| _record_event appends | Unit | Event log has entry, newest first |
+| Event log maxlen | Unit | Bounded at 200 entries |
+| GET events endpoint | Unit | Returns event list with `available=true` |
+| Snapshot includes events | Unit | `events` key present in full snapshot |
+| Orchestrator.pause_task | Unit | Returns True, task status = PAUSED |
+| Orchestrator.resume_task | Unit | Returns True, task status = IN_PROGRESS |
+| Orchestrator.reset_circuit_breaker | Unit | Returns True, CB state = CLOSED |
+| CircuitBreaker.reset from OPEN | Unit | State transitions to CLOSED, counts zeroed |
+| CircuitBreaker.reset from HALF_OPEN | Unit | State transitions to CLOSED |
 
 ### 7. Wrong vs Correct
 
@@ -261,6 +334,8 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 
 - Tailwind CSS via CDN (no node/npm build step)
   > **Gotcha**: Do NOT add `crossorigin="anonymous"` to the Tailwind CDN `<script>` tag. The play CDN (`cdn.tailwindcss.com`) does not support CORS credentials — the attribute causes fetch failures.
+- Mermaid.js via CDN (`cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js`) for subtask DAG rendering
+  > **Note**: SRI not applicable for Mermaid CDN (version-pinned by URL, similar to Tailwind play CDN)
 - Dark theme: `bg-[#0f172a]` body, `bg-[#1e293b]` cards, `border-[#334155]`
 - 4-column grid: `grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4`
 - Status colors: green (`text-green-400` / `bg-green-900`), yellow (`text-yellow-400`), red (`text-red-400`)
@@ -268,3 +343,8 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 - SSE auto-reconnect: `new EventSource('/dashboard/api/stream')` (built-in browser reconnect)
 - Connection indicator: `pulse-dot` CSS animation in header (green = connected, red = disconnected)
 - Initial data fetch: `fetchInitialData()` calls REST endpoints for faster first paint before SSE connects
+- Confirm modal: custom dark-theme modal (`modal-overlay` + `modal-box`) for all POST operations
+- Toast notifications: `toast-success` (green) / `toast-error` (red), auto-dismiss after 4s
+- Action buttons: `btn-action` base class + `btn-pause` / `btn-resume` / `btn-danger` / `btn-trigger` / `btn-flush` variants
+- Task detail expansion: click task row → toggle `task-detail.expanded`, load subtask list + Mermaid DAG
+- Event Log panel: newest-first list, color-coded by event type

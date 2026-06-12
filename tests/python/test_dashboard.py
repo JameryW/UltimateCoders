@@ -567,3 +567,288 @@ class TestDashboardFallback:
 
         # Overall should be degraded
         assert data["status"] == "degraded"
+
+
+# ── Interactive POST Endpoint Tests ───────────────────────────
+
+
+class TestDashboardPOSTEndpoints:
+    """Test POST API endpoints for interactive dashboard operations."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a TestClient with an Orchestrator that has tasks and CB."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker, RateLimiter
+
+        orch = _make_orchestrator()
+        orch.engine.health.return_value = _mock_health_response()
+        orch.circuit_breaker = CircuitBreaker(failure_threshold=3)
+        orch.rate_limiter = RateLimiter()
+
+        # Add a task that can be paused
+        t1 = Task(description="Test task", project_id="p1", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t1.id] = t1
+        self.task_id = t1.id
+
+        dashboard = DashboardApp(orch)
+        self.dashboard = dashboard
+        return TestClient(dashboard._app)
+
+    def test_pause_task(self, client):
+        """POST /dashboard/api/tasks/{id}/pause pauses a task."""
+        response = client.post(f"/dashboard/api/tasks/{self.task_id}/pause")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["status"] == "paused"
+
+    def test_pause_task_not_found(self, client):
+        """POST pause returns 400 for non-existent task."""
+        response = client.post("/dashboard/api/tasks/nonexistent/pause")
+        assert response.status_code == 400
+
+    def test_resume_task(self, client):
+        """POST /dashboard/api/tasks/{id}/resume resumes a paused task."""
+        # First pause
+        client.post(f"/dashboard/api/tasks/{self.task_id}/pause")
+        # Then resume
+        response = client.post(f"/dashboard/api/tasks/{self.task_id}/resume")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["status"] == "in_progress"
+
+    def test_resume_task_not_paused(self, client):
+        """POST resume returns 400 if task is not paused."""
+        response = client.post(f"/dashboard/api/tasks/{self.task_id}/resume")
+        assert response.status_code == 400
+
+    def test_circuit_breaker_reset(self, client):
+        """POST /dashboard/api/circuit-breaker/reset resets CB."""
+        # First open the CB
+        for _ in range(3):
+            client._orch_circuit_breaker = None  # hack: use dashboard's orch
+        self.dashboard.orchestrator.circuit_breaker.record_failure()
+        self.dashboard.orchestrator.circuit_breaker.record_failure()
+        self.dashboard.orchestrator.circuit_breaker.record_failure()
+
+        response = client.post("/dashboard/api/circuit-breaker/reset")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["state"] == "closed"
+
+    def test_circuit_breaker_reset_no_cb(self):
+        """POST reset returns 400 when no CB configured."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        orch.circuit_breaker = None
+        dashboard = DashboardApp(orch)
+        client = TestClient(dashboard._app)
+
+        response = client.post("/dashboard/api/circuit-breaker/reset")
+        assert response.status_code == 400
+
+    def test_flush_pending(self, client):
+        """POST /dashboard/api/tasks/flush-pending returns pending count."""
+        response = client.post("/dashboard/api/tasks/flush-pending")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "pending_count" in data
+
+    def test_trigger_job_no_scheduler(self):
+        """POST trigger returns 503 when no scheduler configured."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator(with_scheduler=False)
+        dashboard = DashboardApp(orch)
+        client = TestClient(dashboard._app)
+
+        response = client.post("/dashboard/api/scheduler/jobs/test-id/trigger")
+        assert response.status_code == 503
+
+    def test_pause_no_orchestrator(self):
+        """POST pause returns 503 when no orchestrator."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        dashboard = DashboardApp(None)
+        client = TestClient(dashboard._app)
+
+        response = client.post("/dashboard/api/tasks/test-id/pause")
+        assert response.status_code == 503
+
+
+# ── Event Log Tests ──────────────────────────────────────────
+
+
+class TestEventLog:
+    """Test event logging and event API endpoint."""
+
+    def test_record_event(self):
+        """_record_event appends to the event log."""
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        dashboard._record_event("test_event", key1="val1")
+        dashboard._record_event("another_event", key2="val2")
+
+        assert len(dashboard._event_log) == 2
+        assert dashboard._event_log[0]["type"] == "another_event"  # newest first
+        assert dashboard._event_log[1]["type"] == "test_event"
+
+    def test_event_log_maxlen(self):
+        """Event log is bounded by maxlen=200."""
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        for i in range(250):
+            dashboard._record_event("event", idx=i)
+
+        assert len(dashboard._event_log) == 200
+
+    def test_events_api_endpoint(self):
+        """GET /dashboard/api/events returns event log."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        dashboard._record_event("test_event", task_id="abc123")
+
+        client = TestClient(dashboard._app)
+        response = client.get("/dashboard/api/events")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["available"] is True
+        assert data["total"] == 1
+        assert data["events"][0]["type"] == "test_event"
+
+    def test_snapshot_includes_events(self):
+        """Full snapshot includes events field."""
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        dashboard._record_event("test_event")
+
+        snapshot = dashboard._get_full_snapshot()
+        assert "events" in snapshot
+        assert len(snapshot["events"]) == 1
+
+
+# ── Orchestrator Method Tests ────────────────────────────────
+
+
+class TestOrchestratorInteractiveMethods:
+    """Test pause_task, resume_task, and reset_circuit_breaker on Orchestrator."""
+
+    def test_pause_task(self):
+        """Orchestrator.pause_task pauses an in-progress task."""
+        orch = _make_orchestrator()
+        t = Task(description="Test", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t.id] = t
+
+        result = orch.pause_task(t.id)
+        assert result is True
+        assert orch.tasks[t.id].status == TaskStatus.PAUSED
+
+    def test_pause_task_not_found(self):
+        """Orchestrator.pause_task returns False for missing task."""
+        orch = _make_orchestrator()
+        result = orch.pause_task("nonexistent")
+        assert result is False
+
+    def test_pause_task_wrong_status(self):
+        """Orchestrator.pause_task returns False for completed task."""
+        orch = _make_orchestrator()
+        t = Task(description="Done", status=TaskStatus.COMPLETED)
+        orch.tasks[t.id] = t
+
+        result = orch.pause_task(t.id)
+        assert result is False
+
+    def test_resume_task(self):
+        """Orchestrator.resume_task resumes a paused task."""
+        orch = _make_orchestrator()
+        t = Task(description="Paused", status=TaskStatus.PAUSED)
+        orch.tasks[t.id] = t
+
+        result = orch.resume_task(t.id)
+        assert result is True
+        assert orch.tasks[t.id].status == TaskStatus.IN_PROGRESS
+
+    def test_resume_task_not_paused(self):
+        """Orchestrator.resume_task returns False for non-paused task."""
+        orch = _make_orchestrator()
+        t = Task(description="Active", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t.id] = t
+
+        result = orch.resume_task(t.id)
+        assert result is False
+
+    def test_reset_circuit_breaker(self):
+        """Orchestrator.reset_circuit_breaker resets the CB to closed."""
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState
+
+        orch = _make_orchestrator()
+        cb = CircuitBreaker(failure_threshold=3)
+        for _ in range(3):
+            cb.record_failure()
+        assert cb.state == CircuitState.OPEN
+
+        orch.circuit_breaker = cb
+        result = orch.reset_circuit_breaker()
+        assert result is True
+        assert cb.state == CircuitState.CLOSED
+
+    def test_reset_circuit_breaker_none(self):
+        """Orchestrator.reset_circuit_breaker returns False when CB is None."""
+        orch = _make_orchestrator()
+        orch.circuit_breaker = None
+        result = orch.reset_circuit_breaker()
+        assert result is False
+
+
+# ── CircuitBreaker reset() Tests ─────────────────────────────
+
+
+class TestCircuitBreakerReset:
+    """Test CircuitBreaker.reset() method."""
+
+    def test_reset_from_open(self):
+        """reset() transitions from OPEN to CLOSED."""
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState
+
+        cb = CircuitBreaker(failure_threshold=3)
+        for _ in range(3):
+            cb.record_failure()
+        assert cb.state == CircuitState.OPEN
+
+        cb.reset()
+        assert cb.state == CircuitState.CLOSED
+        assert cb.failure_count == 0
+
+    def test_reset_from_half_open(self):
+        """reset() transitions from HALF_OPEN to CLOSED."""
+        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState
+
+        cb = CircuitBreaker(failure_threshold=3, reset_timeout_seconds=0.0)
+        for _ in range(3):
+            cb.record_failure()
+        # Timeout=0 means it should transition to half_open on next check
+        cb.allow_request()
+        assert cb.state == CircuitState.HALF_OPEN
+
+        cb.reset()
+        assert cb.state == CircuitState.CLOSED
