@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -58,6 +59,15 @@ class DashboardApp:
     def _setup_routes(self) -> None:
         """Configure FastAPI routes and middleware."""
         app = self._app
+
+        # CORS middleware — allows CDN scripts (Tailwind) and
+        # cross-origin SSE clients to work without errors.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["GET"],
+            allow_headers=["*"],
+        )
 
         # Mount static files
         if _STATIC_DIR.exists():
