@@ -75,11 +75,10 @@ Each SSE event payload is a JSON string with this structure:
   "tasks": {
     "available": true,
     "total": 10,
-    "by_status": {"IN_PROGRESS": 3, "COMPLETED": 5, "FAILED": 2},
-    "pending_count": 0,
-    "night_window_active": false,
+    "status_counts": {"in_progress": 3, "completed": 5, "failed": 2},
+    "pending_task_count": 0,
     "tasks": [
-      {"id": "...", "description": "...", "status": "IN_PROGRESS", "project_id": "..."}
+      {"id": "...", "description": "...", "status": "in_progress", "project_id": "...", "subtask_count": 2, "created_at": "...", "updated_at": "..."}
     ]
   },
   "scheduler": {
@@ -91,8 +90,10 @@ Each SSE event payload is a JSON string with this structure:
   },
   "circuit_breaker": {
     "available": true|false,
-    "circuit_breaker": {"state": "Closed", "failure_count": 0, "total_calls": 100, "total_rejected": 0},
-    "rate_limiter": {"rpm_available": 60, "tpm_available": 100000}
+    "circuit_breaker": {"available": true|false, "state": "Closed|Open|HalfOpen|Unknown", "failure_count": 0, "total_calls": 100, "total_rejected": 0},
+    "rate_limiter": {"available": true|false, "rpm_available": 60, "tpm_available": 100000, "active_count": 2, "total_requests": 15},
+    "engine_circuit_breaker": {},
+    "engine_rate_limiter": {}
   }
 }
 ```
@@ -101,11 +102,14 @@ Each SSE event payload is a JSON string with this structure:
 
 | Condition | Panel Response |
 |-----------|---------------|
-| `orchestrator` is None | All panels: `{"available": false}` |
+| `orchestrator` is None | All panels: `{"available": false}` with full key structure (CB/RL include all metric keys with zero/Unknown defaults) |
 | `orchestrator.scheduler` is None | `scheduler.available = false`, `night_window = null`, `jobs = []` |
 | `orchestrator.engine` is None | `health.status = "unavailable"`, `components = []` |
-| `engine.health()` raises exception | `health.status = "error"`, `components = []` |
-| `scheduler.list_jobs()` raises exception | `scheduler.available = false`, `jobs = []` |
+| `engine.health()` raises exception | `health.status = "error"`, `error` key with message, `components = []` |
+| `scheduler.list_jobs()` raises exception | `scheduler.available = true` (still running), `jobs = []` |
+| `circuit_breaker` attribute missing or None | `circuit_breaker.available = false`, all metric keys present with zero/Unknown defaults |
+| `rate_limiter` attribute missing or None | `rate_limiter.available = false`, all metric keys present with zero defaults |
+| CB/RL read raises exception | `available = false`, `error` key added to default dict (dict not replaced) |
 | No workers registered | `workers.available = true`, `workers = []` |
 | No tasks | `tasks.available = true`, `tasks = []`, `total = 0` |
 
@@ -188,9 +192,16 @@ cb_data = self._get_circuit_breaker_data(health_data=health_data)
 def _get_circuit_breaker_data(self):
     if not self.orchestrator:
         return {"available": False}  # no circuit_breaker or rate_limiter keys!
+
+# BAD: sparse dict on exception overwrites all defaults
+cb_data = {"available": False}
+try:
+    cb_data = read_cb()
+except Exception:
+    cb_data = {"available": False, "error": str(e)}  # lost state/failure_count keys!
 ```
 
-#### Correct: Always include all expected keys
+#### Correct: Always include all expected keys, preserve defaults on error
 
 ```python
 # GOOD: consistent structure, JS can always read data["circuit_breaker"]["state"]
@@ -198,10 +209,17 @@ def _get_circuit_breaker_data(self):
     if not self.orchestrator:
         return {
             "available": False,
-            "circuit_breaker": {"state": "Unknown", "failure_count": 0, ...},
-            "rate_limiter": {"rpm_available": 0, "tpm_available": 0},
+            "circuit_breaker": {"available": False, "state": "Unknown", "failure_count": 0, ...},
+            "rate_limiter": {"available": False, "rpm_available": 0, "tpm_available": 0, ...},
             ...
         }
+
+# GOOD: on exception, add error to existing defaults instead of replacing
+cb_data = {"available": False, "state": "Unknown", "failure_count": 0, ...}
+try:
+    cb_data = read_cb()
+except Exception as e:
+    cb_data["error"] = str(e)  # preserves all default keys
 ```
 
 ---
@@ -223,6 +241,7 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 - Dashboard runs in a **background thread** via `uvicorn.Server.run()`
 - Orchestrator is **not blocked** by dashboard I/O
 - `stop_dashboard()` sets `server.should_exit = True` and joins the thread
+- **CORS middleware** enabled (`allow_origins=["*"]`, `allow_methods=["GET"]`) for CDN script loading (Tailwind) and cross-origin SSE clients
 
 ---
 
@@ -241,7 +260,11 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 ## UI Conventions
 
 - Tailwind CSS via CDN (no node/npm build step)
-- Dark theme: `bg-gray-900` base, `bg-gray-800` cards
+  > **Gotcha**: Do NOT add `crossorigin="anonymous"` to the Tailwind CDN `<script>` tag. The play CDN (`cdn.tailwindcss.com`) does not support CORS credentials — the attribute causes fetch failures.
+- Dark theme: `bg-[#0f172a]` body, `bg-[#1e293b]` cards, `border-[#334155]`
 - 4-column grid: `grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4`
-- Status colors: green (`text-green-400`), yellow (`text-yellow-400`), red (`text-red-400`)
-- SSE auto-reconnect: `new EventSource('/dashboard/api/stream')`
+- Status colors: green (`text-green-400` / `bg-green-900`), yellow (`text-yellow-400`), red (`text-red-400`)
+- Status badges: `badge-ok`, `badge-degraded`, `badge-error`, `badge-closed`, `badge-open`, `badge-half_open`, `badge-unavailable`
+- SSE auto-reconnect: `new EventSource('/dashboard/api/stream')` (built-in browser reconnect)
+- Connection indicator: `pulse-dot` CSS animation in header (green = connected, red = disconnected)
+- Initial data fetch: `fetchInitialData()` calls REST endpoints for faster first paint before SSE connects
