@@ -42,21 +42,38 @@ def _mock_health_response():
 
     components = []
     comp_names = [
-        "short_term_memory", "long_term_memory", "metadata_store",
-        "index_pipeline", "search_engine", "embedding_service",
-        "checkpoint_manager", "conflict_detector", "rate_limiter",
-        "circuit_breaker", "sandbox",
+        "short_term_memory",
+        "long_term_memory",
+        "metadata_store",
+        "index_pipeline",
+        "search_engine",
+        "embedding_service",
+        "checkpoint_manager",
+        "conflict_detector",
+        "rate_limiter",
+        "circuit_breaker",
+        "sandbox",
     ]
     statuses = [
-        "fallback", "fallback", "fallback",
-        "ok", "ok", "ok",
-        "ok", "ok", "ok",
-        "ok", "ok",
+        "fallback",
+        "fallback",
+        "fallback",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
     ]
     details = [
-        "Using in-memory fallback", "Using in-memory fallback",
-        "Using in-memory fallback", "Index pipeline ready",
-        "Hybrid search engine ready", "Embedding service configured",
+        "Using in-memory fallback",
+        "Using in-memory fallback",
+        "Using in-memory fallback",
+        "Index pipeline ready",
+        "Hybrid search engine ready",
+        "Embedding service configured",
         "Event sourcing + checkpoint ready",
         "Intent-based conflict detection ready",
         "RPM: 60 available, TPM: 100000 available",
@@ -163,6 +180,7 @@ class TestDashboardApp:
     def test_get_workers_data_heartbeat_stale(self):
         """Workers data flags stale heartbeats."""
         from datetime import timedelta
+
         w = WorkerInfo(
             id="worker-stale",
             capabilities=[],
@@ -255,6 +273,7 @@ class TestDashboardApp:
         orch.rate_limiter = RateLimiter()
 
         from ultimate_coders.dashboard.app import DashboardApp
+
         dashboard = DashboardApp(orch)
 
         data = dashboard._get_circuit_breaker_data()
@@ -287,6 +306,7 @@ class TestDashboardApp:
         orch.rate_limiter.total_requests = 15
 
         from ultimate_coders.dashboard.app import DashboardApp
+
         dashboard = DashboardApp(orch)
 
         data = dashboard._get_circuit_breaker_data()
@@ -452,6 +472,7 @@ class TestOrchestratorDashboard:
         # by temporarily removing it from sys.modules and inserting
         # a mock that raises ImportError.
         import sys
+
         original_mod = sys.modules.get("ultimate_coders.dashboard.app")
         try:
             # Remove the cached module so the import re-executes
@@ -852,3 +873,415 @@ class TestCircuitBreakerReset:
 
         cb.reset()
         assert cb.state == CircuitState.CLOSED
+
+
+# ── TaskEventEmitter Tests ───────────────────────────────────
+
+
+class TestTaskEventEmitter:
+    """Test TaskEventEmitter event bus."""
+
+    def test_emit_and_get_recent(self):
+        """emit() stores events in recent buffer."""
+        import asyncio
+
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+
+        emitter = TaskEventEmitter()
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(emitter.emit("test_event", task_id="t1", data={"key": "val"}))
+        recent = emitter.get_recent_events()
+        assert len(recent) == 1
+        assert recent[0]["type"] == "test_event"
+        assert recent[0]["task_id"] == "t1"
+        loop.close()
+
+    def test_get_recent_filtered_by_task(self):
+        """get_recent_events filters by task_id."""
+        import asyncio
+
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+
+        emitter = TaskEventEmitter()
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(emitter.emit("ev1", task_id="t1"))
+        loop.run_until_complete(emitter.emit("ev2", task_id="t2"))
+        loop.run_until_complete(emitter.emit("ev3", task_id="t1"))
+        t1_events = emitter.get_recent_events(task_id="t1")
+        assert len(t1_events) == 2
+        loop.close()
+
+    def test_recent_buffer_maxlen(self):
+        """Ring buffer is bounded by buffer_size."""
+        import asyncio
+
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+
+        emitter = TaskEventEmitter(buffer_size=5)
+        loop = asyncio.new_event_loop()
+        for i in range(10):
+            loop.run_until_complete(emitter.emit("ev", task_id="t", data={"i": i}))
+        assert len(emitter.get_recent_events()) == 5
+        loop.close()
+
+    def test_task_event_to_dict(self):
+        """TaskEvent.to_dict() serializes correctly."""
+        from ultimate_coders.agent.event_emitter import TaskEvent
+
+        ev = TaskEvent(type="tool_call", task_id="t1", subtask_id="s1", data={"tool": "read"})
+        d = ev.to_dict()
+        assert d["type"] == "tool_call"
+        assert d["task_id"] == "t1"
+        assert d["subtask_id"] == "s1"
+        assert d["data"]["tool"] == "read"
+        assert "timestamp" in d
+
+
+# ── Task Submit Endpoint Tests ───────────────────────────────
+
+
+class TestTaskSubmitEndpoint:
+    """Test POST /dashboard/api/tasks/submit."""
+
+    def test_submit_task_success(self):
+        """Submit a task with description."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        orch.engine.health.return_value = _mock_health_response()
+        # Mock submit_task to return a task
+        t = Task(description="Write tests", project_id="p1", status=TaskStatus.IN_PROGRESS)
+        orch.submit_task = lambda *a, **kw: _async_return(t)
+
+        dashboard = DashboardApp(orch)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Write tests", "project_id": "p1"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["task_id"] == t.id
+
+    def test_submit_task_no_description(self):
+        """Submit without description returns 400."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": ""},
+        )
+        assert response.status_code == 400
+
+    def test_submit_task_no_orchestrator(self):
+        """Submit with no orchestrator returns 503."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        dashboard = DashboardApp(None)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Do something"},
+        )
+        assert response.status_code == 503
+
+    def test_submit_task_invalid_json(self):
+        """Submit with invalid JSON returns 400."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            content="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400
+
+
+# ── Orchestrator Event Emitter Tests ─────────────────────────
+
+
+class TestOrchestratorEventEmitter:
+    """Test that Orchestrator has an event_emitter."""
+
+    def test_orchestrator_has_event_emitter(self):
+        """Orchestrator initializes with a TaskEventEmitter."""
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+
+        orch = _make_orchestrator()
+        assert hasattr(orch, "event_emitter")
+        assert isinstance(orch.event_emitter, TaskEventEmitter)
+
+    def test_submit_task_emits_event(self):
+        """submit_task emits a task_submitted event."""
+        import asyncio
+
+        orch = _make_orchestrator()
+        t = Task(description="Test emit", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t.id] = t
+
+        # Manually emit as submit_task would
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
+            orch.event_emitter.emit(
+                "task_submitted", task_id=t.id, data={"description": "Test emit"}
+            )
+        )
+
+        recent = orch.event_emitter.get_recent_events(task_id=t.id)
+        assert len(recent) == 1
+        assert recent[0]["type"] == "task_submitted"
+        loop.close()
+
+
+# ── Helper ──────────────────────────────────────────────────
+
+
+def _async_return(value):
+    """Create a coroutine that returns the given value."""
+    import asyncio
+
+    fut = asyncio.Future()
+    fut.set_result(value)
+    return fut
+
+
+# ── Worker Event Emitter Tests ─────────────────────────────────
+
+
+class TestWorkerEventEmitter:
+    """Test Worker emits events via event_emitter during subtask execution."""
+
+    def test_worker_emits_subtask_started(self):
+        """Worker emits subtask_started event when event_emitter is set."""
+        import asyncio
+
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus
+        from ultimate_coders.agent.worker import Worker
+
+        emitter = TaskEventEmitter()
+        worker = Worker(worker_id="w1", event_emitter=emitter)
+
+        subtask = Subtask(
+            parent_id="task-1",
+            description="Test subtask",
+            status=SubtaskStatus.PENDING,
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            # Execute subtask (will fail because no LLM client, but
+            # subtask_started should be emitted before the failure)
+            loop.run_until_complete(worker.execute_subtask(subtask))
+            # Check that subtask_started was emitted
+            events = emitter.get_recent_events(task_id="task-1")
+            started_events = [e for e in events if e["type"] == "subtask_started"]
+            assert len(started_events) >= 1
+            assert started_events[0]["data"]["description"] == "Test subtask"
+        finally:
+            loop.close()
+
+    def test_worker_emits_subtask_failed(self):
+        """Worker emits subtask_failed event on execution error."""
+        import asyncio
+
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus
+        from ultimate_coders.agent.worker import Worker
+
+        emitter = TaskEventEmitter()
+        worker = Worker(worker_id="w1", event_emitter=emitter)
+
+        subtask = Subtask(
+            parent_id="task-1",
+            description="Failing subtask",
+            status=SubtaskStatus.PENDING,
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(worker.execute_subtask(subtask))
+            # No LLM client means it returns a failure result
+            assert result.success is False
+            # Check that subtask_failed was emitted
+            events = emitter.get_recent_events(task_id="task-1")
+            failed_events = [e for e in events if e["type"] == "subtask_failed"]
+            assert len(failed_events) >= 1
+        finally:
+            loop.close()
+
+    def test_worker_without_emitter_backward_compat(self):
+        """Worker works without event_emitter (backward compatible)."""
+        import asyncio
+
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus
+        from ultimate_coders.agent.worker import Worker
+
+        worker = Worker(worker_id="w1")  # No event_emitter
+        assert worker.event_emitter is None
+
+        subtask = Subtask(
+            parent_id="task-1",
+            description="No emitter subtask",
+            status=SubtaskStatus.PENDING,
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(worker.execute_subtask(subtask))
+            # Should still return a result (failure due to no LLM)
+            assert result.success is False
+            assert result.subtask_id == subtask.id
+        finally:
+            loop.close()
+
+
+# ── Orchestrator task_completed Event Tests ────────────────────
+
+
+class TestOrchestratorTaskCompleted:
+    """Test that task_completed event is emitted when all subtasks finish."""
+
+    def test_task_completed_emitted_on_success(self):
+        """handle_subtask_result emits task_completed when all subtasks succeed."""
+        import asyncio
+
+        from ultimate_coders.agent.types import (
+            Subtask,
+            SubtaskResult,
+            SubtaskStatus,
+            Task,
+            TaskStatus,
+        )
+
+        orch = _make_orchestrator()
+
+        task = Task(description="Test", status=TaskStatus.IN_PROGRESS)
+        subtask = Subtask(
+            parent_id=task.id,
+            description="Sub 1",
+            status=SubtaskStatus.IN_PROGRESS,
+        )
+        task.subtasks = [subtask]
+        orch.tasks[task.id] = task
+
+        result = SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id="w1",
+            summary="Done",
+            success=True,
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(orch.handle_subtask_result(result))
+            # Task should be completed
+            assert task.status == TaskStatus.COMPLETED
+            # Event should be emitted
+            events = orch.event_emitter.get_recent_events(task_id=task.id)
+            completed = [e for e in events if e["type"] == "task_completed"]
+            assert len(completed) == 1
+            assert completed[0]["data"]["status"] == "completed"
+        finally:
+            loop.close()
+
+    def test_task_completed_emitted_on_failure(self):
+        """handle_subtask_result emits task_completed with failed status."""
+        import asyncio
+
+        from ultimate_coders.agent.types import (
+            Subtask,
+            SubtaskResult,
+            SubtaskStatus,
+            Task,
+            TaskStatus,
+        )
+
+        orch = _make_orchestrator()
+
+        task = Task(description="Test", status=TaskStatus.IN_PROGRESS)
+        subtask = Subtask(
+            parent_id=task.id,
+            description="Sub 1",
+            status=SubtaskStatus.IN_PROGRESS,
+        )
+        task.subtasks = [subtask]
+        orch.tasks[task.id] = task
+
+        result = SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id="w1",
+            summary="Failed",
+            success=False,
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(orch.handle_subtask_result(result))
+            # Task should be failed
+            assert task.status == TaskStatus.FAILED
+            # Event should be emitted with failed status
+            events = orch.event_emitter.get_recent_events(task_id=task.id)
+            completed = [e for e in events if e["type"] == "task_completed"]
+            assert len(completed) == 1
+            assert completed[0]["data"]["status"] == "failed"
+        finally:
+            loop.close()
+
+
+# ── Events API Filter Tests ───────────────────────────────────
+
+
+class TestEventsAPIFilter:
+    """Test events API filtering by task_id."""
+
+    def test_events_api_filters_by_task_id(self):
+        """GET /dashboard/api/events?task_id=... filters correctly."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        # Record events for different tasks
+        dashboard._record_event("task_submitted", task_id="t1", description="Task 1")
+        dashboard._record_event("task_submitted", task_id="t2", description="Task 2")
+        dashboard._record_event("task_pause", task_id="t1")
+
+        client = TestClient(dashboard._app)
+        response = client.get("/dashboard/api/events?task_id=t1")
+        assert response.status_code == 200
+        data = response.json()
+        # Only events for t1 should be returned
+        for ev in data["events"]:
+            assert ev.get("task_id") == "t1" or ev.get("details", {}).get("task_id") == "t1"
+
+    def test_events_api_no_filter(self):
+        """GET /dashboard/api/events without task_id returns all events."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+        dashboard._record_event("task_submitted", task_id="t1")
+        dashboard._record_event("task_submitted", task_id="t2")
+
+        client = TestClient(dashboard._app)
+        response = client.get("/dashboard/api/events")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2

@@ -124,6 +124,10 @@ class Orchestrator:
         self.scheduler = scheduler
         self._night_window_active: bool = False
         self._pending_tasks: list[Task] = []
+        # Event emitter for real-time dashboard tracking
+        from ultimate_coders.agent.event_emitter import TaskEventEmitter
+
+        self.event_emitter = TaskEventEmitter()
 
     async def submit_task(
         self,
@@ -162,7 +166,8 @@ class Orchestrator:
             self.tasks[task.id] = task
             logger.info(
                 "Task %s queued (night window active): %s",
-                task.id, description,
+                task.id,
+                description,
             )
             return task
 
@@ -198,6 +203,18 @@ class Orchestrator:
             logger.error("Failed to decompose task %s", task.id, exc_info=True)
             task.status = TaskStatus.FAILED
             task.result = "Failed to decompose task"
+
+        # Emit task lifecycle event
+        await self.event_emitter.emit(
+            "task_submitted",
+            task_id=task.id,
+            data={
+                "description": description,
+                "project_id": project_id,
+                "status": task.status.value,
+                "subtask_count": len(task.subtasks),
+            },
+        )
 
         task.update_timestamp()
         return task
@@ -287,11 +304,13 @@ class Orchestrator:
                 self.engine.write_memory(
                     key_scope="task",
                     key=f"assignment_{subtask.id}",
-                    content=json.dumps({
-                        "subtask_id": subtask.id,
-                        "worker_id": worker_id,
-                        "assigned_at": datetime.now(timezone.utc).isoformat(),
-                    }),
+                    content=json.dumps(
+                        {
+                            "subtask_id": subtask.id,
+                            "worker_id": worker_id,
+                            "assigned_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ),
                     content_type="structured",
                     source_agent="orchestrator",
                     task_id=subtask.parent_id,
@@ -301,7 +320,9 @@ class Orchestrator:
                 logger.warning("Failed to write assignment to memory", exc_info=True)
 
         logger.info(
-            "Assigned subtask %s to worker %s", subtask.id, worker_id,
+            "Assigned subtask %s to worker %s",
+            subtask.id,
+            worker_id,
         )
         return worker_id
 
@@ -374,16 +395,35 @@ class Orchestrator:
             task.status = TaskStatus.COMPLETED
             task.result = self._aggregate_results(task)
             logger.info("Task %s completed", task.id)
+            # Emit task completed event
+            await self.event_emitter.emit(
+                "task_completed",
+                task_id=task.id,
+                data={
+                    "status": "completed",
+                    "result_summary": (task.result or "")[:300],
+                    "subtask_count": len(task.subtasks),
+                    "completed_count": sum(1 for s in task.subtasks if s.is_complete),
+                },
+            )
         elif task.has_failed:
             # Check if all subtasks are either completed or failed
-            all_done = all(
-                st.is_complete or st.is_failed
-                for st in task.subtasks
-            )
+            all_done = all(st.is_complete or st.is_failed for st in task.subtasks)
             if all_done:
                 task.status = TaskStatus.FAILED
                 task.result = self._aggregate_results(task)
                 logger.warning("Task %s failed", task.id)
+                # Emit task completed (failed) event
+                await self.event_emitter.emit(
+                    "task_completed",
+                    task_id=task.id,
+                    data={
+                        "status": "failed",
+                        "result_summary": (task.result or "")[:300],
+                        "subtask_count": len(task.subtasks),
+                        "failed_count": sum(1 for s in task.subtasks if s.is_failed),
+                    },
+                )
 
     async def register_worker(self, worker_info: WorkerInfo) -> None:
         """Register a new worker.
@@ -394,7 +434,8 @@ class Orchestrator:
         self.workers[worker_info.id] = worker_info
         logger.info(
             "Registered worker %s with capabilities: %s",
-            worker_info.id, worker_info.capabilities,
+            worker_info.id,
+            worker_info.capabilities,
         )
 
     async def unregister_worker(self, worker_id: str) -> None:
@@ -436,10 +477,7 @@ class Orchestrator:
         Returns:
             Worker ID, or None if no suitable worker found.
         """
-        candidates = [
-            w for w in self.workers.values()
-            if w.is_available
-        ]
+        candidates = [w for w in self.workers.values() if w.is_available]
 
         if not candidates:
             return None
@@ -483,14 +521,10 @@ class Orchestrator:
         except json.JSONDecodeError as e:
             logger.error("Failed to parse decomposition JSON: %s", e)
             logger.debug("Raw LLM response: %s", response.text)
-            raise RuntimeError(
-                f"Failed to parse LLM decomposition output: {e}"
-            ) from e
+            raise RuntimeError(f"Failed to parse LLM decomposition output: {e}") from e
 
         if not isinstance(items, list):
-            raise RuntimeError(
-                f"Expected JSON array from decomposition, got {type(items)}"
-            )
+            raise RuntimeError(f"Expected JSON array from decomposition, got {type(items)}")
 
         # First pass: create subtasks with temporary index-based deps
         subtask_map: dict[int, Subtask] = {}
@@ -513,9 +547,7 @@ class Orchestrator:
                 continue
             dep_indices = item.get("depends_on", [])
             subtask_map[idx].depends_on = [
-                subtask_map[i].id
-                for i in dep_indices
-                if i in subtask_map
+                subtask_map[i].id for i in dep_indices if i in subtask_map
             ]
 
         return list(subtask_map.values())
@@ -554,6 +586,7 @@ class Orchestrator:
 
         try:
             from ultimate_coders.search import SearchQuery
+
             query = SearchQuery(task.description).limit(5)
             result = self.engine.search(query)
             if result and hasattr(result, "items") and result.items:
@@ -629,7 +662,8 @@ class Orchestrator:
         for task in pending:
             logger.info(
                 "Flushing pending task %s: %s",
-                task.id, task.description,
+                task.id,
+                task.description,
             )
             # Re-submit the task for immediate execution
             # (night window is now closed, so it won't be re-queued)
@@ -772,7 +806,9 @@ class Orchestrator:
         """
         line_ranges = [LineRange(start=s, end=e) for s, e in regions]
         result, info = self.conflict_detector.check_conflict(
-            file_path, worker_id, line_ranges,
+            file_path,
+            worker_id,
+            line_ranges,
         )
         return result, info
 
@@ -873,7 +909,8 @@ class Orchestrator:
         if task.status not in (TaskStatus.IN_PROGRESS, TaskStatus.PLANNING):
             logger.warning(
                 "Task %s cannot be paused (current status: %s)",
-                task_id, task.status.value,
+                task_id,
+                task.status.value,
             )
             return False
         task.status = TaskStatus.PAUSED
@@ -899,7 +936,8 @@ class Orchestrator:
         if task.status != TaskStatus.PAUSED:
             logger.warning(
                 "Task %s cannot be resumed (current status: %s)",
-                task_id, task.status.value,
+                task_id,
+                task.status.value,
             )
             return False
         task.status = TaskStatus.IN_PROGRESS
