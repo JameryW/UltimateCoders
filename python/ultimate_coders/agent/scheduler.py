@@ -40,7 +40,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ultimate_coders.agent.scheduler_config import (
@@ -225,8 +225,7 @@ class Scheduler:
         project_id = getattr(job, "project_id", None)
 
         # Create a one-shot job that executes immediately (now + 1s)
-        from datetime import datetime as _dt, timezone as _tz
-        execute_after = _dt.now(_tz.utc).isoformat()
+        execute_after = datetime.now(timezone.utc).isoformat()
 
         try:
             self.create_one_shot_job(

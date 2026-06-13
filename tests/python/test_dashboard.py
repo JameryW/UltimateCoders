@@ -579,8 +579,8 @@ class TestDashboardPOSTEndpoints:
     def client(self):
         """Create a TestClient with an Orchestrator that has tasks and CB."""
         from fastapi.testclient import TestClient
-        from ultimate_coders.dashboard.app import DashboardApp
         from ultimate_coders.agent.rate_limiter import CircuitBreaker, RateLimiter
+        from ultimate_coders.dashboard.app import DashboardApp
 
         orch = _make_orchestrator()
         orch.engine.health.return_value = _mock_health_response()
