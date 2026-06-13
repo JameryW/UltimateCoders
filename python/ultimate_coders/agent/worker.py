@@ -102,6 +102,7 @@ class Worker:
         circuit_breaker: CircuitBreaker | None = None,
         execution_mode: str = "sandbox",
         sandbox_config: SandboxConfig | None = None,
+        event_emitter: Any | None = None,
     ):
         """Initialize the Worker.
 
@@ -117,8 +118,12 @@ class Worker:
             execution_mode: Execution mode ("sandbox" or "llm").
             sandbox_config: Configuration for sandbox execution
                 (required if execution_mode="sandbox").
+            event_emitter: Optional TaskEventEmitter for real-time dashboard
+                event streaming. When set, the Worker emits subtask lifecycle
+                and LLM interaction events during execution.
         """
         import uuid
+
         self.worker_id = worker_id or str(uuid.uuid4())
         self.engine = engine
         self.llm_client = llm_client
@@ -131,6 +136,9 @@ class Worker:
         self.conflict_detector = conflict_detector or ConflictDetector()
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+
+        # Event emitter for real-time dashboard tracking
+        self.event_emitter = event_emitter
 
         # Sandbox execution mode
         self.execution_mode = execution_mode
@@ -171,18 +179,62 @@ class Worker:
         self._active_count += 1
         subtask.status = SubtaskStatus.IN_PROGRESS
 
+        # Emit subtask started event
+        if self.event_emitter is not None:
+            await self.event_emitter.emit(
+                "subtask_started",
+                task_id=subtask.parent_id,
+                subtask_id=subtask.id,
+                data={"description": subtask.description, "worker_id": self.worker_id},
+            )
+
         try:
             if self.execution_mode == "sandbox":
-                return await self._execute_in_sandbox(subtask)
+                result = await self._execute_in_sandbox(subtask)
+            else:
+                # Default: LLM tool-calling loop
+                result = await self._execute_with_llm(subtask)
 
-            # Default: LLM tool-calling loop
-            return await self._execute_with_llm(subtask)
+            # Emit subtask completed/failed event based on result
+            if self.event_emitter is not None:
+                if result.success:
+                    await self.event_emitter.emit(
+                        "subtask_completed",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data={
+                            "summary": result.summary[:300],
+                            "success": True,
+                            "modified_files": [
+                                {"path": f.file_path, "type": f.change_type.value}
+                                for f in (result.modified_files or [])
+                            ],
+                        },
+                    )
+                else:
+                    await self.event_emitter.emit(
+                        "subtask_failed",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data={"error": result.summary[:300], "worker_id": self.worker_id},
+                    )
+            return result
 
         except Exception as e:
             logger.error(
-                "Subtask %s execution failed: %s", subtask.id, e,
+                "Subtask %s execution failed: %s",
+                subtask.id,
+                e,
                 exc_info=True,
             )
+            # Emit subtask failed event
+            if self.event_emitter is not None:
+                await self.event_emitter.emit(
+                    "subtask_failed",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"error": str(e), "worker_id": self.worker_id},
+                )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
@@ -218,12 +270,31 @@ class Worker:
                 success=False,
             )
 
+        # Build on_tool_call callback for event emitter
+        async def _on_tool_call(tool_name: str, tool_input: dict, result: str) -> None:
+            if self.event_emitter is not None:
+                await self.event_emitter.emit(
+                    "tool_call",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"tool": tool_name, "input_summary": str(tool_input)[:200]},
+                )
+                # Truncate result for streaming
+                result_summary = result[:500] if len(result) > 500 else result
+                await self.event_emitter.emit(
+                    "tool_result",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"tool": tool_name, "result_summary": result_summary},
+                )
+
         response, tool_log = await self.llm_client.complete_with_tools(
             messages=messages,
             tools=self._tool_definitions,
             system=_WORKER_SYSTEM_PROMPT,
             max_tokens=4096,
             tool_executor=self._execute_tool,
+            on_tool_call=_on_tool_call if self.event_emitter else None,
         )
 
         # Build result
@@ -307,9 +378,8 @@ class Worker:
 
         try:
             from ultimate_coders.search import SearchQuery
-            search_query = SearchQuery(query).limit(
-                kwargs.get("max_results", 10)
-            )
+
+            search_query = SearchQuery(query).limit(kwargs.get("max_results", 10))
             if kwargs.get("repo_ids"):
                 search_query.in_repos(kwargs["repo_ids"])
             if kwargs.get("languages"):
@@ -321,13 +391,15 @@ class Worker:
             items = []
             if result and hasattr(result, "items"):
                 for item in result.items[:10]:
-                    items.append({
-                        "repo_id": getattr(item, "repo_id", ""),
-                        "file_path": getattr(item, "file_path", ""),
-                        "start_line": getattr(item, "start_line", 0),
-                        "content_snippet": getattr(item, "content_snippet", "")[:200],
-                        "score": getattr(item, "score", 0.0),
-                    })
+                    items.append(
+                        {
+                            "repo_id": getattr(item, "repo_id", ""),
+                            "file_path": getattr(item, "file_path", ""),
+                            "start_line": getattr(item, "start_line", 0),
+                            "content_snippet": getattr(item, "content_snippet", "")[:200],
+                            "score": getattr(item, "score", 0.0),
+                        }
+                    )
 
             return json.dumps({"results": items, "count": len(items)})
         except Exception as e:
@@ -431,11 +503,13 @@ class Worker:
                 if len(content) == max_bytes:
                     content += "\n... (truncated)"
 
-            return json.dumps({
-                "file_path": file_path,
-                "content": content,
-                "size": os.path.getsize(file_path),
-            })
+            return json.dumps(
+                {
+                    "file_path": file_path,
+                    "content": content,
+                    "size": os.path.getsize(file_path),
+                }
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -458,7 +532,8 @@ class Worker:
                 return json.dumps({"error": f"Directory not found: {directory}"})
 
             matches = glob.glob(
-                os.path.join(directory, pattern), recursive=True,
+                os.path.join(directory, pattern),
+                recursive=True,
             )
 
             # Filter out hidden dirs and common non-code dirs
@@ -492,8 +567,7 @@ class Worker:
             make_tool_definition(
                 name="search",
                 description=(
-                    "Search code across indexed repositories. "
-                    "Returns matching code snippets."
+                    "Search code across indexed repositories. Returns matching code snippets."
                 ),
                 parameters={
                     "query": {
@@ -674,11 +748,13 @@ class Worker:
             if tool_name == "read_file":
                 file_path = tool_input.get("file_path", "")
                 if file_path:
-                    modified.append(FileChange(
-                        file_path=file_path,
-                        change_type=ChangeType.MODIFIED,
-                        diff="",  # Actual diff would come from write_file
-                    ))
+                    modified.append(
+                        FileChange(
+                            file_path=file_path,
+                            change_type=ChangeType.MODIFIED,
+                            diff="",  # Actual diff would come from write_file
+                        )
+                    )
 
         return modified
 

@@ -14,7 +14,7 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -56,6 +56,8 @@ class DashboardApp:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
+        # Connect to Orchestrator's event emitter if available
+        self.event_emitter = getattr(orchestrator, "event_emitter", None) if orchestrator else None
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -110,21 +112,109 @@ class DashboardApp:
 
         @app.get("/dashboard/api/stream")
         async def stream(request: Request):
-            """SSE endpoint: push full state snapshot every 5 seconds."""
+            """SSE endpoint: push real-time events + periodic full snapshots.
+
+            Uses a hybrid approach:
+            - Immediate task events (from TaskEventEmitter) via 'task_event' SSE type
+            - Full state snapshot every 5 seconds via 'update' SSE type
+            """
             from sse_starlette.sse import EventSourceResponse
 
             async def event_generator():
                 while True:
                     if await request.is_disconnected():
                         break
+
+                    # Try to get a real-time event first (waits up to 5s)
+                    if self.event_emitter is not None:
+                        event = await self.event_emitter.wait_for_event(timeout=5.0)
+                        if event is not None:
+                            # Also record in our local event log
+                            self._event_log.appendleft(event.to_dict())
+                            yield {
+                                "event": "task_event",
+                                "data": json.dumps(event.to_dict()),
+                            }
+                            continue  # Check for more events immediately
+
+                    # Timeout or no emitter: send full snapshot then wait
                     snapshot = self._get_full_snapshot()
                     yield {
                         "event": "update",
                         "data": json.dumps(snapshot),
                     }
-                    await asyncio.sleep(5)
+                    # When no emitter is available, we must sleep to avoid
+                    # spinning the loop without any delay (infinite fast loop).
+                    if self.event_emitter is None:
+                        await asyncio.sleep(5)
 
             return EventSourceResponse(event_generator())
+
+        # ── Task Submit Endpoint ─────────────────────────────────
+
+        @app.post("/dashboard/api/tasks/submit")
+        async def submit_task_api(request: Request):
+            """Submit a new code development task to the Orchestrator.
+
+            Accepts a JSON body with:
+            - description (required): Task description.
+            - project_id (optional): Project/repository context.
+
+            Returns the created task with its ID and subtask list.
+            """
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse(
+                    {"success": False, "error": "Invalid JSON body"},
+                    status_code=400,
+                )
+
+            description = body.get("description", "").strip()
+            if not description:
+                return JSONResponse(
+                    {"success": False, "error": "description is required"},
+                    status_code=400,
+                )
+
+            project_id = body.get("project_id", "")
+
+            try:
+                task = await orch.submit_task(description, project_id=project_id)
+            except Exception as e:
+                logger.error("Failed to submit task: %s", e, exc_info=True)
+                return JSONResponse(
+                    {"success": False, "error": str(e)},
+                    status_code=500,
+                )
+
+            # Record in event log (the Orchestrator already emits via
+            # event_emitter in submit_task, so we don't duplicate it here)
+            self._record_event("task_submitted", task_id=task.id, description=description)
+
+            return JSONResponse(
+                {
+                    "success": True,
+                    "task_id": task.id,
+                    "status": task.status.value,
+                    "subtask_count": len(task.subtasks),
+                    "subtasks": [
+                        {
+                            "id": st.id,
+                            "description": st.description,
+                            "status": st.status.value,
+                            "depends_on": st.depends_on,
+                        }
+                        for st in task.subtasks
+                    ],
+                }
+            )
 
         # ── POST Endpoints (Interactive Operations) ────────────
 
@@ -218,13 +308,38 @@ class DashboardApp:
         # ── Event Log Endpoint ─────────────────────────────────
 
         @app.get("/dashboard/api/events")
-        async def events_api():
-            """Return recent event log entries."""
-            return JSONResponse({
-                "available": True,
-                "events": list(self._event_log),
-                "total": len(self._event_log),
-            })
+        async def events_api(task_id: Optional[str] = None, limit: int = 100):  # noqa: UP045
+            """Return recent event log entries.
+
+            Args:
+                task_id: Optional filter by task ID.
+                limit: Maximum events to return (default: 100).
+            """
+            # Combine local event log with emitter's recent events
+            all_events = list(self._event_log)
+            if self.event_emitter is not None:
+                all_events = (
+                    self.event_emitter.get_recent_events(
+                        task_id=task_id,
+                        limit=limit,
+                    )
+                    + all_events
+                )
+            if task_id:
+                # Filter by task_id: emitter events have top-level task_id,
+                # local _event_log events have it inside details dict
+                all_events = [
+                    e
+                    for e in all_events
+                    if e.get("task_id") == task_id or e.get("details", {}).get("task_id") == task_id
+                ]
+            return JSONResponse(
+                {
+                    "available": True,
+                    "events": all_events[:limit],
+                    "total": len(all_events),
+                }
+            )
 
     # ── Data Collection Methods ──────────────────────────────────
 
@@ -239,11 +354,13 @@ class DashboardApp:
             event_type: Type of event (e.g., task_pause, circuit_breaker_reset).
             **details: Additional event details.
         """
-        self._event_log.appendleft({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "type": event_type,
-            "details": details,
-        })
+        self._event_log.appendleft(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": event_type,
+                "details": details,
+            }
+        )
 
     def _get_health_data(self) -> dict:
         """Collect engine health data.
@@ -263,11 +380,13 @@ class DashboardApp:
             health = orch.engine.health()
             components = []
             for comp in health.components:
-                components.append({
-                    "name": comp.name,
-                    "status": comp.status,
-                    "details": comp.details,
-                })
+                components.append(
+                    {
+                        "name": comp.name,
+                        "status": comp.status,
+                        "details": comp.details,
+                    }
+                )
             return {
                 "available": True,
                 "status": health.status,
@@ -298,20 +417,21 @@ class DashboardApp:
         for wid, w in orch.workers.items():
             now = datetime.now(timezone.utc)
             heartbeat_age = (now - w.last_heartbeat).total_seconds()
-            workers.append({
-                "id": w.id,
-                "capabilities": w.capabilities,
-                "current_load": w.current_load,
-                "max_capacity": w.max_capacity,
-                "load_percent": (
-                    round(w.current_load / w.max_capacity * 100)
-                    if w.max_capacity > 0 else 0
-                ),
-                "last_heartbeat": w.last_heartbeat.isoformat(),
-                "heartbeat_age_seconds": round(heartbeat_age, 1),
-                "heartbeat_stale": heartbeat_age > heartbeat_timeout,
-                "is_available": w.is_available,
-            })
+            workers.append(
+                {
+                    "id": w.id,
+                    "capabilities": w.capabilities,
+                    "current_load": w.current_load,
+                    "max_capacity": w.max_capacity,
+                    "load_percent": (
+                        round(w.current_load / w.max_capacity * 100) if w.max_capacity > 0 else 0
+                    ),
+                    "last_heartbeat": w.last_heartbeat.isoformat(),
+                    "heartbeat_age_seconds": round(heartbeat_age, 1),
+                    "heartbeat_stale": heartbeat_age > heartbeat_timeout,
+                    "is_available": w.is_available,
+                }
+            )
 
         return {
             "available": True,
@@ -334,15 +454,17 @@ class DashboardApp:
         for tid, t in orch.tasks.items():
             status_val = t.status.value if hasattr(t.status, "value") else str(t.status)
             status_counts[status_val] = status_counts.get(status_val, 0) + 1
-            tasks.append({
-                "id": t.id,
-                "description": t.description,
-                "status": status_val,
-                "project_id": t.project_id,
-                "subtask_count": len(t.subtasks),
-                "created_at": t.created_at.isoformat(),
-                "updated_at": t.updated_at.isoformat(),
-            })
+            tasks.append(
+                {
+                    "id": t.id,
+                    "description": t.description,
+                    "status": status_val,
+                    "project_id": t.project_id,
+                    "subtask_count": len(t.subtasks),
+                    "created_at": t.created_at.isoformat(),
+                    "updated_at": t.updated_at.isoformat(),
+                }
+            )
 
         pending_count = orch.pending_task_count if hasattr(orch, "pending_task_count") else 0
 
@@ -402,13 +524,15 @@ class DashboardApp:
             for job in jobs[:10]:
                 job_id = job["id"]
                 for hist in scheduler.get_execution_history(job_id, limit=5):
-                    execution_history.append({
-                        "task_id": job_id,
-                        "started_at": str(getattr(hist, "started_at", "")),
-                        "completed_at": str(getattr(hist, "completed_at", "")),
-                        "status": str(getattr(hist, "status", "")),
-                        "result_summary": getattr(hist, "result_summary", None),
-                    })
+                    execution_history.append(
+                        {
+                            "task_id": job_id,
+                            "started_at": str(getattr(hist, "started_at", "")),
+                            "completed_at": str(getattr(hist, "completed_at", "")),
+                            "status": str(getattr(hist, "status", "")),
+                            "result_summary": getattr(hist, "result_summary", None),
+                        }
+                    )
         except Exception as e:
             logger.warning("Failed to get execution history: %s", e)
 

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ToolDefinition:
     """Definition of a tool available for LLM function calling."""
+
     name: str
     description: str
     input_schema: dict[str, Any] = field(default_factory=dict)
@@ -26,6 +27,7 @@ class ToolDefinition:
 @dataclass
 class ToolCall:
     """A tool call requested by the LLM."""
+
     id: str
     name: str
     input: dict[str, Any]
@@ -34,6 +36,7 @@ class ToolCall:
 @dataclass
 class LLMResponse:
     """Response from an LLM completion."""
+
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"
@@ -87,6 +90,7 @@ class LLMClient:
 
         try:
             import anthropic
+
             kwargs: dict[str, Any] = {}
             if self.api_key:
                 kwargs["api_key"] = self.api_key
@@ -141,6 +145,7 @@ class LLMClient:
         max_tokens: int = 4096,
         max_tool_rounds: int = 20,
         tool_executor: Any | None = None,
+        on_tool_call: Any | None = None,
         **kwargs: Any,
     ) -> tuple[LLMResponse, list[dict[str, Any]]]:
         """Complete with tool calling loop.
@@ -158,6 +163,9 @@ class LLMClient:
             max_tool_rounds: Maximum tool-calling iterations.
             tool_executor: Callable that takes a ToolCall and returns a string result.
                            If None, tool calls are not executed.
+            on_tool_call: Optional async callback invoked after each tool call
+                          with (tool_name, tool_input, result). Used by the
+                          Dashboard event emitter to stream real-time interactions.
             **kwargs: Additional parameters for the API.
 
         Returns:
@@ -200,32 +208,47 @@ class LLMClient:
                         tool_result_str = f"Error executing tool {tool_call.name}: {e}"
                         logger.error("Tool execution error: %s", e)
 
-                tool_calls_log.append({
-                    "tool_call": {
+                tool_calls_log.append(
+                    {
+                        "tool_call": {
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "input": tool_call.input,
+                        },
+                        "result": tool_result_str,
+                    }
+                )
+
+                # Notify event emitter callback (for Dashboard real-time tracking)
+                if on_tool_call is not None:
+                    try:
+                        await on_tool_call(tool_call.name, tool_call.input, tool_result_str)
+                    except Exception:
+                        logger.debug("on_tool_call callback error", exc_info=True)
+
+                tool_use_blocks.append(
+                    {
+                        "type": "tool_use",
                         "id": tool_call.id,
                         "name": tool_call.name,
                         "input": tool_call.input,
-                    },
-                    "result": tool_result_str,
-                })
-
-                tool_use_blocks.append({
-                    "type": "tool_use",
-                    "id": tool_call.id,
-                    "name": tool_call.name,
-                    "input": tool_call.input,
-                })
+                    }
+                )
 
                 # Append tool result message
                 working_messages.append({"role": "assistant", "content": tool_use_blocks})
-                working_messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_call.id,
-                        "content": tool_result_str,
-                    }],
-                })
+                working_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call.id,
+                                "content": tool_result_str,
+                            }
+                        ],
+                    }
+                )
 
         # Max rounds reached; return the last response
         return llm_response, tool_calls_log
@@ -250,15 +273,18 @@ class LLMClient:
                     raise
 
                 # Exponential backoff with jitter
-                exp_delay = base_delay * (2 ** attempt)
+                exp_delay = base_delay * (2**attempt)
                 jitter = random.uniform(0, 0.5)  # noqa: S311
                 delay = min(exp_delay + jitter, max_delay)
                 logger.warning(
-                    "LLM API rate limited/overloaded (attempt %d/%d), "
-                    "retrying in %.1fs: %s",
-                    attempt + 1, self.max_retries, delay, error_str,
+                    "LLM API rate limited/overloaded (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                    error_str,
                 )
                 import asyncio
+
                 await asyncio.sleep(delay)
 
         raise RuntimeError("Unreachable: max retries exceeded")
@@ -272,11 +298,13 @@ class LLMClient:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append(ToolCall(
-                    id=block.id,
-                    name=block.name,
-                    input=block.input if isinstance(block.input, dict) else {},
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=block.id,
+                        name=block.name,
+                        input=block.input if isinstance(block.input, dict) else {},
+                    )
+                )
 
         usage = {}
         if hasattr(response, "usage") and response.usage:
@@ -299,7 +327,8 @@ class LLMClient:
         return {
             "name": tool.name,
             "description": tool.description,
-            "input_schema": tool.input_schema or {
+            "input_schema": tool.input_schema
+            or {
                 "type": "object",
                 "properties": {},
             },
@@ -329,9 +358,6 @@ def make_tool_definition(
         input_schema={
             "type": "object",
             "properties": properties,
-            "required": [
-                k for k, v in properties.items()
-                if v.get("required", False)
-            ],
+            "required": [k for k, v in properties.items() if v.get("required", False)],
         },
     )

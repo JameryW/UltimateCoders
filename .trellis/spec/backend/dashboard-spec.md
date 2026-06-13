@@ -28,10 +28,11 @@ class DashboardApp:
     GET /dashboard/api/tasks     → JSONResponse  (task status)
     GET /dashboard/api/scheduler → JSONResponse  (scheduler state)
     GET /dashboard/api/circuit-breaker → JSONResponse (CB + rate limiter)
-    GET /dashboard/api/stream    → EventSourceResponse (SSE every 5s)
-    GET /dashboard/api/events    → JSONResponse  (event log)
+    GET /dashboard/api/stream    → EventSourceResponse (SSE: hybrid real-time events + 5s snapshot)
+    GET /dashboard/api/events    → JSONResponse  (event log, supports ?task_id=&limit=)
 
     # REST API endpoints (POST — interactive operations)
+    POST /dashboard/api/tasks/submit              → JSONResponse (submit new task)
     POST /dashboard/api/tasks/{id}/pause          → JSONResponse (pause task)
     POST /dashboard/api/tasks/{id}/resume         → JSONResponse (resume task)
     POST /dashboard/api/circuit-breaker/reset     → JSONResponse (reset CB)
@@ -48,17 +49,56 @@ class DashboardApp:
     def _record_event(self, event_type: str, **details) -> None
 ```
 
+#### TaskEventEmitter (`python/ultimate_coders/agent/event_emitter.py`)
+
+```python
+@dataclass
+class TaskEvent:
+    timestamp: str       # ISO 8601 UTC
+    type: str            # event type (e.g., subtask_started, tool_call)
+    task_id: str
+    subtask_id: str      # optional
+    data: dict[str, Any] # event-specific payload
+    def to_dict(self) -> dict[str, Any]
+
+class TaskEventEmitter:
+    def __init__(self, buffer_size: int = 500) -> None
+    async def emit(self, event_type: str, task_id: str = "", subtask_id: str = "", data: dict | None = None) -> None
+    async def wait_for_event(self, timeout: float = 5.0) -> TaskEvent | None
+    def get_recent_events(self, task_id: str | None = None, limit: int = 100) -> list[dict]
+    @property
+    def pending_count(self) -> int
+```
+
+#### Worker Event Integration (`python/ultimate_coders/agent/worker.py`)
+
+```python
+class Worker:
+    def __init__(self, ..., event_emitter: TaskEventEmitter | None = None)
+    # Emits: subtask_started, subtask_completed, subtask_failed, tool_call, tool_result
+```
+
+#### LLMClient Hook (`python/ultimate_coders/agent/llm.py`)
+
+```python
+class LLMClient:
+    async def complete_with_tools(self, ..., on_tool_call: Callable | None = None)
+    # on_tool_call signature: async (tool_name: str, tool_input: dict, result: str) -> None
+```
+
 #### Orchestrator Integration (`python/ultimate_coders/agent/orchestrator.py`)
 
 ```python
 class Orchestrator:
     _dashboard_app: DashboardApp | None  # lazy init
+    event_emitter: TaskEventEmitter      # created in __init__
 
     def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None
     def stop_dashboard(self) -> None
     def pause_task(self, task_id: str) -> bool
     def resume_task(self, task_id: str) -> bool
     def reset_circuit_breaker(self) -> bool
+    # Emits: task_submitted (in submit_task), task_completed (in handle_subtask_result)
 ```
 
 #### CircuitBreaker (`python/ultimate_coders/agent/rate_limiter.py`)
@@ -88,6 +128,41 @@ class Scheduler:
 | `POST /circuit-breaker/reset` | `{"success": true, "state": "closed"}` | 400: no CB configured, 503: no orchestrator |
 | `POST /scheduler/jobs/{id}/trigger` | `{"success": true, "job_id": ...}` | 404: job not found, 503: no scheduler |
 | `POST /tasks/flush-pending` | `{"success": true, "pending_count": N}` | 503: no orchestrator |
+| `POST /tasks/submit` | `{"success": true, "task_id": ..., "status": ..., "subtask_count": N, "subtasks": [...]}` | 400: no description or invalid JSON, 503: no orchestrator |
+
+#### Task Submit Contract
+
+- **Request**: `{ "description": str (required), "project_id": str (optional) }`
+- **Response (success)**: `{ "success": true, "task_id": str, "status": str, "subtask_count": int, "subtasks": [{ "id": str, "description": str, "status": str, "depends_on": list[str] }] }`
+- **Response (error)**: `{ "success": false, "error": str }`
+- **Behavior**: Calls `orchestrator.submit_task(description, project_id=...)`, which decomposes the task into subtasks and emits a `task_submitted` event via the emitter. The dashboard endpoint does NOT duplicate the emit — the Orchestrator is the single source of truth for task_submitted events.
+
+#### Task Event Types
+
+| Event | Emitter | Payload (`data`) |
+|-------|---------|------------------|
+| `task_submitted` | Orchestrator.submit_task | `{description, project_id, status, subtask_count}` |
+| `task_completed` | Orchestrator.handle_subtask_result | `{status, subtask_count}` |
+| `subtask_started` | Worker.execute_subtask | `{description, worker_id}` |
+| `subtask_completed` | Worker.execute_subtask | `{summary, success, modified_files: [{path, type}]}` |
+| `subtask_failed` | Worker.execute_subtask | `{error, worker_id}` |
+| `tool_call` | Worker._on_tool_call | `{tool, input_summary}` |
+| `tool_result` | Worker._on_tool_call | `{tool, result_summary}` |
+
+#### SSE Hybrid Push Contract
+
+SSE stream pushes two event types:
+- **`task_event`** — pushed immediately when a TaskEvent is emitted via `event_emitter.wait_for_event()`. Payload is a single `TaskEvent.to_dict()` JSON.
+- **`update`** — pushed every 5 seconds as a fallback (when no event_emitter, or when `wait_for_event()` times out). Payload is the full state snapshot JSON.
+
+> **Gotcha**: When `event_emitter` is None (no Orchestrator, or old code path), the SSE loop must still `await asyncio.sleep(5)` after each snapshot to avoid an infinite fast-loop that would consume CPU and bandwidth.
+
+#### Events API Contract
+
+- `GET /dashboard/api/events?task_id=X&limit=N` — returns recent events
+- Combines local `_event_log` deque with `event_emitter.get_recent_events()`
+- `task_id` query param filters by `e.get("task_id") == task_id` OR `e.get("details", {}).get("task_id") == task_id` (covers both TaskEvent format and legacy `_record_event` format)
+- Default `limit=100`
 
 #### Event Log Contract
 
@@ -240,6 +315,29 @@ orch.start_dashboard(port=80)  # privileged port
 | CircuitBreaker.reset from OPEN | Unit | State transitions to CLOSED, counts zeroed |
 | CircuitBreaker.reset from HALF_OPEN | Unit | State transitions to CLOSED |
 
+### 6c. Tests Required (Task Submit + Event Emitter)
+
+| Test | Type | Assertion |
+|------|------|-----------|
+| POST /tasks/submit success | Unit | Status 200, `success=true`, has `task_id` |
+| POST /tasks/submit no description | Unit | Status 400 |
+| POST /tasks/submit no orchestrator | Unit | Status 503 |
+| POST /tasks/submit invalid JSON | Unit | Status 400 |
+| TaskEventEmitter emit + get_recent | Unit | Buffer has 1 event with correct type/task_id |
+| TaskEventEmitter get_recent filtered | Unit | Returns only events for given task_id |
+| TaskEventEmitter buffer maxlen | Unit | Bounded at buffer_size |
+| TaskEvent.to_dict serialization | Unit | Includes type, task_id, subtask_id (if set), timestamp |
+| Orchestrator has event_emitter | Unit | isinstance TaskEventEmitter |
+| Orchestrator submit emits task_submitted | Unit | get_recent_events returns task_submitted event |
+| Worker emits subtask_started | Unit | Event with type=subtask_started in buffer |
+| Worker emits subtask_completed | Unit | Event with type=subtask_completed, data.modified_files |
+| Worker emits subtask_failed | Unit | Event with type=subtask_failed on exception |
+| Worker backward compat (no emitter) | Unit | Worker works without event_emitter, no errors |
+| task_completed emitted on all success | Unit | Orchestrator.handle_subtask_result emits task_completed |
+| task_completed emitted on all failed | Unit | Orchestrator.handle_subtask_result emits task_completed |
+| Events API task_id filter | Unit | GET /events?task_id=X returns only events for that task |
+| Events API no filter | Unit | GET /events returns all events |
+
 ### 7. Wrong vs Correct
 
 #### Wrong: Duplicate engine.health() calls in SSE snapshot
@@ -295,6 +393,60 @@ except Exception as e:
     cb_data["error"] = str(e)  # preserves all default keys
 ```
 
+#### Wrong: Duplicate task_submitted event emission
+
+```python
+# BAD: Both Orchestrator.submit_task() and the dashboard endpoint emit task_submitted
+# This causes two SSE events per task submission
+@app.post("/dashboard/api/tasks/submit")
+async def submit_task_api(request):
+    task = await orch.submit_task(description)  # already emits task_submitted inside
+    await self.event_emitter.emit("task_submitted", task_id=task.id, ...)  # DUPLICATE!
+```
+
+#### Correct: Single source of truth for event emission
+
+```python
+# GOOD: Only Orchestrator emits task_submitted; dashboard endpoint just records locally
+@app.post("/dashboard/api/tasks/submit")
+async def submit_task_api(request):
+    task = await orch.submit_task(description)  # emits task_submitted
+    self._record_event("task_submitted", task_id=task.id, description=description)  # local log only
+```
+
+#### Wrong: SSE infinite fast-loop when event_emitter is None
+
+```python
+# BAD: No sleep when event_emitter is None → CPU/bandwidth hot loop
+async def event_generator():
+    while True:
+        if self.event_emitter is not None:
+            event = await self.event_emitter.wait_for_event(timeout=5.0)
+            if event is not None:
+                yield {"event": "task_event", "data": json.dumps(event.to_dict())}
+                continue
+        # No event_emitter and no sleep → infinite tight loop!
+        snapshot = self._get_full_snapshot()
+        yield {"event": "update", "data": json.dumps(snapshot)}
+```
+
+#### Correct: Always sleep after snapshot when no event received
+
+```python
+# GOOD: asyncio.sleep(5) prevents hot loop when event_emitter is None or on timeout
+async def event_generator():
+    while True:
+        if self.event_emitter is not None:
+            event = await self.event_emitter.wait_for_event(timeout=5.0)
+            if event is not None:
+                yield {"event": "task_event", "data": json.dumps(event.to_dict())}
+                continue
+        # Timeout or no emitter: send snapshot + sleep
+        snapshot = self._get_full_snapshot()
+        yield {"event": "update", "data": json.dumps(snapshot)}
+        await asyncio.sleep(5)
+```
+
 ---
 
 ## Architecture
@@ -302,6 +454,7 @@ except Exception as e:
 ```
 Browser ──SSE──> FastAPI (/dashboard/api/stream)
               ──GET──> FastAPI (/dashboard/api/*)
+              ──POST─> FastAPI (/dashboard/api/tasks/submit, etc.)
                           │
                      Orchestrator (embedded)
                           │
@@ -309,12 +462,20 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
                 │         │          │
           Engine.health()  workers   Scheduler
           (PyO3/Rust)     tasks     jobs/history
+
+Event flow:
+  Worker ──emit()──> TaskEventEmitter ──await──> SSE (task_event)
+  Orchestrator ──emit()──> TaskEventEmitter
+                                        └──timeout──> SSE (update, 5s full snapshot)
 ```
 
 - Dashboard runs in a **background thread** via `uvicorn.Server.run()`
 - Orchestrator is **not blocked** by dashboard I/O
 - `stop_dashboard()` sets `server.should_exit = True` and joins the thread
 - **CORS middleware** enabled (`allow_origins=["*"]`, `allow_methods=["GET"]`) for CDN script loading (Tailwind) and cross-origin SSE clients
+- **TaskEventEmitter** is an in-process asyncio.Queue + ring buffer. Workers and Orchestrator `emit()` events; Dashboard SSE `wait_for_event()` consumes them. Events are not persisted — lost on restart.
+- **SSE hybrid push**: real-time `task_event` SSE events for Worker/Orchestrator events, plus periodic `update` SSE events (5s full snapshot) as fallback
+- **Backward compatibility**: `event_emitter` and `on_tool_call` are optional. Without them, Worker and LLMClient behave identically to pre-event code paths.
 
 ---
 
@@ -346,5 +507,10 @@ Browser ──SSE──> FastAPI (/dashboard/api/stream)
 - Confirm modal: custom dark-theme modal (`modal-overlay` + `modal-box`) for all POST operations
 - Toast notifications: `toast-success` (green) / `toast-error` (red), auto-dismiss after 4s
 - Action buttons: `btn-action` base class + `btn-pause` / `btn-resume` / `btn-danger` / `btn-trigger` / `btn-flush` variants
-- Task detail expansion: click task row → toggle `task-detail.expanded`, load subtask list + Mermaid DAG
+- Task detail expansion: click task row → toggle `task-detail.expanded`, load subtask list + interaction log + output files + Mermaid DAG
 - Event Log panel: newest-first list, color-coded by event type
+- Task submit form: `textarea` (description) + `input` (project_id, optional) + submit button, POST to `/dashboard/api/tasks/submit`
+- Interaction log: per-task event stream in detail expansion, color-coded entries (blue=tool_call, green=tool_result/subtask_completed, yellow=subtask_started, red=subtask_failed)
+- Output files: shown in task detail from `subtask_completed` events with `modified_files` data
+- Mermaid DAG: auto-generated from subtask `depends_on` relationships, rendered via `mermaid.render()`
+- SSE event handling: `task_event` SSE type → `handleTaskEvent()` → append to `_interactionLog` + event log panel + live detail update
