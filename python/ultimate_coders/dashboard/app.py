@@ -14,7 +14,7 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -308,7 +308,7 @@ class DashboardApp:
         # ── Event Log Endpoint ─────────────────────────────────
 
         @app.get("/dashboard/api/events")
-        async def events_api(task_id: str | None = None, limit: int = 100):
+        async def events_api(task_id: Optional[str] = None, limit: int = 100):  # noqa: UP045
             """Return recent event log entries.
 
             Args:

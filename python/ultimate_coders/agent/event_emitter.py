@@ -26,7 +26,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class TaskEventEmitter:
 
     def get_recent_events(
         self,
-        task_id: str | None = None,
+        task_id: Optional[str] = None,  # noqa: UP045
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Get recent events from the ring buffer.
