@@ -148,6 +148,7 @@ class Scheduler:
 | `subtask_failed` | Worker.execute_subtask | `{error, worker_id}` |
 | `tool_call` | Worker._on_tool_call | `{tool, input_summary}` |
 | `tool_result` | Worker._on_tool_call | `{tool, result_summary}` |
+| `llm_request` | Worker._execute_with_llm | `{model, messages_summary: [{role, content_preview}]}` |
 
 #### SSE Hybrid Push Contract
 
@@ -332,6 +333,7 @@ orch.start_dashboard(port=80)  # privileged port
 | Worker emits subtask_started | Unit | Event with type=subtask_started in buffer |
 | Worker emits subtask_completed | Unit | Event with type=subtask_completed, data.modified_files |
 | Worker emits subtask_failed | Unit | Event with type=subtask_failed on exception |
+| Worker emits llm_request | Unit | Event with type=llm_request, data has model and messages_summary |
 | Worker backward compat (no emitter) | Unit | Worker works without event_emitter, no errors |
 | task_completed emitted on all success | Unit | Orchestrator.handle_subtask_result emits task_completed |
 | task_completed emitted on all failed | Unit | Orchestrator.handle_subtask_result emits task_completed |
@@ -445,6 +447,24 @@ async def event_generator():
         snapshot = self._get_full_snapshot()
         yield {"event": "update", "data": json.dumps(snapshot)}
         await asyncio.sleep(5)
+```
+
+#### Wrong: Mutating cached event objects in frontend
+
+```javascript
+// BAD: Directly mutating _interactionLog event objects causes state persistence bugs
+_interactionLog[tid].forEach(ev => {
+  ev.data.modified_files.forEach(mf => {
+    mf._source_subtask = ev.subtask_id;  // mutates original cached object!
+  });
+});
+```
+
+#### Correct: Create new objects instead of mutating cached ones
+
+```javascript
+// GOOD: Create a new plain object to avoid side-effects on cached event data
+const fileEntry = {path: mf.path, type: mf.type, _source_subtask: ev.subtask_id};
 ```
 
 ---
