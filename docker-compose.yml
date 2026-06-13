@@ -6,6 +6,11 @@ version: "3.8"
 #   Qdrant             — semantic vector search, long-term memory
 #   PostgreSQL         — structured metadata (symbols, references, repos)
 #   NATS JetStream     — async event stream (agent events, indexing jobs)
+#
+# Dashboard is embedded in the Orchestrator process and exposes
+# a web UI on port 8080. Map the port when running the
+# Orchestrator in Docker:
+#   docker run -p 8080:8080 ...
 
 services:
   # ── TiKV cluster: Placement Driver ────────────────────────────
@@ -91,6 +96,31 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
       interval: 10s
       retries: 5
+
+  # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
+  # Run the Orchestrator with the embedded web dashboard.
+  # The dashboard is available at http://localhost:8080/dashboard/
+  orchestrator:
+    build: .
+    ports:
+      - "8080:8080"   # Dashboard web UI + SSE
+    depends_on:
+      pd:
+        condition: service_healthy
+      tikv:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      UC_TIKV_PD_ENDPOINTS: "pd:2379"
+      UC_QDRANT_URL: "http://qdrant:6334"
+      UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_NATS_URL: "nats://nats:4222"
+    command: ["python", "-m", "ultimate_coders.cli", "start", "--dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
 volumes:
   pd_data:

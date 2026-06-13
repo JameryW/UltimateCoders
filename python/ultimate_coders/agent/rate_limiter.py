@@ -379,6 +379,20 @@ class CircuitBreaker:
         """Force the circuit into a specific state (for testing)."""
         self._state = state
 
+    def reset(self) -> None:
+        """Reset the circuit breaker to closed state.
+
+        Clears all failure counts and resets the state to CLOSED.
+        Useful for manual recovery via the dashboard when the
+        underlying service has recovered but the circuit hasn't
+        auto-closed yet.
+        """
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._success_count = 0
+        self._last_failure_time = None
+        logger.info("Circuit breaker manually reset to closed state")
+
 
 @dataclass
 class RetryPolicy:

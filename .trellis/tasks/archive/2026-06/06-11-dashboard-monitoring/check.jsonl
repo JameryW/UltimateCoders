@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-11-dashboard-monitoring/prd.md", "reason": "Acceptance criteria to verify against"}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Scheduler contracts — verify Dashboard scheduler panel uses correct API"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify health errors are handled gracefully in Dashboard fallback mode"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Verify start_dashboard() integration, no regression on existing Orchestrator API"}
+{"file": "python/ultimate_coders/dashboard/app.py", "reason": "Dashboard FastAPI app — verify API endpoints, SSE, template rendering"}
+{"file": "python/ultimate_coders/dashboard/templates/index.html", "reason": "Dashboard HTML — verify Tailwind layout, SSE client, fallback display"}

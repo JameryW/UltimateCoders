@@ -842,3 +842,110 @@ class Orchestrator:
     def record_llm_failure(self) -> None:
         """Record a failed LLM API call."""
         self.circuit_breaker.record_failure()
+
+    def reset_circuit_breaker(self) -> bool:
+        """Reset the circuit breaker to closed state.
+
+        Returns:
+            True if the circuit breaker was reset, False if not available.
+        """
+        if self.circuit_breaker is not None:
+            self.circuit_breaker.reset()
+            return True
+        return False
+
+    def pause_task(self, task_id: str) -> bool:
+        """Pause a running task.
+
+        Sets the task status to PAUSED. Paused tasks will not have
+        their subtasks assigned to workers until resumed.
+
+        Args:
+            task_id: The task ID to pause.
+
+        Returns:
+            True if the task was paused, False if not found or not pausable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for pause", task_id)
+            return False
+        if task.status not in (TaskStatus.IN_PROGRESS, TaskStatus.PLANNING):
+            logger.warning(
+                "Task %s cannot be paused (current status: %s)",
+                task_id, task.status.value,
+            )
+            return False
+        task.status = TaskStatus.PAUSED
+        task.update_timestamp()
+        logger.info("Task %s paused", task_id)
+        return True
+
+    def resume_task(self, task_id: str) -> bool:
+        """Resume a paused task.
+
+        Sets the task status back to IN_PROGRESS.
+
+        Args:
+            task_id: The task ID to resume.
+
+        Returns:
+            True if the task was resumed, False if not found or not resumable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for resume", task_id)
+            return False
+        if task.status != TaskStatus.PAUSED:
+            logger.warning(
+                "Task %s cannot be resumed (current status: %s)",
+                task_id, task.status.value,
+            )
+            return False
+        task.status = TaskStatus.IN_PROGRESS
+        task.update_timestamp()
+        logger.info("Task %s resumed", task_id)
+        return True
+
+    # ── Dashboard ──────────────────────────────────────────────────
+
+    def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None:
+        """Start the embedded web dashboard for monitoring.
+
+        Launches a FastAPI server in a background thread that serves
+        the dashboard UI and SSE stream. The dashboard reads
+        Orchestrator state directly from memory for zero-latency
+        updates.
+
+        Args:
+            host: Bind address (default: "0.0.0.0").
+            port: Bind port (default: 8080).
+
+        Raises:
+            ImportError: If dashboard dependencies are not installed.
+        """
+        try:
+            from ultimate_coders.dashboard.app import DashboardApp
+        except ImportError as e:
+            raise ImportError(
+                "Dashboard dependencies not installed. "
+                "Install with: pip install fastapi uvicorn jinja2 sse-starlette"
+            ) from e
+
+        if hasattr(self, "_dashboard_app") and self._dashboard_app is not None:
+            logger.warning("Dashboard is already running")
+            return
+
+        self._dashboard_app = DashboardApp(self)
+        self._dashboard_app.start(host=host, port=port)
+
+    def stop_dashboard(self) -> None:
+        """Stop the embedded web dashboard.
+
+        Gracefully shuts down the FastAPI server.
+        """
+        if hasattr(self, "_dashboard_app") and self._dashboard_app is not None:
+            self._dashboard_app.stop()
+            self._dashboard_app = None
+        else:
+            logger.warning("Dashboard is not running")
