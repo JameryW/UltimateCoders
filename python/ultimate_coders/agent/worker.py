@@ -270,6 +270,28 @@ class Worker:
                 success=False,
             )
 
+        # Emit llm_request event before calling the LLM
+        if self.event_emitter is not None:
+            messages_summary = []
+            for msg in messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    messages_summary.append({"role": role, "content_preview": content[:100]})
+                elif isinstance(content, list):
+                    messages_summary.append({"role": role, "content_preview": str(content)[:100]})
+                else:
+                    messages_summary.append({"role": role, "content_preview": str(content)[:100]})
+            await self.event_emitter.emit(
+                "llm_request",
+                task_id=subtask.parent_id,
+                subtask_id=subtask.id,
+                data={
+                    "model": self.llm_client.model,
+                    "messages_summary": messages_summary,
+                },
+            )
+
         # Build on_tool_call callback for event emitter
         async def _on_tool_call(tool_name: str, tool_input: dict, result: str) -> None:
             if self.event_emitter is not None:

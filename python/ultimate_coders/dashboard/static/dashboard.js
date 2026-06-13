@@ -99,6 +99,8 @@
                 document.getElementById("task-project").value = "";
                 // Init interaction log for this task
                 _interactionLog[data.task_id] = [];
+                // Auto-scroll to tasks panel
+                document.getElementById("tasks-panel")?.scrollIntoView({behavior: "smooth", block: "start"});
             } else {
                 showToast("Submit failed: " + (data.error || "unknown"), "error");
             }
@@ -178,6 +180,7 @@
         var typeColor = "text-gray-400";
         if (ev.type === "task_submitted") typeColor = "text-blue-400";
         else if (ev.type === "subtask_started") typeColor = "text-yellow-400";
+        else if (ev.type === "llm_request") typeColor = "text-purple-400";
         else if (ev.type === "tool_call") typeColor = "text-blue-400";
         else if (ev.type === "tool_result") typeColor = "text-green-400";
         else if (ev.type === "subtask_completed") typeColor = "text-green-400";
@@ -188,6 +191,7 @@
         if (ev.data) {
             if (ev.data.description) dataStr = escapeHtml(ev.data.description.substring(0, 30));
             else if (ev.data.tool) dataStr = escapeHtml(ev.data.tool);
+            else if (ev.data.model) dataStr = escapeHtml(ev.data.model);
             else if (ev.data.summary) dataStr = escapeHtml(ev.data.summary.substring(0, 30));
         }
         var tidShort = ev.task_id ? ev.task_id.substring(0, 8) : "--";
@@ -217,9 +221,13 @@
 
         var time = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "--";
         var cls = "interaction-entry";
+        var stid = ev.subtask_id || "";
         var content = "";
 
-        if (ev.type === "subtask_started") {
+        if (ev.type === "llm_request") {
+            cls += " llm-event";
+            content = '<span class="text-purple-400">&#9679;</span> LLM request: <span class="text-purple-300 font-medium">' + escapeHtml(ev.data.model || "") + "</span>";
+        } else if (ev.type === "subtask_started") {
             cls += " subtask-event";
             content = '<span class="text-yellow-400">&#9679;</span> Subtask started: ' + escapeHtml((ev.data.description || "").substring(0, 40));
         } else if (ev.type === "tool_call") {
@@ -245,7 +253,15 @@
 
         var entry = document.createElement("div");
         entry.className = cls;
+        if (stid) entry.setAttribute("data-subtask-id", stid);
         entry.innerHTML = '<span class="text-gray-500 text-xs">' + time + "</span> " + content;
+
+        // Apply current filter if active
+        var selectEl = document.getElementById("interaction-filter-" + tid);
+        if (selectEl && selectEl.value && stid !== selectEl.value) {
+            entry.style.display = "none";
+        }
+
         container.appendChild(entry);
     }
 
@@ -378,8 +394,20 @@
             html += "</div></div>";
         }
 
-        // Interaction log section
-        html += '<div class="mb-3"><strong class="text-gray-300">Interaction Log:</strong></div>';
+        // Interaction log section with subtask filter
+        html += '<div class="mb-3"><div class="flex items-center justify-between"><strong class="text-gray-300">Interaction Log:</strong>';
+        // Subtask filter dropdown
+        if (subtasks.length > 1) {
+            html += '<select id="interaction-filter-' + taskId + '" onchange="filterInteractionLog(\'' + taskId + '\')" class="text-xs bg-[#0f172a] border border-[#334155] text-gray-300 rounded px-2 py-1">';
+            html += '<option value="">All subtasks</option>';
+            for (var sfi = 0; sfi < subtasks.length; sfi++) {
+                var sfst = subtasks[sfi];
+                var sfLabel = escapeHtml((sfst.description || "").substring(0, 25));
+                html += '<option value="' + escapeHtml(sfst.id) + '">' + sfLabel + ' (' + sfst.id.substring(0, 8) + ')</option>';
+            }
+            html += '</select>';
+        }
+        html += '</div></div>';
         html += '<div id="interaction-' + taskId + '" class="mb-3 max-h-64 overflow-y-auto">';
 
         // Populate from cached interaction log
@@ -389,35 +417,51 @@
                 var ev = log[k];
                 var time = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : "--";
                 var cls = "interaction-entry";
+                var stid = ev.subtask_id || "";
                 var content = "";
-                if (ev.type === "subtask_started") { cls += " subtask-event"; content = '<span class="text-yellow-400">&#9679;</span> Started: ' + escapeHtml((ev.data.description || "").substring(0, 40)); }
+                if (ev.type === "llm_request") { cls += " llm-event"; content = '<span class="text-purple-400">&#9679;</span> LLM request: <span class="text-purple-300 font-medium">' + escapeHtml(ev.data.model || "") + "</span>"; }
+                else if (ev.type === "subtask_started") { cls += " subtask-event"; content = '<span class="text-yellow-400">&#9679;</span> Started: ' + escapeHtml((ev.data.description || "").substring(0, 40)); }
                 else if (ev.type === "tool_call") { cls += " tool-call"; content = '<span class="text-blue-400">&#9679;</span> Tool: <span class="text-blue-300">' + escapeHtml(ev.data.tool || "") + "</span>"; }
                 else if (ev.type === "tool_result") { cls += " tool-result"; content = '<span class="text-green-400">&#9679;</span> Result: ' + escapeHtml((ev.data.result_summary || "").substring(0, 100)); }
                 else if (ev.type === "subtask_completed") { cls += " subtask-event"; content = '<span class="text-green-400">&#9679;</span> Completed: ' + escapeHtml((ev.data.summary || "").substring(0, 60)); }
                 else if (ev.type === "subtask_failed") { cls += " subtask-event"; content = '<span class="text-red-400">&#9679;</span> Failed: ' + escapeHtml((ev.data.error || "").substring(0, 60)); }
                 else if (ev.type === "task_completed") { cls += " subtask-event"; var tSt = ev.data.status || "completed"; content = '<span class="' + (tSt === "completed" ? "text-green-400" : "text-red-400") + '">&#9679;</span> Task ' + escapeHtml(tSt); }
                 else { content = '<span class="text-gray-400">&#9679;</span> ' + escapeHtml(ev.type); }
-                html += '<div class="' + cls + '"><span class="text-gray-500 text-xs">' + time + "</span> " + content + "</div>";
+                html += '<div class="' + cls + '" data-subtask-id="' + escapeHtml(stid) + '"><span class="text-gray-500 text-xs">' + time + "</span> " + content + "</div>";
             }
         } else {
             html += '<p class="text-gray-500">No interaction events yet</p>';
         }
         html += "</div>";
 
-        // Output files section (from events with modified_files)
+        // Output files section (from events with modified_files) — enhanced with icons
         var outputFiles = [];
         for (var m = 0; m < log.length; m++) {
             if (log[m].type === "subtask_completed" && log[m].data && log[m].data.modified_files) {
-                for (var n = 0; n < log[m].data.modified_files.length; n++) outputFiles.push(log[m].data.modified_files[n]);
+                for (var n = 0; n < log[m].data.modified_files.length; n++) {
+                    var mf = log[m].data.modified_files[n];
+                    outputFiles.push({path: mf.path, type: mf.type, _source_subtask: log[m].subtask_id || ""});
+                }
             }
         }
         if (outputFiles.length > 0) {
-            html += '<div class="mb-2"><strong class="text-gray-300">Output Files:</strong></div>';
+            html += '<div class="mb-2"><strong class="text-gray-300">Output Files:</strong> <span class="text-xs text-gray-500">' + outputFiles.length + ' file(s) changed</span></div>';
+            html += '<div class="space-y-1">';
             for (var p = 0; p < outputFiles.length; p++) {
                 var f = outputFiles[p];
-                var icon = f.type === "created" ? "text-green-400" : f.type === "modified" ? "text-yellow-400" : "text-red-400";
-                html += '<div class="file-item"><span class="' + icon + '">' + (f.type === "created" ? "+" : f.type === "modified" ? "~" : "-") + "</span> " + escapeHtml(f.path) + "</div>";
+                var changeIcon, changeLabel, changeColor, changeBg;
+                if (f.type === "created") { changeIcon = "+"; changeLabel = "CREATED"; changeColor = "text-green-400"; changeBg = "bg-green-900"; }
+                else if (f.type === "modified") { changeIcon = "~"; changeLabel = "MODIFIED"; changeColor = "text-yellow-400"; changeBg = "bg-yellow-900"; }
+                else if (f.type === "deleted") { changeIcon = "-"; changeLabel = "DELETED"; changeColor = "text-red-400"; changeBg = "bg-red-900"; }
+                else { changeIcon = "?"; changeLabel = "UNKNOWN"; changeColor = "text-gray-400"; changeBg = "bg-gray-700"; }
+                html += '<div class="flex items-center gap-2 py-1 px-2 rounded ' + changeBg + ' bg-opacity-30">';
+                html += '<span class="' + changeColor + ' font-mono font-bold text-sm w-4 text-center">' + changeIcon + "</span>";
+                html += '<span class="text-gray-200 text-xs font-mono truncate flex-1" title="' + escapeHtml(f.path) + '">' + escapeHtml(f.path) + "</span>";
+                html += '<span class="' + changeColor + ' text-[10px] font-medium px-1.5 py-0.5 rounded">' + changeLabel + "</span>";
+                if (f._source_subtask) html += '<span class="text-gray-600 text-[10px]">' + f._source_subtask.substring(0, 8) + "</span>";
+                html += "</div>";
             }
+            html += "</div>";
         }
 
         // Mermaid DAG (if subtasks have dependencies)
@@ -471,6 +515,27 @@
                 } catch (e) {
                     mermaidEl.innerHTML = '<p class="text-gray-500">DAG render error</p>';
                 }
+            }
+        }
+    };
+
+    // ── Interaction Log Subtask Filter ────────────────────────────
+
+    window.filterInteractionLog = function (taskId) {
+        var selectEl = document.getElementById("interaction-filter-" + taskId);
+        var container = document.getElementById("interaction-" + taskId);
+        if (!selectEl || !container) return;
+
+        var filterValue = selectEl.value;
+        var entries = container.querySelectorAll(".interaction-entry");
+
+        for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            var entrySubtaskId = entry.getAttribute("data-subtask-id") || "";
+            if (!filterValue || entrySubtaskId === filterValue) {
+                entry.style.display = "";
+            } else {
+                entry.style.display = "none";
             }
         }
     };

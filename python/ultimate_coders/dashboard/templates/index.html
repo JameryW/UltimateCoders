@@ -51,6 +51,7 @@
         .interaction-entry.tool-call { border-left-color: #3b82f6; }
         .interaction-entry.tool-result { border-left-color: #22c55e; }
         .interaction-entry.subtask-event { border-left-color: #eab308; }
+        .interaction-entry.llm-event { border-left-color: #a855f7; }
         .submit-form textarea { background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; resize: vertical; }
         .submit-form textarea:focus { border-color: #3b82f6; outline: none; }
         .submit-form input[type="text"] { background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; }
@@ -123,7 +124,7 @@
             </div>
             <div id="workers-list" class="space-y-3 text-sm max-h-96 overflow-y-auto"><p class="text-gray-500">No workers registered</p></div>
         </div>
-        <div class="card p-4">
+        <div id="tasks-panel" class="card p-4">
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
                 <div class="flex items-center space-x-2">
