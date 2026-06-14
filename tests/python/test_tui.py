@@ -2,13 +2,25 @@
 
 Tests focus on instantiation and widget creation, not actual rendering
 (headless Textual testing is complex and fragile).
+
+These tests require the ``tui`` optional dependency group.
+Run ``pip install -e ".[tui]"`` before running this file.
 """
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
-from ultimate_coders.agent.sandbox import SandboxConfig
-from ultimate_coders.agent.types import SubtaskStatus
+
+# Skip entire module when textual is not installed (optional dep)
+pytestmark = pytest.mark.skipif(
+    not importlib.util.find_spec("textual"),
+    reason="textual not installed (pip install -e '.[tui]')",
+)
+
+from ultimate_coders.agent.sandbox import SandboxConfig  # noqa: E402
+from ultimate_coders.agent.types import SubtaskStatus  # noqa: E402
 
 # -- Widget tests (no Textual app required) ------------------------------
 
