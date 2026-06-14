@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import json
-import pytest
 
-from ultimate_coders.agent.orchestrator import Orchestrator, OrchestratorConfig
+import pytest
+from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.sandbox import (
-    DecomposeAdapter,
     ExecResult,
     SandboxConfig,
     SandboxManager,
-    parse_decomposition_output,
 )
-from ultimate_coders.agent.types import Subtask, SubtaskStatus
-
 
 # ── Orchestrator sandbox initialization tests ────────────────────
 
@@ -60,7 +56,14 @@ class TestParseDecompositionItems:
         sm = SandboxManager(config)
         orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
 
-        items = [{"description": "Fix bug", "depends_on": [], "file_constraints": [], "expected_output": "Bug fixed"}]
+        items = [
+            {
+                "description": "Fix bug",
+                "depends_on": [],
+                "file_constraints": [],
+                "expected_output": "Bug fixed",
+            },
+        ]
         subtasks = orch._parse_decomposition_items(items, "task-1")
 
         assert len(subtasks) == 1
@@ -128,7 +131,7 @@ class TestDecomposeSandboxPath:
 
         monkeypatch.setattr(sm, "_execute_subprocess", fake_execute_subprocess)
 
-        from ultimate_coders.agent.types import Task, TaskStatus
+        from ultimate_coders.agent.types import Task
         task = Task(description="Test task", project_id="test-project")
 
         subtasks = await orch.decompose_task(task)

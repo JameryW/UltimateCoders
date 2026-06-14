@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
@@ -286,13 +288,27 @@ class TestParseDecompositionOutput:
     """Tests for parse_decomposition_output()."""
 
     def test_parse_simple_json(self):
-        raw = '[{"description": "Fix bug", "depends_on": [], "file_constraints": [], "expected_output": "Bug fixed"}]'
+        raw = json.dumps(
+            [
+                {
+                    "description": "Fix bug",
+                    "depends_on": [],
+                    "file_constraints": [],
+                    "expected_output": "Bug fixed",
+                },
+            ]
+        )
         items = parse_decomposition_output(raw)
         assert len(items) == 1
         assert items[0]["description"] == "Fix bug"
 
     def test_parse_multiple_subtasks(self):
-        raw = '[{"description": "Research", "depends_on": []}, {"description": "Implement", "depends_on": [0]}]'
+        raw = json.dumps(
+            [
+                {"description": "Research", "depends_on": []},
+                {"description": "Implement", "depends_on": [0]},
+            ]
+        )
         items = parse_decomposition_output(raw)
         assert len(items) == 2
         assert items[1]["depends_on"] == [0]
