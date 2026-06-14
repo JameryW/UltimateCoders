@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-14-sandbox-claude-code/prd.md", "reason": "PRD: acceptance criteria to verify against"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify error handling: sandbox subprocess failures, Claude Code parse errors, timeout handling"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify code quality: type hints, docstrings, test coverage for DecomposeAdapter and run_sandbox.py"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Verify Dashboard integration: --dashboard flag wiring, SSE event emission"}

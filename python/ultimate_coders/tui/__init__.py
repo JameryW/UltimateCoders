@@ -1,7 +1,8 @@
 """TUI package for UltimateCoders sandbox mode.
 
 Provides a Textual-based terminal UI with:
-- Real-time scrollable output log
+- Logo header with ASCII art + version
+- Conversational chat log (user input + system output)
 - Subtask tree with progress indicators
 - Task submission input
 - Status bar

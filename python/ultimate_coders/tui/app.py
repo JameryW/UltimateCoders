@@ -1,9 +1,9 @@
 """Main Textual application for the UltimateCoders sandbox TUI.
 
 Provides a full terminal UI with:
-- Left panel: subtask tree with progress
-- Right panel: scrollable output log
-- Bottom: task input field + status bar
+- Top: Logo header with ASCII art + version
+- Main area: ChatLog (left, wide) + SubtaskTree (right, narrow)
+- Bottom: Task input field + status bar
 
 The TUI integrates with the existing Orchestrator/Worker event system
 via the TaskEventEmitter for real-time updates.
@@ -26,7 +26,8 @@ from ultimate_coders.agent.sandbox import SandboxConfig
 from ultimate_coders.agent.types import SubtaskStatus, WorkerInfo
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.tui.widgets import (
-    OutputLog,
+    ChatLog,
+    LogoHeader,
     StatusBar,
     SubtaskTree,
     TaskInput,
@@ -43,7 +44,7 @@ class SandboxTUI(App):
         python scripts/run_sandbox.py --tui
 
     The TUI creates an Orchestrator + Worker internally, subscribes to
-    the event emitter, and updates the subtask tree and output log in
+    the event emitter, and updates the subtask tree and chat log in
     real-time as tasks are decomposed and executed.
     """
 
@@ -58,17 +59,12 @@ class SandboxTUI(App):
         height: 1fr;
     }
 
-    #input-area {
-        height: 3;
-        margin: 0 1;
+    ChatLog {
+        width: 2fr;
     }
 
     SubtaskTree {
         width: 1fr;
-    }
-
-    OutputLog {
-        width: 2fr;
     }
     """
 
@@ -108,9 +104,10 @@ class SandboxTUI(App):
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
+        yield LogoHeader()
         with Horizontal(id="main-area"):
+            yield ChatLog(id="chat-log")
             yield SubtaskTree(id="subtask-tree")
-            yield OutputLog(id="output-log")
         yield TaskInput(id="task-input")
         yield StatusBar(id="status-bar")
 
@@ -167,7 +164,7 @@ class SandboxTUI(App):
             return
 
         emitter: TaskEventEmitter = self._orch.event_emitter
-        output_log = self.query_one("#output-log", OutputLog)
+        chat_log = self.query_one("#chat-log", ChatLog)
         subtask_tree = self.query_one("#subtask-tree", SubtaskTree)
 
         while True:
@@ -181,19 +178,19 @@ class SandboxTUI(App):
                 subtask_id = event.subtask_id
 
                 if event_type == "task_submitted":
-                    output_log.append(
+                    chat_log.append(
                         f"Task submitted: {data.get('description', '')}",
                         style="bold",
                     )
                     subtask_count = data.get("subtask_count", 0)
-                    output_log.append(
+                    chat_log.append(
                         f"Decomposed into {subtask_count} subtasks",
                         style="cyan",
                     )
 
                 elif event_type == "subtask_started":
                     desc = data.get("description", subtask_id[:8])
-                    output_log.append(
+                    chat_log.append(
                         f"Subtask started: {desc}",
                         style="cyan",
                     )
@@ -203,7 +200,7 @@ class SandboxTUI(App):
                         )
 
                 elif event_type == "subtask_completed":
-                    output_log.append(
+                    chat_log.append(
                         f"Subtask completed: {data.get('summary', '')[:80]}",
                         style="green",
                     )
@@ -214,7 +211,7 @@ class SandboxTUI(App):
                     self._update_progress()
 
                 elif event_type == "subtask_failed":
-                    output_log.append(
+                    chat_log.append(
                         f"Subtask failed: {data.get('error', 'unknown')[:80]}",
                         style="bold red",
                     )
@@ -227,23 +224,23 @@ class SandboxTUI(App):
                 elif event_type == "task_completed":
                     status = data.get("status", "unknown")
                     if status == "completed":
-                        output_log.append("Task completed!", style="bold green")
+                        chat_log.append("Task completed!", style="bold green")
                     else:
-                        output_log.append(
+                        chat_log.append(
                             f"Task finished with status: {status}",
                             style="bold red",
                         )
 
                 elif event_type == "tool_call":
                     tool = data.get("tool", "unknown")
-                    output_log.append(
+                    chat_log.append(
                         f"Tool call: {tool}",
                         style="dim",
                     )
 
                 elif event_type == "llm_request":
                     model = data.get("model", "unknown")
-                    output_log.append(
+                    chat_log.append(
                         f"LLM request ({model})",
                         style="dim",
                     )
@@ -285,11 +282,11 @@ class SandboxTUI(App):
         if self._orch is None or self._worker is None:
             return
 
-        output_log = self.query_one("#output-log", OutputLog)
+        chat_log = self.query_one("#chat-log", ChatLog)
         subtask_tree = self.query_one("#subtask-tree", SubtaskTree)
 
-        output_log.append(f"Submitting task: {description}", style="bold")
-        output_log.append("Decomposing via Claude Code...", style="dim")
+        chat_log.append(f"Submitting task: {description}", style="bold")
+        chat_log.append("Decomposing via Claude Code...", style="dim")
 
         try:
             task = await self._orch.submit_task(
@@ -297,13 +294,13 @@ class SandboxTUI(App):
                 project_id=self._config.project_path,
             )
         except Exception as e:
-            output_log.append(f"Task submission failed: {e}", style="bold red")
+            chat_log.append(f"Task submission failed: {e}", style="bold red")
             return
 
         self.current_task_id = task.id
 
         if task.status.value == "failed":
-            output_log.append(
+            chat_log.append(
                 f"Decomposition failed: {task.result}",
                 style="bold red",
             )
@@ -321,7 +318,7 @@ class SandboxTUI(App):
         self.failed_count = 0
         subtask_tree.update_progress(0, len(task.subtasks))
 
-        output_log.append(
+        chat_log.append(
             f"Executing {len(task.subtasks)} subtasks...",
             style="cyan",
         )
@@ -344,7 +341,7 @@ class SandboxTUI(App):
         if self._orch is None or self._worker is None:
             return
 
-        output_log = self.query_one("#output-log", OutputLog)
+        chat_log = self.query_one("#chat-log", ChatLog)
         orch = self._orch
         worker = self._worker
 
@@ -361,7 +358,7 @@ class SandboxTUI(App):
 
                 if task.status.value not in ("in_progress", "planning"):
                     # Task finished or paused -- stop the loop
-                    output_log.append(
+                    chat_log.append(
                         f"Task loop ended (status: {task.status.value})",
                         style="dim",
                     )
@@ -398,7 +395,7 @@ class SandboxTUI(App):
                     worker_info.current_load += 1
 
                     idx = self._subtask_index.get(subtask.id, 0)
-                    output_log.append(
+                    chat_log.append(
                         f"Executing subtask {idx}: {subtask.description[:60]}",
                         style="cyan",
                     )
@@ -422,7 +419,7 @@ class SandboxTUI(App):
                         st.is_complete or st.is_failed for st in task.subtasks
                     )
                     if all_terminal and task.subtasks:
-                        output_log.append("All subtasks processed", style="dim")
+                        chat_log.append("All subtasks processed", style="dim")
                         break
 
         except asyncio.CancelledError:
@@ -458,14 +455,17 @@ class SandboxTUI(App):
         input_widget = event.input
         input_widget.value = ""
 
-        output_log = self.query_one("#output-log", OutputLog)
+        chat_log = self.query_one("#chat-log", ChatLog)
+
+        # Clear previous log and echo user input as the first line
+        chat_log.clear_log()
+        chat_log.append_user_input(description)
 
         # If there is an active execute loop, cancel it first
         if self._execute_task_handle and not self._execute_task_handle.done():
             self._execute_task_handle.cancel()
             self._execute_task_handle = None
 
-        output_log.clear_log()
         asyncio.create_task(self._submit_and_execute(description))
 
     # ── Cleanup ────────────────────────────────────────────────────

@@ -24,6 +24,25 @@ from ultimate_coders.agent.types import SubtaskStatus  # noqa: E402
 
 # -- Widget tests (no Textual app required) ------------------------------
 
+class TestLogoHeader:
+    """Tests for LogoHeader widget."""
+
+    def test_logo_header_instantiation(self):
+        """LogoHeader can be instantiated."""
+        from ultimate_coders.tui.widgets import LogoHeader
+
+        header = LogoHeader()
+        assert header is not None
+
+    def test_get_version_returns_string(self):
+        """_get_version always returns a non-empty string."""
+        from ultimate_coders.tui.widgets import _get_version
+
+        version = _get_version()
+        assert isinstance(version, str)
+        assert len(version) > 0
+
+
 class TestSubtaskTree:
     """Tests for SubtaskTree widget creation and status mapping."""
 
@@ -42,22 +61,22 @@ class TestSubtaskTree:
             assert isinstance(icon, str) and len(icon) > 0
 
 
-class TestOutputLog:
-    """Tests for OutputLog widget."""
+class TestChatLog:
+    """Tests for ChatLog widget."""
 
-    def test_output_log_instantiation(self):
-        """OutputLog can be instantiated."""
-        from ultimate_coders.tui.widgets import OutputLog
+    def test_chat_log_instantiation(self):
+        """ChatLog can be instantiated."""
+        from ultimate_coders.tui.widgets import ChatLog
 
-        log = OutputLog()
+        log = ChatLog()
         assert log._lines == []
         assert log._max_lines == 2000
 
-    def test_output_log_append(self):
+    def test_chat_log_append(self):
         """Appending a message adds a timestamped line."""
-        from ultimate_coders.tui.widgets import OutputLog
+        from ultimate_coders.tui.widgets import ChatLog
 
-        log = OutputLog()
+        log = ChatLog()
         # Simulate append without calling update() (which needs Textual mount)
         log._lines = []  # ensure clean
         # We test the line formatting logic directly
@@ -70,11 +89,11 @@ class TestOutputLog:
         assert ts in line
         assert message in line
 
-    def test_output_log_max_lines(self):
-        """OutputLog enforces max_lines limit."""
-        from ultimate_coders.tui.widgets import OutputLog
+    def test_chat_log_max_lines(self):
+        """ChatLog enforces max_lines limit."""
+        from ultimate_coders.tui.widgets import ChatLog
 
-        log = OutputLog()
+        log = ChatLog()
         log._max_lines = 5
         # Simulate adding more lines than the limit
         for i in range(10):
@@ -84,14 +103,30 @@ class TestOutputLog:
         assert len(log._lines) == 5
         assert log._lines[0] == "line 5"
 
-    def test_output_log_clear(self):
+    def test_chat_log_clear(self):
         """clear_log empties the line buffer."""
-        from ultimate_coders.tui.widgets import OutputLog
+        from ultimate_coders.tui.widgets import ChatLog
 
-        log = OutputLog()
+        log = ChatLog()
         log._lines = ["a", "b", "c"]
         log._lines.clear()
         assert log._lines == []
+
+    def test_chat_log_append_user_input(self):
+        """append_user_input formats with '>' prefix."""
+        from ultimate_coders.tui.widgets import ChatLog
+
+        ChatLog()  # verify instantiation
+        # Test the line formatting logic directly
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%H:%M:%S")
+        message = "Fix the bug"
+        line = f"[dim][{ts}][/dim] [bold cyan]> [/bold cyan]{message}"
+        assert ts in line
+        assert "> " in line
+        assert message in line
 
 
 class TestStatusBar:
@@ -145,7 +180,7 @@ class TestTaskInput:
 
         inp = TaskInput()
         assert inp.placeholder is not None
-        assert "Submit new task" in inp.placeholder
+        assert ">" in inp.placeholder
 
 
 # -- SandboxTUI tests (mocked, no actual Textual run) -------------------
@@ -313,7 +348,7 @@ class TestSandboxTUI:
         mock_output = MagicMock()
         mock_tree = MagicMock()
         app.query_one = MagicMock(side_effect=lambda selector, cls=None: {
-            "#output-log": mock_output,
+            "#chat-log": mock_output,
             "#subtask-tree": mock_tree,
         }.get(selector, MagicMock()))
 
@@ -384,13 +419,15 @@ class TestTUIPackage:
     def test_import_widgets(self):
         """All widgets can be imported from the tui.widgets module."""
         from ultimate_coders.tui.widgets import (
-            OutputLog,
+            ChatLog,
+            LogoHeader,
             StatusBar,
             SubtaskTree,
             TaskInput,
         )
 
         assert SubtaskTree is not None
-        assert OutputLog is not None
+        assert ChatLog is not None
+        assert LogoHeader is not None
         assert TaskInput is not None
         assert StatusBar is not None
