@@ -27,6 +27,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [Logging Guidelines](./logging-guidelines.md) | tracing crate, Python logging, log levels | Filled |
 | [Scheduler Spec](./scheduler-spec.md) | Task scheduling, night-window guard, persistence contracts | Filled |
 | [Dashboard Spec](./dashboard-spec.md) | FastAPI + SSE monitoring, API endpoints, fallback contracts | Filled |
+| [Codegraph Integration](./codegraph-integration.md) | Worker codegraph client, tool registration, pre-processing, graceful degradation | Filled |
 
 ---
 

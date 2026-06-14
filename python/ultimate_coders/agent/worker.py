@@ -16,6 +16,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from ultimate_coders.agent.codegraph import CodegraphClient
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictResult,
@@ -136,6 +137,10 @@ class Worker:
         self.conflict_detector = conflict_detector or ConflictDetector()
         self.rate_limiter = rate_limiter or RateLimiter()
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
+
+        # Codegraph knowledge graph client (graceful degradation)
+        cg_path = sandbox_config.project_path if sandbox_config else ""
+        self._codegraph = CodegraphClient(cg_path)
 
         # Event emitter for real-time dashboard tracking
         self.event_emitter = event_emitter
@@ -351,12 +356,25 @@ class Worker:
                 success=False,
             )
 
+        # Build codegraph context for sandbox prompt (pre-processing layer)
+        codegraph_context = ""
+        if self._codegraph.is_available():
+            try:
+                codegraph_context = self._codegraph.explore(subtask.description, max_nodes=10)
+            except Exception:
+                logger.debug("Codegraph explore failed for sandbox subtask", exc_info=True)
+
+        # Build the prior context string
+        prior_context = (
+            codegraph_context if codegraph_context else "(sandbox mode: prior context not gathered)"
+        )
+
         # Build the prompt from subtask description
         prompt = _SUBTASK_USER_TEMPLATE.format(
             description=subtask.description,
             expected_output=subtask.expected_output or "Complete the described task",
             file_constraints=", ".join(subtask.file_constraints) or "none",
-            prior_context="(sandbox mode: prior context not gathered)",
+            prior_context=prior_context,
         )
 
         # Execute in sandbox
@@ -571,6 +589,95 @@ class Worker:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    async def _tool_symbol_search(self, query: str, kind: str = "", **kwargs: Any) -> str:
+        """Tool: Search for code symbols in the knowledge graph.
+
+        Args:
+            query: Symbol name or pattern to search for.
+            kind: Optional kind filter (function, method, class, etc.).
+
+        Returns:
+            JSON string with symbol search results.
+        """
+        if not self._codegraph.is_available():
+            return json.dumps({"error": "Codegraph not available"})
+        try:
+            results = self._codegraph.search(query, kind=kind or None)
+            return json.dumps(results, indent=2) if results else json.dumps({"results": []})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_find_callers(self, symbol: str, **kwargs: Any) -> str:
+        """Tool: Find all callers of a symbol.
+
+        Args:
+            symbol: Name of the function/method to find callers for.
+
+        Returns:
+            JSON string with caller information.
+        """
+        if not self._codegraph.is_available():
+            return json.dumps({"error": "Codegraph not available"})
+        try:
+            results = self._codegraph.callers(symbol)
+            return json.dumps(results, indent=2) if results else json.dumps({"callers": []})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_find_callees(self, symbol: str, **kwargs: Any) -> str:
+        """Tool: Find what a symbol calls.
+
+        Args:
+            symbol: Name of the function/method to find callees for.
+
+        Returns:
+            JSON string with callee information.
+        """
+        if not self._codegraph.is_available():
+            return json.dumps({"error": "Codegraph not available"})
+        try:
+            results = self._codegraph.callees(symbol)
+            return json.dumps(results, indent=2) if results else json.dumps({"callees": []})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_impact_analysis(self, symbol: str, **kwargs: Any) -> str:
+        """Tool: Analyze impact of changing a symbol.
+
+        Args:
+            symbol: Name of the symbol to analyze impact for.
+
+        Returns:
+            JSON string with impact analysis results.
+        """
+        if not self._codegraph.is_available():
+            return json.dumps({"error": "Codegraph not available"})
+        try:
+            results = self._codegraph.impact(symbol)
+            return json.dumps(
+                {"symbol": symbol, "affected_count": len(results), "affected": results},
+                indent=2,
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_explore_code(self, query: str, **kwargs: Any) -> str:
+        """Tool: Explore code structure for a natural language query.
+
+        Args:
+            query: Natural language query about the codebase.
+
+        Returns:
+            Markdown string with structured code context.
+        """
+        if not self._codegraph.is_available():
+            return "Codegraph not available"
+        try:
+            result = self._codegraph.explore(query)
+            return result or "No codegraph results found for this query"
+        except Exception as e:
+            return f"Codegraph explore error: {e}"
+
     # ── Private helpers ─────────────────────────────────────────
 
     def _build_tools(self) -> dict[str, Callable]:
@@ -581,6 +688,11 @@ class Worker:
             "write_memory": self._tool_write_memory,
             "read_file": self._tool_read_file,
             "list_files": self._tool_list_files,
+            "symbol_search": self._tool_symbol_search,
+            "find_callers": self._tool_find_callers,
+            "find_callees": self._tool_find_callees,
+            "impact_analysis": self._tool_impact_analysis,
+            "explore_code": self._tool_explore_code,
         }
 
     def _build_tool_definitions(self) -> list[ToolDefinition]:
@@ -666,6 +778,85 @@ class Worker:
                     },
                 },
             ),
+            make_tool_definition(
+                name="symbol_search",
+                description=(
+                    "Search for code symbols (functions, classes, methods, etc.) "
+                    "in the codebase knowledge graph. Faster and more structured "
+                    "than text search — returns symbol name, kind, file location, "
+                    "and signature."
+                ),
+                parameters={
+                    "query": {
+                        "type": "string",
+                        "description": "Symbol name or pattern to search for",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Filter by symbol kind: function, method, class, "
+                            "struct, enum, trait, variable, import"
+                        ),
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="find_callers",
+                description=(
+                    "Find all call sites of a function or method. "
+                    "Returns every location where the symbol is called, "
+                    "useful for understanding usage before modifying code."
+                ),
+                parameters={
+                    "symbol": {
+                        "type": "string",
+                        "description": "Name of the function/method to find callers for",
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="find_callees",
+                description=(
+                    "Find what a function or method calls. Returns the "
+                    "functions/methods invoked by the given symbol, "
+                    "useful for understanding dependencies."
+                ),
+                parameters={
+                    "symbol": {
+                        "type": "string",
+                        "description": "Name of the function/method to find callees for",
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="impact_analysis",
+                description=(
+                    "Analyze the blast radius of changing a symbol. "
+                    "Traverses the dependency graph to find all symbols "
+                    "that would be affected by modifying the given symbol."
+                ),
+                parameters={
+                    "symbol": {
+                        "type": "string",
+                        "description": "Name of the symbol to analyze impact for",
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="explore_code",
+                description=(
+                    "Explore code structure for a natural language query. "
+                    "Returns a Markdown summary of relevant symbols, their "
+                    "callers/callees, and impact analysis. Use this for "
+                    "high-level architecture questions."
+                ),
+                parameters={
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query about the codebase",
+                    },
+                },
+            ),
         ]
 
     async def _execute_tool(self, tool_call: ToolCall) -> str:
@@ -696,30 +887,39 @@ class Worker:
         Returns:
             Formatted context string from prior subtask results.
         """
-        if self.engine is None or not subtask.depends_on:
-            return "(no prior context)"
-
         parts = []
-        for dep_id in subtask.depends_on:
+
+        # Gather results from completed dependencies
+        if self.engine is not None and subtask.depends_on:
+            for dep_id in subtask.depends_on:
+                try:
+                    entry = self.engine.read_memory(
+                        key_scope="task",
+                        key=f"result_{dep_id}",
+                        task_id=subtask.parent_id,
+                    )
+                    if entry is not None:
+                        content = getattr(entry, "content", None)
+                        if content:
+                            text = getattr(content, "text", None) or str(content)
+                        else:
+                            text = str(entry)
+                        parts.append(f"Subtask {dep_id}: {text[:300]}")
+                except Exception:
+                    logger.debug("Failed to read context for dep %s", dep_id, exc_info=True)
+
+        # Add codegraph knowledge graph context
+        if self._codegraph.is_available():
             try:
-                entry = self.engine.read_memory(
-                    key_scope="task",
-                    key=f"result_{dep_id}",
-                    task_id=subtask.parent_id,
-                )
-                if entry is not None:
-                    content = getattr(entry, "content", None)
-                    if content:
-                        text = getattr(content, "text", None) or str(content)
-                    else:
-                        text = str(entry)
-                    parts.append(f"Subtask {dep_id}: {text[:300]}")
+                codegraph_ctx = self._codegraph.explore(subtask.description, max_nodes=10)
+                if codegraph_ctx:
+                    parts.append(f"## Code Knowledge Graph\n{codegraph_ctx}")
             except Exception:
-                logger.debug("Failed to read context for dep %s", dep_id, exc_info=True)
+                logger.debug("Codegraph explore failed for subtask", exc_info=True)
 
         if parts:
             return "\n".join(parts)
-        return "(no prior context found)"
+        return "(no prior context)"
 
     def _build_messages(
         self,

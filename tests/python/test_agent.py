@@ -26,6 +26,7 @@ from ultimate_coders.memory.memory import LongTermMemory, MemoryEntry, MemoryKey
 
 # ── Types tests ──────────────────────────────────────────────────
 
+
 class TestTask:
     """Tests for Task dataclass."""
 
@@ -125,6 +126,7 @@ class TestWorkerInfo:
 
 # ── LLM Client tests ─────────────────────────────────────────────
 
+
 class TestLLMClient:
     """Tests for LLMClient."""
 
@@ -191,6 +193,7 @@ class TestToolDefinition:
 
 # ── Memory types tests ───────────────────────────────────────────
 
+
 class TestMemoryKey:
     """Tests for MemoryKey."""
 
@@ -226,15 +229,17 @@ class TestMemoryEntry:
     """Tests for MemoryEntry."""
 
     def test_from_dict(self):
-        entry = MemoryEntry.from_dict({
-            "id": "mem-1",
-            "key": {"scope": "task", "key": "decisions", "task_id": "t1"},
-            "content": "Use PostgreSQL",
-            "content_type": "text",
-            "source_agent": "orchestrator",
-            "importance": 0.7,
-            "tags": ["architecture"],
-        })
+        entry = MemoryEntry.from_dict(
+            {
+                "id": "mem-1",
+                "key": {"scope": "task", "key": "decisions", "task_id": "t1"},
+                "content": "Use PostgreSQL",
+                "content_type": "text",
+                "source_agent": "orchestrator",
+                "importance": 0.7,
+                "tags": ["architecture"],
+            }
+        )
         assert entry.id == "mem-1"
         assert entry.key.scope == "task"
         assert entry.key.key == "decisions"
@@ -243,6 +248,7 @@ class TestMemoryEntry:
 
 
 # ── ShortTermMemory tests ────────────────────────────────────────
+
 
 class TestShortTermMemory:
     """Tests for ShortTermMemory wrapper."""
@@ -288,6 +294,7 @@ class TestShortTermMemory:
 
 
 # ── LongTermMemory tests ─────────────────────────────────────────
+
 
 class TestLongTermMemory:
     """Tests for LongTermMemory wrapper."""
@@ -336,6 +343,7 @@ class TestLongTermMemory:
 
 
 # ── Orchestrator tests ───────────────────────────────────────────
+
 
 class TestOrchestrator:
     """Tests for Orchestrator."""
@@ -390,20 +398,22 @@ class TestOrchestrator:
     def test_parse_decomposition(self):
         orch = Orchestrator()
         response = LLMResponse(
-            text=json.dumps([
-                {
-                    "description": "Research existing auth code",
-                    "depends_on": [],
-                    "file_constraints": [],
-                    "expected_output": "List of auth-related files",
-                },
-                {
-                    "description": "Implement login endpoint",
-                    "depends_on": [0],
-                    "file_constraints": ["src/utils.py"],
-                    "expected_output": "Working login endpoint",
-                },
-            ]),
+            text=json.dumps(
+                [
+                    {
+                        "description": "Research existing auth code",
+                        "depends_on": [],
+                        "file_constraints": [],
+                        "expected_output": "List of auth-related files",
+                    },
+                    {
+                        "description": "Implement login endpoint",
+                        "depends_on": [0],
+                        "file_constraints": ["src/utils.py"],
+                        "expected_output": "Working login endpoint",
+                    },
+                ]
+            ),
         )
 
         subtasks = orch._parse_decomposition(response, "task-1")
@@ -454,11 +464,15 @@ class TestOrchestrator:
         orch = Orchestrator()
         task = Task(id="t1")
         st1 = Subtask(
-            id="s1", parent_id="t1", status=SubtaskStatus.COMPLETED,
+            id="s1",
+            parent_id="t1",
+            status=SubtaskStatus.COMPLETED,
             result=SubtaskResult(subtask_id="s1", summary="Did research"),
         )
         st2 = Subtask(
-            id="s2", parent_id="t1", status=SubtaskStatus.FAILED,
+            id="s2",
+            parent_id="t1",
+            status=SubtaskStatus.FAILED,
             result=SubtaskResult(subtask_id="s2", summary="Bug in code", success=False),
         )
         task.subtasks = [st1, st2]
@@ -471,6 +485,7 @@ class TestOrchestrator:
 
 
 # ── Worker tests ─────────────────────────────────────────────────
+
 
 class TestWorker:
     """Tests for Worker."""
@@ -509,7 +524,7 @@ class TestWorker:
 
     def test_tool_definitions_built(self):
         worker = Worker()
-        assert len(worker._tool_definitions) == 5
+        assert len(worker._tool_definitions) == 10
         names = [t.name for t in worker._tool_definitions]
         assert "search" in names
         assert "read_memory" in names
@@ -536,6 +551,7 @@ class TestWorker:
 
 # ── Integration-style tests (no external services) ───────────────
 
+
 class TestOrchestratorWorkerIntegration:
     """Integration tests using mock LLM and no engine."""
 
@@ -549,20 +565,22 @@ class TestOrchestratorWorkerIntegration:
 
         # Parse decomposition manually (skip LLM)
         response = LLMResponse(
-            text=json.dumps([
-                {
-                    "description": "Research auth code",
-                    "depends_on": [],
-                    "file_constraints": [],
-                    "expected_output": "Find auth files",
-                },
-                {
-                    "description": "Implement auth",
-                    "depends_on": [0],
-                    "file_constraints": ["README.md"],
-                    "expected_output": "Auth module",
-                },
-            ]),
+            text=json.dumps(
+                [
+                    {
+                        "description": "Research auth code",
+                        "depends_on": [],
+                        "file_constraints": [],
+                        "expected_output": "Find auth files",
+                    },
+                    {
+                        "description": "Implement auth",
+                        "depends_on": [0],
+                        "file_constraints": ["README.md"],
+                        "expected_output": "Auth module",
+                    },
+                ]
+            ),
         )
         subtasks = orch._parse_decomposition(response, "task-1")
         assert len(subtasks) == 2
