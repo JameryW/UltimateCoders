@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Input, Static, Tree
+from textual.widgets import Static, TextArea, Tree
 from textual.widgets._tree import TreeNode
 
 from ultimate_coders.agent.types import Subtask, SubtaskStatus
@@ -228,29 +228,52 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(Input):
+class TaskInput(TextArea):
     """Input field for submitting new task descriptions.
 
-    Renders with a '>' prompt prefix and dark background styling.
+    Uses TextArea instead of Input to support IME (Chinese/Japanese/Korean
+    input methods). Styled as a single-line input with '>' prompt aesthetic.
+    Submits on Enter key.
     """
 
     DEFAULT_CSS = """
     TaskInput {
-        dock: bottom;
         height: 3;
         margin: 0 1;
         border: solid $primary;
         background: $surface;
+        padding: 0 1;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with a '>' prompt placeholder."""
+        """Initialize the TaskInput with a prompt-like placeholder."""
         super().__init__(
-            placeholder="> type task description and press Enter...",
+            "> type task description and press Enter...",
             *args,
             **kwargs,
         )
+
+    def _on_key(self, event) -> None:
+        """Handle Enter key to submit the task."""
+        if event.key == "enter" and not event.shift:
+            # Get the text content (strip the placeholder if untouched)
+            text = self.text.strip()
+            # Remove leading "> " if user typed it
+            if text.startswith("> "):
+                text = text[2:].strip()
+            elif text.startswith(">"):
+                text = text[1:].strip()
+
+            if text:
+                # Post a custom event that SandboxTUI can handle
+                self.post_message(TaskSubmitted(text))
+
+            # Clear input for next task
+            self.load_text("")
+
+            event.prevent_default()
+            event.stop()
 
 
 class StatusBar(Static):
@@ -262,7 +285,6 @@ class StatusBar(Static):
 
     DEFAULT_CSS = """
     StatusBar {
-        dock: bottom;
         height: 1;
         width: 100%;
         background: $primary;
@@ -312,3 +334,23 @@ class StatusBar(Static):
         except Exception:
             # Widget not yet mounted — will render on mount
             pass
+
+
+from textual.message import Message
+
+
+class TaskSubmitted(Message):
+    """Message emitted when the user submits a task via TaskInput.
+
+    This custom message bridges the TextArea-based TaskInput
+    to the SandboxTUI handler, replacing Input.Submitted.
+    """
+
+    def __init__(self, text: str) -> None:
+        """Initialize with the submitted task description.
+
+        Args:
+            text: The task description text.
+        """
+        super().__init__()
+        self.text = text
