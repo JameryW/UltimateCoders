@@ -228,7 +228,7 @@ class StatusBar(Static):
         """
         self._worker_id = worker_id
         self._backend = backend
-        self._render()
+        self._update_content()
 
     def set_progress(self, completed: int, total: int) -> None:
         """Update the progress indicator.
@@ -238,9 +238,9 @@ class StatusBar(Static):
             total: Total number of subtasks.
         """
         self._progress = f"{completed}/{total}"
-        self._render()
+        self._update_content()
 
-    def _render(self) -> None:
+    def _update_content(self) -> None:
         """Update the widget content with current status values."""
         content = (
             f" Worker: {self._worker_id} | "
