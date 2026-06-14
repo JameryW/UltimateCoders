@@ -18,6 +18,7 @@ from typing import Any
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
+from textual.widgets import Input
 
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.orchestrator import Orchestrator
@@ -30,7 +31,6 @@ from ultimate_coders.tui.widgets import (
     StatusBar,
     SubtaskTree,
     TaskInput,
-    TaskSubmitted,
 )
 
 logger = logging.getLogger(__name__)
@@ -449,14 +449,17 @@ class SandboxTUI(App):
 
     # ── Input handling ─────────────────────────────────────────────
 
-    def on_task_submitted(self, event: TaskSubmitted) -> None:
-        """Handle task submission from TaskInput.
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter key in the task input field.
 
         Submits a new task and clears the input.
         """
-        description = event.text.strip()
+        description = event.value.strip()
         if not description:
             return
+
+        # Clear the input field
+        event.input.value = ""
 
         chat_log = self.query_one("#chat-log", ChatLog)
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Static, TextArea, Tree
+from textual.widgets import Input, Static, Tree
 from textual.widgets._tree import TreeNode
 
 from ultimate_coders.agent.types import Subtask, SubtaskStatus
@@ -228,15 +228,11 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(TextArea):
+class TaskInput(Input):
     """Input field for submitting new task descriptions.
 
-    Uses TextArea instead of Input to support IME (Chinese/Japanese/Korean
-    input methods). Styled as a single-line input with '>' prompt aesthetic.
-    Submits on Enter key.
-
-    Implements a manual placeholder: shows dim prompt text when empty and
-    unfocused, clears it on focus, restores on blur if still empty.
+    Renders with a '>' prompt prefix and dark background styling.
+    Uses Textual's native Input widget with placeholder support.
     """
 
     DEFAULT_CSS = """
@@ -245,72 +241,17 @@ class TaskInput(TextArea):
         margin: 0 1;
         border: solid $primary;
         background: $surface;
-        padding: 0 1;
-    }
-
-    TaskInput.placeholder {
-        color: $text-disabled;
     }
     """
 
-    _PLACEHOLDER = "> type task description and press Enter..."
-
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with placeholder text."""
-        TextArea.__init__(self, "", *args, **kwargs)
-        self._showing_placeholder: bool = False
-
-    def on_mount(self) -> None:
-        """Show placeholder on mount."""
-        self._show_placeholder()
-
-    def _show_placeholder(self) -> None:
-        """Display the placeholder text with dim styling."""
-        self.load_text(self._PLACEHOLDER)
-        self._showing_placeholder = True
-        self.add_class("placeholder")
-
-    def _hide_placeholder(self) -> None:
-        """Clear the placeholder text."""
-        if self._showing_placeholder:
-            self.load_text("")
-            self._showing_placeholder = False
-            self.remove_class("placeholder")
-
-    def _on_focus(self, event) -> None:
-        """Clear placeholder when the input is focused."""
-        if self._showing_placeholder:
-            self._hide_placeholder()
-
-    def _on_blur(self, event) -> None:
-        """Restore placeholder if the input is empty on blur."""
-        if not self.text.strip():
-            self._show_placeholder()
-
-    def _on_key(self, event) -> None:
-        """Handle Enter key to submit the task."""
-        if event.key == "enter":
-            text = self.text.strip()
-            # Don't submit the placeholder itself
-            if self._showing_placeholder or not text:
-                event.prevent_default()
-                event.stop()
-                return
-
-            # Remove leading "> " if user typed it
-            if text.startswith("> "):
-                text = text[2:].strip()
-            elif text.startswith(">"):
-                text = text[1:].strip()
-
-            if text:
-                self.post_message(TaskSubmitted(text))
-
-            # Clear input and show placeholder for next task
-            self._show_placeholder()
-
-            event.prevent_default()
-            event.stop()
+        """Initialize the TaskInput with a '>' prompt placeholder."""
+        Input.__init__(
+            self,
+            placeholder="> type task description and press Enter...",
+            *args,
+            **kwargs,
+        )
 
 
 class StatusBar(Static):
@@ -371,23 +312,3 @@ class StatusBar(Static):
         except Exception:
             # Widget not yet mounted — will render on mount
             pass
-
-
-from textual.message import Message
-
-
-class TaskSubmitted(Message):
-    """Message emitted when the user submits a task via TaskInput.
-
-    This custom message bridges the TextArea-based TaskInput
-    to the SandboxTUI handler, replacing Input.Submitted.
-    """
-
-    def __init__(self, text: str) -> None:
-        """Initialize with the submitted task description.
-
-        Args:
-            text: The task description text.
-        """
-        super().__init__()
-        self.text = text

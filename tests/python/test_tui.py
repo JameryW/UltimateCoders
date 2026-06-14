@@ -179,8 +179,8 @@ class TestTaskInput:
         from ultimate_coders.tui.widgets import TaskInput
 
         inp = TaskInput()
-        assert inp._PLACEHOLDER is not None
-        assert ">" in inp._PLACEHOLDER
+        assert inp.placeholder is not None
+        assert ">" in inp.placeholder
 
 
 # -- SandboxTUI tests (mocked, no actual Textual run) -------------------
