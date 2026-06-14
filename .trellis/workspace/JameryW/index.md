@@ -1,0 +1,49 @@
+# Workspace Index - JameryW
+
+> Journal tracking for AI development sessions.
+
+---
+
+## Current Status
+
+<!-- @@@auto:current-status -->
+- **Active File**: `journal-1.md`
+- **Total Sessions**: 9
+- **Last Active**: 2026-06-14
+<!-- @@@/auto:current-status -->
+
+---
+
+## Active Documents
+
+<!-- @@@auto:active-documents -->
+| File | Lines | Status |
+|------|-------|--------|
+| `journal-1.md` | ~343 | Active |
+<!-- @@@/auto:active-documents -->
+
+---
+
+## Session History
+
+<!-- @@@auto:session-history -->
+| # | Date | Title | Commits | Branch |
+|---|------|-------|---------|--------|
+| 9 | 2026-06-14 | TUI Claude Code风格重构：LogoHeader + ChatLog | `32f5208` | `feat/dashboard-v2` |
+| 8 | 2026-06-14 | Integrate codegraph into coding agent Worker | `0b3a237` | `feat/dashboard-v2` |
+| 7 | 2026-06-13 | Dashboard task submit + event emitter — verification & spec update | `0a350d4`, `79decc6`, `8f98de4`, `0bfda8f`, `66442d2` | `feat/dashboard-v2` |
+| 6 | 2026-06-12 | Dashboard monitoring: CORS fix, lint cleanup, spec update | `4cb3999`, `51e4b30`, `6aee4d1` | `main` |
+| 5 | 2026-06-11 | Fix all GitHub CI failures (Rust + Python) | `bb68dd8`, `4040378`, `d717ccd`, `702d833` | `main` |
+| 4 | 2026-06-11 | Task Scheduling: spec updates and code dedup | `8b29dc0`, `f42bea0` | `main` |
+| 3 | 2026-06-11 | Task Scheduling with Night-time Orchestration (PR10) | `0f3c928`, `fa3ce77`, `8e089f9` | `main` |
+| 2 | 2026-06-11 | Populate project spec files with real codebase patterns | `4fa7933` | `main` |
+| 1 | 2026-06-11 | Default sandbox mode with full execution permissions | `2609f26` | `main` |
+<!-- @@@/auto:session-history -->
+
+---
+
+## Notes
+
+- Sessions are appended to journal files
+- New journal file created when current exceeds 2000 lines
+- Use `add_session.py` to record sessions
