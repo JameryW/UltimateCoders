@@ -256,7 +256,7 @@ class TaskInput(TextArea):
 
     def _on_key(self, event) -> None:
         """Handle Enter key to submit the task."""
-        if event.key == "enter" and not event.shift:
+        if event.key == "enter":
             # Get the text content (strip the placeholder if untouched)
             text = self.text.strip()
             # Remove leading "> " if user typed it
