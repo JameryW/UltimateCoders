@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard code-spec: contracts, SSE format, fallback behavior, API endpoints, UI conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index: references all backend specs including dashboard"}

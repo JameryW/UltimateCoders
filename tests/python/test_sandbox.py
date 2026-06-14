@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     ClaudeCodeAdapter,
     CodexAdapter,
+    DecomposeAdapter,
     ExecResult,
     NetworkMode,
     SandboxConfig,
     SandboxManager,
     available_agents,
     create_adapter,
+    parse_decomposition_output,
+    truncate_str,
 )
 from ultimate_coders.agent.types import ChangeType, FileChange
 
@@ -227,7 +232,126 @@ class TestCodexAdapter:
         assert not output.success
 
 
-# ── SandboxManager tests ────────────────────────────────────────
+# ── DecomposeAdapter tests ──────────────────────────────────────
+
+class TestDecomposeAdapter:
+    """Tests for DecomposeAdapter."""
+
+    def test_name(self):
+        adapter = DecomposeAdapter()
+        assert adapter.name() == "claude-code-decompose"
+
+    def test_build_request(self):
+        adapter = DecomposeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Decompose this task", "/tmp/project", config)
+
+        assert request["command"] == "claude"
+        assert "-p" in request["args"]
+        assert "Decompose this task" in request["args"]
+        assert "--output-format" in request["args"]
+        assert "json" in request["args"]
+        assert "--max-turns" in request["args"]
+        assert "1" in request["args"]  # Single turn for decomposition
+        assert "--dangerously-skip-permissions" in request["args"]
+        assert request["timeout_secs"] <= 120  # Capped at 120s
+        assert request["working_dir"] == "/tmp/project"
+
+    def test_parse_output_success(self):
+        adapter = DecomposeAdapter()
+        result = ExecResult(
+            exit_code=0,
+            stdout='[{"description": "Fix bug", "depends_on": []}]',
+        )
+        output = adapter.parse_output(result)
+        assert output.success
+        assert "Fix bug" in output.summary
+
+    def test_parse_output_timeout(self):
+        adapter = DecomposeAdapter()
+        result = ExecResult(exit_code=-1, timed_out=True)
+        output = adapter.parse_output(result)
+        assert not output.success
+        assert "timed out" in output.summary
+
+    def test_parse_output_failure(self):
+        adapter = DecomposeAdapter()
+        result = ExecResult(exit_code=1, stderr="API error")
+        output = adapter.parse_output(result)
+        assert not output.success
+        assert "exit 1" in output.summary
+
+
+# ── parse_decomposition_output tests ─────────────────────────────
+
+class TestParseDecompositionOutput:
+    """Tests for parse_decomposition_output()."""
+
+    def test_parse_simple_json(self):
+        raw = json.dumps(
+            [
+                {
+                    "description": "Fix bug",
+                    "depends_on": [],
+                    "file_constraints": [],
+                    "expected_output": "Bug fixed",
+                },
+            ]
+        )
+        items = parse_decomposition_output(raw)
+        assert len(items) == 1
+        assert items[0]["description"] == "Fix bug"
+
+    def test_parse_multiple_subtasks(self):
+        raw = json.dumps(
+            [
+                {"description": "Research", "depends_on": []},
+                {"description": "Implement", "depends_on": [0]},
+            ]
+        )
+        items = parse_decomposition_output(raw)
+        assert len(items) == 2
+        assert items[1]["depends_on"] == [0]
+
+    def test_parse_wrapped_result(self):
+        """Claude Code wraps output in {"result": "..."} envelope."""
+        inner = '[{"description": "Fix bug", "depends_on": []}]'
+        import json as _json
+        raw = _json.dumps({"type": "result", "result": inner})
+        items = parse_decomposition_output(raw)
+        assert len(items) == 1
+        assert items[0]["description"] == "Fix bug"
+
+    def test_parse_markdown_code_block(self):
+        raw = 'Here are the subtasks:\n```json\n[{"description": "Fix bug", "depends_on": []}]\n```'
+        items = parse_decomposition_output(raw)
+        assert len(items) == 1
+
+    def test_parse_invalid_json_raises(self):
+        with pytest.raises(ValueError, match="Failed to parse"):
+            parse_decomposition_output("not json at all")
+
+    def test_parse_non_array_raises(self):
+        with pytest.raises(ValueError, match="Expected JSON array"):
+            parse_decomposition_output('{"key": "value"}')
+
+
+# ── truncate_str tests ──────────────────────────────────────────
+
+class TestTruncateStr:
+    """Tests for truncate_str()."""
+
+    def test_short_string(self):
+        assert truncate_str("hello", 10) == "hello"
+
+    def test_exact_length(self):
+        assert truncate_str("hello", 5) == "hello"
+
+    def test_truncation(self):
+        result = truncate_str("hello world", 8)
+        assert result == "hello..."
+        assert len(result) == 8
+
 
 class TestSandboxManager:
     """Tests for SandboxManager."""
@@ -301,11 +425,16 @@ class TestAdapterFactory:
     def test_available_agents(self):
         agents = available_agents()
         assert "claude-code" in agents
+        assert "claude-code-decompose" in agents
         assert "codex" in agents
 
     def test_create_adapter_claude_code(self):
         adapter = create_adapter("claude-code")
         assert isinstance(adapter, ClaudeCodeAdapter)
+
+    def test_create_adapter_decompose(self):
+        adapter = create_adapter("claude-code-decompose")
+        assert isinstance(adapter, DecomposeAdapter)
 
     def test_create_adapter_codex(self):
         adapter = create_adapter("codex")
