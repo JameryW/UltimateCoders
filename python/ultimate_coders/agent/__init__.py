@@ -1,5 +1,6 @@
 """Agent module — Orchestrator and Worker implementations."""
 
+from ultimate_coders.agent.codegraph import CodegraphClient
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictInfo,
@@ -62,6 +63,7 @@ from ultimate_coders.agent.worker import Worker
 __all__ = [
     "Orchestrator",
     "Worker",
+    "CodegraphClient",
     "ChangeType",
     "FileChange",
     "OrchestratorConfig",

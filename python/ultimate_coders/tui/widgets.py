@@ -133,7 +133,7 @@ class OutputLog(Static):
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize the OutputLog with an empty line buffer."""
-        super().__init__(*args, **kwargs)
+        super().__init__("", *args, **kwargs)
         self._lines: list[str] = []
         self._max_lines: int = 2000
 
@@ -214,7 +214,7 @@ class StatusBar(Static):
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize the StatusBar with default values."""
-        super().__init__(*args, **kwargs)
+        super().__init__("", *args, **kwargs)
         self._worker_id: str = ""
         self._backend: str = "subprocess"
         self._progress: str = "0/0"
@@ -228,7 +228,7 @@ class StatusBar(Static):
         """
         self._worker_id = worker_id
         self._backend = backend
-        self._render()
+        self._update_content()
 
     def set_progress(self, completed: int, total: int) -> None:
         """Update the progress indicator.
@@ -238,12 +238,17 @@ class StatusBar(Static):
             total: Total number of subtasks.
         """
         self._progress = f"{completed}/{total}"
-        self._render()
+        self._update_content()
 
-    def _render(self) -> None:
+    def _update_content(self) -> None:
         """Update the widget content with current status values."""
-        self.update(
+        content = (
             f" Worker: {self._worker_id} | "
             f"Backend: {self._backend} | "
             f"Progress: {self._progress}"
         )
+        try:
+            self.update(content)
+        except Exception:
+            # Widget not yet mounted — will render on mount
+            pass
