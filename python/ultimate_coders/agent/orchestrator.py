@@ -99,6 +99,7 @@ class Orchestrator:
         rate_limiter: RateLimiter | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         scheduler: Any = None,
+        sandbox_manager: Any = None,
     ):
         """Initialize the Orchestrator.
 
@@ -111,9 +112,12 @@ class Orchestrator:
             circuit_breaker: Circuit breaker for LLM API fault tolerance.
             scheduler: Optional Scheduler instance for scheduling tasks
                 via the night-window orchestration system.
+            sandbox_manager: Optional SandboxManager for Claude Code-based
+                decomposition (used when llm_client is None).
         """
         self.engine = engine
         self.llm_client = llm_client
+        self.sandbox_manager = sandbox_manager
         self.config = config or OrchestratorConfig()
         self.workers: dict[str, WorkerInfo] = {}
         self.tasks: dict[str, Task] = {}
@@ -220,7 +224,12 @@ class Orchestrator:
         return task
 
     async def decompose_task(self, task: Task) -> list[Subtask]:
-        """Use LLM to decompose a task into subtasks.
+        """Decompose a task into subtasks via LLM or sandbox (Claude Code).
+
+        When ``self.llm_client`` is set, uses the traditional Python
+        ``LLMClient.complete()`` path.  When ``self.sandbox_manager`` is
+        set instead, invokes ``claude -p "decompose..."`` via the
+        ``DecomposeAdapter`` and parses the JSON output.
 
         Args:
             task: The task to decompose.
@@ -229,16 +238,14 @@ class Orchestrator:
             List of Subtask objects with dependencies.
 
         Raises:
-            RuntimeError: If LLM decomposition fails.
+            RuntimeError: If neither LLM client nor sandbox manager is
+                configured, or if decomposition fails.
         """
-        if self.llm_client is None:
-            raise RuntimeError("LLM client is required for task decomposition")
-
         # Gather context from memory and search
         memory_context = await self._gather_memory_context(task)
         code_context = await self._gather_code_context(task)
 
-        # Build prompt
+        # Build the decomposition prompt (shared by both paths)
         system = _DECOMPOSE_SYSTEM_PROMPT.format(
             max_subtasks=self.config.max_subtasks,
         )
@@ -249,7 +256,35 @@ class Orchestrator:
             code_context=code_context,
         )
 
-        # Call LLM
+        # ── Sandbox (Claude Code) path ──
+        if self.sandbox_manager is not None and self.llm_client is None:
+            from ultimate_coders.agent.sandbox import (
+                DecomposeAdapter,
+                parse_decomposition_output,
+            )
+
+            # Combine system + user into a single prompt for `claude -p`
+            combined_prompt = f"{system}\n\n{user_msg}"
+            adapter = DecomposeAdapter()
+            request = adapter.build_request(
+                combined_prompt,
+                self.sandbox_manager.config.working_dir
+                or self.sandbox_manager.config.project_path,
+                self.sandbox_manager.config,
+            )
+            result = await self.sandbox_manager._execute_subprocess(request)
+            output = adapter.parse_output(result)
+            if not output.success:
+                raise RuntimeError(f"Sandbox decomposition failed: {output.summary}")
+            items = parse_decomposition_output(result.stdout)
+            return self._parse_decomposition_items(items, task.id)
+
+        # ── Traditional LLM path ──
+        if self.llm_client is None:
+            raise RuntimeError(
+                "Either llm_client or sandbox_manager is required for task decomposition"
+            )
+
         response = await self.llm_client.complete(
             messages=[{"role": "user", "content": user_msg}],
             system=system,
@@ -526,6 +561,25 @@ class Orchestrator:
         if not isinstance(items, list):
             raise RuntimeError(f"Expected JSON array from decomposition, got {type(items)}")
 
+        return self._parse_decomposition_items(items, parent_task_id)
+
+    def _parse_decomposition_items(
+        self,
+        items: list,
+        parent_task_id: str,
+    ) -> list[Subtask]:
+        """Parse a list of subtask dicts into Subtask objects.
+
+        Shared by both LLM and sandbox decomposition paths.
+
+        Args:
+            items: List of dicts with keys: description, depends_on,
+                file_constraints, expected_output.
+            parent_task_id: The parent task ID.
+
+        Returns:
+            List of Subtask objects.
+        """
         # First pass: create subtasks with temporary index-based deps
         subtask_map: dict[int, Subtask] = {}
         for idx, item in enumerate(items):

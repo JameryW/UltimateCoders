@@ -369,6 +369,117 @@ class AgentAdapter:
         raise NotImplementedError
 
 
+class DecomposeAdapter(AgentAdapter):
+    """Adapter for using Claude Code CLI for task decomposition.
+
+    Unlike ClaudeCodeAdapter (which executes coding subtasks with many turns),
+    this adapter is optimized for decomposition: single-turn, strict JSON output.
+    """
+
+    def name(self) -> str:
+        return "claude-code-decompose"
+
+    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
+        return {
+            "command": "claude",
+            "args": [
+                "-p", prompt,
+                "--output-format", "json",
+                "--max-turns", "1",
+                "--dangerously-skip-permissions",
+            ],
+            "timeout_secs": min(config.max_cpu_seconds, 120),
+            "working_dir": working_dir,
+            "env_vars": config._build_env_vars(),
+        }
+
+    def parse_output(self, result: ExecResult) -> AgentOutput:
+        """Parse Claude Code decomposition output into a summary.
+
+        The actual Subtask list is extracted by
+        ``parse_decomposition_output()`` which is called separately
+        by the Orchestrator.
+        """
+        if result.timed_out:
+            return AgentOutput(
+                summary="Task decomposition timed out",
+                success=False,
+            )
+
+        if result.exit_code != 0:
+            return AgentOutput(
+                summary=f"Decomposition failed (exit {result.exit_code}): {result.stderr[:200]}",
+                success=False,
+            )
+
+        output = result.stdout.strip()
+        return AgentOutput(
+            summary=truncate_str(output, 1000) if output else "Decomposition completed",
+            success=True,
+        )
+
+
+def truncate_str(s: str, max_len: int) -> str:
+    """Truncate a string to max_len with ellipsis."""
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 3] + "..."
+
+
+def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
+    """Parse Claude Code JSON output into a list of subtask dicts.
+
+    Accepts the raw stdout from a ``DecomposeAdapter`` invocation and
+    extracts the JSON array of subtask objects.  Handles common
+    wrapping patterns (markdown code blocks, nested ``result`` key).
+
+    Returns:
+        List of dicts with keys: description, depends_on, file_constraints,
+        expected_output.
+    """
+    import json
+
+    text = raw_stdout.strip()
+
+    # The Claude Code JSON output may wrap the actual content in a
+    # top-level object like {"type": "result", "result": "..."} or
+    # {"result": "..."}.
+    try:
+        outer = json.loads(text)
+        if isinstance(outer, dict):
+            # Extract the text content from the response envelope
+            if "result" in outer and isinstance(outer["result"], str):
+                text = outer["result"]
+    except json.JSONDecodeError:
+        pass  # Not wrapped — proceed with raw text
+
+    # Strip markdown code fences if present
+    if "```" in text:
+        lines = text.split("\n")
+        json_lines: list[str] = []
+        in_block = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_block = not in_block
+                continue
+            if in_block:
+                json_lines.append(line)
+        text = "\n".join(json_lines)
+
+    try:
+        items = json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.error("Failed to parse decomposition JSON: %s", e)
+        logger.debug("Raw decomposition output: %s", raw_stdout[:500])
+        raise ValueError(f"Failed to parse decomposition output: {e}") from e
+
+    if not isinstance(items, list):
+        raise ValueError(f"Expected JSON array, got {type(items).__name__}")
+
+    return items
+
+
 class ClaudeCodeAdapter(AgentAdapter):
     """Adapter for Claude Code CLI."""
 
@@ -516,7 +627,7 @@ class CodexAdapter(AgentAdapter):
 
 def available_agents() -> list[str]:
     """List available agent adapter names."""
-    return ["claude-code", "codex"]
+    return ["claude-code", "claude-code-decompose", "codex"]
 
 
 def create_adapter(name: str) -> AgentAdapter:
@@ -533,6 +644,8 @@ def create_adapter(name: str) -> AgentAdapter:
     """
     if name == "claude-code":
         return ClaudeCodeAdapter()
+    elif name == "claude-code-decompose":
+        return DecomposeAdapter()
     elif name == "codex":
         return CodexAdapter()
     raise ValueError(f"Unknown agent: {name}. Available: {available_agents()}")
