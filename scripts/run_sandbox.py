@@ -1,11 +1,15 @@
 """Run UltimateCoders in sandbox mode using Claude Code CLI as the unified engine.
 
 Both Orchestrator (task decomposition) and Worker (subtask execution)
-invoke `claude -p ...` via SandboxManager — no Python LLMClient needed.
+invoke `claude -p ...` via SandboxManager -- no Python LLMClient needed.
 
 Usage:
     # CLI mode (default): submit a task, print results
     .venv/bin/python scripts/run_sandbox.py "Fix the bug in main.rs"
+
+    # TUI mode: interactive terminal UI with real-time updates
+    .venv/bin/python scripts/run_sandbox.py --tui "Fix the bug in main.rs"
+    .venv/bin/python scripts/run_sandbox.py --tui
 
     # Dashboard mode: web UI on http://localhost:8080
     .venv/bin/python scripts/run_sandbox.py --dashboard
@@ -17,12 +21,13 @@ Usage:
     .venv/bin/python scripts/run_sandbox.py --backend docker "Add tests"
 
 Options:
-    --dashboard    Start web Dashboard alongside auto-execute loop
-    --backend      Sandbox backend: subprocess (default) or docker
-    --with-infra   Start Docker Compose storage (TiKV/Qdrant/PostgreSQL/NATS)
-    --project      Project path (defaults to current directory)
-    --max-turns    Max turns for worker Claude Code calls (default: 20)
-    --port         Dashboard port (default: 8080)
+    --tui         Launch Textual TUI (terminal UI with real-time updates)
+    --dashboard   Start web Dashboard alongside auto-execute loop
+    --backend     Sandbox backend: subprocess (default) or docker
+    --with-infra  Start Docker Compose storage (TiKV/Qdrant/PostgreSQL/NATS)
+    --project     Project path (defaults to current directory)
+    --max-turns   Max turns for worker Claude Code calls (default: 20)
+    --port        Dashboard port (default: 8080)
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ import os
 import sys
 from pathlib import Path
 
-# ── Load .env ────────────────────────────────────────────────────
+# -- Load .env -----------------------------------------------------------
 
 _env_path = Path(__file__).parent.parent / ".env"
 if _env_path.exists():
@@ -45,10 +50,10 @@ if _env_path.exists():
         key, _, value = line.partition("=")
         os.environ.setdefault(key.strip(), value.strip())
 
-from ultimate_coders.agent.orchestrator import Orchestrator
-from ultimate_coders.agent.sandbox import SandboxConfig, SandboxManager
-from ultimate_coders.agent.types import SubtaskStatus, WorkerInfo
-from ultimate_coders.agent.worker import Worker
+from ultimate_coders.agent.orchestrator import Orchestrator  # noqa: E402
+from ultimate_coders.agent.sandbox import SandboxConfig, SandboxManager  # noqa: E402
+from ultimate_coders.agent.types import SubtaskStatus, WorkerInfo  # noqa: E402
+from ultimate_coders.agent.worker import Worker  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +62,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ── Auto-execute loop ───────────────────────────────────────────
+# -- Auto-execute loop ---------------------------------------------------
 
 async def auto_execute_loop(orch: Orchestrator, worker: Worker) -> None:
     """Background loop that assigns and executes ready subtasks.
@@ -122,7 +127,7 @@ async def auto_execute_loop(orch: Orchestrator, worker: Worker) -> None:
                 )
 
 
-# ── CLI mode ────────────────────────────────────────────────────
+# -- CLI mode ------------------------------------------------------------
 
 async def run_cli(task_description: str, config: SandboxConfig) -> None:
     """Submit a single task and print decomposition + execution results."""
@@ -157,11 +162,11 @@ async def run_cli(task_description: str, config: SandboxConfig) -> None:
     )
 
     if task.status.value == "failed":
-        print(f"\n❌ Task decomposition failed: {task.result}")
+        print(f"\nX Task decomposition failed: {task.result}")
         return
 
     # Print decomposition
-    print(f"\n📋 Task: {task.description}")
+    print(f"\nTask: {task.description}")
     print(f"   Status: {task.status.value}")
     print(f"   Subtasks ({len(task.subtasks)}):")
     for i, st in enumerate(task.subtasks):
@@ -169,21 +174,21 @@ async def run_cli(task_description: str, config: SandboxConfig) -> None:
         print(f"   {i + 1}. {st.description} (deps: {deps})")
 
     # Execute subtasks
-    print("\n⏳ Executing subtasks via Claude Code sandbox...")
+    print("\nExecuting subtasks via Claude Code sandbox...")
     await auto_execute_loop(orch, worker)
 
     # Print final results
     final = orch.get_task_status(task.id)
     if final:
-        print(f"\n✅ Task completed (status: {final.status.value})")
+        print(f"\nTask completed (status: {final.status.value})")
         for st in final.subtasks:
-            status_icon = "✓" if st.is_complete else "✗"
+            status_icon = "+" if st.is_complete else "-"
             print(f"   {status_icon} {st.description}")
     else:
-        print("\n❌ Task status unavailable")
+        print("\nX Task status unavailable")
 
 
-# ── Dashboard mode ──────────────────────────────────────────────
+# -- Dashboard mode ------------------------------------------------------
 
 def run_dashboard(config: SandboxConfig, port: int) -> None:
     """Start Dashboard with sandbox-mode Orchestrator + Worker."""
@@ -239,7 +244,22 @@ def run_dashboard(config: SandboxConfig, port: int) -> None:
         dashboard.stop()
 
 
-# ── Infrastructure helpers ──────────────────────────────────────
+# -- TUI mode ------------------------------------------------------------
+
+def run_tui(config: SandboxConfig, initial_task: str | None) -> None:
+    """Launch the Textual TUI with sandbox-mode Orchestrator + Worker.
+
+    Args:
+        config: SandboxConfig for the worker.
+        initial_task: Optional task description to auto-submit.
+    """
+    from ultimate_coders.tui import SandboxTUI
+
+    app = SandboxTUI(config=config, initial_task=initial_task)
+    app.run()
+
+
+# -- Infrastructure helpers -----------------------------------------------
 
 def start_infra() -> None:
     """Start Docker Compose storage infrastructure."""
@@ -277,7 +297,7 @@ def stop_infra() -> None:
     )
 
 
-# ── Main ────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -288,6 +308,11 @@ def main() -> None:
         nargs="?",
         default=None,
         help="Task description to submit (required for CLI mode)",
+    )
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Launch Textual TUI with real-time updates",
     )
     parser.add_argument(
         "--dashboard",
@@ -325,9 +350,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Validate: either --dashboard or a task description
-    if not args.dashboard and args.task is None:
-        parser.error("Provide a task description or use --dashboard")
+    # Validate: at least one mode or a task description
+    if not args.tui and not args.dashboard and args.task is None:
+        parser.error("Provide a task description or use --tui or --dashboard")
 
     # Check ANTHROPIC_API_KEY
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -337,11 +362,21 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Check claude CLI
+    # Check claude CLI (required for all modes)
     import shutil
     if not shutil.which("claude"):
         logger.error("claude CLI not found. Install: https://claude.ai/code")
         sys.exit(1)
+
+    # Check TUI dependencies if --tui is used
+    if args.tui:
+        try:
+            import textual  # noqa: F401
+        except ImportError:
+            logger.error(
+                "textual not installed. Install with: pip install textual>=0.40"
+            )
+            sys.exit(1)
 
     # Build SandboxConfig
     config = SandboxConfig(
@@ -358,7 +393,9 @@ def main() -> None:
         start_infra()
 
     try:
-        if args.dashboard:
+        if args.tui:
+            run_tui(config, args.task)
+        elif args.dashboard:
             run_dashboard(config, args.port)
         else:
             asyncio.run(run_cli(args.task, config))

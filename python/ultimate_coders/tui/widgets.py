@@ -1,0 +1,249 @@
+"""Custom Textual widgets for the sandbox TUI.
+
+Widgets:
+- SubtaskTree: Tree view showing task -> subtasks with status icons
+- OutputLog: Scrollable log of execution output
+- TaskInput: Input field for submitting new tasks
+- StatusBar: Compact status bar showing worker/backend/progress
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from rich.text import Text
+from textual.widgets import Input, Static, Tree
+from textual.widgets._tree import TreeNode
+
+from ultimate_coders.agent.types import Subtask, SubtaskStatus
+
+# Status icons for subtasks
+_STATUS_ICONS: dict[SubtaskStatus, str] = {
+    SubtaskStatus.PENDING: "[dim]⏳[/]",
+    SubtaskStatus.ASSIGNED: "[dim]⏳[/]",
+    SubtaskStatus.IN_PROGRESS: "[bold cyan]🔄[/]",
+    SubtaskStatus.COMPLETED: "[bold green]✅[/]",
+    SubtaskStatus.FAILED: "[bold red]❌[/]",
+    SubtaskStatus.CONFLICTED: "[bold yellow]⚠️[/]",
+}
+
+
+class SubtaskTree(Tree):
+    """Tree widget showing task -> subtasks with progress icons.
+
+    Displays a root node for the task with child nodes for each subtask.
+    Status icons update in real-time as subtasks progress through
+    pending -> in_progress -> completed/failed states.
+    """
+
+    DEFAULT_CSS = """
+    SubtaskTree {
+        height: 1fr;
+        border: solid $primary;
+        border-title-color: $text;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ) -> None:
+        """Initialize the SubtaskTree with an empty root node."""
+        super().__init__("No task", *args, **kwargs)
+        self._task_id: str = ""
+        self._subtask_nodes: dict[str, TreeNode] = {}
+
+    def set_task(self, task_description: str, task_id: str) -> None:
+        """Set the root task node.
+
+        Args:
+            task_description: Human-readable task description.
+            task_id: Task UUID.
+        """
+        self._task_id = task_id
+        self._subtask_nodes.clear()
+        self.root.set_label(Text(task_description))
+        self.root.remove_children()
+        self.expand()
+
+    def add_subtask(self, subtask: Subtask, index: int) -> None:
+        """Add a subtask node to the tree.
+
+        Args:
+            subtask: The Subtask object.
+            index: 1-based index for display.
+        """
+        icon = _STATUS_ICONS.get(subtask.status, "⏳")
+        label = f"{icon} {index}. {subtask.description}"
+        node = self.root.add(label, expand=True)
+        self._subtask_nodes[subtask.id] = node
+
+    def update_subtask_status(self, subtask_id: str, status: SubtaskStatus) -> None:
+        """Update the status icon for a subtask.
+
+        Args:
+            subtask_id: The subtask ID.
+            status: New status.
+        """
+        node = self._subtask_nodes.get(subtask_id)
+        if node is None:
+            return
+        icon = _STATUS_ICONS.get(status, "⏳")
+        # Extract the index and description from the existing label
+        old_label = str(node.label)
+        # Label format: "icon N. description" -- extract after the first space
+        parts = old_label.split(" ", 1)
+        if len(parts) > 1:
+            rest = parts[1]
+        else:
+            rest = old_label
+        node.set_label(f"{icon} {rest}")
+
+    def update_progress(self, completed: int, total: int) -> None:
+        """Update the tree title with progress info.
+
+        Args:
+            completed: Number of completed subtasks.
+            total: Total number of subtasks.
+        """
+        pct = int(100 * completed / total) if total > 0 else 0
+        self.border_title = f"Subtasks [{completed}/{total} {pct}%]"
+
+
+class OutputLog(Static):
+    """Scrollable real-time output log.
+
+    Shows timestamped log entries for decomposition, subtask execution,
+    Claude Code output, and completion messages. Auto-scrolls to bottom
+    but can be scrolled up to view history.
+    """
+
+    DEFAULT_CSS = """
+    OutputLog {
+        height: 1fr;
+        border: solid $primary;
+        border-title-color: $text;
+        padding: 0 1;
+        overflow-y: auto;
+        scrollbar-size: 1 1;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize the OutputLog with an empty line buffer."""
+        super().__init__(*args, **kwargs)
+        self._lines: list[str] = []
+        self._max_lines: int = 2000
+
+    def on_mount(self) -> None:
+        """Set the border title when the widget is mounted."""
+        self.border_title = "Output Log"
+
+    def append(self, message: str, style: str = "") -> None:
+        """Append a timestamped log entry.
+
+        Args:
+            message: The log message text.
+            style: Optional Rich style string (e.g., "bold green", "dim").
+        """
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%H:%M:%S")
+        if style:
+            line = f"[dim][{ts}][/dim] [{style}]{message}[/{style}]"
+        else:
+            line = f"[dim][{ts}][/dim] {message}"
+
+        self._lines.append(line)
+        if len(self._lines) > self._max_lines:
+            self._lines = self._lines[-self._max_lines:]
+
+        self.update("\n".join(self._lines))
+        # Auto-scroll to bottom
+        self.scroll_end(animate=False)
+
+    def clear_log(self) -> None:
+        """Clear all log entries."""
+        self._lines.clear()
+        self.update("")
+
+
+class TaskInput(Input):
+    """Input field for submitting new task descriptions.
+
+    Renders with a prompt prefix and handles Enter key submission.
+    """
+
+    DEFAULT_CSS = """
+    TaskInput {
+        dock: bottom;
+        height: 3;
+        margin: 0 1;
+        border: solid $primary;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize the TaskInput with a placeholder prompt."""
+        super().__init__(
+            placeholder="Submit new task: type description and press Enter...",
+            *args,
+            **kwargs,
+        )
+
+
+class StatusBar(Static):
+    """Compact status bar showing worker ID, backend, and progress.
+
+    Displays single-line status information at the bottom of the screen,
+    including the current worker ID, sandbox backend, and subtask progress.
+    """
+
+    DEFAULT_CSS = """
+    StatusBar {
+        dock: bottom;
+        height: 1;
+        width: 100%;
+        background: $primary;
+        color: $text;
+        padding: 0 1;
+        content-align: left middle;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize the StatusBar with default values."""
+        super().__init__(*args, **kwargs)
+        self._worker_id: str = ""
+        self._backend: str = "subprocess"
+        self._progress: str = "0/0"
+
+    def configure(self, worker_id: str, backend: str) -> None:
+        """Set the worker ID and backend.
+
+        Args:
+            worker_id: The sandbox worker identifier.
+            backend: The sandbox backend (subprocess or docker).
+        """
+        self._worker_id = worker_id
+        self._backend = backend
+        self._render()
+
+    def set_progress(self, completed: int, total: int) -> None:
+        """Update the progress indicator.
+
+        Args:
+            completed: Number of completed subtasks.
+            total: Total number of subtasks.
+        """
+        self._progress = f"{completed}/{total}"
+        self._render()
+
+    def _render(self) -> None:
+        """Update the widget content with current status values."""
+        self.update(
+            f" Worker: {self._worker_id} | "
+            f"Backend: {self._backend} | "
+            f"Progress: {self._progress}"
+        )

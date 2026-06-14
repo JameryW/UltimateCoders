@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tui = [
+    "textual>=0.40",
+    "rich>=13.0",
+]
 test = [
     "httpx>=0.24.0",
 ]
