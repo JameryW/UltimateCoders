@@ -265,6 +265,10 @@ class Orchestrator:
 
             # Combine system + user into a single prompt for `claude -p`
             combined_prompt = f"{system}\n\n{user_msg}"
+            logger.info(
+                "Decomposing task %s via sandbox (prompt_len=%d)",
+                task.id, len(combined_prompt),
+            )
             adapter = DecomposeAdapter()
             request = adapter.build_request(
                 combined_prompt,
@@ -275,8 +279,16 @@ class Orchestrator:
             result = await self.sandbox_manager._execute_subprocess(request)
             output = adapter.parse_output(result)
             if not output.success:
+                logger.error(
+                    "Sandbox decomposition failed for task %s: %s",
+                    task.id, output.summary,
+                )
                 raise RuntimeError(f"Sandbox decomposition failed: {output.summary}")
             items = parse_decomposition_output(result.stdout)
+            logger.info(
+                "Sandbox decomposition succeeded for task %s: %d subtasks",
+                task.id, len(items),
+            )
             return self._parse_decomposition_items(items, task.id)
 
         # ── Traditional LLM path ──

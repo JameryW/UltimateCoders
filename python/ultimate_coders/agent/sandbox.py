@@ -300,6 +300,7 @@ class SandboxManager:
         """
         import asyncio
         import os
+        import time
 
         command = request.get("command", "")
         args = request.get("args", [])
@@ -307,11 +308,24 @@ class SandboxManager:
         env_vars = request.get("env_vars", {})
         working_dir = request.get("working_dir", self.config.project_path)
 
+        # Log the command being executed (truncate long prompts)
+        display_args = []
+        for a in args:
+            if len(a) > 200:
+                display_args.append(a[:200] + "...")
+            else:
+                display_args.append(a)
+        logger.info(
+            "Sandbox subprocess: %s %s (timeout=%ds, cwd=%s)",
+            command, " ".join(display_args), timeout_secs, working_dir,
+        )
+
         # Build environment
         env = dict(os.environ)
         env.update(env_vars)
 
         try:
+            start = time.monotonic()
             proc = await asyncio.create_subprocess_exec(
                 command,
                 *args,
@@ -326,27 +340,44 @@ class SandboxManager:
                     proc.communicate(),
                     timeout=timeout_secs,
                 )
+                elapsed = time.monotonic() - start
 
-                return ExecResult(
+                result = ExecResult(
                     exit_code=proc.returncode or -1,
                     stdout=stdout.decode("utf-8", errors="replace"),
                     stderr=stderr.decode("utf-8", errors="replace"),
-                    duration_ms=0,
+                    duration_ms=int(elapsed * 1000),
                     timed_out=False,
                 )
+                logger.info(
+                    "Sandbox subprocess completed: exit=%d, time=%.1fs, stdout=%dB, stderr=%dB",
+                    result.exit_code, elapsed, len(result.stdout), len(result.stderr),
+                )
+                if result.exit_code != 0:
+                    logger.warning(
+                        "Sandbox subprocess stderr: %s",
+                        result.stderr[:500] if result.stderr else "(empty)",
+                    )
+                return result
 
             except asyncio.TimeoutError:
+                elapsed = time.monotonic() - start
                 proc.kill()
                 await proc.wait()
+                logger.error(
+                    "Sandbox subprocess timed out after %.1fs (limit=%ds)",
+                    elapsed, timeout_secs,
+                )
                 return ExecResult(
                     exit_code=-1,
                     stdout="",
-                    stderr="Command timed out",
-                    duration_ms=0,
+                    stderr=f"Command timed out after {timeout_secs}s",
+                    duration_ms=int(elapsed * 1000),
                     timed_out=True,
                 )
 
         except Exception as e:
+            logger.error("Sandbox subprocess failed: %s", e, exc_info=True)
             return ExecResult(
                 exit_code=-1,
                 stdout="",
@@ -380,6 +411,11 @@ class DecomposeAdapter(AgentAdapter):
         return "claude-code-decompose"
 
     def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
+        timeout = min(config.max_cpu_seconds, 300)
+        logger.info(
+            "DecomposeAdapter: building request (timeout=%ds, cwd=%s, prompt_len=%d)",
+            timeout, working_dir, len(prompt),
+        )
         return {
             "command": "claude",
             "args": [
@@ -388,7 +424,7 @@ class DecomposeAdapter(AgentAdapter):
                 "--max-turns", "1",
                 "--dangerously-skip-permissions",
             ],
-            "timeout_secs": min(config.max_cpu_seconds, 120),
+            "timeout_secs": timeout,
             "working_dir": working_dir,
             "env_vars": config._build_env_vars(),
         }
@@ -401,18 +437,30 @@ class DecomposeAdapter(AgentAdapter):
         by the Orchestrator.
         """
         if result.timed_out:
+            logger.error(
+                "DecomposeAdapter: timed out after %dms", result.duration_ms,
+            )
             return AgentOutput(
-                summary="Task decomposition timed out",
+                summary=f"Task decomposition timed out after {result.duration_ms}ms",
                 success=False,
             )
 
         if result.exit_code != 0:
+            logger.error(
+                "DecomposeAdapter: exit=%d, stderr=%s",
+                result.exit_code, result.stderr[:500],
+            )
             return AgentOutput(
                 summary=f"Decomposition failed (exit {result.exit_code}): {result.stderr[:200]}",
                 success=False,
             )
 
         output = result.stdout.strip()
+        logger.info(
+            "DecomposeAdapter: success, stdout_len=%d, duration=%dms",
+            len(output), result.duration_ms,
+        )
+        logger.debug("DecomposeAdapter raw output: %s", output[:2000])
         return AgentOutput(
             summary=truncate_str(output, 1000) if output else "Decomposition completed",
             success=True,
@@ -440,6 +488,7 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
     import json
 
     text = raw_stdout.strip()
+    logger.info("parse_decomposition_output: input length=%d", len(text))
 
     # The Claude Code JSON output may wrap the actual content in a
     # top-level object like {"type": "result", "result": "..."} or
@@ -450,6 +499,7 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
             # Extract the text content from the response envelope
             if "result" in outer and isinstance(outer["result"], str):
                 text = outer["result"]
+                logger.info("parse_decomposition_output: extracted 'result' key (len=%d)", len(text))
     except json.JSONDecodeError:
         pass  # Not wrapped — proceed with raw text
 
@@ -466,17 +516,23 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
             if in_block:
                 json_lines.append(line)
         text = "\n".join(json_lines)
+        logger.info("parse_decomposition_output: stripped markdown fences, remaining len=%d", len(text))
 
     try:
         items = json.loads(text)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse decomposition JSON: %s", e)
-        logger.debug("Raw decomposition output: %s", raw_stdout[:500])
+        logger.error(
+            "Failed to parse decomposition JSON: %s\nText preview: %s",
+            e, text[:1000],
+        )
+        logger.debug("Full raw output: %s", raw_stdout[:2000])
         raise ValueError(f"Failed to parse decomposition output: {e}") from e
 
     if not isinstance(items, list):
+        logger.error("Decomposition output is not a JSON array: %s", type(items).__name__)
         raise ValueError(f"Expected JSON array, got {type(items).__name__}")
 
+    logger.info("parse_decomposition_output: parsed %d subtasks", len(items))
     return items
 
 

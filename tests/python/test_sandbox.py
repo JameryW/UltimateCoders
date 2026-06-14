@@ -254,7 +254,7 @@ class TestDecomposeAdapter:
         assert "--max-turns" in request["args"]
         assert "1" in request["args"]  # Single turn for decomposition
         assert "--dangerously-skip-permissions" in request["args"]
-        assert request["timeout_secs"] <= 120  # Capped at 120s
+        assert request["timeout_secs"] <= 300  # Capped at 300s
         assert request["working_dir"] == "/tmp/project"
 
     def test_parse_output_success(self):
