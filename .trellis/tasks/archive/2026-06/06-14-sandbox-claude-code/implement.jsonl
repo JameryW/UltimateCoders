@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/06-14-sandbox-claude-code/prd.md", "reason": "PRD: requirements, ADR decisions, acceptance criteria, implementation plan"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index: overall architecture and conventions"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend directory layout: where to place new files (DecomposeAdapter, run_sandbox.py)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling conventions for sandbox execution failures and Claude Code parse errors"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Logging conventions for subprocess/Docker sandbox execution tracing"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code quality standards: type hints, docstrings, test coverage requirements"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard integration spec: how run_sandbox.py --dashboard should wire into DashboardApp"}

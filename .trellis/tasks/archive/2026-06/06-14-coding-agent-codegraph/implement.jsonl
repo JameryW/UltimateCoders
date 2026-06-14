@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-14-coding-agent-codegraph/prd.md", "reason": "PRD: requirements, ADR decisions, acceptance criteria, implementation plan"}
+{"file": ".trellis/tasks/06-14-coding-agent-codegraph/research/codegraph-integration.md", "reason": "Research: codegraph architecture, SQLite schema, integration patterns"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling conventions for codegraph query failures and graceful degradation"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code quality standards for new CodegraphClient module"}

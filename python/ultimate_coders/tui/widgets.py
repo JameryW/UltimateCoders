@@ -1,8 +1,9 @@
 """Custom Textual widgets for the sandbox TUI.
 
 Widgets:
+- LogoHeader: ASCII art logo + version display
 - SubtaskTree: Tree view showing task -> subtasks with status icons
-- OutputLog: Scrollable log of execution output
+- ChatLog: Conversational-style scrollable log (user input + system output)
 - TaskInput: Input field for submitting new tasks
 - StatusBar: Compact status bar showing worker/backend/progress
 """
@@ -26,6 +27,47 @@ _STATUS_ICONS: dict[SubtaskStatus, str] = {
     SubtaskStatus.FAILED: "[bold red]❌[/]",
     SubtaskStatus.CONFLICTED: "[bold yellow]⚠️[/]",
 }
+
+
+def _get_version() -> str:
+    """Read version from ultimate_coders package, fallback to '0.1.0'."""
+    try:
+        from ultimate_coders import __version__
+        return __version__
+    except Exception:
+        return "0.1.0"
+
+
+class LogoHeader(Static):
+    """Compact ASCII art logo header with version number.
+
+    Renders a 2-line box-drawing 'UC' monogram alongside the
+    'UltimateCoders' name and version. Docked at the top of the screen.
+    """
+
+    DEFAULT_CSS = """
+    LogoHeader {
+        dock: top;
+        height: 3;
+        width: 100%;
+        background: $surface;
+        color: $text;
+        padding: 0 2;
+        content-align: left middle;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """Initialize the LogoHeader with the ASCII art + version."""
+        version = _get_version()
+        # Compact 2-line box-drawing "UC" monogram
+        logo = (
+            f"[bold cyan]╔═╗╦ ╦╔═╗╔═╗[/]   "
+            f"[bold]UltimateCoders[/] [dim]v{version}[/]\n"
+            f"[bold cyan]║  ╚╦╝║╣ ╚═╗[/]\n"
+            f"[bold cyan]╚═╝ ╩ ╚═╝╚═╝[/]"
+        )
+        super().__init__(logo, *args, **kwargs)
 
 
 class SubtaskTree(Tree):
@@ -112,16 +154,18 @@ class SubtaskTree(Tree):
         self.border_title = f"Subtasks [{completed}/{total} {pct}%]"
 
 
-class OutputLog(Static):
-    """Scrollable real-time output log.
+class ChatLog(Static):
+    """Conversational-style scrollable output log.
 
-    Shows timestamped log entries for decomposition, subtask execution,
-    Claude Code output, and completion messages. Auto-scrolls to bottom
-    but can be scrolled up to view history.
+    Shows timestamped entries in a chat-like format:
+    - User input: prefixed with '>' in cyan
+    - System output: plain timestamped messages
+
+    Auto-scrolls to bottom but can be scrolled up to view history.
     """
 
     DEFAULT_CSS = """
-    OutputLog {
+    ChatLog {
         height: 1fr;
         border: solid $primary;
         border-title-color: $text;
@@ -132,17 +176,32 @@ class OutputLog(Static):
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the OutputLog with an empty line buffer."""
+        """Initialize the ChatLog with an empty line buffer."""
         super().__init__("", *args, **kwargs)
         self._lines: list[str] = []
         self._max_lines: int = 2000
 
     def on_mount(self) -> None:
         """Set the border title when the widget is mounted."""
-        self.border_title = "Output Log"
+        self.border_title = "Chat"
+
+    def append_user_input(self, message: str) -> None:
+        """Append a user input entry with '>' prefix.
+
+        Args:
+            message: The user's input text.
+        """
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%H:%M:%S")
+        line = f"[dim][{ts}][/dim] [bold cyan]> [/bold cyan]{message}"
+        self._lines.append(line)
+        if len(self._lines) > self._max_lines:
+            self._lines = self._lines[-self._max_lines:]
+        self.update("\n".join(self._lines))
+        self.scroll_end(animate=False)
 
     def append(self, message: str, style: str = "") -> None:
-        """Append a timestamped log entry.
+        """Append a system output entry.
 
         Args:
             message: The log message text.
@@ -172,7 +231,7 @@ class OutputLog(Static):
 class TaskInput(Input):
     """Input field for submitting new task descriptions.
 
-    Renders with a prompt prefix and handles Enter key submission.
+    Renders with a '>' prompt prefix and dark background styling.
     """
 
     DEFAULT_CSS = """
@@ -181,13 +240,14 @@ class TaskInput(Input):
         height: 3;
         margin: 0 1;
         border: solid $primary;
+        background: $surface;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with a placeholder prompt."""
+        """Initialize the TaskInput with a '>' prompt placeholder."""
         super().__init__(
-            placeholder="Submit new task: type description and press Enter...",
+            placeholder="> type task description and press Enter...",
             *args,
             **kwargs,
         )

@@ -42,8 +42,12 @@ ultimate_coders/_uc_core*.so
 .env
 .env.local
 
-# Trellis (keep .trellis/ tracked except workspace)
-.trellis/workspace/
+# Trellis — track workspace/ and tasks/; ignore only runtime paths
+.trellis/.backup-*
+.trellis/worktrees/
+.trellis/.runtime/
+.trellis/.cache/
+.trellis/.template-hashes.json
 
 # Local data
 data/

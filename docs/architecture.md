@@ -639,6 +639,213 @@ Production: Docker/gVisor container sandbox implementing the `Sandbox` trait.
 
 ---
 
+## Sandbox Mode
+
+### Overview
+
+Sandbox mode is a deployment configuration where both the Orchestrator (task decomposition) and the Worker (subtask execution) use the `claude` CLI as the unified execution engine. No Python `LLMClient` is required -- the entire system runs with just the `claude` CLI and an `ANTHROPIC_API_KEY`.
+
+This mode is the recommended way to run UltimateCoders locally for development and testing. It requires zero external infrastructure (TiKV, Qdrant, PostgreSQL, NATS) thanks to in-memory fallbacks.
+
+### Architecture
+
+```
+User Task
+    |
+    v
+Orchestrator (sandbox_manager set, llm_client=None)
+    |
+    | decompose_task() ── DecomposeAdapter ──> claude -p "decompose..." --max-turns 1
+    |                                              |
+    |                                         Claude Code CLI
+    |                                              |
+    |                                         JSON subtask list
+    |                                              |
+    v                                         parse_decomposition_output()
+Subtask[]  <───────────────────────────────────────┘
+    |
+    v
+Worker (execution_mode="sandbox")
+    |
+    | _execute_in_sandbox() ── SandboxManager ──> ClaudeCodeAdapter ──> claude -p "<subtask>" --max-turns 20
+    |                                                    |
+    |                                               Claude Code CLI
+    |                                                    |
+    |                                               JSON AgentOutput
+    |                                                    |
+    v                                               parse_output()
+SubtaskResult  <─────────────────────────────────────────┘
+```
+
+### DecomposeAdapter
+
+Defined in `python/ultimate_coders/agent/sandbox.py`, `DecomposeAdapter` is an `AgentAdapter` specialized for task decomposition. Unlike `ClaudeCodeAdapter` (which executes coding subtasks with many turns), it is optimized for single-turn, strict JSON output.
+
+**Command construction:**
+
+```
+claude -p "<decomposition prompt>" --output-format json --max-turns 1 --dangerously-skip-permissions
+```
+
+**Output parsing** (`parse_decomposition_output()`):
+
+1. Extracts the text content from the Claude Code JSON response envelope (`{"result": "..."}`)
+2. Strips markdown code fences if present
+3. Parses the inner JSON array of subtask objects: `[{description, depends_on, file_constraints, expected_output}]`
+4. Returns `list[dict]` which the Orchestrator converts to `list[Subtask]`
+
+**Orchestrator integration** (`orchestrator.py`):
+
+When `sandbox_manager is not None and llm_client is None`, `decompose_task()` takes the sandbox path:
+
+1. Builds the shared decomposition prompt (system + user message)
+2. Combines them into a single prompt for `claude -p`
+3. Uses `DecomposeAdapter.build_request()` to construct the CLI invocation
+4. Executes via `SandboxManager._execute_subprocess()`
+5. Parses the result through `DecomposeAdapter.parse_output()` and `parse_decomposition_output()`
+6. Converts the parsed items into `Subtask` objects via `_parse_decomposition_items()`
+
+### ClaudeCodeAdapter
+
+Defined in `python/ultimate_coders/agent/sandbox.py`, `ClaudeCodeAdapter` is the `AgentAdapter` used by Workers for subtask execution.
+
+**Command construction:**
+
+```
+claude -p "<subtask prompt>" --output-format json --max-turns 20 --dangerously-skip-permissions
+```
+
+**Output parsing** (`parse_output()`):
+
+1. Handles timeout and non-zero exit codes as failures
+2. Parses the JSON output, extracting the summary from:
+   - `result` key (top-level string)
+   - `message` key
+   - `messages` array (last assistant message)
+3. Extracts token usage from the `usage` key (`input_tokens`, `output_tokens`, `total_cost_usd`)
+4. Returns an `AgentOutput` with summary, token usage, and success status
+
+### SandboxManager
+
+`SandboxManager` orchestrates sandbox creation, execution, and cleanup. It maintains a pool of `SandboxHandle` instances and delegates command construction/parsing to the configured `AgentAdapter`.
+
+Key methods:
+
+| Method | Description |
+|--------|-------------|
+| `acquire()` | Get a sandbox handle from the pool or create a new one |
+| `execute(prompt, working_dir)` | Execute a prompt via the adapter, return `AgentOutput` |
+| `release(handle)` | Return a sandbox handle to the pool |
+| `warm_up()` | Pre-warm sandbox instances for fast allocation |
+
+When `engine` is `None` (pure Python mode), `SandboxManager._execute_subprocess()` runs the CLI command as an `asyncio.create_subprocess_exec()` call with the configured environment variables and timeout.
+
+### SandboxConfig
+
+Configuration dataclass controlling sandbox behavior:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `agent` | `"claude-code"` | Agent adapter to use |
+| `backend` | `"subprocess"` | Isolation backend (`"subprocess"` or `"docker"`) |
+| `project_path` | `""` | Path to the project directory |
+| `api_key` | `None` | API key (falls back to `ANTHROPIC_API_KEY` env var) |
+| `max_cpu_seconds` | `3600` | Maximum CPU time per execution |
+| `max_memory_mb` | `8192` | Maximum memory in MB |
+| `max_output_bytes` | `50 MB` | Maximum output size |
+| `network` | `"full"` | Network access mode (`none`, `restricted`, `full`) |
+| `warm_pool_size` | `2` | Pre-warmed sandbox instances |
+| `env_vars` | `{}` | Additional environment variables |
+
+### Backend Options
+
+| Backend | Isolation | Use Case | Flag |
+|---------|-----------|----------|------|
+| `subprocess` | Process-level (shared filesystem) | Development, local testing | Default, or `--backend subprocess` |
+| `docker` | Container-level (isolated filesystem + network) | Production, strong isolation | `--backend docker` |
+
+The subprocess backend requires no additional setup. The Docker backend requires a pre-built sandbox image but provides filesystem and network isolation.
+
+### Entry Point: `scripts/run_sandbox.py`
+
+The sandbox mode entry script supports three operating modes:
+
+#### CLI Mode (default)
+
+```bash
+python scripts/run_sandbox.py "Fix the bug in main.rs"
+```
+
+Submits a task, prints the decomposition (subtask list with dependencies), executes subtasks via Claude Code, and prints the final result. The auto-execute loop polls every 2 seconds for pending subtasks whose dependencies are satisfied.
+
+#### TUI Mode (`--tui`)
+
+```bash
+python scripts/run_sandbox.py --tui "Fix the bug in main.rs"
+python scripts/run_sandbox.py --tui
+```
+
+Launches a Textual terminal interface with:
+
+- **Left**: ChatLog -- real-time event stream (task submitted, subtask started/completed/failed, tool calls)
+- **Right**: SubtaskTree -- hierarchical subtask progress with status indicators
+- **Bottom**: TaskInput -- text input field for submitting new tasks
+- **Status bar**: Worker ID, backend type, progress counter
+
+The TUI creates an Orchestrator + Worker internally and subscribes to the `TaskEventEmitter` for real-time updates.
+
+#### Dashboard Mode (`--dashboard`)
+
+```bash
+python scripts/run_sandbox.py --dashboard
+```
+
+Starts the FastAPI web Dashboard on `http://localhost:8080/dashboard/` with an auto-execute loop running in a background thread. The Dashboard provides the full monitoring UI (health, workers, tasks, scheduler, circuit breaker, event log) and interactive operations (task submit, pause/resume, circuit breaker reset).
+
+#### Infrastructure Flag (`--with-infra`)
+
+```bash
+python scripts/run_sandbox.py --with-infra "Implement auth"
+```
+
+Starts Docker Compose storage infrastructure (TiKV, Qdrant, PostgreSQL, NATS) before launching the selected mode, and stops it on exit. Without this flag, the system uses in-memory fallbacks for all storage -- zero external dependencies.
+
+### No-Infrastructure MVP
+
+Sandbox mode is designed for zero-dependency local deployment:
+
+| Component | With Infrastructure | Without (Default) |
+|-----------|--------------------|--------------------|
+| Short-term memory | TiKV | In-memory dict |
+| Long-term memory | Qdrant | In-memory dict |
+| Structured metadata | PostgreSQL | In-memory dict |
+| Messaging | NATS JetStream | In-process asyncio |
+| Engine health | Full 11-component status | Degraded/fallback status |
+
+The `Orchestrator` is constructed with `engine=None, llm_client=None, sandbox_manager=...`, and the `Worker` uses `execution_mode="sandbox"`. All storage operations fall back to in-memory implementations. The only external requirement is the `claude` CLI and an `ANTHROPIC_API_KEY`.
+
+### File Layout
+
+```
+python/ultimate_coders/agent/
+├── sandbox.py              # SandboxManager, SandboxConfig, AgentAdapter,
+│                           # DecomposeAdapter, ClaudeCodeAdapter, CodexAdapter,
+│                           # parse_decomposition_output()
+├── orchestrator.py         # decompose_task() sandbox path
+├── worker.py               # _execute_in_sandbox() (already existed)
+└── types.py                # Subtask, SubtaskStatus, WorkerInfo, etc.
+
+python/ultimate_coders/tui/
+├── __init__.py             # Public API: SandboxTUI
+├── app.py                  # Textual App with event listener + auto-execute loop
+└── widgets.py              # ChatLog, SubtaskTree, TaskInput, StatusBar, LogoHeader
+
+scripts/
+└── run_sandbox.py          # Entry point: CLI / TUI / Dashboard modes
+```
+
+---
+
 ## Dashboard
 
 ### Overview
