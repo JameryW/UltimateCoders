@@ -1,0 +1,4 @@
+{"file": "prd.md", "reason": "Full PRD with layout, logo design, chat-style interaction, and acceptance criteria"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Widget design conventions and component structure guidelines"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality standards for TUI code"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard/TUI architecture context and event system integration"}
