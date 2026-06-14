@@ -341,3 +341,36 @@ Integrated codegraph knowledge graph into the Worker agent: added CodegraphTool 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Sandbox Claude Code模式：文档补全
+
+**Date**: 2026-06-14
+**Task**: Sandbox Claude Code模式：文档补全
+**Branch**: `feat/dashboard-v2`
+
+### Summary
+
+补全sandbox模式架构文档：在architecture.md中新增Sandbox Mode章节，覆盖DecomposeAdapter/ClaudeCodeAdapter/run_sandbox.py三种模式/后端选项/--with-infra/零依赖MVP。所有AC已满足，任务归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `868fe9a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
