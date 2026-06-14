@@ -234,6 +234,9 @@ class TaskInput(TextArea):
     Uses TextArea instead of Input to support IME (Chinese/Japanese/Korean
     input methods). Styled as a single-line input with '>' prompt aesthetic.
     Submits on Enter key.
+
+    Implements a manual placeholder: shows dim prompt text when empty and
+    unfocused, clears it on focus, restores on blur if still empty.
     """
 
     DEFAULT_CSS = """
@@ -244,21 +247,56 @@ class TaskInput(TextArea):
         background: $surface;
         padding: 0 1;
     }
+
+    TaskInput.placeholder {
+        color: $text-disabled;
+    }
     """
 
+    _PLACEHOLDER = "> type task description and press Enter..."
+
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with a prompt-like placeholder."""
-        super().__init__(
-            "> type task description and press Enter...",
-            *args,
-            **kwargs,
-        )
+        """Initialize the TaskInput with placeholder text."""
+        TextArea.__init__(self, "", *args, **kwargs)
+        self._showing_placeholder: bool = False
+
+    def on_mount(self) -> None:
+        """Show placeholder on mount."""
+        self._show_placeholder()
+
+    def _show_placeholder(self) -> None:
+        """Display the placeholder text with dim styling."""
+        self.load_text(self._PLACEHOLDER)
+        self._showing_placeholder = True
+        self.add_class("placeholder")
+
+    def _hide_placeholder(self) -> None:
+        """Clear the placeholder text."""
+        if self._showing_placeholder:
+            self.load_text("")
+            self._showing_placeholder = False
+            self.remove_class("placeholder")
+
+    def _on_focus(self, event) -> None:
+        """Clear placeholder when the input is focused."""
+        if self._showing_placeholder:
+            self._hide_placeholder()
+
+    def _on_blur(self, event) -> None:
+        """Restore placeholder if the input is empty on blur."""
+        if not self.text.strip():
+            self._show_placeholder()
 
     def _on_key(self, event) -> None:
         """Handle Enter key to submit the task."""
         if event.key == "enter":
-            # Get the text content (strip the placeholder if untouched)
             text = self.text.strip()
+            # Don't submit the placeholder itself
+            if self._showing_placeholder or not text:
+                event.prevent_default()
+                event.stop()
+                return
+
             # Remove leading "> " if user typed it
             if text.startswith("> "):
                 text = text[2:].strip()
@@ -266,11 +304,10 @@ class TaskInput(TextArea):
                 text = text[1:].strip()
 
             if text:
-                # Post a custom event that SandboxTUI can handle
                 self.post_message(TaskSubmitted(text))
 
-            # Clear input for next task
-            self.load_text("")
+            # Clear input and show placeholder for next task
+            self._show_placeholder()
 
             event.prevent_default()
             event.stop()
