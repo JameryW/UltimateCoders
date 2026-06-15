@@ -12,9 +12,8 @@
  * - Input arrives as UTF-8 strings, not raw bytes
  * - IME composition window appears at the real cursor position
  */
-import React, {useState, useCallback, useRef} from 'react';
+import React, {useState, useCallback} from 'react';
 import {Box, Text} from 'ink';
-import stringWidth from 'string-width';
 import CjkTextInput from './CjkTextInput.js';
 import useCursor from '../hooks/useCursor.js';
 
@@ -47,23 +46,20 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const handleChange = useCallback(
     (newValue: string) => {
       setValue(newValue);
-      // After a change, the cursor is at the end of the input.
-      // Use stringWidth (not .length) for display-width-based column.
-      const displayWidth = stringWidth(newValue);
-      cursorDisplayOffsetRef.current = displayWidth;
-      // Position the real terminal cursor for IME composition.
-      // x offset: 2 chars for "> " border prefix + 2 for border padding = 4 display columns
-      setCursorPosition({x: 4 + displayWidth, y: 0});
-      showCursor();
+      // Cursor positioning is handled by onCursorMove callback from CjkTextInput,
+      // which correctly computes the display column based on the cursor's grapheme
+      // position (not just the end of the string). This avoids a one-frame flicker
+      // where handleChange would position the cursor at the end before onCursorMove
+      // corrects it to the actual position (e.g. after backspace/delete in the middle).
     },
-    [setCursorPosition, showCursor],
+    [],
   );
 
   // Called by CjkTextInput whenever the cursor moves (including arrow keys)
   const handleCursorMove = useCallback(
     (displayCol: number) => {
       cursorDisplayOffsetRef.current = displayCol;
-      setCursorPosition({x: 4 + displayCol, y: 0});
+      setCursorPosition({x: 5 + displayCol, y: 0});
       showCursor();
     },
     [setCursorPosition, showCursor],
