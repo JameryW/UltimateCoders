@@ -499,7 +499,10 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
             # Extract the text content from the response envelope
             if "result" in outer and isinstance(outer["result"], str):
                 text = outer["result"]
-                logger.info("parse_decomposition_output: extracted 'result' key (len=%d)", len(text))
+                logger.info(
+                    "parse_decomposition_output: extracted 'result' key (len=%d)",
+                    len(text),
+                )
     except json.JSONDecodeError:
         pass  # Not wrapped — proceed with raw text
 
@@ -516,7 +519,10 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
             if in_block:
                 json_lines.append(line)
         text = "\n".join(json_lines)
-        logger.info("parse_decomposition_output: stripped markdown fences, remaining len=%d", len(text))
+        logger.info(
+            "parse_decomposition_output: stripped markdown fences, remaining len=%d",
+            len(text),
+        )
 
     try:
         items = json.loads(text)
