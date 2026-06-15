@@ -175,11 +175,11 @@ class TestTaskInput:
     """Tests for TaskInput widget."""
 
     def test_task_input_instantiation(self):
-        """TaskInput can be instantiated as TextArea."""
+        """TaskInput can be instantiated with empty buffer."""
         from ultimate_coders.tui.widgets import TaskInput
 
         inp = TaskInput()
-        assert inp.text == ""
+        assert inp._buffer == ""
 
 
 # -- SandboxTUI tests (mocked, no actual Textual run) -------------------

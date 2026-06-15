@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Static, TextArea, Tree
+from textual.widgets import Static, Tree
 from textual.widgets._tree import TreeNode
 
 from ultimate_coders.agent.types import Subtask, SubtaskStatus
@@ -228,12 +228,15 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(TextArea):
-    """CJK-compatible input field for submitting new task descriptions.
+class TaskInput(Static):
+    """CJK-compatible input field using raw key capture.
 
-    Uses TextArea instead of Input to properly render CJK characters
-    (Chinese/Japanese/Korean) which the Input widget fails to display.
-    Submits on Enter, Shift+Enter for newline (not typical use case).
+    Textual's Input and TextArea widgets cannot render CJK characters
+    in some terminal environments. This widget captures key events
+    directly, manages an internal text buffer, and renders content
+    via Rich (which handles CJK correctly).
+
+    Submits on Enter.
     """
 
     DEFAULT_CSS = """
@@ -241,24 +244,77 @@ class TaskInput(TextArea):
         height: 3;
         margin: 1 1 0 1;
         border: solid $primary;
+        padding: 0 1;
+        background: $surface;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput."""
-        # Start with a dim hint line; user types over it
-        TextArea.__init__(self, "", *args, **kwargs)
+        """Initialize the TaskInput with an empty buffer."""
+        Static.__init__(self, "", *args, **kwargs)
+        self._buffer: str = ""
+
+    def _on_mount(self) -> None:
+        """Show prompt on mount."""
+        self._render_prompt()
+
+    def _render_prompt(self) -> None:
+        """Render the input with '>' prefix and cursor."""
+        if self._buffer:
+            content = f"[bold cyan]>[/bold cyan] {self._buffer}█"
+        else:
+            content = "[bold cyan]>[/bold cyan] [dim]type task description and press Enter...[/dim]█"
+        self.update(content)
 
     def _on_key(self, event) -> None:
-        """Handle Enter key to submit the task."""
-        if event.key == "enter":
-            text = self.text.strip()
+        """Handle key events for text input."""
+        key = event.key
+
+        # Enter: submit
+        if key == "enter":
+            text = self._buffer.strip()
             if text:
                 self.post_message(TaskSubmitted(text))
-            # Clear input for next task
-            self.load_text("")
+            self._buffer = ""
+            self._render_prompt()
             event.prevent_default()
             event.stop()
+            return
+
+        # Backspace: delete last char
+        if key == "backspace":
+            if self._buffer:
+                self._buffer = self._buffer[:-1]
+                self._render_prompt()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Delete: same as backspace
+        if key == "delete":
+            if self._buffer:
+                self._buffer = self._buffer[:-1]
+                self._render_prompt()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Ctrl+U: clear line
+        if key == "ctrl+u":
+            self._buffer = ""
+            self._render_prompt()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Printable character (includes CJK via IME)
+        character = event.character
+        if character and event.is_printable:
+            self._buffer += character
+            self._render_prompt()
+            event.prevent_default()
+            event.stop()
+            return
 
 
 class StatusBar(Static):
