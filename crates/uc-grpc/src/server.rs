@@ -26,6 +26,12 @@ pub struct TaskStore {
     events: Vec<uc_engine::AgentEventType>,
 }
 
+impl Default for TaskStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskStore {
     pub fn new() -> Self {
         Self {
@@ -35,11 +41,7 @@ impl TaskStore {
     }
 
     /// Submit a new task: create it, decompose into subtasks, store, and return.
-    pub fn submit_task(
-        &mut self,
-        description: String,
-        project_id: String,
-    ) -> uc_types::Task {
+    pub fn submit_task(&mut self, description: String, project_id: String) -> uc_types::Task {
         let task_id = uc_types::TaskId::new();
         let now = chrono::Utc::now();
 
@@ -64,10 +66,11 @@ impl TaskStore {
 
         // Record subtask events
         for st in &task.subtasks {
-            self.events.push(uc_engine::AgentEventType::SubtaskAssigned {
-                subtask_id: st.id.clone(),
-                worker_id: uc_types::WorkerId::new(),
-            });
+            self.events
+                .push(uc_engine::AgentEventType::SubtaskAssigned {
+                    subtask_id: st.id.clone(),
+                    worker_id: uc_types::WorkerId::new(),
+                });
         }
 
         let task_id_str = task.id.0.clone();
@@ -87,7 +90,9 @@ impl TaskStore {
 
     /// Pause a task. Only tasks in InProgress or Planning status can be paused.
     pub fn pause_task(&mut self, task_id: &str) -> Result<uc_types::Task, String> {
-        let task = self.tasks.get_mut(task_id)
+        let task = self
+            .tasks
+            .get_mut(task_id)
             .ok_or_else(|| format!("Task not found: {}", task_id))?;
         match &task.status {
             uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
@@ -104,7 +109,9 @@ impl TaskStore {
 
     /// Resume a task. Only tasks in Paused status can be resumed.
     pub fn resume_task(&mut self, task_id: &str) -> Result<uc_types::Task, String> {
-        let task = self.tasks.get_mut(task_id)
+        let task = self
+            .tasks
+            .get_mut(task_id)
             .ok_or_else(|| format!("Task not found: {}", task_id))?;
         match &task.status {
             uc_types::TaskStatus::Paused => {
@@ -166,7 +173,7 @@ fn decompose_task(parent_id: &uc_types::TaskId, description: &str) -> Vec<uc_typ
         // Strip leading numbers like "1. " or "1) "
         let cleaned = line
             .trim_start_matches(|c: char| c.is_numeric())
-            .trim_start_matches(|c: char| c == '.' || c == ')' || c == ' ')
+            .trim_start_matches(['.', ')', ' '])
             .to_string();
 
         let desc = if cleaned.is_empty() {
@@ -177,7 +184,10 @@ fn decompose_task(parent_id: &uc_types::TaskId, description: &str) -> Vec<uc_typ
 
         let st_id = uc_types::TaskId::new();
         let depends_on = if i > 0 {
-            prev_id.as_ref().map(|id| vec![id.clone()]).unwrap_or_default()
+            prev_id
+                .as_ref()
+                .map(|id| vec![id.clone()])
+                .unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -286,7 +296,12 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
     ) -> Result<Response<IndexRepoResponse>, Status> {
         let req = request.into_inner();
         let index_req: uc_types::IndexRequest = req.into();
-        let result = self.inner.engine.index_repo(index_req).await.map_err(to_status)?;
+        let result = self
+            .inner
+            .engine
+            .index_repo(index_req)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(result.into()))
     }
 
@@ -329,7 +344,12 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
             key,
             include_semantic: req.include_semantic,
         };
-        let result = self.inner.engine.read_memory(read_req).await.map_err(to_status)?;
+        let result = self
+            .inner
+            .engine
+            .read_memory(read_req)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(result.into()))
     }
 
@@ -385,7 +405,11 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         let req = request.into_inner();
         let key = memory_key_from_proto(&req.key_scope, &req.task_id, &req.project_id, &req.key)
             .map_err(Status::invalid_argument)?;
-        self.inner.engine.delete_memory(&key).await.map_err(to_status)?;
+        self.inner
+            .engine
+            .delete_memory(&key)
+            .await
+            .map_err(to_status)?;
         Ok(Response::new(DeleteMemoryResponse {}))
     }
 
@@ -423,10 +447,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         let mut store = self.inner.task_store.lock().await;
         let task = store.submit_task(req.description, req.project_id);
 
-        let subtask_protos: Vec<SubtaskProto> = task.subtasks.clone()
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let subtask_protos: Vec<SubtaskProto> =
+            task.subtasks.clone().into_iter().map(Into::into).collect();
 
         Ok(Response::new(SubmitTaskResponse {
             success: true,
@@ -478,9 +500,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         }))
     }
 
-    type WatchTaskStream = std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<TaskEvent, Status>> + Send>,
-    >;
+    type WatchTaskStream =
+        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<TaskEvent, Status>> + Send>>;
 
     async fn watch_task(
         &self,
@@ -629,7 +650,10 @@ mod tests {
 
         // Get the task back
         let retrieved = store.get_task(&task.id.0).unwrap();
-        assert_eq!(retrieved.description, "1. Analyze code\n2. Fix bug\n3. Write tests");
+        assert_eq!(
+            retrieved.description,
+            "1. Analyze code\n2. Fix bug\n3. Write tests"
+        );
     }
 
     #[test]
@@ -728,17 +752,38 @@ mod tests {
 
     #[test]
     fn task_status_to_proto_conversion() {
-        assert_eq!(task_status_to_proto(&uc_types::TaskStatus::Created), "Created");
-        assert_eq!(task_status_to_proto(&uc_types::TaskStatus::InProgress), "InProgress");
-        assert_eq!(task_status_to_proto(&uc_types::TaskStatus::Paused), "Paused");
-        assert_eq!(task_status_to_proto(&uc_types::TaskStatus::Completed), "Completed");
+        assert_eq!(
+            task_status_to_proto(&uc_types::TaskStatus::Created),
+            "Created"
+        );
+        assert_eq!(
+            task_status_to_proto(&uc_types::TaskStatus::InProgress),
+            "InProgress"
+        );
+        assert_eq!(
+            task_status_to_proto(&uc_types::TaskStatus::Paused),
+            "Paused"
+        );
+        assert_eq!(
+            task_status_to_proto(&uc_types::TaskStatus::Completed),
+            "Completed"
+        );
     }
 
     #[test]
     fn subtask_status_to_proto_conversion() {
         use crate::conversions::subtask_status_to_proto;
-        assert_eq!(subtask_status_to_proto(&uc_types::SubtaskStatus::Pending), "Pending");
-        assert_eq!(subtask_status_to_proto(&uc_types::SubtaskStatus::InProgress), "InProgress");
-        assert_eq!(subtask_status_to_proto(&uc_types::SubtaskStatus::Conflicted), "Conflicted");
+        assert_eq!(
+            subtask_status_to_proto(&uc_types::SubtaskStatus::Pending),
+            "Pending"
+        );
+        assert_eq!(
+            subtask_status_to_proto(&uc_types::SubtaskStatus::InProgress),
+            "InProgress"
+        );
+        assert_eq!(
+            subtask_status_to_proto(&uc_types::SubtaskStatus::Conflicted),
+            "Conflicted"
+        );
     }
 }

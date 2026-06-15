@@ -7,8 +7,8 @@ use uc_types::{
     ComponentHealth, HealthStatus, IndexRequest, IndexResponse, MemoryContent, MemoryEntry,
     MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest, MemorySearchRequest,
     MemorySearchResponse, MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
-    RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult, SearchResultItem,
-    Subtask, SubtaskStatus, Task, TaskStatus,
+    RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult, SearchResultItem, Subtask,
+    SubtaskStatus, Task, TaskStatus,
 };
 
 // ── Import generated proto types ──────────────────────────
@@ -632,76 +632,132 @@ impl From<Subtask> for SubtaskProto {
 impl From<uc_engine::AgentEventType> for TaskEventProto {
     fn from(event: uc_engine::AgentEventType) -> Self {
         let (event_type, task_id, subtask_id, data) = match event {
-            uc_engine::AgentEventType::TaskCreated { task_id, description } => (
+            uc_engine::AgentEventType::TaskCreated {
+                task_id,
+                description,
+            } => (
                 "task_submitted".to_string(),
                 task_id.0,
                 String::new(),
-                vec![("description".to_string(), description)].into_iter().collect(),
+                vec![("description".to_string(), description)]
+                    .into_iter()
+                    .collect(),
             ),
-            uc_engine::AgentEventType::SubtaskAssigned { subtask_id, worker_id } => (
+            uc_engine::AgentEventType::SubtaskAssigned {
+                subtask_id,
+                worker_id,
+            } => (
                 "subtask_assigned".to_string(),
                 String::new(),
                 subtask_id.0,
-                vec![("worker_id".to_string(), worker_id.0)].into_iter().collect(),
+                vec![("worker_id".to_string(), worker_id.0)]
+                    .into_iter()
+                    .collect(),
             ),
-            uc_engine::AgentEventType::SubtaskStarted { subtask_id, worker_id } => (
+            uc_engine::AgentEventType::SubtaskStarted {
+                subtask_id,
+                worker_id,
+            } => (
                 "subtask_started".to_string(),
                 String::new(),
                 subtask_id.0,
-                vec![("worker_id".to_string(), worker_id.0)].into_iter().collect(),
+                vec![("worker_id".to_string(), worker_id.0)]
+                    .into_iter()
+                    .collect(),
             ),
-            uc_engine::AgentEventType::ToolInvoked { subtask_id, tool_name, tool_input } => (
+            uc_engine::AgentEventType::ToolInvoked {
+                subtask_id,
+                tool_name,
+                tool_input,
+            } => (
                 "tool_call".to_string(),
                 String::new(),
                 subtask_id.0,
                 vec![
                     ("tool_name".to_string(), tool_name),
                     ("tool_input".to_string(), tool_input),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
-            uc_engine::AgentEventType::ToolResult { subtask_id, tool_output, success } => (
+            uc_engine::AgentEventType::ToolResult {
+                subtask_id,
+                tool_output,
+                success,
+            } => (
                 "tool_result".to_string(),
                 String::new(),
                 subtask_id.0,
                 vec![
                     ("tool_output".to_string(), tool_output),
                     ("success".to_string(), success.to_string()),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
-            uc_engine::AgentEventType::FileModified { subtask_id, file_path, diff } => (
+            uc_engine::AgentEventType::FileModified {
+                subtask_id,
+                file_path,
+                diff,
+            } => (
                 "file_modified".to_string(),
                 String::new(),
                 subtask_id.0,
                 vec![
                     ("file_path".to_string(), file_path),
                     ("diff".to_string(), diff),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
-            uc_engine::AgentEventType::SubtaskCompleted { subtask_id, summary, success } => (
+            uc_engine::AgentEventType::SubtaskCompleted {
+                subtask_id,
+                summary,
+                success,
+            } => (
                 "subtask_completed".to_string(),
                 String::new(),
                 subtask_id.0,
                 vec![
                     ("summary".to_string(), summary),
                     ("success".to_string(), success.to_string()),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
-            uc_engine::AgentEventType::SubtaskFailed { subtask_id, error, recoverable } => (
+            uc_engine::AgentEventType::SubtaskFailed {
+                subtask_id,
+                error,
+                recoverable,
+            } => (
                 "subtask_failed".to_string(),
                 String::new(),
                 subtask_id.0,
                 vec![
                     ("error".to_string(), error),
                     ("recoverable".to_string(), recoverable.to_string()),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
-            uc_engine::AgentEventType::CheckpointCreated { task_id, snapshot_id, .. } => (
+            uc_engine::AgentEventType::CheckpointCreated {
+                task_id,
+                snapshot_id,
+                ..
+            } => (
                 "checkpoint_created".to_string(),
                 task_id.0,
                 String::new(),
-                vec![("snapshot_id".to_string(), snapshot_id)].into_iter().collect(),
+                vec![("snapshot_id".to_string(), snapshot_id)]
+                    .into_iter()
+                    .collect(),
             ),
-            uc_engine::AgentEventType::EditIntent { worker_id, file_path, edit_type, regions } => (
+            uc_engine::AgentEventType::EditIntent {
+                worker_id,
+                file_path,
+                edit_type,
+                regions,
+            } => (
                 "edit_intent".to_string(),
                 String::new(),
                 String::new(),
@@ -710,7 +766,9 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                     ("file_path".to_string(), file_path),
                     ("edit_type".to_string(), edit_type),
                     ("regions".to_string(), format!("{:?}", regions)),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
             ),
         };
 
@@ -718,7 +776,11 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
             timestamp: chrono::Utc::now().to_rfc3339(),
             r#type: event_type,
             task_id,
-            subtask_id: if subtask_id.is_empty() { None } else { Some(subtask_id) },
+            subtask_id: if subtask_id.is_empty() {
+                None
+            } else {
+                Some(subtask_id)
+            },
             data,
         }
     }
