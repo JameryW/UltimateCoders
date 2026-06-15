@@ -28,8 +28,6 @@ const TaskInput: React.FC<TaskInputProps> = ({
 }) => {
   const [value, setValue] = useState('');
   const {setCursorPosition, showCursor} = useCursor();
-  // Track the display-width offset of cursor within the input field
-  const cursorDisplayOffsetRef = useRef(0);
 
   const handleSubmit = useCallback(
     (submittedValue: string) => {
@@ -58,7 +56,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
   // Called by CjkTextInput whenever the cursor moves (including arrow keys)
   const handleCursorMove = useCallback(
     (displayCol: number) => {
-      cursorDisplayOffsetRef.current = displayCol;
+      // x offset: 1 (marginX) + 1 (left border │) + 1 (paddingX) + 2 ("> " prefix) = 5 display columns
       setCursorPosition({x: 5 + displayCol, y: 0});
       showCursor();
     },
