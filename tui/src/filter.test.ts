@@ -1,22 +1,6 @@
 import {describe, it, expect} from 'vitest';
-import {createSystemMessage, type ChatMessage} from './components/ChatLog.js';
-
-// Replicate filter logic from ChatLog component
-type EventFilter = 'all' | 'task' | 'subtask' | 'tool' | 'error';
-
-function filterMessages(messages: ChatMessage[], filter: EventFilter): ChatMessage[] {
-  if (filter === 'all') return messages;
-  return messages.filter((msg) => {
-    if (msg.isUser) return true;
-    if (!msg.eventType) return true;
-    const et = msg.eventType;
-    if (filter === 'task') return et.startsWith('task_');
-    if (filter === 'subtask') return et.startsWith('subtask_');
-    if (filter === 'tool') return et.startsWith('tool_');
-    if (filter === 'error') return et === 'subtask_failed' || et === 'task_failed';
-    return true;
-  });
-}
+import {filterMessages, createSystemMessage, type ChatMessage} from './components/ChatLog.js';
+import type {EventFilter} from './reducer.js';
 
 function msg(isUser: boolean, eventType?: string): ChatMessage {
   return {
@@ -28,7 +12,7 @@ function msg(isUser: boolean, eventType?: string): ChatMessage {
   };
 }
 
-describe('ChatLog filter logic', () => {
+describe('ChatLog filterMessages (pure function)', () => {
   it('all filter shows all messages', () => {
     const messages = [
       msg(false, 'task_submitted'),
@@ -101,6 +85,12 @@ describe('ChatLog filter logic', () => {
     const messages = [msg(false)]; // no eventType
     for (const filter of ['all', 'task', 'subtask', 'tool', 'error'] as EventFilter[]) {
       expect(filterMessages(messages, filter)).toHaveLength(1);
+    }
+  });
+
+  it('empty messages returns empty array', () => {
+    for (const filter of ['all', 'task', 'subtask', 'tool', 'error'] as EventFilter[]) {
+      expect(filterMessages([], filter)).toHaveLength(0);
     }
   });
 });

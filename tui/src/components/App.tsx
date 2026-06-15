@@ -12,9 +12,15 @@
  *   │ Worker: grpc │ Backend: grpc │ Progress: 0/3           │
  *   ╰─────────────────────────────────────────────────────────╯
  *
+ * Focus model (v2):
+ *   focusedArea: which area receives keyboard events (input | chat | subtask)
+ *   activeMainPane: which pane occupies the main area in narrow mode (chat | subtask)
+ *   Input is always visible. Narrow mode shows activeMainPane in the main area.
+ *   Shift+Tab cycles focus. Ctrl+W swaps the main pane. Esc returns to main/input.
+ *
  * State management: useReducer (TuiState + tuiReducer).
  * All state transitions go through dispatch — no setState in render.
- * Keyboard: global useInput with Tab pane switching.
+ * Keyboard: global useInput, shortcuts defined in keymap.ts.
  *
  * Scroll offset is managed locally by ChatLog because it must be
  * relative to the filtered message list. The reducer tracks followLog
@@ -36,15 +42,24 @@ import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
 import useGrpcClient from '../hooks/useGrpcClient.js';
 import useTaskEvents from '../hooks/useTaskEvents.js';
-import {tuiReducer, INITIAL_TUI_STATE, type SelectedPane, type TuiAction, nextEventFilter, type EventFilter} from '../reducer.js';
+import {
+  tuiReducer,
+  INITIAL_TUI_STATE,
+  type TuiAction,
+  type FocusedArea,
+  type ActiveMainPane,
+  nextEventFilter,
+} from '../reducer.js';
 import {formatTaskEvents} from '../formatters.js';
 import {getSymbols} from '../symbols.js';
+import {getCommandsForArea} from '../keymap.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
 import {mapSubtaskStatus} from '../grpc/types.js';
 
 // ── Constants ───────────────────────────────────────────────
 
 const VERSION = '0.1.0';
+const SUBMIT_TIMEOUT_MS = 30_000;
 
 // ── App Component ───────────────────────────────────────────
 
@@ -63,6 +78,10 @@ const App: React.FC = () => {
     pauseTask,
     resumeTask,
     client,
+    lastError: grpcError,
+    retryCount,
+    nextRetryAt,
+    serverAddr,
   } = useGrpcClient();
 
   // ── Task events hook (receives stream updates) ──────────
@@ -78,6 +97,9 @@ const App: React.FC = () => {
 
   // ── Track processed events to avoid re-formatting ───────
   const processedEventCount = useRef(0);
+
+  // ── Submit timeout ref ──────────────────────────────────
+  const submitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Side effect: stream events → chat messages ─────────
   useEffect(() => {
@@ -109,7 +131,14 @@ const App: React.FC = () => {
       prev.length !== streamSubtasks.length ||
       streamSubtasks.some((st, i) => {
         const p = prev[i];
-        return !p || p.id !== st.id || p.status !== st.status || p.assignedWorker !== st.assignedWorker;
+        if (!p) return true;
+        if (p.id !== st.id || p.status !== st.status || p.assignedWorker !== st.assignedWorker || p.errorSummary !== st.errorSummary) return true;
+        // Compare dependsOn arrays
+        const dA = p.dependsOn ?? [];
+        const dB = st.dependsOn ?? [];
+        if (dA.length !== dB.length) return true;
+        if (dA.some((d, j) => d !== dB[j])) return true;
+        return false;
       });
 
     if (changed) {
@@ -123,6 +152,9 @@ const App: React.FC = () => {
     return () => {
       for (const tid of state.offlineTimerIds) {
         clearTimeout(tid);
+      }
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current);
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -141,6 +173,7 @@ const App: React.FC = () => {
         description: st.description,
         status: mapSubtaskStatus(st.status),
         assignedWorker: st.assignedWorker,
+        dependsOn: st.dependsOn,
       }));
       dispatch({type: 'SET_SUBTASKS', subtasks: items});
       // Also update the stream hook's internal map
@@ -173,6 +206,9 @@ const App: React.FC = () => {
   // ── Handle task submission ─────────────────────────────
   const handleSubmit = useCallback(
     async (description: string) => {
+      // Prevent duplicate submission
+      if (state.isSubmitting) return;
+
       // Add user message
       addMessage(createUserMessage(description));
       dispatch({type: 'ADD_INPUT_HISTORY', text: description});
@@ -185,14 +221,10 @@ const App: React.FC = () => {
 
       // Check if gRPC is connected
       if (connectionState !== 'connected' || !client) {
+        // Single offline message (dedup from previous 2-message pattern)
         addMessage(
-          createSystemMessage('gRPC server not connected. Using offline mode.', {
+          createSystemMessage('gRPC server not connected. Using offline mode. Ctrl+R to reconnect.', {
             color: 'yellow',
-          }),
-        );
-        addMessage(
-          createSystemMessage('Press Ctrl+R to reconnect, or start the server with: cargo run -p uc-grpc-server', {
-            dim: true,
           }),
         );
 
@@ -206,6 +238,14 @@ const App: React.FC = () => {
         );
         return;
       }
+
+      // Mark submitting
+      dispatch({type: 'SET_SUBMITTING', submitting: true});
+
+      // Safety timeout: unlock after SUBMIT_TIMEOUT_MS
+      submitTimeoutRef.current = setTimeout(() => {
+        dispatch({type: 'SET_SUBMITTING', submitting: false});
+      }, SUBMIT_TIMEOUT_MS);
 
       // Clear previous task state
       clearStreamTask();
@@ -222,6 +262,13 @@ const App: React.FC = () => {
         description,
         projectId: 'default',
       });
+
+      // Clear timeout and unlock
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current);
+        submitTimeoutRef.current = null;
+      }
+      dispatch({type: 'SET_SUBMITTING', submitting: false});
 
       if (response && response.success) {
         dispatch({type: 'SET_ACTIVE_TASK', taskId: response.taskId});
@@ -252,50 +299,76 @@ const App: React.FC = () => {
         );
       }
     },
-    [connectionState, client, addMessage, grpcSubmitTask, clearStreamTask, applySubmitResponse, updateSubtask, state.offlineTimerIds],
+    [connectionState, client, addMessage, grpcSubmitTask, clearStreamTask, applySubmitResponse, updateSubtask, state.offlineTimerIds, state.isSubmitting],
   );
 
   // ── Global keyboard handler ────────────────────────────
   useInput((input, key) => {
-    // ── Global shortcuts (work in any pane) ────────────
+    // ── Global shortcuts (work in any focus area) ────────
     if (key.ctrl && (input === 'c' || input === 'q')) {
       exit();
       return;
     }
 
+    // Ctrl+R: reconnect gRPC with feedback
     if (key.ctrl && input === 'r') {
+      addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
       reconnect();
       return;
     }
 
-    // ── Tab: cycle panes ────────────────────────────────
-    if (key.tab && !key.shift) {
-      const panes: SelectedPane[] = ['input', 'chat', 'subtask'];
-      const next = panes[(panes.indexOf(state.selectedPane) + 1) % panes.length];
-      dispatch({type: 'SET_SELECTED_PANE', pane: next});
+    // Ctrl+P: pause/resume task (global)
+    if (key.ctrl && input === 'p') {
+      if (state.activeTaskId) {
+        const hasInProgress = state.subtasks.some((s) => s.status === 'in_progress');
+        if (hasInProgress) {
+          pauseTask({taskId: state.activeTaskId});
+          addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
+        } else {
+          resumeTask({taskId: state.activeTaskId});
+          addMessage(createSystemMessage(`Resuming task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'cyan'}));
+        }
+      }
       return;
     }
 
-    // ── Pane-specific shortcuts ─────────────────────────
-    switch (state.selectedPane) {
-      case 'input': {
-        // Ctrl+P: pause/resume task
-        if (key.ctrl && input === 'p') {
-          if (state.activeTaskId) {
-            const hasInProgress = state.subtasks.some((s) => s.status === 'in_progress');
-            if (hasInProgress) {
-              pauseTask({taskId: state.activeTaskId});
-              addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
-            } else {
-              resumeTask({taskId: state.activeTaskId});
-              addMessage(createSystemMessage(`Resuming task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'cyan'}));
-            }
-          }
-          return;
-        }
-        break;
-      }
+    // Ctrl+F: cycle event filter (global)
+    if (key.ctrl && input === 'f') {
+      dispatch({type: 'SET_EVENT_FILTER', filter: nextEventFilter(state.eventFilter)});
+      return;
+    }
 
+    // Ctrl+W: swap activeMainPane (chat↔subtask)
+    if (key.ctrl && input === 'w') {
+      dispatch({type: 'SWAP_MAIN_PANE'});
+      return;
+    }
+
+    // Shift+Tab: cycle focus (input→chat→subtask→input)
+    if (key.shift && key.tab) {
+      dispatch({type: 'CYCLE_FOCUS'});
+      return;
+    }
+
+    // Esc: context-dependent escape
+    if (key.escape) {
+      // Close help overlay first if open
+      if (state.helpOverlayOpen) {
+        dispatch({type: 'TOGGLE_HELP_OVERLAY'});
+        return;
+      }
+      dispatch({type: 'ESC_TO_MAIN'});
+      return;
+    }
+
+    // ?: toggle help overlay (when help is open, always close; otherwise only in non-input focus)
+    if (input === '?' && !key.ctrl && !key.meta && (state.helpOverlayOpen || state.focusedArea !== 'input')) {
+      dispatch({type: 'TOGGLE_HELP_OVERLAY'});
+      return;
+    }
+
+    // ── Focus-area-specific shortcuts ────────────────────
+    switch (state.focusedArea) {
       case 'chat': {
         // PageUp: scroll up
         if (key.pageUp) {
@@ -317,28 +390,85 @@ const App: React.FC = () => {
           dispatch({type: 'SCROLL_DOWN', lines: 1});
           return;
         }
+        // Home: jump to top (disable follow) — use Ctrl+Home or Ctrl+A
+        if ((key as any).home) {
+          dispatch({type: 'SCROLL_UP', lines: state.messages.length});
+          return;
+        }
+        // End: jump to bottom (re-enable follow) — use Ctrl+End or Ctrl+E
+        if ((key as any).end) {
+          dispatch({type: 'SET_FOLLOW_LOG', follow: true});
+          return;
+        }
         // Ctrl+L: clear log
         if (key.ctrl && input === 'l') {
           dispatch({type: 'CLEAR_LOG'});
-          return;
-        }
-        // Ctrl+F: cycle event filter
-        if (key.ctrl && input === 'f') {
-          dispatch({type: 'SET_EVENT_FILTER', filter: nextEventFilter(state.eventFilter)});
           return;
         }
         break;
       }
 
       case 'subtask': {
-        // Reserved for future navigation
+        // Up arrow: select previous subtask
+        if (key.upArrow) {
+          const nextIdx = state.selectedSubtaskIndex <= 0
+            ? state.subtasks.length - 1
+            : state.selectedSubtaskIndex - 1;
+          dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+          return;
+        }
+        // Down arrow: select next subtask
+        if (key.downArrow) {
+          const nextIdx = state.subtasks.length === 0
+            ? -1
+            : (state.selectedSubtaskIndex + 1) % state.subtasks.length;
+          dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+          return;
+        }
+        // Enter: toggle subtask detail
+        if (key.return) {
+          dispatch({type: 'TOGGLE_SUBTASK_DETAIL'});
+          return;
+        }
+        // Ctrl+T: retry subtask (placeholder)
+        if (key.ctrl && input === 't') {
+          if (state.selectedSubtaskId) {
+            dispatch({type: 'RETRY_SUBTASK', subtaskId: state.selectedSubtaskId});
+          }
+          return;
+        }
+        // Home: jump to first subtask
+        if ((key as any).home) {
+          if (state.subtasks.length > 0) {
+            dispatch({type: 'SELECT_SUBTASK', index: 0});
+          }
+          return;
+        }
+        // End: jump to last subtask
+        if ((key as any).end) {
+          if (state.subtasks.length > 0) {
+            dispatch({type: 'SELECT_SUBTASK', index: state.subtasks.length - 1});
+          }
+          return;
+        }
+        // f: jump to next failed subtask
+        if (input === 'f' && !key.ctrl && !key.meta) {
+          dispatch({type: 'JUMP_TO_FAILED_SUBTASK'});
+          return;
+        }
+        break;
+      }
+
+      case 'input': {
+        // Tab: handled by CjkTextInput (indentation)
+        // Shift+Tab: handled above (cycle focus)
+        // Other input-area keys are handled by CjkTextInput
         break;
       }
     }
   });
 
   // ── Derive display info ────────────────────────────────
-  const serverAddr = process.env.GRPC_SERVER_ADDR ?? 'localhost:50051';
   const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
   const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
   const mode = connectionState === 'connected' ? 'grpc live' : 'offline demo';
@@ -350,7 +480,7 @@ const App: React.FC = () => {
   // ── Responsive layout ──────────────────────────────────
   // >=100 cols: dual pane (Chat + Subtasks)
   // 80-99 cols: dual pane but compressed right
-  // <80 cols: single pane, Tab switches
+  // <80 cols: single pane, shows activeMainPane
   const isNarrow = terminalWidth < 80;
   const isCompressed = terminalWidth >= 80 && terminalWidth < 100;
   const showDualPane = !isNarrow;
@@ -358,11 +488,54 @@ const App: React.FC = () => {
   // SubtaskTree max width based on terminal
   const subtaskMaxWidth = isCompressed ? 25 : 40;
 
-  // In narrow mode, only show the selected pane
-  const showChat = showDualPane || state.selectedPane === 'chat';
-  const showSubtasks = showDualPane || state.selectedPane === 'subtask';
+  // FIX: In narrow mode, always show the activeMainPane (not focusedArea)
+  // This fixes the blank screen when focusedArea=input on narrow terminals
+  const showChat = showDualPane || state.activeMainPane === 'chat';
+  const showSubtasks = showDualPane || state.activeMainPane === 'subtask';
+
+  // ── Subtask detail (replaces main area when open) ──────
+  const showSubtaskDetail = state.subtaskDetailOpen && state.selectedSubtaskId !== null;
+  const selectedSubtask = showSubtaskDetail
+    ? state.subtasks.find((s) => s.id === state.selectedSubtaskId)
+    : null;
 
   // ── Render ─────────────────────────────────────────────
+  // Help overlay: replaces entire UI
+  if (state.helpOverlayOpen) {
+    const commands = getCommandsForArea(state.focusedArea);
+    const globalCmds = commands.filter((c) => c.global);
+    const areaCmds = commands.filter((c) => !c.global);
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
+        <Box marginBottom={1}>
+          <Text bold color="cyan">{'Keyboard Shortcuts'}</Text>
+          <Text dimColor>{' (? or Esc to close)'}</Text>
+          <Text dimColor>{` — Focus: ${state.focusedArea}`}</Text>
+        </Box>
+        <Text bold>{'Global:'}</Text>
+        {globalCmds.map((cmd) => (
+          <Box key={cmd.id}>
+            <Text color="yellow">{`  ${cmd.key.padEnd(14)}`}</Text>
+            <Text>{cmd.label}</Text>
+          </Box>
+        ))}
+        {areaCmds.length > 0 && (
+          <>
+            <Box marginTop={1}>
+              <Text bold>{`${state.focusedArea.charAt(0).toUpperCase() + state.focusedArea.slice(1)}:`}</Text>
+            </Box>
+            {areaCmds.map((cmd) => (
+              <Box key={cmd.id}>
+                <Text color="yellow">{`  ${cmd.key.padEnd(14)}`}</Text>
+                <Text>{cmd.label}</Text>
+              </Box>
+            ))}
+          </>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
       {/* ── Header ─────────────────────────────────────── */}
@@ -390,36 +563,96 @@ const App: React.FC = () => {
         )}
       </Box>
 
-      {/* ── Main area: Chat + Subtasks (responsive) ────── */}
-      <Box flexDirection="row" flexGrow={1}>
-        {showChat && (
-          <ChatLog
-            messages={state.messages}
-            followLog={state.followLog}
-            visibleLines={visibleLines}
-            isFocused={state.selectedPane === 'chat'}
-            eventFilter={state.eventFilter}
-            scrollCommand={scrollCommand}
-            onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
-          />
-        )}
-        {showDualPane && showChat && showSubtasks && (
-          /* Vertical separator */
-          <Box flexDirection="column" justifyContent="center">
-            <Text color="gray">{(S.verticalSep + '\n').repeat(visibleLines) + S.verticalSep}</Text>
+      {/* ── Main area: Chat + Subtasks or Subtask Detail (responsive) ── */}
+      {showSubtaskDetail && selectedSubtask ? (
+        /* Subtask detail replaces the entire main area */
+        <Box flexDirection="column" flexGrow={2} paddingX={1}>
+          <Box marginBottom={1}>
+            <Text bold color="cyan">{'Subtask Detail'}</Text>
+            <Text dimColor>{' Esc to close'}</Text>
           </Box>
-        )}
-        {showSubtasks && (
-          <SubtaskTree
-            subtasks={state.subtasks}
-            taskDescription={task?.description ?? 'No task'}
-            progress={state.progress}
-            isFocused={state.selectedPane === 'subtask'}
-            maxWidth={subtaskMaxWidth}
-            symbols={S}
-          />
-        )}
-      </Box>
+          <Text bold>{`${selectedSubtask.index}. ${selectedSubtask.description}`}</Text>
+          <Box marginTop={1}>
+            <Text dimColor>{'Status: '}</Text>
+            <Text color={selectedSubtask.status === 'completed' ? 'green' : selectedSubtask.status === 'failed' ? 'red' : selectedSubtask.status === 'in_progress' ? 'cyan' : undefined}>
+              {selectedSubtask.status}
+            </Text>
+          </Box>
+          {selectedSubtask.assignedWorker && (
+            <Box>
+              <Text dimColor>{'Worker: '}</Text>
+              <Text>{selectedSubtask.assignedWorker}</Text>
+            </Box>
+          )}
+          {selectedSubtask.dependsOn && selectedSubtask.dependsOn.length > 0 && (
+            <Box>
+              <Text dimColor>{'Depends on: '}</Text>
+              <Text>{selectedSubtask.dependsOn.map((id) => id.slice(0, 8)).join(', ')}</Text>
+            </Box>
+          )}
+          {selectedSubtask.errorSummary && (
+            <Box marginTop={1}>
+              <Text color="red" bold>{'Error: '}</Text>
+              <Text color="red">{selectedSubtask.errorSummary}</Text>
+            </Box>
+          )}
+          {selectedSubtask.status === 'failed' && (
+            <Box>
+              <Text color="red">{'✗ Ctrl+T retry (coming soon) · f jump to next failed'}</Text>
+            </Box>
+          )}
+          {/* Recent events related to this subtask */}
+          {(() => {
+            const relatedEvents = state.messages
+              .filter((m) => !m.isUser && m.eventType && m.text.includes(selectedSubtask.id.slice(0, 8)))
+              .slice(-5);
+            if (relatedEvents.length === 0) return null;
+            return (
+              <Box flexDirection="column" marginTop={1}>
+                <Text dimColor bold>{'Recent events:'}</Text>
+                {relatedEvents.map((ev) => (
+                  <Box key={ev.id}>
+                    <Text dimColor>{`[${ev.timestamp}] `}</Text>
+                    <Text dimColor>{ev.text.slice(0, 60)}</Text>
+                  </Box>
+                ))}
+              </Box>
+            );
+          })()}
+        </Box>
+      ) : (
+        <Box flexDirection="row" flexGrow={1}>
+          {showChat && (
+            <ChatLog
+              messages={state.messages}
+              followLog={state.followLog}
+              visibleLines={visibleLines}
+              isFocused={state.focusedArea === 'chat'}
+              eventFilter={state.eventFilter}
+              scrollCommand={scrollCommand}
+              unreadCount={state.unreadCount}
+              onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
+            />
+          )}
+          {showDualPane && showChat && showSubtasks && (
+            /* Vertical separator */
+            <Box flexDirection="column" justifyContent="center">
+              <Text color="gray">{(S.verticalSep + '\n').repeat(visibleLines) + S.verticalSep}</Text>
+            </Box>
+          )}
+          {showSubtasks && (
+            <SubtaskTree
+              subtasks={state.subtasks}
+              taskDescription={task?.description ?? 'No task'}
+              progress={state.progress}
+              isFocused={state.focusedArea === 'subtask'}
+              maxWidth={subtaskMaxWidth}
+              symbols={S}
+              selectedIndex={state.selectedSubtaskIndex}
+            />
+          )}
+        </Box>
+      )}
 
       {/* ── Separator ──────────────────────────────────── */}
       <Box>
@@ -429,10 +662,12 @@ const App: React.FC = () => {
       {/* ── Input ──────────────────────────────────────── */}
       <TaskInput
         onSubmit={handleSubmit}
-        isFocused={state.selectedPane === 'input'}
+        isFocused={state.focusedArea === 'input'}
+        isSubmitting={state.isSubmitting}
         inputHistory={state.inputHistory}
         historyIndex={state.historyIndex}
         onHistoryIndexChange={(index: number) => dispatch({type: 'SET_HISTORY_INDEX', index})}
+        isOffline={connectionState !== 'connected'}
       />
 
       {/* ── Status bar ─────────────────────────────────── */}
@@ -444,11 +679,14 @@ const App: React.FC = () => {
         connectionState={connectionState}
         isStreaming={isStreaming}
         activeTaskId={state.activeTaskId}
-        lastError={state.lastError}
+        lastError={grpcError}
         mode={mode}
-        selectedPane={state.selectedPane}
+        focusedArea={state.focusedArea}
+        activeMainPane={state.activeMainPane}
         eventFilter={state.eventFilter}
         terminalWidth={terminalWidth}
+        retryCount={retryCount}
+        nextRetryAt={nextRetryAt}
       />
     </Box>
   );

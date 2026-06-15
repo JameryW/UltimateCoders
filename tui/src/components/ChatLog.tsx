@@ -9,6 +9,8 @@
  * - Auto-follow: when followLog=true, automatically scrolls to bottom
  * - Scroll indicator: shows position in message history
  * - Event filtering: filter by event type (task/subtask/tool/error)
+ * - Unread count: when followLog is off, shows "+N new" in header
+ * - Home/End: jump to top/bottom (handled by parent via scrollCommand)
  *
  * Scroll offset is managed locally because it must be relative to the
  * filtered message list. The reducer tracks followLog (auto-follow state)
@@ -58,6 +60,8 @@ export interface ChatLogProps {
   scrollCommand?: ScrollCommand;
   /** Callback to update followLog in reducer. */
   onSetFollowLog?: (follow: boolean) => void;
+  /** Unread message count (when followLog is off). */
+  unreadCount?: number;
 }
 
 function formatTime(): string {
@@ -86,6 +90,25 @@ export function createSystemMessage(
     isUser: false,
     ...options,
   };
+}
+
+/**
+ * Pure function: filter messages by event type.
+ * Exported for independent testing (filterMessages.test.ts).
+ */
+export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter): ChatMessage[] {
+  if (eventFilter === 'all') return messages;
+  return messages.filter((msg) => {
+    if (msg.isUser) return true; // Always show user messages
+    if (!msg.eventType) return true; // Show messages without eventType
+    // Map event types to filter categories
+    const et = msg.eventType;
+    if (eventFilter === 'task') return et.startsWith('task_');
+    if (eventFilter === 'subtask') return et.startsWith('subtask_');
+    if (eventFilter === 'tool') return et.startsWith('tool_');
+    if (eventFilter === 'error') return et === 'subtask_failed' || et === 'task_failed';
+    return true;
+  });
 }
 
 const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
@@ -123,6 +146,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   eventFilter = 'all',
   scrollCommand,
   onSetFollowLog,
+  unreadCount = 0,
 }) => {
   // Local scroll offset into the filtered message list.
   const [localOffset, setLocalOffset] = useState(0);
@@ -133,20 +157,8 @@ const ChatLog: React.FC<ChatLogProps> = ({
   // Track previous eventFilter to reset scroll when filter changes
   const prevFilterRef = useRef(eventFilter);
 
-  // Apply event filter
-  const filteredMessages = eventFilter === 'all'
-    ? messages
-    : messages.filter((msg) => {
-        if (msg.isUser) return true; // Always show user messages
-        if (!msg.eventType) return true; // Show messages without eventType
-        // Map event types to filter categories
-        const et = msg.eventType;
-        if (eventFilter === 'task') return et.startsWith('task_');
-        if (eventFilter === 'subtask') return et.startsWith('subtask_');
-        if (eventFilter === 'tool') return et.startsWith('tool_');
-        if (eventFilter === 'error') return et === 'subtask_failed' || et === 'task_failed';
-        return true;
-      });
+  // Apply event filter using pure function
+  const filteredMessages = filterMessages(messages, eventFilter);
 
   const totalMessages = filteredMessages.length;
   const maxOffset = Math.max(0, totalMessages - visibleLines);
@@ -213,15 +225,22 @@ const ChatLog: React.FC<ChatLogProps> = ({
   // Follow indicator
   const followIndicator = followLog ? '' : ' [paused]';
 
+  // Unread indicator
+  const unreadIndicator = unreadCount > 0 ? ` [+${unreadCount} new]` : '';
+
+  // Filter count indicator
+  const filterIndicator = eventFilter !== 'all'
+    ? ` [filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}]`
+    : '';
+
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color="cyan">{'Chat'}</Text>
         {isFocused && <Text dimColor>{' [focused]'}</Text>}
-        {eventFilter !== 'all' && (
-          <Text color="yellow">{` [filter:${eventFilterLabel(eventFilter)}]`}</Text>
-        )}
+        {filterIndicator && <Text color="yellow">{filterIndicator}</Text>}
         {followIndicator && <Text color="yellow">{followIndicator}</Text>}
+        {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
         {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
       </Box>
       {visibleMessages.map((msg) => (

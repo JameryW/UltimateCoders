@@ -12,6 +12,11 @@
  * - Failed: ✗ (red, bold) — shows error summary
  * - Conflicted: ⚠ (yellow, bold)
  *
+ * Keyboard navigation (v2):
+ * - selectedIndex: which subtask is highlighted (Up/Down arrows)
+ * - Selected row is shown with inverse highlight and "▸" prefix
+ * - Enter toggles subtask detail in the main area
+ *
  * Enhanced: shows assignedWorker, highlights running items, truncates
  * descriptions with string-width for terminal width safety.
  */
@@ -32,6 +37,10 @@ export interface SubtaskItem {
   description: string;
   status: SubtaskStatusType;
   assignedWorker?: string;
+  /** IDs of subtasks this one depends on. */
+  dependsOn?: string[];
+  /** Error summary for failed subtasks. */
+  errorSummary?: string;
 }
 
 export interface SubtaskTreeProps {
@@ -43,6 +52,8 @@ export interface SubtaskTreeProps {
   maxWidth?: number;
   /** Symbol set for rendering (unicode or ascii). */
   symbols?: SymbolSet;
+  /** Index of the currently selected subtask for keyboard navigation (-1 = none). */
+  selectedIndex?: number;
 }
 
 // Map status to symbol field key
@@ -85,7 +96,15 @@ function truncateToWidth(text: string, maxDisplayWidth: number): string {
   return graphemes.slice(0, end).join('') + '…';
 }
 
-const SubtaskRow: React.FC<{subtask: SubtaskItem; maxWidth: number; symbols: SymbolSet}> = ({subtask, maxWidth, symbols}) => {
+interface SubtaskRowProps {
+  subtask: SubtaskItem;
+  maxWidth: number;
+  symbols: SymbolSet;
+  isSelected: boolean;
+  isFocused: boolean;
+}
+
+const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSelected, isFocused}) => {
   const statusConfig = STATUS_CONFIG[subtask.status] ?? STATUS_CONFIG.pending;
   const icon = symbols[statusConfig.symbolKey];
 
@@ -94,16 +113,22 @@ const SubtaskRow: React.FC<{subtask: SubtaskItem; maxWidth: number; symbols: Sym
   const descWidth = Math.max(10, maxWidth - 7);
   const truncatedDesc = truncateToWidth(subtask.description, descWidth);
 
+  // Selection indicator: "▸" for selected row when subtask tree is focused
+  const selectPrefix = isSelected && isFocused ? '▸ ' : '  ';
+
   return (
     <Box>
       <Text
-        color={statusConfig.color}
-        bold={statusConfig.bold}
-        dimColor={statusConfig.dim}
+        color={isSelected && isFocused ? 'cyan' : statusConfig.color}
+        bold={statusConfig.bold || (isSelected && isFocused)}
+        dimColor={statusConfig.dim && !(isSelected && isFocused)}
       >
-        {`${icon} `}
+        {`${selectPrefix}${icon} `}
       </Text>
-      <Text dimColor={subtask.status === 'pending'}>
+      <Text
+        bold={isSelected && isFocused}
+        dimColor={subtask.status === 'pending' && !(isSelected && isFocused)}
+      >
         {`${subtask.index}. ${truncatedDesc}`}
       </Text>
       {subtask.assignedWorker && subtask.status === 'in_progress' && (
@@ -123,6 +148,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   isFocused = false,
   maxWidth = 40,
   symbols: symbolsProp,
+  selectedIndex = -1,
 }) => {
   const symbols = symbolsProp ?? getSymbols();
   const titleSuffix = getProgressText(progress.completed, progress.total);
@@ -147,9 +173,21 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
         <Text dimColor>No subtasks yet.</Text>
       ) : (
         <Box flexDirection="column">
-          {subtasks.map((st) => (
-            <SubtaskRow key={st.id} subtask={st} maxWidth={maxWidth} symbols={symbols} />
+          {subtasks.map((st, idx) => (
+            <SubtaskRow
+              key={st.id}
+              subtask={st}
+              maxWidth={maxWidth}
+              symbols={symbols}
+              isSelected={idx === selectedIndex}
+              isFocused={isFocused}
+            />
           ))}
+        </Box>
+      )}
+      {isFocused && subtasks.length > 0 && (
+        <Box marginTop={1}>
+          <Text dimColor>{'↑↓ navigate · Enter detail · Esc back'}</Text>
         </Box>
       )}
     </Box>

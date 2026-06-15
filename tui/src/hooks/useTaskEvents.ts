@@ -17,20 +17,13 @@ import type {
   SubtaskStatusType,
 } from '../grpc/types.js';
 import {mapSubtaskStatus} from '../grpc/types.js';
+import type {SubtaskItem} from '../components/SubtaskTree.js';
 import type {TaskServiceClient} from '../grpc/client.js';
 
 // ── Types ───────────────────────────────────────────────────
 
 /** Maximum events to keep in memory. Matches reducer's MAX_MESSAGES. */
 const MAX_EVENTS = 2000;
-
-export interface SubtaskItem {
-  id: string;
-  index: number;
-  description: string;
-  status: SubtaskStatusType;
-  assignedWorker?: string;
-}
 
 export interface UseTaskEventsReturn {
   /** Current active task (null if no task submitted). */
@@ -116,6 +109,7 @@ function processEvent(
           updated.set(event.subtaskId, {
             ...existing,
             status: 'failed',
+            errorSummary: event.data?.error_summary ?? event.data?.error ?? undefined,
           });
         }
       }
@@ -138,6 +132,7 @@ function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
     description: st.description,
     status: mapSubtaskStatus(st.status),
     assignedWorker: st.assignedWorker,
+    dependsOn: st.dependsOn,
   }));
 }
 

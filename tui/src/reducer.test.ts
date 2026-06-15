@@ -1,6 +1,14 @@
 import {describe, it, expect} from 'vitest';
-import {tuiReducer, INITIAL_TUI_STATE} from './reducer.js';
-import type {TuiAction} from './reducer.js';
+import {
+  tuiReducer,
+  INITIAL_TUI_STATE,
+  nextFocusArea,
+  prevFocusArea,
+  swapMainPane,
+  type TuiAction,
+  type FocusedArea,
+  type ActiveMainPane,
+} from './reducer.js';
 import {createSystemMessage, type ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem} from './components/SubtaskTree.js';
 
@@ -36,6 +44,17 @@ describe('tuiReducer: ADD_MESSAGES', () => {
     expect(state.messages).toHaveLength(2000);
     expect(state.messages[0].text).toBe('msg-500'); // first 500 dropped
   });
+
+  it('increments unreadCount when followLog is off', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOLLOW_LOG', follow: false});
+    state = tuiReducer(state, {type: 'ADD_MESSAGES', messages: [sysMsg('a'), sysMsg('b')]});
+    expect(state.unreadCount).toBe(2);
+  });
+
+  it('keeps unreadCount at 0 when followLog is on', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
+    expect(state.unreadCount).toBe(0);
+  });
 });
 
 // ── SET_SUBTASKS / UPDATE_SUBTASK_STATUS ──────────────────
@@ -46,6 +65,16 @@ describe('tuiReducer: subtask actions', () => {
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
     expect(state.subtasks).toHaveLength(3);
     expect(state.progress).toEqual({completed: 1, total: 3});
+  });
+
+  it('SET_SUBTASKS resets subtask selection', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: [subtask('a'), subtask('b')]});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    expect(state.selectedSubtaskIndex).toBe(0);
+    state = tuiReducer(state, {type: 'SET_SUBTASKS', subtasks: [subtask('c')]});
+    expect(state.selectedSubtaskIndex).toBe(-1);
+    expect(state.selectedSubtaskId).toBeNull();
+    expect(state.subtaskDetailOpen).toBe(false);
   });
 
   it('UPDATE_SUBTASK_STATUS updates a single subtask', () => {
@@ -121,6 +150,15 @@ describe('tuiReducer: SET_EVENT_FILTER', () => {
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_EVENT_FILTER', filter: 'error'});
     expect(state.eventFilter).toBe('error');
   });
+
+  it('resets unreadCount and re-enables followLog', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOLLOW_LOG', follow: false});
+    state = tuiReducer(state, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
+    expect(state.unreadCount).toBe(1);
+    state = tuiReducer(state, {type: 'SET_EVENT_FILTER', filter: 'task'});
+    expect(state.unreadCount).toBe(0);
+    expect(state.followLog).toBe(true);
+  });
 });
 
 // ── CLEAR_TASK / CLEAR_LOG ────────────────────────────────
@@ -135,11 +173,23 @@ describe('tuiReducer: clear actions', () => {
     expect(state.progress).toEqual({completed: 0, total: 0});
   });
 
-  it('CLEAR_LOG resets messages and followLog', () => {
+  it('CLEAR_TASK resets subtask selection', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: [subtask('a')]});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'CLEAR_TASK'});
+    expect(state.selectedSubtaskIndex).toBe(-1);
+    expect(state.selectedSubtaskId).toBeNull();
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('CLEAR_LOG resets messages, followLog, and unreadCount', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
+    state = tuiReducer(state, {type: 'SET_FOLLOW_LOG', follow: false});
+    state = tuiReducer(state, {type: 'ADD_MESSAGES', messages: [sysMsg('b')]});
     state = tuiReducer(state, {type: 'CLEAR_LOG'});
     expect(state.messages).toHaveLength(0);
     expect(state.followLog).toBe(true);
+    expect(state.unreadCount).toBe(0);
   });
 });
 
@@ -159,7 +209,255 @@ describe('tuiReducer: offline timer actions', () => {
   });
 });
 
-// ── SET_ACTIVE_TASK / SET_FOLLOW_LOG / SET_SELECTED_PANE ──
+// ── Focus & Layout (v2) ──────────────────────────────────
+
+describe('tuiReducer: focus and layout actions', () => {
+  it('initial state has focusedArea=input, activeMainPane=chat', () => {
+    expect(INITIAL_TUI_STATE.focusedArea).toBe('input');
+    expect(INITIAL_TUI_STATE.activeMainPane).toBe('chat');
+  });
+
+  it('SET_FOCUS changes focusedArea and selectedPane', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
+    expect(state.focusedArea).toBe('chat');
+    expect(state.selectedPane).toBe('chat');
+  });
+
+  it('CYCLE_FOCUS cycles through input→chat→subtask→input', () => {
+    let state = INITIAL_TUI_STATE;
+    state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
+    expect(state.focusedArea).toBe('chat');
+    state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
+    expect(state.focusedArea).toBe('subtask');
+    state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
+    expect(state.focusedArea).toBe('input');
+  });
+
+  it('SET_ACTIVE_MAIN_PANE changes activeMainPane', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_ACTIVE_MAIN_PANE', pane: 'subtask'});
+    expect(state.activeMainPane).toBe('subtask');
+  });
+
+  it('SWAP_MAIN_PANE toggles chat↔subtask', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SWAP_MAIN_PANE'});
+    expect(state.activeMainPane).toBe('subtask');
+    state = tuiReducer(state, {type: 'SWAP_MAIN_PANE'});
+    expect(state.activeMainPane).toBe('chat');
+  });
+
+  it('ESC_TO_MAIN from input focuses activeMainPane', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'ESC_TO_MAIN'});
+    expect(state.focusedArea).toBe('chat'); // activeMainPane defaults to 'chat'
+  });
+
+  it('ESC_TO_MAIN from input respects activeMainPane=subtask', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_ACTIVE_MAIN_PANE', pane: 'subtask'});
+    state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
+    expect(state.focusedArea).toBe('subtask');
+  });
+
+  it('ESC_TO_MAIN from chat/subtask focuses input', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
+    state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
+    expect(state.focusedArea).toBe('input');
+  });
+
+  it('ESC_TO_MAIN with subtaskDetailOpen closes detail', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: [subtask('a')]});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'SET_FOCUS', area: 'subtask'});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(true);
+    state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('SET_SELECTED_PANE (deprecated) maps to SET_FOCUS', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SELECTED_PANE', pane: 'subtask'});
+    expect(state.focusedArea).toBe('subtask');
+    expect(state.selectedPane).toBe('subtask');
+  });
+});
+
+// ── Unread Count ──────────────────────────────────────────
+
+describe('tuiReducer: unread count actions', () => {
+  it('INCREMENT_UNREAD adds to count', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'INCREMENT_UNREAD', count: 3});
+    expect(state.unreadCount).toBe(3);
+  });
+
+  it('RESET_UNREAD sets count to 0', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'INCREMENT_UNREAD', count: 5});
+    state = tuiReducer(state, {type: 'RESET_UNREAD'});
+    expect(state.unreadCount).toBe(0);
+  });
+
+  it('SET_FOLLOW_LOG true resets unreadCount', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'INCREMENT_UNREAD', count: 5});
+    state = tuiReducer(state, {type: 'SET_FOLLOW_LOG', follow: true});
+    expect(state.unreadCount).toBe(0);
+  });
+
+  it('SET_FOLLOW_LOG false preserves unreadCount', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'INCREMENT_UNREAD', count: 5});
+    state = tuiReducer(state, {type: 'SET_FOLLOW_LOG', follow: false});
+    expect(state.unreadCount).toBe(5);
+  });
+});
+
+// ── Subtask Navigation ────────────────────────────────────
+
+describe('tuiReducer: subtask navigation actions', () => {
+  it('SELECT_SUBTASK sets index and id', () => {
+    const items = [subtask('a'), subtask('b'), subtask('c')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 1});
+    expect(state.selectedSubtaskIndex).toBe(1);
+    expect(state.selectedSubtaskId).toBe('b');
+  });
+
+  it('SELECT_SUBTASK with invalid index clears selection', () => {
+    const items = [subtask('a')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 5});
+    expect(state.selectedSubtaskIndex).toBe(-1);
+    expect(state.selectedSubtaskId).toBeNull();
+  });
+
+  it('SELECT_SUBTASK with negative index clears selection', () => {
+    const items = [subtask('a')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: -1});
+    expect(state.selectedSubtaskIndex).toBe(-1);
+    expect(state.selectedSubtaskId).toBeNull();
+  });
+
+  it('TOGGLE_SUBTASK_DETAIL opens detail when selection exists', () => {
+    const items = [subtask('a'), subtask('b')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(true);
+  });
+
+  it('TOGGLE_SUBTASK_DETAIL is no-op without selection', () => {
+    const items = [subtask('a')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('TOGGLE_SUBTASK_DETAIL closes when already open', () => {
+    const items = [subtask('a')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('CLOSE_SUBTASK_DETAIL closes detail', () => {
+    const items = [subtask('a')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    state = tuiReducer(state, {type: 'CLOSE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('JUMP_TO_FAILED_SUBTASK selects next failed after current', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'failed'), subtask('c', 'completed'), subtask('d', 'failed')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    // Start from index 0, next failed should be index 1
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(1);
+    expect(state.selectedSubtaskId).toBe('b');
+    // From index 1, next failed after 1 should be index 3
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(3);
+    expect(state.selectedSubtaskId).toBe('d');
+    // From index 3, wraps back to first failed (index 1)
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(1);
+  });
+
+  it('JUMP_TO_FAILED_SUBTASK is no-op when no failed subtasks', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'pending')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(0); // unchanged
+  });
+});
+
+// ── SET_SUBMITTING ────────────────────────────────────────
+
+describe('tuiReducer: SET_SUBMITTING', () => {
+  it('sets isSubmitting to true', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBMITTING', submitting: true});
+    expect(state.isSubmitting).toBe(true);
+  });
+
+  it('sets isSubmitting to false', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBMITTING', submitting: true});
+    state = tuiReducer(state, {type: 'SET_SUBMITTING', submitting: false});
+    expect(state.isSubmitting).toBe(false);
+  });
+});
+
+// ── TOGGLE_HELP_OVERLAY ──────────────────────────────────
+
+describe('tuiReducer: TOGGLE_HELP_OVERLAY', () => {
+  it('toggles helpOverlayOpen from false to true', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_HELP_OVERLAY'});
+    expect(state.helpOverlayOpen).toBe(true);
+  });
+
+  it('toggles helpOverlayOpen from true to false', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_HELP_OVERLAY'});
+    state = tuiReducer(state, {type: 'TOGGLE_HELP_OVERLAY'});
+    expect(state.helpOverlayOpen).toBe(false);
+  });
+
+  it('initial state has helpOverlayOpen=false', () => {
+    expect(INITIAL_TUI_STATE.helpOverlayOpen).toBe(false);
+  });
+});
+
+// ── RETRY_SUBTASK (placeholder) ───────────────────────────
+
+describe('tuiReducer: RETRY_SUBTASK', () => {
+  it('is a no-op (placeholder)', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'RETRY_SUBTASK', subtaskId: 'a'});
+    // State unchanged (placeholder action)
+    expect(state).toEqual(INITIAL_TUI_STATE);
+  });
+});
+
+// ── Focus helper functions ────────────────────────────────
+
+describe('focus helper functions', () => {
+  it('nextFocusArea cycles input→chat→subtask→input', () => {
+    expect(nextFocusArea('input')).toBe('chat');
+    expect(nextFocusArea('chat')).toBe('subtask');
+    expect(nextFocusArea('subtask')).toBe('input');
+  });
+
+  it('prevFocusArea cycles input→subtask→chat→input', () => {
+    expect(prevFocusArea('input')).toBe('subtask');
+    expect(prevFocusArea('subtask')).toBe('chat');
+    expect(prevFocusArea('chat')).toBe('input');
+  });
+
+  it('swapMainPane toggles chat↔subtask', () => {
+    expect(swapMainPane('chat')).toBe('subtask');
+    expect(swapMainPane('subtask')).toBe('chat');
+  });
+});
+
+// ── SET_ACTIVE_TASK / SET_FOLLOW_LOG ──────────────────────
 
 describe('tuiReducer: simple setters', () => {
   it('SET_ACTIVE_TASK', () => {
@@ -170,10 +468,5 @@ describe('tuiReducer: simple setters', () => {
   it('SET_FOLLOW_LOG', () => {
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOLLOW_LOG', follow: false});
     expect(state.followLog).toBe(false);
-  });
-
-  it('SET_SELECTED_PANE', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SELECTED_PANE', pane: 'chat'});
-    expect(state.selectedPane).toBe('chat');
   });
 });

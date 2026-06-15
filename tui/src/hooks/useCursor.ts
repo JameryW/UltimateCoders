@@ -2,31 +2,24 @@
  * Custom useCursor hook for IME/CJK support.
  *
  * Ink 5.x does not include a built-in useCursor hook.
- * This implementation provides the same functionality:
- * - Shows the real terminal cursor (not Ink's virtual one)
- * - Positions the cursor at the specified location for IME composition
+ * This implementation provides minimal cursor management:
+ * - Shows the real terminal cursor on mount
+ * - Hides it on unmount
+ * - Provides setCursorPosition for IME (but relies on Ink's
+ *   natural cursor position rather than fighting it with ANSI)
  *
- * The key insight from the Ink research: IME composition windows
- * appear at the OS-level terminal cursor position. Ink normally
- * hides the real cursor and draws its own output. For CJK/IME
- * input to work, we must:
- * 1. Show the real cursor using ANSI escape \x1B[?25h
- * 2. Position it at the input field location
+ * Design decision: We do NOT write ANSI cursor-positioning sequences
+ * (\x1B[row;colH) here because Ink manages the terminal cursor during
+ * its own render cycle. Writing ANSI sequences that fight with Ink's
+ * cursor management causes the sequences to be rendered as text or
+ * the cursor to jump to wrong positions.
  *
- * Cursor positioning strategy:
- * - y=0 means the input is at the bottom of the TUI frame
- *   (2 rows from the terminal bottom: input + status bar + border)
- * - y>0 means the input is offset further up (e.g., multi-line input)
- * - x is the display column within the input field
- *
- * IMPORTANT: Ink repositions the cursor during its own render cycle.
- * To avoid fighting with Ink, we schedule cursor positioning via
- * setImmediate (after the current React render) so it runs after
- * Ink has finished its output.
- *
- * This hook uses useStdout to write ANSI escape sequences directly.
+ * Instead, CjkTextInput renders an inverse-video cursor indicator
+ * inline, and the real terminal cursor visibility is managed here.
+ * For IME composition, the terminal positions the candidate window
+ * near the visible cursor automatically.
  */
-import {useCallback, useEffect, useRef} from 'react';
+import {useCallback, useEffect} from 'react';
 import {useStdout} from 'ink';
 
 export interface CursorPosition {
@@ -34,26 +27,26 @@ export interface CursorPosition {
   x: number;
   /**
    * Vertical offset from the bottom of the terminal.
-   * 0 = input is at the second-to-last row (above status bar).
-   * Positive = further up.
+   * 0 = input line, positive = further up.
    */
   y: number;
 }
 
 export interface UseCursorReturn {
-  setCursorPosition: (pos: CursorPosition) => void;
+  /** Show the terminal cursor. */
   showCursor: () => void;
+  /** Hide the terminal cursor. */
   hideCursor: () => void;
+  /**
+   * Request cursor position for IME.
+   * Currently a no-op for positioning — Ink manages cursor location.
+   * Kept for API compatibility with TaskInput.
+   */
+  setCursorPosition: (pos: CursorPosition) => void;
 }
-
-/** Rows from terminal bottom: status bar + bottom border. */
-const BOTTOM_RESERVED = 2;
 
 export function useCursor(): UseCursorReturn {
   const {stdout} = useStdout();
-  const positionRef = useRef<CursorPosition>({x: 0, y: 0});
-  const pendingRef = useRef<CursorPosition | null>(null);
-  const rafRef = useRef<ReturnType<typeof setImmediate> | null>(null);
 
   const showCursor = useCallback(() => {
     if (stdout) {
@@ -67,38 +60,14 @@ export function useCursor(): UseCursorReturn {
     }
   }, [stdout]);
 
-  /** Actually write the ANSI escape to position the cursor. */
-  const writeCursorPosition = useCallback(
-    (pos: CursorPosition) => {
-      if (!stdout) return;
-      const row = (stdout.rows || 24) - BOTTOM_RESERVED - pos.y;
-      const col = pos.x + 1; // 1-based column
-      stdout.write(`\x1B[${row};${col}H`);
+  // No-op: Ink manages cursor position via its render cycle.
+  // We keep the API for compatibility but don't write ANSI sequences.
+  const setCursorPosition = useCallback(
+    (_pos: CursorPosition) => {
+      // Just ensure cursor is visible when input is active
       showCursor();
     },
-    [stdout, showCursor],
-  );
-
-  const setCursorPosition = useCallback(
-    (pos: CursorPosition) => {
-      positionRef.current = pos;
-
-      // Cancel any pending position update
-      if (rafRef.current !== null) {
-        clearImmediate(rafRef.current);
-      }
-
-      // Schedule after Ink's render cycle to avoid cursor fighting
-      pendingRef.current = pos;
-      rafRef.current = setImmediate(() => {
-        rafRef.current = null;
-        if (pendingRef.current) {
-          writeCursorPosition(pendingRef.current);
-          pendingRef.current = null;
-        }
-      });
-    },
-    [writeCursorPosition],
+    [showCursor],
   );
 
   // Show cursor on mount, hide on unmount
@@ -106,9 +75,6 @@ export function useCursor(): UseCursorReturn {
     showCursor();
     return () => {
       hideCursor();
-      if (rafRef.current !== null) {
-        clearImmediate(rafRef.current);
-      }
     };
   }, [showCursor, hideCursor]);
 

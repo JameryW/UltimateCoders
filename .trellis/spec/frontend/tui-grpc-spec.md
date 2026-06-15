@@ -196,6 +196,8 @@ interface TuiState {
 
 ## 6. Tests Required
 
+### Integration / Hook Tests (require React rendering)
+
 | Test | Assertion |
 |------|-----------|
 | Client constructor | Creates gRPC client with correct address and credentials |
@@ -207,6 +209,22 @@ interface TuiState {
 | useTaskEvents stream | Updates subtask map when stream emits events |
 | useTaskEvents null client | Returns empty data when client is null |
 | useTaskEvents cleanup | Cancels stream on unmount |
+
+### Pure-Function Unit Tests (implemented, 57 tests passing)
+
+All pure functions are tested with vitest. No React rendering needed.
+
+| Module | Tests | Key Assertions |
+|--------|-------|----------------|
+| `reducer.ts` | 20 | All action types: ADD_MESSAGES (2000 cap), SET_SUBTASKS (progress derivation), UPDATE_SUBTASK_STATUS (unknown id no-op), SCROLL_UP/DOWN (tick increment, followLog toggle), ADD_INPUT_HISTORY (dedup, 50 cap), SET_EVENT_FILTER, CLEAR_TASK/LOG, ADD/CLEAR_OFFLINE_TIMERS, SET_ACTIVE_TASK, SET_FOLLOW_LOG, SET_SELECTED_PANE |
+| `formatters.ts` | 13 | All event types (task_submitted/failed/completed, subtask_assigned/started/completed/failed, tool_call/tool_result), unknown type, eventType preservation on all messages, batch conversion, null filtering |
+| `symbols.ts` | 9 | unicode mode, ascii mode, auto mode env detection (CI, NO_COLOR, TERM=dumb → ascii; TERM=xterm-256color → unicode), forced override, auto→CI resolution |
+| `truncate.ts` | 8 | Short text (no truncation), exact width, long English + ellipsis, CJK 2-column chars, combining chars not split, ZWJ emoji not split, empty string, width=1 |
+| `filter.ts` | 7 | all/task/subtask/tool/error filters, user messages always pass, messages without eventType pass all filters |
+
+**Test framework**: vitest (configured in `tui/vitest.config.ts`)
+**Run command**: `cd tui && npx vitest run`
+**Typecheck**: `cd tui && npm run typecheck`
 
 ---
 
@@ -397,3 +415,76 @@ The symbol set is passed from App → SubtaskTree as a `SymbolSet` prop rather t
 12. **Not capping event/message arrays** — gRPC streams can emit events indefinitely. Both `useTaskEvents` and the reducer's `ADD_MESSAGES` must cap at ~2000 entries. Without this, long-running sessions consume unbounded memory.
 
 13. **Multiple `useInput` hooks with overlapping key bindings** — Ink 5 allows multiple `useInput` hooks, but they all fire for every keypress. If `CjkTextInput` and `App` both handle Ctrl+R, the action fires twice. Solution: CjkTextInput explicitly ignores Ctrl+C/R/P/Q/F/L (passes them through to App's global handler). The `focus` prop on `useInput({isActive})` controls which component processes printable input.
+
+---
+
+## TUI Testing Conventions
+
+### Testable vs Untestable Boundaries
+
+| Testable (pure functions) | Untestable without React rendering |
+|---------------------------|-----------------------------------|
+| `reducer.ts` — state transitions | Ink component rendering |
+| `formatters.ts` — event formatting | `useInput` keyboard handling |
+| `symbols.ts` — symbol resolution | gRPC client (needs proto mock) |
+| `truncate.ts` — CJK-safe truncation | `useGrpcClient` / `useTaskEvents` hooks |
+| `filter.ts` — event filter logic | `CjkTextInput` cursor behavior |
+
+### Reducer Test Pattern
+
+Test each action type independently with a minimal initial state:
+
+```typescript
+it('caps at 2000 messages', () => {
+  const msgs = Array.from({length: 2001}, (_, i) => makeMsg(`m${i}`));
+  const result = reducer(
+    {...initialState, messages: msgs.slice(0, 2000)},
+    {type: 'ADD_MESSAGES', messages: [makeMsg('overflow')]}
+  );
+  expect(result.messages).toHaveLength(2000);
+  expect(result.messages[1999].text).toBe('overflow'); // newest kept
+});
+```
+
+Key patterns:
+- Use a `makeMsg(text, overrides?)` factory for test messages
+- Test boundary values (0, 2000 cap, 50 history cap)
+- Test no-op cases (unknown subtask id, empty state)
+
+### Truncate Test Pattern
+
+CJK truncation must test grapheme boundaries, not byte/code-unit boundaries:
+
+```typescript
+it('does not split ZWJ emoji', () => {
+  // 👨‍👩‍👧 = man + ZWJ + woman + ZWJ + girl (single grapheme, ~2 columns)
+  const result = truncateToWidth('👨‍👩‍👧abc', 5);
+  // Should not split the ZWJ sequence — either keep whole emoji or drop it
+  expect(result === '👨‍👩‍👧…' || result === '…').toBeTruthy();
+});
+```
+
+Key patterns:
+- Test combining characters (é = e + combining accent)
+- Test ZWJ emoji (👨‍👩‍👧)
+- Test CJK width: each CJK char = 2 terminal columns
+- Test edge cases: empty string, width=1
+
+### Symbols Test Pattern
+
+Mock `process.env` for auto-mode detection:
+
+```typescript
+it('auto mode falls back to ascii in CI', () => {
+  const origCI = process.env.CI;
+  process.env.CI = 'true';
+  const syms = getSymbols('auto');
+  expect(syms.check).toBe('[x]');
+  process.env.CI = origCI;
+});
+```
+
+Key patterns:
+- Save and restore `process.env` values
+- Test each env variable independently (CI, NO_COLOR, TERM, TERM_PROGRAM)
+- Test forced modes (unicode/ascii) without env manipulation
