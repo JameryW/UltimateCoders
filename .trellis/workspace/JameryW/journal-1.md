@@ -374,3 +374,38 @@ Integrated codegraph knowledge graph into the Worker agent: added CodegraphTool 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: TUI PR2: gRPC TaskService integration
+
+**Date**: 2026-06-15
+**Task**: TUI PR2: gRPC TaskService integration
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Extended engine.proto with TaskService (6 RPCs), implemented Rust server with in-memory TaskStore + state validation, created Node.js gRPC client with dynamic proto loading, added useGrpcClient/useTaskEvents React hooks, replaced TUI mock data with real gRPC flow + offline fallback. Resolved merge conflicts with main (dashboard/codegraph specs). Fixed CI: clippy new_without_default, manual_pattern_char_comparison, cargo fmt. PR #14 CI all green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5997287` | (see git log) |
+| `308cbdc` | (see git log) |
+| `f258345` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
