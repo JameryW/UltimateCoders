@@ -514,3 +514,37 @@ Unified TUI layout with single round border frame replacing per-component border
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: TUI Unit Tests — verify coverage + spec update
+
+**Date**: 2026-06-15
+**Task**: TUI Unit Tests — verify coverage + spec update
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Verified all 57 TUI unit tests pass (reducer 20, formatters 13, symbols 9, truncate 8, filter 7). All 7 PRD acceptance criteria met. Typecheck clean. Updated tui-grpc-spec.md with test coverage table and TUI testing conventions section. Marked PRD criteria as done.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cb3a4b3` | (see git log) |
+| `cf98bb3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
