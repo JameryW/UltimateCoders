@@ -107,8 +107,25 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   useInput(
     (input, key) => {
-      // Ignore Tab (handled by parent for pane switching)
-      if (key.tab || (key.shift && key.tab)) {
+      // Shift+Tab: switch pane (let parent handle)
+      if (key.shift && key.tab) {
+        return;
+      }
+
+      // Tab: insert spaces for indentation
+      if (key.tab) {
+        const graphemes = splitter.splitGraphemes(value);
+        const gi = cursorRef.current;
+        const nextValue = [
+          ...graphemes.slice(0, gi),
+          '  ', // 2-space indent
+          ...graphemes.slice(gi),
+        ].join('');
+        const next = gi + 2; // 2 graphemes for 2 spaces
+        setCursorGI(next);
+        cursorRef.current = next;
+        prevValueRef.current = nextValue;
+        onChange(nextValue);
         return;
       }
 

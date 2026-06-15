@@ -34,6 +34,9 @@ import type {
 /** gRPC status code for UNAVAILABLE (server not reachable). */
 const GRPC_UNAVAILABLE = 14;
 
+/** Timeout for gRPC connectivity probe (ms). */
+const CONNECT_TIMEOUT = 3000;
+
 // ── Hook Return Type ────────────────────────────────────────
 
 export interface UseGrpcClientReturn {
@@ -90,17 +93,23 @@ export function useGrpcClient(): UseGrpcClientReturn {
       const newClient = createTaskServiceClient();
       setClient(newClient);
 
-      // The gRPC channel connects lazily. To verify the server is
-      // actually reachable, we attempt a lightweight RPC (listTasks).
-      // If this fails, we mark the connection as error immediately.
+      // The gRPC channel connects lazily. Verify server reachability
+      // with a listTasks probe + timeout. If it fails or times out,
+      // mark as error so the UI shows offline/demo mode immediately.
+      const probeTimeout = setTimeout(() => {
+        setConnectionState('error');
+      }, CONNECT_TIMEOUT);
+
       newClient.listTasks({}).then(() => {
+        clearTimeout(probeTimeout);
         setConnectionState('connected');
       }).catch((err: any) => {
+        clearTimeout(probeTimeout);
         if (isUnavailableError(err)) {
           setConnectionState('error');
         } else {
-          // Non-UNAVAILABLE errors (e.g. server has no tasks) still mean
-          // the server is reachable — gRPC returned a valid response.
+          // Non-UNAVAILABLE errors (e.g. permission) still mean
+          // the server is reachable — treat as connected.
           setConnectionState('connected');
         }
       });

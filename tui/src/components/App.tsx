@@ -268,8 +268,9 @@ const App: React.FC = () => {
       return;
     }
 
-    // ── Tab: cycle panes ────────────────────────────────
-    if (key.tab && !key.shift) {
+    // ── Tab: cycle panes (only when NOT in input mode) ────
+    // In input mode, Tab inserts spaces for indentation
+    if (key.tab && !key.shift && state.selectedPane !== 'input') {
       const panes: SelectedPane[] = ['input', 'chat', 'subtask'];
       const next = panes[(panes.indexOf(state.selectedPane) + 1) % panes.length];
       dispatch({type: 'SET_SELECTED_PANE', pane: next});
