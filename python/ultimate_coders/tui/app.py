@@ -108,8 +108,8 @@ class SandboxTUI(App):
         with Horizontal(id="main-area"):
             yield ChatLog(id="chat-log")
             yield SubtaskTree(id="subtask-tree")
-        yield StatusBar(id="status-bar")
         yield TaskInput(id="task-input")
+        yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
         """Initialize Orchestrator/Worker and start background tasks."""

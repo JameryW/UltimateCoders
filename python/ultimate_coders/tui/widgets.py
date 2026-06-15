@@ -237,10 +237,8 @@ class TaskInput(Input):
 
     DEFAULT_CSS = """
     TaskInput {
-        dock: bottom;
-        height: auto;
+        height: 3;
         margin: 0 1;
-        border: tall $primary;
     }
     """
 
@@ -263,7 +261,6 @@ class StatusBar(Static):
 
     DEFAULT_CSS = """
     StatusBar {
-        dock: bottom;
         height: 1;
         width: 100%;
         background: $primary;
