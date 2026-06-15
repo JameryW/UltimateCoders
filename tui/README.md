@@ -41,7 +41,7 @@ npm start
 | Ctrl+P | Pause/resume current task |
 | Ctrl+R | Reconnect gRPC |
 | Ctrl+Q | Quit |
-| ? | Show/hide keyboard shortcuts |
+| ? | Show/hide keyboard shortcuts (not in input focus) |
 
 ### Input Focus
 

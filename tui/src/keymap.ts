@@ -49,6 +49,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
   {id: 'reconnect', label: 'Reconnect gRPC', shortLabel: 'C-R', key: 'Ctrl+R', areas: [], global: true},
   {id: 'quit', label: 'Quit', shortLabel: 'C-Q', key: 'Ctrl+Q', areas: [], global: true},
+  // Note: ? is global except in input focus (where it types a character)
   {id: 'help', label: 'Show help', shortLabel: '?', key: '?', areas: [], global: true},
 
   // ── Input ──

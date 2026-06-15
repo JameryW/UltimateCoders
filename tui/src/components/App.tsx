@@ -131,7 +131,14 @@ const App: React.FC = () => {
       prev.length !== streamSubtasks.length ||
       streamSubtasks.some((st, i) => {
         const p = prev[i];
-        return !p || p.id !== st.id || p.status !== st.status || p.assignedWorker !== st.assignedWorker;
+        if (!p) return true;
+        if (p.id !== st.id || p.status !== st.status || p.assignedWorker !== st.assignedWorker || p.errorSummary !== st.errorSummary) return true;
+        // Compare dependsOn arrays
+        const dA = p.dependsOn ?? [];
+        const dB = st.dependsOn ?? [];
+        if (dA.length !== dB.length) return true;
+        if (dA.some((d, j) => d !== dB[j])) return true;
+        return false;
       });
 
     if (changed) {
@@ -354,8 +361,8 @@ const App: React.FC = () => {
       return;
     }
 
-    // ?: toggle help overlay
-    if (input === '?' && !key.ctrl && !key.meta) {
+    // ?: toggle help overlay (when help is open, always close; otherwise only in non-input focus)
+    if (input === '?' && !key.ctrl && !key.meta && (state.helpOverlayOpen || state.focusedArea !== 'input')) {
       dispatch({type: 'TOGGLE_HELP_OVERLAY'});
       return;
     }
