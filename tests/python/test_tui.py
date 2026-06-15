@@ -175,7 +175,7 @@ class TestTaskInput:
     """Tests for TaskInput widget."""
 
     def test_task_input_instantiation(self):
-        """TaskInput can be instantiated."""
+        """TaskInput can be instantiated with placeholder."""
         from ultimate_coders.tui.widgets import TaskInput
 
         inp = TaskInput()

@@ -253,6 +253,16 @@ def run_tui(config: SandboxConfig, initial_task: str | None) -> None:
         config: SandboxConfig for the worker.
         initial_task: Optional task description to auto-submit.
     """
+    import os
+
+    # Warn about iTerm2 CJK input issue
+    term_program = os.environ.get("TERM_PROGRAM", "")
+    if "iTerm" in term_program:
+        logger.warning(
+            "iTerm2 detected: CJK (Chinese/Japanese/Korean) input may not display "
+            "correctly in the TUI. Use macOS Terminal.app for CJK support."
+        )
+
     from ultimate_coders.tui import SandboxTUI
 
     app = SandboxTUI(config=config, initial_task=initial_task)

@@ -3,6 +3,10 @@
 Provides REST API endpoints and SSE stream for real-time cluster
 monitoring. Embedded in the Orchestrator process for zero-latency
 access to in-memory state.
+
+The frontend is a separate React SPA (dashboard/ directory) that
+connects to these API endpoints. Jinja2 templates and static file
+serving have been removed — the SPA is built and deployed independently.
 """
 
 from __future__ import annotations
@@ -13,22 +17,14 @@ import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
-
-# Resolve template and static directories relative to this file
-_DASHBOARD_DIR = Path(__file__).parent
-_TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
-_STATIC_DIR = _DASHBOARD_DIR / "static"
 
 
 class DashboardApp:
@@ -73,17 +69,10 @@ class DashboardApp:
             allow_headers=["*"],
         )
 
-        # Mount static files
-        if _STATIC_DIR.exists():
-            app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+        # Mount static files — REMOVED: frontend is now a separate React SPA
+        # Static files and Jinja2 templates are no longer served by the backend
 
-        # Jinja2 templates
-        templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-
-        @app.get("/dashboard/", response_class=HTMLResponse)
-        async def dashboard_page(request: Request):
-            """Render the main dashboard HTML page."""
-            return templates.TemplateResponse(request, "index.html", {})
+        # API endpoints
 
         @app.get("/dashboard/api/health")
         async def health_api():

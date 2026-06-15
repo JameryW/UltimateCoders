@@ -232,21 +232,22 @@ class TaskInput(Input):
     """Input field for submitting new task descriptions.
 
     Renders with a '>' prompt prefix and dark background styling.
+    Uses Textual's native Input widget with placeholder support.
+
+    Note: CJK (Chinese/Japanese/Korean) input may not display correctly
+    in iTerm2. Use macOS Terminal.app or other terminals for CJK support.
     """
 
     DEFAULT_CSS = """
     TaskInput {
-        dock: bottom;
-        height: 3;
-        margin: 0 1;
-        border: solid $primary;
-        background: $surface;
+        margin: 1 1 0 1;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize the TaskInput with a '>' prompt placeholder."""
-        super().__init__(
+        Input.__init__(
+            self,
             placeholder="> type task description and press Enter...",
             *args,
             **kwargs,
@@ -262,7 +263,6 @@ class StatusBar(Static):
 
     DEFAULT_CSS = """
     StatusBar {
-        dock: bottom;
         height: 1;
         width: 100%;
         background: $primary;

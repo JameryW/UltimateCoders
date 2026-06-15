@@ -452,8 +452,7 @@ class SandboxTUI(App):
         if not description:
             return
 
-        input_widget = event.input
-        input_widget.value = ""
+        event.input.value = ""
 
         chat_log = self.query_one("#chat-log", ChatLog)
 

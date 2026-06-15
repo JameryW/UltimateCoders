@@ -343,11 +343,9 @@ class TestDashboardAPIEndpoints:
         return TestClient(dashboard._app)
 
     def test_dashboard_page(self, client):
-        """GET /dashboard/ returns HTML page."""
+        """GET /dashboard/ no longer serves HTML — frontend is a separate React SPA."""
         response = client.get("/dashboard/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "UltimateCoders" in response.text
+        assert response.status_code == 404  # HTML page removed; SPA serves independently
 
     def test_health_api(self, client):
         """GET /dashboard/api/health returns JSON with components."""
