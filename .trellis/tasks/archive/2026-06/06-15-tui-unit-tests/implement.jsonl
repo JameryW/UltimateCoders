@@ -1,0 +1,2 @@
+{"path": ".trellis/tasks/06-15-tui-unit-tests/prd.md", "role": "spec", "reason": "Test requirements and acceptance criteria"}
+{"path": ".trellis/spec/frontend/tui-grpc-spec.md", "role": "spec", "reason": "TUI state management, reducer, scroll architecture contracts"}
