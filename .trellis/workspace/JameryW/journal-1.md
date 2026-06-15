@@ -548,3 +548,37 @@ Verified all 57 TUI unit tests pass (reducer 20, formatters 13, symbols 9, trunc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: TUI Interaction Polish — subtask Home/End/f, help overlay, reconnect feedback, connection-aware placeholder, README
+
+**Date**: 2026-06-15
+**Task**: TUI Interaction Polish — subtask Home/End/f, help overlay, reconnect feedback, connection-aware placeholder, README
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Refactored TUI interaction model: split focusedArea/activeMainPane, unified keymap.ts, unread count badge, subtask navigation (j/k/Home/End/f), exponential backoff reconnect. Polish: help overlay (?), Ctrl+R reconnect feedback in ChatLog, connection-aware TaskInput placeholder, tui/README.md with keymap reference. Archived both refactor and polish tasks.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `846087c` | (see git log) |
+| `b11df48` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
