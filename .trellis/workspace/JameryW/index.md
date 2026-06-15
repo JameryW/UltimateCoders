@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-06-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~482 | Active |
+| `journal-1.md` | ~516 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-06-15 | TUI layout fix: unified frame, offline status updates, run script | `ceaea07`, `2b75b2f` | `feat/tui-ink-react` |
 | 13 | 2026-06-15 | CJK input width fix + spec updates + PR #15 | `79badfe`, `eb618dd`, `2dcc1a2`, `cf3f5c8` | `feat/tui-ink-react` |
 | 12 | 2026-06-15 | CJK input width fix + spec updates + PR #15 | `79badfe`, `eb618dd`, `2dcc1a2` | `feat/tui-ink-react` |
 | 11 | 2026-06-15 | TUI PR2: gRPC TaskService integration | `5997287`, `308cbdc`, `f258345` | `feat/tui-ink-react` |

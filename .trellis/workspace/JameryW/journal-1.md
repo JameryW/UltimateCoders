@@ -480,3 +480,37 @@ Fixed CJK terminal width calculation in TUI input: replaced ink-text-input with 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: TUI layout fix: unified frame, offline status updates, run script
+
+**Date**: 2026-06-15
+**Task**: TUI layout fix: unified frame, offline status updates, run script
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Unified TUI layout with single round border frame replacing per-component borders. Fixed offline mode to update SubtaskTree status on simulate progress (not just ChatLog). Added event-to-chat message conversion for gRPC stream events. Added updateSubtaskStatus method to useTaskEvents hook. ASCII-safe status icons. Created run_tui.sh launcher script (--build, --grpc flags, log redirect to file).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ceaea07` | (see git log) |
+| `2b75b2f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
