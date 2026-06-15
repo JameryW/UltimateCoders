@@ -409,3 +409,38 @@ Extended engine.proto with TaskService (6 RPCs), implemented Rust server with in
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: CJK input width fix + spec updates + PR #15
+
+**Date**: 2026-06-15
+**Task**: CJK input width fix + spec updates + PR #15
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Fixed CJK terminal width calculation in TUI input: replaced ink-text-input with CjkTextInput using string-width + grapheme-splitter; corrected cursor offset 4→5; unified cursor positioning via onCursorMove; grapheme-safe placeholder slicing. Updated tui-grpc-spec with CJK design decision and 3 common mistakes. Unified App layout with inline header. Created PR #15.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79badfe` | (see git log) |
+| `eb618dd` | (see git log) |
+| `2dcc1a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
