@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark-900: #0f172a;
+  --color-dark-800: #1e293b;
+  --color-dark-700: #334155;
+  --color-dark-600: #475569;
+}
+
+body {
+  background-color: var(--color-dark-900);
+  color: #e2e8f0;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-dark-900);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-dark-700);
+  border-radius: 3px;
+}
+
+.badge-ok { background-color: #166534; color: #bbf7d0; }
+.badge-degraded { background-color: #713f12; color: #fef08a; }
+.badge-error, .badge-fallback { background-color: #7f1d1d; color: #fecaca; }
+.badge-unavailable { background-color: #374151; color: #9ca3af; }
+.badge-closed { background-color: #166534; color: #bbf7d0; }
+.badge-open { background-color: #7f1d1d; color: #fecaca; }
+.badge-half_open { background-color: #713f12; color: #fef08a; }
+
+.load-bar { height: 6px; border-radius: 3px; background-color: var(--color-dark-700); }
+.load-bar-fill { height: 6px; border-radius: 3px; transition: width 0.3s ease; }
+
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+.mermaid { background: transparent !important; }

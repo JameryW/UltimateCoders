@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index — conventions, tooling, patterns"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "React component conventions for shadcn/ui + Tailwind"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "State management patterns (hooks vs context vs store)"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript type conventions and API typing"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Frontend project directory conventions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Custom hook patterns (useSSE, useAuth, useDashboard)"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — lint, typecheck, build"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Backend API contracts — endpoints, SSE format, fallback behavior"}
+{"file": ".trellis/tasks/06-15-dashboard/prd.md", "reason": "PRD — requirements, acceptance criteria, architecture decisions"}
