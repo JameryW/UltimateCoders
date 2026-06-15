@@ -74,6 +74,26 @@ npm start
 | Enter | Toggle subtask detail panel |
 | Ctrl+T | Retry failed subtask (coming soon) |
 
+### Subtask Detail View
+
+When a subtask is selected and you press Enter, a detail panel expands below the row showing:
+- Full description
+- Status (with color)
+- Assigned worker
+- Dependencies (IDs)
+- Error summary (for failed subtasks)
+
+Press Enter again or Esc to close the detail.
+
+### Input Indicators
+
+| Indicator | Meaning |
+|-----------|---------|
+| `Ln2:Col8` | Multi-line: line 2, column 8 |
+| `history 3/10` | Browsing input history: entry 3 of 10 |
+| `[submitting...]` | Task submission in progress |
+| `offline demo: type...` | gRPC not connected (offline mode) |
+
 ## Focus Model
 
 The TUI uses a split focus model:

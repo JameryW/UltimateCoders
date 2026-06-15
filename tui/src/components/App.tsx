@@ -101,6 +101,16 @@ const App: React.FC = () => {
   // ── Submit timeout ref ──────────────────────────────────
   const submitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Track whether offline message has been shown ────────
+  const hasShownOfflineMsg = useRef(false);
+
+  // ── Reset offline msg flag when connection is restored ───
+  useEffect(() => {
+    if (connectionState === 'connected') {
+      hasShownOfflineMsg.current = false;
+    }
+  }, [connectionState]);
+
   // ── Side effect: stream events → chat messages ─────────
   useEffect(() => {
     if (events.length <= processedEventCount.current) return;
@@ -221,12 +231,15 @@ const App: React.FC = () => {
 
       // Check if gRPC is connected
       if (connectionState !== 'connected' || !client) {
-        // Single offline message (dedup from previous 2-message pattern)
-        addMessage(
-          createSystemMessage('gRPC server not connected. Using offline mode. Ctrl+R to reconnect.', {
-            color: 'yellow',
-          }),
-        );
+        // Show offline message only once per offline session
+        if (!hasShownOfflineMsg.current) {
+          hasShownOfflineMsg.current = true;
+          addMessage(
+            createSystemMessage(`gRPC server not connected (${serverAddr}). Using offline mode. Ctrl+R to reconnect.`, {
+              color: 'yellow',
+            }),
+          );
+        }
 
         // Offline fallback: simulate locally
         simulateOfflineSubmit(
@@ -649,6 +662,7 @@ const App: React.FC = () => {
               maxWidth={subtaskMaxWidth}
               symbols={S}
               selectedIndex={state.selectedSubtaskIndex}
+              detailOpen={state.subtaskDetailOpen}
             />
           )}
         </Box>
