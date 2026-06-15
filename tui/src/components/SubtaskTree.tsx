@@ -37,6 +37,10 @@ export interface SubtaskItem {
   description: string;
   status: SubtaskStatusType;
   assignedWorker?: string;
+  /** IDs of subtasks this one depends on. */
+  dependsOn?: string[];
+  /** Error summary for failed subtasks. */
+  errorSummary?: string;
 }
 
 export interface SubtaskTreeProps {

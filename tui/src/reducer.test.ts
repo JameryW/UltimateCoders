@@ -365,6 +365,31 @@ describe('tuiReducer: subtask navigation actions', () => {
     state = tuiReducer(state, {type: 'CLOSE_SUBTASK_DETAIL'});
     expect(state.subtaskDetailOpen).toBe(false);
   });
+
+  it('JUMP_TO_FAILED_SUBTASK selects next failed after current', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'failed'), subtask('c', 'completed'), subtask('d', 'failed')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    // Start from index 0, next failed should be index 1
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(1);
+    expect(state.selectedSubtaskId).toBe('b');
+    // From index 1, next failed after 1 should be index 3
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(3);
+    expect(state.selectedSubtaskId).toBe('d');
+    // From index 3, wraps back to first failed (index 1)
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(1);
+  });
+
+  it('JUMP_TO_FAILED_SUBTASK is no-op when no failed subtasks', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'pending')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(state.selectedSubtaskIndex).toBe(0); // unchanged
+  });
 });
 
 // ── SET_SUBMITTING ────────────────────────────────────────
@@ -379,6 +404,25 @@ describe('tuiReducer: SET_SUBMITTING', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBMITTING', submitting: true});
     state = tuiReducer(state, {type: 'SET_SUBMITTING', submitting: false});
     expect(state.isSubmitting).toBe(false);
+  });
+});
+
+// ── TOGGLE_HELP_OVERLAY ──────────────────────────────────
+
+describe('tuiReducer: TOGGLE_HELP_OVERLAY', () => {
+  it('toggles helpOverlayOpen from false to true', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_HELP_OVERLAY'});
+    expect(state.helpOverlayOpen).toBe(true);
+  });
+
+  it('toggles helpOverlayOpen from true to false', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_HELP_OVERLAY'});
+    state = tuiReducer(state, {type: 'TOGGLE_HELP_OVERLAY'});
+    expect(state.helpOverlayOpen).toBe(false);
+  });
+
+  it('initial state has helpOverlayOpen=false', () => {
+    expect(INITIAL_TUI_STATE.helpOverlayOpen).toBe(false);
   });
 });
 

@@ -36,6 +36,8 @@ export interface TaskInputProps {
   historyIndex?: number;
   /** Called when the history index changes (Up/Down navigation). */
   onHistoryIndexChange?: (index: number) => void;
+  /** Whether gRPC is connected (affects placeholder text). */
+  isOffline?: boolean;
 }
 
 const TaskInput: React.FC<TaskInputProps> = ({
@@ -45,6 +47,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
   inputHistory = [],
   historyIndex = -1,
   onHistoryIndexChange,
+  isOffline = false,
 }) => {
   const [value, setValue] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
@@ -143,7 +146,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
         onSubmit={handleSubmit}
         onCursorMove={handleCursorMove}
         onHistoryNav={handleHistoryNav}
-        placeholder={isSubmitting ? 'submitting...' : 'type task description and press Enter...'}
+        placeholder={isSubmitting ? 'submitting...' : isOffline ? 'offline demo: type task description...' : 'type task description and press Enter...'}
         focus={isFocused}
       />
       {isSubmitting && <Text color="yellow">{' [submitting...]'}</Text>}

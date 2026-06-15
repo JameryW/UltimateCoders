@@ -146,6 +146,9 @@ export interface TuiState {
   /** Whether subtask detail panel is open. */
   subtaskDetailOpen: boolean;
 
+  /** Whether the help overlay is showing. */
+  helpOverlayOpen: boolean;
+
   /** @deprecated Use focusedArea instead. Kept for gradual migration. */
   selectedPane: FocusedArea;
 }
@@ -172,6 +175,7 @@ export const INITIAL_TUI_STATE: TuiState = {
   selectedSubtaskIndex: -1,
   selectedSubtaskId: null,
   subtaskDetailOpen: false,
+  helpOverlayOpen: false,
   // Backward compat: selectedPane mirrors focusedArea
   selectedPane: 'input',
 };
@@ -216,6 +220,8 @@ export type TuiAction =
   | {type: 'SELECT_SUBTASK'; index: number}
   | {type: 'TOGGLE_SUBTASK_DETAIL'}
   | {type: 'CLOSE_SUBTASK_DETAIL'}
+  | {type: 'JUMP_TO_FAILED_SUBTASK'}
+  | {type: 'TOGGLE_HELP_OVERLAY'}
   // ── Subtask retry (placeholder) ──
   | {type: 'RETRY_SUBTASK'; subtaskId: string};
 
@@ -440,6 +446,26 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'CLOSE_SUBTASK_DETAIL':
       return {...state, subtaskDetailOpen: false};
+
+    case 'JUMP_TO_FAILED_SUBTASK': {
+      // Cycle through failed subtasks, starting after current selection
+      if (state.subtasks.length === 0) return state;
+      const failedIndices = state.subtasks
+        .map((st, idx) => ({id: st.id, idx, status: st.status}))
+        .filter((x) => x.status === 'failed');
+      if (failedIndices.length === 0) return state; // No failed subtasks
+      // Find the next failed after current selection, or wrap to first
+      const startIdx = state.selectedSubtaskIndex + 1;
+      const next = failedIndices.find((f) => f.idx >= startIdx) ?? failedIndices[0];
+      return {
+        ...state,
+        selectedSubtaskIndex: next.idx,
+        selectedSubtaskId: next.id,
+      };
+    }
+
+    case 'TOGGLE_HELP_OVERLAY':
+      return {...state, helpOverlayOpen: !state.helpOverlayOpen};
 
     // ── Subtask retry (placeholder) ───────────────────────────
 

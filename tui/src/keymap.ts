@@ -49,6 +49,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
   {id: 'reconnect', label: 'Reconnect gRPC', shortLabel: 'C-R', key: 'Ctrl+R', areas: [], global: true},
   {id: 'quit', label: 'Quit', shortLabel: 'C-Q', key: 'Ctrl+Q', areas: [], global: true},
+  {id: 'help', label: 'Show help', shortLabel: '?', key: '?', areas: [], global: true},
 
   // ── Input ──
   {id: 'indent', label: 'Insert indent', shortLabel: 'Tab', key: 'Tab', areas: ['input'], global: false},
@@ -71,6 +72,9 @@ const COMMANDS: KeyCommand[] = [
   // ── Subtask ──
   {id: 'navUp', label: 'Previous subtask', shortLabel: '↑', key: 'Up', areas: ['subtask'], global: false},
   {id: 'navDown', label: 'Next subtask', shortLabel: '↓', key: 'Down', areas: ['subtask'], global: false},
+  {id: 'navHome', label: 'First subtask', shortLabel: 'Home', key: 'Home', areas: ['subtask'], global: false},
+  {id: 'navEnd', label: 'Last subtask', shortLabel: 'End', key: 'End', areas: ['subtask'], global: false},
+  {id: 'jumpFailed', label: 'Jump to next failed', shortLabel: 'f', key: 'f', areas: ['subtask'], global: false},
   {id: 'toggleDetail', label: 'Toggle detail', shortLabel: 'Enter', key: 'Enter', areas: ['subtask'], global: false},
   {id: 'retrySubtask', label: 'Retry subtask (coming soon)', shortLabel: 'C-T', key: 'Ctrl+T', areas: ['subtask'], global: false},
 ];

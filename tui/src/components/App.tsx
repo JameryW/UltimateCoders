@@ -52,6 +52,7 @@ import {
 } from '../reducer.js';
 import {formatTaskEvents} from '../formatters.js';
 import {getSymbols} from '../symbols.js';
+import {getCommandsForArea} from '../keymap.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
 import {mapSubtaskStatus} from '../grpc/types.js';
 
@@ -165,6 +166,7 @@ const App: React.FC = () => {
         description: st.description,
         status: mapSubtaskStatus(st.status),
         assignedWorker: st.assignedWorker,
+        dependsOn: st.dependsOn,
       }));
       dispatch({type: 'SET_SUBTASKS', subtasks: items});
       // Also update the stream hook's internal map
@@ -301,8 +303,9 @@ const App: React.FC = () => {
       return;
     }
 
-    // Ctrl+R: reconnect gRPC
+    // Ctrl+R: reconnect gRPC with feedback
     if (key.ctrl && input === 'r') {
+      addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
       reconnect();
       return;
     }
@@ -342,7 +345,18 @@ const App: React.FC = () => {
 
     // Esc: context-dependent escape
     if (key.escape) {
+      // Close help overlay first if open
+      if (state.helpOverlayOpen) {
+        dispatch({type: 'TOGGLE_HELP_OVERLAY'});
+        return;
+      }
       dispatch({type: 'ESC_TO_MAIN'});
+      return;
+    }
+
+    // ?: toggle help overlay
+    if (input === '?' && !key.ctrl && !key.meta) {
+      dispatch({type: 'TOGGLE_HELP_OVERLAY'});
       return;
     }
 
@@ -416,6 +430,25 @@ const App: React.FC = () => {
           }
           return;
         }
+        // Home: jump to first subtask
+        if ((key as any).home) {
+          if (state.subtasks.length > 0) {
+            dispatch({type: 'SELECT_SUBTASK', index: 0});
+          }
+          return;
+        }
+        // End: jump to last subtask
+        if ((key as any).end) {
+          if (state.subtasks.length > 0) {
+            dispatch({type: 'SELECT_SUBTASK', index: state.subtasks.length - 1});
+          }
+          return;
+        }
+        // f: jump to next failed subtask
+        if (input === 'f' && !key.ctrl && !key.meta) {
+          dispatch({type: 'JUMP_TO_FAILED_SUBTASK'});
+          return;
+        }
         break;
       }
 
@@ -460,6 +493,42 @@ const App: React.FC = () => {
     : null;
 
   // ── Render ─────────────────────────────────────────────
+  // Help overlay: replaces entire UI
+  if (state.helpOverlayOpen) {
+    const commands = getCommandsForArea(state.focusedArea);
+    const globalCmds = commands.filter((c) => c.global);
+    const areaCmds = commands.filter((c) => !c.global);
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
+        <Box marginBottom={1}>
+          <Text bold color="cyan">{'Keyboard Shortcuts'}</Text>
+          <Text dimColor>{' (? or Esc to close)'}</Text>
+          <Text dimColor>{` — Focus: ${state.focusedArea}`}</Text>
+        </Box>
+        <Text bold>{'Global:'}</Text>
+        {globalCmds.map((cmd) => (
+          <Box key={cmd.id}>
+            <Text color="yellow">{`  ${cmd.key.padEnd(14)}`}</Text>
+            <Text>{cmd.label}</Text>
+          </Box>
+        ))}
+        {areaCmds.length > 0 && (
+          <>
+            <Box marginTop={1}>
+              <Text bold>{`${state.focusedArea.charAt(0).toUpperCase() + state.focusedArea.slice(1)}:`}</Text>
+            </Box>
+            {areaCmds.map((cmd) => (
+              <Box key={cmd.id}>
+                <Text color="yellow">{`  ${cmd.key.padEnd(14)}`}</Text>
+                <Text>{cmd.label}</Text>
+              </Box>
+            ))}
+          </>
+        )}
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
       {/* ── Header ─────────────────────────────────────── */}
@@ -508,11 +577,41 @@ const App: React.FC = () => {
               <Text>{selectedSubtask.assignedWorker}</Text>
             </Box>
           )}
-          {selectedSubtask.status === 'failed' && (
-            <Box marginTop={1}>
-              <Text color="red">{'✗ This subtask failed. Ctrl+T retry (coming soon)'}</Text>
+          {selectedSubtask.dependsOn && selectedSubtask.dependsOn.length > 0 && (
+            <Box>
+              <Text dimColor>{'Depends on: '}</Text>
+              <Text>{selectedSubtask.dependsOn.map((id) => id.slice(0, 8)).join(', ')}</Text>
             </Box>
           )}
+          {selectedSubtask.errorSummary && (
+            <Box marginTop={1}>
+              <Text color="red" bold>{'Error: '}</Text>
+              <Text color="red">{selectedSubtask.errorSummary}</Text>
+            </Box>
+          )}
+          {selectedSubtask.status === 'failed' && (
+            <Box>
+              <Text color="red">{'✗ Ctrl+T retry (coming soon) · f jump to next failed'}</Text>
+            </Box>
+          )}
+          {/* Recent events related to this subtask */}
+          {(() => {
+            const relatedEvents = state.messages
+              .filter((m) => !m.isUser && m.eventType && m.text.includes(selectedSubtask.id.slice(0, 8)))
+              .slice(-5);
+            if (relatedEvents.length === 0) return null;
+            return (
+              <Box flexDirection="column" marginTop={1}>
+                <Text dimColor bold>{'Recent events:'}</Text>
+                {relatedEvents.map((ev) => (
+                  <Box key={ev.id}>
+                    <Text dimColor>{`[${ev.timestamp}] `}</Text>
+                    <Text dimColor>{ev.text.slice(0, 60)}</Text>
+                  </Box>
+                ))}
+              </Box>
+            );
+          })()}
         </Box>
       ) : (
         <Box flexDirection="row" flexGrow={1}>
@@ -561,6 +660,7 @@ const App: React.FC = () => {
         inputHistory={state.inputHistory}
         historyIndex={state.historyIndex}
         onHistoryIndexChange={(index: number) => dispatch({type: 'SET_HISTORY_INDEX', index})}
+        isOffline={connectionState !== 'connected'}
       />
 
       {/* ── Status bar ─────────────────────────────────── */}
