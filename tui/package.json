@@ -1,0 +1,30 @@
+{
+  "name": "ultimate-coders-tui",
+  "version": "0.1.0",
+  "description": "Ink/React terminal UI for UltimateCoders - with CJK/IME support",
+  "type": "module",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx watch src/index.tsx",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ink": "^5.2.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1",
+    "chalk": "^5.3.0",
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "esbuild": "^0.24.0",
+    "@types/react": "^18.3.0",
+    "tsx": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
