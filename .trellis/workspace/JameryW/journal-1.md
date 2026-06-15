@@ -582,3 +582,36 @@ Refactored TUI interaction model: split focusedArea/activeMainPane, unified keym
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: PR #17: Ink/React TUI + Dashboard + Sandbox + Codegraph + Scheduler
+
+**Date**: 2026-06-15
+**Task**: PR #17: Ink/React TUI + Dashboard + Sandbox + Codegraph + Scheduler
+**Branch**: `feat/tui-ink-react`
+
+### Summary
+
+Created PR #17 (feat/tui-ink-react → main) covering Ink/React TUI with CJK input & gRPC integration, React Dashboard SPA with SSE, Sandbox Agent Executor, Codegraph Worker integration, Task Scheduler, and gRPC server enhancements. 163 files, +25536/-200 lines. Also committed .codegraph/.gitignore improvement and run_dashboard.py script. Archived 06-15-dashboard task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `614b99c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
