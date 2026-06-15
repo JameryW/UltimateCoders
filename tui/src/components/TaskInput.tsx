@@ -4,13 +4,9 @@
  * Uses CjkTextInput (replacing ink-text-input) for proper CJK-width-aware
  * cursor positioning and grapheme-cluster-based editing.
  *
+ * No border — the parent App component provides the unified outer frame.
  * The custom useCursor hook positions the real terminal cursor for IME
- * composition. This is the critical component that fixes CJK input in iTerm2.
- *
- * Key difference from Textual's Input:
- * - Ink preserves the real terminal cursor (useCursor positions it)
- * - Input arrives as UTF-8 strings, not raw bytes
- * - IME composition window appears at the real cursor position
+ * composition.
  */
 import React, {useState, useCallback} from 'react';
 import {Box, Text} from 'ink';
@@ -44,11 +40,6 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const handleChange = useCallback(
     (newValue: string) => {
       setValue(newValue);
-      // Cursor positioning is handled by onCursorMove callback from CjkTextInput,
-      // which correctly computes the display column based on the cursor's grapheme
-      // position (not just the end of the string). This avoids a one-frame flicker
-      // where handleChange would position the cursor at the end before onCursorMove
-      // corrects it to the actual position (e.g. after backspace/delete in the middle).
     },
     [],
   );
@@ -56,20 +47,15 @@ const TaskInput: React.FC<TaskInputProps> = ({
   // Called by CjkTextInput whenever the cursor moves (including arrow keys)
   const handleCursorMove = useCallback(
     (displayCol: number) => {
-      // x offset: 1 (marginX) + 1 (left border │) + 1 (paddingX) + 2 ("> " prefix) = 5 display columns
-      setCursorPosition({x: 5 + displayCol, y: 0});
+      // x offset: 1 (paddingX) + 2 ("> " prefix) = 3 display columns
+      setCursorPosition({x: 3 + displayCol, y: 0});
       showCursor();
     },
     [setCursorPosition, showCursor],
   );
 
   return (
-    <Box
-      borderStyle="single"
-      borderColor={isFocused ? 'cyan' : 'gray'}
-      paddingX={1}
-      marginX={1}
-    >
+    <Box paddingX={1}>
       <Text color="cyan" bold>
         {'> '}
       </Text>

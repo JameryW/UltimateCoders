@@ -1,7 +1,8 @@
 /**
  * StatusBar component - single-line status display at the bottom.
  *
- * Shows: Worker ID | Backend | Progress (X/Y)
+ * Shows: connection dot | Worker | Backend | Progress
+ * Integrated into the unified border frame (no separate border).
  */
 import React from 'react';
 import {Box, Text} from 'ink';
@@ -18,30 +19,20 @@ const StatusBar: React.FC<StatusBarProps> = ({
   progress = {completed: 0, total: 0},
 }) => {
   const progressText = `${progress.completed}/${progress.total}`;
+  const backendColor = backend === 'grpc' ? 'green' : backend === 'disconnected' ? 'red' : 'yellow';
 
   return (
-    <Box>
-      <Text backgroundColor="blue" color="white">
-        {' Worker: '}
-      </Text>
-      <Text backgroundColor="blue" color="white" bold>
-        {workerId || 'N/A'}
-      </Text>
-      <Text backgroundColor="blue" color="white">
-        {' | Backend: '}
-      </Text>
-      <Text backgroundColor="blue" color="white" bold>
-        {backend}
-      </Text>
-      <Text backgroundColor="blue" color="white">
-        {' | Progress: '}
-      </Text>
-      <Text backgroundColor="blue" color="white" bold>
-        {progressText}
-      </Text>
-      <Text backgroundColor="blue" color="white">
-        {' '}
-      </Text>
+    <Box paddingX={1}>
+      <Text dimColor>{'Worker:'}</Text>
+      <Text> {workerId || 'N/A'} </Text>
+      <Text dimColor>{'│'}</Text>
+      <Text dimColor>{' Backend:'}</Text>
+      <Text color={backendColor}> {backend} </Text>
+      <Text dimColor>{'│'}</Text>
+      <Text dimColor>{' Progress:'}</Text>
+      <Text bold> {progressText}</Text>
+      <Text dimColor>{'  '}</Text>
+      <Text dimColor>{'(Ctrl+R reconnect  Ctrl+Q quit)'}</Text>
     </Box>
   );
 };

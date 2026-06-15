@@ -1,13 +1,16 @@
 /**
  * SubtaskTree component - right panel showing subtask list with status icons.
  *
- * Status icons:
- * - Pending: hourglass (dim)
- * - In progress: spinner (cyan)
- * - Completed: checkmark (green)
- * - Failed: cross (red)
+ * No border — the parent App component provides the unified outer frame.
+ * Separated from ChatLog by a vertical divider rendered by App.
  *
- * Border title shows "Subtasks [X/Y Z%]"
+ * Status icons:
+ * - Pending: ○ (dim)
+ * - Assigned: ◌ (dim)
+ * - In progress: ◉ (cyan)
+ * - Completed: ● (green)
+ * - Failed: ✗ (red)
+ * - Conflicted: ⚠ (yellow)
  */
 import React from 'react';
 import {Box, Text} from 'ink';
@@ -27,13 +30,14 @@ export interface SubtaskTreeProps {
   progress?: {completed: number; total: number};
 }
 
+// Use ASCII-safe icons that render reliably in all terminals
 const STATUS_ICONS: Record<SubtaskStatusType, {icon: string; color?: string; bold?: boolean; dim?: boolean}> = {
-  pending: {icon: '⏳', dim: true},
-  assigned: {icon: '⏳', dim: true},
-  in_progress: {icon: '🔄', color: 'cyan', bold: true},
-  completed: {icon: '✅', color: 'green', bold: true},
-  failed: {icon: '❌', color: 'red', bold: true},
-  conflicted: {icon: '⚠️', color: 'yellow', bold: true},
+  pending: {icon: '○', dim: true},
+  assigned: {icon: '◌', dim: true},
+  in_progress: {icon: '◉', color: 'cyan', bold: true},
+  completed: {icon: '●', color: 'green', bold: true},
+  failed: {icon: '✗', color: 'red', bold: true},
+  conflicted: {icon: '⚠', color: 'yellow', bold: true},
 };
 
 function getProgressText(completed: number, total: number): string {
@@ -68,15 +72,10 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   const titleSuffix = getProgressText(progress.completed, progress.total);
 
   return (
-    <Box
-      flexDirection="column"
-      flexGrow={1}
-      borderStyle="single"
-      borderColor="gray"
-      paddingX={1}
-    >
+    <Box flexDirection="column" flexGrow={1} paddingX={1}>
       <Box marginBottom={1}>
-        <Text bold>{`Subtasks [${titleSuffix}]`}</Text>
+        <Text bold color="cyan">{`Subtasks`}</Text>
+        <Text dimColor>{` [${titleSuffix}]`}</Text>
       </Box>
       {subtasks.length === 0 ? (
         <Text dimColor>No subtasks yet.</Text>
