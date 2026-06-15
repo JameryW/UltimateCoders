@@ -15,9 +15,14 @@
  *
  * Cursor positioning strategy:
  * - y=0 means the input is at the bottom of the TUI frame
- *   (2 rows from the terminal bottom: input + status bar)
+ *   (2 rows from the terminal bottom: input + status bar + border)
  * - y>0 means the input is offset further up (e.g., multi-line input)
  * - x is the display column within the input field
+ *
+ * IMPORTANT: Ink repositions the cursor during its own render cycle.
+ * To avoid fighting with Ink, we schedule cursor positioning via
+ * setImmediate (after the current React render) so it runs after
+ * Ink has finished its output.
  *
  * This hook uses useStdout to write ANSI escape sequences directly.
  */
@@ -41,12 +46,14 @@ export interface UseCursorReturn {
   hideCursor: () => void;
 }
 
-/** Rows from terminal bottom for the status bar + border. */
+/** Rows from terminal bottom: status bar + bottom border. */
 const BOTTOM_RESERVED = 2;
 
 export function useCursor(): UseCursorReturn {
   const {stdout} = useStdout();
   const positionRef = useRef<CursorPosition>({x: 0, y: 0});
+  const pendingRef = useRef<CursorPosition | null>(null);
+  const rafRef = useRef<ReturnType<typeof setImmediate> | null>(null);
 
   const showCursor = useCallback(() => {
     if (stdout) {
@@ -60,22 +67,38 @@ export function useCursor(): UseCursorReturn {
     }
   }, [stdout]);
 
+  /** Actually write the ANSI escape to position the cursor. */
+  const writeCursorPosition = useCallback(
+    (pos: CursorPosition) => {
+      if (!stdout) return;
+      const row = (stdout.rows || 24) - BOTTOM_RESERVED - pos.y;
+      const col = pos.x + 1; // 1-based column
+      stdout.write(`\x1B[${row};${col}H`);
+      showCursor();
+    },
+    [stdout, showCursor],
+  );
+
   const setCursorPosition = useCallback(
     (pos: CursorPosition) => {
       positionRef.current = pos;
-      if (stdout) {
-        // Position cursor: ESC [ row ; col H (1-based)
-        // Row calculation: count from terminal bottom, accounting for
-        // status bar and border lines.
-        // pos.y=0 → input line (2nd from bottom)
-        // pos.y=1 → one line above input (multi-line)
-        const row = (stdout.rows || 24) - BOTTOM_RESERVED - pos.y;
-        const col = pos.x + 1; // 1-based column
-        stdout.write(`\x1B[${row};${col}H`);
-        showCursor();
+
+      // Cancel any pending position update
+      if (rafRef.current !== null) {
+        clearImmediate(rafRef.current);
       }
+
+      // Schedule after Ink's render cycle to avoid cursor fighting
+      pendingRef.current = pos;
+      rafRef.current = setImmediate(() => {
+        rafRef.current = null;
+        if (pendingRef.current) {
+          writeCursorPosition(pendingRef.current);
+          pendingRef.current = null;
+        }
+      });
     },
-    [stdout, showCursor],
+    [writeCursorPosition],
   );
 
   // Show cursor on mount, hide on unmount
@@ -83,6 +106,9 @@ export function useCursor(): UseCursorReturn {
     showCursor();
     return () => {
       hideCursor();
+      if (rafRef.current !== null) {
+        clearImmediate(rafRef.current);
+      }
     };
   }, [showCursor, hideCursor]);
 
