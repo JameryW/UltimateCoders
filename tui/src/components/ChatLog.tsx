@@ -1,16 +1,15 @@
 /**
- * ChatLog component - conversational-style scrollable log.
+ * ChatLog component - conversational-style message log.
  *
- * Uses Ink's <Static> component for scrollback history (permanently
- * rendered above the interactive area) and a live message area for
- * the most recent messages.
+ * Renders chat messages in the left panel. No border — the parent
+ * App component provides the unified outer frame.
  *
  * Message format:
  * - User input: [HH:MM:SS] > message  (cyan > prefix)
  * - System output: [HH:MM:SS] message  (with optional color)
  */
 import React from 'react';
-import {Box, Text, Static} from 'ink';
+import {Box, Text} from 'ink';
 
 export interface ChatMessage {
   id: string;
@@ -82,27 +81,19 @@ const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
 };
 
 const ChatLog: React.FC<ChatLogProps> = ({messages}) => {
-  // Use <Static> for previously rendered messages (scrollback).
-  // <Static> renders items permanently above the interactive area.
-  // The children function is called once per item (not per batch).
-  const staticMessages = messages.slice(0, -1);
-  const liveMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  // Show last N messages that fit (avoid <Static> which breaks unified layout)
+  const visibleMessages = messages.slice(-20);
 
   return (
-    <Box flexDirection="column" flexGrow={2} borderStyle="single" borderColor="gray" paddingX={1}>
-      <Box flexDirection="column">
-        <Text bold>Chat</Text>
+    <Box flexDirection="column" flexGrow={2} paddingX={1}>
+      <Box marginBottom={1}>
+        <Text bold color="cyan">{'Chat'}</Text>
       </Box>
-      {staticMessages.length > 0 && (
-        <Static items={staticMessages}>
-          {(msg: ChatMessage, index: number) => (
-            <ChatMessageItem key={msg.id} msg={msg} />
-          )}
-        </Static>
-      )}
-      {liveMessage && <ChatMessageItem msg={liveMessage} />}
+      {visibleMessages.map((msg) => (
+        <ChatMessageItem key={msg.id} msg={msg} />
+      ))}
       {messages.length === 0 && (
-        <Text dimColor>No messages yet. Type a task description below.</Text>
+        <Text dimColor>No messages yet. Type a task below.</Text>
       )}
     </Box>
   );

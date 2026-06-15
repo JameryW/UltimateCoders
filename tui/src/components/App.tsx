@@ -1,13 +1,16 @@
 /**
  * App component - root layout for the UltimateCoders TUI.
  *
- * Layout:
- *   ┌─ LogoHeader ──────────────────────────────────────────┐
- *   │ ┌─ ChatLog (2fr) ──────┐ ┌─ SubtaskTree (1fr) ─────┐ │
- *   │ │                       │ │                          │ │
- *   │ └───────────────────────┘ └──────────────────────────┘ │
- *   ├─ TaskInput ────────────────────────────────────────────┤
- *   └─ StatusBar ────────────────────────────────────────────┘
+ * Layout (unified border frame):
+ *   ┌─ UltimateCoders v0.1.0 ─────────────────────────────────┐
+ *   │ Chat                    │ Subtasks [0/0 0%]             │
+ *   │ > user message          │ ⏳ 1. Analyze code            │
+ *   │   system response       │ 🔄 2. Fix bug                │
+ *   │                         │ ✅ 3. Write tests             │
+ *   ├─────────────────────────┴───────────────────────────────┤
+ *   │ > type task description and press Enter...              │
+ *   ├─── Worker: grpc │ Backend: grpc │ Progress: 0/0 ───────┤
+ *   └─────────────────────────────────────────────────────────┘
  *
  * PR2: Replaced mock data with gRPC-backed real data flow.
  * - useGrpcClient: manages gRPC connection state
@@ -17,8 +20,7 @@
  * - ChatLog shows system messages from TaskEvent stream
  */
 import React, {useState, useCallback} from 'react';
-import {Box, useApp, useInput} from 'ink';
-import LogoHeader from './LogoHeader.js';
+import {Box, Text, useApp, useInput} from 'ink';
 import ChatLog, {
   type ChatMessage,
   createUserMessage,
@@ -178,9 +180,29 @@ const App: React.FC = () => {
   const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
   const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
 
+  // Version for header
+  const version = '0.1.0';
+
   return (
-    <Box flexDirection="column" height="100%">
-      <LogoHeader />
+    <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
+      {/* ── Header ─────────────────────────────────────── */}
+      <Box paddingX={1}>
+        <Text bold color="cyan">{'╔═╗╦ ╦╔═╗╔═╗'}</Text>
+        <Text>  </Text>
+        <Text bold>UltimateCoders</Text>
+        <Text dimColor> v{version}</Text>
+        <Text>  </Text>
+        {connectionState === 'connected' && <Text color="green">●</Text>}
+        {connectionState === 'connecting' && <Text color="yellow">◌</Text>}
+        {connectionState === 'disconnected' && <Text color="red">○</Text>}
+        <Text dimColor>
+          {connectionState === 'connected' ? ' connected' : ''}
+          {connectionState === 'connecting' ? ' connecting...' : ''}
+          {connectionState === 'disconnected' ? ' offline' : ''}
+        </Text>
+      </Box>
+
+      {/* ── Main area: Chat + Subtasks ─────────────────── */}
       <Box flexDirection="row" flexGrow={1}>
         <ChatLog messages={messages} />
         <SubtaskTree
@@ -189,7 +211,16 @@ const App: React.FC = () => {
           progress={progress}
         />
       </Box>
+
+      {/* ── Separator ──────────────────────────────────── */}
+      <Box>
+        <Text color="gray">{'─'.repeat(80)}</Text>
+      </Box>
+
+      {/* ── Input ──────────────────────────────────────── */}
       <TaskInput onSubmit={handleSubmit} />
+
+      {/* ── Status bar ─────────────────────────────────── */}
       <StatusBar workerId={workerId} backend={backend} progress={progress} />
     </Box>
   );
