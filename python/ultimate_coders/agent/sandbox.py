@@ -343,7 +343,7 @@ class SandboxManager:
                 elapsed = time.monotonic() - start
 
                 result = ExecResult(
-                    exit_code=proc.returncode or -1,
+                    exit_code=proc.returncode if proc.returncode is not None else -1,
                     stdout=stdout.decode("utf-8", errors="replace"),
                     stderr=stderr.decode("utf-8", errors="replace"),
                     duration_ms=int(elapsed * 1000),
