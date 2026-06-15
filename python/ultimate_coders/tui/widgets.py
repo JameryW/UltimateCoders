@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Input, Static, Tree
+from textual.widgets import Static, TextArea, Tree
 from textual.widgets._tree import TreeNode
 
 from ultimate_coders.agent.types import Subtask, SubtaskStatus
@@ -228,28 +228,37 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(Input):
-    """Input field for submitting new task descriptions.
+class TaskInput(TextArea):
+    """CJK-compatible input field for submitting new task descriptions.
 
-    Renders with a '>' prompt prefix and dark background styling.
-    Uses Textual's native Input widget with placeholder support.
+    Uses TextArea instead of Input to properly render CJK characters
+    (Chinese/Japanese/Korean) which the Input widget fails to display.
+    Submits on Enter, Shift+Enter for newline (not typical use case).
     """
 
     DEFAULT_CSS = """
     TaskInput {
         height: 3;
-        margin: 0 1;
+        margin: 1 1 0 1;
+        border: solid $primary;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with a '>' prompt placeholder."""
-        Input.__init__(
-            self,
-            placeholder="> type task description and press Enter...",
-            *args,
-            **kwargs,
-        )
+        """Initialize the TaskInput."""
+        # Start with a dim hint line; user types over it
+        TextArea.__init__(self, "", *args, **kwargs)
+
+    def _on_key(self, event) -> None:
+        """Handle Enter key to submit the task."""
+        if event.key == "enter":
+            text = self.text.strip()
+            if text:
+                self.post_message(TaskSubmitted(text))
+            # Clear input for next task
+            self.load_text("")
+            event.prevent_default()
+            event.stop()
 
 
 class StatusBar(Static):
@@ -310,3 +319,15 @@ class StatusBar(Static):
         except Exception:
             # Widget not yet mounted — will render on mount
             pass
+
+
+from textual.message import Message
+
+
+class TaskSubmitted(Message):
+    """Message emitted when the user submits a task via TaskInput."""
+
+    def __init__(self, text: str) -> None:
+        """Initialize with the submitted task description."""
+        Message.__init__(self)
+        self.text = text

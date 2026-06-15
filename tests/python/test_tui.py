@@ -175,12 +175,11 @@ class TestTaskInput:
     """Tests for TaskInput widget."""
 
     def test_task_input_instantiation(self):
-        """TaskInput can be instantiated with placeholder."""
+        """TaskInput can be instantiated as TextArea."""
         from ultimate_coders.tui.widgets import TaskInput
 
         inp = TaskInput()
-        assert inp.placeholder is not None
-        assert ">" in inp.placeholder
+        assert inp.text == ""
 
 
 # -- SandboxTUI tests (mocked, no actual Textual run) -------------------
