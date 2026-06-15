@@ -4,6 +4,14 @@
  * Replaces the scattered useState + render-side-effects in App.tsx.
  * Every state transition goes through dispatch(action).
  * Render path contains zero setState calls.
+ *
+ * Scroll offset is NOT stored here — it is managed locally by ChatLog
+ * because the offset must be relative to the filtered message list,
+ * which the reducer cannot compute. Instead, the reducer tracks:
+ * - followLog: whether auto-follow is active
+ * - scrollTick: monotonically increasing counter for scroll commands
+ * The ChatLog component reads scrollTick and applies the scroll direction
+ * to its own local offset.
  */
 import type {ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem, SubtaskStatusType} from './components/SubtaskTree.js';
@@ -56,8 +64,11 @@ export interface TuiState {
   /** Current keyboard focus pane. */
   selectedPane: SelectedPane;
 
-  /** ChatLog scroll offset (index into messages array). */
-  logOffset: number;
+  /** Monotonically increasing tick for scroll commands.
+   *  ChatLog reads this to detect new scroll events. */
+  scrollDirection: 'up' | 'down' | null;
+  scrollLines: number;
+  scrollTick: number;
 
   /** Submitted task descriptions for Up/Down history. */
   inputHistory: string[];
@@ -85,7 +96,9 @@ export const INITIAL_TUI_STATE: TuiState = {
   activeTaskId: null,
   followLog: true,
   selectedPane: 'input',
-  logOffset: 0,
+  scrollDirection: null,
+  scrollLines: 0,
+  scrollTick: 0,
   inputHistory: [],
   historyIndex: -1,
   lastError: null,
@@ -103,9 +116,8 @@ export type TuiAction =
   | {type: 'SET_ACTIVE_TASK'; taskId: string | null}
   | {type: 'SET_FOLLOW_LOG'; follow: boolean}
   | {type: 'SET_SELECTED_PANE'; pane: SelectedPane}
-  | {type: 'SET_LOG_OFFSET'; offset: number}
   | {type: 'SCROLL_UP'; lines: number}
-  | {type: 'SCROLL_DOWN'; lines: number; totalMessages: number; visibleLines: number}
+  | {type: 'SCROLL_DOWN'; lines: number}
   | {type: 'ADD_INPUT_HISTORY'; text: string}
   | {type: 'SET_HISTORY_INDEX'; index: number}
   | {type: 'SET_LAST_ERROR'; error: string | null}
@@ -125,11 +137,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       const messages = newMessages.length > 2000
         ? newMessages.slice(newMessages.length - 2000)
         : newMessages;
-      // If following log, keep offset at bottom
-      const logOffset = state.followLog
-        ? Math.max(0, messages.length - 1)
-        : state.logOffset;
-      return {...state, messages, logOffset};
+      return {...state, messages};
     }
 
     case 'SET_SUBTASKS': {
@@ -162,21 +170,25 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'SET_SELECTED_PANE':
       return {...state, selectedPane: action.pane};
 
-    case 'SET_LOG_OFFSET':
-      return {...state, logOffset: action.offset};
-
     case 'SCROLL_UP': {
-      const newOffset = Math.max(0, state.logOffset - action.lines);
-      // Scrolling up disables auto-follow
-      return {...state, logOffset: newOffset, followLog: false};
+      // Scrolling up disables auto-follow and emits a scroll command
+      return {
+        ...state,
+        followLog: false,
+        scrollDirection: 'up',
+        scrollLines: action.lines,
+        scrollTick: state.scrollTick + 1,
+      };
     }
 
     case 'SCROLL_DOWN': {
-      const maxOffset = Math.max(0, action.totalMessages - action.visibleLines);
-      const newOffset = Math.min(maxOffset, state.logOffset + action.lines);
-      // If scrolled to bottom, re-enable auto-follow
-      const followLog = newOffset >= maxOffset;
-      return {...state, logOffset: newOffset, followLog};
+      // Emit scroll command; ChatLog will re-enable followLog if at bottom
+      return {
+        ...state,
+        scrollDirection: 'down',
+        scrollLines: action.lines,
+        scrollTick: state.scrollTick + 1,
+      };
     }
 
     case 'ADD_INPUT_HISTORY': {
@@ -203,7 +215,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       };
 
     case 'CLEAR_LOG':
-      return {...state, messages: [], logOffset: 0, followLog: true};
+      return {...state, messages: [], followLog: true};
 
     case 'ADD_OFFLINE_TIMER':
       return {...state, offlineTimerIds: [...state.offlineTimerIds, action.timerId]};

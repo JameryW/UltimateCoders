@@ -18,8 +18,11 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
+import GraphemeSplitter from 'grapheme-splitter';
 import type {SymbolSet} from '../symbols.js';
 import {getSymbols} from '../symbols.js';
+
+const splitter = new GraphemeSplitter();
 
 export type SubtaskStatusType = 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed' | 'conflicted';
 
@@ -64,17 +67,22 @@ function getProgressText(completed: number, total: number): string {
 
 /**
  * Truncate a string to fit within maxDisplayWidth terminal columns.
- * Uses string-width for CJK-aware measurement.
+ * Uses string-width for CJK-aware measurement and GraphemeSplitter
+ * for safe grapheme-boundary truncation (avoids splitting combining
+ * characters, emoji ZWJ sequences, etc.).
  */
 function truncateToWidth(text: string, maxDisplayWidth: number): string {
   if (stringWidth(text) <= maxDisplayWidth) return text;
-  // Remove characters from end until width fits (leave room for "…")
+  // Remove graphemes from end until width fits (leave room for "…")
   const ellipsisWidth = 1;
-  let result = text;
-  while (stringWidth(result) > maxDisplayWidth - ellipsisWidth && result.length > 0) {
-    result = result.slice(0, -1);
+  const graphemes = splitter.splitGraphemes(text);
+  let width = stringWidth(text);
+  let end = graphemes.length;
+  while (width > maxDisplayWidth - ellipsisWidth && end > 0) {
+    end--;
+    width -= stringWidth(graphemes[end]);
   }
-  return result + '…';
+  return graphemes.slice(0, end).join('') + '…';
 }
 
 const SubtaskRow: React.FC<{subtask: SubtaskItem; maxWidth: number; symbols: SymbolSet}> = ({subtask, maxWidth, symbols}) => {

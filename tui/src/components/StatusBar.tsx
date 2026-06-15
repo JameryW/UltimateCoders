@@ -3,12 +3,15 @@
  *
  * Shows: connection | Worker | Backend | Mode | Task | Progress | Pane | Help
  * Integrated into the unified border frame (no separate border).
+ *
+ * Responsive: omits less-critical fields on narrow terminals to avoid overflow.
+ * At <100 cols, the help text and mode are hidden.
+ * At <80 cols, only connection + worker + progress + pane are shown.
  */
 import React from 'react';
 import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
 import type {SelectedPane, EventFilter} from '../reducer.js';
-import {eventFilterLabel} from '../reducer.js';
 
 export interface StatusBarProps {
   workerId?: string;
@@ -22,6 +25,8 @@ export interface StatusBarProps {
   mode?: string;
   selectedPane?: SelectedPane;
   eventFilter?: EventFilter;
+  /** Terminal width for responsive layout. */
+  terminalWidth?: number;
 }
 
 const PANE_LABELS: Record<SelectedPane, string> = {
@@ -42,6 +47,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
   mode = '',
   selectedPane = 'input',
   eventFilter = 'all',
+  terminalWidth = 80,
 }) => {
   const progressText = `${progress.completed}/${progress.total}`;
   const backendColor = backend === 'grpc' ? 'green' : backend === 'disconnected' ? 'red' : 'yellow';
@@ -62,23 +68,31 @@ const StatusBar: React.FC<StatusBarProps> = ({
         ? 'yellow'
         : 'red';
 
+  // Responsive: show fewer fields on narrow terminals
+  const isNarrow = terminalWidth < 80;
+  const isMedium = terminalWidth >= 80 && terminalWidth < 100;
+
   return (
     <Box paddingX={1}>
       <Text color={connColor}>{connDot}</Text>
       <Text dimColor>{' '}</Text>
       <Text dimColor>{'Worker:'}</Text>
       <Text> {workerId || 'N/A'} </Text>
-      <Text dimColor>{'│'}</Text>
-      <Text dimColor>{' Backend:'}</Text>
-      <Text color={backendColor}> {backend} </Text>
-      {mode && (
+      {!isNarrow && (
+        <>
+          <Text dimColor>{'│'}</Text>
+          <Text dimColor>{' Backend:'}</Text>
+          <Text color={backendColor}> {backend} </Text>
+        </>
+      )}
+      {!isNarrow && mode && (
         <>
           <Text dimColor>{'│'}</Text>
           <Text dimColor>{' '}</Text>
           <Text dimColor>{mode}</Text>
         </>
       )}
-      {activeTaskId && (
+      {!isNarrow && activeTaskId && (
         <>
           <Text dimColor>{'│'}</Text>
           <Text dimColor>{' Task:'}</Text>
@@ -91,14 +105,18 @@ const StatusBar: React.FC<StatusBarProps> = ({
       <Text dimColor>{'│'}</Text>
       <Text dimColor>{' Pane:'}</Text>
       <Text bold color="cyan"> {PANE_LABELS[selectedPane]}</Text>
-      {lastError && (
+      {!isNarrow && lastError && (
         <>
           <Text dimColor>{'│'}</Text>
           <Text color="red"> {lastError.slice(0, 30)}</Text>
         </>
       )}
-      <Text dimColor>{'  '}</Text>
-      <Text dimColor>{'(Tab pane  Ctrl+P pause  Ctrl+F filter  Ctrl+R reconnect  Ctrl+Q quit)'}</Text>
+      {!isMedium && !isNarrow && (
+        <>
+          <Text dimColor>{'  '}</Text>
+          <Text dimColor>{'(Tab pane  Ctrl+P pause  Ctrl+F filter  Ctrl+R reconnect  Ctrl+Q quit)'}</Text>
+        </>
+      )}
     </Box>
   );
 };

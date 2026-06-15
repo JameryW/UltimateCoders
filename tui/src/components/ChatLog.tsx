@@ -5,15 +5,21 @@
  * App component provides the unified outer frame.
  *
  * Features:
- * - Window slicing: only renders messages[logOffset..logOffset+visibleLines]
+ * - Window slicing: only renders filteredMessages[offset..offset+visibleLines]
  * - Auto-follow: when followLog=true, automatically scrolls to bottom
  * - Scroll indicator: shows position in message history
+ * - Event filtering: filter by event type (task/subtask/tool/error)
+ *
+ * Scroll offset is managed locally because it must be relative to the
+ * filtered message list. The reducer tracks followLog (auto-follow state)
+ * and issues scroll commands (via scrollCommand prop) that ChatLog applies
+ * to its local offset.
  *
  * Message format:
  * - User input: [HH:MM:SS] > message  (cyan > prefix)
  * - System output: [HH:MM:SS] message  (with optional color)
  */
-import React from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 import type {EventFilter} from '../reducer.js';
 import {eventFilterLabel} from '../reducer.js';
@@ -30,10 +36,16 @@ export interface ChatMessage {
   eventType?: string;
 }
 
+/** Scroll command issued by the parent. Monotonically increasing tick ensures
+ *  each command is processed exactly once even if the values are identical. */
+export interface ScrollCommand {
+  direction: 'up' | 'down';
+  lines: number;
+  tick: number;
+}
+
 export interface ChatLogProps {
   messages: ChatMessage[];
-  /** Scroll offset into the messages array. */
-  logOffset: number;
   /** Whether auto-follow is active. */
   followLog: boolean;
   /** Number of visible lines for the message area. */
@@ -42,6 +54,10 @@ export interface ChatLogProps {
   isFocused: boolean;
   /** Current event type filter. */
   eventFilter?: EventFilter;
+  /** Scroll command from parent. Processed once per tick. */
+  scrollCommand?: ScrollCommand;
+  /** Callback to update followLog in reducer. */
+  onSetFollowLog?: (follow: boolean) => void;
 }
 
 function formatTime(): string {
@@ -101,12 +117,22 @@ const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
 
 const ChatLog: React.FC<ChatLogProps> = ({
   messages,
-  logOffset,
   followLog,
   visibleLines,
   isFocused,
   eventFilter = 'all',
+  scrollCommand,
+  onSetFollowLog,
 }) => {
+  // Local scroll offset into the filtered message list.
+  const [localOffset, setLocalOffset] = useState(0);
+
+  // Track last processed scroll command tick to avoid double-processing
+  const lastScrollTick = useRef(0);
+
+  // Track previous eventFilter to reset scroll when filter changes
+  const prevFilterRef = useRef(eventFilter);
+
   // Apply event filter
   const filteredMessages = eventFilter === 'all'
     ? messages
@@ -122,8 +148,41 @@ const ChatLog: React.FC<ChatLogProps> = ({
         return true;
       });
 
-  // Window slicing: render only the visible portion
   const totalMessages = filteredMessages.length;
+  const maxOffset = Math.max(0, totalMessages - visibleLines);
+
+  // When filter changes, snap to bottom (re-enable follow)
+  useEffect(() => {
+    if (eventFilter !== prevFilterRef.current) {
+      prevFilterRef.current = eventFilter;
+      setLocalOffset(0);
+      if (!followLog) {
+        onSetFollowLog?.(true);
+      }
+    }
+  }, [eventFilter, followLog, onSetFollowLog]);
+
+  // Process scroll commands from parent
+  useEffect(() => {
+    if (!scrollCommand || scrollCommand.tick <= lastScrollTick.current) return;
+    lastScrollTick.current = scrollCommand.tick;
+
+    if (scrollCommand.direction === 'up') {
+      setLocalOffset((prev) => Math.max(0, prev - scrollCommand.lines));
+      onSetFollowLog?.(false);
+    } else {
+      setLocalOffset((prev) => {
+        const newOffset = Math.min(maxOffset, prev + scrollCommand.lines);
+        if (newOffset >= maxOffset) {
+          onSetFollowLog?.(true);
+        }
+        return newOffset;
+      });
+    }
+  }, [scrollCommand, maxOffset, onSetFollowLog]);
+
+  // When followLog is true, offset is always at the bottom of the filtered list
+  const effectiveOffset = followLog ? maxOffset : Math.min(localOffset, maxOffset);
 
   if (totalMessages === 0) {
     return (
@@ -137,22 +196,19 @@ const ChatLog: React.FC<ChatLogProps> = ({
     );
   }
 
-  // Calculate the visible window
-  const maxOffset = Math.max(0, totalMessages - visibleLines);
-  const clampedOffset = Math.min(logOffset, maxOffset);
-  const endIdx = Math.min(clampedOffset + visibleLines, totalMessages);
-  const visibleMessages = filteredMessages.slice(clampedOffset, endIdx);
+  const endIdx = Math.min(effectiveOffset + visibleLines, totalMessages);
+  const visibleMessages = filteredMessages.slice(effectiveOffset, endIdx);
 
   // Scroll indicator
-  const atTop = clampedOffset === 0;
-  const atBottom = clampedOffset >= maxOffset;
+  const atTop = effectiveOffset === 0;
+  const atBottom = effectiveOffset >= maxOffset;
   const scrollIndicator = atTop && atBottom
     ? ''
     : atTop
       ? ' ↓'
       : atBottom
         ? ' ↑'
-        : ` ↑${clampedOffset + 1}-${endIdx}/${totalMessages}↓`;
+        : ` ↑${effectiveOffset + 1}-${endIdx}/${totalMessages}↓`;
 
   // Follow indicator
   const followIndicator = followLog ? '' : ' [paused]';

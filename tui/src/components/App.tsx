@@ -15,6 +15,10 @@
  * State management: useReducer (TuiState + tuiReducer).
  * All state transitions go through dispatch — no setState in render.
  * Keyboard: global useInput with Tab pane switching.
+ *
+ * Scroll offset is managed locally by ChatLog because it must be
+ * relative to the filtered message list. The reducer tracks followLog
+ * and emits scroll commands (via scrollTick) that ChatLog applies.
  */
 import React, {useReducer, useCallback, useEffect, useRef} from 'react';
 import {Box, Text, useApp, useInput, useStdout} from 'ink';
@@ -22,6 +26,7 @@ import ChatLog, {
   type ChatMessage,
   createUserMessage,
   createSystemMessage,
+  type ScrollCommand,
 } from './ChatLog.js';
 import SubtaskTree, {
   type SubtaskItem,
@@ -40,9 +45,6 @@ import {mapSubtaskStatus} from '../grpc/types.js';
 // ── Constants ───────────────────────────────────────────────
 
 const VERSION = '0.1.0';
-
-/** Maximum messages to keep in memory. */
-const MAX_MESSAGES = 2000;
 
 // ── App Component ───────────────────────────────────────────
 
@@ -85,6 +87,13 @@ const App: React.FC = () => {
     const newMessages = formatTaskEvents(newEvents);
     if (newMessages.length > 0) {
       dispatch({type: 'ADD_MESSAGES', messages: newMessages});
+    }
+  }, [events.length]);
+
+  // ── Reset processed event count when events are cleared ─
+  useEffect(() => {
+    if (events.length === 0 && processedEventCount.current > 0) {
+      processedEventCount.current = 0;
     }
   }, [events.length]);
 
@@ -155,6 +164,11 @@ const App: React.FC = () => {
     5,
     (stdout?.rows ?? 24) - 8, // header(2) + separator(1) + input(1) + status(1) + borders(3)
   );
+
+  // ── Build scroll command for ChatLog ────────────────────
+  const scrollCommand: ScrollCommand | undefined = state.scrollDirection
+    ? {direction: state.scrollDirection, lines: state.scrollLines, tick: state.scrollTick}
+    : undefined;
 
   // ── Handle task submission ─────────────────────────────
   const handleSubmit = useCallback(
@@ -290,12 +304,7 @@ const App: React.FC = () => {
         }
         // PageDown: scroll down
         if (key.pageDown) {
-          dispatch({
-            type: 'SCROLL_DOWN',
-            lines: visibleLines,
-            totalMessages: state.messages.length,
-            visibleLines,
-          });
+          dispatch({type: 'SCROLL_DOWN', lines: visibleLines});
           return;
         }
         // Up arrow: scroll up one line
@@ -305,12 +314,7 @@ const App: React.FC = () => {
         }
         // Down arrow: scroll down one line
         if (key.downArrow) {
-          dispatch({
-            type: 'SCROLL_DOWN',
-            lines: 1,
-            totalMessages: state.messages.length,
-            visibleLines,
-          });
+          dispatch({type: 'SCROLL_DOWN', lines: 1});
           return;
         }
         // Ctrl+L: clear log
@@ -391,11 +395,12 @@ const App: React.FC = () => {
         {showChat && (
           <ChatLog
             messages={state.messages}
-            logOffset={state.logOffset}
             followLog={state.followLog}
             visibleLines={visibleLines}
             isFocused={state.selectedPane === 'chat'}
             eventFilter={state.eventFilter}
+            scrollCommand={scrollCommand}
+            onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
           />
         )}
         {showDualPane && showChat && showSubtasks && (
@@ -443,6 +448,7 @@ const App: React.FC = () => {
         mode={mode}
         selectedPane={state.selectedPane}
         eventFilter={state.eventFilter}
+        terminalWidth={terminalWidth}
       />
     </Box>
   );
