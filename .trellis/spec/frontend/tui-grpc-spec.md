@@ -55,6 +55,25 @@ interface UseTaskEventsReturn {
 function useTaskEvents(client: TaskServiceClient | null, taskId?: string): UseTaskEventsReturn;
 ```
 
+### CjkTextInput Component (`tui/src/components/CjkTextInput.tsx`)
+
+```typescript
+interface CjkTextInputProps {
+    readonly value: string;
+    readonly onChange: (value: string) => void;
+    readonly onSubmit?: (value: string) => void;
+    readonly placeholder?: string;
+    readonly focus?: boolean;
+    readonly showCursor?: boolean;
+    readonly onCursorMove?: (displayCol: number) => void;
+}
+```
+
+**Key behavior**:
+- Cursor tracked as grapheme index internally; converted to display column via `stringWidth(textBeforeCursor)` for real cursor positioning
+- `onCursorMove` fires on every cursor change (input, backspace, delete, arrow keys, Ctrl+A/E, external value reset)
+- Uses `useInput` from Ink for keyboard handling; `cursorRef` (ref) avoids stale closures alongside `cursorGI` (state) for re-render
+
 ---
 
 ## 3. Contracts
@@ -210,6 +229,32 @@ subtasks.map((desc, i) => ({
 
 **Decision**: When gRPC is unavailable, `App.tsx` falls back to offline mode that simulates task decomposition with locally-generated IDs and static subtask statuses. This ensures the TUI is always interactive. The StatusBar shows connection status so users know when they're in offline mode.
 
+### Decision: CjkTextInput replacing ink-text-input
+
+**Context**: `ink-text-input` uses `input.length` (JS code units) for cursor positioning, which breaks for CJK characters that occupy 2 terminal columns but have `length` 1. This causes misaligned terminal cursor, broken IME composition windows, incorrect arrow/backspace behavior, and garbled rendering.
+
+**Options Considered**:
+1. Patch ink-text-input with string-width — Fragile; internal `.length`/`slice` calls are scattered and not pluggable
+2. Replace with CjkTextInput — Full control over width calculation and cursor movement
+
+**Decision**: Use custom `CjkTextInput` component that:
+- Uses `string-width` (v8) for all display-width calculations
+- Uses `grapheme-splitter` (v1) for grapheme-cluster-based cursor movement
+- Deletes whole grapheme clusters on backspace/delete (not single code units)
+- Positions the real terminal cursor via `onCursorMove` callback with display-width column
+
+**Example**:
+```typescript
+// WRONG: JS length ≠ terminal display width
+setCursorPosition({x: 4 + value.length, y: 0});  // "中文" → 4+2=6 (should be 4+4=8)
+
+// CORRECT: string-width returns terminal column count
+import stringWidth from 'string-width';
+setCursorPosition({x: 5 + stringWidth(value), y: 0});  // "中文" → 5+4=9
+```
+
+**Extensibility**: The `onCursorMove(displayCol: number)` callback pattern decouples cursor positioning from the input component, allowing any parent to position the real terminal cursor correctly regardless of layout changes.
+
 ### Decision: Subtask state as Map<string, SubtaskItem>
 
 **Context**: `useTaskEvents` needs to maintain subtask state that updates incrementally as events arrive.
@@ -229,3 +274,9 @@ subtasks.map((desc, i) => ({
 4. **Not handling stream `end` event** — When the server closes the stream, the `end` event fires, not `error`. Both must be handled to set `isConnected=false`.
 
 5. **Hardcoding proto path** — Always resolve relative to the package directory or use `GRPC_PROTO_PATH`. Absolute paths break portability.
+
+6. **Using JS `.length` for terminal column positions** — `string.length` counts UTF-16 code units, not terminal display columns. CJK characters occupy 2 columns but have `length` 1. Always use `string-width` for column math. This applies to cursor positioning, padding calculations, and any ANSI escape column arguments.
+
+7. **Using JS string indexing (`[0]`, `slice(1)`) on multi-code-point graphemes** — Emoji with ZWJ sequences, combining characters, and CJK surrogate pairs span multiple code units. Use `GraphemeSplitter.splitGraphemes()` then index the resulting array. Applies especially to placeholder rendering where `placeholder[0]` may slice a grapheme in half.
+
+8. **Calculating cursor x-offset without accounting for Box layout** — Ink's `<Box marginX paddingX borderStyle>` each consume terminal columns. The total offset for TaskInput's cursor is: `marginX(1) + left-border(1) + paddingX(1) + "> "(2) = 5` columns, not 4. Recalculate if the layout changes.

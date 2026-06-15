@@ -24,7 +24,7 @@ The Python layer does not access storage backends directly. All storage operatio
 - **Ink 5 + React 18** — Terminal rendering framework
 - **gRPC Client** — `@grpc/grpc-js` + `@grpc/proto-loader` connecting to uc-grpc-server
 - **Hooks** — `useGrpcClient` (connection management), `useTaskEvents` (stream subscription)
-- **Components** — App, ChatLog, SubtaskTree, TaskInput, StatusBar, LogoHeader
+- **Components** — App, ChatLog, SubtaskTree, TaskInput (CJK-aware), CjkTextInput, StatusBar, LogoHeader
 
 ---
 
