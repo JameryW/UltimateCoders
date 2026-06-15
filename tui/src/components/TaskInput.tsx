@@ -1,18 +1,21 @@
 /**
  * TaskInput component - text input with CJK/IME support.
  *
- * Uses ink-text-input for the input field and a custom useCursor hook
- * to position the real terminal cursor for IME composition.
- * This is the critical component that fixes CJK input in iTerm2.
+ * Uses CjkTextInput (replacing ink-text-input) for proper CJK-width-aware
+ * cursor positioning and grapheme-cluster-based editing.
+ *
+ * The custom useCursor hook positions the real terminal cursor for IME
+ * composition. This is the critical component that fixes CJK input in iTerm2.
  *
  * Key difference from Textual's Input:
  * - Ink preserves the real terminal cursor (useCursor positions it)
  * - Input arrives as UTF-8 strings, not raw bytes
  * - IME composition window appears at the real cursor position
  */
-import React, {useState, useCallback} from 'react';
+import React, {useState, useCallback, useRef} from 'react';
 import {Box, Text} from 'ink';
-import TextInput from 'ink-text-input';
+import stringWidth from 'string-width';
+import CjkTextInput from './CjkTextInput.js';
 import useCursor from '../hooks/useCursor.js';
 
 export interface TaskInputProps {
@@ -26,6 +29,8 @@ const TaskInput: React.FC<TaskInputProps> = ({
 }) => {
   const [value, setValue] = useState('');
   const {setCursorPosition, showCursor} = useCursor();
+  // Track the display-width offset of cursor within the input field
+  const cursorDisplayOffsetRef = useRef(0);
 
   const handleSubmit = useCallback(
     (submittedValue: string) => {
@@ -42,13 +47,23 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const handleChange = useCallback(
     (newValue: string) => {
       setValue(newValue);
+      // After a change, the cursor is at the end of the input.
+      // Use stringWidth (not .length) for display-width-based column.
+      const displayWidth = stringWidth(newValue);
+      cursorDisplayOffsetRef.current = displayWidth;
       // Position the real terminal cursor for IME composition.
-      // The cursor position is based on the prompt prefix length
-      // ("> " = 2 chars) plus the input value length.
-      // For CJK characters, each character occupies 2 cell widths,
-      // but Ink's internal rendering handles the visual width.
-      // The x offset here is the visual column position.
-      setCursorPosition({x: 4 + newValue.length, y: 0});
+      // x offset: 2 chars for "> " border prefix + 2 for border padding = 4 display columns
+      setCursorPosition({x: 4 + displayWidth, y: 0});
+      showCursor();
+    },
+    [setCursorPosition, showCursor],
+  );
+
+  // Called by CjkTextInput whenever the cursor moves (including arrow keys)
+  const handleCursorMove = useCallback(
+    (displayCol: number) => {
+      cursorDisplayOffsetRef.current = displayCol;
+      setCursorPosition({x: 4 + displayCol, y: 0});
       showCursor();
     },
     [setCursorPosition, showCursor],
@@ -64,10 +79,11 @@ const TaskInput: React.FC<TaskInputProps> = ({
       <Text color="cyan" bold>
         {'> '}
       </Text>
-      <TextInput
+      <CjkTextInput
         value={value}
         onChange={handleChange}
         onSubmit={handleSubmit}
+        onCursorMove={handleCursorMove}
         placeholder="type task description and press Enter..."
         focus={isFocused}
       />

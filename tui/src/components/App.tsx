@@ -9,8 +9,12 @@
  *   ├─ TaskInput ────────────────────────────────────────────┤
  *   └─ StatusBar ────────────────────────────────────────────┘
  *
- * State management uses React useState for now (mock data).
- * gRPC integration will be added in PR2.
+ * PR2: Replaced mock data with gRPC-backed real data flow.
+ * - useGrpcClient: manages gRPC connection state
+ * - useTaskEvents: subscribes to WatchTask event stream
+ * - TaskInput submits via gRPC SubmitTask RPC
+ * - SubtaskTree updates from WatchTask stream events
+ * - ChatLog shows system messages from TaskEvent stream
  */
 import React, {useState, useCallback} from 'react';
 import {Box, useApp, useInput} from 'ink';
@@ -26,37 +30,50 @@ import SubtaskTree, {
 } from './SubtaskTree.js';
 import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
-
-// ── Mock data for PR1 ──────────────────────────────────────
-
-const MOCK_SUBTASKS: SubtaskItem[] = [
-  {id: 'st-1', index: 1, description: 'Analyze codebase structure', status: 'completed'},
-  {id: 'st-2', index: 2, description: 'Identify bug in auth module', status: 'in_progress'},
-  {id: 'st-3', index: 3, description: 'Write unit tests for fix', status: 'pending'},
-  {id: 'st-4', index: 4, description: 'Update documentation', status: 'pending'},
-];
+import useGrpcClient from '../hooks/useGrpcClient.js';
+import useTaskEvents from '../hooks/useTaskEvents.js';
+import type {SubtaskProto, TaskProto} from '../grpc/types.js';
+import {mapSubtaskStatus} from '../grpc/types.js';
 
 // ── App Component ──────────────────────────────────────────
 
 const App: React.FC = () => {
   const {exit} = useApp();
 
+  // gRPC client hook
+  const {
+    connectionState,
+    submitTask: grpcSubmitTask,
+    reconnect,
+    client,
+  } = useGrpcClient();
+
+  // Task events hook (receives stream updates)
+  const {
+    task,
+    subtasks,
+    events,
+    isStreaming,
+    setSubtasksFromSubmit,
+    clearTask,
+  } = useTaskEvents(client, connectionState);
+
   // Chat log state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  // Subtask state
-  const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
-  const [taskDescription, setTaskDescription] = useState<string>('No task');
-
   // Status state
-  const [workerId] = useState('local-sandbox-worker');
-  const [backend] = useState('subprocess');
   const [progress, setProgress] = useState({completed: 0, total: 0});
 
-  // Handle Ctrl+C / Ctrl+Q to quit
+  // Track active task ID for pause/resume
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+
+  // Handle Ctrl+C / Ctrl+Q to quit, Ctrl+R to reconnect
   useInput((input, key) => {
     if (key.ctrl && (input === 'c' || input === 'q')) {
       exit();
+    }
+    if (key.ctrl && input === 'r') {
+      reconnect();
     }
   });
 
@@ -65,58 +82,101 @@ const App: React.FC = () => {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  // Simulate task submission with mock data (PR1: no gRPC yet)
+  // Derive progress from subtasks
+  const updateProgress = useCallback((items: SubtaskItem[]) => {
+    const completed = items.filter((s) => s.status === 'completed').length;
+    setProgress({completed, total: items.length});
+  }, []);
+
+  // Convert proto subtasks to SubtaskItem[] and update state
+  const applySubmitResponse = useCallback(
+    (protoSubtasks: SubtaskProto[], taskProto?: TaskProto) => {
+      setSubtasksFromSubmit(protoSubtasks, taskProto);
+
+      // Convert to SubtaskItem for progress calculation
+      const items: SubtaskItem[] = protoSubtasks.map((st, idx) => ({
+        id: st.id,
+        index: idx + 1,
+        description: st.description,
+        status: mapSubtaskStatus(st.status),
+      }));
+      updateProgress(items);
+    },
+    [setSubtasksFromSubmit, updateProgress],
+  );
+
+  // Handle task submission
   const handleSubmit = useCallback(
-    (description: string) => {
+    async (description: string) => {
       // Add user message
       addMessage(createUserMessage(description));
 
-      // Clear previous subtasks
-      setSubtasks([]);
-      setTaskDescription(description);
+      // Check if gRPC is connected
+      if (connectionState !== 'connected' || !client) {
+        addMessage(
+          createSystemMessage('gRPC server not connected. Using offline mode.', {
+            color: 'yellow',
+          }),
+        );
+        addMessage(
+          createSystemMessage('Press Ctrl+R to reconnect, or start the server with: cargo run -p uc-grpc-server', {
+            dim: true,
+          }),
+        );
 
-      // Simulate task submission
+        // Offline fallback: simulate locally
+        simulateOfflineSubmit(description, addMessage, applySubmitResponse, setActiveTaskId);
+        return;
+      }
+
+      // Clear previous task state
+      clearTask();
       addMessage(
         createSystemMessage(`Submitting task: ${description}`, {bold: true}),
       );
       addMessage(
-        createSystemMessage('Decomposing via Claude Code...', {dim: true}),
+        createSystemMessage('Decomposing via Orchestrator...', {dim: true}),
       );
 
-      // Simulate decomposition result after a brief delay
-      setTimeout(() => {
-        const mockSubtasks: SubtaskItem[] = MOCK_SUBTASKS.map((st) => ({
-          ...st,
-          id: `st-${Date.now()}-${st.index}`,
-          status: (st.index <= 2 ? 'completed' : 'pending') as SubtaskStatusType,
-        }));
-        setSubtasks(mockSubtasks);
-        setTaskDescription(description);
+      // Submit via gRPC
+      const response = await grpcSubmitTask({
+        description,
+        projectId: 'default',
+      });
 
-        const completed = mockSubtasks.filter(
-          (s) => s.status === 'completed',
-        ).length;
-        setProgress({completed, total: mockSubtasks.length});
-
+      if (response && response.success) {
+        setActiveTaskId(response.taskId);
         addMessage(
           createSystemMessage(
-            `Decomposed into ${mockSubtasks.length} subtasks`,
-            {color: 'cyan'},
-          ),
-        );
-        addMessage(
-          createSystemMessage(
-            `Executing ${mockSubtasks.length} subtasks...`,
+            `Task created: ${response.taskId.slice(0, 8)}... (status: ${response.status})`,
             {color: 'cyan'},
           ),
         );
 
-        // Simulate subtask progress
-        simulateProgress(mockSubtasks, addMessage, setSubtasks, setProgress);
-      }, 500);
+        if (response.subtaskCount > 0) {
+          applySubmitResponse(response.subtasks);
+          addMessage(
+            createSystemMessage(
+              `Decomposed into ${response.subtaskCount} subtasks`,
+              {color: 'cyan'},
+            ),
+          );
+        }
+      } else {
+        addMessage(
+          createSystemMessage(
+            `Failed to submit task: ${response?.error ?? 'unknown error'}`,
+            {color: 'red'},
+          ),
+        );
+      }
     },
-    [addMessage],
+    [connectionState, client, addMessage, grpcSubmitTask, clearTask, applySubmitResponse],
   );
+
+  // Derive status bar info from connection state
+  const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
+  const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
 
   return (
     <Box flexDirection="column" height="100%">
@@ -125,7 +185,7 @@ const App: React.FC = () => {
         <ChatLog messages={messages} />
         <SubtaskTree
           subtasks={subtasks}
-          taskDescription={taskDescription}
+          taskDescription={task?.description ?? 'No task'}
           progress={progress}
         />
       </Box>
@@ -136,63 +196,81 @@ const App: React.FC = () => {
 };
 
 /**
- * Simulate subtask progress updates (mock for PR1).
- * In PR2 this will be replaced by gRPC event streaming.
+ * Offline fallback: simulate task submission without gRPC server.
+ * Provides basic functionality when the server is not running.
  */
-function simulateProgress(
-  initialSubtasks: SubtaskItem[],
+function simulateOfflineSubmit(
+  description: string,
   addMessage: (msg: ChatMessage) => void,
-  setSubtasks: React.Dispatch<React.SetStateAction<SubtaskItem[]>>,
-  setProgress: React.Dispatch<React.SetStateAction<{completed: number; total: number}>>,
+  applySubmitResponse: (subtasks: SubtaskProto[], task?: TaskProto) => void,
+  setActiveTaskId: (id: string | null) => void,
 ): void {
-  const pending = initialSubtasks.filter((s) => s.status === 'pending');
+  // Simple local decomposition
+  const lines = description
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
-  pending.forEach((subtask, idx) => {
-    // Start subtask
+  if (lines.length <= 1) {
+    // Single-task description: create one subtask
+    lines.push(description);
+  }
+
+  // Use a unique base to avoid ID collisions when Date.now() returns the same value
+  const baseId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const mockSubtasks: SubtaskProto[] = lines.map((line, idx) => {
+    const cleaned = line
+      .replace(/^\d+[\.\)]\s*/, '')
+      .trim();
+    return {
+      id: `${baseId}-st-${idx}`,
+      description: cleaned || line,
+      status: idx === 0 ? 'InProgress' : 'Pending',
+      dependsOn: idx > 0 ? [`${baseId}-st-${idx - 1}`] : [],
+    };
+  });
+
+  const mockTask: TaskProto = {
+    id: `${baseId}-task`,
+    description,
+    status: 'InProgress',
+    projectId: 'default',
+    subtaskCount: mockSubtasks.length,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    subtasks: mockSubtasks,
+  };
+
+  setActiveTaskId(mockTask.id);
+  applySubmitResponse(mockSubtasks, mockTask);
+
+  addMessage(
+    createSystemMessage(
+      `Decomposed into ${mockSubtasks.length} subtasks (offline)`,
+      {color: 'yellow'},
+    ),
+  );
+
+  // Simulate subtask progress in offline mode
+  const pendingSubtasks = mockSubtasks.filter((s) => s.status === 'Pending');
+  pendingSubtasks.forEach((st, idx) => {
     setTimeout(() => {
-      setSubtasks((prev) =>
-        prev.map((s) =>
-          s.id === subtask.id ? {...s, status: 'in_progress' as SubtaskStatusType} : s,
-        ),
-      );
       addMessage(
         createSystemMessage(
-          `Subtask started: ${subtask.description.slice(0, 60)}`,
+          `Subtask started: ${st.description.slice(0, 60)}`,
           {color: 'cyan'},
         ),
       );
     }, 1000 + idx * 1500);
 
-    // Complete subtask
     setTimeout(() => {
-      setSubtasks((prev) =>
-        prev.map((s) =>
-          s.id === subtask.id ? {...s, status: 'completed' as SubtaskStatusType} : s,
-        ),
-      );
       addMessage(
         createSystemMessage(
-          `Subtask completed: ${subtask.description.slice(0, 60)}`,
+          `Subtask completed: ${st.description.slice(0, 60)}`,
           {color: 'green'},
         ),
       );
-
-      // Update progress
-      setSubtasks((current) => {
-        const completed = current.filter(
-          (s) => s.status === 'completed',
-        ).length;
-        setProgress({completed, total: current.length});
-
-        // Check if all done
-        if (completed === current.length) {
-          addMessage(
-            createSystemMessage('All subtasks completed!', {bold: true, color: 'green'}),
-          );
-        }
-
-        return current;
-      });
     }, 2500 + idx * 1500);
   });
 }

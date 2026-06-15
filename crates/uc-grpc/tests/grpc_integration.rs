@@ -12,7 +12,7 @@ use tonic::transport::Server;
 async fn start_server() -> String {
     let engine = LocalEngine::new_fallback();
     let grpc_server = GrpcServer::new(engine);
-    let service = grpc_server.into_service();
+    let (engine_service, task_service) = grpc_server.into_services();
 
     // Use port 0 to let OS pick a free port
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
@@ -21,7 +21,8 @@ async fn start_server() -> String {
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(service)
+            .add_service(engine_service)
+            .add_service(task_service)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap();

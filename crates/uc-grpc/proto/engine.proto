@@ -13,6 +13,17 @@ service EngineService {
     rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+// ── Task Service (for TUI / Dashboard clients) ─────────
+
+service TaskService {
+    rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+    rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+    rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+    rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
+    rpc PauseTask(PauseTaskRequest) returns (PauseTaskResponse);
+    rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
+}
+
 // ── Search ──────────────────────────────────────────────
 
 message SearchRequest {
@@ -175,4 +186,91 @@ message ComponentHealthProto {
     string name = 1;
     string status = 2;
     optional string details = 3;
+}
+
+// ── Task Service Messages ───────────────────────────────
+
+message SubmitTaskRequest {
+    string description = 1;
+    string project_id = 2;
+}
+
+message SubmitTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    string status = 3;
+    uint32 subtask_count = 4;
+    repeated SubtaskProto subtasks = 5;
+    optional string error = 6;
+}
+
+message GetTaskRequest {
+    string task_id = 1;
+}
+
+message GetTaskResponse {
+    bool available = 1;
+    optional TaskProto task = 2;
+}
+
+message ListTasksRequest {}
+
+message ListTasksResponse {
+    bool available = 1;
+    repeated TaskProto tasks = 2;
+    uint32 total = 3;
+    map<string, uint32> status_counts = 4;
+}
+
+message PauseTaskRequest {
+    string task_id = 1;
+}
+
+message PauseTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    string status = 3;
+    optional string error = 4;
+}
+
+message ResumeTaskRequest {
+    string task_id = 1;
+}
+
+message ResumeTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    string status = 3;
+    optional string error = 4;
+}
+
+message WatchTaskRequest {
+    string task_id = 1;  // empty = watch all tasks
+}
+
+message TaskEvent {
+    string timestamp = 1;
+    string type = 2;       // task_submitted, subtask_started, tool_call, tool_result, subtask_completed, subtask_failed, task_completed
+    string task_id = 3;
+    optional string subtask_id = 4;
+    map<string, string> data = 5;  // event-specific payload as string map
+}
+
+message TaskProto {
+    string id = 1;
+    string description = 2;
+    string status = 3;
+    string project_id = 4;
+    uint32 subtask_count = 5;
+    int64 created_at = 6;
+    int64 updated_at = 7;
+    repeated SubtaskProto subtasks = 8;
+}
+
+message SubtaskProto {
+    string id = 1;
+    string description = 2;
+    string status = 3;
+    repeated string depends_on = 4;
+    optional string assigned_worker = 5;
 }
