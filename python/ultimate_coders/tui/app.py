@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.widgets import Input
 
@@ -66,11 +66,6 @@ class SandboxTUI(App):
     SubtaskTree {
         width: 1fr;
     }
-
-    #bottom-bar {
-        dock: bottom;
-        height: auto;
-    }
     """
 
     BINDINGS = [
@@ -113,9 +108,8 @@ class SandboxTUI(App):
         with Horizontal(id="main-area"):
             yield ChatLog(id="chat-log")
             yield SubtaskTree(id="subtask-tree")
-        with Vertical(id="bottom-bar"):
-            yield TaskInput(id="task-input")
-            yield StatusBar(id="status-bar")
+        yield StatusBar(id="status-bar")
+        yield TaskInput(id="task-input")
 
     def on_mount(self) -> None:
         """Initialize Orchestrator/Worker and start background tasks."""
