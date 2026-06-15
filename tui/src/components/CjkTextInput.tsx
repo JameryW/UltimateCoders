@@ -209,7 +209,10 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   if (!hasValue && placeholder) {
     if (showCursor && focus) {
-      rendered = inverseChar(placeholder[0] ?? ' ') + dimText(placeholder.slice(1));
+      const placeholderGraphemes = splitter.splitGraphemes(placeholder);
+      const firstGrapheme = placeholderGraphemes[0] ?? ' ';
+      const rest = placeholderGraphemes.slice(1).join('');
+      rendered = inverseChar(firstGrapheme) + dimText(rest);
     } else {
       rendered = dimText(placeholder);
     }
