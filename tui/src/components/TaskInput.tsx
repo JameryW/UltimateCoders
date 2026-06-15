@@ -9,6 +9,12 @@
  * - Ctrl+U: clear input
  * - Ctrl+K: delete to end of line
  * - Up/Down: browse input history
+ * - Shift+Tab: cycle focus to next area
+ *
+ * Visual indicators:
+ * - Multi-line: shows Ln/Col + submit hint
+ * - History browsing: shows "history N/M"
+ * - Submitting: shows "submitting..." and disables Enter
  *
  * No border — the parent App component provides the unified outer frame.
  * The custom useCursor hook positions the real terminal cursor for IME
@@ -22,6 +28,8 @@ import useCursor from '../hooks/useCursor.js';
 export interface TaskInputProps {
   onSubmit: (value: string) => void;
   isFocused?: boolean;
+  /** Whether a task submission is in progress (disables Enter). */
+  isSubmitting?: boolean;
   /** Previously submitted task descriptions (most recent first). */
   inputHistory?: string[];
   /** Current index into inputHistory (-1 = not browsing). */
@@ -33,6 +41,7 @@ export interface TaskInputProps {
 const TaskInput: React.FC<TaskInputProps> = ({
   onSubmit,
   isFocused = true,
+  isSubmitting = false,
   inputHistory = [],
   historyIndex = -1,
   onHistoryIndexChange,
@@ -58,6 +67,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
 
   const handleSubmit = useCallback(
     (submittedValue: string) => {
+      if (isSubmitting) return;
       const trimmed = submittedValue.trim();
       if (trimmed.length === 0) {
         return;
@@ -66,7 +76,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
       setValue('');
       setSavedDraft('');
     },
-    [onSubmit],
+    [onSubmit, isSubmitting],
   );
 
   const handleChange = useCallback(
@@ -113,6 +123,15 @@ const TaskInput: React.FC<TaskInputProps> = ({
   // Detect multi-line value for visual indicator
   const isMultiline = value.includes('\n');
 
+  // Calculate line/col for multi-line display
+  const getLineCol = (): {line: number; col: number} => {
+    if (!isMultiline) return {line: 1, col: value.length + 1};
+    const lines = value.split('\n');
+    return {line: lines.length, col: (lines[lines.length - 1]?.length ?? 0) + 1};
+  };
+
+  const {line, col} = getLineCol();
+
   return (
     <Box paddingX={1}>
       <Text color="cyan" bold>
@@ -124,10 +143,16 @@ const TaskInput: React.FC<TaskInputProps> = ({
         onSubmit={handleSubmit}
         onCursorMove={handleCursorMove}
         onHistoryNav={handleHistoryNav}
-        placeholder="type task description and press Enter..."
+        placeholder={isSubmitting ? 'submitting...' : 'type task description and press Enter...'}
         focus={isFocused}
       />
-      {isMultiline && <Text dimColor>{' [multi-line]'}</Text>}
+      {isSubmitting && <Text color="yellow">{' [submitting...]'}</Text>}
+      {isMultiline && !isSubmitting && (
+        <Text dimColor>{` Ln${line}:Col${col} │ Enter submit · Ctrl+J newline`}</Text>
+      )}
+      {historyIndex >= 0 && !isSubmitting && (
+        <Text dimColor>{` history ${historyIndex + 1}/${inputHistory.length}`}</Text>
+      )}
     </Box>
   );
 };

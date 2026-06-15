@@ -107,7 +107,9 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   useInput(
     (input, key) => {
-      // Shift+Tab: switch pane (let parent handle)
+      // Shift+Tab: do NOT handle locally — let it bubble to App's useInput
+      // which dispatches CYCLE_FOCUS. Calling onShiftTab here would cause
+      // a double dispatch since both useInput handlers fire on the same keypress.
       if (key.shift && key.tab) {
         return;
       }
