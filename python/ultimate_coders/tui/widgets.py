@@ -228,7 +228,7 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(Static):
+class TaskInput(Static, can_focus=True):
     """CJK-compatible input field using raw key capture.
 
     Textual's Input and TextArea widgets cannot render CJK characters
@@ -247,6 +247,10 @@ class TaskInput(Static):
         padding: 0 1;
         background: $surface;
     }
+
+    TaskInput:focus {
+        border: solid $accent;
+    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -258,12 +262,22 @@ class TaskInput(Static):
         """Show prompt on mount."""
         self._render_prompt()
 
+    def _on_focus(self, event) -> None:
+        """Re-render with cursor when focused."""
+        self._render_prompt()
+
+    def _on_blur(self, event) -> None:
+        """Re-render without cursor when blurred."""
+        self._render_prompt()
+
     def _render_prompt(self) -> None:
         """Render the input with '>' prefix and cursor."""
+        cursor = "█" if self.has_focus else ""
         if self._buffer:
-            content = f"[bold cyan]>[/bold cyan] {self._buffer}█"
+            content = f"[bold cyan]>[/bold cyan] {self._buffer}{cursor}"
         else:
-            content = "[bold cyan]>[/bold cyan] [dim]type task description and press Enter...[/dim]█"
+            placeholder = "[dim]type task description and press Enter...[/dim]" if self.has_focus else ""
+            content = f"[bold cyan]>[/bold cyan] {placeholder}{cursor}"
         self.update(content)
 
     def _on_key(self, event) -> None:
