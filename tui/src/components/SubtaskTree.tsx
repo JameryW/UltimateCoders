@@ -22,12 +22,14 @@ export interface SubtaskItem {
   index: number;
   description: string;
   status: SubtaskStatusType;
+  assignedWorker?: string;
 }
 
 export interface SubtaskTreeProps {
   subtasks: SubtaskItem[];
   taskDescription?: string;
   progress?: {completed: number; total: number};
+  isFocused?: boolean;
 }
 
 // Use ASCII-safe icons that render reliably in all terminals
@@ -68,6 +70,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   subtasks,
   taskDescription = 'No task',
   progress = {completed: 0, total: 0},
+  isFocused = false,
 }) => {
   const titleSuffix = getProgressText(progress.completed, progress.total);
 
@@ -76,6 +79,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
       <Box marginBottom={1}>
         <Text bold color="cyan">{`Subtasks`}</Text>
         <Text dimColor>{` [${titleSuffix}]`}</Text>
+        {isFocused && <Text dimColor>{' [focused]'}</Text>}
       </Box>
       {subtasks.length === 0 ? (
         <Text dimColor>No subtasks yet.</Text>
