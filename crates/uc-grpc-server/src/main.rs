@@ -1,6 +1,7 @@
 //! UltimateCoders gRPC Server
 //!
 //! Standalone binary that starts a tonic gRPC server with LocalEngine.
+//! Serves both EngineService and TaskService.
 
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::GrpcServer;
@@ -34,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wrap in gRPC server
     let grpc_server = GrpcServer::new(engine);
-    let service = grpc_server.into_service();
+    let (engine_service, task_service) = grpc_server.into_services();
 
     // Determine listen address
     let addr = std::env::var("UC_GRPC_ADDR")
@@ -43,7 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("UltimateCoders gRPC server listening on {}", addr);
 
-    Server::builder().add_service(service).serve(addr).await?;
+    Server::builder()
+        .add_service(engine_service)
+        .add_service(task_service)
+        .serve(addr)
+        .await?;
 
     Ok(())
 }

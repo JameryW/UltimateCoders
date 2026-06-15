@@ -1,0 +1,248 @@
+/**
+ * useTaskEvents hook - subscribes to WatchTask server-streaming RPC.
+ *
+ * Maintains React state for:
+ * - Current task (from the most recent task_submitted event)
+ * - Subtask list (updated from subtask_assigned/started/completed/failed events)
+ * - Event log (all received TaskEvent messages)
+ *
+ * Re-subscribes automatically on reconnect.
+ */
+
+import {useState, useEffect, useCallback, useRef} from 'react';
+import type {
+  TaskEventProto,
+  SubtaskProto,
+  TaskProto,
+  SubtaskStatusType,
+} from '../grpc/types.js';
+import {mapSubtaskStatus} from '../grpc/types.js';
+import type {TaskServiceClient} from '../grpc/client.js';
+
+// ── Types ───────────────────────────────────────────────────
+
+export interface SubtaskItem {
+  id: string;
+  index: number;
+  description: string;
+  status: SubtaskStatusType;
+  assignedWorker?: string;
+}
+
+export interface UseTaskEventsReturn {
+  /** Current active task (null if no task submitted). */
+  task: TaskProto | null;
+
+  /** Subtask list derived from events, mapped to TUI SubtaskItem format. */
+  subtasks: SubtaskItem[];
+
+  /** All received events (for ChatLog display). */
+  events: TaskEventProto[];
+
+  /** Whether the event stream is active. */
+  isStreaming: boolean;
+
+  /** Update subtask state from a SubmitTaskResponse. */
+  setSubtasksFromSubmit: (subtasks: SubtaskProto[], task?: TaskProto) => void;
+
+  /** Clear all task state. */
+  clearTask: () => void;
+}
+
+// ── Event Processing ────────────────────────────────────────
+
+/** Process a TaskEvent and update subtask state accordingly. */
+function processEvent(
+  event: TaskEventProto,
+  currentSubtasks: Map<string, SubtaskItem>,
+): Map<string, SubtaskItem> {
+  const updated = new Map(currentSubtasks);
+
+  switch (event.type) {
+    case 'task_submitted': {
+      // New task submitted - clear previous subtasks
+      // Subtasks will arrive via subsequent events or from the submit response
+      break;
+    }
+    case 'subtask_assigned': {
+      if (event.subtaskId) {
+        const existing = updated.get(event.subtaskId);
+        if (existing) {
+          updated.set(event.subtaskId, {
+            ...existing,
+            status: 'assigned',
+            assignedWorker: event.data?.worker_id,
+          });
+        }
+        // If not existing, it will be added from the submit response subtasks
+      }
+      break;
+    }
+    case 'subtask_started': {
+      if (event.subtaskId) {
+        const existing = updated.get(event.subtaskId);
+        if (existing) {
+          updated.set(event.subtaskId, {
+            ...existing,
+            status: 'in_progress',
+            assignedWorker: event.data?.worker_id ?? existing.assignedWorker,
+          });
+        }
+      }
+      break;
+    }
+    case 'subtask_completed': {
+      if (event.subtaskId) {
+        const existing = updated.get(event.subtaskId);
+        if (existing) {
+          updated.set(event.subtaskId, {
+            ...existing,
+            status: 'completed',
+          });
+        }
+      }
+      break;
+    }
+    case 'subtask_failed': {
+      if (event.subtaskId) {
+        const existing = updated.get(event.subtaskId);
+        if (existing) {
+          updated.set(event.subtaskId, {
+            ...existing,
+            status: 'failed',
+          });
+        }
+      }
+      break;
+    }
+    default:
+      // Other event types (tool_call, tool_result, file_modified, etc.)
+      // don't affect subtask status but are stored in events for ChatLog
+      break;
+  }
+
+  return updated;
+}
+
+/** Convert proto SubtaskProto[] to SubtaskItem[] for TUI display. */
+function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
+  return subtasks.map((st, idx) => ({
+    id: st.id,
+    index: idx + 1,
+    description: st.description,
+    status: mapSubtaskStatus(st.status),
+    assignedWorker: st.assignedWorker,
+  }));
+}
+
+// ── Hook Implementation ─────────────────────────────────────
+
+export function useTaskEvents(
+  client: TaskServiceClient | null,
+  connectionState: string,
+): UseTaskEventsReturn {
+  const [task, setTask] = useState<TaskProto | null>(null);
+  const [subtaskMap, setSubtaskMap] = useState<Map<string, SubtaskItem>>(new Map());
+  const [events, setEvents] = useState<TaskEventProto[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const streamRef = useRef<any>(null);
+
+  // Convert the subtask map to an array for display
+  const subtasks = Array.from(subtaskMap.values());
+
+  // Subscribe to WatchTask stream when client becomes available
+  useEffect(() => {
+    if (!client || connectionState !== 'connected') {
+      setIsStreaming(false);
+      if (streamRef.current) {
+        streamRef.current.cancel();
+        streamRef.current = null;
+      }
+      return;
+    }
+
+    // Start watching all tasks (empty task_id = watch all)
+    let cancelled = false;
+
+    try {
+      const stream = client.watchTask({taskId: ''});
+      streamRef.current = stream;
+
+      stream.on('data', (event: any) => {
+        if (cancelled) return;
+
+        // With keepCase: false, proto fields are converted to camelCase
+        const taskEvent: TaskEventProto = {
+          timestamp: event.timestamp ?? new Date().toISOString(),
+          type: event.type ?? 'unknown',
+          taskId: event.taskId ?? '',
+          subtaskId: event.subtaskId ?? undefined,
+          data: event.data ?? {},
+        };
+
+        setEvents((prev) => [...prev, taskEvent]);
+        setSubtaskMap((prev) => processEvent(taskEvent, prev));
+      });
+
+      stream.on('end', () => {
+        if (!cancelled) {
+          setIsStreaming(false);
+        }
+      });
+
+      stream.on('error', (err: any) => {
+        if (!cancelled) {
+          // Stream errors are expected when server disconnects
+          setIsStreaming(false);
+        }
+      });
+
+      setIsStreaming(true);
+    } catch (err) {
+      setIsStreaming(false);
+    }
+
+    return () => {
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.cancel();
+        streamRef.current = null;
+      }
+    };
+  }, [client, connectionState]);
+
+  /** Update subtask state from a SubmitTaskResponse. */
+  const setSubtasksFromSubmit = useCallback(
+    (protoSubtasks: SubtaskProto[], taskProto?: TaskProto) => {
+      const items = protoSubtasksToItems(protoSubtasks);
+      const newMap = new Map<string, SubtaskItem>();
+      for (const item of items) {
+        newMap.set(item.id, item);
+      }
+      setSubtaskMap(newMap);
+
+      if (taskProto) {
+        setTask(taskProto);
+      }
+    },
+    [],
+  );
+
+  /** Clear all task state. */
+  const clearTask = useCallback(() => {
+    setTask(null);
+    setSubtaskMap(new Map());
+    setEvents([]);
+  }, []);
+
+  return {
+    task,
+    subtasks,
+    events,
+    isStreaming,
+    setSubtasksFromSubmit,
+    clearTask,
+  };
+}
+
+export default useTaskEvents;

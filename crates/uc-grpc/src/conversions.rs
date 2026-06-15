@@ -8,6 +8,7 @@ use uc_types::{
     MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest, MemorySearchRequest,
     MemorySearchResponse, MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
     RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult, SearchResultItem,
+    Subtask, SubtaskStatus, Task, TaskStatus,
 };
 
 // ── Import generated proto types ──────────────────────────
@@ -17,7 +18,7 @@ use crate::ultimate_coders::{
     HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto, MemorySearchResultProto,
     ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest, SearchMemoryRequest,
     SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
-    WriteMemoryRequest, WriteMemoryResponse,
+    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -569,6 +570,156 @@ impl From<ComponentHealthProto> for ComponentHealth {
             name: proto.name,
             status: proto.status,
             details: proto.details,
+        }
+    }
+}
+
+// ── Task conversions ───────────────────────────────────────
+
+/// Convert TaskStatus to proto string representation.
+pub fn task_status_to_proto(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Created => "Created",
+        TaskStatus::Planning => "Planning",
+        TaskStatus::InProgress => "InProgress",
+        TaskStatus::Completed => "Completed",
+        TaskStatus::Failed => "Failed",
+        TaskStatus::Paused => "Paused",
+    }
+}
+
+/// Convert SubtaskStatus to proto string representation.
+pub fn subtask_status_to_proto(status: &SubtaskStatus) -> &'static str {
+    match status {
+        SubtaskStatus::Pending => "Pending",
+        SubtaskStatus::Assigned => "Assigned",
+        SubtaskStatus::InProgress => "InProgress",
+        SubtaskStatus::Completed => "Completed",
+        SubtaskStatus::Failed => "Failed",
+        SubtaskStatus::Conflicted => "Conflicted",
+    }
+}
+
+impl From<Task> for TaskProto {
+    fn from(task: Task) -> Self {
+        Self {
+            id: task.id.0,
+            description: task.description,
+            status: task_status_to_proto(&task.status).to_string(),
+            project_id: task.project_id,
+            subtask_count: task.subtasks.len() as u32,
+            created_at: task.created_at.timestamp(),
+            updated_at: task.updated_at.timestamp(),
+            subtasks: task.subtasks.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<Subtask> for SubtaskProto {
+    fn from(st: Subtask) -> Self {
+        Self {
+            id: st.id.0,
+            description: st.description,
+            status: subtask_status_to_proto(&st.status).to_string(),
+            depends_on: st.depends_on.iter().map(|id| id.0.clone()).collect(),
+            assigned_worker: st.assigned_worker.map(|w| w.0),
+        }
+    }
+}
+
+/// Convert an AgentEventType from uc-engine into a proto TaskEvent.
+/// Used by the WatchTask streaming RPC.
+impl From<uc_engine::AgentEventType> for TaskEventProto {
+    fn from(event: uc_engine::AgentEventType) -> Self {
+        let (event_type, task_id, subtask_id, data) = match event {
+            uc_engine::AgentEventType::TaskCreated { task_id, description } => (
+                "task_submitted".to_string(),
+                task_id.0,
+                String::new(),
+                vec![("description".to_string(), description)].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::SubtaskAssigned { subtask_id, worker_id } => (
+                "subtask_assigned".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![("worker_id".to_string(), worker_id.0)].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::SubtaskStarted { subtask_id, worker_id } => (
+                "subtask_started".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![("worker_id".to_string(), worker_id.0)].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::ToolInvoked { subtask_id, tool_name, tool_input } => (
+                "tool_call".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![
+                    ("tool_name".to_string(), tool_name),
+                    ("tool_input".to_string(), tool_input),
+                ].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::ToolResult { subtask_id, tool_output, success } => (
+                "tool_result".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![
+                    ("tool_output".to_string(), tool_output),
+                    ("success".to_string(), success.to_string()),
+                ].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::FileModified { subtask_id, file_path, diff } => (
+                "file_modified".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![
+                    ("file_path".to_string(), file_path),
+                    ("diff".to_string(), diff),
+                ].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::SubtaskCompleted { subtask_id, summary, success } => (
+                "subtask_completed".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![
+                    ("summary".to_string(), summary),
+                    ("success".to_string(), success.to_string()),
+                ].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::SubtaskFailed { subtask_id, error, recoverable } => (
+                "subtask_failed".to_string(),
+                String::new(),
+                subtask_id.0,
+                vec![
+                    ("error".to_string(), error),
+                    ("recoverable".to_string(), recoverable.to_string()),
+                ].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::CheckpointCreated { task_id, snapshot_id, .. } => (
+                "checkpoint_created".to_string(),
+                task_id.0,
+                String::new(),
+                vec![("snapshot_id".to_string(), snapshot_id)].into_iter().collect(),
+            ),
+            uc_engine::AgentEventType::EditIntent { worker_id, file_path, edit_type, regions } => (
+                "edit_intent".to_string(),
+                String::new(),
+                String::new(),
+                vec![
+                    ("worker_id".to_string(), worker_id.0),
+                    ("file_path".to_string(), file_path),
+                    ("edit_type".to_string(), edit_type),
+                    ("regions".to_string(), format!("{:?}", regions)),
+                ].into_iter().collect(),
+            ),
+        };
+
+        Self {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            r#type: event_type,
+            task_id,
+            subtask_id: if subtask_id.is_empty() { None } else { Some(subtask_id) },
+            data,
         }
     }
 }
