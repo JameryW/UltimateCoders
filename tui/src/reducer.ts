@@ -7,10 +7,33 @@
  */
 import type {ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem, SubtaskStatusType} from './components/SubtaskTree.js';
+import type {SymbolMode} from './symbols.js';
 
 // ── Pane Selection ──────────────────────────────────────────
 
 export type SelectedPane = 'input' | 'chat' | 'subtask';
+
+// ── Event Filter ────────────────────────────────────────────
+
+export type EventFilter = 'all' | 'task' | 'subtask' | 'tool' | 'error';
+
+/** Cycle through filter modes. */
+export function nextEventFilter(current: EventFilter): EventFilter {
+  const order: EventFilter[] = ['all', 'task', 'subtask', 'tool', 'error'];
+  const idx = order.indexOf(current);
+  return order[(idx + 1) % order.length];
+}
+
+/** Get display label for filter mode. */
+export function eventFilterLabel(filter: EventFilter): string {
+  switch (filter) {
+    case 'all': return 'All';
+    case 'task': return 'Task';
+    case 'subtask': return 'Subtask';
+    case 'tool': return 'Tool';
+    case 'error': return 'Error';
+  }
+}
 
 // ── State ───────────────────────────────────────────────────
 
@@ -47,6 +70,12 @@ export interface TuiState {
 
   /** Offline simulation timer IDs (for cleanup). */
   offlineTimerIds: ReturnType<typeof setTimeout>[];
+
+  /** Event type filter for ChatLog. */
+  eventFilter: EventFilter;
+
+  /** Symbol rendering mode (unicode/ascii/auto). */
+  symbolMode: SymbolMode;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -61,6 +90,8 @@ export const INITIAL_TUI_STATE: TuiState = {
   historyIndex: -1,
   lastError: null,
   offlineTimerIds: [],
+  eventFilter: 'all',
+  symbolMode: 'auto',
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -81,7 +112,8 @@ export type TuiAction =
   | {type: 'CLEAR_TASK'}
   | {type: 'CLEAR_LOG'}
   | {type: 'ADD_OFFLINE_TIMER'; timerId: ReturnType<typeof setTimeout>}
-  | {type: 'CLEAR_OFFLINE_TIMERS'};
+  | {type: 'CLEAR_OFFLINE_TIMERS'}
+  | {type: 'SET_EVENT_FILTER'; filter: EventFilter};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -178,6 +210,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'CLEAR_OFFLINE_TIMERS':
       return {...state, offlineTimerIds: []};
+
+    case 'SET_EVENT_FILTER':
+      return {...state, eventFilter: action.filter};
 
     default:
       return state;

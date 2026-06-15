@@ -7,7 +7,8 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
-import type {SelectedPane} from '../reducer.js';
+import type {SelectedPane, EventFilter} from '../reducer.js';
+import {eventFilterLabel} from '../reducer.js';
 
 export interface StatusBarProps {
   workerId?: string;
@@ -20,6 +21,7 @@ export interface StatusBarProps {
   lastError?: string | null;
   mode?: string;
   selectedPane?: SelectedPane;
+  eventFilter?: EventFilter;
 }
 
 const PANE_LABELS: Record<SelectedPane, string> = {
@@ -39,6 +41,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
   lastError = null,
   mode = '',
   selectedPane = 'input',
+  eventFilter = 'all',
 }) => {
   const progressText = `${progress.completed}/${progress.total}`;
   const backendColor = backend === 'grpc' ? 'green' : backend === 'disconnected' ? 'red' : 'yellow';
@@ -95,7 +98,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
         </>
       )}
       <Text dimColor>{'  '}</Text>
-      <Text dimColor>{'(Tab pane  Ctrl+P pause  Ctrl+R reconnect  Ctrl+Q quit)'}</Text>
+      <Text dimColor>{'(Tab pane  Ctrl+P pause  Ctrl+F filter  Ctrl+R reconnect  Ctrl+Q quit)'}</Text>
     </Box>
   );
 };

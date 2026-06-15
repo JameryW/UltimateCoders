@@ -31,8 +31,9 @@ import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
 import useGrpcClient from '../hooks/useGrpcClient.js';
 import useTaskEvents from '../hooks/useTaskEvents.js';
-import {tuiReducer, INITIAL_TUI_STATE, type SelectedPane, type TuiAction} from '../reducer.js';
+import {tuiReducer, INITIAL_TUI_STATE, type SelectedPane, type TuiAction, nextEventFilter, type EventFilter} from '../reducer.js';
 import {formatTaskEvents} from '../formatters.js';
+import {getSymbols} from '../symbols.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
 import {mapSubtaskStatus} from '../grpc/types.js';
 
@@ -317,6 +318,11 @@ const App: React.FC = () => {
           dispatch({type: 'CLEAR_LOG'});
           return;
         }
+        // Ctrl+F: cycle event filter
+        if (key.ctrl && input === 'f') {
+          dispatch({type: 'SET_EVENT_FILTER', filter: nextEventFilter(state.eventFilter)});
+          return;
+        }
         break;
       }
 
@@ -334,6 +340,24 @@ const App: React.FC = () => {
   const mode = connectionState === 'connected' ? 'grpc live' : 'offline demo';
   const terminalWidth = stdout?.columns ?? 80;
 
+  // ── Symbols (auto-detect unicode/ascii) ─────────────────
+  const S = getSymbols(state.symbolMode);
+
+  // ── Responsive layout ──────────────────────────────────
+  // >=100 cols: dual pane (Chat + Subtasks)
+  // 80-99 cols: dual pane but compressed right
+  // <80 cols: single pane, Tab switches
+  const isNarrow = terminalWidth < 80;
+  const isCompressed = terminalWidth >= 80 && terminalWidth < 100;
+  const showDualPane = !isNarrow;
+
+  // SubtaskTree max width based on terminal
+  const subtaskMaxWidth = isCompressed ? 25 : 40;
+
+  // In narrow mode, only show the selected pane
+  const showChat = showDualPane || state.selectedPane === 'chat';
+  const showSubtasks = showDualPane || state.selectedPane === 'subtask';
+
   // ── Render ─────────────────────────────────────────────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
@@ -344,10 +368,10 @@ const App: React.FC = () => {
         <Text bold>UltimateCoders</Text>
         <Text dimColor> v{VERSION}</Text>
         <Text>  </Text>
-        {connectionState === 'connected' && <Text color="green">●</Text>}
-        {connectionState === 'connecting' && <Text color="yellow">◌</Text>}
-        {connectionState === 'disconnected' && <Text color="red">○</Text>}
-        {connectionState === 'error' && <Text color="red">✗</Text>}
+        {connectionState === 'connected' && <Text color="green">{S.connected}</Text>}
+        {connectionState === 'connecting' && <Text color="yellow">{S.connecting}</Text>}
+        {connectionState === 'disconnected' && <Text color="red">{S.disconnected}</Text>}
+        {connectionState === 'error' && <Text color="red">{S.error}</Text>}
         <Text dimColor>
           {connectionState === 'connected' ? ' connected' : ''}
           {connectionState === 'connecting' ? ' connecting...' : ''}
@@ -357,32 +381,44 @@ const App: React.FC = () => {
         {state.activeTaskId && (
           <Text dimColor>{` │ task:${state.activeTaskId.slice(0, 8)}`}</Text>
         )}
+        {isNarrow && (
+          <Text dimColor>{` │ ${terminalWidth}cols`}</Text>
+        )}
       </Box>
 
-      {/* ── Main area: Chat + Subtasks ─────────────────── */}
+      {/* ── Main area: Chat + Subtasks (responsive) ────── */}
       <Box flexDirection="row" flexGrow={1}>
-        <ChatLog
-          messages={state.messages}
-          logOffset={state.logOffset}
-          followLog={state.followLog}
-          visibleLines={visibleLines}
-          isFocused={state.selectedPane === 'chat'}
-        />
-        {/* Vertical separator */}
-        <Box flexDirection="column" justifyContent="center">
-          <Text color="gray">{'│\n'.repeat(visibleLines)}│</Text>
-        </Box>
-        <SubtaskTree
-          subtasks={state.subtasks}
-          taskDescription={task?.description ?? 'No task'}
-          progress={state.progress}
-          isFocused={state.selectedPane === 'subtask'}
-        />
+        {showChat && (
+          <ChatLog
+            messages={state.messages}
+            logOffset={state.logOffset}
+            followLog={state.followLog}
+            visibleLines={visibleLines}
+            isFocused={state.selectedPane === 'chat'}
+            eventFilter={state.eventFilter}
+          />
+        )}
+        {showDualPane && showChat && showSubtasks && (
+          /* Vertical separator */
+          <Box flexDirection="column" justifyContent="center">
+            <Text color="gray">{(S.verticalSep + '\n').repeat(visibleLines) + S.verticalSep}</Text>
+          </Box>
+        )}
+        {showSubtasks && (
+          <SubtaskTree
+            subtasks={state.subtasks}
+            taskDescription={task?.description ?? 'No task'}
+            progress={state.progress}
+            isFocused={state.selectedPane === 'subtask'}
+            maxWidth={subtaskMaxWidth}
+            symbols={S}
+          />
+        )}
       </Box>
 
       {/* ── Separator ──────────────────────────────────── */}
       <Box>
-        <Text color="gray">{'─'.repeat(Math.max(1, terminalWidth - 2))}</Text>
+        <Text color="gray">{S.divider.repeat(Math.max(1, terminalWidth - 2))}</Text>
       </Box>
 
       {/* ── Input ──────────────────────────────────────── */}
@@ -406,6 +442,7 @@ const App: React.FC = () => {
         lastError={state.lastError}
         mode={mode}
         selectedPane={state.selectedPane}
+        eventFilter={state.eventFilter}
       />
     </Box>
   );

@@ -13,13 +13,25 @@
  * 1. Show the real cursor using ANSI escape \x1B[?25h
  * 2. Position it at the input field location
  *
+ * Cursor positioning strategy:
+ * - y=0 means the input is at the bottom of the TUI frame
+ *   (2 rows from the terminal bottom: input + status bar)
+ * - y>0 means the input is offset further up (e.g., multi-line input)
+ * - x is the display column within the input field
+ *
  * This hook uses useStdout to write ANSI escape sequences directly.
  */
 import {useCallback, useEffect, useRef} from 'react';
 import {useStdout} from 'ink';
 
 export interface CursorPosition {
+  /** Display column (0-based). */
   x: number;
+  /**
+   * Vertical offset from the bottom of the terminal.
+   * 0 = input is at the second-to-last row (above status bar).
+   * Positive = further up.
+   */
   y: number;
 }
 
@@ -28,6 +40,9 @@ export interface UseCursorReturn {
   showCursor: () => void;
   hideCursor: () => void;
 }
+
+/** Rows from terminal bottom for the status bar + border. */
+const BOTTOM_RESERVED = 2;
 
 export function useCursor(): UseCursorReturn {
   const {stdout} = useStdout();
@@ -50,9 +65,11 @@ export function useCursor(): UseCursorReturn {
       positionRef.current = pos;
       if (stdout) {
         // Position cursor: ESC [ row ; col H (1-based)
-        // We use the last row of the terminal for the input field
-        // The y offset is relative to the current Ink render position
-        const row = (stdout.rows || 24) - 2; // Input is near the bottom
+        // Row calculation: count from terminal bottom, accounting for
+        // status bar and border lines.
+        // pos.y=0 → input line (2nd from bottom)
+        // pos.y=1 → one line above input (multi-line)
+        const row = (stdout.rows || 24) - BOTTOM_RESERVED - pos.y;
         const col = pos.x + 1; // 1-based column
         stdout.write(`\x1B[${row};${col}H`);
         showCursor();

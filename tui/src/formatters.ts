@@ -76,7 +76,7 @@ export function formatTaskEvent(event: TaskEventProto): ChatMessage | null {
 
   if (!text) return null;
 
-  return createSystemMessage(text, {color, bold, dim});
+  return {...createSystemMessage(text, {color, bold, dim}), eventType: event.type};
 }
 
 /**
