@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-06-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~446 | Active |
+| `journal-1.md` | ~482 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-06-15 | CJK input width fix + spec updates + PR #15 | `79badfe`, `eb618dd`, `2dcc1a2`, `cf3f5c8` | `feat/tui-ink-react` |
 | 12 | 2026-06-15 | CJK input width fix + spec updates + PR #15 | `79badfe`, `eb618dd`, `2dcc1a2` | `feat/tui-ink-react` |
 | 11 | 2026-06-15 | TUI PR2: gRPC TaskService integration | `5997287`, `308cbdc`, `f258345` | `feat/tui-ink-react` |
 | 10 | 2026-06-14 | Sandbox Claude Code模式：文档补全 | `868fe9a` | `feat/dashboard-v2` |
