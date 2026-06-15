@@ -47,12 +47,16 @@ function useGrpcClient(serverAddress?: string): UseGrpcClientReturn;
 
 ```typescript
 interface UseTaskEventsReturn {
-    subtasks: Map<string, SubtaskItem>;
-    events: TaskEvent[];
-    isConnected: boolean;
+    task: TaskProto | null;
+    subtasks: SubtaskItem[];        // Array derived from internal Map
+    events: TaskEventProto[];       // Capped at MAX_EVENTS (2000)
+    isStreaming: boolean;
+    setSubtasksFromSubmit: (subtasks: SubtaskProto[], task?: TaskProto) => void;
+    updateSubtaskStatus: (subtaskId: string, status: SubtaskStatusType) => void;
+    clearTask: () => void;
 }
 
-function useTaskEvents(client: TaskServiceClient | null, taskId?: string): UseTaskEventsReturn;
+function useTaskEvents(client: TaskServiceClient | null, connectionState: string): UseTaskEventsReturn;
 ```
 
 ### CjkTextInput Component (`tui/src/components/CjkTextInput.tsx`)
@@ -66,6 +70,7 @@ interface CjkTextInputProps {
     readonly focus?: boolean;
     readonly showCursor?: boolean;
     readonly onCursorMove?: (displayCol: number) => void;
+    readonly onHistoryNav?: (direction: 'up' | 'down') => void;
 }
 ```
 
@@ -73,6 +78,35 @@ interface CjkTextInputProps {
 - Cursor tracked as grapheme index internally; converted to display column via `stringWidth(textBeforeCursor)` for real cursor positioning
 - `onCursorMove` fires on every cursor change (input, backspace, delete, arrow keys, Ctrl+A/E, external value reset)
 - Uses `useInput` from Ink for keyboard handling; `cursorRef` (ref) avoids stale closures alongside `cursorGI` (state) for re-render
+- **Ctrl+J**: inserts newline (multi-line task editing)
+- **Ctrl+U**: clears entire input
+- **Ctrl+K**: deletes from cursor to end of line
+- **Up/Down**: delegates to `onHistoryNav` callback (for input history browsing)
+- **Pass-through**: Ctrl+C/R/P/Q/F are ignored here and handled by App's global `useInput`
+
+### TUI Reducer (`tui/src/reducer.ts`)
+
+```typescript
+interface TuiState {
+    messages: ChatMessage[];
+    subtasks: SubtaskItem[];
+    progress: {completed: number; total: number};
+    activeTaskId: string | null;
+    followLog: boolean;
+    selectedPane: SelectedPane;    // 'input' | 'chat' | 'subtask'
+    scrollDirection: 'up' | 'down' | null;
+    scrollLines: number;
+    scrollTick: number;            // Monotonically increasing — ChatLog detects new scroll commands
+    inputHistory: string[];
+    historyIndex: number;
+    lastError: string | null;
+    offlineTimerIds: ReturnType<typeof setTimeout>[];
+    eventFilter: EventFilter;      // 'all' | 'task' | 'subtask' | 'tool' | 'error'
+    symbolMode: SymbolMode;        // 'unicode' | 'ascii' | 'auto'
+}
+```
+
+**Key architecture**: Scroll offset is NOT stored in reducer — ChatLog manages `localOffset` internally because the offset must be relative to the **filtered** message list, which the reducer cannot compute. Instead, the reducer tracks `followLog`, `scrollTick`, `scrollDirection`, and `scrollLines`. ChatLog reads `scrollTick` and applies the scroll to its own local offset.
 
 ---
 
@@ -259,7 +293,80 @@ setCursorPosition({x: 5 + stringWidth(value), y: 0});  // "中文" → 5+4=9
 
 **Context**: `useTaskEvents` needs to maintain subtask state that updates incrementally as events arrive.
 
-**Decision**: Use `Map<string, SubtaskItem>` keyed by subtask ID. When a new event arrives for an existing subtask, only that entry is updated. This avoids re-creating the entire array on every event and makes lookups O(1).
+**Decision**: Use `Map<string, SubtaskItem>` keyed by subtask ID internally, exposed as `SubtaskItem[]` array. When a new event arrives for an existing subtask, only that entry is updated. This avoids re-creating the entire array on every event and makes lookups O(1). The `processEvent()` function returns a new Map (immutable update pattern) rather than mutating in place.
+
+### Decision: useReducer over multiple useState
+
+**Context**: App.tsx had 6+ useState + 2 render-side-effect synchronizations, causing stale state and inconsistent subtask updates.
+
+**Options Considered**:
+1. Multiple useState with useEffect sync — Fragile; useEffect chains create cascading re-renders
+2. Custom hook `useTuiModel` wrapping useState — Incremental but still has sync issues
+3. useReducer with single TuiState — Single dispatch path, predictable state transitions
+
+**Decision**: useReducer with a single `TuiState` object and 15+ action types. All state transitions go through `dispatch(action)`. The render path contains zero setState calls. This makes state changes traceable and prevents the "setState during render" anti-pattern that caused subtask sync bugs.
+
+**Example**:
+```typescript
+// WRONG: setState in render path causes infinite re-render risk
+const prevLen = useRef(0);
+if (streamSubtasks.length !== prevLen.current) {
+  prevLen.current = streamSubtasks.length;
+  setSubtasks(streamSubtasks);  // setState during render!
+}
+
+// CORRECT: useEffect for side effects, dispatch for state changes
+useEffect(() => {
+  if (streamSubtasks.length === 0) return;
+  const changed = streamSubtasks.some((st, i) =>
+    !prev[i] || prev[i].status !== st.status
+  );
+  if (changed) dispatch({type: 'SET_SUBTASKS', subtasks: streamSubtasks});
+}, [streamSubtasks]);
+```
+
+### Decision: Scroll offset in ChatLog component, not reducer
+
+**Context**: ChatLog supports event filtering (all/task/subtask/tool/error). The scroll offset must be relative to the **filtered** message list, not the full list. The reducer cannot compute the filtered list.
+
+**Options Considered**:
+1. Store `logOffset` in reducer — Wrong: offset indexes into full list but is applied to filtered list
+2. Store `logOffset` in reducer + derive filtered offset — Fragile: requires reducer to know filter logic
+3. Store scroll commands in reducer, offset in ChatLog — Correct: reducer emits intent, component applies to its local view
+
+**Decision**: The reducer tracks `followLog`, `scrollTick`, `scrollDirection`, `scrollLines`. ChatLog maintains `localOffset` (useState) relative to its filtered message list. When `scrollTick` changes, ChatLog applies the scroll direction/lines to `localOffset`. When `followLog` is true, `localOffset` is pinned to the bottom.
+
+**Example**:
+```typescript
+// In ChatLog:
+const [localOffset, setLocalOffset] = useState(0);
+const prevTick = useRef(state.scrollTick);
+
+useEffect(() => {
+  if (state.scrollTick === prevTick.current) return;
+  prevTick.current = state.scrollTick;
+  if (state.scrollDirection === 'up') {
+    setLocalOffset(prev => Math.max(0, prev - state.scrollLines));
+  } else if (state.scrollDirection === 'down') {
+    setLocalOffset(prev => Math.min(maxOffset, prev + state.scrollLines));
+  }
+}, [state.scrollTick]);
+```
+
+### Decision: Symbol strategy (unicode/ascii/auto)
+
+**Context**: Different terminals have different Unicode support. CI environments, dumb terminals, and NO_COLOR settings often can't render Unicode box-drawing characters or special symbols.
+
+**Decision**: `tui/src/symbols.ts` provides three modes: `unicode` (full symbols), `ascii` (safe fallback like `[x]`, `[ ]`), `auto` (detects from environment). The `auto` mode checks:
+- `CI` env var → ASCII
+- `NO_COLOR` env var → ASCII
+- `TERM=dumb` → ASCII
+- `TERM` contains xterm/screen/tmux → Unicode
+- `TERM_PROGRAM` contains iTerm/WezTerm/kitty → Unicode
+- `LC_ALL`/`LANG` contains UTF-8 → Unicode
+- Default → ASCII (conservative)
+
+The symbol set is passed from App → SubtaskTree as a `SymbolSet` prop rather than imported directly, keeping components testable and the strategy centralized.
 
 ---
 
@@ -280,3 +387,13 @@ setCursorPosition({x: 5 + stringWidth(value), y: 0});  // "中文" → 5+4=9
 7. **Using JS string indexing (`[0]`, `slice(1)`) on multi-code-point graphemes** — Emoji with ZWJ sequences, combining characters, and CJK surrogate pairs span multiple code units. Use `GraphemeSplitter.splitGraphemes()` then index the resulting array. Applies especially to placeholder rendering where `placeholder[0]` may slice a grapheme in half.
 
 8. **Calculating cursor x-offset without accounting for Box layout** — Ink's `<Box marginX paddingX borderStyle>` each consume terminal columns. The total offset for TaskInput's cursor is: `marginX(1) + left-border(1) + paddingX(1) + "> "(2) = 5` columns, not 4. Recalculate if the layout changes.
+
+9. **Storing scroll offset in reducer when the view is filtered** — When ChatLog has an event filter active, the visible messages are a subset of the full list. An offset that indexes into the full list will point to the wrong message when applied to the filtered list. Always manage scroll offset locally in the component that knows the filtered list.
+
+10. **Using `string.slice(0, -1)` for terminal-width truncation** — This can split a grapheme cluster (combining characters, ZWJ emoji, CJK with variant selectors), producing malformed strings. Use `GraphemeSplitter.splitGraphemes()` and remove from the end by grapheme, tracking cumulative width with `stringWidth()`.
+
+11. **Not resetting `processedEventCount` when events are cleared** — `useTaskEvents` appends to an internal `events` array. If `clearTask()` empties this array but the consumer's `processedEventCount` ref retains the old count, new events are silently skipped until the count exceeds the old threshold. Always reset the counter when the source array is cleared.
+
+12. **Not capping event/message arrays** — gRPC streams can emit events indefinitely. Both `useTaskEvents` and the reducer's `ADD_MESSAGES` must cap at ~2000 entries. Without this, long-running sessions consume unbounded memory.
+
+13. **Multiple `useInput` hooks with overlapping key bindings** — Ink 5 allows multiple `useInput` hooks, but they all fire for every keypress. If `CjkTextInput` and `App` both handle Ctrl+R, the action fires twice. Solution: CjkTextInput explicitly ignores Ctrl+C/R/P/Q/F/L (passes them through to App's global handler). The `focus` prop on `useInput({isActive})` controls which component processes printable input.
