@@ -21,6 +21,9 @@ import type {TaskServiceClient} from '../grpc/client.js';
 
 // ── Types ───────────────────────────────────────────────────
 
+/** Maximum events to keep in memory. Matches reducer's MAX_MESSAGES. */
+const MAX_EVENTS = 2000;
+
 export interface SubtaskItem {
   id: string;
   index: number;
@@ -44,6 +47,9 @@ export interface UseTaskEventsReturn {
 
   /** Update subtask state from a SubmitTaskResponse. */
   setSubtasksFromSubmit: (subtasks: SubtaskProto[], task?: TaskProto) => void;
+
+  /** Update a single subtask's status. */
+  updateSubtaskStatus: (subtaskId: string, status: SubtaskStatusType) => void;
 
   /** Clear all task state. */
   clearTask: () => void;
@@ -180,7 +186,13 @@ export function useTaskEvents(
           data: event.data ?? {},
         };
 
-        setEvents((prev) => [...prev, taskEvent]);
+        setEvents((prev) => {
+          const next = [...prev, taskEvent];
+          // Cap at MAX_EVENTS to prevent unbounded memory growth
+          return next.length > MAX_EVENTS
+            ? next.slice(next.length - MAX_EVENTS)
+            : next;
+        });
         setSubtaskMap((prev) => processEvent(taskEvent, prev));
       });
 
@@ -235,12 +247,28 @@ export function useTaskEvents(
     setEvents([]);
   }, []);
 
+  /** Update a single subtask's status by ID. */
+  const updateSubtaskStatus = useCallback(
+    (subtaskId: string, status: SubtaskStatusType) => {
+      setSubtaskMap((prev) => {
+        const updated = new Map(prev);
+        const existing = updated.get(subtaskId);
+        if (existing) {
+          updated.set(subtaskId, {...existing, status});
+        }
+        return updated;
+      });
+    },
+    [],
+  );
+
   return {
     task,
     subtasks,
     events,
     isStreaming,
     setSubtasksFromSubmit,
+    updateSubtaskStatus,
     clearTask,
   };
 }

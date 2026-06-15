@@ -12,6 +12,12 @@
  * - Moves cursor by grapheme index (1 step = 1 grapheme, regardless of width)
  * - Deletes whole grapheme clusters on backspace/delete
  * - Positions the real terminal cursor correctly for IME via onCursorMove
+ *
+ * Extended shortcuts:
+ * - Ctrl+J: insert newline (multi-line task editing)
+ * - Ctrl+U: clear entire input
+ * - Ctrl+K: delete from cursor to end of line
+ * - Up/Down: delegate to parent for input history navigation
  */
 import React, {useState, useEffect, useRef} from 'react';
 import {Text, useInput} from 'ink';
@@ -35,6 +41,8 @@ export interface CjkTextInputProps {
   readonly showCursor?: boolean;
   /** Callback to position the real terminal cursor (for IME). Receives display column. */
   readonly onCursorMove?: (displayCol: number) => void;
+  /** Callback for Up/Down history navigation. */
+  readonly onHistoryNav?: (direction: 'up' | 'down') => void;
 }
 
 /**
@@ -54,6 +62,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
   focus = true,
   showCursor = true,
   onCursorMove,
+  onHistoryNav,
 }) => {
   // Cursor position as grapheme index (0 = before first, N = after last).
   // Kept in both state (for re-render) and ref (for non-stale useInput callbacks).
@@ -98,8 +107,8 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   useInput(
     (input, key) => {
-      // Ignore navigation keys that are not our responsibility
-      if (key.upArrow || key.downArrow || key.tab || (key.shift && key.tab)) {
+      // Ignore Tab (handled by parent for pane switching)
+      if (key.tab || (key.shift && key.tab)) {
         return;
       }
 
@@ -108,9 +117,79 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         return;
       }
 
+      // Ctrl+R is handled by the parent App for reconnect
+      if (key.ctrl && input === 'r') {
+        return;
+      }
+
+      // Ctrl+P is handled by the parent App for pause/resume
+      if (key.ctrl && input === 'p') {
+        return;
+      }
+
+      // Ctrl+Q is handled by the parent App for quit
+      if (key.ctrl && input === 'q') {
+        return;
+      }
+
+      // ── Ctrl+J: insert newline (multi-line task) ───────
+      if (key.ctrl && input === 'j') {
+        const graphemes = splitter.splitGraphemes(value);
+        const gi = cursorRef.current;
+        const nextValue = [
+          ...graphemes.slice(0, gi),
+          '\n',
+          ...graphemes.slice(gi),
+        ].join('');
+        const next = gi + 1;
+        setCursorGI(next);
+        cursorRef.current = next;
+        prevValueRef.current = nextValue;
+        onChange(nextValue);
+        return;
+      }
+
+      // ── Ctrl+U: clear entire input ─────────────────────
+      if (key.ctrl && input === 'u') {
+        setCursorGI(0);
+        cursorRef.current = 0;
+        prevValueRef.current = '';
+        onChange('');
+        return;
+      }
+
+      // ── Ctrl+K: delete from cursor to end ──────────────
+      if (key.ctrl && input === 'k') {
+        const graphemes = splitter.splitGraphemes(value);
+        const gi = cursorRef.current;
+        const nextValue = graphemes.slice(0, gi).join('');
+        // cursor stays at same position
+        prevValueRef.current = nextValue;
+        onChange(nextValue);
+        return;
+      }
+
       if (key.return) {
         if (onSubmit) {
           onSubmit(value);
+        }
+        return;
+      }
+
+      // ── Up/Down: delegate to parent for history nav ────
+      if (key.upArrow) {
+        if (onHistoryNav) {
+          onHistoryNav('up');
+          return;
+        }
+        // Without history nav, ignore
+        return;
+      }
+
+      if (key.downArrow) {
+        if (onHistoryNav) {
+          onHistoryNav('down');
+          return;
         }
         return;
       }

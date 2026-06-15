@@ -38,7 +38,7 @@ The Python layer does not access storage backends directly. All storage operatio
 | [State Management](./state-management.md) | Task state machine, in-memory state, computed properties | Filled |
 | [Quality Guidelines](./quality-guidelines.md) | pytest patterns, mocking, test organization | Filled |
 | [Type Safety](./type-safety.md) | Type annotations, Optional/List/Dict, Any for engine | Filled |
-| [TUI gRPC Spec](./tui-grpc-spec.md) | TUI gRPC client, React hooks, streaming, offline fallback | Filled |
+| [TUI gRPC Spec](./tui-grpc-spec.md) | TUI gRPC client, React hooks, streaming, offline fallback, useReducer state model, scroll architecture, symbol strategy | Filled |
 
 ---
 

@@ -1,0 +1,7 @@
+{"path": ".trellis/tasks/06-15-tui/prd.md", "reason": "PRD with all requirements, decisions, acceptance criteria for both PR1 and PR2"}
+{"path": ".trellis/spec/frontend/state-management.md", "reason": "Frontend state management guidelines - must align reducer pattern with project conventions"}
+{"path": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook design guidelines - useTaskEvents and new hooks must follow these patterns"}
+{"path": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component structure guidelines - ChatLog/SubtaskTree/StatusBar refactors must comply"}
+{"path": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC integration spec - pauseTask/resumeTask/streaming behavior reference"}
+{"path": ".trellis/spec/frontend/type-safety.md", "reason": "Type safety guidelines - TuiState, actions, reducer types must be strictly typed"}
+{"path": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality bar - typecheck/build must pass, testing expectations"}

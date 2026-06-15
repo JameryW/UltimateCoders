@@ -1,0 +1,4 @@
+{"path": ".trellis/spec/frontend/state-management.md", "reason": "Verify reducer pattern matches project state management guidelines"}
+{"path": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify component refactors comply with structure guidelines"}
+{"path": ".trellis/spec/frontend/type-safety.md", "reason": "Verify all new types are strictly typed per guidelines"}
+{"path": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify typecheck/build pass, test coverage meets bar"}

@@ -90,9 +90,20 @@ export function useGrpcClient(): UseGrpcClientReturn {
       const newClient = createTaskServiceClient();
       setClient(newClient);
 
-      // The gRPC channel connects lazily, so we mark as connected
-      // and handle errors on individual RPC calls.
-      setConnectionState('connected');
+      // The gRPC channel connects lazily. To verify the server is
+      // actually reachable, we attempt a lightweight RPC (listTasks).
+      // If this fails, we mark the connection as error immediately.
+      newClient.listTasks({}).then(() => {
+        setConnectionState('connected');
+      }).catch((err: any) => {
+        if (isUnavailableError(err)) {
+          setConnectionState('error');
+        } else {
+          // Non-UNAVAILABLE errors (e.g. server has no tasks) still mean
+          // the server is reachable — gRPC returned a valid response.
+          setConnectionState('connected');
+        }
+      });
     } catch {
       setConnectionState('error');
       setClient(null);
