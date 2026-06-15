@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.text import Text
-from textual.widgets import Static, Tree
+from textual.widgets import Input, Static, Tree
 from textual.widgets._tree import TreeNode
 
 from ultimate_coders.agent.types import Subtask, SubtaskStatus
@@ -228,107 +228,30 @@ class ChatLog(Static):
         self.update("")
 
 
-class TaskInput(Static, can_focus=True):
-    """CJK-compatible input field using raw key capture.
+class TaskInput(Input):
+    """Input field for submitting new task descriptions.
 
-    Textual's Input and TextArea widgets cannot render CJK characters
-    in some terminal environments. This widget captures key events
-    directly, manages an internal text buffer, and renders content
-    via Rich (which handles CJK correctly).
+    Renders with a '>' prompt prefix and dark background styling.
+    Uses Textual's native Input widget with placeholder support.
 
-    Submits on Enter.
+    Note: CJK (Chinese/Japanese/Korean) input may not display correctly
+    in iTerm2. Use macOS Terminal.app or other terminals for CJK support.
     """
 
     DEFAULT_CSS = """
     TaskInput {
-        height: 3;
         margin: 1 1 0 1;
-        border: solid $primary;
-        padding: 0 1;
-        background: $surface;
-    }
-
-    TaskInput:focus {
-        border: solid $accent;
     }
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """Initialize the TaskInput with an empty buffer."""
-        Static.__init__(self, "", *args, **kwargs)
-        self._buffer: str = ""
-
-    def _on_mount(self) -> None:
-        """Show prompt on mount."""
-        self._render_prompt()
-
-    def _on_focus(self, event) -> None:
-        """Re-render with cursor when focused."""
-        self._render_prompt()
-
-    def _on_blur(self, event) -> None:
-        """Re-render without cursor when blurred."""
-        self._render_prompt()
-
-    def _render_prompt(self) -> None:
-        """Render the input with '>' prefix and cursor."""
-        cursor = "█" if self.has_focus else ""
-        if self._buffer:
-            content = f"[bold cyan]>[/bold cyan] {self._buffer}{cursor}"
-        else:
-            placeholder = "[dim]type task description and press Enter...[/dim]" if self.has_focus else ""
-            content = f"[bold cyan]>[/bold cyan] {placeholder}{cursor}"
-        self.update(content)
-
-    def _on_key(self, event) -> None:
-        """Handle key events for text input."""
-        key = event.key
-
-        # Enter: submit
-        if key == "enter":
-            text = self._buffer.strip()
-            if text:
-                self.post_message(TaskSubmitted(text))
-            self._buffer = ""
-            self._render_prompt()
-            event.prevent_default()
-            event.stop()
-            return
-
-        # Backspace: delete last char
-        if key == "backspace":
-            if self._buffer:
-                self._buffer = self._buffer[:-1]
-                self._render_prompt()
-            event.prevent_default()
-            event.stop()
-            return
-
-        # Delete: same as backspace
-        if key == "delete":
-            if self._buffer:
-                self._buffer = self._buffer[:-1]
-                self._render_prompt()
-            event.prevent_default()
-            event.stop()
-            return
-
-        # Ctrl+U: clear line
-        if key == "ctrl+u":
-            self._buffer = ""
-            self._render_prompt()
-            event.prevent_default()
-            event.stop()
-            return
-
-        # Printable character (includes CJK via IME)
-        character = event.character
-        if character and event.is_printable:
-            self._buffer += character
-            self._render_prompt()
-            event.prevent_default()
-            event.stop()
-            return
+        """Initialize the TaskInput with a '>' prompt placeholder."""
+        Input.__init__(
+            self,
+            placeholder="> type task description and press Enter...",
+            *args,
+            **kwargs,
+        )
 
 
 class StatusBar(Static):
@@ -389,15 +312,3 @@ class StatusBar(Static):
         except Exception:
             # Widget not yet mounted — will render on mount
             pass
-
-
-from textual.message import Message
-
-
-class TaskSubmitted(Message):
-    """Message emitted when the user submits a task via TaskInput."""
-
-    def __init__(self, text: str) -> None:
-        """Initialize with the submitted task description."""
-        Message.__init__(self)
-        self.text = text
