@@ -856,3 +856,39 @@ Confirmed backend-engine-api-fixes fully implemented (search_memory embeddings, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: TUI layout v3 — single-column vertical (ref Claude Code/Codex)
+
+**Date**: 2026-06-16
+**Task**: TUI layout v3 — single-column vertical (ref Claude Code/Codex)
+**Branch**: `fix/engine-unwrap-and-taskid`
+
+### Summary
+
+Refactored TUI from split-pane to single-column vertical layout. ChatLog full-width, SubtaskTree→Ctrl+T overlay, mutable subtask summary line inline, LogoBanner compact mode, user messages use > prefix. Fixed hasSubtaskSummaryRef bug (CLEAR_TASK stale message), added REMOVE_MESSAGE action. Updated tui-grpc-spec. 328 tests passing.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3618320` | (see git log) |
+| `3c5d827` | (see git log) |
+| `788b94d` | (see git log) |
+| `1f92ac7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

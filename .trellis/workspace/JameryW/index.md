@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-06-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~858 | Active |
+| `journal-1.md` | ~894 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-06-16 | TUI layout v3 — single-column vertical (ref Claude Code/Codex) | `3618320`, `3c5d827`, `788b94d`, `1f92ac7` | `fix/engine-unwrap-and-taskid` |
 | 24 | 2026-06-16 | Backend completion + NATS orchestrator bridge | `847aa62`, `691681c`, `4c22d93` | `feat/grpc-orchestrator-bridge` |
 | 23 | 2026-06-16 | Backend Hardening & Enhancement | `b766492`, `a1a3dcb`, `f72e325`, `aac0b44` | `feat/pixel-logo-banner` |
 | 22 | 2026-06-16 | StatusBar segment-based layout + gRPC error noise reduction | `4659f98` | `docs/spec-updates-cursor-statusbar-memory` |
