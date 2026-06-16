@@ -123,7 +123,9 @@ export function cursorDisplayCol(value: string, cursorGI: number): number;
 
 ### StatusBar Component (`tui/src/components/StatusBar.tsx`)
 
-Segment-based layout with width budget. Priority order: connection > worker > backend > progress > focus > view > retry > help. Each segment has an `id`, `width`, and `render` function. `buildSegments()` produces ordered segments; `selectSegments()` trims them to fit `terminalWidth`.
+Segment-based layout with width budget. Priority order: brand > connection > worker > backend > progress > focus > retry > help. Each segment has an `id`, `width`, and `render` function. `buildSegments()` produces ordered segments; `selectSegments()` trims them to fit `terminalWidth`.
+
+> **v3 change**: `view` segment removed (no split pane). `activeMainPane` prop deprecated.
 
 ```typescript
 interface Segment {
@@ -139,9 +141,9 @@ export function buildSegments(props: {
     backend: string;
     progress: {completed: number; total: number};
     focusedArea: FocusedArea;
-    activeMainPane: ActiveMainPane;
     retryCount: number;
     focusedAreaHelp: string;
+    brandChar: string;
 }): Segment[];
 
 export function selectSegments(segments: Segment[], budget: number): Segment[];
@@ -153,8 +155,11 @@ export function selectSegments(segments: Segment[], budget: number): Segment[];
 
 ### TUI Reducer (`tui/src/reducer.ts`)
 
+> **v3 change**: `FocusedArea` is `'input' | 'chat'` only (no `'subtask'`). `ActiveMainPane` deprecated. New actions: `UPDATE_MESSAGE`, `REMOVE_MESSAGE`, `TOGGLE_SUBTASK_OVERLAY`. Removed: `SET_ACTIVE_MAIN_PANE` (no-op), `SWAP_MAIN_PANE` (no-op), `TOGGLE_SUBTASK_DETAIL`, `CLOSE_SUBTASK_DETAIL`, `subtaskDetailOpen` state field.
+
 ```typescript
-type FocusedArea = 'input' | 'chat' | 'subtask';
+type FocusedArea = 'input' | 'chat';
+/** @deprecated No longer used in single-column layout. */
 type ActiveMainPane = 'chat' | 'subtask';
 type EventFilter = 'all' | 'task' | 'subtask' | 'tool' | 'error';
 type SymbolMode = 'unicode' | 'ascii' | 'auto';
@@ -165,8 +170,7 @@ interface TuiState {
     progress: {completed: number; total: number};
     activeTaskId: string | null;
     followLog: boolean;
-    focusedArea: FocusedArea;       // which area receives keyboard events
-    activeMainPane: ActiveMainPane; // which pane occupies main area in narrow mode
+    focusedArea: FocusedArea;       // which area receives keyboard events (v3: input | chat only)
     scrollDirection: 'up' | 'down' | null;
     scrollLines: number;
     scrollTick: number;            // Monotonically increasing — ChatLog detects new scroll commands
@@ -177,17 +181,22 @@ interface TuiState {
     eventFilter: EventFilter;
     symbolMode: SymbolMode;
     unreadCount: number;           // New messages when followLog is off; reset on follow re-enable
-    isSubmitting: boolean;         // Prevents duplicate Enter submits
+    isSubmitting: boolean;         // Prevents duplicate Enter submits; also controls startedAt
     selectedSubtaskIndex: number;  // Keyboard nav index (-1 = none)
     selectedSubtaskId: string | null;  // Synced with index
-    subtaskDetailOpen: boolean;    // Whether detail panel is expanded
+    subtaskOverlayOpen: boolean;   // Whether Ctrl+T subtask overlay is showing
     helpOverlayOpen: boolean;      // Whether ? overlay is showing
+    expandAllMessages: boolean;    // Toggle expand/collapse all long messages
+    startedAt: number | null;      // Timestamp when task submission started (null = idle)
+    // Backward compat:
+    selectedPane: FocusedArea;     // @deprecated — mirrors focusedArea
+    activeMainPane: ActiveMainPane; // @deprecated — no-op in single-column layout
 }
 ```
 
 **Key architecture**: Scroll offset is NOT stored in reducer — ChatLog manages `localOffset` internally because the offset must be relative to the **filtered** message list, which the reducer cannot compute. Instead, the reducer tracks `followLog`, `scrollTick`, `scrollDirection`, and `scrollLines`. ChatLog reads `scrollTick` and applies the scroll to its own local offset.
 
-**Focus model (v2)**: `focusedArea` and `activeMainPane` are independent state dimensions. `focusedArea` determines keyboard routing and visual highlight. `activeMainPane` determines which pane fills the main area in narrow (<80 cols) mode. Input is always visible regardless of focus.
+**Focus model (v3)**: `focusedArea` is `'input' | 'chat'` only. No split panes — ChatLog is full-width. SubtaskTree shown as overlay via Ctrl+T. `activeMainPane` is deprecated (kept for backward compat only). Shift+Tab cycles `input → chat → input`.
 
 ---
 
