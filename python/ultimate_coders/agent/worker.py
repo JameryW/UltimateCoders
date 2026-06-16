@@ -13,6 +13,7 @@ import glob
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -523,6 +524,137 @@ class Worker:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    async def _tool_edit_file(
+        self,
+        file_path: str,
+        content: str,
+        create: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        """Tool: Write content to a file atomically.
+
+        When create=False (default), the file must already exist; it will be
+        overwritten.  When create=True, the file must NOT exist; it will be
+        created as a new file.
+
+        The write is performed atomically by writing to a temporary file first
+        and then renaming it over the target.
+
+        Args:
+            file_path: Path to the file to write.
+            content: Content to write.
+            create: If True, create a new file (error if exists).
+                    If False, overwrite existing file (error if not found).
+
+        Returns:
+            JSON string with success status and bytes written.
+        """
+        try:
+            # Validate UTF-8 content
+            try:
+                content.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                return json.dumps({"error": f"Content is not valid UTF-8: {exc}"})
+
+            abs_path = os.path.abspath(file_path)
+
+            if create:
+                # create=True: file must NOT exist
+                if os.path.exists(abs_path):
+                    return json.dumps(
+                        {"error": f"File already exists (use create=False to overwrite): {abs_path}"}
+                    )
+            else:
+                # create=False: file MUST exist
+                if not os.path.isfile(abs_path):
+                    return json.dumps(
+                        {"error": f"File not found (use create=True for new files): {abs_path}"}
+                    )
+
+            # Ensure parent directory exists
+            parent_dir = os.path.dirname(abs_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
+            # Atomic write: temp file then rename
+            fd, tmp_path = tempfile.mkstemp(
+                dir=parent_dir,
+                prefix=".uc_edit_",
+                suffix=".tmp",
+            )
+            try:
+                encoded = content.encode("utf-8")
+                with os.fdopen(fd, "wb") as tmp_f:
+                    tmp_f.write(encoded)
+                os.replace(tmp_path, abs_path)
+            except Exception:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "file_path": abs_path,
+                    "bytes_written": len(encoded),
+                }
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_search_memory(
+        self,
+        query: str,
+        scope_type: str = "all",
+        project_id: str | None = None,
+        max_results: int = 10,
+        **kwargs: Any,
+    ) -> str:
+        """Tool: Search long-term memory semantically.
+
+        Args:
+            query: Search query text.
+            scope_type: Search scope — "project", "global", or "all".
+            project_id: Project ID for project-scoped search.
+            max_results: Maximum number of results (default 10).
+
+        Returns:
+            JSON string with search results.
+        """
+        if self.engine is None:
+            return json.dumps({"error": "No engine available"})
+
+        try:
+            results = self.engine.search_memory(
+                query=query,
+                scope_type=scope_type,
+                project_id=project_id,
+                max_results=max_results,
+            )
+
+            items = []
+            for r in results:
+                content = getattr(r, "content", None) or getattr(r, "entry", None)
+                if content:
+                    text = getattr(content, "text", None) or str(content)
+                else:
+                    text = str(r)
+                items.append(
+                    {
+                        "key": getattr(r, "key", ""),
+                        "scope": getattr(r, "scope", ""),
+                        "content": text[:500],
+                        "score": getattr(r, "score", 0.0),
+                    }
+                )
+
+            return json.dumps({"results": items, "count": len(items)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     async def _tool_read_file(self, file_path: str) -> str:
         """Tool: Read a file from the local filesystem.
 
@@ -686,6 +818,8 @@ class Worker:
             "search": self._tool_search,
             "read_memory": self._tool_read_memory,
             "write_memory": self._tool_write_memory,
+            "edit_file": self._tool_edit_file,
+            "search_memory": self._tool_search_memory,
             "read_file": self._tool_read_file,
             "list_files": self._tool_list_files,
             "symbol_search": self._tool_symbol_search,
@@ -745,6 +879,55 @@ class Worker:
                     "content": {
                         "type": "string",
                         "description": "Content to store",
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="edit_file",
+                description=(
+                    "Write content to a file. Use create=True for new files, "
+                    "create=False (default) to overwrite existing files."
+                ),
+                parameters={
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to write",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write",
+                    },
+                    "create": {
+                        "type": "boolean",
+                        "description": (
+                            "If True, create new file (error if exists). "
+                            "If False, overwrite existing (error if not found)."
+                        ),
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="search_memory",
+                description=(
+                    "Search long-term memory semantically. Returns relevant "
+                    "memories matching the query."
+                ),
+                parameters={
+                    "query": {
+                        "type": "string",
+                        "description": "Search query text",
+                    },
+                    "scope_type": {
+                        "type": "string",
+                        "description": 'Search scope: "project", "global", or "all"',
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Project ID for project-scoped search",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results (default 10)",
                     },
                 },
             ),
@@ -975,6 +1158,17 @@ class Worker:
                             file_path=file_path,
                             change_type=ChangeType.MODIFIED,
                             diff="",  # Actual diff would come from write_file
+                        )
+                    )
+            elif tool_name == "edit_file":
+                file_path = tool_input.get("file_path", "")
+                create = tool_input.get("create", False)
+                if file_path:
+                    modified.append(
+                        FileChange(
+                            file_path=file_path,
+                            change_type=ChangeType.CREATED if create else ChangeType.MODIFIED,
+                            diff="",  # Actual diff not available from tool log
                         )
                     )
 

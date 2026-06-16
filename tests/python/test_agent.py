@@ -519,16 +519,20 @@ class TestWorker:
         assert "search" in worker.tools
         assert "read_memory" in worker.tools
         assert "write_memory" in worker.tools
+        assert "edit_file" in worker.tools
+        assert "search_memory" in worker.tools
         assert "read_file" in worker.tools
         assert "list_files" in worker.tools
 
     def test_tool_definitions_built(self):
         worker = Worker()
-        assert len(worker._tool_definitions) == 10
+        assert len(worker._tool_definitions) == 12
         names = [t.name for t in worker._tool_definitions]
         assert "search" in names
         assert "read_memory" in names
         assert "write_memory" in names
+        assert "edit_file" in names
+        assert "search_memory" in names
         assert "read_file" in names
         assert "list_files" in names
 
