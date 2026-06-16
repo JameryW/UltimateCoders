@@ -716,3 +716,39 @@ Extracted pure functions from CjkTextInput, StatusBar, TaskInput, App, SubtaskTr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Fix TUI cursor + backspace, resolve merge conflicts, update specs and READMEs
+
+**Date**: 2026-06-16
+**Task**: Fix TUI cursor + backspace, resolve merge conflicts, update specs and READMEs
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Fixed dual-cursor bug (hide real terminal cursor, use inline fake only) and Backspace not working (Ink 5 parses \x7f as key.delete, unified to backward delete). Resolved merge conflicts with main. Updated tui-grpc-spec (6 items: cjk-input-utils extraction, StatusBar segment architecture, budget-based getStatusBarHelp, exported helpers, connection color convention, Backspace/Delete handling) and taskservice-grpc-spec (new Engine Layer section with MemoryStore signatures, semantic read path, EmbeddingService search, LocalEngine construction order). Updated root README (badges, TUI section, architecture diagram) and TUI README (yellow connection states, segment StatusBar, cursor strategy, expanded architecture). Created PRs #23 (merged), #24 (merged), #25 (README).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0ba0691` | (see git log) |
+| `f9f15af` | (see git log) |
+| `01a6121` | (see git log) |
+| `a698d0e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
