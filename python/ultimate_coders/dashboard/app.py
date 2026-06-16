@@ -232,14 +232,11 @@ class DashboardApp:
             # ── NATS path ───────────────────────────────────────────
             if self._nats_publisher is not None:
                 task_id = str(uuid4())
-                payload = json.dumps({
-                    "task_id": task_id,
-                    "description": description,
-                    "project_id": project_id,
-                }).encode("utf-8")
                 try:
-                    await self._nats_publisher._nc.publish(
-                        "uc.task.submit", payload
+                    await self._nats_publisher.publish_submit(
+                        task_id=task_id,
+                        description=description,
+                        project_id=project_id,
                     )
                     return JSONResponse({
                         "success": True,
@@ -295,12 +292,11 @@ class DashboardApp:
             """Pause a running task."""
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
-                payload = json.dumps({
-                    "type": "task_pause",
-                    "task_id": task_id,
-                }).encode("utf-8")
                 try:
-                    await self._nats_publisher._nc.publish("uc.task.event", payload)
+                    await self._nats_publisher.publish_event(
+                        event_type="task_pause",
+                        task_id=task_id,
+                    )
                     return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
                 except Exception as e:
                     logger.warning("NATS pause publish failed: %s, falling back", e)
@@ -325,13 +321,14 @@ class DashboardApp:
             """Resume a paused task."""
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
-                payload = json.dumps({
-                    "type": "task_resume",
-                    "task_id": task_id,
-                }).encode("utf-8")
                 try:
-                    await self._nats_publisher._nc.publish("uc.task.event", payload)
-                    return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress"})
+                    await self._nats_publisher.publish_event(
+                        event_type="task_resume",
+                        task_id=task_id,
+                    )
+                    return JSONResponse(
+                        {"success": True, "task_id": task_id, "status": "in_progress"}
+                    )
                 except Exception as e:
                     logger.warning("NATS resume publish failed: %s, falling back", e)
 
@@ -826,7 +823,6 @@ class DashboardApp:
         if self._server is not None:
             # The server's loop may not be ready yet, so we schedule
             # a delayed subscription attempt.
-            import time
 
             def _schedule_subscribe():
                 loop = asyncio.get_event_loop()
