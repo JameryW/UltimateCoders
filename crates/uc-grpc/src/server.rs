@@ -551,7 +551,8 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     #[cfg(feature = "messaging")]
     nats_client: Option<async_nats::Client>,
     /// Local Python worker bridge for task execution without NATS.
-    local_worker: Option<crate::local_worker::LocalWorkerBridge>,
+    /// The worker is spawned lazily on the first task submission.
+    local_worker: Arc<Mutex<crate::local_worker::LocalWorkerBridge>>,
     /// Broadcast channel for real-time task event streaming.
     /// All event sources (local worker, NATS, local decomposition) publish here.
     /// WatchTask streams subscribe via Receiver for instant delivery.
@@ -588,7 +589,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 task_store: Arc::new(Mutex::new(TaskStore::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
-                local_worker: None,
+                local_worker: Arc::new(Mutex::new(
+                    crate::local_worker::LocalWorkerBridge::new(),
+                )),
                 event_tx,
             }),
         }
@@ -638,13 +641,15 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             engine,
             task_store: task_store.clone(),
             nats_client: nats_client.clone(),
-            local_worker: None, // NATS mode — local worker not needed
-            event_tx,
+            local_worker: Arc::new(Mutex::new(
+                crate::local_worker::LocalWorkerBridge::new(),
+            )),
+            event_tx: event_tx.clone(),
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
         if let Some(client) = nats_client {
-            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx.clone());
+            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx);
             spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
         }
 
@@ -1129,11 +1134,13 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         let mut result = self.inner.engine.health().await.map_err(to_status)?;
 
         // Add local_worker component status
-        let worker_status = match &self.inner.local_worker {
-            Some(bridge) if bridge.is_available() => ("healthy", Some("connected".to_string())),
-            Some(_) => ("unhealthy", Some("process died".to_string())),
-            None => ("unavailable", Some("not started".to_string())),
+        let worker_bridge = self.inner.local_worker.lock().await;
+        let worker_status = if worker_bridge.is_available() {
+            ("healthy", Some("connected".to_string()))
+        } else {
+            ("unavailable", Some("not started".to_string()))
         };
+        drop(worker_bridge);
         result.components.push(uc_types::ComponentHealth {
             name: "local_worker".to_string(),
             status: worker_status.0.to_string(),
@@ -1404,31 +1411,267 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
 
 // ── Local task decomposition (fallback) ──────────────────────
 
+/// Apply a worker task update to the TaskStore and broadcast events.
+///
+/// This is a standalone function (not a method) so it can be called from
+/// both the GrpcServer methods and the notification reader background task.
+///
+/// Creates or updates the task in the store, mapping worker subtask
+/// statuses back to uc_types, records AgentEventType events, and
+/// broadcasts them via the event_tx channel.
+pub async fn apply_worker_update_to_store(
+    update: &crate::local_worker::WorkerTaskUpdate,
+    task_store: &Arc<Mutex<TaskStore>>,
+    event_tx: &broadcast::Sender<TaskEvent>,
+) {
+    use crate::local_worker::WorkerSubtaskUpdate;
+
+    let mut store = task_store.lock().await;
+    let event_count_before = store.events.len();
+
+    // Convert subtask updates
+    let subtasks: Vec<uc_types::Subtask> = update
+        .subtasks
+        .iter()
+        .map(|st: &WorkerSubtaskUpdate| {
+            let status = subtask_status_from_str(&st.status)
+                .unwrap_or(uc_types::SubtaskStatus::Pending);
+            uc_types::Subtask {
+                id: uc_types::TaskId(st.id.clone()),
+                parent_id: uc_types::TaskId(update.task_id.clone()),
+                description: st.description.clone(),
+                status,
+                assigned_worker: st
+                    .assigned_worker
+                    .as_deref()
+                    .map(|w| uc_types::WorkerId(w.to_string())),
+                depends_on: st
+                    .depends_on
+                    .iter()
+                    .map(|d| uc_types::TaskId(d.clone()))
+                    .collect(),
+                file_constraints: Vec::new(),
+                expected_output: String::new(),
+                result: None,
+            }
+        })
+        .collect();
+
+    let task_status = task_status_from_str(&update.status)
+        .unwrap_or(uc_types::TaskStatus::InProgress);
+
+    let task = uc_types::Task {
+        id: uc_types::TaskId(update.task_id.clone()),
+        description: update.description.clone(),
+        project_id: update.project_id.clone(),
+        status: task_status,
+        subtasks,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    store.tasks.insert(update.task_id.clone(), task);
+
+    // Record events for subtask state transitions so WatchTask can stream them
+    for st in &update.subtasks {
+        let status = subtask_status_from_str(&st.status)
+            .unwrap_or(uc_types::SubtaskStatus::Pending);
+        let event = match status {
+            uc_types::SubtaskStatus::Assigned => uc_engine::AgentEventType::SubtaskAssigned {
+                task_id: uc_types::TaskId(update.task_id.clone()),
+                subtask_id: uc_types::TaskId(st.id.clone()),
+                worker_id: st
+                    .assigned_worker
+                    .as_deref()
+                    .map(|w| uc_types::WorkerId(w.to_string()))
+                    .unwrap_or_else(uc_types::WorkerId::new),
+            },
+            uc_types::SubtaskStatus::InProgress => uc_engine::AgentEventType::SubtaskStarted {
+                task_id: uc_types::TaskId(update.task_id.clone()),
+                subtask_id: uc_types::TaskId(st.id.clone()),
+                worker_id: st
+                    .assigned_worker
+                    .as_deref()
+                    .map(|w| uc_types::WorkerId(w.to_string()))
+                    .unwrap_or_else(uc_types::WorkerId::new),
+            },
+            uc_types::SubtaskStatus::Completed => uc_engine::AgentEventType::SubtaskCompleted {
+                task_id: uc_types::TaskId(update.task_id.clone()),
+                subtask_id: uc_types::TaskId(st.id.clone()),
+                summary: String::new(),
+                success: true,
+            },
+            uc_types::SubtaskStatus::Failed => uc_engine::AgentEventType::SubtaskFailed {
+                task_id: uc_types::TaskId(update.task_id.clone()),
+                subtask_id: uc_types::TaskId(st.id.clone()),
+                error: String::new(),
+                recoverable: false,
+            },
+            _ => continue,
+        };
+        store.record_event(event);
+    }
+
+    // Broadcast newly recorded events
+    let new_events = store.events[event_count_before..]
+        .iter()
+        .cloned()
+        .map(|e| -> TaskEvent { e.into() })
+        .collect::<Vec<_>>();
+    drop(store);
+    for event in new_events {
+        let _ = event_tx.send(event);
+    }
+}
+
+/// Mark all in-progress tasks as Failed in the TaskStore and broadcast events.
+///
+/// Called when the local worker process dies unexpectedly.
+async fn mark_tasks_failed_on_worker_death(
+    task_store: &Arc<Mutex<TaskStore>>,
+    event_tx: &broadcast::Sender<TaskEvent>,
+) {
+    let mut store = task_store.lock().await;
+    let event_count_before = store.events.len();
+
+    let mut failed_ids = Vec::new();
+    for (id, task) in &mut store.tasks {
+        if task.status == uc_types::TaskStatus::InProgress
+            || task.status == uc_types::TaskStatus::Planning
+        {
+            task.status = uc_types::TaskStatus::Failed;
+            task.updated_at = chrono::Utc::now();
+            failed_ids.push(id.clone());
+        }
+    }
+
+    if !failed_ids.is_empty() {
+        tracing::warn!(
+            tasks_failed = failed_ids.len(),
+            "Marked tasks as Failed due to local worker death"
+        );
+    }
+
+    // Broadcast Failed events
+    let new_events = store.events[event_count_before..]
+        .iter()
+        .cloned()
+        .map(|e| -> TaskEvent { e.into() })
+        .collect::<Vec<_>>();
+    drop(store);
+    for event in new_events {
+        let _ = event_tx.send(event);
+    }
+}
+
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
+    /// Ensure the local Python worker is spawned and the notification reader
+    /// is started. Called lazily on the first task submission.
+    ///
+    /// Returns true if the worker is available, false otherwise.
+    async fn ensure_local_worker(&self) -> bool {
+        let bridge_guard = self.inner.local_worker.lock().await;
+
+        // Already available
+        if bridge_guard.is_available() {
+            return true;
+        }
+
+        // Try to spawn the worker
+        match bridge_guard.ensure_worker().await {
+            Ok(()) => {
+                // Worker spawned successfully — start the notification reader.
+                let task_store = self.inner.task_store.clone();
+                let event_tx = self.inner.event_tx.clone();
+                // Clone for the on_worker_dead closure (the apply_fn closure
+                // moves the originals).
+                let task_store_for_death = task_store.clone();
+                let event_tx_for_death = event_tx.clone();
+
+                // Start the notification reader with closures that apply
+                // updates and handle worker death.
+                bridge_guard.start_notification_reader(
+                    move |update: crate::local_worker::WorkerTaskUpdate| {
+                        // We need to call the async apply_worker_update_to_store.
+                        // Since this closure is sync, we spawn a tokio task.
+                        let ts = task_store.clone();
+                        let tx = event_tx.clone();
+                        tokio::spawn(async move {
+                            apply_worker_update_to_store(&update, &ts, &tx).await;
+                        });
+                    },
+                    move || {
+                        // Worker died — mark tasks as Failed
+                        let ts = task_store_for_death.clone();
+                        let tx = event_tx_for_death.clone();
+                        tokio::spawn(async move {
+                            mark_tasks_failed_on_worker_death(&ts, &tx).await;
+                        });
+                    },
+                );
+
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to spawn local worker, will use local decomposition"
+                );
+                false
+            }
+        }
+    }
+
     /// Submit a task via the local Python worker bridge.
     ///
-    /// If the worker is available, sends the task via JSON-RPC and
-    /// applies updates to the TaskStore as notifications arrive.
+    /// Creates a task in Planning status, sends it to the worker via JSON-RPC,
+    /// and returns immediately. The background notification reader will apply
+    /// updates and broadcast events as the worker processes the task.
+    ///
     /// Falls back to `submit_task_local` if the worker is unavailable.
     async fn submit_task_via_bridge(
         &self,
         req: SubmitTaskRequest,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
-        let bridge = &self.inner.local_worker;
-        if let Some(worker) = bridge {
-            if worker.is_available() {
-                match worker.submit_task(&req.description, &req.project_id).await {
-                    Ok((final_update, notifications)) => {
-                        // Apply notifications to TaskStore
-                        for notif in &notifications {
-                            self.apply_worker_update(notif).await;
-                        }
-                        // Apply final update
-                        self.apply_worker_update(&final_update).await;
+        // Ensure the worker is spawned and the reader is running
+        let worker_available = self.ensure_local_worker().await;
 
-                        // Build response from final update
+        if worker_available {
+            let bridge = self.inner.local_worker.lock().await;
+            if bridge.is_available() {
+                // Create task in Planning status
+                let (task_id_str, new_events) = {
+                    let mut store = self.inner.task_store.lock().await;
+                    let event_count_before = store.events.len();
+                    let task =
+                        store.submit_task_pending(req.description.clone(), req.project_id.clone());
+                    let events: Vec<TaskEvent> = store.events[event_count_before..]
+                        .iter()
+                        .cloned()
+                        .map(|e| e.into())
+                        .collect();
+                    (task.id.0.clone(), events)
+                };
+
+                // Broadcast TaskCreated event
+                for event in new_events {
+                    let _ = self.inner.event_tx.send(event);
+                }
+
+                // Send the task to the worker (fire-and-forget)
+                match bridge
+                    .send_submit_task(&req.description, &req.project_id)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            task_id = %task_id_str,
+                            "Task submitted to local worker, status=Planning"
+                        );
+
+                        // Build response with Planning status
                         let store = self.inner.task_store.lock().await;
-                        if let Some(task) = store.get_task(&final_update.task_id) {
+                        if let Some(task) = store.get_task(&task_id_str) {
                             let subtask_protos: Vec<SubtaskProto> =
                                 task.subtasks.clone().into_iter().map(Into::into).collect();
                             return Ok(Response::new(SubmitTaskResponse {
@@ -1440,51 +1683,31 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                                 error: None,
                             }));
                         }
-                        // Task not found in store (shouldn't happen) — build from update via uc_types
-                        let task_status = task_status_from_str(&final_update.status)
-                            .unwrap_or(uc_types::TaskStatus::InProgress);
-                        let fallback_subtasks: Vec<uc_types::Subtask> = final_update
-                            .subtasks
-                            .iter()
-                            .map(|st| {
-                                let status = subtask_status_from_str(&st.status)
-                                    .unwrap_or(uc_types::SubtaskStatus::Pending);
-                                uc_types::Subtask {
-                                    id: uc_types::TaskId(st.id.clone()),
-                                    parent_id: uc_types::TaskId(final_update.task_id.clone()),
-                                    description: st.description.clone(),
-                                    status,
-                                    assigned_worker: st
-                                        .assigned_worker
-                                        .as_deref()
-                                        .map(|w| uc_types::WorkerId(w.to_string())),
-                                    depends_on: st
-                                        .depends_on
-                                        .iter()
-                                        .map(|d| uc_types::TaskId(d.clone()))
-                                        .collect(),
-                                    file_constraints: Vec::new(),
-                                    expected_output: String::new(),
-                                    result: None,
-                                }
-                            })
-                            .collect();
-                        let subtask_protos: Vec<SubtaskProto> =
-                            fallback_subtasks.into_iter().map(Into::into).collect();
+
+                        // Fallback: task was created but not found (shouldn't happen)
                         return Ok(Response::new(SubmitTaskResponse {
                             success: true,
-                            task_id: final_update.task_id,
-                            status: task_status_to_proto(&task_status).to_string(),
-                            subtask_count: subtask_protos.len() as u32,
-                            subtasks: subtask_protos,
+                            task_id: task_id_str,
+                            status: "Planning".to_string(),
+                            subtask_count: 0,
+                            subtasks: Vec::new(),
                             error: None,
                         }));
                     }
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
-                            "Local worker submit failed, falling back to local decomposition"
+                            "Failed to send task to local worker, falling back to local decomposition"
                         );
+                        // Remove the Planning placeholder before falling back
+                        {
+                            let mut store = self.inner.task_store.lock().await;
+                            store.tasks.remove(&task_id_str);
+                            store.events.retain(|e| {
+                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
+                            });
+                        }
+                        // Fall through to local decomposition
                     }
                 }
             }
@@ -1492,111 +1715,6 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         // Worker unavailable or failed — fall back
         self.submit_task_local(req).await
-    }
-
-    /// Apply a worker task update to the TaskStore.
-    ///
-    /// Creates or updates the task in the store, mapping worker subtask
-    /// statuses back to uc_types.
-    async fn apply_worker_update(&self, update: &crate::local_worker::WorkerTaskUpdate) {
-        use crate::local_worker::WorkerSubtaskUpdate;
-
-        let mut store = self.inner.task_store.lock().await;
-        let event_count_before = store.events.len();
-
-        // Convert subtask updates
-        let subtasks: Vec<uc_types::Subtask> = update
-            .subtasks
-            .iter()
-            .map(|st: &WorkerSubtaskUpdate| {
-                let status = crate::server::subtask_status_from_str(&st.status)
-                    .unwrap_or(uc_types::SubtaskStatus::Pending);
-                uc_types::Subtask {
-                    id: uc_types::TaskId(st.id.clone()),
-                    parent_id: uc_types::TaskId(update.task_id.clone()),
-                    description: st.description.clone(),
-                    status,
-                    assigned_worker: st
-                        .assigned_worker
-                        .as_deref()
-                        .map(|w| uc_types::WorkerId(w.to_string())),
-                    depends_on: st
-                        .depends_on
-                        .iter()
-                        .map(|d| uc_types::TaskId(d.clone()))
-                        .collect(),
-                    file_constraints: Vec::new(),
-                    expected_output: String::new(),
-                    result: None,
-                }
-            })
-            .collect();
-
-        let task_status = crate::server::task_status_from_str(&update.status)
-            .unwrap_or(uc_types::TaskStatus::InProgress);
-
-        let task = uc_types::Task {
-            id: uc_types::TaskId(update.task_id.clone()),
-            description: update.description.clone(),
-            project_id: update.project_id.clone(),
-            status: task_status,
-            subtasks,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        store.tasks.insert(update.task_id.clone(), task);
-
-        // Record events for subtask state transitions so WatchTask can stream them
-        for st in &update.subtasks {
-            let status = crate::server::subtask_status_from_str(&st.status)
-                .unwrap_or(uc_types::SubtaskStatus::Pending);
-            let event = match status {
-                uc_types::SubtaskStatus::Assigned => uc_engine::AgentEventType::SubtaskAssigned {
-                    task_id: uc_types::TaskId(update.task_id.clone()),
-                    subtask_id: uc_types::TaskId(st.id.clone()),
-                    worker_id: st
-                        .assigned_worker
-                        .as_deref()
-                        .map(|w| uc_types::WorkerId(w.to_string()))
-                        .unwrap_or_else(uc_types::WorkerId::new),
-                },
-                uc_types::SubtaskStatus::InProgress => uc_engine::AgentEventType::SubtaskStarted {
-                    task_id: uc_types::TaskId(update.task_id.clone()),
-                    subtask_id: uc_types::TaskId(st.id.clone()),
-                    worker_id: st
-                        .assigned_worker
-                        .as_deref()
-                        .map(|w| uc_types::WorkerId(w.to_string()))
-                        .unwrap_or_else(uc_types::WorkerId::new),
-                },
-                uc_types::SubtaskStatus::Completed => uc_engine::AgentEventType::SubtaskCompleted {
-                    task_id: uc_types::TaskId(update.task_id.clone()),
-                    subtask_id: uc_types::TaskId(st.id.clone()),
-                    summary: String::new(),
-                    success: true,
-                },
-                uc_types::SubtaskStatus::Failed => uc_engine::AgentEventType::SubtaskFailed {
-                    task_id: uc_types::TaskId(update.task_id.clone()),
-                    subtask_id: uc_types::TaskId(st.id.clone()),
-                    error: String::new(),
-                    recoverable: false,
-                },
-                _ => continue,
-            };
-            store.record_event(event);
-        }
-
-        // Broadcast newly recorded events
-        let new_events = store.events[event_count_before..]
-            .iter()
-            .cloned()
-            .map(|e| -> TaskEvent { e.into() })
-            .collect::<Vec<_>>();
-        drop(store);
-        for event in new_events {
-            let _ = self.inner.event_tx.send(event);
-        }
     }
 
     /// Submit a task using local (newline-split) decomposition.
