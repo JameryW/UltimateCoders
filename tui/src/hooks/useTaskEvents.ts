@@ -141,6 +141,7 @@ function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
 export function useTaskEvents(
   client: TaskServiceClient | null,
   connectionState: string,
+  activeTaskId?: string | null,
 ): UseTaskEventsReturn {
   const [task, setTask] = useState<TaskProto | null>(null);
   const [subtaskMap, setSubtaskMap] = useState<Map<string, SubtaskItem>>(new Map());
@@ -162,11 +163,12 @@ export function useTaskEvents(
       return;
     }
 
-    // Start watching all tasks (empty task_id = watch all)
+    // Watch specific task if active, otherwise watch all
+    const watchId = activeTaskId ?? '';
     let cancelled = false;
 
     try {
-      const stream = client.watchTask({taskId: ''});
+      const stream = client.watchTask({taskId: watchId});
       streamRef.current = stream;
 
       stream.on('data', (event: any) => {
@@ -216,7 +218,7 @@ export function useTaskEvents(
         streamRef.current = null;
       }
     };
-  }, [client, connectionState]);
+  }, [client, connectionState, activeTaskId]);
 
   /** Update subtask state from a SubmitTaskResponse. */
   const setSubtasksFromSubmit = useCallback(

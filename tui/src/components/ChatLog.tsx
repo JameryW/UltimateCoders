@@ -18,8 +18,8 @@
  * to its local offset.
  *
  * Message format:
- * - User input: [HH:MM:SS] > message  (cyan > prefix)
- * - System output: [HH:MM:SS] message  (with optional color)
+ * - User input: [HH:MM] > message  (cyan > prefix, bold)
+ * - System output: [HH:MM] message  (with optional color)
  */
 import React, {useState, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
@@ -62,6 +62,8 @@ export interface ChatLogProps {
   onSetFollowLog?: (follow: boolean) => void;
   /** Unread message count (when followLog is off). */
   unreadCount?: number;
+  /** Whether all collapsed messages should be expanded (toggled by Enter in chat focus). */
+  expandAll?: boolean;
 }
 
 function formatTime(): string {
@@ -113,10 +115,29 @@ export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter
 
 const COLLAPSE_THRESHOLD = 3;
 
-const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
+/** Event type icon prefix mapping for visual scanning. */
+const EVENT_ICONS: Record<string, string> = {
+  task_submitted: '📋',
+  task_completed: '✓',
+  task_failed: '✗',
+  subtask_assigned: '◌',
+  subtask_started: '▶',
+  subtask_completed: '✓',
+  subtask_failed: '✗',
+  tool_call: '🔧',
+  tool_result: '📄',
+};
+
+const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg, expandAll}) => {
   const [expanded, setExpanded] = useState(false);
   const lines = msg.text.split('\n');
-  const isLong = lines.length > COLLAPSE_THRESHOLD;
+  // Per PRD AC5: user messages are never collapsed
+  const isLong = !msg.isUser && lines.length > COLLAPSE_THRESHOLD;
+
+  // When expandAll changes, sync local expanded state
+  useEffect(() => {
+    setExpanded(expandAll ?? false);
+  }, [expandAll]);
 
   // Auto-color status change events based on eventType
   const statusColor = msg.color ?? (
@@ -129,9 +150,9 @@ const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
           : undefined
   );
 
-  // Decide which lines to show
+  // Per PRD AC5: collapsed messages show only the first line
   const visibleLines = (isLong && !expanded)
-    ? lines.slice(0, COLLAPSE_THRESHOLD)
+    ? lines.slice(0, 1)
     : lines;
 
   const renderText = () => {
@@ -152,7 +173,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
         bold={msg.bold}
         dimColor={msg.dim}
       >
-        {visibleLines.join('\n')}
+        {msg.eventType && EVENT_ICONS[msg.eventType] ? `${EVENT_ICONS[msg.eventType]} ` : ''}{visibleLines.join('\n')}
       </Text>
     );
   };
@@ -165,7 +186,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
       </Box>
       {isLong && !expanded && (
         <Box marginLeft={7}>
-          <Text dimColor>{`[+${lines.length - COLLAPSE_THRESHOLD} more]`}</Text>
+          <Text dimColor>{`[+${lines.length - 1} more]`}</Text>
         </Box>
       )}
     </Box>
@@ -181,6 +202,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   scrollCommand,
   onSetFollowLog,
   unreadCount = 0,
+  expandAll = false,
 }) => {
   // Local scroll offset into the filtered message list.
   const [localOffset, setLocalOffset] = useState(0);
@@ -278,7 +300,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
         {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
       </Box>
       {visibleMessages.map((msg) => (
-        <ChatMessageItem key={msg.id} msg={msg} />
+        <ChatMessageItem key={msg.id} msg={msg} expandAll={expandAll} />
       ))}
     </Box>
   );

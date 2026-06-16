@@ -68,6 +68,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'pageDown', label: 'Page down', shortLabel: 'PgDn', key: 'PageDown', areas: ['chat'], global: false},
   {id: 'home', label: 'Jump to top', shortLabel: 'Home', key: 'Home', areas: ['chat'], global: false},
   {id: 'end', label: 'Jump to bottom', shortLabel: 'End', key: 'End', areas: ['chat'], global: false},
+  {id: 'expandAll', label: 'Expand/collapse long messages', shortLabel: 'Enter', key: 'Enter', areas: ['chat'], global: false},
   {id: 'clearLog', label: 'Clear log', shortLabel: 'C-L', key: 'Ctrl+L', areas: ['chat'], global: false},
 
   // ── Subtask ──
