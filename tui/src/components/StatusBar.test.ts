@@ -22,7 +22,7 @@ describe('buildSegments', () => {
   it('produces segments in priority order when connected', () => {
     const segs = buildSegments(defaultArgs);
     const ids = segs.map((s) => s.id);
-    expect(ids).toEqual(['connection', 'worker', 'backend', 'progress', 'focus', 'view', 'help']);
+    expect(ids).toEqual(['brand', 'connection', 'worker', 'backend', 'progress', 'focus', 'view', 'help']);
   });
 
   it('includes retry segment when error + retrying', () => {
@@ -92,12 +92,12 @@ describe('selectSegments', () => {
     const budget = 2 + segs[0].width + segs[1].width + segs[2].width;
     const selected = selectSegments(segs, budget);
     expect(selected).toHaveLength(3);
-    expect(selected[0].id).toBe('connection');
-    expect(selected[1].id).toBe('worker');
-    expect(selected[2].id).toBe('backend');
+    expect(selected[0].id).toBe('brand');
+    expect(selected[1].id).toBe('connection');
+    expect(selected[2].id).toBe('worker');
   });
 
-  it('always shows connection segment even on narrow terminals (60 cols)', () => {
+  it('always shows brand + connection segment even on narrow terminals (60 cols)', () => {
     const segs = buildSegments({
       ...defaultArgs,
       connectionState: 'error',
@@ -106,7 +106,8 @@ describe('selectSegments', () => {
     });
     const selected = selectSegments(segs, 60);
     expect(selected.length).toBeGreaterThan(0);
-    expect(selected[0].id).toBe('connection');
+    expect(selected[0].id).toBe('brand');
+    expect(selected.map((s) => s.id)).toContain('connection');
   });
 
   it('fits within 80 columns for connected state', () => {
