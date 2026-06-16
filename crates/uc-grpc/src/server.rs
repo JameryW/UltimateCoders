@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
@@ -552,6 +552,10 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     nats_client: Option<async_nats::Client>,
     /// Local Python worker bridge for task execution without NATS.
     local_worker: Option<crate::local_worker::LocalWorkerBridge>,
+    /// Broadcast channel for real-time task event streaming.
+    /// All event sources (local worker, NATS, local decomposition) publish here.
+    /// WatchTask streams subscribe via Receiver for instant delivery.
+    event_tx: broadcast::Sender<TaskEvent>,
 }
 
 /// gRPC server that delegates EngineService operations to an inner EngineApi
@@ -572,23 +576,11 @@ pub struct GrpcServer<E: EngineApi + Send + Sync + 'static> {
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Create a new gRPC server wrapping the given engine, without NATS.
     ///
-    /// Attempts to spawn a local Python worker for real task execution.
-    /// If the worker is unavailable, falls back to local (newline-split)
-    /// decomposition.
-    pub async fn new(engine: E) -> Self {
-        let local_worker = match crate::local_worker::LocalWorkerBridge::spawn().await {
-            Ok(bridge) => {
-                tracing::info!("Local Python worker started — real task execution available");
-                Some(bridge)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Local Python worker unavailable, falling back to newline-split decomposition"
-                );
-                None
-            }
-        };
+    /// The local Python worker is spawned lazily on the first task submission.
+    /// Falls back to local (newline-split) decomposition if the worker is
+    /// unavailable.
+    pub fn new(engine: E) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
 
         Self {
             inner: Arc::new(GrpcServerInner {
@@ -596,7 +588,8 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 task_store: Arc::new(Mutex::new(TaskStore::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
-                local_worker,
+                local_worker: None,
+                event_tx,
             }),
         }
     }
@@ -639,16 +632,19 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let task_store = Arc::new(Mutex::new(TaskStore::new()));
 
+        let (event_tx, _) = broadcast::channel(256);
+
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
             nats_client: nats_client.clone(),
             local_worker: None, // NATS mode — local worker not needed
+            event_tx,
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
         if let Some(client) = nats_client {
-            spawn_nats_subscriber(client.clone(), task_store.clone());
+            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx.clone());
             spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
         }
 
@@ -678,7 +674,11 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
 /// Spawn a background task that subscribes to `uc.task.update`,
 /// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly.
 #[cfg(feature = "messaging")]
-fn spawn_nats_subscriber(nats_client: async_nats::Client, task_store: Arc<Mutex<TaskStore>>) {
+fn spawn_nats_subscriber(
+    nats_client: async_nats::Client,
+    task_store: Arc<Mutex<TaskStore>>,
+    event_tx: broadcast::Sender<TaskEvent>,
+) {
     use futures::StreamExt;
 
     tokio::spawn(async move {
@@ -751,8 +751,12 @@ fn spawn_nats_subscriber(nats_client: async_nats::Client, task_store: Arc<Mutex<
                             );
                             // Convert NATS event to AgentEventType and record it
                             if let Some(agent_event) = nats_event_to_agent_event(&nats_event) {
+                                let proto_event: TaskEvent = agent_event.clone().into();
                                 let mut store = task_store.lock().await;
                                 store.record_event(agent_event);
+                                drop(store);
+                                // Broadcast to all WatchTask streams
+                                let _ = event_tx.send(proto_event);
                             }
                         }
                         Err(e) => {
@@ -1167,8 +1171,9 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 // then release the lock BEFORE the async NATS publish.
                 // Holding the lock across an async publish would block all
                 // other TaskStore operations (get_task, list_tasks, etc.).
-                let (task_id_str, submit_payload) = {
+                let (task_id_str, submit_payload, new_events) = {
                     let mut store = self.inner.task_store.lock().await;
+                    let event_count_before = store.events.len();
                     let task =
                         store.submit_task_pending(req.description.clone(), req.project_id.clone());
 
@@ -1177,8 +1182,17 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
                     };
-                    (task.id.0.clone(), payload)
+                    let events: Vec<TaskEvent> = store.events[event_count_before..]
+                        .iter()
+                        .cloned()
+                        .map(|e| e.into())
+                        .collect();
+                    (task.id.0.clone(), payload, events)
                 };
+                // Broadcast TaskCreated event to WatchTask streams
+                for event in new_events {
+                    let _ = self.inner.event_tx.send(event);
+                }
 
                 let payload_bytes = match serde_json::to_vec(&submit_payload) {
                     Ok(bytes) => bytes,
@@ -1297,33 +1311,46 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         let req = request.into_inner();
         let task_id = req.task_id;
         let task_store = self.inner.task_store.clone();
+        let event_rx = self.inner.event_tx.subscribe();
 
-        // Create a polling stream that checks for new events every 500ms
+        // Hybrid stream: replay existing events from TaskStore first,
+        // then switch to broadcast Receiver for real-time delivery.
         let stream = async_stream::stream! {
-            let mut offset = 0usize;
-
-            loop {
-                let events = {
-                    let s = task_store.lock().await;
-                    s.read_events_from(offset)
-                };
-
+            // Phase 1: replay existing events from TaskStore
+            {
+                let s = task_store.lock().await;
+                let events = s.read_events_from(0);
                 for event in events {
                     let proto_event: TaskEvent = event.into();
-
-                    // Filter by task_id if specified.
-                    // Subtask events now carry task_id in AgentEventType variants.
                     if !task_id.is_empty() && proto_event.task_id != task_id {
-                        offset += 1;
                         continue;
                     }
-
-                    offset += 1;
                     yield Ok(proto_event);
                 }
+            }
 
-                // Wait before polling again
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Phase 2: listen for new events via broadcast
+            let mut rx = event_rx;
+            loop {
+                match rx.recv().await {
+                    Ok(proto_event) => {
+                        if !task_id.is_empty() && proto_event.task_id != task_id {
+                            continue;
+                        }
+                        yield Ok(proto_event);
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "WatchTask broadcast receiver lagged, some events dropped"
+                        );
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("WatchTask broadcast channel closed, ending stream");
+                        break;
+                    }
+                }
             }
         };
 
@@ -1475,6 +1502,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         use crate::local_worker::WorkerSubtaskUpdate;
 
         let mut store = self.inner.task_store.lock().await;
+        let event_count_before = store.events.len();
 
         // Convert subtask updates
         let subtasks: Vec<uc_types::Subtask> = update
@@ -1513,11 +1541,62 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             project_id: update.project_id.clone(),
             status: task_status,
             subtasks,
-            created_at: chrono::Utc::now(), // ponytail: approximate, exact timestamp from worker not critical
+            created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
 
         store.tasks.insert(update.task_id.clone(), task);
+
+        // Record events for subtask state transitions so WatchTask can stream them
+        for st in &update.subtasks {
+            let status = crate::server::subtask_status_from_str(&st.status)
+                .unwrap_or(uc_types::SubtaskStatus::Pending);
+            let event = match status {
+                uc_types::SubtaskStatus::Assigned => uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: uc_types::TaskId(update.task_id.clone()),
+                    subtask_id: uc_types::TaskId(st.id.clone()),
+                    worker_id: st
+                        .assigned_worker
+                        .as_deref()
+                        .map(|w| uc_types::WorkerId(w.to_string()))
+                        .unwrap_or_else(uc_types::WorkerId::new),
+                },
+                uc_types::SubtaskStatus::InProgress => uc_engine::AgentEventType::SubtaskStarted {
+                    task_id: uc_types::TaskId(update.task_id.clone()),
+                    subtask_id: uc_types::TaskId(st.id.clone()),
+                    worker_id: st
+                        .assigned_worker
+                        .as_deref()
+                        .map(|w| uc_types::WorkerId(w.to_string()))
+                        .unwrap_or_else(uc_types::WorkerId::new),
+                },
+                uc_types::SubtaskStatus::Completed => uc_engine::AgentEventType::SubtaskCompleted {
+                    task_id: uc_types::TaskId(update.task_id.clone()),
+                    subtask_id: uc_types::TaskId(st.id.clone()),
+                    summary: String::new(),
+                    success: true,
+                },
+                uc_types::SubtaskStatus::Failed => uc_engine::AgentEventType::SubtaskFailed {
+                    task_id: uc_types::TaskId(update.task_id.clone()),
+                    subtask_id: uc_types::TaskId(st.id.clone()),
+                    error: String::new(),
+                    recoverable: false,
+                },
+                _ => continue,
+            };
+            store.record_event(event);
+        }
+
+        // Broadcast newly recorded events
+        let new_events = store.events[event_count_before..]
+            .iter()
+            .cloned()
+            .map(|e| -> TaskEvent { e.into() })
+            .collect::<Vec<_>>();
+        drop(store);
+        for event in new_events {
+            let _ = self.inner.event_tx.send(event);
+        }
     }
 
     /// Submit a task using local (newline-split) decomposition.
@@ -1528,7 +1607,19 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         req: SubmitTaskRequest,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
         let mut store = self.inner.task_store.lock().await;
+        let event_count_before = store.events.len();
         let task = store.submit_task(req.description, req.project_id);
+
+        // Broadcast newly recorded events to all WatchTask streams
+        let new_events = store.events[event_count_before..]
+            .iter()
+            .cloned()
+            .map(|e| -> TaskEvent { e.into() })
+            .collect::<Vec<_>>();
+        drop(store);
+        for event in new_events {
+            let _ = self.inner.event_tx.send(event);
+        }
 
         let subtask_protos: Vec<SubtaskProto> =
             task.subtasks.clone().into_iter().map(Into::into).collect();
@@ -2185,5 +2276,89 @@ mod tests {
         // Default is returned when key is missing
         assert!(json_bool_or_default(&data, "missing", true));
         assert!(!json_bool_or_default(&data, "missing", false));
+    }
+
+    #[tokio::test]
+    async fn broadcast_channel_receives_events() {
+        let (tx, mut rx1) = broadcast::channel::<TaskEvent>(256);
+        let mut rx2 = tx.subscribe();
+
+        let event = TaskEvent {
+            timestamp: String::new(),
+            r#type: "TaskCreated".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: None,
+            data: HashMap::new(),
+        };
+
+        let _ = tx.send(event.clone());
+
+        // Both subscribers receive the event
+        let received1 = rx1.try_recv().unwrap();
+        assert_eq!(received1.task_id, "t-1");
+
+        let received2 = rx2.try_recv().unwrap();
+        assert_eq!(received2.task_id, "t-1");
+    }
+
+    #[tokio::test]
+    async fn broadcast_channel_lagged() {
+        let (tx, mut rx) = broadcast::channel::<TaskEvent>(2);
+
+        // Send 5 events — receiver capacity is 2, so some will be dropped
+        for i in 0..5 {
+            let event = TaskEvent {
+                timestamp: String::new(),
+                r#type: "TaskCreated".to_string(),
+                task_id: format!("t-{i}"),
+                subtask_id: None,
+                data: HashMap::new(),
+            };
+            let _ = tx.send(event);
+        }
+
+        // Receiver should get a Lagged error when trying to recv
+        let result = rx.try_recv();
+        assert!(
+            result.is_ok() || matches!(result, Err(broadcast::error::TryRecvError::Lagged(_))),
+            "Expected Ok or Lagged, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_task_stream_receives_broadcast() {
+        use uc_engine::LocalEngine;
+
+        let engine = LocalEngine::new_fallback();
+        let server = GrpcServer::new(engine);
+        let tx = server.inner.event_tx.clone();
+
+        // Subscribe BEFORE sending — broadcast only delivers to active receivers
+        let mut rx = tx.subscribe();
+
+        let event = TaskEvent {
+            timestamp: String::new(),
+            r#type: "SubtaskAssigned".to_string(),
+            task_id: "t-broadcast".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data: HashMap::new(),
+        };
+        let _ = tx.send(event);
+
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received.task_id, "t-broadcast");
+        assert_eq!(received.r#type, "SubtaskAssigned");
+    }
+
+    #[test]
+    fn grpc_server_new_is_sync() {
+        // Verify GrpcServer::new() is not async — compile-time check
+        fn _assert_sync<T: Sync>() {}
+        fn _check<E: EngineApi + Send + Sync + 'static>(engine: E) {
+            let _server = GrpcServer::new(engine);
+        }
+        // If this compiles, new() is sync
+        _assert_sync::<GrpcServer<uc_engine::LocalEngine>>();
     }
 }

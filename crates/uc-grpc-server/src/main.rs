@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(_) => {
             tracing::info!("No UC_NATS_URL set, TaskService using local decomposition");
-            GrpcServer::new(engine).await
+            GrpcServer::new(engine)
         }
     };
     let (engine_service, task_service) = grpc_server.into_services();
