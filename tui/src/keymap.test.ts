@@ -50,35 +50,27 @@ describe('keymap: getCommandsForArea', () => {
 });
 
 describe('keymap: getStatusBarHelp', () => {
-  it('returns minimal help on narrow terminals', () => {
+  it('returns at least one shortcut on narrow terminals', () => {
     const help = getStatusBarHelp('input', 60);
     expect(help).toContain('S-Tab');
+    expect(help.length).toBeGreaterThan(0);
+  });
+
+  it('returns more shortcuts on wider terminals', () => {
+    const narrow = getStatusBarHelp('input', 60);
+    const wide = getStatusBarHelp('input', 200);
+    // Wider terminal should have more or equal shortcuts
+    expect(wide.length).toBeGreaterThanOrEqual(narrow.length);
+  });
+
+  it('includes focus and help shortcuts', () => {
+    const help = getStatusBarHelp('input', 120);
+    expect(help).toContain('focus');
+    expect(help).toContain('help');
+  });
+
+  it('includes quit on wide terminals', () => {
+    const help = getStatusBarHelp('input', 200);
     expect(help).toContain('quit');
-    // Should not include swap or other medium/wide commands
-    expect(help).not.toContain('C-W');
-  });
-
-  it('returns global shortcuts on medium terminals', () => {
-    const help = getStatusBarHelp('input', 90);
-    expect(help).toContain('S-Tab');
-    expect(help).toContain('C-W');
-    expect(help).toContain('C-Q');
-  });
-
-  it('includes area-specific commands on wide terminals', () => {
-    const chatHelp = getStatusBarHelp('chat', 120);
-    const inputHelp = getStatusBarHelp('input', 120);
-    // Wide terminal should have more info than medium
-    expect(chatHelp.length).toBeGreaterThan(getStatusBarHelp('chat', 90).length);
-    // Input area help mentions scrolling on chat area
-    expect(chatHelp).toContain('↑');
-  });
-
-  it('different areas produce different wide help text', () => {
-    const chatHelp = getStatusBarHelp('chat', 120);
-    const inputHelp = getStatusBarHelp('input', 120);
-    // Chat help includes scroll commands; input help includes insert (indent)
-    expect(chatHelp).toContain('scroll');
-    expect(inputHelp).toContain('insert');
   });
 });

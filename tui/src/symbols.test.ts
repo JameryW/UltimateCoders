@@ -23,41 +23,61 @@ describe('getSymbols', () => {
     expect(s.verticalSep).toBe('|');
     expect(s.arrowRight).toBe('->');
   });
+});
 
-  it('auto mode falls back to ascii in CI', () => {
-    process.env.CI = 'true';
-    const s = getSymbols('auto');
-    expect(s.pending).toBe('[ ]');
-    delete process.env.CI;
+describe('getSymbols: auto mode', () => {
+  beforeEach(() => {
+    vi.stubEnv('CI', '');
+    vi.stubEnv('NO_COLOR', '');
+    vi.stubEnv('TERM', 'xterm-256color');
   });
 
-  it('auto mode falls back to ascii with NO_COLOR', () => {
-    process.env.NO_COLOR = '1';
-    const s = getSymbols('auto');
-    expect(s.pending).toBe('[ ]');
-    delete process.env.NO_COLOR;
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('auto mode falls back to ascii with TERM=dumb', () => {
-    const orig = process.env.TERM;
-    process.env.TERM = 'dumb';
+  it('falls back to ascii in CI', () => {
+    vi.stubEnv('CI', 'true');
     const s = getSymbols('auto');
     expect(s.pending).toBe('[ ]');
-    process.env.TERM = orig;
   });
 
-  it('auto mode uses unicode with TERM=xterm-256color', () => {
-    const orig = process.env.TERM;
-    process.env.TERM = 'xterm-256color';
-    delete process.env.CI;
-    delete process.env.NO_COLOR;
+  it('falls back to ascii with NO_COLOR', () => {
+    vi.stubEnv('NO_COLOR', '1');
+    const s = getSymbols('auto');
+    expect(s.pending).toBe('[ ]');
+  });
+
+  it('falls back to ascii with TERM=dumb', () => {
+    vi.stubEnv('TERM', 'dumb');
+    const s = getSymbols('auto');
+    expect(s.pending).toBe('[ ]');
+  });
+
+  it('uses unicode with TERM=xterm-256color', () => {
+    vi.stubEnv('TERM', 'xterm-256color');
     const s = getSymbols('auto');
     expect(s.pending).toBe('○');
-    process.env.TERM = orig;
+  });
+
+  it('uses unicode with TERM=xterm', () => {
+    vi.stubEnv('TERM', 'xterm');
+    const s = getSymbols('auto');
+    expect(s.pending).toBe('○');
   });
 });
 
 describe('resolveSymbolMode', () => {
+  beforeEach(() => {
+    vi.stubEnv('CI', '');
+    vi.stubEnv('NO_COLOR', '');
+    vi.stubEnv('TERM', 'xterm-256color');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('returns unicode when forced', () => {
     expect(resolveSymbolMode('unicode')).toBe('unicode');
   });
@@ -67,8 +87,17 @@ describe('resolveSymbolMode', () => {
   });
 
   it('resolves auto in CI to ascii', () => {
-    process.env.CI = 'true';
+    vi.stubEnv('CI', 'true');
     expect(resolveSymbolMode('auto')).toBe('ascii');
-    delete process.env.CI;
+  });
+
+  it('resolves auto with NO_COLOR to ascii', () => {
+    vi.stubEnv('NO_COLOR', '1');
+    expect(resolveSymbolMode('auto')).toBe('ascii');
+  });
+
+  it('resolves auto with TERM=xterm-256color to unicode', () => {
+    vi.stubEnv('TERM', 'xterm-256color');
+    expect(resolveSymbolMode('auto')).toBe('unicode');
   });
 });

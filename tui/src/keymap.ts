@@ -100,40 +100,35 @@ export function getCommandsForArea(area: FocusedArea): KeyCommand[] {
 
 /**
  * Generate the status bar help text for a given focus area and terminal width.
- * Returns a compact string like: "S-Tab focus  C-W swap  C-P pause  C-R reconnect  C-Q quit"
+ * Returns a compact string like: "S-Tab focus  ? help"
+ *
+ * Budget-based: only outputs the most useful 2-3 shortcuts that fit.
+ * Full shortcuts are in the ? help overlay.
  */
 export function getStatusBarHelp(area: FocusedArea, terminalWidth: number): string {
-  const isNarrow = terminalWidth < 80;
-  const isMedium = terminalWidth >= 80 && terminalWidth < 100;
-
-  // Priority-ordered commands to show in status bar
-  const globalCmds = [
-    getCommand('cycleFocus')!,
-    getCommand('swapPane')!,
-    getCommand('filter')!,
-    getCommand('pause')!,
-    getCommand('reconnect')!,
-    getCommand('quit')!,
+  // Priority-ordered commands for status bar (most useful first)
+  // Each entry: [shortLabel, oneWordLabel, approximate display width]
+  const candidates: Array<{shortcut: string; label: string; width: number}> = [
+    {shortcut: getCommand('cycleFocus')!.shortLabel, label: 'focus', width: 12},   // "S-Tab focus"
+    {shortcut: getCommand('help')!.shortLabel, label: 'help', width: 7},           // "? help"
+    {shortcut: getCommand('reconnect')!.shortLabel, label: 'reconnect', width: 15}, // "C-R reconnect"
+    {shortcut: getCommand('quit')!.shortLabel, label: 'quit', width: 9},           // "C-Q quit"
   ];
 
-  const areaCmds = getCommandsForArea(area).filter((c) => !c.global);
+  // Build text by adding shortcuts until we run out of budget
+  // Budget: approximately terminalWidth / 4 chars for help (rest is for other segments)
+  const helpBudget = Math.max(7, Math.floor(terminalWidth / 4));
+  const parts: string[] = [];
+  let usedWidth = 0;
 
-  if (isNarrow) {
-    // Minimal: just cycle focus + quit
-    return `${getCommand('cycleFocus')!.shortLabel} focus  ${getCommand('quit')!.shortLabel} quit`;
+  for (const cmd of candidates) {
+    const entry = `${cmd.shortcut} ${cmd.label}`;
+    const entryWidth = usedWidth > 0 ? 2 + entry.length : entry.length; // 2 spaces separator
+    if (usedWidth + entryWidth <= helpBudget) {
+      parts.push(entry);
+      usedWidth += entryWidth;
+    }
   }
 
-  if (isMedium) {
-    // Medium: global shortcuts only
-    return globalCmds.map((c) => `${c.shortLabel} ${c.label.toLowerCase().split(' ')[0]}`).join('  ');
-  }
-
-  // Wide: global + area-specific
-  const parts = globalCmds.map((c) => `${c.shortLabel} ${c.label.toLowerCase().split(' ')[0]}`);
-  if (areaCmds.length > 0) {
-    // Show first 2 area-specific commands
-    const areaPart = areaCmds.slice(0, 2).map((c) => `${c.shortLabel} ${c.label.toLowerCase().split(' ')[0]}`);
-    parts.push(...areaPart);
-  }
   return parts.join('  ');
 }
