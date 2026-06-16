@@ -586,7 +586,7 @@ const App: React.FC = () => {
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
       {/* ── Header ─────────────────────────────────────── */}
       <Box paddingX={1}>
-        <Text color="magenta">{'◆'}</Text>
+        <Text color="magenta">{S.brand}</Text>
         <Text bold color="magenta">{' UC'}</Text>
         <Text>  </Text>
         <Text bold>UltimateCoders</Text>

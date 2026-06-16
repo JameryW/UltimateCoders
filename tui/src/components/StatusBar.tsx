@@ -22,6 +22,7 @@ import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
 import type {FocusedArea, ActiveMainPane, EventFilter} from '../reducer.js';
 import {getStatusBarHelp} from '../keymap.js';
+import {getSymbols} from '../symbols.js';
 
 export interface StatusBarProps {
   workerId?: string;
@@ -82,6 +83,8 @@ export function buildSegments(props: {
   activeMainPane: ActiveMainPane;
   retryCount: number;
   focusedAreaHelp: string;
+  /** Brand symbol from getSymbols().brand (◆ or *). */
+  brandChar: string;
 }): Segment[] {
   const {
     connectionState,
@@ -93,19 +96,21 @@ export function buildSegments(props: {
     activeMainPane,
     retryCount,
     focusedAreaHelp,
+    brandChar,
   } = props;
 
   const segments: Segment[] = [];
 
   // ── 0. Brand logo ───────────────────────────────────────
   // Inspired by Claude Code's ▲ prefix — short, distinctive, always visible
+  const brandLabel = 'UC';
   segments.push({
     id: 'brand',
-    width: 6, // "◆ UC " = 1 + 1 + 2 + 1 = 5 + 1 padding
+    width: brandChar.length + 1 + brandLabel.length, // char + space + "UC"
     render: () => (
       <>
-        <Text color="magenta">{'◆'}</Text>
-        <Text bold color="magenta">{' UC'}</Text>
+        <Text color="magenta">{brandChar}</Text>
+        <Text bold color="magenta">{` ${brandLabel}`}</Text>
       </>
     ),
   });
@@ -291,6 +296,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
 }) => {
   // Help text from keymap (budget-aware)
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
+  const S = getSymbols();
 
   // Build and select segments
   const allSegments = buildSegments({
@@ -303,6 +309,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
     activeMainPane,
     retryCount,
     focusedAreaHelp: helpText,
+    brandChar: S.brand,
   });
 
   const visibleSegments = selectSegments(allSegments, terminalWidth);
