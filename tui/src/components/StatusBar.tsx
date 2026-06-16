@@ -2,7 +2,7 @@
  * StatusBar component - single-line status display at the bottom.
  *
  * Segment-based layout with width budget:
- *   Priority order: connection > worker > backend > progress > focus > view > retry > help
+ *   Priority order: connection > progress > focus > retry > help
  *   Each segment has a display width. Segments are appended in priority order
  *   until the terminal width budget is exhausted.
  *
@@ -12,15 +12,11 @@
  *   ◌ offline  — connecting (yellow)
  *   ✗ offline  — error / unavailable (yellow, not red — offline is expected)
  *   ✗ offline | retry 3/5 — retrying after error
- *
- * Removed from status bar (moved to ? help / diagnostics):
- *   - mode, Task ID, serverAddr, lastError long text
- *   - Full error messages (only short codes like "retry N/5")
  */
 import React from 'react';
 import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
-import type {FocusedArea, ActiveMainPane, EventFilter} from '../reducer.js';
+import type {FocusedArea, EventFilter} from '../reducer.js';
 import {getStatusBarHelp} from '../keymap.js';
 import {getSymbols} from '../symbols.js';
 
@@ -35,7 +31,8 @@ export interface StatusBarProps {
   lastError?: string | null;
   mode?: string;
   focusedArea?: FocusedArea;
-  activeMainPane?: ActiveMainPane;
+  /** @deprecated No longer used in single-column layout. */
+  activeMainPane?: string;
   eventFilter?: EventFilter;
   /** Terminal width for responsive layout. */
   terminalWidth?: number;
@@ -48,12 +45,6 @@ export interface StatusBarProps {
 const FOCUS_LABELS: Record<FocusedArea, string> = {
   input: 'Input',
   chat: 'Chat',
-  subtask: 'Subtask',
-};
-
-const VIEW_LABELS: Record<ActiveMainPane, string> = {
-  chat: 'Chat',
-  subtask: 'Subtask',
 };
 
 const MAX_RETRY_DISPLAY = 5;
@@ -80,7 +71,6 @@ export function buildSegments(props: {
   backend: string;
   progress: {completed: number; total: number};
   focusedArea: FocusedArea;
-  activeMainPane: ActiveMainPane;
   retryCount: number;
   focusedAreaHelp: string;
   /** Brand symbol from getSymbols().brand (◆ or *). */
@@ -93,7 +83,6 @@ export function buildSegments(props: {
     backend,
     progress,
     focusedArea,
-    activeMainPane,
     retryCount,
     focusedAreaHelp,
     brandChar,
@@ -102,11 +91,10 @@ export function buildSegments(props: {
   const segments: Segment[] = [];
 
   // ── 0. Brand logo ───────────────────────────────────────
-  // Inspired by Claude Code's ▲ prefix — short, distinctive, always visible
   const brandLabel = 'UC';
   segments.push({
     id: 'brand',
-    width: brandChar.length + 1 + brandLabel.length, // char + space + "UC"
+    width: brandChar.length + 1 + brandLabel.length,
     render: () => (
       <>
         <Text color="magenta">{brandChar}</Text>
@@ -123,16 +111,14 @@ export function buildSegments(props: {
       : connectionState === 'error'
         ? '✗'
         : '○';
-  // Connected=green when streaming, yellow when idle; all other states=yellow (offline is expected)
   const connColor = connectionState === 'connected'
     ? (isStreaming ? 'green' : 'yellow')
     : 'yellow';
 
   const connLabel = connectionState === 'connected' ? 'grpc' : 'offline';
-  // "● grpc" = 1 + 1 + 4 = 6
   segments.push({
     id: 'connection',
-    width: connLabel.length + 2, // dot + space + label
+    width: connLabel.length + 2,
     render: () => (
       <>
         <Text color={connColor}>{connDot}</Text>
@@ -143,7 +129,6 @@ export function buildSegments(props: {
 
   // ── 2. Worker ───────────────────────────────────────────
   const workerText = workerId || 'offline';
-  // " | worker" = 3 + workerText.length
   segments.push({
     id: 'worker',
     width: 3 + workerText.length,
@@ -157,7 +142,6 @@ export function buildSegments(props: {
 
   // ── 3. Backend ──────────────────────────────────────────
   const backendColor = backend === 'grpc' ? 'green' : 'yellow';
-  // " │ backend" = 3 + backend.length
   segments.push({
     id: 'backend',
     width: 3 + backend.length,
@@ -171,7 +155,6 @@ export function buildSegments(props: {
 
   // ── 4. Progress ─────────────────────────────────────────
   const progressText = `P ${progress.completed}/${progress.total}`;
-  // " │ P 2/5" = 3 + progressText.length
   segments.push({
     id: 'progress',
     width: 3 + progressText.length,
@@ -185,7 +168,6 @@ export function buildSegments(props: {
 
   // ── 5. Focus ────────────────────────────────────────────
   const focusText = FOCUS_LABELS[focusedArea];
-  // " │ F Input" = 3 (separator) + 2 ("F ") + focusText.length
   segments.push({
     id: 'focus',
     width: 3 + 2 + focusText.length,
@@ -198,22 +180,7 @@ export function buildSegments(props: {
     ),
   });
 
-  // ── 6. View ─────────────────────────────────────────────
-  const viewText = VIEW_LABELS[activeMainPane];
-  // " │ V Chat" = 3 (separator) + 2 ("V ") + viewText.length
-  segments.push({
-    id: 'view',
-    width: 3 + 2 + viewText.length,
-    render: () => (
-      <>
-        <Text dimColor>{' │ '}</Text>
-        <Text color="yellow">{'V '}</Text>
-        <Text color="yellow">{viewText}</Text>
-      </>
-    ),
-  });
-
-  // ── 7. Retry (only when error + retrying) ────────────────
+  // ── 6. Retry (only when error + retrying) ────────────────
   if (connectionState === 'error' && retryCount > 0) {
     const retryText = `retry ${retryCount}/${MAX_RETRY_DISPLAY}`;
     segments.push({
@@ -227,11 +194,10 @@ export function buildSegments(props: {
       ),
     });
   } else if (connectionState !== 'connected' && connectionState !== 'connecting') {
-    // Offline but not retrying: show reconnect hint
     const reconnectText = 'C-R reconnect';
     segments.push({
       id: 'retry',
-      width: 3 + reconnectText.length, // " │ C-R reconnect"
+      width: 3 + reconnectText.length,
       render: () => (
         <>
           <Text dimColor>{' │ '}</Text>
@@ -241,12 +207,11 @@ export function buildSegments(props: {
     });
   }
 
-  // ── 8. Help ─────────────────────────────────────────────
+  // ── 7. Help ─────────────────────────────────────────────
   if (focusedAreaHelp) {
-    // "  ? help" or "  S-Tab focus  ? help"
     segments.push({
       id: 'help',
-      width: 2 + focusedAreaHelp.length, // 2 spaces + help text
+      width: 2 + focusedAreaHelp.length,
       render: () => (
         <>
           <Text dimColor>{'  '}</Text>
@@ -261,37 +226,28 @@ export function buildSegments(props: {
 
 /**
  * Select segments that fit within the terminal width budget.
- * Implements progressive collapse tiers from PRD P3:
- *   >100 cols: full info (all segments)
+ * Progressive collapse tiers:
+ *   >100 cols: full info
  *   80-100 cols: remove help
- *   60-80 cols: only connection + progress + focus
- *   <60 cols: only connection + progress
- *
- * Returns segments in display order, trimmed to fit budget.
+ *   60-80 cols: only brand + connection + progress + focus
+ *   <60 cols: only brand + connection + progress
  */
 export function selectSegments(segments: Segment[], budget: number): Segment[] {
-  // Reserve 2 cols for padding (paddingX=1 on each side)
   let remaining = budget - 2;
   const result: Segment[] = [];
 
-  // Progressive collapse: skip low-priority segments in narrow terminals
   const skipIds = new Set<string>();
   if (budget < 60) {
-    // <60: only brand + connection + progress
     skipIds.add('worker');
     skipIds.add('backend');
     skipIds.add('focus');
-    skipIds.add('view');
     skipIds.add('retry');
     skipIds.add('help');
   } else if (budget < 80) {
-    // 60-80: brand + connection + progress + focus
     skipIds.add('worker');
     skipIds.add('backend');
-    skipIds.add('view');
     skipIds.add('help');
   } else if (budget < 100) {
-    // 80-100: remove help
     skipIds.add('help');
   }
 
@@ -301,7 +257,6 @@ export function selectSegments(segments: Segment[], budget: number): Segment[] {
       result.push(seg);
       remaining -= seg.width;
     } else {
-      // Budget exhausted — stop adding segments
       break;
     }
   }
@@ -316,17 +271,14 @@ const StatusBar: React.FC<StatusBarProps> = ({
   connectionState = 'disconnected',
   isStreaming = false,
   focusedArea = 'input',
-  activeMainPane = 'chat',
   terminalWidth = 80,
   retryCount = 0,
   // Props below are accepted for interface compatibility but no longer displayed:
-  // serverAddr, activeTaskId, lastError, mode, eventFilter, nextRetryAt
+  // serverAddr, activeTaskId, lastError, mode, activeMainPane, eventFilter, nextRetryAt
 }) => {
-  // Help text from keymap (budget-aware)
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
   const S = getSymbols();
 
-  // Build and select segments
   const allSegments = buildSegments({
     connectionState,
     isStreaming,
@@ -334,7 +286,6 @@ const StatusBar: React.FC<StatusBarProps> = ({
     backend,
     progress,
     focusedArea,
-    activeMainPane,
     retryCount,
     focusedAreaHelp: helpText,
     brandChar: S.brand,

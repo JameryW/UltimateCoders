@@ -3,8 +3,6 @@ import {
   tuiReducer,
   INITIAL_TUI_STATE,
   nextFocusArea,
-  prevFocusArea,
-  swapMainPane,
   type TuiAction,
   type FocusedArea,
   type ActiveMainPane,
@@ -57,6 +55,31 @@ describe('tuiReducer: ADD_MESSAGES', () => {
   });
 });
 
+// ── UPDATE_MESSAGE ────────────────────────────────────────
+
+describe('tuiReducer: UPDATE_MESSAGE', () => {
+  it('updates a message by id', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('original')]});
+    const messageId = state.messages[0].id;
+    state = tuiReducer(state, {type: 'UPDATE_MESSAGE', messageId, text: 'updated'});
+    expect(state.messages[0].text).toBe('updated');
+  });
+
+  it('leaves other messages unchanged', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a'), sysMsg('b')]});
+    const messageId = state.messages[0].id;
+    state = tuiReducer(state, {type: 'UPDATE_MESSAGE', messageId, text: 'updated'});
+    expect(state.messages[0].text).toBe('updated');
+    expect(state.messages[1].text).toBe('b');
+  });
+
+  it('is no-op for unknown messageId', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
+    state = tuiReducer(state, {type: 'UPDATE_MESSAGE', messageId: 'nonexistent', text: 'x'});
+    expect(state.messages[0].text).toBe('a');
+  });
+});
+
 // ── SET_SUBTASKS / UPDATE_SUBTASK_STATUS ──────────────────
 
 describe('tuiReducer: subtask actions', () => {
@@ -74,7 +97,6 @@ describe('tuiReducer: subtask actions', () => {
     state = tuiReducer(state, {type: 'SET_SUBTASKS', subtasks: [subtask('c')]});
     expect(state.selectedSubtaskIndex).toBe(-1);
     expect(state.selectedSubtaskId).toBeNull();
-    expect(state.subtaskDetailOpen).toBe(false);
   });
 
   it('UPDATE_SUBTASK_STATUS updates a single subtask', () => {
@@ -173,13 +195,14 @@ describe('tuiReducer: clear actions', () => {
     expect(state.progress).toEqual({completed: 0, total: 0});
   });
 
-  it('CLEAR_TASK resets subtask selection', () => {
+  it('CLEAR_TASK resets subtask selection and closes overlay', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: [subtask('a')]});
     state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
     state = tuiReducer(state, {type: 'CLEAR_TASK'});
     expect(state.selectedSubtaskIndex).toBe(-1);
     expect(state.selectedSubtaskId).toBeNull();
-    expect(state.subtaskDetailOpen).toBe(false);
+    expect(state.subtaskOverlayOpen).toBe(false);
   });
 
   it('CLEAR_LOG resets messages, followLog, and unreadCount', () => {
@@ -209,7 +232,7 @@ describe('tuiReducer: offline timer actions', () => {
   });
 });
 
-// ── Focus & Layout (v2) ──────────────────────────────────
+// ── Focus & Layout (v3 — single-column) ──────────────────
 
 describe('tuiReducer: focus and layout actions', () => {
   it('initial state has focusedArea=input, activeMainPane=chat', () => {
@@ -223,59 +246,42 @@ describe('tuiReducer: focus and layout actions', () => {
     expect(state.selectedPane).toBe('chat');
   });
 
-  it('CYCLE_FOCUS cycles through input→chat→subtask→input', () => {
+  it('CYCLE_FOCUS cycles through input→chat→input', () => {
     let state = INITIAL_TUI_STATE;
     state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
     expect(state.focusedArea).toBe('chat');
     state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
-    expect(state.focusedArea).toBe('subtask');
-    state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
     expect(state.focusedArea).toBe('input');
   });
 
-  it('SET_ACTIVE_MAIN_PANE changes activeMainPane', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_ACTIVE_MAIN_PANE', pane: 'subtask'});
-    expect(state.activeMainPane).toBe('subtask');
+  it('SWAP_MAIN_PANE is a deprecated no-op', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SWAP_MAIN_PANE'});
+    expect(state).toEqual(INITIAL_TUI_STATE);
   });
 
-  it('SWAP_MAIN_PANE toggles chat↔subtask', () => {
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SWAP_MAIN_PANE'});
-    expect(state.activeMainPane).toBe('subtask');
-    state = tuiReducer(state, {type: 'SWAP_MAIN_PANE'});
-    expect(state.activeMainPane).toBe('chat');
-  });
-
-  it('ESC_TO_MAIN from input focuses activeMainPane', () => {
+  it('ESC_TO_MAIN from input focuses chat', () => {
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'ESC_TO_MAIN'});
-    expect(state.focusedArea).toBe('chat'); // activeMainPane defaults to 'chat'
+    expect(state.focusedArea).toBe('chat');
   });
 
-  it('ESC_TO_MAIN from input respects activeMainPane=subtask', () => {
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_ACTIVE_MAIN_PANE', pane: 'subtask'});
-    state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
-    expect(state.focusedArea).toBe('subtask');
-  });
-
-  it('ESC_TO_MAIN from chat/subtask focuses input', () => {
+  it('ESC_TO_MAIN from chat focuses input', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
     state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
     expect(state.focusedArea).toBe('input');
   });
 
-  it('ESC_TO_MAIN with subtaskDetailOpen closes detail', () => {
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: [subtask('a')]});
-    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
-    state = tuiReducer(state, {type: 'SET_FOCUS', area: 'subtask'});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    expect(state.subtaskDetailOpen).toBe(true);
+  it('ESC_TO_MAIN with subtaskOverlayOpen closes overlay', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(true);
     state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
-    expect(state.subtaskDetailOpen).toBe(false);
+    expect(state.subtaskOverlayOpen).toBe(false);
   });
 
   it('SET_SELECTED_PANE (deprecated) maps to SET_FOCUS', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SELECTED_PANE', pane: 'subtask'});
-    expect(state.focusedArea).toBe('subtask');
-    expect(state.selectedPane).toBe('subtask');
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SELECTED_PANE', pane: 'chat'});
+    expect(state.focusedArea).toBe('chat');
+    expect(state.selectedPane).toBe('chat');
   });
 });
 
@@ -333,37 +339,17 @@ describe('tuiReducer: subtask navigation actions', () => {
     expect(state.selectedSubtaskId).toBeNull();
   });
 
-  it('TOGGLE_SUBTASK_DETAIL opens detail when selection exists', () => {
-    const items = [subtask('a'), subtask('b')];
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
-    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    expect(state.subtaskDetailOpen).toBe(true);
+  it('TOGGLE_SUBTASK_OVERLAY toggles overlay open/closed', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(true);
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(false);
   });
 
-  it('TOGGLE_SUBTASK_DETAIL is no-op without selection', () => {
-    const items = [subtask('a')];
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    expect(state.subtaskDetailOpen).toBe(false);
-  });
-
-  it('TOGGLE_SUBTASK_DETAIL closes when already open', () => {
-    const items = [subtask('a')];
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
-    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    expect(state.subtaskDetailOpen).toBe(false);
-  });
-
-  it('CLOSE_SUBTASK_DETAIL closes detail', () => {
-    const items = [subtask('a')];
-    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
-    state = tuiReducer(state, {type: 'SELECT_SUBTASK', index: 0});
-    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
-    state = tuiReducer(state, {type: 'CLOSE_SUBTASK_DETAIL'});
-    expect(state.subtaskDetailOpen).toBe(false);
+  it('TOGGLE_SUBTASK_OVERLAY works independently of subtask selection', () => {
+    // Overlay can be opened even without selecting a subtask
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(true);
   });
 
   it('JUMP_TO_FAILED_SUBTASK selects next failed after current', () => {
@@ -481,21 +467,9 @@ describe('tuiReducer: RETRY_SUBTASK', () => {
 // ── Focus helper functions ────────────────────────────────
 
 describe('focus helper functions', () => {
-  it('nextFocusArea cycles input→chat→subtask→input', () => {
+  it('nextFocusArea cycles input→chat→input', () => {
     expect(nextFocusArea('input')).toBe('chat');
-    expect(nextFocusArea('chat')).toBe('subtask');
-    expect(nextFocusArea('subtask')).toBe('input');
-  });
-
-  it('prevFocusArea cycles input→subtask→chat→input', () => {
-    expect(prevFocusArea('input')).toBe('subtask');
-    expect(prevFocusArea('subtask')).toBe('chat');
-    expect(prevFocusArea('chat')).toBe('input');
-  });
-
-  it('swapMainPane toggles chat↔subtask', () => {
-    expect(swapMainPane('chat')).toBe('subtask');
-    expect(swapMainPane('subtask')).toBe('chat');
+    expect(nextFocusArea('chat')).toBe('input');
   });
 });
 

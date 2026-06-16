@@ -127,6 +127,7 @@ export const EVENT_ICONS: Record<string, string> = {
   subtask_started: '▶',
   subtask_completed: '✓',
   subtask_failed: '✗',
+  subtask_summary: '📋',
   tool_call: '⚙',
   tool_result: '📄',
   file_modified: '✏',
@@ -173,12 +174,13 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
 
   const renderText = () => {
     if (msg.isUser) {
+      // User message: bold ">" prefix + content (like Claude Code)
       return (
         <>
-          <Text bold color="cyan">{'▎ '}</Text>
-          <Text bold color="white">{visibleLines[0]}</Text>
+          <Text bold color="cyan">{'> '}</Text>
+          <Text bold>{visibleLines[0]}</Text>
           {visibleLines.slice(1).map((line, i) => (
-            <Text key={i}>{'\n' + line}</Text>
+            <Text key={i}>{'\n  ' + line}</Text>
           ))}
         </>
       );
@@ -274,11 +276,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   if (totalMessages === 0) {
     return (
       <Box flexDirection="column" flexGrow={2} paddingX={1}>
-        <Box marginBottom={1}>
-          <Text bold color="cyan">{'Chat'}</Text>
-          {isFocused && <Text dimColor>{' [focused]'}</Text>}
-        </Box>
-        <Text dimColor>No messages yet. Type a task below.</Text>
+        <Text dimColor>{'No messages yet. Type a task below.'}</Text>
       </Box>
     );
   }
@@ -310,14 +308,10 @@ const ChatLog: React.FC<ChatLogProps> = ({
 
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">{'Chat'}</Text>
-        {isFocused && <Text dimColor>{' [focused]'}</Text>}
-        {filterIndicator && <Text color="yellow">{filterIndicator}</Text>}
-        {followIndicator && <Text color="yellow">{followIndicator}</Text>}
-        {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
-        {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
-      </Box>
+      {filterIndicator && <Text color="yellow">{filterIndicator}</Text>}
+      {followIndicator && <Text color="yellow">{followIndicator}</Text>}
+      {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
+      {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
       {visibleMessages.map((msg) => (
         <ChatMessageItem key={msg.id} msg={msg} expandAll={expandAll} />
       ))}
