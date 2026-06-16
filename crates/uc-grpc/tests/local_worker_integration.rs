@@ -47,7 +47,10 @@ async fn apply_worker_update_to_task_store() {
     assert_eq!(parsed.status, "in_progress");
     assert_eq!(parsed.subtasks.len(), 1);
     assert_eq!(parsed.subtasks[0].id, "st-1");
-    assert_eq!(parsed.subtasks[0].assigned_worker, Some("worker-1".to_string()));
+    assert_eq!(
+        parsed.subtasks[0].assigned_worker,
+        Some("worker-1".to_string())
+    );
 }
 
 /// Test: JSON-RPC protocol messages are single-line (newline-delimited).

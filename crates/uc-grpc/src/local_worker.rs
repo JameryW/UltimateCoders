@@ -183,7 +183,8 @@ impl LocalWorkerBridge {
             let mut stdout = self.stdout.lock().await;
 
             // Send request
-            let mut line = serde_json::to_string(&req).map_err(|e| format!("Serialize error: {}", e))?;
+            let mut line =
+                serde_json::to_string(&req).map_err(|e| format!("Serialize error: {}", e))?;
             line.push('\n');
             stdin
                 .write_all(line.as_bytes())
@@ -221,9 +222,11 @@ impl LocalWorkerBridge {
                         if let Some(err) = resp.error {
                             return Err(format!("Worker error {}: {}", err.code, err.message));
                         }
-                        let result = resp.result.ok_or_else(|| "Missing result field".to_string())?;
-                        let update: WorkerTaskUpdate =
-                            serde_json::from_value(result).map_err(|e| format!("Parse result: {}", e))?;
+                        let result = resp
+                            .result
+                            .ok_or_else(|| "Missing result field".to_string())?;
+                        let update: WorkerTaskUpdate = serde_json::from_value(result)
+                            .map_err(|e| format!("Parse result: {}", e))?;
                         return Ok((update, notifications));
                     }
                     // Response for a different ID — skip (shouldn't happen in sequential mode)
@@ -261,10 +264,7 @@ impl LocalWorkerBridge {
             .write_all(line.as_bytes())
             .await
             .map_err(|e| format!("Write: {}", e))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| format!("Flush: {}", e))?;
+        stdin.flush().await.map_err(|e| format!("Flush: {}", e))?;
 
         // Read one line
         let mut buf = String::new();

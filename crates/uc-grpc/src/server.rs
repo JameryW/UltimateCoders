@@ -1427,8 +1427,15 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                                     parent_id: uc_types::TaskId(final_update.task_id.clone()),
                                     description: st.description.clone(),
                                     status,
-                                    assigned_worker: st.assigned_worker.as_deref().map(|w| uc_types::WorkerId(w.to_string())),
-                                    depends_on: st.depends_on.iter().map(|d| uc_types::TaskId(d.clone())).collect(),
+                                    assigned_worker: st
+                                        .assigned_worker
+                                        .as_deref()
+                                        .map(|w| uc_types::WorkerId(w.to_string())),
+                                    depends_on: st
+                                        .depends_on
+                                        .iter()
+                                        .map(|d| uc_types::TaskId(d.clone()))
+                                        .collect(),
                                     file_constraints: Vec::new(),
                                     expected_output: String::new(),
                                     result: None,
@@ -1464,10 +1471,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     ///
     /// Creates or updates the task in the store, mapping worker subtask
     /// statuses back to uc_types.
-    async fn apply_worker_update(
-        &self,
-        update: &crate::local_worker::WorkerTaskUpdate,
-    ) {
+    async fn apply_worker_update(&self, update: &crate::local_worker::WorkerTaskUpdate) {
         use crate::local_worker::WorkerSubtaskUpdate;
 
         let mut store = self.inner.task_store.lock().await;
@@ -1484,7 +1488,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     parent_id: uc_types::TaskId(update.task_id.clone()),
                     description: st.description.clone(),
                     status,
-                    assigned_worker: st.assigned_worker.as_deref().map(|w| uc_types::WorkerId(w.to_string())),
+                    assigned_worker: st
+                        .assigned_worker
+                        .as_deref()
+                        .map(|w| uc_types::WorkerId(w.to_string())),
                     depends_on: st
                         .depends_on
                         .iter()
