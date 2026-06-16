@@ -5,7 +5,6 @@ import {
   nextFocusArea,
   type TuiAction,
   type FocusedArea,
-  type ActiveMainPane,
 } from './reducer.js';
 import {createSystemMessage, type ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem} from './components/SubtaskTree.js';
@@ -77,6 +76,33 @@ describe('tuiReducer: UPDATE_MESSAGE', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
     state = tuiReducer(state, {type: 'UPDATE_MESSAGE', messageId: 'nonexistent', text: 'x'});
     expect(state.messages[0].text).toBe('a');
+  });
+});
+
+// ── REMOVE_MESSAGE ────────────────────────────────────────
+
+describe('tuiReducer: REMOVE_MESSAGE', () => {
+  it('removes a message by id', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a'), sysMsg('b')]});
+    const messageId = state.messages[0].id;
+    state = tuiReducer(state, {type: 'REMOVE_MESSAGE', messageId});
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].text).toBe('b');
+  });
+
+  it('is no-op for unknown messageId', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [sysMsg('a')]});
+    state = tuiReducer(state, {type: 'REMOVE_MESSAGE', messageId: 'nonexistent'});
+    expect(state.messages).toHaveLength(1);
+  });
+
+  it('removes only the matching message', () => {
+    const msgs = [sysMsg('a'), sysMsg('b'), sysMsg('c')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: msgs});
+    const messageId = state.messages[1].id;
+    state = tuiReducer(state, {type: 'REMOVE_MESSAGE', messageId});
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages.map((m) => m.text)).toEqual(['a', 'c']);
   });
 });
 

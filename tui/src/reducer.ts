@@ -176,6 +176,7 @@ export const INITIAL_TUI_STATE: TuiState = {
 export type TuiAction =
   | {type: 'ADD_MESSAGES'; messages: ChatMessage[]}
   | {type: 'UPDATE_MESSAGE'; messageId: string; text: string}
+  | {type: 'REMOVE_MESSAGE'; messageId: string}
   | {type: 'SET_SUBTASKS'; subtasks: SubtaskItem[]}
   | {type: 'UPDATE_SUBTASK_STATUS'; subtaskId: string; status: SubtaskStatusType}
   | {type: 'SET_ACTIVE_TASK'; taskId: string | null}
@@ -241,6 +242,12 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       const messages = state.messages.map((m) =>
         m.id === action.messageId ? {...m, text: action.text} : m,
       );
+      return {...state, messages};
+    }
+
+    case 'REMOVE_MESSAGE': {
+      // Remove a single message by id (used to clean up subtask summary)
+      const messages = state.messages.filter((m) => m.id !== action.messageId);
       return {...state, messages};
     }
 
@@ -460,7 +467,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Subtask retry (placeholder) ───────────────────────────
 
     case 'RETRY_SUBTASK':
-      // ponytail: placeholder, add when gRPC retry endpoint exists
+      // placeholder: add when gRPC retry endpoint exists
       return state;
 
     default:

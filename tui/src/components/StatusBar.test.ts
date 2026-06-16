@@ -33,7 +33,7 @@ describe('buildSegments', () => {
     });
     const ids = segs.map((s) => s.id);
     expect(ids).toContain('retry');
-    // view and retry can coexist (retry is higher priority, but both may fit)
+    // retry segment is present when error + retrying
   });
 
   it('shows "C-R reconnect" segment when offline and not retrying', () => {
