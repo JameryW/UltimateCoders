@@ -1,8 +1,12 @@
 # UltimateCoders
 
+[![CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JameryW/UltimateCoders)](https://github.com/JameryW/UltimateCoders/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime.
+Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. An Ink-based TUI provides real-time task monitoring with CJK/IME support.
 
 ## Quick Start
 
@@ -10,6 +14,7 @@ Multiple AI coding agents collaborate on software tasks using an Orchestrator-Wo
 
 - Rust 1.75+ (stable)
 - Python 3.9+
+- Node.js 18+ (for TUI)
 - Docker and Docker Compose (for storage backends)
 
 ### 1. Start Storage Backends
@@ -70,30 +75,40 @@ Then connect from Python:
 engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 ```
 
+### 6. Start the TUI
+
+```bash
+cd tui
+npm install
+npm start
+```
+
+The TUI connects to the gRPC server and provides real-time task monitoring with CJK/IME input support. See [tui/README.md](tui/README.md) for keyboard shortcuts and architecture details.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture document.
 
 ```
-+-------------------+     +-------------------+
-|   Python Agent    |     |   Python Agent    |
-|   Orchestrator    |     |     Worker        |
-+--------+----------+     +--------+----------+
-         |                         |
-         |  Engine API (PyO3/gRPC) |
-         |                         |
-+--------v-------------------------v----------+
-|              Rust Core Engine               |
-|  +----------+ +--------+ +---------+       |
-|  | Indexer  | | Search | | Memory  |       |
-|  +----------+ +--------+ +---------+       |
-|  +----------+ +----------+ +---------+     |
-|  |Scheduler | |Checkpoint| |Conflict|      |
-|  +----------+ +----------+ +---------+     |
-+--------+----------+---------+---------+-----+
-         |          |         |         |
-    +----v---+ +----v---+ +--v----+ +--v----+
-    |  TiKV  | | Qdrant | | PgSQL | | NATS  |
++-------------------+     +-------------------+     +---------------+
+|   Python Agent    |     |   Python Agent    |     |  Ink TUI      |
+|   Orchestrator    |     |     Worker        |     |  (Node.js)    |
++--------+----------+     +--------+----------+     +-------+-------+
+         |                         |                         |
+         |  Engine API (PyO3)      |                         | gRPC
+         |                         |                         |
++--------v-------------------------v----------+     +--------v-------+
+|              Rust Core Engine               |     |  uc-grpc-server|
+|  +----------+ +--------+ +---------+       |     +--------+-------+
+|  | Indexer  | | Search | | Memory  |       |              |
+|  +----------+ +--------+ +---------+       |              |
+|  +----------+ +----------+ +---------+     |              |
+|  |Scheduler | |Checkpoint| |Conflict|      |              |
+|  +----------+ +----------+ +---------+     |              |
++--------+----------+---------+---------+-----+              |
+         |          |         |         |                     |
+    +----v---+ +----v---+ +--v----+ +--v----+                |
+    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<---------------+
     +--------+ +--------+ +-------+ +-------+
 ```
 
@@ -117,6 +132,14 @@ ultimate-coders/
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
+├── tui/                      # Ink-based Terminal UI
+│   ├── src/
+│   │   ├── components/       # React/Ink UI components
+│   │   ├── hooks/            # gRPC connection + event hooks
+│   │   ├── grpc/             # Node.js gRPC client
+│   │   ├── reducer.ts        # Central state management
+│   │   └── keymap.ts         # Keyboard command definitions
+│   └── vitest.config.ts      # Test configuration
 ├── proto/                    # Protobuf definitions
 ├── tests/
 │   ├── rust/                 # Rust integration tests
@@ -143,6 +166,16 @@ cargo fmt --all -- --check     # Format check
 ```bash
 maturin develop                # Build and install in editable mode
 pytest tests/python/ -v        # Run Python tests
+```
+
+### TUI
+
+```bash
+cd tui
+npm install                    # Install dependencies
+npm start                      # Start TUI
+npm test                       # Run 280+ unit tests (vitest)
+npm run typecheck              # TypeScript type checking
 ```
 
 ### Docker Compose
@@ -191,6 +224,20 @@ Docker Compose default credentials:
 | NATS | localhost | 4222 | - | - |
 | NATS Monitor | localhost | 8222 | - | - |
 
+## Development Progress
+
+- ✅ PR1: Rust workspace + uc-types + uc-engine skeleton
+- ✅ PR2: 存储客户端集成 + Memory 读写 (in-memory fallback; TiKV/Qdrant/PostgreSQL clients coded, need infra)
+- ✅ PR3: 文本检索 + AST 索引引擎 (language-aware tokenization, tree-sitter AST, text search)
+- ✅ PR4: 语义检索 + 混合检索 API (BLAKE3 fallback embeddings, hybrid search engine)
+- ✅ PR5: gRPC + PyO3 桥接层 (tonic server/client, proto compilation, PyEngine wired)
+- ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
+- ✅ PR7: 容错机制 (Event Sourcing, Checkpoint/Resume, Conflict Detection, Rate Limiting, Circuit Breaker)
+- ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
+- ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
+- ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
+- ✅ PR11-20: TUI 实时监控 (Ink + React, gRPC streaming, CJK/IME input, segment-based StatusBar, 280+ tests)
+
 ## Development
 
 ### Running Tests
@@ -210,6 +257,9 @@ PYTHONPATH=python pytest tests/python/ -v
 
 # Python tests with Rust extension
 maturin develop && pytest tests/python/ -v
+
+# TUI tests
+cd tui && npm test
 ```
 
 ### Linting
@@ -221,6 +271,9 @@ cargo fmt --all -- --check
 
 # Python
 ruff check python/ tests/
+
+# TUI
+cd tui && npm run typecheck
 ```
 
 ## License
