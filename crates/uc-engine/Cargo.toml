@@ -44,6 +44,9 @@ croner = "3"
 # Scheduler (feature-gated — enables tokio-cron-scheduler runtime)
 tokio-cron-scheduler = { version = "0.15", optional = true }
 
+[dev-dependencies]
+sqlx = { workspace = true }
+
 [features]
 default = ["storage", "indexing", "messaging"]
 storage = ["tikv-client", "qdrant-client", "sqlx"]

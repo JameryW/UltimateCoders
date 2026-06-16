@@ -78,7 +78,17 @@ impl MemoryStore {
 
         // If not found and semantic lookup requested, search long-term memory
         if request.include_semantic {
-            // Derive query text from the key's inner key field
+            // Derive query text from the key's inner key field.
+            //
+            // NOTE (BLAKE3 limitation): Entries written via `write()` are embedded
+            // from their *content* text, but `read()` searches using the *key* text.
+            // With Voyage semantic embeddings, key "architecture" and content
+            // "Use microservices for scaling" are semantically related, so the
+            // search can still find a match. With the BLAKE3 fallback, however,
+            // embeddings are deterministic per exact text — different strings
+            // produce unrelated vectors. This means `read(include_semantic=true)`
+            // may not find entries via BLAKE3 unless the key text happens to
+            // overlap with the content text that was embedded at write time.
             let query_text = key_to_query_text(&request.key);
             let scope = key_to_search_scope(&request.key);
 
@@ -134,7 +144,9 @@ impl MemoryStore {
                         entry.metadata.embedding = Some(embedding);
                     }
                     Err(e) => {
-                        // Log but continue — entry will be stored with zero vector
+                        // Log but continue — LongTermMemory::write() falls back to
+                        // a zero vector when embedding is None, so the entry is still
+                        // stored but won't be findable via semantic search
                         tracing::warn!(
                             "Failed to generate embedding for long-term memory write: {}",
                             e
@@ -253,6 +265,16 @@ impl MemoryStore {
     pub async fn list_keys(&self, key: &MemoryKey) -> Result<Vec<MemoryKey>, EngineError> {
         let prefix = crate::memory::short_term::scope_prefix(key);
         self.short_term.list_keys(&prefix).await
+    }
+
+    /// Get a reference to the long-term memory store.
+    pub fn long_term(&self) -> &Arc<LongTermMemory> {
+        &self.long_term
+    }
+
+    /// Get a reference to the embedding service.
+    pub fn embedding_service(&self) -> &Arc<EmbeddingService> {
+        &self.embedding_service
     }
 
     /// Health check for memory components.
@@ -565,7 +587,7 @@ mod tests {
         };
         let query_text = "architecture decision";
         let embedding = store
-            .embedding_service
+            .embedding_service()
             .embed_single(query_text)
             .await
             .unwrap();
@@ -583,7 +605,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        store.long_term.write(&entry).await.unwrap();
+        store.long_term().write(&entry).await.unwrap();
 
         // Read with include_semantic=true should find the entry
         let read_result = store
@@ -613,7 +635,7 @@ mod tests {
             key: "design patterns".to_string(),
         };
         let embedding = store
-            .embedding_service
+            .embedding_service()
             .embed_single("design patterns")
             .await
             .unwrap();
@@ -631,7 +653,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        store.long_term.write(&entry).await.unwrap();
+        store.long_term().write(&entry).await.unwrap();
 
         // Read with include_semantic=false should NOT find it
         let read_result = store
@@ -648,14 +670,19 @@ mod tests {
         );
     }
 
-    /// AC5: search() gracefully handles embedding failures
+    /// AC5: search() gracefully handles embedding failures.
+    ///
+    /// Note: With the BLAKE3 fallback, `embed_single()` never fails (it's pure
+    /// computation). The actual error path (Voyage API timeout / rate limit)
+    /// can only be triggered with the `indexing` feature and a configured API
+    /// key. This test verifies that search returns a valid response without
+    /// panicking even when no results match (high min_score threshold).
+    /// A full integration test with a failing Voyage API would be needed to
+    /// exercise the `Err` branch of `embed_single()`.
     #[tokio::test]
     async fn test_search_graceful_degradation_on_embedding_failure() {
         let store = make_store().await;
 
-        // Search with an empty query — BLAKE3 will still produce an embedding,
-        // but we test the general error path by verifying search doesn't panic
-        // and returns a valid (possibly empty) response.
         let search_request = MemorySearchRequest {
             query: "nonexistent query".to_string(),
             scope: MemorySearchScope::All,
