@@ -852,7 +852,12 @@ mod memory_e2e_tests {
         );
     }
 
-    /// Test: read() with include_semantic=true -> finds entry in long-term memory.
+    /// Test: read() with include_semantic=true -> finds entry (via short-term hit).
+    ///
+    /// Note: Because MemoryStore::write() with high importance writes to both short-term
+    /// and long-term, and read() checks short-term first, this test primarily verifies
+    /// the read path works end-to-end rather than specifically testing the semantic fallback.
+    /// See test_e2e_short_term_miss_long_term_hit for a dedicated semantic-only path test.
     #[tokio::test]
     #[ignore]
     async fn test_e2e_read_include_semantic() {
@@ -901,6 +906,13 @@ mod memory_e2e_tests {
 
     /// Test: write only to long-term -> read from short-term -> miss ->
     /// read with include_semantic -> hit (short-term miss + long-term hit).
+    ///
+    /// NOTE: With BLAKE3 fallback embeddings, `MemoryStore::read(include_semantic=true)`
+    /// derives the query embedding from the key's inner text via `key_to_query_text()`.
+    /// For the semantic search to find the entry, the key's inner text must match
+    /// (or overlap with) the content text that was embedded at write time. We set
+    /// the key's inner text to the same value as the content text so BLAKE3 produces
+    /// identical vectors for query and stored entry.
     #[tokio::test]
     #[ignore]
     async fn test_e2e_short_term_miss_long_term_hit() {
@@ -910,10 +922,12 @@ mod memory_e2e_tests {
         let project_id = format!("{}_e2e_miss_proj", prefix);
         let content_text = format!("{}_miss_architecture_decision", prefix);
 
-        // Write directly to long-term memory only (bypassing short-term)
+        // Write directly to long-term memory only (bypassing short-term).
+        // Use the content_text as the key's inner text so that BLAKE3 embedding
+        // derived from the key matches the embedding stored with the entry.
         let key = MemoryKey::Project {
             project_id: project_id.clone(),
-            key: "direct_long_term".to_string(),
+            key: content_text.clone(),
         };
 
         let embedding = store
