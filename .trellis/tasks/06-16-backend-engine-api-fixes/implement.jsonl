@@ -1,0 +1,8 @@
+{"file": "crates/uc-engine/src/memory/mod.rs", "reason": "AC1+AC3: search_memory 零向量修复 + read include_semantic 修复"}
+{"file": "crates/uc-engine/src/local.rs", "reason": "AC1: MemoryStore 构造注入 EmbeddingService; AC2: get_index_state 计数来源修复"}
+{"file": "crates/uc-engine/src/indexer/semantic.rs", "reason": "AC1: EmbeddingService 实现，BLAKE3 fallback embedding 逻辑"}
+{"file": "crates/uc-engine/src/indexer/mod.rs", "reason": "AC2: IndexPipeline 索引完成时计数写入 MetadataStore"}
+{"file": "crates/uc-engine/src/metadata/postgres.rs", "reason": "AC2: IndexState 新增计数字段 + PostgreSQL migration + fallback 更新"}
+{"file": "crates/uc-types/src/memory.rs", "reason": "理解 MemoryKey/MemoryEntry 类型定义"}
+{"file": "crates/uc-types/src/engine.rs", "reason": "EngineApi trait 签名确认"}
+{"file": "crates/uc-engine/src/memory/long_term.rs", "reason": "VECTOR_SIZE 常量 + search_with_embedding 已有实现"}
