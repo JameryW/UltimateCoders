@@ -323,3 +323,71 @@ async submitTask(req) {
 4. **Hardcoding absolute proto paths** — The proto path must be resolved relative to the package or via `GRPC_PROTO_PATH` env var. Never hardcode `/Users/...` paths.
 
 5. **Pausing/resuming without state validation** — Only `InProgress`/`Planning` tasks can be paused, only `Paused` tasks can be resumed. Always validate before mutating state.
+
+---
+
+## Engine Layer (uc-engine)
+
+### MemoryStore (`crates/uc-engine/src/memory/mod.rs`)
+
+```rust
+pub struct MemoryStore {
+    short_term: Arc<ShortTermMemory>,
+    long_term: Arc<LongTermMemory>,
+    embedding_service: Arc<EmbeddingService>,
+    config: MemoryConfig,
+}
+
+impl MemoryStore {
+    pub fn new(
+        short_term: Arc<ShortTermMemory>,
+        long_term: Arc<LongTermMemory>,
+        embedding_service: Arc<EmbeddingService>,
+        config: MemoryConfig,
+    ) -> Self;
+
+    pub fn new_with_default_config(
+        short_term: Arc<ShortTermMemory>,
+        long_term: Arc<LongTermMemory>,
+        embedding_service: Arc<EmbeddingService>,
+    ) -> Self;
+
+    pub async fn read(&self, request: MemoryReadRequest) -> Result<Option<MemoryEntry>, EngineError>;
+    pub async fn write(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError>;
+    pub async fn delete(&self, key: &MemoryKey) -> Result<(), EngineError>;
+    pub async fn search(&self, request: MemorySearchRequest) -> Result<MemorySearchResponse, EngineError>;
+    pub async fn search_with_embedding(&self, ...) -> Result<MemorySearchResponse, EngineError>;
+    pub async fn list_keys(&self, key: &MemoryKey) -> Result<Vec<MemoryKey>, EngineError>;
+    pub fn health(&self) -> Vec<ComponentHealth>;
+}
+```
+
+**Read path with semantic lookup**: When `include_semantic=true` and the entry is not in short-term memory:
+1. Derive query text from `MemoryKey` via `key_to_query_text()`
+2. Compute search scope via `key_to_search_scope()`
+3. Generate embedding via `EmbeddingService::embed_single()`
+4. Search long-term memory with `min_search_score` threshold
+5. Return first result if score exceeds threshold
+6. **Graceful degradation**: If embedding generation fails, log warning and return `None` (not an error)
+
+**Search path**: `search()` uses `EmbeddingService` (BLAKE3 fallback or Voyage Code 3 API) to compute query embeddings. On embedding failure, returns empty `MemorySearchResponse` with warning log (graceful degradation — no error propagation).
+
+**Key derivation helpers** (private):
+- `key_to_query_text(key: &MemoryKey) -> String` — extracts searchable text from the key's inner key field
+- `key_to_search_scope(key: &MemoryKey) -> MemorySearchScope` — determines the search scope (task/project/global)
+
+### LocalEngine Construction Order
+
+`EmbeddingService` must be created **before** `MemoryStore` because `MemoryStore::new()` requires `Arc<EmbeddingService>`. This applies to all three `LocalEngine` constructors:
+
+```rust
+impl LocalEngine {
+    pub fn new(...) -> Result<Self, EngineError> {
+        let embedding_service = Arc::new(EmbeddingService::new(...));
+        let memory_store = MemoryStore::new(..., embedding_service.clone(), ...);
+        // ...
+    }
+    pub fn new_fallback(...) -> Self { /* same order */ }
+    pub fn new_fallback_with_config(...) -> Self { /* same order */ }
+}
+```

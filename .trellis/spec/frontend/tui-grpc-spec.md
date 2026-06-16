@@ -48,6 +48,10 @@ interface UseGrpcClientReturn {
 }
 
 function useGrpcClient(): UseGrpcClientReturn;
+
+// Exported pure helpers (for testing and reuse):
+export function isUnavailableError(error: unknown): boolean;
+export function getErrorMessage(error: unknown): string;
 ```
 
 ### useTaskEvents Hook (`tui/src/hooks/useTaskEvents.ts`)
@@ -64,6 +68,10 @@ interface UseTaskEventsReturn {
 }
 
 function useTaskEvents(client: TaskServiceClient | null, connectionState: string): UseTaskEventsReturn;
+
+// Exported pure functions (for testing and reuse):
+export function processEvent(event: TaskEventProto, subtasks: Map<string, SubtaskItem>): Map<string, SubtaskItem>;
+export function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[];
 ```
 
 ### CjkTextInput Component (`tui/src/components/CjkTextInput.tsx`)
@@ -82,14 +90,66 @@ interface CjkTextInputProps {
 ```
 
 **Key behavior**:
-- Cursor tracked as grapheme index internally; converted to display column via `stringWidth(textBeforeCursor)` for real cursor positioning
-- `onCursorMove` fires on every cursor change (input, backspace, delete, arrow keys, Ctrl+A/E, external value reset)
+- Cursor tracked as grapheme index internally; converted to display column via `cursorDisplayCol()` from `cjk-input-utils.ts`
+- `onCursorMove` fires on every cursor change (input, backspace, delete, arrow keys, Ctrl+A/E, external value reset). Currently a no-op in TaskInput — see "Fake-only cursor strategy" below.
 - Uses `useInput` from Ink for keyboard handling; `cursorRef` (ref) avoids stale closures alongside `cursorGI` (state) for re-render
+- **Both key.backspace and key.delete** are treated as backward delete — Ink 5 parses terminal `\x7f` (Backspace) as `key.delete`, so mapping `key.delete` to forward-delete breaks Backspace at end of input
 - **Ctrl+J**: inserts newline (multi-line task editing)
 - **Ctrl+U**: clears entire input
 - **Ctrl+K**: deletes from cursor to end of line
 - **Up/Down**: delegates to `onHistoryNav` callback (for input history browsing)
 - **Pass-through**: Ctrl+C/R/P/Q/F are ignored here and handled by App's global `useInput`
+- Editing and rendering logic delegated to `cjk-input-utils.ts` (see below)
+
+### CJK Input Utilities (`tui/src/cjk-input-utils.ts`)
+
+Pure functions extracted from CjkTextInput for testability. No React dependencies.
+
+```typescript
+// ANSI escape helpers
+export function inverseChar(char: string): string;   // \x1B[7m...\x1B[27m
+export function dimText(text: string): string;       // \x1B[2m...\x1B[22m
+
+// Grapheme editing operations
+export interface EditResult { nextValue: string; nextCursorGI: number }
+export function insertAtCursor(value: string, cursorGI: number, input: string): EditResult;
+export function deleteBackward(value: string, cursorGI: number): EditResult | null;
+export function deleteToEnd(value: string, cursorGI: number): EditResult;
+
+// Cursor rendering
+export function renderInputWithCursor(value: string, cursorGI: number, showCursor: boolean, focus: boolean, placeholder: string): string;
+export function cursorDisplayCol(value: string, cursorGI: number): number;
+```
+
+### StatusBar Component (`tui/src/components/StatusBar.tsx`)
+
+Segment-based layout with width budget. Priority order: connection > worker > backend > progress > focus > view > retry > help. Each segment has an `id`, `width`, and `render` function. `buildSegments()` produces ordered segments; `selectSegments()` trims them to fit `terminalWidth`.
+
+```typescript
+interface Segment {
+    id: string;        // unique identifier for testing/debugging
+    width: number;     // display width in terminal columns
+    render: () => React.ReactNode;
+}
+
+export function buildSegments(props: {
+    connectionState: ConnectionState;
+    isStreaming: boolean;
+    workerId: string;
+    backend: string;
+    progress: {completed: number; total: number};
+    focusedArea: FocusedArea;
+    activeMainPane: ActiveMainPane;
+    retryCount: number;
+    focusedAreaHelp: string;
+}): Segment[];
+
+export function selectSegments(segments: Segment[], budget: number): Segment[];
+```
+
+**Connection indicators**: `●` connected (green when streaming, yellow idle), `○` disconnected, `◌` connecting, `✗` error — all non-connected states use yellow because offline is expected, not an error.
+
+**Removed from status bar** (moved to `?` help overlay / diagnostics): mode, Task ID, serverAddr, lastError long text. Only short codes like `retry N/5` remain.
 
 ### TUI Reducer (`tui/src/reducer.ts`)
 
@@ -149,7 +209,9 @@ interface TuiState {
 | Failed (non-UNAVAILABLE) | `'connected'` | TaskServiceClient | null (server reachable) |
 | Reconnecting | `'connecting'` | null | Previous error |
 | Max retries reached | `'error'` | null | Error message |
-| Manual reconnect (Ctrl+R) | `'connecting'` | null | null (retry count reset) |
+| Manual reconnect (Ctrl+R) | `'connecting'` | null | null (retry count reset; no-op if already in `connecting` state — prevents duplicate reconnect messages) |
+
+**Color convention**: All non-connected states use **yellow** (not red) in both StatusBar and ChatLog messages, because offline is expected (development, no server), not an error. Only `connected + streaming` uses green.
 
 **Exponential backoff**: `retryCount` increments from 0 to 5 (MAX_RETRY_COUNT). `nextRetryAt` is set to `Date.now() + interval`. Intervals: [1000, 2000, 4000, 8000, 16000] ms. On manual reconnect (`Ctrl+R`), `retryCount` and `nextRetryAt` are reset to 0/null before calling `connect()`.
 
@@ -242,11 +304,13 @@ All pure functions are tested with vitest. No React rendering needed.
 | Module | Tests | Key Assertions |
 |--------|-------|----------------|
 | `reducer.ts` | 56 | All action types: ADD_MESSAGES (2000 cap, unreadCount increment), SET_SUBTASKS (progress, selection reset), UPDATE_SUBTASK_STATUS, SCROLL_UP/DOWN (tick increment, followLog toggle), CYCLE_FOCUS (input→chat→subtask→input), SWAP_MAIN_PANE (chat↔subtask), ESC_TO_MAIN (input→main pane, detail close), SET_EVENT_FILTER (follow reset, unread reset), SELECT_SUBTASK (index validation), TOGGLE_SUBTASK_DETAIL, JUMP_TO_FAILED_SUBTASK (wrap), ADD_INPUT_HISTORY (dedup, 50 cap), CLEAR_TASK/LOG, SET_FOLLOW_LOG (unread reset on re-enable), TOGGLE_HELP_OVERLAY |
-| `keymap.ts` | 9 | getCommand returns correct command, getCommandsForArea returns global+area, getStatusBarHelp adapts to narrow/medium/wide |
+| `keymap.ts` | 9 | getCommand returns correct command, getCommandsForArea returns global+area, getStatusBarHelp uses budget-based candidate selection (fits shortcuts within terminalWidth/4) |
 | `formatters.ts` | 13 | All event types (task_submitted/failed/completed, subtask_assigned/started/completed/failed, tool_call/tool_result), unknown type, eventType preservation on all messages, batch conversion, null filtering |
 | `symbols.ts` | 9 | unicode mode, ascii mode, auto mode env detection (CI, NO_COLOR, TERM=dumb → ascii; TERM=xterm-256color → unicode), forced override, auto→CI resolution |
 | `truncate.ts` | 8 | Short text (no truncation), exact width, long English + ellipsis, CJK 2-column chars, combining chars not split, ZWJ emoji not split, empty string, width=1 |
 | `filter.ts` | 8 | all/task/subtask/tool/error filters, user messages always pass, messages without eventType pass all filters, filterMessages pure function |
+| `cjk-input-utils.ts` | (pending) | insertAtCursor, deleteBackward (returns null at GI=0), deleteToEnd, renderInputWithCursor (empty/placeholder/with-value), cursorDisplayCol |
+| `chatlog-utils.ts` | 9 | formatTimestamp, formatMessage, scroll calculations, message dedup |
 
 **Test framework**: vitest (configured in `tui/vitest.config.ts`)
 **Run command**: `cd tui && npx vitest run`
@@ -453,6 +517,8 @@ The symbol set is passed from App → SubtaskTree as a `SymbolSet` prop rather t
 
 **Decision**: `tui/src/keymap.ts` is the single source of truth for all keyboard commands. It defines `KeyCommand` objects with `id`, `label`, `shortLabel`, `key`, `areas`, and `global`. Components derive their behavior and display text from this file. This ensures "status bar says it, key does it" — no mismatches.
 
+**Status bar help text** (`getStatusBarHelp`): Uses a budget-based candidate selection model. Priority-ordered candidates (`cycleFocus`, `help`, `reconnect`, `quit`) are added incrementally until `helpBudget = Math.max(7, Math.floor(terminalWidth / 4))` is exhausted. Area-specific commands appear only in the `?` help overlay, not in the status bar.
+
 **Example**:
 ```typescript
 // keymap.ts defines the command
@@ -540,6 +606,7 @@ useEffect(() => {
 | `symbols.ts` — symbol resolution | gRPC client (needs proto mock) |
 | `truncate.ts` — CJK-safe truncation | `useGrpcClient` / `useTaskEvents` hooks |
 | `filter.ts` — event filter logic | `CjkTextInput` cursor behavior |
+| `cjk-input-utils.ts` — grapheme editing (insertAtCursor, deleteBackward, deleteToEnd, renderInputWithCursor, cursorDisplayCol) | `StatusBar` segment layout (depends on React render) |
 
 ### Reducer Test Pattern
 
