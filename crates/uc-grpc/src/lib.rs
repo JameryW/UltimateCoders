@@ -8,6 +8,7 @@
 
 pub mod client;
 pub mod conversions;
+pub mod local_worker;
 pub mod server;
 
 pub use server::TaskStore;
