@@ -62,6 +62,16 @@ pub trait EngineApi: Send + Sync {
 
     /// Check engine health.
     async fn health(&self) -> Result<HealthStatus, EngineError>;
+
+    // ── Future Extension Points ────────────────────────────────
+    // TODO(future): Batch memory write for high-throughput agent coordination
+    // async fn batch_write_memory(&self, requests: Vec<MemoryWriteRequest>) -> Result<Vec<MemoryEntry>, EngineError>;
+
+    // TODO(future): List all indexed repositories
+    // async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError>;
+
+    // TODO(future): Stream search results for large result sets
+    // async fn search_stream(&self, query: SearchQuery) -> Result<tokio_stream::BoxStream<'static, SearchResult>, EngineError>;
 }
 
 /// Index state returned by get_index_state.

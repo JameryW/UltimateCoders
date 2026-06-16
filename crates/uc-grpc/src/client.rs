@@ -41,7 +41,7 @@ impl GrpcEngineClient {
 fn from_status(status: tonic::Status) -> EngineError {
     use tonic::Code::*;
     match status.code() {
-        NotFound => EngineError::IndexError(status.message().to_string()),
+        NotFound => EngineError::NotFound(status.message().to_string()),
         DeadlineExceeded => EngineError::TimeoutError(status.message().to_string()),
         Unavailable => EngineError::ConnectionError(status.message().to_string()),
         ResourceExhausted => {
@@ -260,7 +260,7 @@ mod tests {
     fn from_status_not_found() {
         let status = Status::not_found("repo not found");
         let err = from_status(status);
-        assert!(matches!(err, EngineError::IndexError(_)));
+        assert!(matches!(err, EngineError::NotFound(_)));
     }
 
     #[test]

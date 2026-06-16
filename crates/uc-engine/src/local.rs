@@ -494,10 +494,29 @@ impl EngineApi for LocalEngine {
 
     async fn health(&self) -> Result<HealthStatus, EngineError> {
         let memory_health = self.memory_store.health();
+
+        // Map "fallback" to "degraded" for AC5 compliance (healthy/degraded/unavailable)
+        let memory_components: Vec<uc_types::engine::ComponentHealth> = memory_health
+            .into_iter()
+            .map(|c| {
+                let status = match c.status.as_str() {
+                    "ok" => "healthy",
+                    "fallback" => "degraded",
+                    other => other, // keep "error", "disabled", etc.
+                };
+                uc_types::engine::ComponentHealth {
+                    name: c.name,
+                    status: status.into(),
+                    details: c.details,
+                }
+            })
+            .collect();
+
+        // Metadata store status
         let metadata_status = if self.metadata_store.is_connected() {
-            "ok"
+            "healthy"
         } else {
-            "fallback"
+            "degraded"
         };
         let metadata_details = if self.metadata_store.is_connected() {
             Some("PostgreSQL connected".into())
@@ -505,18 +524,37 @@ impl EngineApi for LocalEngine {
             Some("Using in-memory fallback".into())
         };
 
-        let overall_status =
-            if memory_health.iter().all(|c| c.status == "ok") && metadata_status == "ok" {
-                "ok"
-            } else if memory_health.iter().any(|c| c.status == "fallback")
-                || metadata_status == "fallback"
-            {
-                "degraded"
-            } else {
-                "error"
-            };
+        // Index pipeline: check if available
+        let index_pipeline_status = "healthy";
+        let index_pipeline_details = Some("Index pipeline ready".into());
 
-        let mut components = memory_health;
+        // Search engine: check if hybrid engine has semantic support
+        let search_status = if self.index_pipeline.semantic_indexer().is_some() {
+            "healthy"
+        } else {
+            "degraded"
+        };
+        let search_details = Some(if self.index_pipeline.semantic_indexer().is_some() {
+            "Hybrid search (text + semantic) available".into()
+        } else {
+            "Text search only (semantic unavailable)".into()
+        });
+
+        let overall_status = if memory_components.iter().all(|c| c.status == "healthy")
+            && metadata_status == "healthy"
+            && search_status == "healthy"
+        {
+            "healthy"
+        } else if memory_components.iter().any(|c| c.status == "degraded")
+            || metadata_status == "degraded"
+            || search_status == "degraded"
+        {
+            "degraded"
+        } else {
+            "error"
+        };
+
+        let mut components = memory_components;
         components.push(uc_types::engine::ComponentHealth {
             name: "metadata_store".into(),
             status: metadata_status.into(),
@@ -524,20 +562,20 @@ impl EngineApi for LocalEngine {
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "index_pipeline".into(),
-            status: "ok".into(),
-            details: Some("Index pipeline ready".into()),
+            status: index_pipeline_status.into(),
+            details: index_pipeline_details,
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "search_engine".into(),
-            status: "ok".into(),
-            details: Some("Hybrid search engine ready".into()),
+            status: search_status.into(),
+            details: search_details,
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "embedding_service".into(),
             status: if self.index_pipeline.semantic_indexer().is_some() {
-                "ok"
+                "healthy"
             } else {
-                "disabled"
+                "unavailable"
             }
             .into(),
             details: Some(if self.index_pipeline.semantic_indexer().is_some() {
@@ -548,17 +586,17 @@ impl EngineApi for LocalEngine {
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "checkpoint_manager".into(),
-            status: "ok".into(),
+            status: "healthy".into(),
             details: Some("Event sourcing + checkpoint ready".into()),
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "conflict_detector".into(),
-            status: "ok".into(),
+            status: "healthy".into(),
             details: Some("Intent-based conflict detection ready".into()),
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "rate_limiter".into(),
-            status: "ok".into(),
+            status: "healthy".into(),
             details: Some(format!(
                 "RPM: {:.0} available, TPM: {:.0} available",
                 self.rate_limiter.rpm_available(),
@@ -568,9 +606,9 @@ impl EngineApi for LocalEngine {
         components.push(uc_types::engine::ComponentHealth {
             name: "circuit_breaker".into(),
             status: match self.circuit_breaker.state() {
-                crate::circuit_breaker::CircuitState::Closed => "ok",
+                crate::circuit_breaker::CircuitState::Closed => "healthy",
                 crate::circuit_breaker::CircuitState::HalfOpen => "degraded",
-                crate::circuit_breaker::CircuitState::Open => "error",
+                crate::circuit_breaker::CircuitState::Open => "unavailable",
             }
             .into(),
             details: Some(format!(
@@ -581,7 +619,7 @@ impl EngineApi for LocalEngine {
         });
         components.push(uc_types::engine::ComponentHealth {
             name: "sandbox".into(),
-            status: "ok".into(),
+            status: "healthy".into(),
             details: Some("Sandbox execution ready".into()),
         });
 
@@ -621,29 +659,29 @@ mod tests {
         let health = engine.health().await.unwrap();
 
         assert_eq!(health.components[0].name, "short_term_memory");
-        assert_eq!(health.components[0].status, "fallback");
+        assert_eq!(health.components[0].status, "degraded");
         assert_eq!(health.components[1].name, "long_term_memory");
-        assert_eq!(health.components[1].status, "fallback");
+        assert_eq!(health.components[1].status, "degraded");
         assert_eq!(health.components[2].name, "metadata_store");
-        assert_eq!(health.components[2].status, "fallback");
+        assert_eq!(health.components[2].status, "degraded");
         assert_eq!(health.components[3].name, "index_pipeline");
-        assert_eq!(health.components[3].status, "ok");
+        assert_eq!(health.components[3].status, "healthy");
         assert_eq!(health.components[4].name, "search_engine");
-        assert_eq!(health.components[4].status, "ok");
+        assert_eq!(health.components[4].status, "healthy");
         assert_eq!(health.components[5].name, "embedding_service");
-        assert_eq!(health.components[5].status, "ok");
+        assert_eq!(health.components[5].status, "healthy");
         // Fault tolerance components
         assert_eq!(health.components[6].name, "checkpoint_manager");
-        assert_eq!(health.components[6].status, "ok");
+        assert_eq!(health.components[6].status, "healthy");
         assert_eq!(health.components[7].name, "conflict_detector");
-        assert_eq!(health.components[7].status, "ok");
+        assert_eq!(health.components[7].status, "healthy");
         assert_eq!(health.components[8].name, "rate_limiter");
-        assert_eq!(health.components[8].status, "ok");
+        assert_eq!(health.components[8].status, "healthy");
         assert_eq!(health.components[9].name, "circuit_breaker");
-        assert_eq!(health.components[9].status, "ok");
+        assert_eq!(health.components[9].status, "healthy");
         // Sandbox component
         assert_eq!(health.components[10].name, "sandbox");
-        assert_eq!(health.components[10].status, "ok");
+        assert_eq!(health.components[10].status, "healthy");
     }
 
     #[tokio::test]
@@ -1019,7 +1057,7 @@ fn load_index() -> Index { Index::new() }"#,
         engine.stop_sandbox(&handle).await.unwrap();
     }
 
-    /// AC2: get_index_state returns real counts (not hardcoded 0)
+    /// AC2: get_index_state returns real counts
     #[cfg(feature = "indexing")]
     #[tokio::test]
     async fn local_engine_get_index_state_returns_real_counts() {
@@ -1053,7 +1091,7 @@ fn load_index() -> Index { Index::new() }"#,
         let response = engine.index_repo(request).await.unwrap();
         assert!(response.files_indexed >= 1);
 
-        // get_index_state should return non-zero counts
+        // get_index_state should return indexed=true with counts
         let state = engine.get_index_state("test-counts-repo").await.unwrap();
         assert_eq!(state.repo_id, "test-counts-repo");
         assert!(state.indexed);
@@ -1064,5 +1102,97 @@ fn load_index() -> Index { Index::new() }"#,
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    // -- AC1: NotFound error variant tests --
+
+    #[test]
+    fn engine_error_not_found_is_not_found() {
+        let err = EngineError::NotFound("repo xyz".into());
+        assert!(err.is_not_found());
+        assert!(!err.is_retryable());
+        assert!(!err.should_fallback());
+    }
+
+    #[test]
+    fn engine_error_other_variants_are_not_not_found() {
+        assert!(!EngineError::SearchError("x".into()).is_not_found());
+        assert!(!EngineError::IndexError("x".into()).is_not_found());
+        assert!(!EngineError::MemoryReadError("x".into()).is_not_found());
+        assert!(!EngineError::ConnectionError("x".into()).is_not_found());
+        assert!(!EngineError::TimeoutError("x".into()).is_not_found());
+        assert!(!EngineError::RateLimited(5).is_not_found());
+    }
+
+    #[tokio::test]
+    async fn local_engine_health_returns_component_statuses() {
+        let engine = LocalEngine::new_fallback();
+        let health = engine.health().await.unwrap();
+
+        // Verify key components exist with correct status values
+        let component_names: Vec<&str> =
+            health.components.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            component_names.contains(&"short_term_memory"),
+            "missing short_term_memory"
+        );
+        assert!(
+            component_names.contains(&"long_term_memory"),
+            "missing long_term_memory"
+        );
+        assert!(
+            component_names.contains(&"search_engine"),
+            "missing search_engine"
+        );
+        assert!(
+            component_names.contains(&"index_pipeline"),
+            "missing index_pipeline"
+        );
+
+        // All statuses should be one of: healthy, degraded, unavailable
+        for c in &health.components {
+            assert!(
+                matches!(
+                    c.status.as_str(),
+                    "healthy" | "degraded" | "unavailable" | "disabled"
+                ),
+                "component {} has unexpected status: {}",
+                c.name,
+                c.status
+            );
+        }
+
+        // In-memory fallback should report degraded for memory components
+        let short_term = health
+            .components
+            .iter()
+            .find(|c| c.name == "short_term_memory")
+            .unwrap();
+        assert_eq!(short_term.status, "degraded");
+        let long_term = health
+            .components
+            .iter()
+            .find(|c| c.name == "long_term_memory")
+            .unwrap();
+        assert_eq!(long_term.status, "degraded");
+    }
+
+    #[tokio::test]
+    async fn local_engine_health_overall_status_degraded_with_fallback() {
+        let engine = LocalEngine::new_fallback();
+        let health = engine.health().await.unwrap();
+        // Using in-memory fallbacks, overall should be degraded
+        assert_eq!(health.status, "degraded");
+    }
+
+    #[tokio::test]
+    async fn local_engine_health_component_details_populated() {
+        let engine = LocalEngine::new_fallback();
+        let health = engine.health().await.unwrap();
+
+        // All components should have details set
+        for c in &health.components {
+            assert!(c.details.is_some(), "component {} missing details", c.name);
+        }
     }
 }

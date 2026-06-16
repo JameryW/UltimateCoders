@@ -29,6 +29,7 @@ pub struct PyEngine {
 fn engine_error_to_pyerr(err: uc_types::EngineError) -> PyErr {
     use uc_types::EngineError::*;
     match err {
+        NotFound(msg) => pyo3::exceptions::PyKeyError::new_err(msg),
         SearchError(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
         IndexError(msg) => pyo3::exceptions::PyKeyError::new_err(msg),
         MemoryReadError(msg) | MemoryWriteError(msg) => {
