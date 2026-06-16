@@ -148,13 +148,14 @@ const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSe
  * Displays full description, status, worker, dependencies, and error summary.
  */
 const SubtaskDetail: React.FC<{subtask: SubtaskItem; maxWidth: number}> = ({subtask, maxWidth}) => {
-  const detailWidth = maxWidth - 2; // left padding "│"
+  // Total indent: outer marginLeft={2} + inner marginLeft={1} = 3 cols
+  const contentWidth = maxWidth - 3;
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Text dimColor>{'│'}</Text>
       <Box marginLeft={1}>
         <Text dimColor>{'desc: '}</Text>
-        <Text>{truncateToWidth(subtask.description, detailWidth - 6)}</Text>
+        <Text>{truncateToWidth(subtask.description, contentWidth - 6)}</Text>
       </Box>
       <Box marginLeft={1}>
         <Text dimColor>{'status: '}</Text>
@@ -165,19 +166,19 @@ const SubtaskDetail: React.FC<{subtask: SubtaskItem; maxWidth: number}> = ({subt
       {subtask.assignedWorker && (
         <Box marginLeft={1}>
           <Text dimColor>{'worker: '}</Text>
-          <Text>{truncateToWidth(subtask.assignedWorker, detailWidth - 8)}</Text>
+          <Text>{truncateToWidth(subtask.assignedWorker, contentWidth - 8)}</Text>
         </Box>
       )}
       {subtask.dependsOn && subtask.dependsOn.length > 0 && (
         <Box marginLeft={1}>
           <Text dimColor>{'deps: '}</Text>
-          <Text>{truncateToWidth(subtask.dependsOn.join(', '), detailWidth - 6)}</Text>
+          <Text>{truncateToWidth(subtask.dependsOn.join(', '), contentWidth - 6)}</Text>
         </Box>
       )}
       {subtask.errorSummary && (
         <Box marginLeft={1}>
           <Text dimColor>{'error: '}</Text>
-          <Text color="red">{truncateToWidth(subtask.errorSummary, detailWidth - 7)}</Text>
+          <Text color="red">{truncateToWidth(subtask.errorSummary, contentWidth - 7)}</Text>
         </Box>
       )}
       <Text dimColor>{'│'}</Text>
