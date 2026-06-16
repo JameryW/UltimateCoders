@@ -1,7 +1,7 @@
 import React, {useState, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 
-// ponytail: spinner chars — standard braille pattern, no extra deps
+// spinner chars — standard braille pattern, no extra deps
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export interface StatusIndicatorProps {
