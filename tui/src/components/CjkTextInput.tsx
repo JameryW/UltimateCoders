@@ -253,8 +253,10 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         const graphemes = splitter.splitGraphemes(value);
         const gi = cursorRef.current;
 
-        if (key.backspace && gi > 0) {
-          // Remove grapheme before cursor
+        if (gi > 0) {
+          // Ink parses the common terminal Backspace byte (\x7f) as
+          // key.delete. Treat both backspace and delete as backward delete
+          // so Backspace works consistently across terminals.
           const nextValue = [
             ...graphemes.slice(0, gi - 1),
             ...graphemes.slice(gi),
@@ -262,15 +264,6 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
           const next = gi - 1;
           setCursorGI(next);
           cursorRef.current = next;
-          prevValueRef.current = nextValue;
-          onChange(nextValue);
-        } else if (key.delete && gi < graphemes.length) {
-          // Remove grapheme after cursor
-          const nextValue = [
-            ...graphemes.slice(0, gi),
-            ...graphemes.slice(gi + 1),
-          ].join('');
-          // cursor index stays the same
           prevValueRef.current = nextValue;
           onChange(nextValue);
         }

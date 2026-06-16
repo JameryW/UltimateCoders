@@ -1,0 +1,6 @@
+{"check":"SubtaskTree shows ASCII progress bar in header","ac":"1"}
+{"check":"Subtask rows show dependency indicator →2,3","ac":"2"}
+{"check":"Empty Enter shows gray hint that auto-disappears in 2s","ac":"3"}
+{"check":"User messages have > prefix + bold, system messages have color-coded status changes","ac":"4"}
+{"check":"Messages >3 lines are collapsed with [+N more], expandable via Enter in chat focus","ac":"5"}
+{"check":"WatchTask stream auto-starts on connect, updates subtask status in real-time","ac":"6"}
