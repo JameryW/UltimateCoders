@@ -66,7 +66,7 @@ export interface ChatLogProps {
 
 function formatTime(): string {
   const now = new Date();
-  return now.toTimeString().slice(0, 8);
+  return now.toTimeString().slice(0, 5); // HH:MM instead of HH:MM:SS
 }
 
 /** Helper to create a ChatMessage object. */
@@ -111,29 +111,63 @@ export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter
   });
 }
 
-const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
-  if (msg.isUser) {
-    return (
-      <Box>
-        <Text dimColor>{`[${msg.timestamp}] `}</Text>
-        <Text bold color="cyan">
-          {'> '}
-        </Text>
-        <Text>{msg.text}</Text>
-      </Box>
-    );
-  }
+const COLLAPSE_THRESHOLD = 3;
 
-  return (
-    <Box>
-      <Text dimColor>{`[${msg.timestamp}] `}</Text>
+const ChatMessageItem: React.FC<{msg: ChatMessage}> = ({msg}) => {
+  const [expanded, setExpanded] = useState(false);
+  const lines = msg.text.split('\n');
+  const isLong = lines.length > COLLAPSE_THRESHOLD;
+
+  // Auto-color status change events based on eventType
+  const statusColor = msg.color ?? (
+    msg.eventType === 'subtask_completed' || msg.eventType === 'task_completed'
+      ? 'green'
+      : msg.eventType === 'subtask_failed' || msg.eventType === 'task_failed'
+        ? 'red'
+        : msg.eventType === 'subtask_started' || msg.eventType === 'subtask_assigned'
+          ? 'cyan'
+          : undefined
+  );
+
+  // Decide which lines to show
+  const visibleLines = (isLong && !expanded)
+    ? lines.slice(0, COLLAPSE_THRESHOLD)
+    : lines;
+
+  const renderText = () => {
+    if (msg.isUser) {
+      return (
+        <>
+          <Text bold color="cyan">{'> '}</Text>
+          <Text bold>{visibleLines[0]}</Text>
+          {visibleLines.slice(1).map((line, i) => (
+            <Text key={i}>{'\n' + line}</Text>
+          ))}
+        </>
+      );
+    }
+    return (
       <Text
-        color={msg.color}
+        color={statusColor}
         bold={msg.bold}
         dimColor={msg.dim}
       >
-        {msg.text}
+        {visibleLines.join('\n')}
       </Text>
+    );
+  };
+
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text dimColor>{`[${msg.timestamp}] `}</Text>
+        {renderText()}
+      </Box>
+      {isLong && !expanded && (
+        <Box marginLeft={7}>
+          <Text dimColor>{`[+${lines.length - COLLAPSE_THRESHOLD} more]`}</Text>
+        </Box>
+      )}
     </Box>
   );
 };

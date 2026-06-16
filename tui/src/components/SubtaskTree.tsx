@@ -104,9 +104,11 @@ interface SubtaskRowProps {
   symbols: SymbolSet;
   isSelected: boolean;
   isFocused: boolean;
+  /** Indexes of subtasks that depend on this one (reverse deps). */
+  dependedBy?: number[];
 }
 
-const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSelected, isFocused}) => {
+const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSelected, isFocused, dependedBy}) => {
   const statusConfig = STATUS_CONFIG[subtask.status] ?? STATUS_CONFIG.pending;
   const icon = symbols[statusConfig.symbolKey];
 
@@ -138,6 +140,9 @@ const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSe
       )}
       {subtask.status === 'failed' && (
         <Text color="red">{` ✗`}</Text>
+      )}
+      {dependedBy && dependedBy.length > 0 && (
+        <Text dimColor>{` →${dependedBy.join(',')}`}</Text>
       )}
     </Box>
   );
@@ -199,6 +204,27 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   const symbols = symbolsProp ?? getSymbols();
   const titleSuffix = getProgressText(progress.completed, progress.total);
 
+  // Build progress bar: e.g. ▓▓░░░ 40% or ##--- 40%
+  const barWidth = Math.min(10, Math.max(3, maxWidth - 20));
+  const pct = progress.total > 0 ? progress.completed / progress.total : 0;
+  const filled = Math.round(pct * barWidth);
+  const empty = barWidth - filled;
+  const bar = symbols.barFilled.repeat(filled) + symbols.barEmpty.repeat(empty);
+  const progressBar = progress.total > 0 ? ` ${bar} ${Math.round(pct * 100)}%` : '';
+
+  // Build reverse dependency map: subtask index → list of dependent subtask indexes
+  const dependedByMap = new Map<number, number[]>();
+  for (const st of subtasks) {
+    for (const depId of (st.dependsOn ?? [])) {
+      const depIdx = subtasks.findIndex((s) => s.id === depId);
+      if (depIdx >= 0) {
+        const existing = dependedByMap.get(depIdx) ?? [];
+        existing.push(st.index);
+        dependedByMap.set(depIdx, existing);
+      }
+    }
+  }
+
   // Truncate task description for header
   const truncatedTaskDesc = truncateToWidth(taskDescription, maxWidth - 10);
 
@@ -209,6 +235,11 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
         <Text dimColor>{` [${titleSuffix}]`}</Text>
         {isFocused && <Text dimColor>{' [focused]'}</Text>}
       </Box>
+      {progress.total > 0 && (
+        <Box marginBottom={1}>
+          <Text dimColor>{progressBar}</Text>
+        </Box>
+      )}
       {taskDescription !== 'No task' && (
         <Box marginBottom={1}>
           <Text dimColor>{`Task: `}</Text>
@@ -227,6 +258,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
                 symbols={symbols}
                 isSelected={idx === selectedIndex}
                 isFocused={isFocused}
+                dependedBy={dependedByMap.get(idx)}
               />
               {detailOpen && idx === selectedIndex && (
                 <SubtaskDetail subtask={st} maxWidth={maxWidth} />

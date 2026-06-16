@@ -20,7 +20,7 @@
  * The custom useCursor hook positions the real terminal cursor for IME
  * composition.
  */
-import React, {useState, useCallback, useEffect} from 'react';
+import React, {useState, useCallback, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 import CjkTextInput from './CjkTextInput.js';
 import useCursor from '../hooks/useCursor.js';
@@ -51,7 +51,16 @@ const TaskInput: React.FC<TaskInputProps> = ({
 }) => {
   const [value, setValue] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
+  const [showEmptyHint, setShowEmptyHint] = useState(false);
+  const emptyHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const {setCursorPosition, showCursor} = useCursor();
+
+  // Cleanup empty hint timer on unmount
+  useEffect(() => {
+    return () => {
+      if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current);
+    };
+  }, []);
 
   // Sync from history index: when user navigates history, update value
   useEffect(() => {
@@ -73,6 +82,10 @@ const TaskInput: React.FC<TaskInputProps> = ({
       if (isSubmitting) return;
       const trimmed = submittedValue.trim();
       if (trimmed.length === 0) {
+        // Show empty hint for 2 seconds
+        setShowEmptyHint(true);
+        if (emptyHintTimer.current) clearTimeout(emptyHintTimer.current);
+        emptyHintTimer.current = setTimeout(() => setShowEmptyHint(false), 2000);
         return;
       }
       onSubmit(trimmed);
@@ -150,6 +163,9 @@ const TaskInput: React.FC<TaskInputProps> = ({
         focus={isFocused}
       />
       {isSubmitting && <Text color="yellow">{' [submitting...]'}</Text>}
+      {showEmptyHint && !isSubmitting && (
+        <Text dimColor>{' ↵ Enter a task description'}</Text>
+      )}
       {isMultiline && !isSubmitting && (
         <Text dimColor>{` Ln${line}:Col${col} │ Enter submit · Ctrl+J newline`}</Text>
       )}
