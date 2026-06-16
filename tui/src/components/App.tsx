@@ -117,11 +117,12 @@ const App: React.FC = () => {
     prevConnectionStateRef.current = connectionState;
 
     // Connection state change notifications in ChatLog
+    // Offline/unavailable is expected (not an error) → yellow, not red
     if (prev && prev !== connectionState) {
       if (connectionState === 'connected') {
         addMessage(createSystemMessage(`Connected to ${serverAddr}`, {color: 'green'}));
       } else if (connectionState === 'error' && prev === 'connected') {
-        addMessage(createSystemMessage(`Connection lost to ${serverAddr}. Retrying...`, {color: 'red'}));
+        addMessage(createSystemMessage(`Connection lost to ${serverAddr}. Retrying...`, {color: 'yellow'}));
       } else if (connectionState === 'connecting' && prev === 'error') {
         addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
       }
@@ -348,9 +349,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // Ctrl+R: reconnect gRPC with feedback
+    // Ctrl+R: reconnect gRPC with feedback (deduplicate in connecting state)
     if (key.ctrl && input === 'r') {
-      addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
+      if (connectionState !== 'connecting') {
+        addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
+      }
       reconnect();
       return;
     }

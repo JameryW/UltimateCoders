@@ -107,12 +107,12 @@ export function getCommandsForArea(area: FocusedArea): KeyCommand[] {
  */
 export function getStatusBarHelp(area: FocusedArea, terminalWidth: number): string {
   // Priority-ordered commands for status bar (most useful first)
-  // Each entry: [shortLabel, oneWordLabel, approximate display width]
-  const candidates: Array<{shortcut: string; label: string; width: number}> = [
-    {shortcut: getCommand('cycleFocus')!.shortLabel, label: 'focus', width: 12},   // "S-Tab focus"
-    {shortcut: getCommand('help')!.shortLabel, label: 'help', width: 7},           // "? help"
-    {shortcut: getCommand('reconnect')!.shortLabel, label: 'reconnect', width: 15}, // "C-R reconnect"
-    {shortcut: getCommand('quit')!.shortLabel, label: 'quit', width: 9},           // "C-Q quit"
+  // Note: `area` is kept for future area-specific help; currently all areas show the same global shortcuts.
+  const candidates: Array<{shortcut: string; label: string}> = [
+    {shortcut: getCommand('cycleFocus')!.shortLabel, label: 'focus'},
+    {shortcut: getCommand('help')!.shortLabel, label: 'help'},
+    {shortcut: getCommand('reconnect')!.shortLabel, label: 'reconnect'},
+    {shortcut: getCommand('quit')!.shortLabel, label: 'quit'},
   ];
 
   // Build text by adding shortcuts until we run out of budget

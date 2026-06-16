@@ -28,6 +28,12 @@ pub struct IndexState {
     pub index_version: u32,
     /// Index health status.
     pub health: IndexHealth,
+    /// Number of files indexed.
+    pub files_count: u64,
+    /// Number of symbols extracted.
+    pub symbols_count: u64,
+    /// Number of code chunks embedded.
+    pub chunks_count: u64,
 }
 
 /// Health status of a repository's index.

@@ -683,3 +683,105 @@ Fixed two TUI input bugs: (1) dual cursor display — real terminal cursor was v
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: TUI test expansion: 129→319 tests, pure function extraction
+
+**Date**: 2026-06-16
+**Task**: TUI test expansion: 129→319 tests, pure function extraction
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Extracted pure functions from CjkTextInput, StatusBar, TaskInput, App, SubtaskTree into 5 new utility modules (cjk-input-utils, statusbar-utils, taskinput-utils, offline-utils, truncate). Added 10 new test files covering grapheme editing, connection indicators, gRPC types/client, event processing, message factories, and reducer actions. Fixed keymap.ts syntax error, symbols.test.ts env leak, and keymap test alignment. Created PR #26.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `741cf78` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 21: Fix TUI cursor + backspace, resolve merge conflicts, update specs and READMEs
+
+**Date**: 2026-06-16
+**Task**: Fix TUI cursor + backspace, resolve merge conflicts, update specs and READMEs
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Fixed dual-cursor bug (hide real terminal cursor, use inline fake only) and Backspace not working (Ink 5 parses \x7f as key.delete, unified to backward delete). Resolved merge conflicts with main. Updated tui-grpc-spec (6 items: cjk-input-utils extraction, StatusBar segment architecture, budget-based getStatusBarHelp, exported helpers, connection color convention, Backspace/Delete handling) and taskservice-grpc-spec (new Engine Layer section with MemoryStore signatures, semantic read path, EmbeddingService search, LocalEngine construction order). Updated root README (badges, TUI section, architecture diagram) and TUI README (yellow connection states, segment StatusBar, cursor strategy, expanded architecture). Created PRs #23 (merged), #24 (merged), #25 (README).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0ba0691` | (see git log) |
+| `f9f15af` | (see git log) |
+| `01a6121` | (see git log) |
+| `a698d0e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 22: StatusBar segment-based layout + gRPC error noise reduction
+
+**Date**: 2026-06-16
+**Task**: StatusBar segment-based layout + gRPC error noise reduction
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Rewrite StatusBar.tsx to segment-based priority layout with width budget (buildSegments + selectSegments). Remove lastError/mode/TaskID/serverAddr from display. Connection errors use yellow instead of red. Ctrl+R dedup in connecting state. getStatusBarHelp() budget-based output. 14 new tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4659f98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
