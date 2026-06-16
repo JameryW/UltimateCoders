@@ -21,8 +21,17 @@
  */
 import React, {useState, useEffect, useRef} from 'react';
 import {Text, useInput} from 'ink';
-import stringWidth from 'string-width';
 import GraphemeSplitter from 'grapheme-splitter';
+import stringWidth from 'string-width';
+import {
+  inverseChar,
+  dimText,
+  insertAtCursor,
+  deleteBackward,
+  deleteToEnd,
+  renderInputWithCursor,
+  cursorDisplayCol,
+} from '../cjk-input-utils.js';
 
 const splitter = new GraphemeSplitter();
 
@@ -90,9 +99,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
   // Notify parent of cursor display position
   useEffect(() => {
     if (onCursorMove) {
-      const graphemes = splitter.splitGraphemes(value);
-      const textBeforeCursor = graphemes.slice(0, cursorGI).join('');
-      onCursorMove(stringWidth(textBeforeCursor));
+      onCursorMove(cursorDisplayCol(value, cursorGI));
     }
   }, [cursorGI, value, onCursorMove]);
 
@@ -116,16 +123,9 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
       // Tab: insert spaces for indentation
       if (key.tab) {
-        const graphemes = splitter.splitGraphemes(value);
-        const gi = cursorRef.current;
-        const nextValue = [
-          ...graphemes.slice(0, gi),
-          '  ', // 2-space indent
-          ...graphemes.slice(gi),
-        ].join('');
-        const next = gi + 2; // 2 graphemes for 2 spaces
-        setCursorGI(next);
-        cursorRef.current = next;
+        const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, '  ');
+        setCursorGI(nextCursorGI);
+        cursorRef.current = nextCursorGI;
         prevValueRef.current = nextValue;
         onChange(nextValue);
         return;
@@ -153,16 +153,9 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
       // ── Ctrl+J: insert newline (multi-line task) ───────
       if (key.ctrl && input === 'j') {
-        const graphemes = splitter.splitGraphemes(value);
-        const gi = cursorRef.current;
-        const nextValue = [
-          ...graphemes.slice(0, gi),
-          '\n',
-          ...graphemes.slice(gi),
-        ].join('');
-        const next = gi + 1;
-        setCursorGI(next);
-        cursorRef.current = next;
+        const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, '\n');
+        setCursorGI(nextCursorGI);
+        cursorRef.current = nextCursorGI;
         prevValueRef.current = nextValue;
         onChange(nextValue);
         return;
@@ -179,11 +172,9 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
       // ── Ctrl+K: delete from cursor to end ──────────────
       if (key.ctrl && input === 'k') {
-        const graphemes = splitter.splitGraphemes(value);
-        const gi = cursorRef.current;
-        const nextValue = graphemes.slice(0, gi).join('');
-        // cursor stays at same position
+        const {nextValue, nextCursorGI} = deleteToEnd(value, cursorRef.current);
         prevValueRef.current = nextValue;
+        // cursor stays at same position (nextCursorGI === cursorRef.current)
         onChange(nextValue);
         return;
       }
@@ -249,40 +240,21 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
       if (key.backspace || key.delete) {
         if (value.length === 0) return;
-
-        const graphemes = splitter.splitGraphemes(value);
-        const gi = cursorRef.current;
-
-        if (gi > 0) {
-          // Ink parses the common terminal Backspace byte (\x7f) as
-          // key.delete. Treat both backspace and delete as backward delete
-          // so Backspace works consistently across terminals.
-          const nextValue = [
-            ...graphemes.slice(0, gi - 1),
-            ...graphemes.slice(gi),
-          ].join('');
-          const next = gi - 1;
-          setCursorGI(next);
-          cursorRef.current = next;
-          prevValueRef.current = nextValue;
-          onChange(nextValue);
+        const result = deleteBackward(value, cursorRef.current);
+        if (result) {
+          setCursorGI(result.nextCursorGI);
+          cursorRef.current = result.nextCursorGI;
+          prevValueRef.current = result.nextValue;
+          onChange(result.nextValue);
         }
         return;
       }
 
       // Printable input: insert at cursor position
       if (input.length > 0 && !key.ctrl && !key.meta) {
-        const graphemes = splitter.splitGraphemes(value);
-        const inputGraphemes = splitter.splitGraphemes(input);
-        const gi = cursorRef.current;
-        const nextValue = [
-          ...graphemes.slice(0, gi),
-          ...inputGraphemes,
-          ...graphemes.slice(gi),
-        ].join('');
-        const next = gi + inputGraphemes.length;
-        setCursorGI(next);
-        cursorRef.current = next;
+        const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, input);
+        setCursorGI(nextCursorGI);
+        cursorRef.current = nextCursorGI;
         prevValueRef.current = nextValue;
         onChange(nextValue);
       }
@@ -292,57 +264,9 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   // ── Rendering ──────────────────────────────────────────────
 
-  const graphemes = splitter.splitGraphemes(value);
-  const hasValue = value.length > 0;
-
-  // Build rendered text with cursor indicator
-  let rendered = '';
-
-  if (!hasValue && placeholder) {
-    if (showCursor && focus) {
-      const placeholderGraphemes = splitter.splitGraphemes(placeholder);
-      const firstGrapheme = placeholderGraphemes[0] ?? ' ';
-      const rest = placeholderGraphemes.slice(1).join('');
-      rendered = inverseChar(firstGrapheme) + dimText(rest);
-    } else {
-      rendered = dimText(placeholder);
-    }
-  } else if (hasValue) {
-    if (showCursor && focus) {
-      for (let i = 0; i < graphemes.length; i++) {
-        if (i === cursorGI) {
-          // Cursor is before this grapheme: highlight it
-          rendered += inverseChar(graphemes[i]);
-        } else {
-          rendered += graphemes[i];
-        }
-      }
-      // Cursor at end: show block cursor after text
-      if (cursorGI >= graphemes.length) {
-        rendered += inverseChar(' ');
-      }
-    } else {
-      rendered = value;
-    }
-  } else if (showCursor && focus) {
-    rendered = inverseChar(' ');
-  }
+  const rendered = renderInputWithCursor(value, cursorGI, showCursor, focus, placeholder);
 
   return <Text>{rendered}</Text>;
 };
-
-/**
- * Apply inverse video to a character (or grapheme cluster).
- */
-function inverseChar(char: string): string {
-  return `\x1B[7m${char}\x1B[27m`;
-}
-
-/**
- * Apply dim styling to text.
- */
-function dimText(text: string): string {
-  return `\x1B[2m${text}\x1B[22m`;
-}
 
 export default CjkTextInput;

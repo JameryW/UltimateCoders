@@ -390,6 +390,21 @@ describe('tuiReducer: subtask navigation actions', () => {
     state = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
     expect(state.selectedSubtaskIndex).toBe(0); // unchanged
   });
+
+  it('JUMP_TO_FAILED_SUBTASK is no-op with empty subtasks array', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: []});
+    const next = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(next.selectedSubtaskIndex).toBe(-1); // default, unchanged
+  });
+
+  it('JUMP_TO_FAILED_SUBTASK from default selectedSubtaskIndex=-1 finds first failed', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'failed'), subtask('c', 'pending')];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    // selectedSubtaskIndex is -1 by default, startIdx = -1 + 1 = 0
+    const next = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
+    expect(next.selectedSubtaskIndex).toBe(1);
+    expect(next.selectedSubtaskId).toBe('b');
+  });
 });
 
 // ── SET_SUBMITTING ────────────────────────────────────────
@@ -490,17 +505,36 @@ describe('tuiReducer: simple setters', () => {
   });
 });
 
-// ── TOGGLE_EXPAND_ALL_MESSAGES ───────────────────────────
+// ── SET_HISTORY_INDEX ─────────────────────────────────────
 
-describe('tuiReducer: TOGGLE_EXPAND_ALL_MESSAGES', () => {
-  it('toggles expandAllMessages from false to true', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
-    expect(state.expandAllMessages).toBe(true);
+describe('tuiReducer: SET_HISTORY_INDEX', () => {
+  it('sets historyIndex to given value', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_HISTORY_INDEX', index: 2});
+    expect(state.historyIndex).toBe(2);
   });
 
-  it('toggles expandAllMessages back to false', () => {
-    const expanded = {...INITIAL_TUI_STATE, expandAllMessages: true};
-    const state = tuiReducer(expanded, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
-    expect(state.expandAllMessages).toBe(false);
+  it('sets historyIndex to -1 to exit history browsing', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_HISTORY_INDEX', index: 0});
+    state = tuiReducer(state, {type: 'SET_HISTORY_INDEX', index: -1});
+    expect(state.historyIndex).toBe(-1);
+  });
+});
+
+// ── SET_LAST_ERROR ────────────────────────────────────────
+
+describe('tuiReducer: SET_LAST_ERROR', () => {
+  it('sets lastError to an error string', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_LAST_ERROR', error: 'Connection refused'});
+    expect(state.lastError).toBe('Connection refused');
+  });
+
+  it('clears lastError with null', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_LAST_ERROR', error: 'some error'});
+    state = tuiReducer(state, {type: 'SET_LAST_ERROR', error: null});
+    expect(state.lastError).toBeNull();
+  });
+
+  it('initial state has lastError=null', () => {
+    expect(INITIAL_TUI_STATE.lastError).toBeNull();
   });
 });

@@ -41,7 +41,7 @@ const DEFAULT_SERVER_ADDR = 'localhost:50051';
  * 1. GRPC_PROTO_PATH env var (absolute path)
  * 2. Relative to this package: ../../crates/uc-grpc/proto/engine.proto
  */
-function resolveProtoPath(): string {
+export function resolveProtoPath(): string {
   const envPath = process.env.GRPC_PROTO_PATH;
   if (envPath && fs.existsSync(envPath)) {
     return envPath;

@@ -99,6 +99,35 @@ describe('formatTaskEvent', () => {
     expect(msg!.dim).toBe(true);
   });
 
+  it('subtask_assigned without worker_id shows "unknown"', () => {
+    const msg = formatTaskEvent(event('subtask_assigned', {data: {}}));
+    expect(msg!.text).toContain('unknown');
+  });
+
+  it('subtask_failed without error data shows "unknown"', () => {
+    const msg = formatTaskEvent(event('subtask_failed', {data: {}}));
+    expect(msg!.text).toContain('unknown');
+  });
+
+  it('task_failed without error data shows "unknown"', () => {
+    const msg = formatTaskEvent(event('task_failed', {data: {}}));
+    expect(msg!.text).toContain('unknown');
+  });
+
+  it('tool_result with success=false shows ✗', () => {
+    const msg = formatTaskEvent(event('tool_result', {
+      data: {success: 'false'},
+    }));
+    expect(msg!.text).toContain('✗');
+  });
+
+  it('event with undefined subtaskId uses empty string slice', () => {
+    const msg = formatTaskEvent(event('subtask_started', {subtaskId: undefined}));
+    expect(msg).not.toBeNull();
+    // (undefined ?? '').slice(-6) = ''.slice(-6) = ''
+    expect(msg!.text).toContain('Subtask started: ');
+  });
+
   it('eventType is preserved on all messages', () => {
     const types = ['task_submitted', 'subtask_started', 'subtask_completed', 'tool_call', 'subtask_failed'];
     for (const t of types) {
@@ -115,6 +144,11 @@ describe('formatTaskEvents', () => {
     const events = [event('task_submitted'), event('subtask_started')];
     const msgs = formatTaskEvents(events);
     expect(msgs).toHaveLength(2);
+  });
+
+  it('returns empty array for empty input', () => {
+    const msgs = formatTaskEvents([]);
+    expect(msgs).toEqual([]);
   });
 
   it('filters out null results', () => {

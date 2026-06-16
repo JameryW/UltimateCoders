@@ -1,21 +1,9 @@
 import {describe, it, expect} from 'vitest';
 import stringWidth from 'string-width';
 import GraphemeSplitter from 'grapheme-splitter';
+import {truncateToWidth} from './truncate.js';
 
 const splitter = new GraphemeSplitter();
-
-function truncateToWidth(text: string, maxDisplayWidth: number): string {
-  if (stringWidth(text) <= maxDisplayWidth) return text;
-  const ellipsisWidth = 1;
-  const graphemes = splitter.splitGraphemes(text);
-  let width = stringWidth(text);
-  let end = graphemes.length;
-  while (width > maxDisplayWidth - ellipsisWidth && end > 0) {
-    end--;
-    width -= stringWidth(graphemes[end]);
-  }
-  return graphemes.slice(0, end).join('') + '…';
-}
 
 describe('truncateToWidth', () => {
   it('does not truncate short text', () => {
@@ -77,5 +65,22 @@ describe('truncateToWidth', () => {
   it('handles width of 1', () => {
     const result = truncateToWidth('hello', 1);
     expect(stringWidth(result)).toBeLessThanOrEqual(1);
+  });
+
+  it('returns just ellipsis when maxDisplayWidth is 1 and text is wider', () => {
+    const result = truncateToWidth('hello', 1);
+    expect(result).toBe('…');
+  });
+
+  it('handles mixed CJK and ASCII', () => {
+    // "你好abc" = 2+2+1+1+1 = 7 display width
+    const result = truncateToWidth('你好abc', 5);
+    expect(stringWidth(result)).toBeLessThanOrEqual(5);
+    expect(result.endsWith('…')).toBe(true);
+  });
+
+  it('preserves text that fits exactly with ellipsis room', () => {
+    // "hi" = 2 display cols, maxDisplayWidth=2 → fits exactly
+    expect(truncateToWidth('hi', 2)).toBe('hi');
   });
 });

@@ -51,7 +51,7 @@ export interface UseTaskEventsReturn {
 // ── Event Processing ────────────────────────────────────────
 
 /** Process a TaskEvent and update subtask state accordingly. */
-function processEvent(
+export function processEvent(
   event: TaskEventProto,
   currentSubtasks: Map<string, SubtaskItem>,
 ): Map<string, SubtaskItem> {
@@ -125,7 +125,7 @@ function processEvent(
 }
 
 /** Convert proto SubtaskProto[] to SubtaskItem[] for TUI display. */
-function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
+export function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
   return subtasks.map((st, idx) => ({
     id: st.id,
     index: idx + 1,

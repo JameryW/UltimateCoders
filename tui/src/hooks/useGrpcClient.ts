@@ -93,14 +93,14 @@ export interface UseGrpcClientReturn {
 /**
  * Check if a gRPC error indicates the server is unavailable.
  */
-function isUnavailableError(err: any): boolean {
+export function isUnavailableError(err: any): boolean {
   return typeof err?.code === 'number' && err.code === GRPC_UNAVAILABLE;
 }
 
 /**
  * Extract a short error message from a gRPC error.
  */
-function getErrorMessage(err: any): string {
+export function getErrorMessage(err: any): string {
   if (typeof err?.message === 'string') {
     return err.message.slice(0, 100);
   }
