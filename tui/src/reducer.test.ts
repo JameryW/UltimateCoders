@@ -426,6 +426,25 @@ describe('tuiReducer: TOGGLE_HELP_OVERLAY', () => {
   });
 });
 
+// ── TOGGLE_EXPAND_ALL_MESSAGES ───────────────────────────
+
+describe('tuiReducer: TOGGLE_EXPAND_ALL_MESSAGES', () => {
+  it('toggles expandAllMessages from false to true', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+    expect(state.expandAllMessages).toBe(true);
+  });
+
+  it('toggles expandAllMessages from true to false', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+    state = tuiReducer(state, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+    expect(state.expandAllMessages).toBe(false);
+  });
+
+  it('initial state has expandAllMessages=false', () => {
+    expect(INITIAL_TUI_STATE.expandAllMessages).toBe(false);
+  });
+});
+
 // ── RETRY_SUBTASK (placeholder) ───────────────────────────
 
 describe('tuiReducer: RETRY_SUBTASK', () => {
