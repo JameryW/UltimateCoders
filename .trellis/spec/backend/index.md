@@ -29,6 +29,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [Dashboard Spec](./dashboard-spec.md) | FastAPI + SSE monitoring, API endpoints, fallback contracts | Filled |
 | [Codegraph Integration](./codegraph-integration.md) | Worker codegraph client, tool registration, pre-processing, graceful degradation | Filled |
 | [TaskService gRPC Spec](./taskservice-grpc-spec.md) | TaskService proto, Rust server, Node.js client contracts | Filled |
+| [NATS Bridge Spec](./nats-bridge-spec.md) | NATS message protocol, gRPC↔Python bridging, graceful degradation | Filled |
 
 ---
 
