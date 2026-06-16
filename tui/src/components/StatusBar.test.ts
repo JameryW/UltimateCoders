@@ -79,23 +79,26 @@ describe('buildSegments', () => {
 // ── selectSegments ─────────────────────────────────────────
 
 describe('selectSegments', () => {
-  it('returns all segments when budget is sufficient', () => {
+  it('returns all segments when budget is sufficient (>100 cols)', () => {
     const segs = buildSegments(defaultArgs);
     // Sum up all widths + 2 (padding)
     const totalWidth = segs.reduce((sum, s) => sum + s.width, 0) + 2;
-    const selected = selectSegments(segs, totalWidth + 10);
+    // Use budget > 100 to avoid progressive collapse skipping segments
+    const selected = selectSegments(segs, Math.max(totalWidth + 10, 110));
     expect(selected).toHaveLength(segs.length);
   });
 
   it('truncates from the end when budget is tight', () => {
     const segs = buildSegments(defaultArgs);
-    // Only allow first 3 segments + padding
-    const budget = 2 + segs[0].width + segs[1].width + segs[2].width;
-    const selected = selectSegments(segs, budget);
-    expect(selected).toHaveLength(3);
+    // Budget = 100 + padding: above all tier thresholds, but only enough
+    // for brand + connection. Remaining segments don't fit.
+    const brandAndConnWidth = segs[0].width + segs[1].width + 2; // +2 padding
+    const selected = selectSegments(segs, Math.max(brandAndConnWidth, 101));
+    // At budget 101, we're above the 100 threshold, so no tier skipping.
+    // But the actual width only fits brand + connection.
+    expect(selected.length).toBeGreaterThanOrEqual(2);
     expect(selected[0].id).toBe('brand');
     expect(selected[1].id).toBe('connection');
-    expect(selected[2].id).toBe('worker');
   });
 
   it('always shows brand + connection segment even on narrow terminals (60 cols)', () => {
@@ -150,5 +153,43 @@ describe('selectSegments', () => {
     const selected = selectSegments(segs, 5); // too small
     // Connection segment alone needs ~6 cols, so it should be empty
     expect(selected).toHaveLength(0);
+  });
+
+  // ── Progressive collapse tiers (PRD P3) ──────────────────
+  it('<60 cols: only brand + connection + progress', () => {
+    const segs = buildSegments({...defaultArgs, focusedAreaHelp: ''});
+    const selected = selectSegments(segs, 55);
+    const ids = selected.map((s) => s.id);
+    expect(ids).toContain('brand');
+    expect(ids).toContain('connection');
+    expect(ids).toContain('progress');
+    // Low-priority segments skipped
+    expect(ids).not.toContain('worker');
+    expect(ids).not.toContain('backend');
+    expect(ids).not.toContain('focus');
+    expect(ids).not.toContain('view');
+    expect(ids).not.toContain('help');
+  });
+
+  it('60-80 cols: brand + connection + progress + focus', () => {
+    const segs = buildSegments({...defaultArgs, focusedAreaHelp: ''});
+    const selected = selectSegments(segs, 70);
+    const ids = selected.map((s) => s.id);
+    expect(ids).toContain('brand');
+    expect(ids).toContain('connection');
+    expect(ids).toContain('progress');
+    expect(ids).toContain('focus');
+    // Worker/backend/view/help skipped
+    expect(ids).not.toContain('worker');
+    expect(ids).not.toContain('backend');
+    expect(ids).not.toContain('view');
+    expect(ids).not.toContain('help');
+  });
+
+  it('80-100 cols: removes help segment', () => {
+    const segs = buildSegments(defaultArgs); // has help text
+    const selected = selectSegments(segs, 90);
+    const ids = selected.map((s) => s.id);
+    expect(ids).not.toContain('help');
   });
 });

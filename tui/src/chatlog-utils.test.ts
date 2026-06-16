@@ -16,7 +16,7 @@ describe('getEventIcon', () => {
     expect(getEventIcon('task_submitted')).toBe('📋 ');
     expect(getEventIcon('subtask_completed')).toBe('✓ ');
     expect(getEventIcon('subtask_failed')).toBe('✗ ');
-    expect(getEventIcon('tool_call')).toBe('🔧 ');
+    expect(getEventIcon('tool_call')).toBe('⚙ ');
   });
 
   it('returns empty string for unknown event types', () => {
