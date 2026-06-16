@@ -785,3 +785,37 @@ Rewrite StatusBar.tsx to segment-based priority layout with width budget (buildS
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Backend EngineApi fixes + TUI brand logo + integration tests
+
+**Date**: 2026-06-16
+**Task**: Backend EngineApi fixes + TUI brand logo + integration tests
+**Branch**: `feat/statusbar-brand-logo`
+
+### Summary
+
+Fixed 5 EngineApi defects (search_memory zero-vector, get_index_state hardcoded counts, read include_semantic, error handling, unit tests). Added TUI ◆ UC brand logo. Added 15 storage integration tests with Qdrant scope field. Updated specs with BLAKE3 limitation and incremental count caveats. PR #30 created.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b0db40` | (see git log) |
+| `ccc0b4f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
