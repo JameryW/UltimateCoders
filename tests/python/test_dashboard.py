@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ultimate_coders.agent.orchestrator import Orchestrator
@@ -1283,3 +1283,333 @@ class TestEventsAPIFilter:
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 2
+
+
+# ── Dashboard NATS Integration Tests ──────────────────────────
+
+
+class TestDashboardNatsSubmit:
+    """Test Dashboard submit_task with NATS publisher (no direct Orchestrator call)."""
+
+    def test_submit_via_nats_publisher(self):
+        """When nats_publisher is set, submit uses publish_submit instead of Orchestrator."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        # Mock nats_publisher with publish_submit
+        mock_publisher = MagicMock()
+        mock_publisher.publish_submit = AsyncMock()
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Fix the bug", "project_id": "proj-1"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["status"] == "Planning"
+        assert data["subtask_count"] == 0
+        assert "task_id" in data
+        # Verify publish_submit was called with correct args
+        mock_publisher.publish_submit.assert_called_once()
+        call_kwargs = mock_publisher.publish_submit.call_args
+        assert call_kwargs.kwargs["description"] == "Fix the bug"
+        assert call_kwargs.kwargs["project_id"] == "proj-1"
+
+    def test_submit_nats_fallback_on_failure(self):
+        """When NATS publish_submit fails, falls back to direct Orchestrator call."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        t = Task(description="Fix the bug", project_id="proj-1", status=TaskStatus.IN_PROGRESS)
+        orch.submit_task = lambda *a, **kw: _async_return(t)
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_submit = AsyncMock(side_effect=ConnectionError("NATS down"))
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Fix the bug", "project_id": "proj-1"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Falls back to Orchestrator, so status is from the task
+        assert data["task_id"] == t.id
+
+    def test_submit_no_nats_no_orchestrator(self):
+        """Without NATS or Orchestrator, submit returns 503."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        dashboard = DashboardApp(None)
+        client = TestClient(dashboard._app)
+
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Do something"},
+        )
+        assert response.status_code == 503
+
+
+class TestDashboardNatsPauseResume:
+    """Test Dashboard pause/resume with NATS publisher."""
+
+    def test_pause_via_nats_publisher(self):
+        """When nats_publisher is set, pause publishes event via publish_event."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        mock_publisher = MagicMock()
+        mock_publisher.publish_event = AsyncMock()
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post("/dashboard/api/tasks/task-1/pause")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["status"] == "paused"
+        mock_publisher.publish_event.assert_called_once()
+        call_kwargs = mock_publisher.publish_event.call_args
+        assert call_kwargs.kwargs["event_type"] == "task_pause"
+        assert call_kwargs.kwargs["task_id"] == "task-1"
+
+    def test_resume_via_nats_publisher(self):
+        """When nats_publisher is set, resume publishes event via publish_event."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        mock_publisher = MagicMock()
+        mock_publisher.publish_event = AsyncMock()
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post("/dashboard/api/tasks/task-1/resume")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["status"] == "in_progress"
+        mock_publisher.publish_event.assert_called_once()
+        call_kwargs = mock_publisher.publish_event.call_args
+        assert call_kwargs.kwargs["event_type"] == "task_resume"
+        assert call_kwargs.kwargs["task_id"] == "task-1"
+
+    def test_pause_nats_fallback_on_failure(self):
+        """When NATS publish_event fails for pause, falls back to Orchestrator."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        t = Task(description="Test task", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t.id] = t
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_event = AsyncMock(side_effect=ConnectionError("NATS down"))
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post(f"/dashboard/api/tasks/{t.id}/pause")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Falls back to Orchestrator.pause_task
+        assert orch.tasks[t.id].status == TaskStatus.PAUSED
+
+    def test_resume_nats_fallback_on_failure(self):
+        """When NATS publish_event fails for resume, falls back to Orchestrator."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        t = Task(description="Test task", status=TaskStatus.PAUSED)
+        orch.tasks[t.id] = t
+
+        mock_publisher = MagicMock()
+        mock_publisher.publish_event = AsyncMock(side_effect=ConnectionError("NATS down"))
+        dashboard = DashboardApp(orch, nats_publisher=mock_publisher)
+        client = TestClient(dashboard._app)
+
+        response = client.post(f"/dashboard/api/tasks/{t.id}/resume")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Falls back to Orchestrator.resume_task
+        assert orch.tasks[t.id].status == TaskStatus.IN_PROGRESS
+
+
+class TestDashboardNatsEventHandling:
+    """Test Dashboard NATS event queue and SSE merging."""
+
+    def test_handle_nats_event_valid_payload(self):
+        """_handle_nats_event pushes valid events to the queue."""
+        import asyncio
+
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        msg = MagicMock()
+        msg.data = json.dumps({
+            "type": "subtask_completed",
+            "task_id": "task-1",
+            "subtask_id": "st-1",
+            "data": {"success": True},
+        }).encode("utf-8")
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(dashboard._handle_nats_event(msg))
+        finally:
+            loop.close()
+
+        # Event should be in the queue
+        assert not dashboard._nats_event_queue.empty()
+        event = dashboard._nats_event_queue.get_nowait()
+        assert event["type"] == "subtask_completed"
+        assert event["task_id"] == "task-1"
+        assert event["subtask_id"] == "st-1"
+
+    def test_handle_nats_event_invalid_json(self):
+        """_handle_nats_event handles invalid JSON gracefully."""
+        import asyncio
+
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        msg = MagicMock()
+        msg.data = b"not valid json"
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(dashboard._handle_nats_event(msg))
+        finally:
+            loop.close()
+
+        # Queue should remain empty
+        assert dashboard._nats_event_queue.empty()
+
+    def test_handle_nats_event_minimal_payload(self):
+        """_handle_nats_event handles payload with only required fields."""
+        import asyncio
+
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        msg = MagicMock()
+        msg.data = json.dumps({
+            "type": "task_submitted",
+            "task_id": "task-1",
+        }).encode("utf-8")
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(dashboard._handle_nats_event(msg))
+        finally:
+            loop.close()
+
+        event = dashboard._nats_event_queue.get_nowait()
+        assert event["type"] == "task_submitted"
+        assert event["task_id"] == "task-1"
+        # subtask_id and data should not be present
+        assert "subtask_id" not in event
+        assert "data" not in event
+
+    def test_nats_subject_constants(self):
+        """Dashboard NATS subject constants match nats_worker.py."""
+        from ultimate_coders.dashboard.app import (
+            NATS_SUBJECT_HEARTBEAT,
+            NATS_SUBJECT_TASK_EVENT,
+            NATS_SUBJECT_TASK_SUBMIT,
+            NATS_SUBJECT_TASK_UPDATE,
+        )
+
+        assert NATS_SUBJECT_TASK_SUBMIT == "uc.task.submit"
+        assert NATS_SUBJECT_TASK_UPDATE == "uc.task.update"
+        assert NATS_SUBJECT_TASK_EVENT == "uc.task.event"
+        assert NATS_SUBJECT_HEARTBEAT == "uc.heartbeat"
+
+    def test_dashboard_without_nats_backward_compat(self):
+        """Dashboard without NATS publisher/client works exactly as before."""
+        from fastapi.testclient import TestClient
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        t = Task(description="Test task", status=TaskStatus.IN_PROGRESS)
+        orch.tasks[t.id] = t
+        orch.submit_task = lambda *a, **kw: _async_return(t)
+
+        # No NATS publisher or client
+        dashboard = DashboardApp(orch)
+        assert dashboard._nats_publisher is None
+        assert dashboard._nats_client is None
+
+        client = TestClient(dashboard._app)
+
+        # Submit should use direct Orchestrator call
+        response = client.post(
+            "/dashboard/api/tasks/submit",
+            json={"description": "Test task"},
+        )
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+        # Pause should use direct Orchestrator call
+        response = client.post(f"/dashboard/api/tasks/{t.id}/pause")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+
+class TestDashboardNatsEventQueueFull:
+    """Test Dashboard NATS event queue behavior when full."""
+
+    def test_event_queue_drops_when_full(self):
+        """When the NATS event queue is full, events are dropped with a warning."""
+        import asyncio
+
+        from ultimate_coders.dashboard.app import DashboardApp
+
+        orch = _make_orchestrator()
+        dashboard = DashboardApp(orch)
+
+        # Fill the queue to capacity (default maxsize=0 = unlimited, so
+        # we create a bounded queue for this test)
+        dashboard._nats_event_queue = asyncio.Queue(maxsize=1)
+
+        msg1 = MagicMock()
+        msg1.data = json.dumps({
+            "type": "event_1",
+            "task_id": "task-1",
+        }).encode("utf-8")
+
+        msg2 = MagicMock()
+        msg2.data = json.dumps({
+            "type": "event_2",
+            "task_id": "task-1",
+        }).encode("utf-8")
+
+        loop = asyncio.new_event_loop()
+        try:
+            # First event fills the queue
+            loop.run_until_complete(dashboard._handle_nats_event(msg1))
+            assert dashboard._nats_event_queue.qsize() == 1
+
+            # Second event should be dropped (QueueFull)
+            loop.run_until_complete(dashboard._handle_nats_event(msg2))
+            # Queue should still have only 1 item
+            assert dashboard._nats_event_queue.qsize() == 1
+        finally:
+            loop.close()
