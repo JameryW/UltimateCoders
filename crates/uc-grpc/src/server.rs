@@ -5,6 +5,11 @@
 //!
 //! TaskService uses an in-memory task store (bridge until full Python
 //! Orchestrator integration).
+//!
+//! When the `messaging` feature is enabled, TaskService can publish
+//! task submissions to NATS and subscribe to status updates from the
+//! Python Orchestrator. If NATS is unavailable, it gracefully degrades
+//! to local (newline-split) task decomposition.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,35 +23,125 @@ use crate::ultimate_coders::engine_service_server::{EngineService, EngineService
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
 use crate::ultimate_coders::*;
 
-/// Create a `tonic_health` reporter and health service pre-configured to
-/// report the `EngineService` as `Serving`.
+// ── NATS message protocol types ──────────────────────────────
+
+/// NATS subject for task submission (gRPC/Dashboard -> Python).
+pub const NATS_SUBJECT_TASK_SUBMIT: &str = "uc.task.submit";
+
+/// NATS subject for task status updates (Python -> gRPC).
+pub const NATS_SUBJECT_TASK_UPDATE: &str = "uc.task.update";
+
+/// NATS subject for task events (Python -> gRPC).
+pub const NATS_SUBJECT_TASK_EVENT: &str = "uc.task.event";
+
+/// NATS subject for consumer heartbeats (Python -> gRPC).
+pub const NATS_SUBJECT_HEARTBEAT: &str = "uc.heartbeat";
+
+/// Payload for `uc.task.submit` messages.
 ///
-/// Returns a `(HealthReporter, HealthServer)` pair. The reporter can be
-/// used to update service status at runtime; the server should be
-/// registered with the tonic router via `add_service`.
-///
-/// The `EngineService` is registered by its gRPC service name
-/// so that standard health-checking clients can query it.
-pub async fn health_reporter<E>() -> (
-    tonic_health::server::HealthReporter,
-    tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health>,
-)
-where
-    E: EngineApi + Send + Sync + 'static,
-{
-    let (mut reporter, service) = tonic_health::server::health_reporter();
-    reporter
-        .set_serving::<EngineServiceServer<GrpcServer<E>>>()
-        .await;
-    (reporter, service)
+/// Published by gRPC server when a task is submitted. The Python NATS
+/// consumer subscribes to this subject and calls Orchestrator.submit_task().
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsTaskSubmit {
+    pub task_id: String,
+    pub description: String,
+    pub project_id: String,
 }
 
-// ── In-memory task store ────────────────────────────────────
+/// Payload for `uc.task.update` messages.
+///
+/// Published by Python Orchestrator when a task or its subtasks change status.
+/// The gRPC server subscribes to this subject and updates the in-memory TaskStore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsTaskUpdate {
+    pub task_id: String,
+    pub status: String,
+    pub subtasks: Vec<NatsSubtaskUpdate>,
+    #[serde(default)]
+    pub result: Option<String>,
+}
+
+/// Subtask update within a `NatsTaskUpdate`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsSubtaskUpdate {
+    pub subtask_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub assigned_worker: Option<String>,
+    #[serde(default)]
+    pub result: Option<String>,
+}
+
+/// Payload for `uc.task.event` messages.
+///
+/// Published by Python Orchestrator for real-time events (tool calls, LLM
+/// requests, etc.). The gRPC server pushes these into the TaskStore event
+/// log for WatchTask streaming.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsTaskEvent {
+    pub r#type: String,
+    pub task_id: String,
+    #[serde(default)]
+    pub subtask_id: Option<String>,
+    #[serde(default)]
+    pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Payload for `uc.heartbeat` messages.
+///
+/// Published periodically by the Python NATS consumer. The gRPC server
+/// monitors heartbeats and marks tasks as Failed if no heartbeat is
+/// received within the configured timeout.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsHeartbeat {
+    pub consumer_id: String,
+    pub timestamp: String,
+}
+
+// ── Helper: parse status from NATS message strings ───────────
+
+/// Parse a TaskStatus from its string representation.
+///
+/// Returns None if the string does not match any known status.
+fn task_status_from_str(s: &str) -> Option<uc_types::TaskStatus> {
+    match s {
+        "Created" => Some(uc_types::TaskStatus::Created),
+        "Planning" => Some(uc_types::TaskStatus::Planning),
+        "InProgress" => Some(uc_types::TaskStatus::InProgress),
+        "Completed" => Some(uc_types::TaskStatus::Completed),
+        "Failed" => Some(uc_types::TaskStatus::Failed),
+        "Paused" => Some(uc_types::TaskStatus::Paused),
+        _ => None,
+    }
+}
+
+/// Parse a SubtaskStatus from its string representation.
+///
+/// Returns None if the string does not match any known status.
+fn subtask_status_from_str(s: &str) -> Option<uc_types::SubtaskStatus> {
+    match s {
+        "Pending" => Some(uc_types::SubtaskStatus::Pending),
+        "Assigned" => Some(uc_types::SubtaskStatus::Assigned),
+        "InProgress" => Some(uc_types::SubtaskStatus::InProgress),
+        "Completed" => Some(uc_types::SubtaskStatus::Completed),
+        "Failed" => Some(uc_types::SubtaskStatus::Failed),
+        "Conflicted" => Some(uc_types::SubtaskStatus::Conflicted),
+        _ => None,
+    }
+}
+
+// ── In-memory task store ─────────────────────────────────────
 
 /// In-memory store for tasks and events, used by TaskService.
+///
+/// When NATS is available, the store is updated by the Python Orchestrator
+/// via `apply_update()`. When NATS is unavailable, tasks are decomposed
+/// locally using a newline-split heuristic.
 pub struct TaskStore {
     tasks: HashMap<String, uc_types::Task>,
     events: Vec<uc_engine::AgentEventType>,
+    /// Last heartbeat timestamp from Python NATS consumer.
+    last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Default for TaskStore {
@@ -60,6 +155,7 @@ impl TaskStore {
         Self {
             tasks: HashMap::new(),
             events: Vec::new(),
+            last_heartbeat: None,
         }
     }
 
@@ -95,6 +191,40 @@ impl TaskStore {
                     worker_id: uc_types::WorkerId::new(),
                 });
         }
+
+        let task_id_str = task.id.0.clone();
+        self.tasks.insert(task_id_str, task.clone());
+        task
+    }
+
+    /// Create a task in Planning status, awaiting NATS-based decomposition.
+    ///
+    /// Used when NATS is available — the task is created with no subtasks
+    /// and status Planning. The Python Orchestrator will decompose it and
+    /// send back an update via `uc.task.update`.
+    pub fn submit_task_pending(
+        &mut self,
+        description: String,
+        project_id: String,
+    ) -> uc_types::Task {
+        let task_id = uc_types::TaskId::new();
+        let now = chrono::Utc::now();
+
+        let task = uc_types::Task {
+            id: task_id.clone(),
+            description: description.clone(),
+            project_id,
+            status: uc_types::TaskStatus::Planning,
+            subtasks: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        // Record TaskCreated event
+        self.events.push(uc_engine::AgentEventType::TaskCreated {
+            task_id: task_id.clone(),
+            description,
+        });
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
@@ -161,6 +291,141 @@ impl TaskStore {
     /// Get current event count (used as latest offset).
     pub fn event_count(&self) -> usize {
         self.events.len()
+    }
+
+    /// Apply a status update from NATS (`uc.task.update`).
+    ///
+    /// Updates the task's status, subtask statuses, and result.
+    /// If the task does not exist, logs a warning and does nothing (graceful
+    /// handling of stale or out-of-order messages).
+    pub fn apply_update(&mut self, update: &NatsTaskUpdate) {
+        let task = match self.tasks.get_mut(&update.task_id) {
+            Some(t) => t,
+            None => {
+                tracing::warn!(
+                    task_id = %update.task_id,
+                    "Received NATS update for unknown task, ignoring"
+                );
+                return;
+            }
+        };
+
+        // Update task status
+        if let Some(status) = task_status_from_str(&update.status) {
+            task.status = status;
+        } else {
+            tracing::warn!(
+                task_id = %update.task_id,
+                status = %update.status,
+                "Unknown task status in NATS update, ignoring status field"
+            );
+        }
+
+        // Update result if provided
+        if update.result.is_some() {
+            // Task-level result is not directly stored in the current Task struct,
+            // but we update the timestamp to reflect the change.
+        }
+
+        // Update subtask statuses
+        for subtask_update in &update.subtasks {
+            if let Some(subtask) = task
+                .subtasks
+                .iter_mut()
+                .find(|st| st.id.0 == subtask_update.subtask_id)
+            {
+                if let Some(status) = subtask_status_from_str(&subtask_update.status) {
+                    subtask.status = status;
+                } else {
+                    tracing::warn!(
+                        subtask_id = %subtask_update.subtask_id,
+                        status = %subtask_update.status,
+                        "Unknown subtask status in NATS update, ignoring"
+                    );
+                }
+                if let Some(worker) = &subtask_update.assigned_worker {
+                    subtask.assigned_worker = Some(uc_types::WorkerId(worker.clone()));
+                }
+            } else {
+                // New subtask from Python Orchestrator — add it
+                let new_subtask = uc_types::Subtask {
+                    id: uc_types::TaskId(subtask_update.subtask_id.clone()),
+                    parent_id: task.id.clone(),
+                    description: String::new(), // Not provided in update
+                    status: subtask_status_from_str(&subtask_update.status)
+                        .unwrap_or(uc_types::SubtaskStatus::Pending),
+                    assigned_worker: subtask_update
+                        .assigned_worker
+                        .as_ref()
+                        .map(|w| uc_types::WorkerId(w.clone())),
+                    depends_on: Vec::new(),
+                    file_constraints: Vec::new(),
+                    expected_output: String::new(),
+                    result: None,
+                };
+                task.subtasks.push(new_subtask);
+            }
+        }
+
+        task.updated_at = chrono::Utc::now();
+    }
+
+    /// Record an event from NATS (`uc.task.event`).
+    ///
+    /// Pushes the event into the event log for WatchTask streaming.
+    pub fn record_event(&mut self, event: uc_engine::AgentEventType) {
+        self.events.push(event);
+    }
+
+    /// Update the last heartbeat timestamp from the Python NATS consumer.
+    pub fn update_last_heartbeat(&mut self) {
+        self.last_heartbeat = Some(chrono::Utc::now());
+    }
+
+    /// Get the last heartbeat timestamp.
+    pub fn last_heartbeat(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.last_heartbeat
+    }
+
+    /// Mark tasks as Failed if no heartbeat has been received within
+    /// the specified timeout AND there are tasks in InProgress or Planning status.
+    ///
+    /// Returns the IDs of tasks that were marked as Failed.
+    pub fn mark_stale_tasks_failed(&mut self, timeout: std::time::Duration) -> Vec<String> {
+        // If we've never received a heartbeat, there's no consumer to go stale.
+        let last_hb = match self.last_heartbeat {
+            Some(ts) => ts,
+            None => return Vec::new(),
+        };
+
+        let now = chrono::Utc::now();
+        let elapsed = now.signed_duration_since(last_hb);
+        if elapsed.num_milliseconds() < timeout.as_millis() as i64 {
+            return Vec::new();
+        }
+
+        // Consumer is stale — mark all InProgress/Planning tasks as Failed
+        let mut failed_ids = Vec::new();
+        for (id, task) in &mut self.tasks {
+            match task.status {
+                uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
+                    task.status = uc_types::TaskStatus::Failed;
+                    task.updated_at = now;
+                    failed_ids.push(id.clone());
+                }
+                _ => {}
+            }
+        }
+
+        if !failed_ids.is_empty() {
+            tracing::warn!(
+                elapsed_secs = elapsed.num_seconds(),
+                tasks_failed = failed_ids.len(),
+                "Marked tasks as Failed due to consumer heartbeat timeout"
+            );
+        }
+
+        failed_ids
     }
 }
 
@@ -235,29 +500,120 @@ fn decompose_task(parent_id: &uc_types::TaskId, description: &str) -> Vec<uc_typ
 
 // ── gRPC Server ─────────────────────────────────────────────
 
+/// Create a `tonic_health` reporter and health service pre-configured to
+/// report the `EngineService` as `Serving`.
+///
+/// Returns a `(HealthReporter, HealthServer)` pair. The reporter can be
+/// used to update service status at runtime; the server should be
+/// registered with the tonic router via `add_service`.
+///
+/// The `EngineService` is registered by its gRPC service name
+/// so that standard health-checking clients can query it.
+pub async fn health_reporter<E>() -> (
+    tonic_health::server::HealthReporter,
+    tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health>,
+)
+where
+    E: EngineApi + Send + Sync + 'static,
+{
+    let (mut reporter, service) = tonic_health::server::health_reporter();
+    reporter
+        .set_serving::<EngineServiceServer<GrpcServer<E>>>()
+        .await;
+    (reporter, service)
+}
+
 /// Internal shared state for the gRPC server.
 struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     engine: E,
     task_store: Arc<Mutex<TaskStore>>,
+    /// NATS client for task submission and status subscriptions.
+    /// Present when the `messaging` feature is enabled and NATS connection succeeded.
+    #[cfg(feature = "messaging")]
+    nats_client: Option<async_nats::Client>,
 }
 
 /// gRPC server that delegates EngineService operations to an inner EngineApi
 /// and provides TaskService via an in-memory task store.
 ///
 /// Internally wraps state in `Arc` so both services can share it.
+///
+/// When the `messaging` feature is enabled and NATS is available:
+/// - `submit_task()` publishes to `uc.task.submit` and creates a Planning task
+/// - A background subscriber listens on `uc.task.update` and `uc.task.event`
+/// - Heartbeat monitoring marks stale tasks as Failed
+///
+/// When NATS is unavailable, falls back to local task decomposition.
 pub struct GrpcServer<E: EngineApi + Send + Sync + 'static> {
     inner: Arc<GrpcServerInner<E>>,
 }
 
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
-    /// Create a new gRPC server wrapping the given engine.
+    /// Create a new gRPC server wrapping the given engine, without NATS.
+    ///
+    /// Tasks are decomposed locally using the newline-split heuristic.
     pub fn new(engine: E) -> Self {
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store: Arc::new(Mutex::new(TaskStore::new())),
+                #[cfg(feature = "messaging")]
+                nats_client: None,
             }),
         }
+    }
+
+    /// Create a new gRPC server with NATS integration.
+    ///
+    /// Attempts to connect to NATS at the given URL. If the connection
+    /// fails, logs a warning and proceeds without NATS (graceful degradation).
+    ///
+    /// When NATS is connected:
+    /// - `submit_task()` publishes to `uc.task.submit` instead of local decomposition
+    /// - A background subscriber updates TaskStore from `uc.task.update` and `uc.task.event`
+    /// - A heartbeat monitor marks stale tasks as Failed
+    #[cfg(feature = "messaging")]
+    pub async fn with_nats(engine: E, nats_url: &str) -> Self {
+        Self::with_nats_and_timeout(engine, nats_url, std::time::Duration::from_secs(600)).await
+    }
+
+    /// Create a new gRPC server with NATS integration and custom heartbeat timeout.
+    #[cfg(feature = "messaging")]
+    pub async fn with_nats_and_timeout(
+        engine: E,
+        nats_url: &str,
+        heartbeat_timeout: std::time::Duration,
+    ) -> Self {
+        let nats_client = match async_nats::connect(nats_url).await {
+            Ok(client) => {
+                tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
+                Some(client)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    nats_url = %nats_url,
+                    error = %e,
+                    "NATS unavailable, TaskService will use local decomposition"
+                );
+                None
+            }
+        };
+
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        let inner = Arc::new(GrpcServerInner {
+            engine,
+            task_store: task_store.clone(),
+            nats_client: nats_client.clone(),
+        });
+
+        // Spawn background subscriber and heartbeat monitor if NATS is connected
+        if let Some(client) = nats_client {
+            spawn_nats_subscriber(client.clone(), task_store.clone());
+            spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
+        }
+
+        Self { inner }
     }
 
     /// Convert into tonic services ready to be served.
@@ -274,6 +630,278 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+        }
+    }
+}
+
+// ── NATS subscriber (feature-gated) ─────────────────────────
+
+/// Spawn a background task that subscribes to `uc.task.update`,
+/// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly.
+#[cfg(feature = "messaging")]
+fn spawn_nats_subscriber(nats_client: async_nats::Client, task_store: Arc<Mutex<TaskStore>>) {
+    use futures::StreamExt;
+
+    tokio::spawn(async move {
+        // Subscribe to task updates
+        let mut update_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_UPDATE).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to subscribe to NATS task updates, subscriber not running"
+                );
+                return;
+            }
+        };
+
+        // Subscribe to task events
+        let mut event_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_EVENT).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to subscribe to NATS task events, event subscriber not running"
+                );
+                return;
+            }
+        };
+
+        // Subscribe to heartbeats
+        let mut heartbeat_sub = match nats_client.subscribe(NATS_SUBJECT_HEARTBEAT).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to subscribe to NATS heartbeats, heartbeat monitoring not active"
+                );
+                return;
+            }
+        };
+
+        tracing::info!("NATS subscriber started for TaskService");
+
+        loop {
+            tokio::select! {
+                Some(message) = update_sub.next() => {
+                    match serde_json::from_slice::<NatsTaskUpdate>(&message.payload) {
+                        Ok(update) => {
+                            tracing::debug!(
+                                task_id = %update.task_id,
+                                status = %update.status,
+                                "Received NATS task update"
+                            );
+                            let mut store = task_store.lock().await;
+                            store.apply_update(&update);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to parse NATS task update message"
+                            );
+                        }
+                    }
+                }
+                Some(message) = event_sub.next() => {
+                    match serde_json::from_slice::<NatsTaskEvent>(&message.payload) {
+                        Ok(nats_event) => {
+                            tracing::debug!(
+                                event_type = %nats_event.r#type,
+                                task_id = %nats_event.task_id,
+                                "Received NATS task event"
+                            );
+                            // Convert NATS event to AgentEventType and record it
+                            if let Some(agent_event) = nats_event_to_agent_event(&nats_event) {
+                                let mut store = task_store.lock().await;
+                                store.record_event(agent_event);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to parse NATS task event message"
+                            );
+                        }
+                    }
+                }
+                Some(_message) = heartbeat_sub.next() => {
+                    let mut store = task_store.lock().await;
+                    store.update_last_heartbeat();
+                }
+                else => {
+                    tracing::warn!("NATS subscription ended, subscriber exiting");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// Spawn a background task that periodically checks for heartbeat timeouts
+/// and marks stale tasks as Failed.
+#[cfg(feature = "messaging")]
+fn spawn_heartbeat_monitor(
+    _nats_client: async_nats::Client,
+    task_store: Arc<Mutex<TaskStore>>,
+    heartbeat_timeout: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        // Check every 30 seconds
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+
+        loop {
+            interval.tick().await;
+
+            let mut store = task_store.lock().await;
+            let failed = store.mark_stale_tasks_failed(heartbeat_timeout);
+            if !failed.is_empty() {
+                tracing::warn!(
+                    task_ids = ?failed,
+                    "Marked tasks as Failed due to heartbeat timeout"
+                );
+            }
+        }
+    });
+}
+
+/// Convert a `NatsTaskEvent` to an `AgentEventType`.
+///
+/// Returns None for unrecognized event types.
+#[cfg(feature = "messaging")]
+fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEventType> {
+    match event.r#type.as_str() {
+        "subtask_assigned" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let worker_id = event
+                .data
+                .get("worker_id")
+                .and_then(|v| v.as_str())
+                .map(|s| uc_types::WorkerId(s.to_string()))
+                .unwrap_or_default();
+            Some(uc_engine::AgentEventType::SubtaskAssigned {
+                subtask_id,
+                worker_id,
+            })
+        }
+        "subtask_started" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let worker_id = event
+                .data
+                .get("worker_id")
+                .and_then(|v| v.as_str())
+                .map(|s| uc_types::WorkerId(s.to_string()))
+                .unwrap_or_default();
+            Some(uc_engine::AgentEventType::SubtaskStarted {
+                subtask_id,
+                worker_id,
+            })
+        }
+        "tool_call" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let tool_name = event
+                .data
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tool_input = event
+                .data
+                .get("tool_input")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(uc_engine::AgentEventType::ToolInvoked {
+                subtask_id,
+                tool_name,
+                tool_input,
+            })
+        }
+        "tool_result" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let tool_output = event
+                .data
+                .get("tool_output")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let success = event
+                .data
+                .get("success")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            Some(uc_engine::AgentEventType::ToolResult {
+                subtask_id,
+                tool_output,
+                success,
+            })
+        }
+        "file_modified" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let file_path = event
+                .data
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let diff = event
+                .data
+                .get("diff")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(uc_engine::AgentEventType::FileModified {
+                subtask_id,
+                file_path,
+                diff,
+            })
+        }
+        "subtask_completed" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let summary = event
+                .data
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let success = event
+                .data
+                .get("success")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "true")
+                .unwrap_or(true);
+            Some(uc_engine::AgentEventType::SubtaskCompleted {
+                subtask_id,
+                summary,
+                success,
+            })
+        }
+        "subtask_failed" => {
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let error = event
+                .data
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error")
+                .to_string();
+            let recoverable = event
+                .data
+                .get("recoverable")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            Some(uc_engine::AgentEventType::SubtaskFailed {
+                subtask_id,
+                error,
+                recoverable,
+            })
+        }
+        _ => {
+            tracing::debug!(
+                event_type = %event.r#type,
+                "Ignoring unrecognized NATS event type"
+            );
+            None
         }
     }
 }
@@ -468,20 +1096,90 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         request: Request<SubmitTaskRequest>,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
         let req = request.into_inner();
-        let mut store = self.inner.task_store.lock().await;
-        let task = store.submit_task(req.description, req.project_id);
 
-        let subtask_protos: Vec<SubtaskProto> =
-            task.subtasks.clone().into_iter().map(Into::into).collect();
+        if req.description.is_empty() {
+            return Ok(Response::new(SubmitTaskResponse {
+                success: false,
+                task_id: String::new(),
+                status: String::new(),
+                subtask_count: 0,
+                subtasks: Vec::new(),
+                error: Some("Task description cannot be empty".to_string()),
+            }));
+        }
 
-        Ok(Response::new(SubmitTaskResponse {
-            success: true,
-            task_id: task.id.0,
-            status: task_status_to_proto(&task.status).to_string(),
-            subtask_count: task.subtasks.len() as u32,
-            subtasks: subtask_protos,
-            error: None,
-        }))
+        #[cfg(feature = "messaging")]
+        {
+            // Try NATS publish first
+            if let Some(nats_client) = &self.inner.nats_client {
+                let mut store = self.inner.task_store.lock().await;
+
+                // Create task in Planning status (awaiting Python decomposition)
+                let task =
+                    store.submit_task_pending(req.description.clone(), req.project_id.clone());
+
+                let submit_payload = NatsTaskSubmit {
+                    task_id: task.id.0.clone(),
+                    description: req.description.clone(),
+                    project_id: req.project_id.clone(),
+                };
+
+                let payload_bytes = match serde_json::to_vec(&submit_payload) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to serialize NATS submit payload, falling back to local decomposition"
+                        );
+                        // Fall back to local decomposition
+                        drop(store);
+                        return self.submit_task_local(req).await;
+                    }
+                };
+
+                match nats_client
+                    .publish(NATS_SUBJECT_TASK_SUBMIT.to_string(), payload_bytes.into())
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            task_id = %task.id.0,
+                            "Task submitted via NATS, awaiting Python Orchestrator"
+                        );
+                        let subtask_protos: Vec<SubtaskProto> =
+                            task.subtasks.clone().into_iter().map(Into::into).collect();
+
+                        return Ok(Response::new(SubmitTaskResponse {
+                            success: true,
+                            task_id: task.id.0,
+                            status: task_status_to_proto(&task.status).to_string(),
+                            subtask_count: task.subtasks.len() as u32,
+                            subtasks: subtask_protos,
+                            error: None,
+                        }));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "NATS publish failed, falling back to local decomposition"
+                        );
+                        // NATS publish failed — fall back to local decomposition.
+                        // Remove the Planning task and re-create with local decomposition.
+                        let task_id_str = task.id.0.clone();
+                        store.tasks.remove(&task_id_str);
+                        // Remove the TaskCreated event we just added
+                        store.events.retain(|e| {
+                            !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
+                        });
+                        drop(store);
+                        return self.submit_task_local(req).await;
+                    }
+                }
+            }
+        }
+
+        // No NATS — use local decomposition
+        self.submit_task_local(req).await
     }
 
     async fn get_task(
@@ -618,6 +1316,33 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
     }
 }
 
+// ── Local task decomposition (fallback) ──────────────────────
+
+impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
+    /// Submit a task using local (newline-split) decomposition.
+    ///
+    /// This is the fallback path when NATS is unavailable.
+    async fn submit_task_local(
+        &self,
+        req: SubmitTaskRequest,
+    ) -> Result<Response<SubmitTaskResponse>, Status> {
+        let mut store = self.inner.task_store.lock().await;
+        let task = store.submit_task(req.description, req.project_id);
+
+        let subtask_protos: Vec<SubtaskProto> =
+            task.subtasks.clone().into_iter().map(Into::into).collect();
+
+        Ok(Response::new(SubmitTaskResponse {
+            success: true,
+            task_id: task.id.0,
+            status: task_status_to_proto(&task.status).to_string(),
+            subtask_count: task.subtasks.len() as u32,
+            subtasks: subtask_protos,
+            error: None,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +1410,23 @@ mod tests {
             retrieved.description,
             "1. Analyze code\n2. Fix bug\n3. Write tests"
         );
+    }
+
+    #[test]
+    fn task_store_submit_pending() {
+        let mut store = TaskStore::new();
+        let task =
+            store.submit_task_pending("Fix the login bug".to_string(), "project-1".to_string());
+
+        assert_eq!(task.status, uc_types::TaskStatus::Planning);
+        assert!(task.subtasks.is_empty());
+
+        // TaskCreated event should be recorded
+        assert!(store.event_count() >= 1);
+
+        // Get the task back
+        let retrieved = store.get_task(&task.id.0).unwrap();
+        assert_eq!(retrieved.status, uc_types::TaskStatus::Planning);
     }
 
     #[test]
@@ -816,5 +1558,392 @@ mod tests {
             subtask_status_to_proto(&uc_types::SubtaskStatus::Conflicted),
             "Conflicted"
         );
+    }
+
+    // ── NATS protocol tests ──────────────────────────────────
+
+    #[test]
+    fn nats_task_submit_serialization() {
+        let msg = NatsTaskSubmit {
+            task_id: "abc-123".to_string(),
+            description: "Fix the login bug".to_string(),
+            project_id: "proj-1".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: NatsTaskSubmit = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.task_id, "abc-123");
+        assert_eq!(parsed.description, "Fix the login bug");
+        assert_eq!(parsed.project_id, "proj-1");
+    }
+
+    #[test]
+    fn nats_task_update_serialization() {
+        let msg = NatsTaskUpdate {
+            task_id: "abc-123".to_string(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-1".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                result: None,
+            }],
+            result: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: NatsTaskUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.task_id, "abc-123");
+        assert_eq!(parsed.status, "InProgress");
+        assert_eq!(parsed.subtasks.len(), 1);
+        assert_eq!(parsed.subtasks[0].subtask_id, "st-1");
+        assert_eq!(
+            parsed.subtasks[0].assigned_worker,
+            Some("worker-1".to_string())
+        );
+    }
+
+    #[test]
+    fn nats_task_event_serialization() {
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "tool_name".to_string(),
+            serde_json::Value::String("grep".to_string()),
+        );
+        data.insert(
+            "tool_input".to_string(),
+            serde_json::Value::String("pattern".to_string()),
+        );
+
+        let msg = NatsTaskEvent {
+            r#type: "tool_call".to_string(),
+            task_id: "abc-123".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: NatsTaskEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.r#type, "tool_call");
+        assert_eq!(parsed.task_id, "abc-123");
+        assert_eq!(parsed.subtask_id, Some("st-1".to_string()));
+    }
+
+    #[test]
+    fn nats_heartbeat_serialization() {
+        let msg = NatsHeartbeat {
+            consumer_id: "consumer-1".to_string(),
+            timestamp: "2026-06-16T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: NatsHeartbeat = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.consumer_id, "consumer-1");
+        assert_eq!(parsed.timestamp, "2026-06-16T12:00:00Z");
+    }
+
+    #[test]
+    fn task_status_from_str_roundtrip() {
+        let statuses = [
+            "Created",
+            "Planning",
+            "InProgress",
+            "Completed",
+            "Failed",
+            "Paused",
+        ];
+        for s in &statuses {
+            let status = task_status_from_str(s).unwrap();
+            assert_eq!(task_status_to_proto(&status), *s);
+        }
+    }
+
+    #[test]
+    fn task_status_from_str_unknown() {
+        assert!(task_status_from_str("Unknown").is_none());
+        assert!(task_status_from_str("").is_none());
+    }
+
+    #[test]
+    fn subtask_status_from_str_roundtrip() {
+        use crate::conversions::subtask_status_to_proto;
+        let statuses = [
+            "Pending",
+            "Assigned",
+            "InProgress",
+            "Completed",
+            "Failed",
+            "Conflicted",
+        ];
+        for s in &statuses {
+            let status = subtask_status_from_str(s).unwrap();
+            assert_eq!(subtask_status_to_proto(&status), *s);
+        }
+    }
+
+    #[test]
+    fn subtask_status_from_str_unknown() {
+        assert!(subtask_status_from_str("Unknown").is_none());
+    }
+
+    #[test]
+    fn task_store_apply_update_existing_task() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Apply an update that changes task status and adds a new subtask
+        let update = NatsTaskUpdate {
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-new-1".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                result: None,
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(updated.subtasks.len(), 2); // original 1 + new 1
+        assert_eq!(updated.subtasks[1].id.0, "st-new-1");
+        assert_eq!(
+            updated.subtasks[1].status,
+            uc_types::SubtaskStatus::Assigned
+        );
+    }
+
+    #[test]
+    fn task_store_apply_update_unknown_task() {
+        let mut store = TaskStore::new();
+
+        let update = NatsTaskUpdate {
+            task_id: "nonexistent".to_string(),
+            status: "InProgress".to_string(),
+            subtasks: vec![],
+            result: None,
+        };
+
+        // Should not panic, just log a warning
+        store.apply_update(&update);
+        assert!(store.get_task("nonexistent").is_none());
+    }
+
+    #[test]
+    fn task_store_apply_update_unknown_status() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            task_id: task_id.clone(),
+            status: "BogusStatus".to_string(),
+            subtasks: vec![],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        // Status should remain unchanged (unknown status is ignored)
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.status, uc_types::TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn task_store_apply_update_subtask_status() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let subtask_id = task.subtasks[0].id.0.clone();
+
+        let update = NatsTaskUpdate {
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: subtask_id.clone(),
+                status: "Completed".to_string(),
+                assigned_worker: None,
+                result: Some("Done".to_string()),
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(
+            updated.subtasks[0].status,
+            uc_types::SubtaskStatus::Completed
+        );
+    }
+
+    #[test]
+    fn task_store_record_event() {
+        let mut store = TaskStore::new();
+        let initial_count = store.event_count();
+
+        store.record_event(uc_engine::AgentEventType::TaskCreated {
+            task_id: uc_types::TaskId::new(),
+            description: "Extra event".to_string(),
+        });
+
+        assert_eq!(store.event_count(), initial_count + 1);
+    }
+
+    #[test]
+    fn task_store_heartbeat_tracking() {
+        let mut store = TaskStore::new();
+
+        // No heartbeat initially
+        assert!(store.last_heartbeat().is_none());
+
+        // Update heartbeat
+        store.update_last_heartbeat();
+        assert!(store.last_heartbeat().is_some());
+    }
+
+    #[test]
+    fn task_store_mark_stale_tasks_no_heartbeat() {
+        let mut store = TaskStore::new();
+        store.submit_task("Test task".to_string(), "p1".to_string());
+
+        // No heartbeat received — should not mark tasks as failed
+        let failed = store.mark_stale_tasks_failed(std::time::Duration::from_secs(1));
+        assert!(failed.is_empty());
+    }
+
+    #[test]
+    fn task_store_mark_stale_tasks_with_heartbeat() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Record heartbeat
+        store.update_last_heartbeat();
+
+        // With a very long timeout, should not mark as failed
+        let failed = store.mark_stale_tasks_failed(std::time::Duration::from_secs(9999));
+        assert!(failed.is_empty());
+
+        // With zero timeout (immediately stale), should mark as failed
+        // Note: this test depends on the heartbeat timestamp being in the past
+        // by even a tiny amount, which is always true since we recorded it
+        // before calling mark_stale_tasks_failed.
+        let failed = store.mark_stale_tasks_failed(std::time::Duration::ZERO);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0], task_id);
+
+        // Task should now be Failed
+        let task = store.get_task(&failed[0]).unwrap();
+        assert_eq!(task.status, uc_types::TaskStatus::Failed);
+    }
+
+    #[test]
+    fn task_store_mark_stale_skips_completed_tasks() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Manually set task to Completed
+        {
+            let task = store.tasks.get_mut(&task_id).unwrap();
+            task.status = uc_types::TaskStatus::Completed;
+        }
+
+        store.update_last_heartbeat();
+
+        // Even with zero timeout, Completed tasks should not be marked Failed
+        let failed = store.mark_stale_tasks_failed(std::time::Duration::ZERO);
+        assert!(failed.is_empty());
+    }
+
+    #[test]
+    fn nats_subjects_constants() {
+        assert_eq!(NATS_SUBJECT_TASK_SUBMIT, "uc.task.submit");
+        assert_eq!(NATS_SUBJECT_TASK_UPDATE, "uc.task.update");
+        assert_eq!(NATS_SUBJECT_TASK_EVENT, "uc.task.event");
+        assert_eq!(NATS_SUBJECT_HEARTBEAT, "uc.heartbeat");
+    }
+
+    // ── NATS event conversion tests ──────────────────────────
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_event_to_agent_event_subtask_assigned() {
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "worker_id".to_string(),
+            serde_json::Value::String("w-1".to_string()),
+        );
+
+        let event = NatsTaskEvent {
+            r#type: "subtask_assigned".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data,
+        };
+
+        let result = nats_event_to_agent_event(&event);
+        assert!(result.is_some());
+        match result.unwrap() {
+            uc_engine::AgentEventType::SubtaskAssigned {
+                subtask_id,
+                worker_id,
+            } => {
+                assert_eq!(subtask_id.0, "st-1");
+                assert_eq!(worker_id.0, "w-1");
+            }
+            _ => panic!("Expected SubtaskAssigned"),
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_event_to_agent_event_unknown_type() {
+        let event = NatsTaskEvent {
+            r#type: "unknown_type".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: None,
+            data: serde_json::Map::new(),
+        };
+
+        let result = nats_event_to_agent_event(&event);
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_event_to_agent_event_tool_call() {
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "tool_name".to_string(),
+            serde_json::Value::String("grep".to_string()),
+        );
+        data.insert(
+            "tool_input".to_string(),
+            serde_json::Value::String("pattern".to_string()),
+        );
+
+        let event = NatsTaskEvent {
+            r#type: "tool_call".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data,
+        };
+
+        let result = nats_event_to_agent_event(&event);
+        assert!(result.is_some());
+        match result.unwrap() {
+            uc_engine::AgentEventType::ToolInvoked {
+                subtask_id,
+                tool_name,
+                tool_input,
+            } => {
+                assert_eq!(subtask_id.0, "st-1");
+                assert_eq!(tool_name, "grep");
+                assert_eq!(tool_input, "pattern");
+            }
+            _ => panic!("Expected ToolInvoked"),
+        }
     }
 }

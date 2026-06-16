@@ -142,9 +142,27 @@ def main():
         )
 
     # Build Orchestrator (no engine — fallback mode)
+    # Optionally connect NATS publisher for gRPC TaskStore sync
+    nats_publisher = None
+    nats_url = os.environ.get("UC_NATS_URL", "")
+    if nats_url:
+        try:
+            import nats as nats_lib
+            from ultimate_coders.nats_worker import NatsPublisher
+
+            async def _connect_nats():
+                nc = await nats_lib.connect(nats_url)
+                return NatsPublisher(nc)
+
+            nats_publisher = asyncio.new_event_loop().run_until_complete(_connect_nats())
+            logger.info("NATS publisher connected at %s", nats_url)
+        except Exception:
+            logger.warning("NATS connection failed, running without TaskStore sync", exc_info=True)
+
     orch = Orchestrator(
         engine=None,
         llm_client=llm,
+        nats_publisher=nats_publisher,
     )
 
     # Build Worker with real LLM client + event emitter
@@ -169,8 +187,8 @@ def main():
 
     logger.info("Orchestrator + Worker created (engine=None, fallback mode)")
 
-    # Build Dashboard
-    dashboard = DashboardApp(orch)
+    # Build Dashboard (with NATS publisher for TaskStore sync)
+    dashboard = DashboardApp(orch, nats_publisher=nats_publisher)
 
     logger.info("Starting Dashboard on http://localhost:8080/dashboard/")
     dashboard.start(host="0.0.0.0", port=8080)

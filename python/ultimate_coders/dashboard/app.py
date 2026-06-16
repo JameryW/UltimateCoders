@@ -7,6 +7,16 @@ access to in-memory state.
 The frontend is a separate React SPA (dashboard/ directory) that
 connects to these API endpoints. Jinja2 templates and static file
 serving have been removed — the SPA is built and deployed independently.
+
+NATS integration (optional):
+    When a NATS client is provided, the Dashboard:
+    - Publishes task submit/pause/resume to NATS subjects so the
+      gRPC TaskStore stays in sync with TUI consumers.
+    - Subscribes to ``uc.task.event`` and merges those events into
+      the SSE stream, giving visibility into tasks submitted via
+      gRPC/TUI that are processed by the independent NATS consumer.
+    When NATS is unavailable, the Dashboard falls back to direct
+    Orchestrator calls (legacy mode).
 """
 
 from __future__ import annotations
@@ -14,10 +24,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -25,6 +37,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+# ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
+
+NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
+NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
+NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
+NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 
 
 class DashboardApp:
@@ -41,13 +60,31 @@ class DashboardApp:
         app.stop()
     """
 
-    def __init__(self, orchestrator: Any) -> None:
+    def __init__(
+        self,
+        orchestrator: Any,
+        nats_publisher: Any = None,
+        nats_client: Any = None,
+    ) -> None:
         """Create the dashboard app.
 
         Args:
             orchestrator: The Orchestrator instance to monitor.
+            nats_publisher: Optional NatsPublisher instance. When set,
+                task submit/pause/resume are routed through NATS so that
+                the gRPC TaskStore stays in sync with TUI consumers.
+                When None, falls back to direct Orchestrator calls (legacy mode).
+            nats_client: Optional nats-py Client instance. When set,
+                the Dashboard subscribes to ``uc.task.event`` and merges
+                those events into the SSE stream. This gives the Dashboard
+                visibility into tasks submitted via gRPC/TUI. When None,
+                only local TaskEventEmitter events are streamed.
         """
         self.orchestrator = orchestrator
+        self._nats_publisher = nats_publisher
+        self._nats_client = nats_client
+        self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._nats_subscriptions: list[Any] = []
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -104,8 +141,12 @@ class DashboardApp:
             """SSE endpoint: push real-time events + periodic full snapshots.
 
             Uses a hybrid approach:
-            - Immediate task events (from TaskEventEmitter) via 'task_event' SSE type
+            - Immediate task events from both the local TaskEventEmitter
+              AND NATS ``uc.task.event`` (if connected) via 'task_event' SSE type
             - Full state snapshot every 5 seconds via 'update' SSE type
+
+            When NATS is available, events from the independent NATS consumer
+            (e.g., tasks submitted via gRPC/TUI) are merged into the stream.
             """
             from sse_starlette.sse import EventSourceResponse
 
@@ -114,9 +155,9 @@ class DashboardApp:
                     if await request.is_disconnected():
                         break
 
-                    # Try to get a real-time event first (waits up to 5s)
+                    # Try to get a real-time event from local emitter first
                     if self.event_emitter is not None:
-                        event = await self.event_emitter.wait_for_event(timeout=5.0)
+                        event = await self.event_emitter.wait_for_event(timeout=1.0)
                         if event is not None:
                             # Also record in our local event log
                             self._event_log.appendleft(event.to_dict())
@@ -126,16 +167,33 @@ class DashboardApp:
                             }
                             continue  # Check for more events immediately
 
-                    # Timeout or no emitter: send full snapshot then wait
+                    # Check NATS event queue (non-blocking)
+                    if self._nats_client is not None:
+                        try:
+                            nats_event = self._nats_event_queue.get_nowait()
+                            if nats_event is not None:
+                                self._event_log.appendleft(nats_event)
+                                yield {
+                                    "event": "task_event",
+                                    "data": json.dumps(nats_event),
+                                }
+                                continue  # Check for more events immediately
+                        except asyncio.QueueEmpty:
+                            pass
+
+                    # Timeout or no events: send full snapshot then wait
                     snapshot = self._get_full_snapshot()
                     yield {
                         "event": "update",
                         "data": json.dumps(snapshot),
                     }
-                    # When no emitter is available, we must sleep to avoid
+                    # When no emitter and no NATS, we must sleep to avoid
                     # spinning the loop without any delay (infinite fast loop).
-                    if self.event_emitter is None:
+                    if self.event_emitter is None and self._nats_client is None:
                         await asyncio.sleep(5)
+                    else:
+                        # Short sleep to avoid busy-wait between snapshot intervals
+                        await asyncio.sleep(2)
 
             return EventSourceResponse(event_generator())
 
@@ -143,20 +201,17 @@ class DashboardApp:
 
         @app.post("/dashboard/api/tasks/submit")
         async def submit_task_api(request: Request):
-            """Submit a new code development task to the Orchestrator.
+            """Submit a new code development task.
+
+            When NATS is configured, publishes the task to ``uc.task.submit``
+            so it goes through the gRPC TaskStore → NATS → Python Orchestrator
+            pipeline (same path as TUI).  Otherwise falls back to direct
+            Orchestrator call (legacy mode, no TaskStore sync).
 
             Accepts a JSON body with:
             - description (required): Task description.
             - project_id (optional): Project/repository context.
-
-            Returns the created task with its ID and subtask list.
             """
-            orch = self.orchestrator
-            if orch is None:
-                return JSONResponse(
-                    {"success": False, "error": "Orchestrator not available"},
-                    status_code=503,
-                )
             try:
                 body = await request.json()
             except Exception:
@@ -174,6 +229,33 @@ class DashboardApp:
 
             project_id = body.get("project_id", "")
 
+            # ── NATS path ───────────────────────────────────────────
+            if self._nats_publisher is not None:
+                task_id = str(uuid4())
+                try:
+                    await self._nats_publisher.publish_submit(
+                        task_id=task_id,
+                        description=description,
+                        project_id=project_id,
+                    )
+                    return JSONResponse({
+                        "success": True,
+                        "task_id": task_id,
+                        "status": "Planning",
+                        "subtask_count": 0,
+                        "subtasks": [],
+                    })
+                except Exception as e:
+                    logger.warning("NATS publish failed: %s, falling back", e)
+
+            # ── Legacy direct-Orchestrator path ──────────────────────
+            orch = self.orchestrator
+            if orch is None:
+                return JSONResponse(
+                    {"success": False, "error": "Orchestrator not available"},
+                    status_code=503,
+                )
+
             try:
                 task = await orch.submit_task(description, project_id=project_id)
             except Exception as e:
@@ -183,8 +265,6 @@ class DashboardApp:
                     status_code=500,
                 )
 
-            # Record in event log (the Orchestrator already emits via
-            # event_emitter in submit_task, so we don't duplicate it here)
             self._record_event("task_submitted", task_id=task.id, description=description)
 
             return JSONResponse(
@@ -210,6 +290,17 @@ class DashboardApp:
         @app.post("/dashboard/api/tasks/{task_id}/pause")
         async def pause_task_api(task_id: str):
             """Pause a running task."""
+            # NATS path: publish control event for gRPC server / nats_worker
+            if self._nats_publisher is not None:
+                try:
+                    await self._nats_publisher.publish_event(
+                        event_type="task_pause",
+                        task_id=task_id,
+                    )
+                    return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
+                except Exception as e:
+                    logger.warning("NATS pause publish failed: %s, falling back", e)
+
             orch = self.orchestrator
             if orch is None:
                 return JSONResponse(
@@ -228,6 +319,19 @@ class DashboardApp:
         @app.post("/dashboard/api/tasks/{task_id}/resume")
         async def resume_task_api(task_id: str):
             """Resume a paused task."""
+            # NATS path: publish control event for gRPC server / nats_worker
+            if self._nats_publisher is not None:
+                try:
+                    await self._nats_publisher.publish_event(
+                        event_type="task_resume",
+                        task_id=task_id,
+                    )
+                    return JSONResponse(
+                        {"success": True, "task_id": task_id, "status": "in_progress"}
+                    )
+                except Exception as e:
+                    logger.warning("NATS resume publish failed: %s, falling back", e)
+
             orch = self.orchestrator
             if orch is None:
                 return JSONResponse(
@@ -652,6 +756,9 @@ class DashboardApp:
     def start(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """Start the dashboard server in a background thread.
 
+        If a NATS client is configured, subscribes to ``uc.task.event``
+        for real-time event streaming from the independent NATS consumer.
+
         Args:
             host: Bind address (default: "0.0.0.0").
             port: Bind port (default: 8080).
@@ -679,8 +786,97 @@ class DashboardApp:
         self._thread.start()
         logger.info("Dashboard started on http://%s:%d/dashboard/", host, port)
 
+        # Subscribe to NATS uc.task.event if client is available
+        self._subscribe_nats_events()
+
+    def _subscribe_nats_events(self) -> None:
+        """Subscribe to NATS ``uc.task.event`` for real-time event streaming.
+
+        This must be called from within the running async event loop.
+        Since uvicorn runs in a background thread, we schedule the
+        subscription on the server's event loop.
+        """
+        if self._nats_client is None:
+            logger.debug("No NATS client configured, skipping event subscription")
+            return
+
+        # Schedule the NATS subscription on the server's event loop.
+        # The uvicorn server's event loop is available after it starts.
+        async def _subscribe():
+            try:
+                sub = await self._nats_client.subscribe(
+                    NATS_SUBJECT_TASK_EVENT,
+                    cb=self._handle_nats_event,
+                )
+                self._nats_subscriptions.append(sub)
+                logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+            except Exception:
+                logger.warning(
+                    "Failed to subscribe to %s",
+                    NATS_SUBJECT_TASK_EVENT,
+                    exc_info=True,
+                )
+
+        # We need to schedule this on the uvicorn thread's event loop.
+        # Since uvicorn creates its own event loop, we use
+        # call_soon_threadsafe to schedule from the main thread.
+        if self._server is not None:
+            # The server's loop may not be ready yet, so we schedule
+            # a delayed subscription attempt.
+
+            def _schedule_subscribe():
+                loop = asyncio.get_event_loop()
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.ensure_future(_subscribe())
+                )
+
+            # Delay slightly to ensure uvicorn's loop is running
+            threading.Timer(1.0, _schedule_subscribe).start()
+
+    async def _handle_nats_event(self, msg: Any) -> None:
+        """Handle a NATS ``uc.task.event`` message.
+
+        Parses the JSON payload and pushes it into the NATS event queue
+        for the SSE stream to pick up.
+        """
+        try:
+            payload = json.loads(msg.data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning("Invalid NATS event payload: %s", e)
+            return
+
+        # Normalize to TaskEvent format
+        event_dict: dict[str, Any] = {
+            "timestamp": payload.get(
+                "timestamp", datetime.now(timezone.utc).isoformat()
+            ),
+            "type": payload.get("type", "unknown"),
+            "task_id": payload.get("task_id", ""),
+        }
+        if payload.get("subtask_id"):
+            event_dict["subtask_id"] = payload.get("subtask_id")
+        if payload.get("data"):
+            event_dict["data"] = payload.get("data")
+
+        try:
+            self._nats_event_queue.put_nowait(event_dict)
+        except asyncio.QueueFull:
+            logger.warning("NATS event queue full, dropping event: %s", event_dict.get("type"))
+
     def stop(self) -> None:
-        """Stop the dashboard server gracefully."""
+        """Stop the dashboard server gracefully.
+
+        Unsubscribes from NATS event streams and shuts down the FastAPI server.
+        """
+        # Unsubscribe from NATS
+        for sub in self._nats_subscriptions:
+            try:
+                # Subscription.unsubscribe() is async; schedule it
+                asyncio.get_event_loop().create_task(sub.unsubscribe())
+            except Exception:
+                logger.debug("Failed to unsubscribe from NATS", exc_info=True)
+        self._nats_subscriptions.clear()
+
         if self._server is not None:
             self._server.should_exit = True
             self._server = None
@@ -688,3 +884,75 @@ class DashboardApp:
             self._thread.join(timeout=5)
             self._thread = None
         logger.info("Dashboard stopped")
+
+    # ── Factory Methods ─────────────────────────────────────────────
+
+    @classmethod
+    def from_env(
+        cls,
+        orchestrator: Any,
+        nats_publisher: Any = None,
+    ) -> DashboardApp:
+        """Create a DashboardApp with NATS client from environment variables.
+
+        If ``UC_NATS_URL`` is set, connects to NATS and creates both
+        a NatsPublisher and a raw NATS client for event subscription.
+        If not set, creates the Dashboard without NATS (legacy mode).
+
+        Args:
+            orchestrator: The Orchestrator instance to monitor.
+            nats_publisher: Optional pre-created NatsPublisher. If None
+                and UC_NATS_URL is set, one will be created.
+
+        Returns:
+            A DashboardApp instance, optionally with NATS integration.
+
+        Note:
+            The NATS connection is established synchronously in this
+            factory method. For async initialization, connect to NATS
+            separately and pass the client to the constructor directly.
+        """
+        nats_url = os.environ.get("UC_NATS_URL", "")
+
+        if not nats_url:
+            logger.info("UC_NATS_URL not set, Dashboard running without NATS")
+            return cls(orchestrator, nats_publisher=nats_publisher)
+
+        # Try to connect to NATS synchronously
+        nats_client = None
+        try:
+            import nats as nats_lib
+
+            # Run the async connect in a new event loop
+            loop = asyncio.new_event_loop()
+            try:
+                nats_client = loop.run_until_complete(
+                    nats_lib.connect(nats_url, connect_timeout=5.0)
+                )
+                logger.info("Dashboard connected to NATS at %s", nats_url)
+            finally:
+                loop.close()
+        except ImportError:
+            logger.warning(
+                "nats-py not installed, Dashboard running without NATS. "
+                "Install with: pip install nats-py"
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to connect to NATS at %s: %s. "
+                "Dashboard running without NATS event subscription.",
+                nats_url,
+                e,
+            )
+
+        # Create NatsPublisher if we have a client and none was provided
+        if nats_client is not None and nats_publisher is None:
+            from ultimate_coders.nats_worker import NatsPublisher
+
+            nats_publisher = NatsPublisher(nats_client)
+
+        return cls(
+            orchestrator,
+            nats_publisher=nats_publisher,
+            nats_client=nats_client,
+        )
