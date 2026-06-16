@@ -93,7 +93,7 @@ const App: React.FC = () => {
     setSubtasksFromSubmit,
     updateSubtaskStatus,
     clearTask: clearStreamTask,
-  } = useTaskEvents(client, connectionState);
+  } = useTaskEvents(client, connectionState, state.activeTaskId);
 
   // ── Track processed events to avoid re-formatting ───────
   const processedEventCount = useRef(0);
@@ -115,6 +115,18 @@ const App: React.FC = () => {
   useEffect(() => {
     const prev = prevConnectionStateRef.current;
     prevConnectionStateRef.current = connectionState;
+
+    // Connection state change notifications in ChatLog
+    if (prev && prev !== connectionState) {
+      if (connectionState === 'connected') {
+        addMessage(createSystemMessage(`Connected to ${serverAddr}`, {color: 'green'}));
+      } else if (connectionState === 'error' && prev === 'connected') {
+        addMessage(createSystemMessage(`Connection lost to ${serverAddr}. Retrying...`, {color: 'red'}));
+      } else if (connectionState === 'connecting' && prev === 'error') {
+        addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
+      }
+    }
+
     if (connectionState === 'connected') {
       hasShownOfflineMsg.current = false;
     } else if (prev === 'connected') {
@@ -122,7 +134,7 @@ const App: React.FC = () => {
       // show the offline message again.
       hasShownOfflineMsg.current = false;
     }
-  }, [connectionState]);
+  }, [connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Side effect: stream events → chat messages ─────────
   useEffect(() => {
@@ -431,6 +443,11 @@ const App: React.FC = () => {
           dispatch({type: 'CLEAR_LOG'});
           return;
         }
+        // Enter: toggle expand/collapse all long messages
+        if (key.return) {
+          dispatch({type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+          return;
+        }
         break;
       }
 
@@ -658,6 +675,7 @@ const App: React.FC = () => {
               scrollCommand={scrollCommand}
               unreadCount={state.unreadCount}
               onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
+              expandAll={state.expandAllMessages}
             />
           )}
           {showDualPane && showChat && showSubtasks && (

@@ -149,6 +149,9 @@ export interface TuiState {
   /** Whether the help overlay is showing. */
   helpOverlayOpen: boolean;
 
+  /** Whether all collapsed ChatLog messages are expanded (toggled by Enter in chat focus). */
+  expandAllMessages: boolean;
+
   /** @deprecated Use focusedArea instead. Kept for gradual migration. */
   selectedPane: FocusedArea;
 }
@@ -176,6 +179,7 @@ export const INITIAL_TUI_STATE: TuiState = {
   selectedSubtaskId: null,
   subtaskDetailOpen: false,
   helpOverlayOpen: false,
+  expandAllMessages: false,
   // Backward compat: selectedPane mirrors focusedArea
   selectedPane: 'input',
 };
@@ -222,6 +226,7 @@ export type TuiAction =
   | {type: 'CLOSE_SUBTASK_DETAIL'}
   | {type: 'JUMP_TO_FAILED_SUBTASK'}
   | {type: 'TOGGLE_HELP_OVERLAY'}
+  | {type: 'TOGGLE_EXPAND_ALL_MESSAGES'}
   // ── Subtask retry (placeholder) ──
   | {type: 'RETRY_SUBTASK'; subtaskId: string};
 
@@ -466,6 +471,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'TOGGLE_HELP_OVERLAY':
       return {...state, helpOverlayOpen: !state.helpOverlayOpen};
+
+    case 'TOGGLE_EXPAND_ALL_MESSAGES':
+      return {...state, expandAllMessages: !state.expandAllMessages};
 
     // ── Subtask retry (placeholder) ───────────────────────────
 
