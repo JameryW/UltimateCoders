@@ -53,3 +53,4 @@ ultimate_coders/_uc_core*.so
 data/
 *.db
 *.sqlite
+.codegraph/daemon.pid
