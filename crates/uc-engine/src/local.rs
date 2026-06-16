@@ -450,6 +450,7 @@ impl EngineApi for LocalEngine {
                 repo_id: state.repo_id,
                 indexed: true,
                 last_indexed_sha: Some(state.last_indexed_sha),
+                // u64 -> u32 truncation is safe: no repo has >4 billion files/symbols/chunks
                 files_count: state.files_count as u32,
                 symbols_count: state.symbols_count as u32,
                 chunks_count: state.chunks_count as u32,
