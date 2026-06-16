@@ -97,6 +97,19 @@ export function buildSegments(props: {
 
   const segments: Segment[] = [];
 
+  // ── 0. Brand logo ───────────────────────────────────────
+  // Inspired by Claude Code's ▲ prefix — short, distinctive, always visible
+  segments.push({
+    id: 'brand',
+    width: 6, // "◆ UC " = 1 + 1 + 2 + 1 = 5 + 1 padding
+    render: () => (
+      <>
+        <Text color="magenta">{'◆'}</Text>
+        <Text bold color="magenta">{' UC'}</Text>
+      </>
+    ),
+  });
+
   // ── 1. Connection ───────────────────────────────────────
   const connDot = connectionState === 'connected'
     ? '●'
