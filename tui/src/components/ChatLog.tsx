@@ -115,6 +115,9 @@ export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter
 
 const COLLAPSE_THRESHOLD = 3;
 
+/** Tool-related event types that default to collapsed (summary only). */
+const TOOL_EVENT_TYPES = new Set(['tool_call', 'tool_result', 'file_modified']);
+
 /** Event type icon prefix mapping for visual scanning. */
 export const EVENT_ICONS: Record<string, string> = {
   task_submitted: '📋',
@@ -124,8 +127,9 @@ export const EVENT_ICONS: Record<string, string> = {
   subtask_started: '▶',
   subtask_completed: '✓',
   subtask_failed: '✗',
-  tool_call: '🔧',
+  tool_call: '⚙',
   tool_result: '📄',
+  file_modified: '✏',
 };
 
 /**
@@ -140,8 +144,11 @@ export function getEventIcon(eventType?: string): string {
 const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg, expandAll}) => {
   const [expanded, setExpanded] = useState(false);
   const lines = msg.text.split('\n');
-  // Per PRD AC5: user messages are never collapsed
-  const isLong = !msg.isUser && lines.length > COLLAPSE_THRESHOLD;
+
+  // Tool events always start collapsed (show summary only)
+  const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
+  // Non-tool long messages collapse after COLLAPSE_THRESHOLD
+  const isLong = !msg.isUser && (isToolEvent || lines.length > COLLAPSE_THRESHOLD);
 
   // When expandAll changes, sync local expanded state
   useEffect(() => {
@@ -159,7 +166,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
           : undefined
   );
 
-  // Per PRD AC5: collapsed messages show only the first line
+  // Collapsed messages show only the first line
   const visibleLines = (isLong && !expanded)
     ? lines.slice(0, 1)
     : lines;
@@ -168,24 +175,27 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
     if (msg.isUser) {
       return (
         <>
-          <Text bold color="cyan">{'> '}</Text>
-          <Text bold>{visibleLines[0]}</Text>
+          <Text bold color="cyan">{'▎ '}</Text>
+          <Text bold color="white">{visibleLines[0]}</Text>
           {visibleLines.slice(1).map((line, i) => (
             <Text key={i}>{'\n' + line}</Text>
           ))}
         </>
       );
     }
+    // System/tool messages
     return (
       <Text
         color={statusColor}
         bold={msg.bold}
-        dimColor={msg.dim}
+        dimColor={msg.dim ? true : isToolEvent}
       >
         {msg.eventType ? getEventIcon(msg.eventType) : ''}{visibleLines.join('\n')}
       </Text>
     );
   };
+
+  const collapsedCount = isLong && !expanded ? lines.length - 1 : 0;
 
   return (
     <Box flexDirection="column">
@@ -193,9 +203,9 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
         <Text dimColor>{`[${msg.timestamp}] `}</Text>
         {renderText()}
       </Box>
-      {isLong && !expanded && (
+      {collapsedCount > 0 && (
         <Box marginLeft={7}>
-          <Text dimColor>{`[+${lines.length - 1} more]`}</Text>
+          <Text dimColor>{isToolEvent ? `[+${collapsedCount} lines — Enter to expand]` : `[+${collapsedCount} more]`}</Text>
         </Box>
       )}
     </Box>

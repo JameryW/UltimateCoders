@@ -420,6 +420,14 @@ describe('tuiReducer: SET_SUBMITTING', () => {
     state = tuiReducer(state, {type: 'SET_SUBMITTING', submitting: false});
     expect(state.isSubmitting).toBe(false);
   });
+
+  it('sets startedAt when submitting=true, clears when submitting=false', () => {
+    const state1 = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBMITTING', submitting: true});
+    expect(state1.startedAt).toBeTypeOf('number');
+    expect(state1.startedAt).toBeGreaterThan(0);
+    const state2 = tuiReducer(state1, {type: 'SET_SUBMITTING', submitting: false});
+    expect(state2.startedAt).toBeNull();
+  });
 });
 
 // ── TOGGLE_HELP_OVERLAY ──────────────────────────────────

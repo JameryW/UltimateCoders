@@ -40,6 +40,7 @@ import SubtaskTree, {
 } from './SubtaskTree.js';
 import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
+import StatusIndicator from './StatusIndicator.js';
 import LogoBanner from './LogoBanner.js';
 import useGrpcClient from '../hooks/useGrpcClient.js';
 import useTaskEvents from '../hooks/useTaskEvents.js';
@@ -232,7 +233,7 @@ const App: React.FC = () => {
   // ── Calculate ChatLog visible lines ────────────────────
   const visibleLines = Math.max(
     5,
-    (stdout?.rows ?? 24) - 8, // header(2) + separator(1) + input(1) + status(1) + borders(3)
+    (stdout?.rows ?? 24) - 9, // header(2) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(3)
   );
 
   // ── Build scroll command for ChatLog ────────────────────
@@ -269,6 +270,7 @@ const App: React.FC = () => {
         }
 
         // Offline fallback: simulate locally
+        dispatch({type: 'SET_SUBMITTING', submitting: true}); // ponytail: sets startedAt for StatusIndicator
         simulateOfflineSubmit(
           description,
           addMessage,
@@ -708,7 +710,14 @@ const App: React.FC = () => {
         <Text color="gray">{S.divider.repeat(Math.max(1, terminalWidth - 2))}</Text>
       </Box>
 
-      {/* ── Input ──────────────────────────────────────── */}
+      {/* ── Status indicator (spinner + elapsed) ─────── */}
+      <StatusIndicator
+        isSubmitting={state.isSubmitting}
+        isStreaming={isStreaming}
+        startedAt={state.startedAt}
+      />
+
+      {/* ── Input (fixed at bottom) ──────────────────── */}
       <TaskInput
         onSubmit={handleSubmit}
         isFocused={state.focusedArea === 'input'}

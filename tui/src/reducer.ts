@@ -152,6 +152,9 @@ export interface TuiState {
   /** Whether all collapsed ChatLog messages are expanded (toggled by Enter in chat focus). */
   expandAllMessages: boolean;
 
+  /** Timestamp (ms) when the current task submission started. Null when idle. */
+  startedAt: number | null;
+
   /** @deprecated Use focusedArea instead. Kept for gradual migration. */
   selectedPane: FocusedArea;
 }
@@ -180,6 +183,7 @@ export const INITIAL_TUI_STATE: TuiState = {
   subtaskDetailOpen: false,
   helpOverlayOpen: false,
   expandAllMessages: false,
+  startedAt: null,
   // Backward compat: selectedPane mirrors focusedArea
   selectedPane: 'input',
 };
@@ -376,7 +380,11 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       return {...state, historyIndex: action.index};
 
     case 'SET_SUBMITTING':
-      return {...state, isSubmitting: action.submitting};
+      return {
+        ...state,
+        isSubmitting: action.submitting,
+        startedAt: action.submitting ? Date.now() : null,
+      };
 
     // ── Error ─────────────────────────────────────────────────
 
@@ -394,6 +402,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         selectedSubtaskIndex: -1,
         selectedSubtaskId: null,
         subtaskDetailOpen: false,
+        startedAt: null,
       };
 
     case 'CLEAR_LOG':

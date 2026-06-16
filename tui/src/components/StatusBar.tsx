@@ -261,14 +261,42 @@ export function buildSegments(props: {
 
 /**
  * Select segments that fit within the terminal width budget.
- * Returns segments in display order, trimming from the end if needed.
+ * Implements progressive collapse tiers from PRD P3:
+ *   >100 cols: full info (all segments)
+ *   80-100 cols: remove help
+ *   60-80 cols: only connection + progress + focus
+ *   <60 cols: only connection + progress
+ *
+ * Returns segments in display order, trimmed to fit budget.
  */
 export function selectSegments(segments: Segment[], budget: number): Segment[] {
   // Reserve 2 cols for padding (paddingX=1 on each side)
   let remaining = budget - 2;
   const result: Segment[] = [];
 
+  // Progressive collapse: skip low-priority segments in narrow terminals
+  const skipIds = new Set<string>();
+  if (budget < 60) {
+    // <60: only brand + connection + progress
+    skipIds.add('worker');
+    skipIds.add('backend');
+    skipIds.add('focus');
+    skipIds.add('view');
+    skipIds.add('retry');
+    skipIds.add('help');
+  } else if (budget < 80) {
+    // 60-80: brand + connection + progress + focus
+    skipIds.add('worker');
+    skipIds.add('backend');
+    skipIds.add('view');
+    skipIds.add('help');
+  } else if (budget < 100) {
+    // 80-100: remove help
+    skipIds.add('help');
+  }
+
   for (const seg of segments) {
+    if (skipIds.has(seg.id)) continue;
     if (remaining >= seg.width) {
       result.push(seg);
       remaining -= seg.width;
