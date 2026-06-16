@@ -1,17 +1,21 @@
 /**
  * StatusBar component - single-line status display at the bottom.
  *
- * Shows: connection | Worker | Backend | Mode | Task | Progress | Focus | Help
- * Integrated into the unified border frame (no separate border).
+ * Segment-based layout with width budget:
+ *   Priority order: connection > worker > backend > progress > focus > view > retry > help
+ *   Each segment has a display width. Segments are appended in priority order
+ *   until the terminal width budget is exhausted.
  *
- * Focus model (v2):
- *   focusedArea: which area has keyboard focus (shown as "Focus:")
- *   activeMainPane: which pane is in the main area (shown as "View:")
- *   Help text comes from keymap.ts — always accurate.
+ * Connection states:
+ *   ● grpc     — connected (green when streaming, yellow idle)
+ *   ○ offline  — disconnected (yellow)
+ *   ◌ offline  — connecting (yellow)
+ *   ✗ offline  — error / unavailable (yellow, not red — offline is expected)
+ *   ✗ offline | retry 3/5 — retrying after error
  *
- * Responsive: omits less-critical fields on narrow terminals to avoid overflow.
- * At <100 cols, the help text and mode are hidden.
- * At <80 cols, only connection + worker + progress + focus are shown.
+ * Removed from status bar (moved to ? help / diagnostics):
+ *   - mode, Task ID, serverAddr, lastError long text
+ *   - Full error messages (only short codes like "retry N/5")
  */
 import React from 'react';
 import {Box, Text} from 'ink';
@@ -53,112 +57,248 @@ const VIEW_LABELS: Record<ActiveMainPane, string> = {
 
 const MAX_RETRY_DISPLAY = 5;
 
-const StatusBar: React.FC<StatusBarProps> = ({
-  workerId = '',
-  backend = 'subprocess',
-  progress = {completed: 0, total: 0},
-  serverAddr = '',
-  connectionState = 'disconnected',
-  isStreaming = false,
-  activeTaskId = null,
-  lastError = null,
-  mode = '',
-  focusedArea = 'input',
-  activeMainPane = 'chat',
-  eventFilter = 'all',
-  terminalWidth = 80,
-  retryCount = 0,
-  nextRetryAt = null,
-}) => {
-  const progressText = `${progress.completed}/${progress.total}`;
-  const backendColor = backend === 'grpc' ? 'green' : backend === 'disconnected' ? 'red' : 'yellow';
+// ── Segment-based width budget ────────────────────────────────
 
-  // Connection indicator
+interface Segment {
+  /** Unique id for testing/debugging. */
+  id: string;
+  /** Display width in terminal columns (approximate). */
+  width: number;
+  /** Render this segment. */
+  render: () => React.ReactNode;
+}
+
+/**
+ * Build ordered segments for the status bar.
+ * Returns segments in priority order; caller trims to fit terminalWidth.
+ */
+export function buildSegments(props: {
+  connectionState: ConnectionState;
+  isStreaming: boolean;
+  workerId: string;
+  backend: string;
+  progress: {completed: number; total: number};
+  focusedArea: FocusedArea;
+  activeMainPane: ActiveMainPane;
+  retryCount: number;
+  focusedAreaHelp: string;
+}): Segment[] {
+  const {
+    connectionState,
+    isStreaming,
+    workerId,
+    backend,
+    progress,
+    focusedArea,
+    activeMainPane,
+    retryCount,
+    focusedAreaHelp,
+  } = props;
+
+  const segments: Segment[] = [];
+
+  // ── 1. Connection ───────────────────────────────────────
   const connDot = connectionState === 'connected'
-    ? (isStreaming ? '●' : '○')
+    ? '●'
     : connectionState === 'connecting'
       ? '◌'
       : connectionState === 'error'
         ? '✗'
         : '○';
+  // Connected=green when streaming, yellow when idle; all other states=yellow (offline is expected)
   const connColor = connectionState === 'connected'
     ? (isStreaming ? 'green' : 'yellow')
-    : connectionState === 'error'
-      ? 'red'
-      : connectionState === 'connecting'
-        ? 'yellow'
-        : 'red';
+    : 'yellow';
 
-  // Connection detail for error/offline
-  const retrySecondsLeft = nextRetryAt ? Math.max(0, Math.ceil((nextRetryAt - Date.now()) / 1000)) : 0;
-  const connDetail = connectionState === 'error'
-    ? ` ${serverAddr}${retryCount > 0 ? ` retry ${retryCount}/${MAX_RETRY_DISPLAY}` : ''}${retrySecondsLeft > 0 ? ` in ${retrySecondsLeft}s` : ''}`
-    : connectionState !== 'connected'
-      ? ` ${serverAddr}`
-      : '';
+  const connLabel = connectionState === 'connected' ? 'grpc' : 'offline';
+  // "● grpc" = 1 + 1 + 4 = 6
+  segments.push({
+    id: 'connection',
+    width: connLabel.length + 2, // dot + space + label
+    render: () => (
+      <>
+        <Text color={connColor}>{connDot}</Text>
+        <Text> {connLabel}</Text>
+      </>
+    ),
+  });
 
-  // Help text from keymap
+  // ── 2. Worker ───────────────────────────────────────────
+  const workerText = workerId || 'offline';
+  // " | worker" = 3 + workerText.length
+  segments.push({
+    id: 'worker',
+    width: 3 + workerText.length,
+    render: () => (
+      <>
+        <Text dimColor>{' │ '}</Text>
+        <Text>{workerText}</Text>
+      </>
+    ),
+  });
+
+  // ── 3. Backend ──────────────────────────────────────────
+  const backendColor = backend === 'grpc' ? 'green' : 'yellow';
+  // " │ backend" = 3 + backend.length
+  segments.push({
+    id: 'backend',
+    width: 3 + backend.length,
+    render: () => (
+      <>
+        <Text dimColor>{' │ '}</Text>
+        <Text color={backendColor}>{backend}</Text>
+      </>
+    ),
+  });
+
+  // ── 4. Progress ─────────────────────────────────────────
+  const progressText = `P ${progress.completed}/${progress.total}`;
+  // " │ P 2/5" = 3 + progressText.length
+  segments.push({
+    id: 'progress',
+    width: 3 + progressText.length,
+    render: () => (
+      <>
+        <Text dimColor>{' │ '}</Text>
+        <Text bold>{progressText}</Text>
+      </>
+    ),
+  });
+
+  // ── 5. Focus ────────────────────────────────────────────
+  const focusText = FOCUS_LABELS[focusedArea];
+  // " │ F Input" = 3 (separator) + 2 ("F ") + focusText.length
+  segments.push({
+    id: 'focus',
+    width: 3 + 2 + focusText.length,
+    render: () => (
+      <>
+        <Text dimColor>{' │ '}</Text>
+        <Text bold color="cyan">{'F '}</Text>
+        <Text bold color="cyan">{focusText}</Text>
+      </>
+    ),
+  });
+
+  // ── 6. View ─────────────────────────────────────────────
+  const viewText = VIEW_LABELS[activeMainPane];
+  // " │ V Chat" = 3 (separator) + 2 ("V ") + viewText.length
+  segments.push({
+    id: 'view',
+    width: 3 + 2 + viewText.length,
+    render: () => (
+      <>
+        <Text dimColor>{' │ '}</Text>
+        <Text color="yellow">{'V '}</Text>
+        <Text color="yellow">{viewText}</Text>
+      </>
+    ),
+  });
+
+  // ── 7. Retry (only when error + retrying) ────────────────
+  if (connectionState === 'error' && retryCount > 0) {
+    const retryText = `retry ${retryCount}/${MAX_RETRY_DISPLAY}`;
+    segments.push({
+      id: 'retry',
+      width: 3 + retryText.length,
+      render: () => (
+        <>
+          <Text dimColor>{' │ '}</Text>
+          <Text color="yellow">{retryText}</Text>
+        </>
+      ),
+    });
+  } else if (connectionState !== 'connected' && connectionState !== 'connecting') {
+    // Offline but not retrying: show reconnect hint
+    const reconnectText = 'C-R reconnect';
+    segments.push({
+      id: 'retry',
+      width: 3 + reconnectText.length, // " │ C-R reconnect"
+      render: () => (
+        <>
+          <Text dimColor>{' │ '}</Text>
+          <Text color="yellow">{'C-R reconnect'}</Text>
+        </>
+      ),
+    });
+  }
+
+  // ── 8. Help ─────────────────────────────────────────────
+  if (focusedAreaHelp) {
+    // "  ? help" or "  S-Tab focus  ? help"
+    segments.push({
+      id: 'help',
+      width: 2 + focusedAreaHelp.length, // 2 spaces + help text
+      render: () => (
+        <>
+          <Text dimColor>{'  '}</Text>
+          <Text dimColor>{focusedAreaHelp}</Text>
+        </>
+      ),
+    });
+  }
+
+  return segments;
+}
+
+/**
+ * Select segments that fit within the terminal width budget.
+ * Returns segments in display order, trimming from the end if needed.
+ */
+export function selectSegments(segments: Segment[], budget: number): Segment[] {
+  // Reserve 2 cols for padding (paddingX=1 on each side)
+  let remaining = budget - 2;
+  const result: Segment[] = [];
+
+  for (const seg of segments) {
+    if (remaining >= seg.width) {
+      result.push(seg);
+      remaining -= seg.width;
+    } else {
+      // Budget exhausted — stop adding segments
+      break;
+    }
+  }
+
+  return result;
+}
+
+const StatusBar: React.FC<StatusBarProps> = ({
+  workerId = '',
+  backend = 'subprocess',
+  progress = {completed: 0, total: 0},
+  connectionState = 'disconnected',
+  isStreaming = false,
+  focusedArea = 'input',
+  activeMainPane = 'chat',
+  terminalWidth = 80,
+  retryCount = 0,
+  // Props below are accepted for interface compatibility but no longer displayed:
+  // serverAddr, activeTaskId, lastError, mode, eventFilter, nextRetryAt
+}) => {
+  // Help text from keymap (budget-aware)
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
 
-  // Responsive: show fewer fields on narrow terminals
-  const isNarrow = terminalWidth < 80;
-  const isMedium = terminalWidth >= 80 && terminalWidth < 100;
+  // Build and select segments
+  const allSegments = buildSegments({
+    connectionState,
+    isStreaming,
+    workerId,
+    backend,
+    progress,
+    focusedArea,
+    activeMainPane,
+    retryCount,
+    focusedAreaHelp: helpText,
+  });
+
+  const visibleSegments = selectSegments(allSegments, terminalWidth);
 
   return (
     <Box paddingX={1}>
-      <Text color={connColor}>{connDot}</Text>
-      <Text dimColor>{' '}</Text>
-      <Text dimColor>{'Worker:'}</Text>
-      <Text> {workerId || 'N/A'} </Text>
-      {!isNarrow && (
-        <>
-          <Text dimColor>{'│'}</Text>
-          <Text dimColor>{' Backend:'}</Text>
-          <Text color={backendColor}> {backend} </Text>
-        </>
-      )}
-      {!isNarrow && mode && (
-        <>
-          <Text dimColor>{'│'}</Text>
-          <Text dimColor>{' '}</Text>
-          <Text dimColor>{mode}</Text>
-        </>
-      )}
-      {connDetail && !isNarrow && (
-        <Text dimColor>{connDetail}</Text>
-      )}
-      {!isNarrow && activeTaskId && (
-        <>
-          <Text dimColor>{'│'}</Text>
-          <Text dimColor>{' Task:'}</Text>
-          <Text> {activeTaskId.slice(0, 8)}</Text>
-        </>
-      )}
-      <Text dimColor>{'│'}</Text>
-      <Text dimColor>{' Progress:'}</Text>
-      <Text bold> {progressText}</Text>
-      <Text dimColor>{'│'}</Text>
-      <Text dimColor>{' Focus:'}</Text>
-      <Text bold color="cyan"> {FOCUS_LABELS[focusedArea]}</Text>
-      {!isNarrow && (
-        <>
-          <Text dimColor>{'│'}</Text>
-          <Text dimColor>{' View:'}</Text>
-          <Text color="yellow"> {VIEW_LABELS[activeMainPane]}</Text>
-        </>
-      )}
-      {!isNarrow && lastError && (
-        <>
-          <Text dimColor>{'│'}</Text>
-          <Text color="red"> {lastError.slice(0, 30)}</Text>
-        </>
-      )}
-      {!isMedium && !isNarrow && (
-        <>
-          <Text dimColor>{'  '}</Text>
-          <Text dimColor>({helpText})</Text>
-        </>
-      )}
+      {visibleSegments.map((seg) => (
+        <React.Fragment key={seg.id}>{seg.render()}</React.Fragment>
+      ))}
     </Box>
   );
 };
