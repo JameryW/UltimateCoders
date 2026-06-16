@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "存储 fallback pattern、key encoding、migration 模式参考"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError 映射模式，集成测试需验证错误路径"}

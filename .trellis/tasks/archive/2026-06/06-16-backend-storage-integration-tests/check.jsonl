@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证集成测试遵循 fallback pattern 和 key encoding 规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证测试质量符合项目标准"}
