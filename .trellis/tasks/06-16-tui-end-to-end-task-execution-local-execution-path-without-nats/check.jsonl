@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-16-tui-end-to-end-task-execution-local-execution-path-without-nats/prd.md", "reason": "PRD acceptance criteria — used to verify implementation completeness"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS bridge spec — verify NATS path still works after adding local worker path"}

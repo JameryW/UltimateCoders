@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC client spec — reducer state model, component API contracts, design decisions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component design patterns — Ink/React conventions for TUI components"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "State management patterns — useReducer conventions, action design"}
+{"file": ".trellis/tasks/06-16-tui-layout-v3/research/claude-codex-tui-patterns.md", "reason": "Research: Claude Code & Codex CLI TUI layout patterns, visual elements, streaming, tool output"}

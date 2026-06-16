@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "Validate reducer state model, action types, component contracts against spec"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality bar — lint, typecheck, test coverage requirements"}

@@ -54,3 +54,14 @@ data/
 *.db
 *.sqlite
 .codegraph/daemon.pid
+
+# Other AI tool configs (local only)
+.gemini/
+.kiro/
+.mcp.json
+opencode.jsonc
+
+# Root-level Node artifacts (TUI has its own tui/package.json)
+node_modules/
+package.json
+pnpm-lock.yaml

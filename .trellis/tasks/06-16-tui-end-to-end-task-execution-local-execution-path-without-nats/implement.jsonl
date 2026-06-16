@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-16-tui-end-to-end-task-execution-local-execution-path-without-nats/prd.md", "reason": "Full PRD with architecture, JSON-RPC protocol, decisions, acceptance criteria"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS bridge spec — reference for message contracts and existing NATS path behavior"}
+{"file": "crates/uc-grpc/proto/engine.proto", "reason": "TaskService proto — SubmitTaskRequest/Response, TaskEvent, WatchTask, Health RPC definitions"}
+{"file": "docs/nats-bridge.md", "reason": "NATS bridge architecture doc — reference for understanding existing task flow and degradation patterns"}
