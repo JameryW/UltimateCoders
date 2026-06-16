@@ -73,9 +73,53 @@ const STATUS_CONFIG: Record<SubtaskStatusType, {
   conflicted: {symbolKey: 'conflicted', color: 'yellow', bold: true},
 };
 
-function getProgressText(completed: number, total: number): string {
+export function getProgressText(completed: number, total: number): string {
   const pct = total > 0 ? Math.round((100 * completed) / total) : 0;
   return `${completed}/${total} ${pct}%`;
+}
+
+/**
+ * Build a progress bar string from completion ratio.
+ * @param completed Number of completed items
+ * @param total Total number of items
+ * @param barWidth Width of the bar in terminal columns
+ * @param filledChar Character for filled segments (e.g. '▓' or '#')
+ * @param emptyChar Character for empty segments (e.g. '░' or '-')
+ * @returns Progress bar string like "▓▓░░ 50%"
+ */
+export function buildProgressBar(
+  completed: number,
+  total: number,
+  barWidth: number,
+  filledChar: string,
+  emptyChar: string,
+): string {
+  if (total <= 0) return '';
+  const pct = completed / total;
+  const filled = Math.round(pct * barWidth);
+  const empty = barWidth - filled;
+  return `${filledChar.repeat(filled)}${emptyChar.repeat(empty)} ${Math.round(pct * 100)}%`;
+}
+
+/**
+ * Build reverse dependency map: subtask index → list of dependent subtask indexes.
+ * If subtask B depends on subtask A, then A is depended on by B.
+ * @param subtasks Array of SubtaskItem
+ * @returns Map from subtask index to array of indexes that depend on it
+ */
+export function buildDependedByMap(subtasks: SubtaskItem[]): Map<number, number[]> {
+  const map = new Map<number, number[]>();
+  for (const st of subtasks) {
+    for (const depId of (st.dependsOn ?? [])) {
+      const depIdx = subtasks.findIndex((s) => s.id === depId);
+      if (depIdx >= 0) {
+        const existing = map.get(depIdx) ?? [];
+        existing.push(st.index);
+        map.set(depIdx, existing);
+      }
+    }
+  }
+  return map;
 }
 
 /**
@@ -204,26 +248,15 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   const symbols = symbolsProp ?? getSymbols();
   const titleSuffix = getProgressText(progress.completed, progress.total);
 
-  // Build progress bar: e.g. ▓▓░░░ 40% or ##--- 40%
-  const barWidth = Math.min(10, Math.max(3, maxWidth - 20));
-  const pct = progress.total > 0 ? progress.completed / progress.total : 0;
-  const filled = Math.round(pct * barWidth);
-  const empty = barWidth - filled;
-  const bar = symbols.barFilled.repeat(filled) + symbols.barEmpty.repeat(empty);
-  const progressBar = progress.total > 0 ? ` ${bar} ${Math.round(pct * 100)}%` : '';
+  // Progress bar
+  const progressBar = buildProgressBar(
+    progress.completed, progress.total,
+    Math.min(10, Math.max(3, maxWidth - 20)),
+    symbols.barFilled, symbols.barEmpty,
+  );
 
-  // Build reverse dependency map: subtask index → list of dependent subtask indexes
-  const dependedByMap = new Map<number, number[]>();
-  for (const st of subtasks) {
-    for (const depId of (st.dependsOn ?? [])) {
-      const depIdx = subtasks.findIndex((s) => s.id === depId);
-      if (depIdx >= 0) {
-        const existing = dependedByMap.get(depIdx) ?? [];
-        existing.push(st.index);
-        dependedByMap.set(depIdx, existing);
-      }
-    }
-  }
+  // Reverse dependency map
+  const dependedByMap = buildDependedByMap(subtasks);
 
   // Truncate task description for header
   const truncatedTaskDesc = truncateToWidth(taskDescription, maxWidth - 10);
