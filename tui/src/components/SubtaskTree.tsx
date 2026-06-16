@@ -54,6 +54,8 @@ export interface SubtaskTreeProps {
   symbols?: SymbolSet;
   /** Index of the currently selected subtask for keyboard navigation (-1 = none). */
   selectedIndex?: number;
+  /** Whether the selected subtask's detail panel is open. */
+  detailOpen?: boolean;
 }
 
 // Map status to symbol field key
@@ -141,6 +143,49 @@ const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSe
   );
 };
 
+/**
+ * Detail panel for the selected subtask — shown below the row when detailOpen.
+ * Displays full description, status, worker, dependencies, and error summary.
+ */
+const SubtaskDetail: React.FC<{subtask: SubtaskItem; maxWidth: number}> = ({subtask, maxWidth}) => {
+  // Total indent: outer marginLeft={2} + inner marginLeft={1} = 3 cols
+  const contentWidth = maxWidth - 3;
+  return (
+    <Box flexDirection="column" marginLeft={2}>
+      <Text dimColor>{'│'}</Text>
+      <Box marginLeft={1}>
+        <Text dimColor>{'desc: '}</Text>
+        <Text>{truncateToWidth(subtask.description, contentWidth - 6)}</Text>
+      </Box>
+      <Box marginLeft={1}>
+        <Text dimColor>{'status: '}</Text>
+        <Text color={STATUS_CONFIG[subtask.status]?.color ?? 'white'} bold={STATUS_CONFIG[subtask.status]?.bold}>
+          {subtask.status}
+        </Text>
+      </Box>
+      {subtask.assignedWorker && (
+        <Box marginLeft={1}>
+          <Text dimColor>{'worker: '}</Text>
+          <Text>{truncateToWidth(subtask.assignedWorker, contentWidth - 8)}</Text>
+        </Box>
+      )}
+      {subtask.dependsOn && subtask.dependsOn.length > 0 && (
+        <Box marginLeft={1}>
+          <Text dimColor>{'deps: '}</Text>
+          <Text>{truncateToWidth(subtask.dependsOn.join(', '), contentWidth - 6)}</Text>
+        </Box>
+      )}
+      {subtask.errorSummary && (
+        <Box marginLeft={1}>
+          <Text dimColor>{'error: '}</Text>
+          <Text color="red">{truncateToWidth(subtask.errorSummary, contentWidth - 7)}</Text>
+        </Box>
+      )}
+      <Text dimColor>{'│'}</Text>
+    </Box>
+  );
+};
+
 const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   subtasks,
   taskDescription = 'No task',
@@ -149,6 +194,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   maxWidth = 40,
   symbols: symbolsProp,
   selectedIndex = -1,
+  detailOpen = false,
 }) => {
   const symbols = symbolsProp ?? getSymbols();
   const titleSuffix = getProgressText(progress.completed, progress.total);
@@ -174,14 +220,18 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
       ) : (
         <Box flexDirection="column">
           {subtasks.map((st, idx) => (
-            <SubtaskRow
-              key={st.id}
-              subtask={st}
-              maxWidth={maxWidth}
-              symbols={symbols}
-              isSelected={idx === selectedIndex}
-              isFocused={isFocused}
-            />
+            <React.Fragment key={st.id}>
+              <SubtaskRow
+                subtask={st}
+                maxWidth={maxWidth}
+                symbols={symbols}
+                isSelected={idx === selectedIndex}
+                isFocused={isFocused}
+              />
+              {detailOpen && idx === selectedIndex && (
+                <SubtaskDetail subtask={st} maxWidth={maxWidth} />
+              )}
+            </React.Fragment>
           ))}
         </Box>
       )}
