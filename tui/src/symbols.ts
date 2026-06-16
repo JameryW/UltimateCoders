@@ -44,6 +44,10 @@ export interface SymbolSet {
   check: string;
   cross: string;
   bullet: string;
+
+  // Progress bar
+  barFilled: string;
+  barEmpty: string;
 }
 
 const UNICODE: SymbolSet = {
@@ -65,6 +69,8 @@ const UNICODE: SymbolSet = {
   check: '✓',
   cross: '✗',
   bullet: '•',
+  barFilled: '▓',
+  barEmpty: '░',
 };
 
 const ASCII: SymbolSet = {
@@ -86,6 +92,8 @@ const ASCII: SymbolSet = {
   check: 'ok',
   cross: 'X',
   bullet: '*',
+  barFilled: '#',
+  barEmpty: '-',
 };
 
 // ── Auto-detection ──────────────────────────────────────────
