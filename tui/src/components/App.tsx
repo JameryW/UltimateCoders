@@ -40,6 +40,7 @@ import SubtaskTree, {
 } from './SubtaskTree.js';
 import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
+import LogoBanner from './LogoBanner.js';
 import useGrpcClient from '../hooks/useGrpcClient.js';
 import useTaskEvents from '../hooks/useTaskEvents.js';
 import {
@@ -585,13 +586,12 @@ const App: React.FC = () => {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
       {/* ── Header ─────────────────────────────────────── */}
+      <LogoBanner
+        terminalWidth={terminalWidth}
+        brandChar={S.brand}
+        version={VERSION}
+      />
       <Box paddingX={1}>
-        <Text color="magenta">{S.brand}</Text>
-        <Text bold color="magenta">{' UC'}</Text>
-        <Text>  </Text>
-        <Text bold>UltimateCoders</Text>
-        <Text dimColor> v{VERSION}</Text>
-        <Text>  </Text>
         {connectionState === 'connected' && <Text color="green">{S.connected}</Text>}
         {connectionState === 'connecting' && <Text color="yellow">{S.connecting}</Text>}
         {connectionState === 'disconnected' && <Text color="yellow">{S.disconnected}</Text>}
