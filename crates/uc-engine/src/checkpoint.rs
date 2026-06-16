@@ -439,7 +439,7 @@ mod tests {
             .record_event(
                 "agent.events.task1",
                 AgentEventType::SubtaskAssigned {
-                    task_id: TaskId::new(), // TODO: derive task_id from context
+                    task_id: TaskId("task1".to_string()),
                     subtask_id: TaskId::new(),
                     worker_id: WorkerId::new(),
                 },

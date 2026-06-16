@@ -923,7 +923,7 @@ fn load_index() -> Index { Index::new() }"#,
             .record_event(
                 &format!("agent.events.{}", task_id),
                 AgentEventType::SubtaskAssigned {
-                    task_id: uc_types::TaskId::new(), // TODO: derive task_id from context
+                    task_id: uc_types::TaskId(task_id.to_string()),
                     subtask_id: uc_types::TaskId::new(),
                     worker_id: uc_types::WorkerId::new(),
                 },

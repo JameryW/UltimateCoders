@@ -1279,13 +1279,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     let proto_event: TaskEvent = event.into();
 
                     // Filter by task_id if specified.
-                    // TODO: Subtask-level events (SubtaskAssigned, SubtaskStarted, etc.)
-                    // currently have an empty task_id in the proto conversion because
-                    // AgentEventType variants do not carry a task_id field. This means
-                    // watching a specific task_id will miss subtask events. The TUI
-                    // currently uses empty task_id (watch all), so this is not an
-                    // immediate issue. A future fix should maintain a subtask->task
-                    // mapping and populate the task_id for subtask events.
+                    // Subtask events now carry task_id in AgentEventType variants.
                     if !task_id.is_empty() && proto_event.task_id != task_id {
                         offset += 1;
                         continue;
