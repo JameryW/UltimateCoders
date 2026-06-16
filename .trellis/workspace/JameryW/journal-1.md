@@ -752,3 +752,36 @@ Fixed dual-cursor bug (hide real terminal cursor, use inline fake only) and Back
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: StatusBar segment-based layout + gRPC error noise reduction
+
+**Date**: 2026-06-16
+**Task**: StatusBar segment-based layout + gRPC error noise reduction
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Rewrite StatusBar.tsx to segment-based priority layout with width budget (buildSegments + selectSegments). Remove lastError/mode/TaskID/serverAddr from display. Connection errors use yellow instead of red. Ctrl+R dedup in connecting state. getStatusBarHelp() budget-based output. 14 new tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4659f98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
