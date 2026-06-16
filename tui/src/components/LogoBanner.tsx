@@ -1,15 +1,12 @@
 /**
- * LogoBanner — Pixel-game-style brand banner for the TUI header.
+ * LogoBanner — Brand banner for the TUI header.
  *
- * Displays a double-line box "UC" logo in magenta, like a retro game HUD.
- * Inspired by pixel art aesthetics + Claude Code's startup banner.
+ * Full mode: pixel-game-style "UC" logo (5 lines) + version line.
+ * Compact mode: single-line brand + version (for space-efficient layout).
  *
- * Unicode variant: ╔╗╚╝ double-line box characters
- * ASCII variant:  # hash block characters
- *
- * Hidden on narrow terminals (<80 cols).
+ * Hidden on narrow terminals (<60 cols).
  */
-import React from 'react';
+import React, {useState, useEffect} from 'react';
 import {Box, Text} from 'ink';
 
 export interface LogoBannerProps {
@@ -19,6 +16,8 @@ export interface LogoBannerProps {
   brandChar: string;
   /** Version string. */
   version?: string;
+  /** Show compact single-line banner instead of full logo. */
+  compact?: boolean;
 }
 
 // ── Pixel-game-style UC Logos ──────────────────────────────
@@ -43,9 +42,32 @@ export function LogoBanner({
   terminalWidth = 80,
   brandChar = '◆',
   version = '',
+  compact = false,
 }: LogoBannerProps): React.ReactNode | null {
-  // Hide logo on narrow terminals (<80 cols)
-  if (terminalWidth < 80) return null;
+  // Hide on very narrow terminals
+  if (terminalWidth < 60) return null;
+
+  // Compact mode: single-line brand
+  if (compact) {
+    return (
+      <Box paddingX={1}>
+        <Text color="magenta" bold>{brandChar}</Text>
+        <Text bold color="magenta">{' UC'}</Text>
+        {version && <Text dimColor>{` v${version}`}</Text>}
+      </Box>
+    );
+  }
+
+  // Full mode: hide on narrow terminals (<80 cols)
+  if (terminalWidth < 80) {
+    return (
+      <Box paddingX={1}>
+        <Text color="magenta" bold>{brandChar}</Text>
+        <Text bold color="magenta">{' UC'}</Text>
+        {version && <Text dimColor>{` v${version}`}</Text>}
+      </Box>
+    );
+  }
 
   const isUnicode = brandChar === '◆';
   const lines = isUnicode ? UC_UNICODE : UC_ASCII;

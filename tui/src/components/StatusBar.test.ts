@@ -11,9 +11,8 @@ const defaultArgs = {
   backend: 'grpc',
   progress: {completed: 2, total: 5},
   focusedArea: 'input' as const,
-  activeMainPane: 'chat' as const,
   retryCount: 0,
-  focusedAreaHelp: 'S-Tab focus  ? help',
+  focusedAreaHelp: 'S-Tab focus  C-T subtasks  ? help',
   brandChar: '◆',
 };
 
@@ -23,7 +22,7 @@ describe('buildSegments', () => {
   it('produces segments in priority order when connected', () => {
     const segs = buildSegments(defaultArgs);
     const ids = segs.map((s) => s.id);
-    expect(ids).toEqual(['brand', 'connection', 'worker', 'backend', 'progress', 'focus', 'view', 'help']);
+    expect(ids).toEqual(['brand', 'connection', 'worker', 'backend', 'progress', 'focus', 'help']);
   });
 
   it('includes retry segment when error + retrying', () => {
@@ -167,7 +166,6 @@ describe('selectSegments', () => {
     expect(ids).not.toContain('worker');
     expect(ids).not.toContain('backend');
     expect(ids).not.toContain('focus');
-    expect(ids).not.toContain('view');
     expect(ids).not.toContain('help');
   });
 
@@ -179,10 +177,9 @@ describe('selectSegments', () => {
     expect(ids).toContain('connection');
     expect(ids).toContain('progress');
     expect(ids).toContain('focus');
-    // Worker/backend/view/help skipped
+    // Worker/backend/help skipped
     expect(ids).not.toContain('worker');
     expect(ids).not.toContain('backend');
-    expect(ids).not.toContain('view');
     expect(ids).not.toContain('help');
   });
 

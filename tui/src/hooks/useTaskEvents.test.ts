@@ -1,7 +1,7 @@
 import {describe, it, expect} from 'vitest';
 import {processEvent, protoSubtasksToItems} from './useTaskEvents.js';
-import type {TaskEventProto, SubtaskProto} from './grpc/types.js';
-import type {SubtaskItem} from './components/SubtaskTree.js';
+import type {TaskEventProto, SubtaskProto} from '../grpc/types.js';
+import type {SubtaskItem} from '../components/SubtaskTree.js';
 
 // ── Helpers ──────────────────────────────────────────────────
 

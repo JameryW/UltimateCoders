@@ -18,13 +18,13 @@ describe('keymap: getCommand', () => {
 
 describe('keymap: getCommandsForArea', () => {
   it('includes global commands for any area', () => {
-    const areas: FocusedArea[] = ['input', 'chat', 'subtask'];
+    const areas: FocusedArea[] = ['input', 'chat'];
     for (const area of areas) {
       const cmds = getCommandsForArea(area);
       const globalIds = cmds.filter((c) => c.global).map((c) => c.id);
       // All global commands should be present
       expect(globalIds).toContain('cycleFocus');
-      expect(globalIds).toContain('swapPane');
+      expect(globalIds).toContain('subtaskOverlay');
       expect(globalIds).toContain('quit');
     }
   });
@@ -35,9 +35,6 @@ describe('keymap: getCommandsForArea', () => {
 
     const chatCmds = getCommandsForArea('chat');
     expect(chatCmds.some((c) => c.id === 'scrollUp')).toBe(true);
-
-    const subtaskCmds = getCommandsForArea('subtask');
-    expect(subtaskCmds.some((c) => c.id === 'navUp')).toBe(true);
   });
 
   it('does not include other area commands', () => {
@@ -64,7 +61,7 @@ describe('keymap: getStatusBarHelp', () => {
   });
 
   it('includes focus and help shortcuts', () => {
-    const help = getStatusBarHelp('input', 120);
+    const help = getStatusBarHelp('input', 160);
     expect(help).toContain('focus');
     expect(help).toContain('help');
   });
