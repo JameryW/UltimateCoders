@@ -280,7 +280,7 @@ impl EmbeddingService {
         }
 
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = response.text().await.unwrap_or_else(|e| format!("<read failed: {}>", e));
             return Err(EngineError::SearchError(format!(
                 "Voyage API error ({}): {}",
                 status, body

@@ -380,7 +380,10 @@ fn entry_to_payload(entry: &MemoryEntry) -> HashMap<String, qdrant_client::qdran
     );
 
     // Content as JSON string
-    let content_json = serde_json::to_string(&entry.content).unwrap_or_default();
+    let content_json = serde_json::to_string(&entry.content).unwrap_or_else(|e| {
+        tracing::warn!("Content serialization failed, storing empty: {}", e);
+        String::new()
+    });
     payload.insert(
         "content".into(),
         qdrant_client::qdrant::Value::from(content_json),
@@ -467,7 +470,10 @@ fn payload_to_entry(
         .get("entry_id")
         .and_then(|v| v.as_string())
         .map(|s| MemoryId(s.to_string()))
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            tracing::warn!("Missing entry_id in Qdrant payload, using fallback");
+            MemoryId::new()
+        });
 
     Some(MemoryEntry {
         id,
