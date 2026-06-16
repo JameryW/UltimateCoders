@@ -184,6 +184,16 @@ let indexes = [
 
 **Delete ordering** respects foreign keys: references -> symbols -> index_state -> repos.
 
+**Migration additions (2026-06-16)** — IndexState count columns:
+
+```sql
+ALTER TABLE index_state ADD COLUMN IF NOT EXISTS files_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE index_state ADD COLUMN IF NOT EXISTS symbols_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE index_state ADD COLUMN IF NOT EXISTS chunks_count BIGINT NOT NULL DEFAULT 0;
+```
+
+These columns are populated by `IndexPipeline` after indexing. The `IF NOT EXISTS` + `DEFAULT 0` ensures the migration is additive and non-breaking — existing rows get 0 (matching previous hardcoded behavior).
+
 **Upsert pattern** uses `ON CONFLICT ... DO UPDATE`:
 
 ```sql
@@ -231,3 +241,9 @@ pub fn health(&self) -> Vec<ComponentHealth> {
 3. **Using `unwrap()` on storage operations** -- Always use `.map_err(|e| EngineError::ConnectionError(...))` or `.map_err(|e| EngineError::MemoryReadError(...))` instead.
 
 4. **Not suppressing unused variables in the non-storage path** -- When `value` is only used in the `storage` feature path, add `let _ = value;` in the `not(storage)` block to avoid compiler warnings.
+
+5. **Using zero vectors for memory search queries** -- `MemoryStore::search()` previously used `vec![0.0f32; VECTOR_SIZE]` as the query embedding, which always returns empty results. The fix uses `EmbeddingService` to generate real embeddings (BLAKE3 fallback or Voyage Code 3 API). If you add a new search path that needs embeddings, always use `embedding_service.embed_single(text)` — never hardcode a zero vector.
+
+6. **Hardcoding IndexState counts to 0** -- `LocalEngine::get_index_state()` previously returned `files_count: 0, symbols_count: 0, chunks_count: 0` regardless of actual indexed content. The fix reads these from `IndexState` (which `IndexPipeline` populates at index time). If you add new count fields, follow the same pattern: add to `IndexState`, populate in `IndexPipeline`, read in `LocalEngine`, add PostgreSQL migration with `DEFAULT 0`.
+
+7. **Not generating embeddings when writing to long-term memory** -- `MemoryStore::write()` must generate embeddings for high-importance entries before storing them in long-term memory. Without embeddings, the entry is stored with a zero vector and semantic search can never find it. The embedding generation is best-effort: on failure, log a warning and store with zero vector (graceful degradation).

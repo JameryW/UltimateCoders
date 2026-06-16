@@ -186,6 +186,32 @@ if entry.metadata.importance >= self.config.long_term_importance_threshold {
 }
 ```
 
+### Graceful degradation on embedding failure
+
+When `EmbeddingService` fails to generate an embedding (API timeout, BLAKE3 hash error, etc.), the operation returns empty/default results with a warning log rather than propagating an `EngineError`. This pattern applies to `MemoryStore::search()`, `MemoryStore::read()`, and `MemoryStore::write()`:
+
+```rust
+// search(): return empty results
+let query_embedding = match self.embedding_service.embed_single(&request.query).await {
+    Ok(vec) => vec,
+    Err(e) => {
+        tracing::warn!("Embedding generation failed, returning empty results: {}", e);
+        return Ok(MemorySearchResponse { results: vec![] });
+    }
+};
+
+// write(): fall back to zero vector (entry still stored, just not findable by semantic search)
+let embedding = match self.embedding_service.embed_single(&content_text).await {
+    Ok(vec) => Some(vec),
+    Err(e) => {
+        tracing::warn!("Embedding generation failed for write, using zero vector: {}", e);
+        None
+    }
+};
+```
+
+**Why this pattern**: Embedding generation is an enhancement, not a hard requirement. The system must still function (with degraded search quality) when the embedding service is unavailable. Returning `EngineError` would break callers that don't handle search failures gracefully.
+
 ### Circuit breaker integration
 
 The Python-side `CircuitBreaker` class uses `EngineError.is_retryable()` and `should_fallback()` to determine whether to retry, fall back to a different model, or open the circuit.
