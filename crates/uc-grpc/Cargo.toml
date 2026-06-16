@@ -9,6 +9,7 @@ uc-types = { path = "../uc-types" }
 uc-engine = { path = "../uc-engine", default-features = false }
 tokio = { workspace = true }
 tonic = { workspace = true }
+tonic-health = "0.12"
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true }
@@ -19,6 +20,13 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 async-stream = "0.3"
 tokio-stream = "0.1"
+
+# NATS (feature-gated)
+async-nats = { workspace = true, optional = true }
+
+[features]
+default = []
+messaging = ["async-nats", "uc-engine/messaging"]
 
 [build-dependencies]
 tonic-build = { workspace = true }

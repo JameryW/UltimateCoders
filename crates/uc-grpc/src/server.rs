@@ -18,6 +18,29 @@ use crate::ultimate_coders::engine_service_server::{EngineService, EngineService
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
 use crate::ultimate_coders::*;
 
+/// Create a `tonic_health` reporter and health service pre-configured to
+/// report the `EngineService` as `Serving`.
+///
+/// Returns a `(HealthReporter, HealthServer)` pair. The reporter can be
+/// used to update service status at runtime; the server should be
+/// registered with the tonic router via `add_service`.
+///
+/// The `EngineService` is registered by its gRPC service name
+/// so that standard health-checking clients can query it.
+pub async fn health_reporter<E>() -> (
+    tonic_health::server::HealthReporter,
+    tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health>,
+)
+where
+    E: EngineApi + Send + Sync + 'static,
+{
+    let (mut reporter, service) = tonic_health::server::health_reporter();
+    reporter
+        .set_serving::<EngineServiceServer<GrpcServer<E>>>()
+        .await;
+    (reporter, service)
+}
+
 // ── In-memory task store ────────────────────────────────────
 
 /// In-memory store for tasks and events, used by TaskService.
@@ -258,6 +281,7 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
 fn to_status(err: uc_types::EngineError) -> Status {
     use uc_types::EngineError::*;
     let (code, msg) = match &err {
+        NotFound(m) => (tonic::Code::NotFound, m.clone()),
         SearchError(m) => (tonic::Code::Internal, m.clone()),
         IndexError(m) => (tonic::Code::NotFound, m.clone()),
         MemoryReadError(m) | MemoryWriteError(m) => (tonic::Code::Internal, m.clone()),
@@ -608,6 +632,13 @@ mod tests {
     fn error_mapping_index_not_found() {
         let status = to_status(uc_types::EngineError::IndexError("repo-1".into()));
         assert_eq!(status.code(), tonic::Code::NotFound);
+    }
+
+    #[test]
+    fn error_mapping_not_found() {
+        let status = to_status(uc_types::EngineError::NotFound("resource xyz".into()));
+        assert_eq!(status.code(), tonic::Code::NotFound);
+        assert_eq!(status.message(), "resource xyz");
     }
 
     #[test]

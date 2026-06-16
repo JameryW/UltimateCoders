@@ -1,10 +1,10 @@
 //! UltimateCoders gRPC Server
 //!
 //! Standalone binary that starts a tonic gRPC server with LocalEngine.
-//! Serves both EngineService and TaskService.
+//! Serves EngineService, TaskService, and the standard gRPC Health service.
 
 use uc_engine::{EngineConfig, LocalEngine};
-use uc_grpc::server::GrpcServer;
+use uc_grpc::server::{health_reporter, GrpcServer};
 
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
@@ -37,6 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_server = GrpcServer::new(engine);
     let (engine_service, task_service) = grpc_server.into_services();
 
+    // Create health reporter (marks EngineService as serving)
+    let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
+
     // Determine listen address
     let addr = std::env::var("UC_GRPC_ADDR")
         .unwrap_or_else(|_| "[::]:50051".to_string())
@@ -47,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Server::builder()
         .add_service(engine_service)
         .add_service(task_service)
+        .add_service(health_service)
         .serve(addr)
         .await?;
 

@@ -533,6 +533,55 @@ class Orchestrator:
         candidates.sort(key=lambda w: (w.current_load, -w.max_capacity))
         return candidates[0].id
 
+    def _select_next_subtask(self, task: Task) -> Subtask | None:
+        """Select the next subtask to assign, respecting priority and dependencies.
+
+        Candidates are subtasks that are PENDING and have all dependencies
+        completed.  They are sorted by:
+        1. Priority (higher value = higher priority, first)
+        2. Dependency readiness (all deps completed)
+        3. Round-robin among workers (via _select_worker tie-break)
+
+        Args:
+            task: The task whose subtasks to consider.
+
+        Returns:
+            The next Subtask to assign, or None if no subtask is ready.
+        """
+        ready = task.ready_subtasks
+        if not ready:
+            return None
+
+        # Filter to only those whose dependencies are fully completed
+        candidates = [st for st in ready if self._check_dependencies(st, task)]
+
+        if not candidates:
+            return None
+
+        # Sort by priority descending (higher priority first)
+        candidates.sort(key=lambda st: -st.priority)
+        return candidates[0]
+
+    def _check_dependencies(self, subtask: Subtask, task: Task) -> bool:
+        """Check whether all dependencies of a subtask are completed.
+
+        Args:
+            subtask: The subtask whose dependencies to check.
+            task: The parent task (used to look up dependency subtask status).
+
+        Returns:
+            True if all dependencies are completed (or there are none).
+        """
+        if not subtask.depends_on:
+            return True
+
+        subtask_map = {st.id: st for st in task.subtasks}
+        for dep_id in subtask.depends_on:
+            dep = subtask_map.get(dep_id)
+            if dep is None or not dep.is_complete:
+                return False
+        return True
+
     def _parse_decomposition(
         self,
         response: LLMResponse,
@@ -602,6 +651,7 @@ class Orchestrator:
                 parent_id=parent_task_id,
                 description=item.get("description", f"Subtask {idx + 1}"),
                 status=SubtaskStatus.PENDING,
+                priority=item.get("priority", 0),
                 file_constraints=item.get("file_constraints", []),
                 expected_output=item.get("expected_output", ""),
             )

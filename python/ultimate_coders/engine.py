@@ -2,17 +2,23 @@
 Engine factory -- creates the unified engine interface.
 
 Switches between local (PyO3 FFI) and remote (gRPC) at construction time.
+Supports automatic fallback from gRPC to local mode when the remote server
+is unavailable.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+import time
+from typing import Any, Callable
 
 try:
     from ultimate_coders._uc_core import PyEngine, PySearchQuery
 except ImportError:
     PyEngine = None  # Rust extension not built yet
     PySearchQuery = None
+
+logger = logging.getLogger(__name__)
 
 
 class Engine:
@@ -46,23 +52,186 @@ class Engine:
         self,
         mode: str = "local",
         grpc_endpoint: str | None = None,
+        fallback_mode: str = "none",
+        on_fallback: Callable[[], None] | None = None,
+        on_recovery: Callable[[], None] | None = None,
     ):
+        """Initialize the Engine.
+
+        Args:
+            mode: "local" (in-process) or "grpc" (remote server).
+            grpc_endpoint: Required if mode="grpc".
+            fallback_mode: "none" (no fallback, default), or "auto"
+                (if mode="grpc" and gRPC fails, auto-switch to local).
+            on_fallback: Callback invoked when the engine falls back
+                from gRPC to local mode.
+            on_recovery: Callback invoked when the engine recovers
+                back to gRPC mode after a fallback.
+        """
         if PyEngine is None:
             raise ImportError(
                 "Rust extension not built. Run `maturin develop` first."
             )
         self._mode = mode
-        self._engine = PyEngine(mode=mode, grpc_endpoint=grpc_endpoint)
+        self._fallback_mode = fallback_mode
+        self._fallback_active = False
+        self._on_fallback = on_fallback
+        self._on_recovery = on_recovery
+        self._last_recovery_check: float = 0.0
+        self._recovery_check_interval: float = 30.0  # seconds
+
+        # Always create the local engine (needed for fallback)
+        self._local_engine = PyEngine(mode="local", grpc_endpoint=None)
+
+        if mode == "grpc":
+            self._grpc_engine = PyEngine(mode=mode, grpc_endpoint=grpc_endpoint)
+            self._engine = self._grpc_engine
+        else:
+            self._grpc_engine = None
+            self._engine = self._local_engine
 
     @property
     def mode(self) -> str:
         """Current engine mode ('local' or 'grpc')."""
         return self._mode
 
+    @property
+    def fallback_active(self) -> bool:
+        """Whether the engine is currently in fallback (local) mode.
+
+        True only when mode="grpc", fallback_mode="auto", and the gRPC
+        server has failed, causing the engine to fall back to local mode.
+        """
+        return self._fallback_active
+
+    # ── Fallback helpers ─────────────────────────────────────────
+
+    def _should_use_fallback(self) -> bool:
+        """Whether fallback logic applies for the current call.
+
+        True only when mode="grpc" and fallback_mode="auto".
+        """
+        return self._mode == "grpc" and self._fallback_mode == "auto"
+
+    def _try_grpc_with_fallback(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        """Call a gRPC method with automatic fallback to local on failure.
+
+        If the engine is currently in fallback mode, delegates to the local
+        engine directly.  Otherwise tries the gRPC engine first; on
+        ConnectionError or TimeoutError, activates fallback and retries
+        on the local engine.
+
+        Args:
+            method_name: Name of the method to call on the engine.
+            *args: Positional arguments for the method.
+            **kwargs: Keyword arguments for the method.
+
+        Returns:
+            The result of the method call.
+        """
+        if not self._should_use_fallback():
+            # No fallback configured — call the engine directly
+            return getattr(self._engine, method_name)(*args, **kwargs)
+
+        if self._fallback_active:
+            # Already in fallback — check for recovery opportunity
+            self._check_grpc_recovery()
+            if self._fallback_active:
+                return getattr(self._local_engine, method_name)(*args, **kwargs)
+
+        # Try gRPC first
+        try:
+            result = getattr(self._grpc_engine, method_name)(*args, **kwargs)
+            return result
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "gRPC %s failed (%s), falling back to local engine",
+                method_name,
+                exc,
+            )
+            self._activate_fallback()
+            return getattr(self._local_engine, method_name)(*args, **kwargs)
+
+    async def _try_grpc_with_fallback_async(
+        self, method_name: str, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Async version of _try_grpc_with_fallback.
+
+        Args:
+            method_name: Name of the async method to call on the engine.
+            *args: Positional arguments for the method.
+            **kwargs: Keyword arguments for the method.
+
+        Returns:
+            The result of the async method call.
+        """
+        if not self._should_use_fallback():
+            return await getattr(self._engine, method_name)(*args, **kwargs)
+
+        if self._fallback_active:
+            self._check_grpc_recovery()
+            if self._fallback_active:
+                return await getattr(self._local_engine, method_name)(*args, **kwargs)
+
+        try:
+            result = await getattr(self._grpc_engine, method_name)(*args, **kwargs)
+            return result
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "gRPC %s failed (%s), falling back to local engine",
+                method_name,
+                exc,
+            )
+            self._activate_fallback()
+            return await getattr(self._local_engine, method_name)(*args, **kwargs)
+
+    def _activate_fallback(self) -> None:
+        """Switch the engine from gRPC to local fallback mode."""
+        if self._fallback_active:
+            return
+        self._fallback_active = True
+        self._engine = self._local_engine
+        logger.info("Activated fallback to local engine")
+        if self._on_fallback is not None:
+            try:
+                self._on_fallback()
+            except Exception:
+                logger.debug("on_fallback callback error", exc_info=True)
+
+    def _check_grpc_recovery(self) -> None:
+        """Try to recover back to gRPC mode.
+
+        Periodically (every recovery_check_interval seconds) attempts a
+        gRPC health() call.  If it succeeds, switches back to gRPC mode.
+        """
+        if not self._fallback_active or self._grpc_engine is None:
+            return
+
+        now = time.monotonic()
+        if now - self._last_recovery_check < self._recovery_check_interval:
+            return
+
+        self._last_recovery_check = now
+        try:
+            self._grpc_engine.health()
+            # Recovery successful
+            self._fallback_active = False
+            self._engine = self._grpc_engine
+            logger.info("Recovered from fallback to gRPC engine")
+            if self._on_recovery is not None:
+                try:
+                    self._on_recovery()
+                except Exception:
+                    logger.debug("on_recovery callback error", exc_info=True)
+        except (ConnectionError, TimeoutError, OSError):
+            logger.debug("gRPC recovery check failed, staying in fallback")
+
+    # ── Public API (with fallback wrapping) ──────────────────────
+
     def health(self) -> object:
         """Check engine health. Returns a HealthStatus object with
         .status, .version, .uptime_seconds, and .components attributes."""
-        return self._engine.health()
+        return self._try_grpc_with_fallback("health")
 
     def search(self, query) -> object:
         """Search across indexed repositories.
@@ -75,7 +244,7 @@ class Engine:
             SearchResult with matching items.
         """
         py_query = self._convert_search_query(query)
-        return self._engine.search(py_query)
+        return self._try_grpc_with_fallback("search", py_query)
 
     def _convert_search_query(self, query: Any) -> Any:
         """Convert a SearchQuery builder or dict to a PySearchQuery for the Rust engine.
@@ -138,8 +307,9 @@ class Engine:
         Returns:
             IndexResponse with indexing statistics.
         """
-        return self._engine.index_repo(
-            repo_id, local_path, remote_url, default_branch, force_full
+        return self._try_grpc_with_fallback(
+            "index_repo",
+            repo_id, local_path, remote_url, default_branch, force_full,
         )
 
     def get_index_state(self, repo_id: str) -> object:
@@ -151,7 +321,7 @@ class Engine:
         Returns:
             RepoIndexState with index status information.
         """
-        return self._engine.get_index_state(repo_id)
+        return self._try_grpc_with_fallback("get_index_state", repo_id)
 
     def remove_index(self, repo_id: str) -> None:
         """Remove a repository's index.
@@ -159,7 +329,7 @@ class Engine:
         Args:
             repo_id: Repository identifier.
         """
-        self._engine.remove_index(repo_id)
+        return self._try_grpc_with_fallback("remove_index", repo_id)
 
     def read_memory(
         self,
@@ -181,8 +351,9 @@ class Engine:
         Returns:
             MemoryEntry or None if not found.
         """
-        return self._engine.read_memory(
-            key_scope, key, task_id, project_id, include_semantic
+        return self._try_grpc_with_fallback(
+            "read_memory",
+            key_scope, key, task_id, project_id, include_semantic,
         )
 
     def write_memory(
@@ -221,7 +392,8 @@ class Engine:
         Returns:
             MemoryEntry with the written data.
         """
-        return self._engine.write_memory(
+        return self._try_grpc_with_fallback(
+            "write_memory",
             key_scope, key, content, content_type, source_agent,
             importance, tags, task_id, project_id,
             language, file_path, uri, description,
@@ -242,7 +414,9 @@ class Engine:
             task_id: Task ID (required if key_scope="task").
             project_id: Project ID (required if key_scope="project").
         """
-        self._engine.delete_memory(key_scope, key, task_id, project_id)
+        return self._try_grpc_with_fallback(
+            "delete_memory", key_scope, key, task_id, project_id,
+        )
 
     def search_memory(
         self,
@@ -264,8 +438,9 @@ class Engine:
         Returns:
             List of MemorySearchResult objects.
         """
-        return self._engine.search_memory(
-            query, scope_type, project_id, max_results, min_score
+        return self._try_grpc_with_fallback(
+            "search_memory",
+            query, scope_type, project_id, max_results, min_score,
         )
 
     # ── Async methods ──────────────────────────────────────────
@@ -276,7 +451,7 @@ class Engine:
         Usage:
             status = await engine.health_async()
         """
-        return await self._engine.health_async()
+        return await self._try_grpc_with_fallback_async("health_async")
 
     async def search_async(self, query) -> object:
         """Async version of search().
@@ -289,7 +464,7 @@ class Engine:
             result = await engine.search_async(query)
         """
         py_query = self._convert_search_query(query)
-        return await self._engine.search_async(py_query)
+        return await self._try_grpc_with_fallback_async("search_async", py_query)
 
     async def index_repo_async(
         self,
@@ -311,8 +486,9 @@ class Engine:
         Usage:
             response = await engine.index_repo_async("my-repo", "/path/to/repo")
         """
-        return await self._engine.index_repo_async(
-            repo_id, local_path, remote_url, default_branch, force_full
+        return await self._try_grpc_with_fallback_async(
+            "index_repo_async",
+            repo_id, local_path, remote_url, default_branch, force_full,
         )
 
     async def read_memory_async(
@@ -335,8 +511,9 @@ class Engine:
         Usage:
             entry = await engine.read_memory_async("task", "decisions", task_id="t1")
         """
-        return await self._engine.read_memory_async(
-            key_scope, key, task_id, project_id, include_semantic
+        return await self._try_grpc_with_fallback_async(
+            "read_memory_async",
+            key_scope, key, task_id, project_id, include_semantic,
         )
 
     async def write_memory_async(
@@ -377,7 +554,8 @@ class Engine:
                 "task", "decisions", "Use PostgreSQL", task_id="t1"
             )
         """
-        return await self._engine.write_memory_async(
+        return await self._try_grpc_with_fallback_async(
+            "write_memory_async",
             key_scope, key, content, content_type, source_agent,
             importance, tags, task_id, project_id,
             language, file_path, uri, description,
@@ -401,7 +579,9 @@ class Engine:
         Usage:
             await engine.delete_memory_async("task", "decisions", task_id="t1")
         """
-        await self._engine.delete_memory_async(key_scope, key, task_id, project_id)
+        await self._try_grpc_with_fallback_async(
+            "delete_memory_async", key_scope, key, task_id, project_id,
+        )
 
     async def search_memory_async(
         self,
@@ -423,8 +603,9 @@ class Engine:
         Usage:
             results = await engine.search_memory_async("database patterns")
         """
-        return await self._engine.search_memory_async(
-            query, scope_type, project_id, max_results, min_score
+        return await self._try_grpc_with_fallback_async(
+            "search_memory_async",
+            query, scope_type, project_id, max_results, min_score,
         )
 
     async def get_index_state_async(self, repo_id: str) -> object:
@@ -436,7 +617,9 @@ class Engine:
         Usage:
             state = await engine.get_index_state_async("my-repo")
         """
-        return await self._engine.get_index_state_async(repo_id)
+        return await self._try_grpc_with_fallback_async(
+            "get_index_state_async", repo_id,
+        )
 
     async def remove_index_async(self, repo_id: str) -> None:
         """Async version of remove_index().
@@ -447,20 +630,34 @@ class Engine:
         Usage:
             await engine.remove_index_async("my-repo")
         """
-        await self._engine.remove_index_async(repo_id)
+        await self._try_grpc_with_fallback_async(
+            "remove_index_async", repo_id,
+        )
 
 
 def create_engine(
     mode: str = "local",
     grpc_endpoint: str | None = None,
+    fallback_mode: str = "none",
+    on_fallback: Callable[[], None] | None = None,
+    on_recovery: Callable[[], None] | None = None,
 ) -> Engine:
     """Factory function to create an Engine instance.
 
     Args:
         mode: "local" (in-process) or "grpc" (remote server)
         grpc_endpoint: Required if mode="grpc"
+        fallback_mode: "none" (default) or "auto" (fallback to local on gRPC failure)
+        on_fallback: Callback invoked when fallback to local mode occurs
+        on_recovery: Callback invoked when recovery to gRPC mode occurs
 
     Returns:
         Engine instance
     """
-    return Engine(mode=mode, grpc_endpoint=grpc_endpoint)
+    return Engine(
+        mode=mode,
+        grpc_endpoint=grpc_endpoint,
+        fallback_mode=fallback_mode,
+        on_fallback=on_fallback,
+        on_recovery=on_recovery,
+    )

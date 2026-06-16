@@ -8,6 +8,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("Search failed: {0}")]
     SearchError(String),
 
@@ -68,5 +71,10 @@ impl EngineError {
             self,
             EngineError::RateLimited(_) | EngineError::TimeoutError(_)
         )
+    }
+
+    /// Whether this error represents a resource not found condition.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, EngineError::NotFound(_))
     }
 }

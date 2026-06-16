@@ -63,6 +63,7 @@ class Subtask:
     status: SubtaskStatus = SubtaskStatus.PENDING
     assigned_worker: str | None = None
     depends_on: list[str] = field(default_factory=list)
+    priority: int = 0
     file_constraints: list[str] = field(default_factory=list)
     expected_output: str = ""
     result: SubtaskResult | None = None
