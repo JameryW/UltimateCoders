@@ -589,9 +589,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 task_store: Arc::new(Mutex::new(TaskStore::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
-                local_worker: Arc::new(Mutex::new(
-                    crate::local_worker::LocalWorkerBridge::new(),
-                )),
+                local_worker: Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new())),
                 event_tx,
             }),
         }
@@ -641,9 +639,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             engine,
             task_store: task_store.clone(),
             nats_client: nats_client.clone(),
-            local_worker: Arc::new(Mutex::new(
-                crate::local_worker::LocalWorkerBridge::new(),
-            )),
+            local_worker: Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new())),
             event_tx: event_tx.clone(),
         });
 
@@ -1434,8 +1430,8 @@ pub async fn apply_worker_update_to_store(
         .subtasks
         .iter()
         .map(|st: &WorkerSubtaskUpdate| {
-            let status = subtask_status_from_str(&st.status)
-                .unwrap_or(uc_types::SubtaskStatus::Pending);
+            let status =
+                subtask_status_from_str(&st.status).unwrap_or(uc_types::SubtaskStatus::Pending);
             uc_types::Subtask {
                 id: uc_types::TaskId(st.id.clone()),
                 parent_id: uc_types::TaskId(update.task_id.clone()),
@@ -1457,8 +1453,8 @@ pub async fn apply_worker_update_to_store(
         })
         .collect();
 
-    let task_status = task_status_from_str(&update.status)
-        .unwrap_or(uc_types::TaskStatus::InProgress);
+    let task_status =
+        task_status_from_str(&update.status).unwrap_or(uc_types::TaskStatus::InProgress);
 
     let task = uc_types::Task {
         id: uc_types::TaskId(update.task_id.clone()),
@@ -1474,8 +1470,8 @@ pub async fn apply_worker_update_to_store(
 
     // Record events for subtask state transitions so WatchTask can stream them
     for st in &update.subtasks {
-        let status = subtask_status_from_str(&st.status)
-            .unwrap_or(uc_types::SubtaskStatus::Pending);
+        let status =
+            subtask_status_from_str(&st.status).unwrap_or(uc_types::SubtaskStatus::Pending);
         let event = match status {
             uc_types::SubtaskStatus::Assigned => uc_engine::AgentEventType::SubtaskAssigned {
                 task_id: uc_types::TaskId(update.task_id.clone()),

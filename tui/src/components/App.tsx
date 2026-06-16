@@ -99,7 +99,6 @@ const App: React.FC = () => {
     pauseTask,
     resumeTask,
     client,
-    lastError: grpcError,
     retryCount,
     nextRetryAt,
     serverAddr,
@@ -281,10 +280,10 @@ const App: React.FC = () => {
   );
 
   // ── Calculate ChatLog visible lines ────────────────────
-  // v3: compact logo(1) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2)
+  // Full logo(6) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2) = 12
   const visibleLines = Math.max(
     5,
-    (stdout?.rows ?? 24) - 7,
+    (stdout?.rows ?? 24) - 12,
   );
 
   // ── Build scroll command for ChatLog ────────────────────
@@ -456,6 +455,55 @@ const App: React.FC = () => {
       return;
     }
 
+    // ── Subtask overlay shortcuts ────────────────────────
+    if (state.subtaskOverlayOpen) {
+      if (key.upArrow) {
+        const nextIdx = state.selectedSubtaskIndex <= 0
+          ? state.subtasks.length - 1
+          : state.selectedSubtaskIndex - 1;
+        dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+        return;
+      }
+      if (key.downArrow) {
+        const nextIdx = state.selectedSubtaskIndex >= state.subtasks.length - 1
+          ? 0
+          : state.selectedSubtaskIndex + 1;
+        dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+        return;
+      }
+      if (key.return) {
+        dispatch({type: 'TOGGLE_SUBTASK_DETAIL'});
+        return;
+      }
+      if (input === 'r' && !key.ctrl && !key.meta) {
+        // R: retry failed subtask
+        const selected = state.subtasks[state.selectedSubtaskIndex];
+        if (selected && selected.status === 'failed') {
+          dispatch({type: 'RETRY_SUBTASK', subtaskId: selected.id});
+          updateSubtask(selected.id, 'pending');
+          addMessage(createSystemMessage(`Retrying subtask: ${selected.description.slice(0, 50)}`, {color: 'yellow'}));
+
+          // Offline: simulate retry progress with timers
+          if (connectionState !== 'connected') {
+            const startTimer = setTimeout(() => {
+              updateSubtask(selected.id, 'in_progress');
+              addMessage(createSystemMessage(`▶ Subtask started: ${selected.description.slice(0, 50)}`, {color: 'cyan'}));
+            }, 1000);
+            dispatch({type: 'ADD_OFFLINE_TIMER', timerId: startTimer});
+
+            const completeTimer = setTimeout(() => {
+              updateSubtask(selected.id, 'completed');
+              addMessage(createSystemMessage(`✓ Subtask completed: ${selected.description.slice(0, 50)}`, {color: 'green'}));
+            }, 2500);
+            dispatch({type: 'ADD_OFFLINE_TIMER', timerId: completeTimer});
+          }
+        }
+        return;
+      }
+      // In overlay, block other keys from reaching focus-area handlers
+      return;
+    }
+
     // ── Focus-area-specific shortcuts ────────────────────
     switch (state.focusedArea) {
       case 'chat': {
@@ -503,7 +551,6 @@ const App: React.FC = () => {
   // ── Derive display info ────────────────────────────────
   const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
   const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
-  const mode = connectionState === 'connected' ? 'grpc live' : 'offline demo';
   const terminalWidth = stdout?.columns ?? 80;
 
   // ── Symbols ─────────────────────────────────────────────
@@ -552,7 +599,7 @@ const App: React.FC = () => {
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">{'Subtasks'}</Text>
-          <Text dimColor>{' (Ctrl+T or Esc to close)'}</Text>
+          <Text dimColor>{' (Ctrl+T or Esc to close · ↑↓ navigate · Enter detail · R retry)'}</Text>
         </Box>
         <SubtaskTree
           subtasks={state.subtasks}
@@ -562,7 +609,7 @@ const App: React.FC = () => {
           maxWidth={terminalWidth - 4}
           symbols={S}
           selectedIndex={state.selectedSubtaskIndex}
-          detailOpen={false}
+          detailOpen={state.subtaskDetailOpen}
         />
       </Box>
     );
@@ -571,12 +618,11 @@ const App: React.FC = () => {
   // ── Render: Main layout (single-column vertical) ──────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
-      {/* ── Logo (compact single-line in v3 layout) ── */}
+      {/* ── Logo banner (full pixel-game UC logo) ── */}
       <LogoBanner
         terminalWidth={terminalWidth}
         brandChar={S.brand}
         version={VERSION}
-        compact={true}
       />
 
       {/* ── ChatLog (full-width, single column) ──────── */}
@@ -620,15 +666,9 @@ const App: React.FC = () => {
         workerId={workerId}
         backend={backend}
         progress={state.progress}
-        serverAddr={serverAddr}
         connectionState={connectionState}
         isStreaming={isStreaming}
-        activeTaskId={state.activeTaskId}
-        lastError={grpcError}
-        mode={mode}
         focusedArea={state.focusedArea}
-        activeMainPane={state.activeMainPane}
-        eventFilter={state.eventFilter}
         terminalWidth={terminalWidth}
         retryCount={retryCount}
         nextRetryAt={nextRetryAt}

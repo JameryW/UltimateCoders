@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "Verify WatchTask stream and submit_task API contracts unchanged from TUI perspective"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Verify JSON-RPC protocol additions (shutdown method, notification format) are backwards compatible"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify worker crash error propagation follows established patterns"}
+{"file": ".trellis/tasks/06-17-backend-hardening-local-worker-bridge-async-streaming-integration-tests/prd.md", "reason": "Check acceptance criteria coverage"}

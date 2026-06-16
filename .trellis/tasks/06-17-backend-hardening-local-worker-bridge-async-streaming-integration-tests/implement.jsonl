@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskService API contracts — submit_task, WatchTask stream, task lifecycle"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "JSON-RPC protocol contracts between Rust gRPC server and Python worker"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS event path — need to unify with broadcast channel (统一事件源)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError variants and gRPC Status mapping patterns"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI WatchTask consumer contract — ensure broadcast changes are compatible"}
+{"file": ".trellis/tasks/06-17-backend-hardening-local-worker-bridge-async-streaming-integration-tests/prd.md", "reason": "Task PRD — requirements, architecture, implementation plan"}

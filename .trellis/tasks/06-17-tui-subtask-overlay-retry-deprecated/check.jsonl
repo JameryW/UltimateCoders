@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "Verify overlay interactions and retry action conform to existing contracts"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Test conventions — pure-function vs React-rendering boundaries for new overlay/retry tests"}

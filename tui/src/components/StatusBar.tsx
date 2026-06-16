@@ -24,17 +24,9 @@ export interface StatusBarProps {
   workerId?: string;
   backend?: string;
   progress?: {completed: number; total: number};
-  serverAddr?: string;
   connectionState?: ConnectionState;
   isStreaming?: boolean;
-  activeTaskId?: string | null;
-  lastError?: string | null;
-  mode?: string;
   focusedArea?: FocusedArea;
-  /** @deprecated No longer used in single-column layout. */
-  activeMainPane?: string;
-  /** @deprecated Not displayed in status bar. */
-  eventFilter?: string;
   /** Terminal width for responsive layout. */
   terminalWidth?: number;
   /** Current retry attempt count. */
@@ -274,8 +266,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
   focusedArea = 'input',
   terminalWidth = 80,
   retryCount = 0,
-  // Props below are accepted for interface compatibility but no longer displayed:
-  // serverAddr, activeTaskId, lastError, mode, activeMainPane, eventFilter, nextRetryAt
+  nextRetryAt = null,
 }) => {
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
   const S = getSymbols();

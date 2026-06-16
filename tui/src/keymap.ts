@@ -70,6 +70,12 @@ const COMMANDS: KeyCommand[] = [
   {id: 'end', label: 'Jump to bottom', shortLabel: 'End', key: 'End', areas: ['chat'], global: false},
   {id: 'expandAll', label: 'Expand/collapse long messages', shortLabel: 'Enter', key: 'Enter', areas: ['chat'], global: false},
   {id: 'clearLog', label: 'Clear log', shortLabel: 'C-L', key: 'Ctrl+L', areas: ['chat'], global: false},
+
+  // ── Overlay (subtask Ctrl+T) ──
+  {id: 'overlayUp', label: 'Navigate subtask up', shortLabel: '↑', key: 'Up', areas: [], global: false},
+  {id: 'overlayDown', label: 'Navigate subtask down', shortLabel: '↓', key: 'Down', areas: [], global: false},
+  {id: 'overlayDetail', label: 'Toggle subtask detail', shortLabel: 'Enter', key: 'Enter', areas: [], global: false},
+  {id: 'overlayRetry', label: 'Retry failed subtask', shortLabel: 'R', key: 'R', areas: [], global: false},
 ];
 
 // ── Lookup Helpers ─────────────────────────────────────────

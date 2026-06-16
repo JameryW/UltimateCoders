@@ -285,7 +285,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
       )}
       {isFocused && subtasks.length > 0 && (
         <Box marginTop={1}>
-          <Text dimColor>{'↑↓ navigate · Enter detail · Esc back'}</Text>
+          <Text dimColor>{'↑↓ navigate · Enter detail · R retry failed · Esc back'}</Text>
         </Box>
       )}
     </Box>
