@@ -586,20 +586,21 @@ const App: React.FC = () => {
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
       {/* ── Header ─────────────────────────────────────── */}
       <Box paddingX={1}>
-        <Text bold color="cyan">{'UC'}</Text>
+        <Text color="magenta">{'◆'}</Text>
+        <Text bold color="magenta">{' UC'}</Text>
         <Text>  </Text>
         <Text bold>UltimateCoders</Text>
         <Text dimColor> v{VERSION}</Text>
         <Text>  </Text>
         {connectionState === 'connected' && <Text color="green">{S.connected}</Text>}
         {connectionState === 'connecting' && <Text color="yellow">{S.connecting}</Text>}
-        {connectionState === 'disconnected' && <Text color="red">{S.disconnected}</Text>}
-        {connectionState === 'error' && <Text color="red">{S.error}</Text>}
+        {connectionState === 'disconnected' && <Text color="yellow">{S.disconnected}</Text>}
+        {connectionState === 'error' && <Text color="yellow">{S.error}</Text>}
         <Text dimColor>
           {connectionState === 'connected' ? ' connected' : ''}
           {connectionState === 'connecting' ? ' connecting...' : ''}
           {connectionState === 'disconnected' ? ' offline' : ''}
-          {connectionState === 'error' ? ' error' : ''}
+          {connectionState === 'error' ? ' offline' : ''}
         </Text>
         {state.activeTaskId && (
           <Text dimColor>{` │ task:${state.activeTaskId.slice(0, 8)}`}</Text>

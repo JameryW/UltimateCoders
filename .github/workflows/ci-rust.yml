@@ -85,3 +85,29 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  storage-integration:
+    name: storage integration tests
+    runs-on: ubuntu-latest
+    # Only run on main pushes or manual trigger to avoid PR noise from infra flakiness
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Start storage infrastructure
+        run: docker compose up -d --wait
+      - name: Run storage integration tests
+        run: cargo test --features storage -- --ignored
+        env:
+          UC_PG_URL: postgresql://ultimate_coders:ultimate_coders@localhost:5432/ultimate_coders
+          UC_QDRANT_URL: http://localhost:6334
+          UC_TIKV_PD_ENDPOINTS: localhost:2379
+      - name: Print logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop storage infrastructure
+        if: always()
+        run: docker compose down -v
