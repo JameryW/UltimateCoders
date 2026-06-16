@@ -11,6 +11,11 @@ pub mod conversions;
 pub mod server;
 
 pub use server::TaskStore;
+pub use server::{
+    NatsHeartbeat, NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate,
+    NATS_SUBJECT_HEARTBEAT, NATS_SUBJECT_TASK_EVENT, NATS_SUBJECT_TASK_SUBMIT,
+    NATS_SUBJECT_TASK_UPDATE,
+};
 
 /// Generated protobuf types and service definitions.
 pub mod ultimate_coders {

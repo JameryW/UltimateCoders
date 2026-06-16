@@ -100,6 +100,7 @@ class Orchestrator:
         circuit_breaker: CircuitBreaker | None = None,
         scheduler: Any = None,
         sandbox_manager: Any = None,
+        nats_publisher: Any | None = None,
     ):
         """Initialize the Orchestrator.
 
@@ -114,6 +115,10 @@ class Orchestrator:
                 via the night-window orchestration system.
             sandbox_manager: Optional SandboxManager for Claude Code-based
                 decomposition (used when llm_client is None).
+            nats_publisher: Optional NatsPublisher for publishing task
+                state changes to NATS. When set, the Orchestrator
+                publishes ``uc.task.update`` and ``uc.task.event``
+                messages after each state transition.
         """
         self.engine = engine
         self.llm_client = llm_client
@@ -128,6 +133,8 @@ class Orchestrator:
         self.scheduler = scheduler
         self._night_window_active: bool = False
         self._pending_tasks: list[Task] = []
+        # NATS publisher for state change events
+        self.nats_publisher = nats_publisher
         # Event emitter for real-time dashboard tracking
         from ultimate_coders.agent.event_emitter import TaskEventEmitter
 
@@ -219,6 +226,20 @@ class Orchestrator:
                 "subtask_count": len(task.subtasks),
             },
         )
+
+        # Publish task state to NATS (if nats_publisher is configured)
+        if self.nats_publisher is not None:
+            await self.nats_publisher.publish_update(task)
+            await self.nats_publisher.publish_event(
+                "task_submitted",
+                task_id=task.id,
+                data={
+                    "description": description,
+                    "project_id": project_id,
+                    "status": task.status.value,
+                    "subtask_count": len(task.subtasks),
+                },
+            )
 
         task.update_timestamp()
         return task
@@ -371,6 +392,20 @@ class Orchestrator:
             subtask.id,
             worker_id,
         )
+
+        # Publish subtask assignment to NATS (if nats_publisher is configured)
+        if self.nats_publisher is not None:
+            # Find the parent task for the update
+            parent_task = self.tasks.get(subtask.parent_id)
+            if parent_task is not None:
+                await self.nats_publisher.publish_update(parent_task)
+            await self.nats_publisher.publish_event(
+                "subtask_assigned",
+                task_id=subtask.parent_id,
+                subtask_id=subtask.id,
+                data={"worker_id": worker_id},
+            )
+
         return worker_id
 
     async def handle_subtask_result(self, result: SubtaskResult) -> None:
@@ -453,6 +488,17 @@ class Orchestrator:
                     "completed_count": sum(1 for s in task.subtasks if s.is_complete),
                 },
             )
+            # Publish task completion to NATS
+            if self.nats_publisher is not None:
+                await self.nats_publisher.publish_update(task)
+                await self.nats_publisher.publish_event(
+                    "task_completed",
+                    task_id=task.id,
+                    data={
+                        "status": "completed",
+                        "result_summary": (task.result or "")[:300],
+                    },
+                )
         elif task.has_failed:
             # Check if all subtasks are either completed or failed
             all_done = all(st.is_complete or st.is_failed for st in task.subtasks)
@@ -469,6 +515,32 @@ class Orchestrator:
                         "result_summary": (task.result or "")[:300],
                         "subtask_count": len(task.subtasks),
                         "failed_count": sum(1 for s in task.subtasks if s.is_failed),
+                    },
+                )
+                # Publish task failure to NATS
+                if self.nats_publisher is not None:
+                    await self.nats_publisher.publish_update(task)
+                    await self.nats_publisher.publish_event(
+                        "task_completed",
+                        task_id=task.id,
+                        data={
+                            "status": "failed",
+                            "result_summary": (task.result or "")[:300],
+                        },
+                    )
+        else:
+            # Task still in progress — publish subtask status update
+            if self.nats_publisher is not None:
+                await self.nats_publisher.publish_update(task)
+                event_type = "subtask_completed" if result.success else "subtask_failed"
+                await self.nats_publisher.publish_event(
+                    event_type,
+                    task_id=task.id,
+                    subtask_id=result.subtask_id,
+                    data={
+                        "success": result.success,
+                        "summary": result.summary[:300] if result.success else "",
+                        "error": "" if result.success else result.summary[:300],
                     },
                 )
 
@@ -1071,6 +1143,11 @@ class Orchestrator:
         Orchestrator state directly from memory for zero-latency
         updates.
 
+        When the Orchestrator has a NatsPublisher configured, it is
+        passed to the Dashboard so that task submit/pause/resume are
+        routed through NATS. The Dashboard also subscribes to
+        ``uc.task.event`` for real-time event streaming.
+
         Args:
             host: Bind address (default: "0.0.0.0").
             port: Bind port (default: 8080).
@@ -1090,7 +1167,10 @@ class Orchestrator:
             logger.warning("Dashboard is already running")
             return
 
-        self._dashboard_app = DashboardApp(self)
+        self._dashboard_app = DashboardApp(
+            self,
+            nats_publisher=self.nats_publisher,
+        )
         self._dashboard_app.start(host=host, port=port)
 
     def stop_dashboard(self) -> None:

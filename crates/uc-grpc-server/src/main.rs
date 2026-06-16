@@ -2,6 +2,10 @@
 //!
 //! Standalone binary that starts a tonic gRPC server with LocalEngine.
 //! Serves EngineService, TaskService, and the standard gRPC Health service.
+//!
+//! When NATS is available (via `UC_NATS_URL` env var), TaskService will
+//! publish task submissions to NATS for the Python Orchestrator to process.
+//! When NATS is unavailable, falls back to local task decomposition.
 
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
@@ -33,8 +37,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Wrap in gRPC server
-    let grpc_server = GrpcServer::new(engine);
+    // Create gRPC server, optionally with NATS integration
+    let grpc_server = match std::env::var("UC_NATS_URL") {
+        Ok(nats_url) => {
+            tracing::info!(nats_url = %nats_url, "Attempting NATS connection for TaskService");
+            GrpcServer::with_nats(engine, &nats_url).await
+        }
+        Err(_) => {
+            tracing::info!("No UC_NATS_URL set, TaskService using local decomposition");
+            GrpcServer::new(engine)
+        }
+    };
     let (engine_service, task_service) = grpc_server.into_services();
 
     // Create health reporter (marks EngineService as serving)
