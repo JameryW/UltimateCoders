@@ -38,24 +38,29 @@ pub enum AgentEventType {
         description: String,
     },
     SubtaskAssigned {
+        task_id: TaskId,
         subtask_id: TaskId,
         worker_id: WorkerId,
     },
     SubtaskStarted {
+        task_id: TaskId,
         subtask_id: TaskId,
         worker_id: WorkerId,
     },
     ToolInvoked {
+        task_id: TaskId,
         subtask_id: TaskId,
         tool_name: String,
         tool_input: String,
     },
     ToolResult {
+        task_id: TaskId,
         subtask_id: TaskId,
         tool_output: String,
         success: bool,
     },
     FileModified {
+        task_id: TaskId,
         subtask_id: TaskId,
         file_path: String,
         diff: String,
@@ -67,11 +72,13 @@ pub enum AgentEventType {
         regions: Vec<LineRange>,
     },
     SubtaskCompleted {
+        task_id: TaskId,
         subtask_id: TaskId,
         summary: String,
         success: bool,
     },
     SubtaskFailed {
+        task_id: TaskId,
         subtask_id: TaskId,
         error: String,
         recoverable: bool,
@@ -367,6 +374,7 @@ mod tests {
             .append(
                 "agent.events.task1",
                 &AgentEventType::SubtaskAssigned {
+                    task_id: task_id.clone(),
                     subtask_id: TaskId::new(),
                     worker_id: worker_id.clone(),
                 },

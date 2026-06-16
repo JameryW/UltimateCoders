@@ -187,6 +187,7 @@ impl TaskStore {
         for st in &task.subtasks {
             self.events
                 .push(uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: task_id.clone(),
                     subtask_id: st.id.clone(),
                     worker_id: uc_types::WorkerId::new(),
                 });
@@ -771,6 +772,7 @@ fn spawn_heartbeat_monitor(
 fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEventType> {
     match event.r#type.as_str() {
         "subtask_assigned" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let worker_id = event
                 .data
@@ -779,11 +781,13 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .map(|s| uc_types::WorkerId(s.to_string()))
                 .unwrap_or_default();
             Some(uc_engine::AgentEventType::SubtaskAssigned {
+                task_id,
                 subtask_id,
                 worker_id,
             })
         }
         "subtask_started" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let worker_id = event
                 .data
@@ -792,11 +796,13 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .map(|s| uc_types::WorkerId(s.to_string()))
                 .unwrap_or_default();
             Some(uc_engine::AgentEventType::SubtaskStarted {
+                task_id,
                 subtask_id,
                 worker_id,
             })
         }
         "tool_call" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let tool_name = event
                 .data
@@ -811,12 +817,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .unwrap_or("")
                 .to_string();
             Some(uc_engine::AgentEventType::ToolInvoked {
+                task_id,
                 subtask_id,
                 tool_name,
                 tool_input,
             })
         }
         "tool_result" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let tool_output = event
                 .data
@@ -831,12 +839,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .map(|s| s == "true")
                 .unwrap_or(false);
             Some(uc_engine::AgentEventType::ToolResult {
+                task_id,
                 subtask_id,
                 tool_output,
                 success,
             })
         }
         "file_modified" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let file_path = event
                 .data
@@ -851,12 +861,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .unwrap_or("")
                 .to_string();
             Some(uc_engine::AgentEventType::FileModified {
+                task_id,
                 subtask_id,
                 file_path,
                 diff,
             })
         }
         "subtask_completed" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let summary = event
                 .data
@@ -871,12 +883,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .map(|s| s == "true")
                 .unwrap_or(true);
             Some(uc_engine::AgentEventType::SubtaskCompleted {
+                task_id,
                 subtask_id,
                 summary,
                 success,
             })
         }
         "subtask_failed" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
             let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
             let error = event
                 .data
@@ -891,6 +905,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .map(|s| s == "true")
                 .unwrap_or(false);
             Some(uc_engine::AgentEventType::SubtaskFailed {
+                task_id,
                 subtask_id,
                 error,
                 recoverable,
@@ -1887,9 +1902,11 @@ mod tests {
         assert!(result.is_some());
         match result.unwrap() {
             uc_engine::AgentEventType::SubtaskAssigned {
+                task_id,
                 subtask_id,
                 worker_id,
             } => {
+                assert_eq!(task_id.0, "t-1");
                 assert_eq!(subtask_id.0, "st-1");
                 assert_eq!(worker_id.0, "w-1");
             }
@@ -1935,10 +1952,12 @@ mod tests {
         assert!(result.is_some());
         match result.unwrap() {
             uc_engine::AgentEventType::ToolInvoked {
+                task_id,
                 subtask_id,
                 tool_name,
                 tool_input,
             } => {
+                assert_eq!(task_id.0, "t-1");
                 assert_eq!(subtask_id.0, "st-1");
                 assert_eq!(tool_name, "grep");
                 assert_eq!(tool_input, "pattern");

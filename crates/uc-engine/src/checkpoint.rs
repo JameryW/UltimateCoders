@@ -223,6 +223,7 @@ impl CheckpointManager {
         for event in &events {
             match &event.event {
                 AgentEventType::SubtaskAssigned {
+                    task_id: _,
                     subtask_id,
                     worker_id,
                 } => {
@@ -233,12 +234,17 @@ impl CheckpointManager {
                         result_summary: None,
                     });
                 }
-                AgentEventType::SubtaskStarted { subtask_id, .. } => {
+                AgentEventType::SubtaskStarted {
+                    task_id: _,
+                    subtask_id,
+                    ..
+                } => {
                     if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
                         st.status = "in_progress".to_string();
                     }
                 }
                 AgentEventType::SubtaskCompleted {
+                    task_id: _,
                     subtask_id,
                     summary,
                     success,
@@ -249,6 +255,7 @@ impl CheckpointManager {
                     }
                 }
                 AgentEventType::SubtaskFailed {
+                    task_id: _,
                     subtask_id,
                     error,
                     recoverable,
@@ -319,14 +326,14 @@ impl CheckpointManager {
 fn extract_task_id(event: &AgentEventType) -> Option<String> {
     match event {
         AgentEventType::TaskCreated { task_id, .. } => Some(task_id.0.clone()),
-        AgentEventType::SubtaskAssigned { subtask_id, .. } => Some(subtask_id.0.clone()),
-        AgentEventType::SubtaskStarted { subtask_id, .. } => Some(subtask_id.0.clone()),
-        AgentEventType::ToolInvoked { subtask_id, .. } => Some(subtask_id.0.clone()),
-        AgentEventType::ToolResult { subtask_id, .. } => Some(subtask_id.0.clone()),
-        AgentEventType::FileModified { subtask_id, .. } => Some(subtask_id.0.clone()),
+        AgentEventType::SubtaskAssigned { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::SubtaskStarted { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::ToolInvoked { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::ToolResult { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::FileModified { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::EditIntent { .. } => None,
-        AgentEventType::SubtaskCompleted { subtask_id, .. } => Some(subtask_id.0.clone()),
-        AgentEventType::SubtaskFailed { subtask_id, .. } => Some(subtask_id.0.clone()),
+        AgentEventType::SubtaskCompleted { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::SubtaskFailed { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::CheckpointCreated { task_id, .. } => Some(task_id.0.clone()),
     }
 }
@@ -338,6 +345,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             snapshot.status = "created".to_string();
         }
         AgentEventType::SubtaskAssigned {
+            task_id: _,
             subtask_id,
             worker_id,
         } => {
@@ -352,7 +360,11 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             }
             snapshot.status = "in_progress".to_string();
         }
-        AgentEventType::SubtaskStarted { subtask_id, .. } => {
+        AgentEventType::SubtaskStarted {
+            task_id: _,
+            subtask_id,
+            ..
+        } => {
             if let Some(st) = snapshot
                 .subtasks
                 .iter_mut()
@@ -362,6 +374,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             }
         }
         AgentEventType::SubtaskCompleted {
+            task_id: _,
             subtask_id,
             summary,
             success,
@@ -376,6 +389,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             }
         }
         AgentEventType::SubtaskFailed {
+            task_id: _,
             subtask_id,
             error,
             recoverable,
@@ -425,6 +439,7 @@ mod tests {
             .record_event(
                 "agent.events.task1",
                 AgentEventType::SubtaskAssigned {
+                    task_id: TaskId::new(), // TODO: derive task_id from context
                     subtask_id: TaskId::new(),
                     worker_id: WorkerId::new(),
                 },
@@ -464,6 +479,7 @@ mod tests {
             .record_event(
                 "agent.events.test-task-1",
                 AgentEventType::SubtaskAssigned {
+                    task_id: TaskId(task_id.to_string()),
                     subtask_id: subtask_id.clone(),
                     worker_id: worker_id.clone(),
                 },
@@ -480,6 +496,7 @@ mod tests {
             .record_event(
                 "agent.events.test-task-1",
                 AgentEventType::SubtaskCompleted {
+                    task_id: TaskId(task_id.to_string()),
                     subtask_id: subtask_id.clone(),
                     summary: "Done".to_string(),
                     success: true,
@@ -571,6 +588,7 @@ mod tests {
             .record_event(
                 "agent.events.test-task-list",
                 AgentEventType::SubtaskAssigned {
+                    task_id: TaskId(task_id.to_string()),
                     subtask_id: TaskId::new(),
                     worker_id: WorkerId::new(),
                 },
