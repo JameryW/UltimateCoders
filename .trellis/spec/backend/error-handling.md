@@ -16,11 +16,14 @@ The project uses a single `EngineError` enum defined in `uc-types` as the shared
 
 ## EngineError Enum
 
-Defined in `crates/uc-types/src/error.rs:9-52`. 13 variants, all using `thiserror::Error` derive:
+Defined in `crates/uc-types/src/error.rs:9-52`. 14 variants, all using `thiserror::Error` derive:
 
 ```rust
 #[derive(Debug, Error)]
 pub enum EngineError {
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     #[error("Search failed: {0}")]
     SearchError(String),
 
@@ -67,6 +70,7 @@ pub enum EngineError {
 
 **Design notes**:
 - Most variants carry a `String` message
+- `NotFound(String)` is the unified "resource does not exist" variant — used instead of `IndexError` or `SearchError` for not-found semantics
 - `RateLimited(u64)` carries the retry-after duration in seconds (not a string)
 - `ConflictError { path, details }` uses named struct-like fields for clarity
 - `MemoryReadError` and `MemoryWriteError` are separate variants (not combined)
@@ -75,7 +79,7 @@ pub enum EngineError {
 
 ## Helper Methods
 
-`EngineError` provides two classification methods (`crates/uc-types/src/error.rs:54-69`):
+`EngineError` provides three classification methods (`crates/uc-types/src/error.rs:54-80`):
 
 ```rust
 impl EngineError {
@@ -88,10 +92,15 @@ impl EngineError {
     pub fn should_fallback(&self) -> bool {
         matches!(self, EngineError::RateLimited(_) | EngineError::TimeoutError(_))
     }
+
+    /// Whether this error represents a resource-not-found condition.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, EngineError::NotFound(_))
+    }
 }
 ```
 
-These are used by the Python-side rate limiter and circuit breaker to decide retry/fallback behavior.
+These are used by the Python-side rate limiter, circuit breaker, and gRPC fallback logic to decide retry/fallback/degradation behavior.
 
 ---
 
@@ -101,8 +110,9 @@ Defined in `crates/uc-python/src/engine.rs:26-49`. Each `EngineError` variant ma
 
 | EngineError Variant | Python Exception | Rationale |
 |---|---|---|
+| `NotFound` | `PyKeyError` | Resource not found semantics |
 | `SearchError` | `PyRuntimeError` | General runtime failure |
-| `IndexError` | `PyKeyError` | "Not found" semantics |
+| `IndexError` | `PyKeyError` | "Not found" semantics (legacy — prefer `NotFound` for new code) |
 | `MemoryReadError` / `MemoryWriteError` | `PyRuntimeError` | General runtime failure |
 | `IndexingError` | `PyRuntimeError` | General runtime failure |
 | `ConnectionError` | `PyConnectionError` | Network/connection semantics |
@@ -123,8 +133,9 @@ Defined in `crates/uc-grpc/src/server.rs:30-48`. Each variant maps to a tonic `C
 
 | EngineError Variant | tonic Code | Rationale |
 |---|---|---|
+| `NotFound` | `NotFound` | Standard gRPC NOT_FOUND |
 | `SearchError` | `Internal` | Server-side search failure |
-| `IndexError` | `NotFound` | Index/resource not found |
+| `IndexError` | `NotFound` | Index/resource not found (legacy — prefer `NotFound` for new code) |
 | `MemoryReadError` / `MemoryWriteError` | `Internal` | Server-side failure |
 | `IndexingError` | `Internal` | Server-side failure |
 | `ConnectionError` | `Unavailable` | Backend unreachable |
@@ -230,8 +241,76 @@ The Python-side `CircuitBreaker` class uses `EngineError.is_retryable()` and `sh
 
 ---
 
+## gRPC Fallback Mode
+
+The Python `Engine` class supports automatic gRPC-to-local fallback (`python/ultimate_coders/engine.py`):
+
+### Configuration
+
+```python
+Engine(mode="grpc", grpc_endpoint="localhost:50051", fallback_mode="auto")
+```
+
+- `fallback_mode="none"` (default): no fallback, gRPC errors propagate
+- `fallback_mode="auto"`: on `ConnectionError`/`TimeoutError`/`OSError`, automatically switch to local engine
+
+### State Machine
+
+```
+grpc_ok → grpc_failed → local_active → grpc_recovered → grpc_ok
+```
+
+- **grpc_failed**: detected on any gRPC call failure → activates local engine
+- **local_active**: all Engine API calls go through local engine
+- **grpc_recovered**: health check succeeds (checked every 30s) → switches back to gRPC
+
+### Callbacks
+
+```python
+engine = Engine(
+    mode="grpc",
+    fallback_mode="auto",
+    on_fallback=lambda: print("Fell back to local mode"),
+    on_recovery=lambda: print("Recovered gRPC connection"),
+)
+```
+
+### Contract
+
+- Fallback is transparent: callers see the same `Engine` API
+- Local engine may have reduced functionality (no shared state across processes)
+- `engine.fallback_active` property returns `True` when in local fallback mode
+- Backward compatible: `fallback_mode="none"` preserves original behavior
+
+---
+
+## Health Check Components
+
+`LocalEngine.health()` returns component-level status in `HealthStatus.components`:
+
+| Component | Status Values | Meaning |
+|-----------|--------------|---------|
+| `memory_short_term` | healthy / degraded / unavailable | TiKV or in-memory fallback |
+| `memory_long_term` | healthy / degraded / unavailable | Qdrant or in-memory fallback |
+| `metadata` | healthy / degraded / unavailable | PostgreSQL or in-memory fallback |
+| `search` | healthy / degraded | Text + semantic search engine |
+| `index_pipeline` | healthy / unavailable | AST + text indexing |
+| `circuit_breaker` | healthy / degraded / unavailable | Circuit breaker state |
+
+- **degraded**: using in-memory fallback (data not persisted across restarts)
+- **unavailable**: component is non-functional
+- **healthy**: using real storage backend
+
+Overall `HealthStatus.status` is derived from the worst component status.
+
+gRPC health reflection (`tonic-health`) is also registered, allowing standard `grpc.health.v1.Health` checks.
+
+---
+
 ## Common Mistakes
 
 1. **Mapping `MemoryWriteError` for delete operations** -- Deletes that fail should also use `MemoryWriteError` (this is the current convention in `short_term.rs:173`), even though "delete" is not "write". The naming is about KV mutation, not CRUD semantics.
 
 2. **Forgetting to format the original error** -- Just `EngineError::ConnectionError("error")` loses the actual cause. Always include the original error: `format!("TiKV read error: {}", e)`.
+
+3. **Using `IndexError` or `SearchError` for "not found" semantics** -- New code should use `EngineError::NotFound(msg)` instead. `IndexError` maps to `PyKeyError` and gRPC `NOT_FOUND` for backward compatibility, but `NotFound` is the canonical variant. Empty search results are NOT errors — only single-key lookups that fail should return `NotFound`.
