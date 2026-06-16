@@ -136,6 +136,7 @@ fn subtask_status_from_str(s: &str) -> Option<uc_types::SubtaskStatus> {
 /// (`"true"`/`"false"`). Python publishers send booleans as JSON `true`/`false`,
 /// but some sources may send them as strings. Returns `default` if the key
 /// is missing or neither a bool nor a string.
+#[cfg(feature = "messaging")]
 fn json_bool_or_default(
     data: &serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -2357,6 +2358,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn json_bool_or_default_bool_values() {
         let mut data = serde_json::Map::new();
@@ -2367,6 +2369,7 @@ mod tests {
         assert!(!json_bool_or_default(&data, "off", true));
     }
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn json_bool_or_default_string_values() {
         let mut data = serde_json::Map::new();
@@ -2383,6 +2386,7 @@ mod tests {
         assert!(!json_bool_or_default(&data, "off", true));
     }
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn json_bool_or_default_missing_key() {
         let data = serde_json::Map::new();
@@ -2474,5 +2478,180 @@ mod tests {
         }
         // If this compiles, new() is sync
         _assert_sync::<GrpcServer<uc_engine::LocalEngine>>();
+    }
+
+    // ── apply_worker_update_to_store tests ───────────────────
+
+    #[tokio::test]
+    async fn apply_worker_update_creates_task() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        let update = crate::local_worker::WorkerTaskUpdate {
+            task_id: "t-worker-1".to_string(),
+            description: "Fix the bug".to_string(),
+            project_id: "proj-1".to_string(),
+            status: "InProgress".to_string(),
+            subtasks: vec![crate::local_worker::WorkerSubtaskUpdate {
+                id: "s-1".to_string(),
+                description: "Write test".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("w-1".to_string()),
+                depends_on: vec![],
+            }],
+            result: None,
+        };
+
+        apply_worker_update_to_store(&update, &task_store, &event_tx).await;
+
+        let store = task_store.lock().await;
+        let task = store.get_task("t-worker-1").unwrap();
+        assert_eq!(task.description, "Fix the bug");
+        assert_eq!(task.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(task.subtasks.len(), 1);
+        assert_eq!(task.subtasks[0].id.0, "s-1");
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Assigned);
+    }
+
+    #[tokio::test]
+    async fn apply_worker_update_broadcasts_events() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let mut rx = event_tx.subscribe();
+
+        let update = crate::local_worker::WorkerTaskUpdate {
+            task_id: "t-worker-2".to_string(),
+            description: "Another task".to_string(),
+            project_id: "".to_string(),
+            status: "InProgress".to_string(),
+            subtasks: vec![crate::local_worker::WorkerSubtaskUpdate {
+                id: "s-2".to_string(),
+                description: "Do work".to_string(),
+                status: "InProgress".to_string(),
+                assigned_worker: None,
+                depends_on: vec![],
+            }],
+            result: None,
+        };
+
+        apply_worker_update_to_store(&update, &task_store, &event_tx).await;
+
+        // Should have received a SubtaskStarted event
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.task_id, "t-worker-2");
+        assert_eq!(event.r#type, "subtask_started");
+    }
+
+    #[tokio::test]
+    async fn apply_worker_update_completed_subtask() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        // First: create the task with an in-progress subtask
+        let update1 = crate::local_worker::WorkerTaskUpdate {
+            task_id: "t-worker-3".to_string(),
+            description: "Task three".to_string(),
+            project_id: "".to_string(),
+            status: "InProgress".to_string(),
+            subtasks: vec![crate::local_worker::WorkerSubtaskUpdate {
+                id: "s-3".to_string(),
+                description: "Work item".to_string(),
+                status: "InProgress".to_string(),
+                assigned_worker: Some("w-1".to_string()),
+                depends_on: vec![],
+            }],
+            result: None,
+        };
+        apply_worker_update_to_store(&update1, &task_store, &event_tx).await;
+
+        // Now: update with completed subtask
+        let update2 = crate::local_worker::WorkerTaskUpdate {
+            task_id: "t-worker-3".to_string(),
+            description: "Task three".to_string(),
+            project_id: "".to_string(),
+            status: "Completed".to_string(),
+            subtasks: vec![crate::local_worker::WorkerSubtaskUpdate {
+                id: "s-3".to_string(),
+                description: "Work item".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("w-1".to_string()),
+                depends_on: vec![],
+            }],
+            result: Some("Done".to_string()),
+        };
+        apply_worker_update_to_store(&update2, &task_store, &event_tx).await;
+
+        let store = task_store.lock().await;
+        let task = store.get_task("t-worker-3").unwrap();
+        assert_eq!(task.status, uc_types::TaskStatus::Completed);
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Completed);
+    }
+
+    // ── mark_tasks_failed_on_worker_death tests ──────────────
+
+    #[tokio::test]
+    async fn mark_tasks_failed_on_death_marks_in_progress() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        // Create an InProgress task
+        {
+            let mut store = task_store.lock().await;
+            store.submit_task("In progress task".to_string(), "p1".to_string());
+        }
+
+        mark_tasks_failed_on_worker_death(&task_store, &event_tx).await;
+
+        let store = task_store.lock().await;
+        for task in store.tasks.values() {
+            if task.description == "In progress task" {
+                assert_eq!(task.status, uc_types::TaskStatus::Failed);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_tasks_failed_skips_completed() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        // Create a task and manually set it to Completed
+        {
+            let mut store = task_store.lock().await;
+            let task = store.submit_task("Completed task".to_string(), "p1".to_string());
+            let task_id = task.id.0.clone();
+            let task = store.tasks.get_mut(&task_id).unwrap();
+            task.status = uc_types::TaskStatus::Completed;
+        }
+
+        mark_tasks_failed_on_worker_death(&task_store, &event_tx).await;
+
+        let store = task_store.lock().await;
+        for task in store.tasks.values() {
+            if task.description == "Completed task" {
+                assert_eq!(task.status, uc_types::TaskStatus::Completed);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_tasks_failed_on_death_marks_planning() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+
+        // Create a Planning task
+        {
+            let mut store = task_store.lock().await;
+            store.submit_task_pending("Planning task".to_string(), "p1".to_string());
+        }
+
+        mark_tasks_failed_on_worker_death(&task_store, &event_tx).await;
+
+        let store = task_store.lock().await;
+        for task in store.tasks.values() {
+            if task.description == "Planning task" {
+                assert_eq!(task.status, uc_types::TaskStatus::Failed);
+            }
+        }
     }
 }
