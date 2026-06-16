@@ -11,7 +11,7 @@ use tonic::transport::Server;
 /// Helper: start a gRPC server on a random port and return the address.
 async fn start_server() -> String {
     let engine = LocalEngine::new_fallback();
-    let grpc_server = GrpcServer::new(engine);
+    let grpc_server = GrpcServer::new(engine).await;
     let (engine_service, task_service) = grpc_server.into_services();
 
     // Use port 0 to let OS pick a free port

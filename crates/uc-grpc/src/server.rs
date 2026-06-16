@@ -1122,7 +1122,20 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         &self,
         _request: Request<HealthRequest>,
     ) -> Result<Response<HealthResponse>, Status> {
-        let result = self.inner.engine.health().await.map_err(to_status)?;
+        let mut result = self.inner.engine.health().await.map_err(to_status)?;
+
+        // Add local_worker component status
+        let worker_status = match &self.inner.local_worker {
+            Some(bridge) if bridge.is_available() => ("healthy", Some("connected".to_string())),
+            Some(_) => ("unhealthy", Some("process died".to_string())),
+            None => ("unavailable", Some("not started".to_string())),
+        };
+        result.components.push(uc_types::ComponentHealth {
+            name: "local_worker".to_string(),
+            status: worker_status.0.to_string(),
+            details: worker_status.1,
+        });
+
         Ok(Response::new(result.into()))
     }
 }
@@ -1365,9 +1378,144 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
 // ── Local task decomposition (fallback) ──────────────────────
 
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
+    /// Submit a task via the local Python worker bridge.
+    ///
+    /// If the worker is available, sends the task via JSON-RPC and
+    /// applies updates to the TaskStore as notifications arrive.
+    /// Falls back to `submit_task_local` if the worker is unavailable.
+    async fn submit_task_via_bridge(
+        &self,
+        req: SubmitTaskRequest,
+    ) -> Result<Response<SubmitTaskResponse>, Status> {
+        let bridge = &self.inner.local_worker;
+        if let Some(worker) = bridge {
+            if worker.is_available() {
+                match worker.submit_task(&req.description, &req.project_id).await {
+                    Ok((final_update, notifications)) => {
+                        // Apply notifications to TaskStore
+                        for notif in &notifications {
+                            self.apply_worker_update(notif).await;
+                        }
+                        // Apply final update
+                        self.apply_worker_update(&final_update).await;
+
+                        // Build response from final update
+                        let store = self.inner.task_store.lock().await;
+                        if let Some(task) = store.get_task(&final_update.task_id) {
+                            let subtask_protos: Vec<SubtaskProto> =
+                                task.subtasks.clone().into_iter().map(Into::into).collect();
+                            return Ok(Response::new(SubmitTaskResponse {
+                                success: true,
+                                task_id: task.id.0.clone(),
+                                status: task_status_to_proto(&task.status).to_string(),
+                                subtask_count: task.subtasks.len() as u32,
+                                subtasks: subtask_protos,
+                                error: None,
+                            }));
+                        }
+                        // Task not found in store (shouldn't happen) — build from update via uc_types
+                        let task_status = task_status_from_str(&final_update.status)
+                            .unwrap_or(uc_types::TaskStatus::InProgress);
+                        let fallback_subtasks: Vec<uc_types::Subtask> = final_update
+                            .subtasks
+                            .iter()
+                            .map(|st| {
+                                let status = subtask_status_from_str(&st.status)
+                                    .unwrap_or(uc_types::SubtaskStatus::Pending);
+                                uc_types::Subtask {
+                                    id: uc_types::TaskId(st.id.clone()),
+                                    parent_id: uc_types::TaskId(final_update.task_id.clone()),
+                                    description: st.description.clone(),
+                                    status,
+                                    assigned_worker: st.assigned_worker.as_deref().map(|w| uc_types::WorkerId(w.to_string())),
+                                    depends_on: st.depends_on.iter().map(|d| uc_types::TaskId(d.clone())).collect(),
+                                    file_constraints: Vec::new(),
+                                    expected_output: String::new(),
+                                    result: None,
+                                }
+                            })
+                            .collect();
+                        let subtask_protos: Vec<SubtaskProto> =
+                            fallback_subtasks.into_iter().map(Into::into).collect();
+                        return Ok(Response::new(SubmitTaskResponse {
+                            success: true,
+                            task_id: final_update.task_id,
+                            status: task_status_to_proto(&task_status).to_string(),
+                            subtask_count: subtask_protos.len() as u32,
+                            subtasks: subtask_protos,
+                            error: None,
+                        }));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Local worker submit failed, falling back to local decomposition"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Worker unavailable or failed — fall back
+        self.submit_task_local(req).await
+    }
+
+    /// Apply a worker task update to the TaskStore.
+    ///
+    /// Creates or updates the task in the store, mapping worker subtask
+    /// statuses back to uc_types.
+    async fn apply_worker_update(
+        &self,
+        update: &crate::local_worker::WorkerTaskUpdate,
+    ) {
+        use crate::local_worker::WorkerSubtaskUpdate;
+
+        let mut store = self.inner.task_store.lock().await;
+
+        // Convert subtask updates
+        let subtasks: Vec<uc_types::Subtask> = update
+            .subtasks
+            .iter()
+            .map(|st: &WorkerSubtaskUpdate| {
+                let status = crate::server::subtask_status_from_str(&st.status)
+                    .unwrap_or(uc_types::SubtaskStatus::Pending);
+                uc_types::Subtask {
+                    id: uc_types::TaskId(st.id.clone()),
+                    parent_id: uc_types::TaskId(update.task_id.clone()),
+                    description: st.description.clone(),
+                    status,
+                    assigned_worker: st.assigned_worker.as_deref().map(|w| uc_types::WorkerId(w.to_string())),
+                    depends_on: st
+                        .depends_on
+                        .iter()
+                        .map(|d| uc_types::TaskId(d.clone()))
+                        .collect(),
+                    file_constraints: Vec::new(),
+                    expected_output: String::new(),
+                    result: None,
+                }
+            })
+            .collect();
+
+        let task_status = crate::server::task_status_from_str(&update.status)
+            .unwrap_or(uc_types::TaskStatus::InProgress);
+
+        let task = uc_types::Task {
+            id: uc_types::TaskId(update.task_id.clone()),
+            description: update.description.clone(),
+            project_id: update.project_id.clone(),
+            status: task_status,
+            subtasks,
+            created_at: chrono::Utc::now(), // ponytail: approximate, exact timestamp from worker not critical
+            updated_at: chrono::Utc::now(),
+        };
+
+        store.tasks.insert(update.task_id.clone(), task);
+    }
+
     /// Submit a task using local (newline-split) decomposition.
     ///
-    /// This is the fallback path when NATS is unavailable.
+    /// This is the fallback path when NATS and the local worker are unavailable.
     async fn submit_task_local(
         &self,
         req: SubmitTaskRequest,

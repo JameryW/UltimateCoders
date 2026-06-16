@@ -49,7 +49,7 @@ struct JsonRpcError {
 }
 
 /// Task update from the worker (maps to ``task_update`` notification params).
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct WorkerTaskUpdate {
     pub task_id: String,
     pub description: String,
@@ -63,7 +63,7 @@ pub struct WorkerTaskUpdate {
 }
 
 /// Subtask update within a worker notification.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct WorkerSubtaskUpdate {
     pub id: String,
     pub description: String,
