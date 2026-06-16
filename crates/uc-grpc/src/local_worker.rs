@@ -416,7 +416,7 @@ impl LocalWorkerBridge {
                                     }
                                 } else if result
                                     .get("status")
-                                    .map_or(false, |v| v.as_str() == Some("ok"))
+                                    .is_some_and(|v| v.as_str() == Some("ok"))
                                 {
                                     // ping response — already handled during ensure_worker
                                     tracing::debug!("Worker ping response received (in reader)");
