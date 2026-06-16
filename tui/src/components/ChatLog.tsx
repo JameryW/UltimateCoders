@@ -116,7 +116,7 @@ export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter
 const COLLAPSE_THRESHOLD = 3;
 
 /** Event type icon prefix mapping for visual scanning. */
-const EVENT_ICONS: Record<string, string> = {
+export const EVENT_ICONS: Record<string, string> = {
   task_submitted: '📋',
   task_completed: '✓',
   task_failed: '✗',
@@ -127,6 +127,15 @@ const EVENT_ICONS: Record<string, string> = {
   tool_call: '🔧',
   tool_result: '📄',
 };
+
+/**
+ * Get icon prefix for an event type. Returns empty string for unknown types.
+ * Exported for testing.
+ */
+export function getEventIcon(eventType?: string): string {
+  if (!eventType) return '';
+  return EVENT_ICONS[eventType] ? `${EVENT_ICONS[eventType]} ` : '';
+}
 
 const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg, expandAll}) => {
   const [expanded, setExpanded] = useState(false);
@@ -173,7 +182,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
         bold={msg.bold}
         dimColor={msg.dim}
       >
-        {msg.eventType && EVENT_ICONS[msg.eventType] ? `${EVENT_ICONS[msg.eventType]} ` : ''}{visibleLines.join('\n')}
+        {msg.eventType ? getEventIcon(msg.eventType) : ''}{visibleLines.join('\n')}
       </Text>
     );
   };

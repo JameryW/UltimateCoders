@@ -489,3 +489,18 @@ describe('tuiReducer: simple setters', () => {
     expect(state.followLog).toBe(false);
   });
 });
+
+// ── TOGGLE_EXPAND_ALL_MESSAGES ───────────────────────────
+
+describe('tuiReducer: TOGGLE_EXPAND_ALL_MESSAGES', () => {
+  it('toggles expandAllMessages from false to true', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+    expect(state.expandAllMessages).toBe(true);
+  });
+
+  it('toggles expandAllMessages back to false', () => {
+    const expanded = {...INITIAL_TUI_STATE, expandAllMessages: true};
+    const state = tuiReducer(expanded, {type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
+    expect(state.expandAllMessages).toBe(false);
+  });
+});
