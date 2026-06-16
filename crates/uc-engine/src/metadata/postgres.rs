@@ -961,7 +961,10 @@ impl PostgresMetadataStore {
         Ok(())
     }
 
-    /// Check if PostgreSQL is available.
+    /// Check if the external storage backend (PostgreSQL) is connected.
+    ///
+    /// Returns `false` for in-memory fallback mode — the store is
+    /// **functional** but not connected to a persistent backend.
     pub fn is_connected(&self) -> bool {
         #[cfg(feature = "storage")]
         {

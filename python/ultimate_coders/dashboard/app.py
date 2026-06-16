@@ -790,18 +790,19 @@ class DashboardApp:
         self._subscribe_nats_events()
 
     def _subscribe_nats_events(self) -> None:
-        """Subscribe to NATS ``uc.task.event`` for real-time event streaming.
+        """Register a FastAPI startup event to subscribe to NATS events.
 
-        This must be called from within the running async event loop.
-        Since uvicorn runs in a background thread, we schedule the
-        subscription on the server's event loop.
+        Uses FastAPI's ``add_event_handler("startup", ...)`` so the
+        subscription runs on uvicorn's event loop after the server starts.
         """
         if self._nats_client is None:
             logger.debug("No NATS client configured, skipping event subscription")
             return
 
         # Schedule the NATS subscription on the server's event loop.
-        # The uvicorn server's event loop is available after it starts.
+        # The uvicorn server creates its own event loop in the background
+        # thread. We use a startup event hook to schedule the subscription
+        # once the loop is running.
         async def _subscribe():
             try:
                 sub = await self._nats_client.subscribe(
@@ -817,21 +818,11 @@ class DashboardApp:
                     exc_info=True,
                 )
 
-        # We need to schedule this on the uvicorn thread's event loop.
-        # Since uvicorn creates its own event loop, we use
-        # call_soon_threadsafe to schedule from the main thread.
-        if self._server is not None:
-            # The server's loop may not be ready yet, so we schedule
-            # a delayed subscription attempt.
-
-            def _schedule_subscribe():
-                loop = asyncio.get_event_loop()
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.ensure_future(_subscribe())
-                )
-
-            # Delay slightly to ensure uvicorn's loop is running
-            threading.Timer(1.0, _schedule_subscribe).start()
+        # Use a startup event to schedule the subscription on the
+        # uvicorn event loop. This is more reliable than trying to
+        # grab the loop from a timer thread.
+        if self._nats_client is not None:
+            self._app.add_event_handler("startup", _subscribe)
 
     async def _handle_nats_event(self, msg: Any) -> None:
         """Handle a NATS ``uc.task.event`` message.
@@ -868,13 +859,10 @@ class DashboardApp:
 
         Unsubscribes from NATS event streams and shuts down the FastAPI server.
         """
-        # Unsubscribe from NATS
-        for sub in self._nats_subscriptions:
-            try:
-                # Subscription.unsubscribe() is async; schedule it
-                asyncio.get_event_loop().create_task(sub.unsubscribe())
-            except Exception:
-                logger.debug("Failed to unsubscribe from NATS", exc_info=True)
+        # Clear NATS subscriptions. The actual unsubscribe calls are async
+        # and the event loop may be shutting down; since the NATS client
+        # will be drained/closed separately, clearing the references is
+        # sufficient for cleanup.
         self._nats_subscriptions.clear()
 
         if self._server is not None:

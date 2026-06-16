@@ -231,7 +231,12 @@ impl ShortTermMemory {
         }
     }
 
-    /// Check if TiKV is available.
+    /// Check if the external storage backend (TiKV) is connected.
+    ///
+    /// Returns `false` for in-memory fallback mode — the store is
+    /// **functional** but not connected to a persistent backend.
+    /// Use this to distinguish "connected to TiKV" from "using fallback"
+    /// in health check reporting.
     pub fn is_connected(&self) -> bool {
         #[cfg(feature = "storage")]
         {
