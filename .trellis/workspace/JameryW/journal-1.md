@@ -683,3 +683,36 @@ Fixed two TUI input bugs: (1) dual cursor display — real terminal cursor was v
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: TUI test expansion: 129→319 tests, pure function extraction
+
+**Date**: 2026-06-16
+**Task**: TUI test expansion: 129→319 tests, pure function extraction
+**Branch**: `docs/spec-updates-cursor-statusbar-memory`
+
+### Summary
+
+Extracted pure functions from CjkTextInput, StatusBar, TaskInput, App, SubtaskTree into 5 new utility modules (cjk-input-utils, statusbar-utils, taskinput-utils, offline-utils, truncate). Added 10 new test files covering grapheme editing, connection indicators, gRPC types/client, event processing, message factories, and reducer actions. Fixed keymap.ts syntax error, symbols.test.ts env leak, and keymap test alignment. Created PR #26.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `741cf78` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
