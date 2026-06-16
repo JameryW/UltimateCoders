@@ -261,15 +261,13 @@ describe('tuiReducer: offline timer actions', () => {
 // ── Focus & Layout (v3 — single-column) ──────────────────
 
 describe('tuiReducer: focus and layout actions', () => {
-  it('initial state has focusedArea=input, activeMainPane=chat', () => {
+  it('initial state has focusedArea=input', () => {
     expect(INITIAL_TUI_STATE.focusedArea).toBe('input');
-    expect(INITIAL_TUI_STATE.activeMainPane).toBe('chat');
   });
 
-  it('SET_FOCUS changes focusedArea and selectedPane', () => {
+  it('SET_FOCUS changes focusedArea', () => {
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
     expect(state.focusedArea).toBe('chat');
-    expect(state.selectedPane).toBe('chat');
   });
 
   it('CYCLE_FOCUS cycles through input→chat→input', () => {
@@ -278,11 +276,6 @@ describe('tuiReducer: focus and layout actions', () => {
     expect(state.focusedArea).toBe('chat');
     state = tuiReducer(state, {type: 'CYCLE_FOCUS'});
     expect(state.focusedArea).toBe('input');
-  });
-
-  it('SWAP_MAIN_PANE is a deprecated no-op', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SWAP_MAIN_PANE'});
-    expect(state).toEqual(INITIAL_TUI_STATE);
   });
 
   it('ESC_TO_MAIN from input focuses chat', () => {
@@ -302,12 +295,6 @@ describe('tuiReducer: focus and layout actions', () => {
     expect(state.subtaskOverlayOpen).toBe(true);
     state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
     expect(state.subtaskOverlayOpen).toBe(false);
-  });
-
-  it('SET_SELECTED_PANE (deprecated) maps to SET_FOCUS', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SELECTED_PANE', pane: 'chat'});
-    expect(state.focusedArea).toBe('chat');
-    expect(state.selectedPane).toBe('chat');
   });
 });
 
@@ -416,6 +403,42 @@ describe('tuiReducer: subtask navigation actions', () => {
     const next = tuiReducer(state, {type: 'JUMP_TO_FAILED_SUBTASK'});
     expect(next.selectedSubtaskIndex).toBe(1);
     expect(next.selectedSubtaskId).toBe('b');
+  });
+
+  it('TOGGLE_SUBTASK_DETAIL toggles subtaskDetailOpen', () => {
+    expect(INITIAL_TUI_STATE.subtaskDetailOpen).toBe(false);
+    const state1 = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state1.subtaskDetailOpen).toBe(true);
+    const state2 = tuiReducer(state1, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state2.subtaskDetailOpen).toBe(false);
+  });
+
+  it('TOGGLE_SUBTASK_OVERLAY resets subtaskDetailOpen', () => {
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_SUBTASK_DETAIL'});
+    expect(state.subtaskDetailOpen).toBe(true);
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(true);
+    expect(state.subtaskDetailOpen).toBe(false);
+  });
+
+  it('RETRY_SUBTASK resets failed subtask to pending and clears errorSummary', () => {
+    const items = [
+      subtask('a', 'completed'),
+      {...subtask('b', 'failed'), errorSummary: 'something went wrong'},
+      subtask('c', 'pending'),
+    ];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'RETRY_SUBTASK', subtaskId: 'b'});
+    expect(state.subtasks[1].status).toBe('pending');
+    expect(state.subtasks[1].errorSummary).toBeUndefined();
+    expect(state.progress.completed).toBe(1); // only 'a' is completed
+  });
+
+  it('RETRY_SUBTASK is no-op for non-existent subtask', () => {
+    const items = [subtask('a', 'completed')];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    const next = tuiReducer(state, {type: 'RETRY_SUBTASK', subtaskId: 'nonexistent'});
+    expect(next.subtasks).toEqual(state.subtasks);
   });
 });
 

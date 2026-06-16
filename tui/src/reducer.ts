@@ -57,14 +57,6 @@ export function eventFilterLabel(filter: EventFilter): string {
   }
 }
 
-// ── Backward Compatibility ──────────────────────────────────
-
-/** @deprecated Use FocusedArea instead. Kept for gradual migration. */
-export type SelectedPane = FocusedArea;
-
-/** @deprecated No longer used in single-column layout. */
-export type ActiveMainPane = 'chat' | 'subtask';
-
 // ── State ───────────────────────────────────────────────────
 
 export interface TuiState {
@@ -129,17 +121,14 @@ export interface TuiState {
   /** Whether the help overlay is showing. */
   helpOverlayOpen: boolean;
 
+  /** Whether the selected subtask's detail panel is open (in overlay). */
+  subtaskDetailOpen: boolean;
+
   /** Whether all collapsed ChatLog messages are expanded (toggled by Enter in chat focus). */
   expandAllMessages: boolean;
 
   /** Timestamp (ms) when the current task submission started. Null when idle. */
   startedAt: number | null;
-
-  /** @deprecated Use focusedArea instead. Kept for gradual migration. */
-  selectedPane: FocusedArea;
-
-  /** @deprecated No longer used in single-column layout. Kept for StatusBar compat. */
-  activeMainPane: ActiveMainPane;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -164,11 +153,9 @@ export const INITIAL_TUI_STATE: TuiState = {
   selectedSubtaskId: null,
   subtaskOverlayOpen: false,
   helpOverlayOpen: false,
+  subtaskDetailOpen: false,
   expandAllMessages: false,
   startedAt: null,
-  // Backward compat
-  selectedPane: 'input',
-  activeMainPane: 'chat',
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -185,8 +172,6 @@ export type TuiAction =
   | {type: 'SET_FOCUS'; area: FocusedArea}
   | {type: 'CYCLE_FOCUS'}
   | {type: 'ESC_TO_MAIN'}
-  // ── Deprecated (maps to SET_FOCUS) ──
-  | {type: 'SET_SELECTED_PANE'; pane: SelectedPane}
   // ── Scroll ──
   | {type: 'SCROLL_UP'; lines: number}
   | {type: 'SCROLL_DOWN'; lines: number}
@@ -210,13 +195,12 @@ export type TuiAction =
   // ── Subtask overlay ──
   | {type: 'SELECT_SUBTASK'; index: number}
   | {type: 'TOGGLE_SUBTASK_OVERLAY'}
+  | {type: 'TOGGLE_SUBTASK_DETAIL'}
   | {type: 'JUMP_TO_FAILED_SUBTASK'}
   | {type: 'TOGGLE_HELP_OVERLAY'}
   | {type: 'TOGGLE_EXPAND_ALL_MESSAGES'}
   // ── Subtask retry (placeholder) ──
-  | {type: 'RETRY_SUBTASK'; subtaskId: string}
-  // ── Deprecated ──
-  | {type: 'SWAP_MAIN_PANE'};
+  | {type: 'RETRY_SUBTASK'; subtaskId: string};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -287,55 +271,25 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     // ── Focus ──────────────────────────────────────────────────
 
     case 'SET_FOCUS':
-      return {
-        ...state,
-        focusedArea: action.area,
-        selectedPane: action.area, // backward compat
-      };
+      return {...state, focusedArea: action.area};
 
     case 'CYCLE_FOCUS': {
       const next = nextFocusArea(state.focusedArea);
-      return {
-        ...state,
-        focusedArea: next,
-        selectedPane: next, // backward compat
-      };
+      return {...state, focusedArea: next};
     }
 
     case 'ESC_TO_MAIN': {
       // Esc from input: focus returns to chat
       if (state.focusedArea === 'input') {
-        return {
-          ...state,
-          focusedArea: 'chat',
-          selectedPane: 'chat',
-        };
+        return {...state, focusedArea: 'chat'};
       }
       // Esc from subtask overlay: close overlay
       if (state.subtaskOverlayOpen) {
         return {...state, subtaskOverlayOpen: false};
       }
       // Esc from chat: focus returns to input
-      return {
-        ...state,
-        focusedArea: 'input',
-        selectedPane: 'input',
-      };
+      return {...state, focusedArea: 'input'};
     }
-
-    // ── Deprecated: SET_SELECTED_PANE maps to SET_FOCUS ──
-
-    case 'SET_SELECTED_PANE':
-      return {
-        ...state,
-        focusedArea: action.pane,
-        selectedPane: action.pane,
-      };
-
-    // ── Deprecated: SWAP_MAIN_PANE is a no-op in single-column layout ──
-
-    case 'SWAP_MAIN_PANE':
-      return state;
 
     // ── Scroll ───────────────────────────────────────────────
 
@@ -394,6 +348,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         selectedSubtaskIndex: -1,
         selectedSubtaskId: null,
         subtaskOverlayOpen: false,
+        subtaskDetailOpen: false,
         startedAt: null,
       };
 
@@ -441,7 +396,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     }
 
     case 'TOGGLE_SUBTASK_OVERLAY':
-      return {...state, subtaskOverlayOpen: !state.subtaskOverlayOpen};
+      return {...state, subtaskOverlayOpen: !state.subtaskOverlayOpen, subtaskDetailOpen: false};
+
+    case 'TOGGLE_SUBTASK_DETAIL':
+      return {...state, subtaskDetailOpen: !state.subtaskDetailOpen};
 
     case 'JUMP_TO_FAILED_SUBTASK': {
       if (state.subtasks.length === 0) return state;
@@ -464,11 +422,21 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'TOGGLE_EXPAND_ALL_MESSAGES':
       return {...state, expandAllMessages: !state.expandAllMessages};
 
-    // ── Subtask retry (placeholder) ───────────────────────────
+    // ── Subtask retry ─────────────────────────────────────────
 
-    case 'RETRY_SUBTASK':
-      // placeholder: add when gRPC retry endpoint exists
-      return state;
+    case 'RETRY_SUBTASK': {
+      const subtasks = state.subtasks.map((st) =>
+        st.id === action.subtaskId
+          ? {...st, status: 'pending' as SubtaskStatusType, errorSummary: undefined}
+          : st,
+      );
+      const completed = subtasks.filter((s) => s.status === 'completed').length;
+      return {
+        ...state,
+        subtasks,
+        progress: {completed, total: subtasks.length},
+      };
+    }
 
     default:
       return state;

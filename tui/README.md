@@ -10,27 +10,30 @@ Features CJK/IME input support with grapheme-aware cursor positioning, real-time
 cd tui
 npm install
 npm start         # Connects to gRPC server at localhost:50051
-npm test          # 280+ unit tests (vitest)
+npm test          # 330+ unit tests (vitest)
 npm run typecheck # TypeScript type checking
 ```
 
 ## Layout
 
+Single-column vertical layout (v3):
+
 ```
- UC UltimateCoders v0.1.0 ● grpc │ offline │ P 0/3 │ F Input │ V Chat │ ? help
- Chat                             Subtasks [0/3 0%]
- [12:00] > fix bug                ◉ 1. Analyze
- [12:00] Task created             ○ 2. Fix
-                                  ○ 3. Test
-──────────────────────────────────────────────────────────────────────────
- > type task description and press Enter...
+╭─ UC v0.1.0 ──────────────────────────────────────────────╮
+│ [12:00] ▎ fix bug              (user message, full width) │
+│ [12:00] ⚙ Task created: abc1   (system message)          │
+│ [12:00] 📋 1/3 ✅ │ 2 ⏳       (subtask summary inline)  │
+│───────────────────────────────────────────────────────────│
+│ > type task description and press Enter...                │
+│ ◆ UC │ ● grpc │ P 0/3 │ F Input                         │
+╰───────────────────────────────────────────────────────────╯
 ```
 
-- **Wide (≥100 cols)**: Chat + Subtasks dual pane
-- **Medium (80-99 cols)**: Dual pane, compressed right
-- **Narrow (<80 cols)**: Single pane, shows `activeMainPane`
+- ChatLog is full-width, single column
+- SubtaskTree shown as overlay via Ctrl+T
+- Subtask summary line rendered inline in ChatLog
 
-Status bar uses a segment-based width budget: priority-ordered segments (connection > worker > backend > progress > focus > view > retry > help) are added until the terminal width is exhausted. Less-critical info (mode, Task ID, server address, error details) moved to the `?` help overlay.
+Status bar uses a segment-based width budget: priority-ordered segments (brand > connection > worker > backend > progress > focus > retry > help) are added until the terminal width is exhausted. Less-critical info moved to the `?` help overlay.
 
 ## Keyboard Shortcuts
 
@@ -40,9 +43,9 @@ All shortcuts are defined in `keymap.ts` — the single source of truth ensuring
 
 | Key | Action |
 |-----|--------|
-| Shift+Tab | Cycle focus: input → chat → subtask → input |
-| Esc | Context-dependent: close detail / return to main / focus input |
-| Ctrl+W | Swap main pane (chat ↔ subtask) |
+| Shift+Tab | Cycle focus: input → chat → input |
+| Esc | Context-dependent: close overlay / return to main / focus input |
+| Ctrl+T | Toggle subtask overlay |
 | Ctrl+F | Cycle event filter (all → task → subtask → tool → error) |
 | Ctrl+P | Pause/resume current task |
 | Ctrl+R | Reconnect gRPC |
@@ -71,15 +74,14 @@ All shortcuts are defined in `keymap.ts` — the single source of truth ensuring
 | Enter | Expand/collapse long messages |
 | Ctrl+L | Clear chat log |
 
-### Subtask Focus
+### Subtask Overlay (Ctrl+T)
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Select previous/next subtask |
-| Home / End | Jump to first/last subtask |
-| f | Jump to next failed subtask |
+| ↑ / ↓ | Navigate previous/next subtask |
 | Enter | Toggle subtask detail panel |
-| Ctrl+T | Retry failed subtask (coming soon) |
+| R | Retry failed subtask |
+| Esc | Close overlay |
 
 ### Subtask Detail View
 
@@ -103,12 +105,11 @@ Press Enter again or Esc to close the detail.
 
 ## Focus Model
 
-The TUI uses a split focus model:
+The TUI uses a 2-area focus model:
 
-- **focusedArea** (`input` | `chat` | `subtask`): which area receives keyboard events
-- **activeMainPane** (`chat` | `subtask`): which pane occupies the main area in narrow mode
-
-These are independent — the input is always visible, and the main area always shows content regardless of which area has focus.
+- **focusedArea** (`input` | `chat`): which area receives keyboard events
+- Shift+Tab cycles: input → chat → input
+- SubtaskTree is accessed via the Ctrl+T overlay (not a focus area)
 
 ## Connection States
 
@@ -130,7 +131,7 @@ IME candidate windows are positioned by the terminal near the last text output, 
 ## Testing
 
 ```bash
-npm test              # Run all 280+ tests (vitest)
+npm test              # Run all 330+ tests (vitest)
 npm run test:watch    # Watch mode
 npm run typecheck     # TypeScript type checking
 ```
@@ -141,7 +142,7 @@ Pure functions are tested with vitest (no React rendering needed):
 
 | Module | Description |
 |--------|-------------|
-| `reducer.ts` | State transitions (61 tests) |
+| `reducer.ts` | State transitions (67 tests) |
 | `keymap.ts` | Command lookup + status bar help (9 tests) |
 | `formatters.ts` | Event formatting (13 tests) |
 | `symbols.ts` | Unicode/ASCII symbol resolution (9 tests) |
@@ -163,7 +164,7 @@ React hooks (`useGrpcClient`, `useTaskEvents`) and Ink components require React 
 |--------|------|
 | `reducer.ts` | Single source of truth — `useReducer` with 15+ action types |
 | `keymap.ts` | Centralized keyboard command definitions + status bar help |
-| `App.tsx` | Root layout + global keyboard handler |
+| `App.tsx` | Root layout + global keyboard handler + overlay interaction |
 | `StatusBar.tsx` | Segment-based responsive status bar (`buildSegments` → `selectSegments`) |
 | `ChatLog.tsx` | Message log with scrolling, filtering, unread count, expand/collapse |
 | `SubtaskTree.tsx` | Subtask list with keyboard navigation + detail panel |

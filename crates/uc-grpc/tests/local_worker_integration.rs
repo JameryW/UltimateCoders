@@ -14,7 +14,7 @@ async fn submit_task_fallback_without_worker() {
     let engine = LocalEngine::new_fallback();
     // GrpcServer::new will try to spawn local_worker.py, which will fail
     // in test environment (no maturin build). Falls back to newline-split.
-    let server = GrpcServer::new(engine).await;
+    let server = GrpcServer::new(engine);
 
     // Verify the server was created (even without worker)
     let _ = server.into_services();
