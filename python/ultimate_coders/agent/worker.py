@@ -562,7 +562,8 @@ class Worker:
                 # create=True: file must NOT exist
                 if os.path.exists(abs_path):
                     return json.dumps(
-                        {"error": f"File already exists (use create=False to overwrite): {abs_path}"}
+                        {"error": f"File already exists (use create=False to overwrite): "
+                                  f"{abs_path}"}
                     )
             else:
                 # create=False: file MUST exist
