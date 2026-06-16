@@ -198,9 +198,14 @@ const App: React.FC = () => {
 
   // ── Side effect: update mutable subtask summary line ────
   // When subtasks change, insert or update the single summary line in ChatLog.
+  // Uses a stable ID (SUBTASK_SUMMARY_ID) so the message can be updated in place.
   useEffect(() => {
     if (state.subtasks.length === 0) {
-      hasSubtaskSummaryRef.current = false;
+      // When subtasks are cleared, remove the summary message if it exists
+      if (hasSubtaskSummaryRef.current) {
+        hasSubtaskSummaryRef.current = false;
+        dispatch({type: 'REMOVE_MESSAGE', messageId: SUBTASK_SUMMARY_ID});
+      }
       return;
     }
 
@@ -211,19 +216,24 @@ const App: React.FC = () => {
       // Update existing summary message
       dispatch({type: 'UPDATE_MESSAGE', messageId: SUBTASK_SUMMARY_ID, text: summaryText});
     } else {
-      // Insert new summary message
+      // Insert new summary message (or update if a stale one exists from a previous task)
+      const alreadyExists = state.messages.some((m) => m.id === SUBTASK_SUMMARY_ID);
+      if (alreadyExists) {
+        dispatch({type: 'UPDATE_MESSAGE', messageId: SUBTASK_SUMMARY_ID, text: summaryText});
+      } else {
+        dispatch({
+          type: 'ADD_MESSAGES',
+          messages: [{
+            id: SUBTASK_SUMMARY_ID,
+            timestamp: new Date().toTimeString().slice(0, 5),
+            text: summaryText,
+            isUser: false,
+            eventType: 'subtask_summary',
+            dim: true,
+          }],
+        });
+      }
       hasSubtaskSummaryRef.current = true;
-      dispatch({
-        type: 'ADD_MESSAGES',
-        messages: [{
-          id: SUBTASK_SUMMARY_ID,
-          timestamp: new Date().toTimeString().slice(0, 5),
-          text: summaryText,
-          isUser: false,
-          eventType: 'subtask_summary',
-          dim: true,
-        }],
-      });
     }
   }, [state.subtasks, state.progress]); // eslint-disable-line react-hooks/exhaustive-deps
 

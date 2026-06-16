@@ -2,7 +2,7 @@
  * StatusBar component - single-line status display at the bottom.
  *
  * Segment-based layout with width budget:
- *   Priority order: connection > progress > focus > retry > help
+ *   Priority order: brand > connection > worker > backend > progress > focus > retry > help
  *   Each segment has a display width. Segments are appended in priority order
  *   until the terminal width budget is exhausted.
  *
@@ -16,7 +16,7 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
-import type {FocusedArea, EventFilter} from '../reducer.js';
+import type {FocusedArea} from '../reducer.js';
 import {getStatusBarHelp} from '../keymap.js';
 import {getSymbols} from '../symbols.js';
 
@@ -33,7 +33,8 @@ export interface StatusBarProps {
   focusedArea?: FocusedArea;
   /** @deprecated No longer used in single-column layout. */
   activeMainPane?: string;
-  eventFilter?: EventFilter;
+  /** @deprecated Not displayed in status bar. */
+  eventFilter?: string;
   /** Terminal width for responsive layout. */
   terminalWidth?: number;
   /** Current retry attempt count. */

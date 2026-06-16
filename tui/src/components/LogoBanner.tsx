@@ -6,7 +6,7 @@
  *
  * Hidden on narrow terminals (<60 cols).
  */
-import React, {useState, useEffect} from 'react';
+import React from 'react';
 import {Box, Text} from 'ink';
 
 export interface LogoBannerProps {

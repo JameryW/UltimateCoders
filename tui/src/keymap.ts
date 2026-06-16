@@ -104,7 +104,6 @@ export function getStatusBarHelp(area: FocusedArea, terminalWidth: number): stri
     {shortcut: getCommand('quit')!.shortLabel, label: 'quit'},
   ];
 
-  // ponytail: same budget logic as before
   const helpBudget = Math.max(7, Math.floor(terminalWidth / 4));
   const parts: string[] = [];
   let usedWidth = 0;
