@@ -366,6 +366,16 @@ fn entry_to_payload(entry: &MemoryEntry) -> HashMap<String, qdrant_client::qdran
         qdrant_client::qdrant::Value::from(encode_key_for_payload(&entry.key)),
     );
 
+    // Scope as a separate field for efficient filtering.
+    // Unlike the "key" field which includes the full path (e.g., "project:proj1:architecture"),
+    // the "scope" field contains just the scope prefix (e.g., "project:proj1") so we can
+    // use exact-match filtering instead of prefix matching (which Qdrant doesn't natively support).
+    let scope_str = scope_of_key(&entry.key);
+    payload.insert(
+        "scope".into(),
+        qdrant_client::qdrant::Value::from(scope_str),
+    );
+
     // Content as JSON string
     let content_json = serde_json::to_string(&entry.content).unwrap_or_default();
     payload.insert(
@@ -478,17 +488,34 @@ fn key_to_filter(key: &MemoryKey) -> Filter {
     Filter::must([Condition::matches("key", key_str)])
 }
 
+/// Derive the scope prefix from a MemoryKey for use as a filterable payload field.
+///
+/// This produces a short, exact-matchable string like "project:proj1" or "global"
+/// that can be stored in the Qdrant payload and matched efficiently with
+/// `Condition::matches("scope", ...)`.
+#[cfg(feature = "storage")]
+fn scope_of_key(key: &MemoryKey) -> String {
+    match key {
+        MemoryKey::Task { task_id, .. } => format!("task:{}", task_id),
+        MemoryKey::Project { project_id, .. } => format!("project:{}", project_id),
+        MemoryKey::Global { .. } => "global".to_string(),
+    }
+}
+
 /// Convert a MemorySearchScope to a Qdrant filter.
+///
+/// Uses the "scope" payload field for exact-match filtering. This avoids the need
+/// for prefix matching on the "key" field, which Qdrant does not natively support.
 #[cfg(feature = "storage")]
 fn scope_to_filter(scope: &MemorySearchScope) -> Option<Filter> {
     match scope {
         MemorySearchScope::Project { project_id } => Some(Filter::must([Condition::matches(
-            "key",
-            format!("project:{}:", project_id),
+            "scope",
+            format!("project:{}", project_id),
         )])),
         MemorySearchScope::Global => Some(Filter::must([Condition::matches(
-            "key",
-            "global:".to_string(),
+            "scope",
+            "global".to_string(),
         )])),
         MemorySearchScope::All => None,
     }
