@@ -281,10 +281,10 @@ const App: React.FC = () => {
   );
 
   // ── Calculate ChatLog visible lines ────────────────────
-  // v3: compact logo(1) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2)
+  // Full logo(6) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2) = 12
   const visibleLines = Math.max(
     5,
-    (stdout?.rows ?? 24) - 7,
+    (stdout?.rows ?? 24) - 12,
   );
 
   // ── Build scroll command for ChatLog ────────────────────
@@ -571,12 +571,11 @@ const App: React.FC = () => {
   // ── Render: Main layout (single-column vertical) ──────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
-      {/* ── Logo (compact single-line in v3 layout) ── */}
+      {/* ── Logo banner ── */}
       <LogoBanner
         terminalWidth={terminalWidth}
         brandChar={S.brand}
         version={VERSION}
-        compact={true}
       />
 
       {/* ── ChatLog (full-width, single column) ──────── */}
