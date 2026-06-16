@@ -550,6 +550,8 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     /// Present when the `messaging` feature is enabled and NATS connection succeeded.
     #[cfg(feature = "messaging")]
     nats_client: Option<async_nats::Client>,
+    /// Local Python worker bridge for task execution without NATS.
+    local_worker: Option<crate::local_worker::LocalWorkerBridge>,
 }
 
 /// gRPC server that delegates EngineService operations to an inner EngineApi
@@ -570,14 +572,31 @@ pub struct GrpcServer<E: EngineApi + Send + Sync + 'static> {
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Create a new gRPC server wrapping the given engine, without NATS.
     ///
-    /// Tasks are decomposed locally using the newline-split heuristic.
-    pub fn new(engine: E) -> Self {
+    /// Attempts to spawn a local Python worker for real task execution.
+    /// If the worker is unavailable, falls back to local (newline-split)
+    /// decomposition.
+    pub async fn new(engine: E) -> Self {
+        let local_worker = match crate::local_worker::LocalWorkerBridge::spawn().await {
+            Ok(bridge) => {
+                tracing::info!("Local Python worker started — real task execution available");
+                Some(bridge)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Local Python worker unavailable, falling back to newline-split decomposition"
+                );
+                None
+            }
+        };
+
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store: Arc::new(Mutex::new(TaskStore::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
+                local_worker,
             }),
         }
     }
@@ -624,6 +643,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             engine,
             task_store: task_store.clone(),
             nats_client: nats_client.clone(),
+            local_worker: None, // NATS mode — local worker not needed
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
@@ -1210,8 +1230,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             }
         }
 
-        // No NATS — use local decomposition
-        self.submit_task_local(req).await
+        // No NATS — try local worker, then fall back to newline-split
+        self.submit_task_via_bridge(req).await
     }
 
     async fn get_task(
