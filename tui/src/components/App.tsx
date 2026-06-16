@@ -104,9 +104,22 @@ const App: React.FC = () => {
   // ── Track whether offline message has been shown ────────
   const hasShownOfflineMsg = useRef(false);
 
-  // ── Reset offline msg flag when connection is restored ───
+  // ── Track previous connection state for transition detection ──
+  const prevConnectionStateRef = useRef(connectionState);
+
+  // ── Reset offline msg flag when connection is restored or re-lost ───
+  // PRD P4: show message "when first entering offline or state changes
+  // from connected→error". Reset on connected (so next offline shows msg)
+  // and also on connected→non-connected transition (so a failed reconnect
+  // produces a fresh message on the next submit).
   useEffect(() => {
+    const prev = prevConnectionStateRef.current;
+    prevConnectionStateRef.current = connectionState;
     if (connectionState === 'connected') {
+      hasShownOfflineMsg.current = false;
+    } else if (prev === 'connected') {
+      // Transition from connected to non-connected: allow next submit to
+      // show the offline message again.
       hasShownOfflineMsg.current = false;
     }
   }, [connectionState]);

@@ -34,13 +34,20 @@ class TaskServiceClient {
 ```typescript
 interface UseGrpcClientReturn {
     client: TaskServiceClient | null;
-    isConnected: boolean;
-    isConnecting: boolean;
-    error: string | null;
+    connectionState: ConnectionState;  // 'connected' | 'connecting' | 'disconnected' | 'error'
+    submitTask: (request: SubmitTaskRequest) => Promise<SubmitTaskResponse | null>;
+    getTask: (request: GetTaskRequest) => Promise<GetTaskResponse | null>;
+    listTasks: (request: ListTasksRequest) => Promise<ListTasksResponse | null>;
+    pauseTask: (request: PauseTaskRequest) => Promise<PauseTaskResponse | null>;
+    resumeTask: (request: ResumeTaskRequest) => Promise<ResumeTaskResponse | null>;
     reconnect: () => void;
+    lastError: string | null;
+    retryCount: number;
+    nextRetryAt: number | null;
+    serverAddr: string;
 }
 
-function useGrpcClient(serverAddress?: string): UseGrpcClientReturn;
+function useGrpcClient(): UseGrpcClientReturn;
 ```
 
 ### useTaskEvents Hook (`tui/src/hooks/useTaskEvents.ts`)
@@ -87,13 +94,19 @@ interface CjkTextInputProps {
 ### TUI Reducer (`tui/src/reducer.ts`)
 
 ```typescript
+type FocusedArea = 'input' | 'chat' | 'subtask';
+type ActiveMainPane = 'chat' | 'subtask';
+type EventFilter = 'all' | 'task' | 'subtask' | 'tool' | 'error';
+type SymbolMode = 'unicode' | 'ascii' | 'auto';
+
 interface TuiState {
     messages: ChatMessage[];
     subtasks: SubtaskItem[];
     progress: {completed: number; total: number};
     activeTaskId: string | null;
     followLog: boolean;
-    selectedPane: SelectedPane;    // 'input' | 'chat' | 'subtask'
+    focusedArea: FocusedArea;       // which area receives keyboard events
+    activeMainPane: ActiveMainPane; // which pane occupies main area in narrow mode
     scrollDirection: 'up' | 'down' | null;
     scrollLines: number;
     scrollTick: number;            // Monotonically increasing — ChatLog detects new scroll commands
@@ -101,12 +114,20 @@ interface TuiState {
     historyIndex: number;
     lastError: string | null;
     offlineTimerIds: ReturnType<typeof setTimeout>[];
-    eventFilter: EventFilter;      // 'all' | 'task' | 'subtask' | 'tool' | 'error'
-    symbolMode: SymbolMode;        // 'unicode' | 'ascii' | 'auto'
+    eventFilter: EventFilter;
+    symbolMode: SymbolMode;
+    unreadCount: number;           // New messages when followLog is off; reset on follow re-enable
+    isSubmitting: boolean;         // Prevents duplicate Enter submits
+    selectedSubtaskIndex: number;  // Keyboard nav index (-1 = none)
+    selectedSubtaskId: string | null;  // Synced with index
+    subtaskDetailOpen: boolean;    // Whether detail panel is expanded
+    helpOverlayOpen: boolean;      // Whether ? overlay is showing
 }
 ```
 
 **Key architecture**: Scroll offset is NOT stored in reducer — ChatLog manages `localOffset` internally because the offset must be relative to the **filtered** message list, which the reducer cannot compute. Instead, the reducer tracks `followLog`, `scrollTick`, `scrollDirection`, and `scrollLines`. ChatLog reads `scrollTick` and applies the scroll to its own local offset.
+
+**Focus model (v2)**: `focusedArea` and `activeMainPane` are independent state dimensions. `focusedArea` determines keyboard routing and visual highlight. `activeMainPane` determines which pane fills the main area in narrow (<80 cols) mode. Input is always visible regardless of focus.
 
 ---
 
@@ -120,13 +141,17 @@ interface TuiState {
 
 ### Connection Lifecycle
 
-| Phase | `isConnecting` | `isConnected` | `error` |
-|-------|---------------|---------------|---------|
-| Initial | true | false | null |
-| Connected | false | true | null |
-| Failed | false | false | "Connection refused..." |
-| Reconnecting | true | false | null |
-| Closed (unmount) | false | false | null |
+| Phase | `connectionState` | `client` | `lastError` |
+|-------|-------------------|----------|-------------|
+| Initial | `'connecting'` | null | null |
+| Connected | `'connected'` | TaskServiceClient | null |
+| Failed (UNAVAILABLE) | `'error'` | null | Error message |
+| Failed (non-UNAVAILABLE) | `'connected'` | TaskServiceClient | null (server reachable) |
+| Reconnecting | `'connecting'` | null | Previous error |
+| Max retries reached | `'error'` | null | Error message |
+| Manual reconnect (Ctrl+R) | `'connecting'` | null | null (retry count reset) |
+
+**Exponential backoff**: `retryCount` increments from 0 to 5 (MAX_RETRY_COUNT). `nextRetryAt` is set to `Date.now() + interval`. Intervals: [1000, 2000, 4000, 8000, 16000] ms. On manual reconnect (`Ctrl+R`), `retryCount` and `nextRetryAt` are reset to 0/null before calling `connect()`.
 
 ### WatchTask Stream Events
 
@@ -210,17 +235,18 @@ interface TuiState {
 | useTaskEvents null client | Returns empty data when client is null |
 | useTaskEvents cleanup | Cancels stream on unmount |
 
-### Pure-Function Unit Tests (implemented, 57 tests passing)
+### Pure-Function Unit Tests (implemented, 103 tests passing)
 
 All pure functions are tested with vitest. No React rendering needed.
 
 | Module | Tests | Key Assertions |
 |--------|-------|----------------|
-| `reducer.ts` | 20 | All action types: ADD_MESSAGES (2000 cap), SET_SUBTASKS (progress derivation), UPDATE_SUBTASK_STATUS (unknown id no-op), SCROLL_UP/DOWN (tick increment, followLog toggle), ADD_INPUT_HISTORY (dedup, 50 cap), SET_EVENT_FILTER, CLEAR_TASK/LOG, ADD/CLEAR_OFFLINE_TIMERS, SET_ACTIVE_TASK, SET_FOLLOW_LOG, SET_SELECTED_PANE |
+| `reducer.ts` | 56 | All action types: ADD_MESSAGES (2000 cap, unreadCount increment), SET_SUBTASKS (progress, selection reset), UPDATE_SUBTASK_STATUS, SCROLL_UP/DOWN (tick increment, followLog toggle), CYCLE_FOCUS (input→chat→subtask→input), SWAP_MAIN_PANE (chat↔subtask), ESC_TO_MAIN (input→main pane, detail close), SET_EVENT_FILTER (follow reset, unread reset), SELECT_SUBTASK (index validation), TOGGLE_SUBTASK_DETAIL, JUMP_TO_FAILED_SUBTASK (wrap), ADD_INPUT_HISTORY (dedup, 50 cap), CLEAR_TASK/LOG, SET_FOLLOW_LOG (unread reset on re-enable), TOGGLE_HELP_OVERLAY |
+| `keymap.ts` | 9 | getCommand returns correct command, getCommandsForArea returns global+area, getStatusBarHelp adapts to narrow/medium/wide |
 | `formatters.ts` | 13 | All event types (task_submitted/failed/completed, subtask_assigned/started/completed/failed, tool_call/tool_result), unknown type, eventType preservation on all messages, batch conversion, null filtering |
 | `symbols.ts` | 9 | unicode mode, ascii mode, auto mode env detection (CI, NO_COLOR, TERM=dumb → ascii; TERM=xterm-256color → unicode), forced override, auto→CI resolution |
 | `truncate.ts` | 8 | Short text (no truncation), exact width, long English + ellipsis, CJK 2-column chars, combining chars not split, ZWJ emoji not split, empty string, width=1 |
-| `filter.ts` | 7 | all/task/subtask/tool/error filters, user messages always pass, messages without eventType pass all filters |
+| `filter.ts` | 8 | all/task/subtask/tool/error filters, user messages always pass, messages without eventType pass all filters, filterMessages pure function |
 
 **Test framework**: vitest (configured in `tui/vitest.config.ts`)
 **Run command**: `cd tui && npx vitest run`
@@ -386,6 +412,44 @@ useEffect(() => {
 
 The symbol set is passed from App → SubtaskTree as a `SymbolSet` prop rather than imported directly, keeping components testable and the strategy centralized.
 
+### Decision: Unified keymap.ts for keyboard commands
+
+**Context**: Multiple components (App, CjkTextInput, StatusBar, help overlay) all need to agree on which keys do what. Previously, key handling was scattered and status bar labels could be inconsistent with actual behavior.
+
+**Decision**: `tui/src/keymap.ts` is the single source of truth for all keyboard commands. It defines `KeyCommand` objects with `id`, `label`, `shortLabel`, `key`, `areas`, and `global`. Components derive their behavior and display text from this file. This ensures "status bar says it, key does it" — no mismatches.
+
+**Example**:
+```typescript
+// keymap.ts defines the command
+{id: 'cycleFocus', label: 'Cycle focus', shortLabel: 'S-Tab', key: 'Shift+Tab', areas: [], global: true}
+
+// StatusBar reads it
+const helpText = getStatusBarHelp(focusedArea, terminalWidth);
+
+// Help overlay reads it
+const commands = getCommandsForArea(focusedArea);
+```
+
+### Decision: Offline message deduplication
+
+**Context**: When gRPC is disconnected, every task submission used to show "gRPC server not connected" in the ChatLog, creating noise if the user submits multiple tasks while offline.
+
+**Decision**: App.tsx tracks `hasShownOfflineMsg` ref. The offline message is shown only once per offline session. The ref resets when `connectionState` changes to `'connected'` or when transitioning from connected to non-connected (so the message appears again if the server goes down after being up).
+
+**Example**:
+```typescript
+// Only show once per offline session
+if (!hasShownOfflineMsg.current) {
+    hasShownOfflineMsg.current = true;
+    addMessage(createSystemMessage(`gRPC server not connected (${serverAddr})...`));
+}
+
+// Reset on reconnection or new disconnection
+useEffect(() => {
+    if (connectionState === 'connected') hasShownOfflineMsg.current = false;
+}, [connectionState]);
+```
+
 ---
 
 ## Common Mistakes
@@ -415,6 +479,12 @@ The symbol set is passed from App → SubtaskTree as a `SymbolSet` prop rather t
 12. **Not capping event/message arrays** — gRPC streams can emit events indefinitely. Both `useTaskEvents` and the reducer's `ADD_MESSAGES` must cap at ~2000 entries. Without this, long-running sessions consume unbounded memory.
 
 13. **Multiple `useInput` hooks with overlapping key bindings** — Ink 5 allows multiple `useInput` hooks, but they all fire for every keypress. If `CjkTextInput` and `App` both handle Ctrl+R, the action fires twice. Solution: CjkTextInput explicitly ignores Ctrl+C/R/P/Q/F/L (passes them through to App's global handler). The `focus` prop on `useInput({isActive})` controls which component processes printable input.
+
+14. **Offline message spam on repeated submits** — Without deduplication, every task submission in offline mode adds a "gRPC not connected" message. Use a `hasShownOfflineMsg` ref that resets on connection state transitions (connected, or connected→error), not just on `'connected'`.
+
+15. **Truncate width not accounting for nested marginLeft** — When a component uses nested `<Box marginLeft={2}>` and inner `<Box marginLeft={1}>`, the total indent is 3 columns, not 2. `truncateToWidth` must subtract the full indent from `maxWidth`. Always count: outer margin + inner margin + label prefix width.
+
+16. **hasShownOfflineMsg not resetting on connected→error transition** — If the server was connected, then goes down, and the user submits a task, the offline message should appear again. Track `prevConnectionState` with a ref and reset `hasShownOfflineMsg` on both `'connected'` and `connected → non-connected` transitions.
 
 ---
 
