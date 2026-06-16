@@ -258,7 +258,7 @@ class NatsWorker:
         self._publisher = NatsPublisher(self._nc)
 
         # Initialize Engine, Orchestrator, Worker
-        self._init_components()
+        await self._init_components()
 
         # Subscribe to uc.task.submit
         sub = await self._nc.subscribe(
@@ -308,7 +308,7 @@ class NatsWorker:
 
     # ── Component initialization ─────────────────────────────────
 
-    def _init_components(self) -> None:
+    async def _init_components(self) -> None:
         """Initialize Engine, Orchestrator, and Worker."""
         # Engine (local mode — shared with Orchestrator/Worker)
         try:
@@ -350,13 +350,10 @@ class NatsWorker:
                 event_emitter=self._orchestrator.event_emitter,
             )
 
-        # Register the worker with the Orchestrator
+        # Register the worker with the Orchestrator (await to ensure
+        # registration completes before any tasks arrive)
         worker_info = self._worker.get_info()
-        # Register is async, but we are in a sync context here.
-        # Schedule the registration on the event loop.
-        asyncio.get_event_loop().create_task(
-            self._orchestrator.register_worker(worker_info)
-        )
+        await self._orchestrator.register_worker(worker_info)
         logger.info(
             "Orchestrator + Worker initialized (worker_id=%s)",
             self._worker.worker_id,
@@ -477,6 +474,8 @@ class NatsWorker:
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
             # Find the next ready subtask
+            # TODO: _select_next_subtask is a private method; Orchestrator
+            # should expose a public API for this.
             next_subtask = self._orchestrator._select_next_subtask(task)
             if next_subtask is None:
                 # No more ready subtasks — either all done or blocked

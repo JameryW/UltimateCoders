@@ -130,6 +130,24 @@ fn subtask_status_from_str(s: &str) -> Option<uc_types::SubtaskStatus> {
     }
 }
 
+/// Extract a boolean value from a JSON map entry.
+///
+/// Handles both boolean values (`true`/`false`) and string values
+/// (`"true"`/`"false"`). Python publishers send booleans as JSON `true`/`false`,
+/// but some sources may send them as strings. Returns `default` if the key
+/// is missing or neither a bool nor a string.
+fn json_bool_or_default(
+    data: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    default: bool,
+) -> bool {
+    match data.get(key) {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => s == "true",
+        _ => default,
+    }
+}
+
 // ── In-memory task store ─────────────────────────────────────
 
 /// In-memory store for tasks and events, used by TaskService.
@@ -832,12 +850,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let success = event
-                .data
-                .get("success")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "true")
-                .unwrap_or(false);
+            let success = json_bool_or_default(&event.data, "success", false);
             Some(uc_engine::AgentEventType::ToolResult {
                 task_id,
                 subtask_id,
@@ -876,12 +889,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let success = event
-                .data
-                .get("success")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "true")
-                .unwrap_or(true);
+            let success = json_bool_or_default(&event.data, "success", true);
             Some(uc_engine::AgentEventType::SubtaskCompleted {
                 task_id,
                 subtask_id,
@@ -898,12 +906,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown error")
                 .to_string();
-            let recoverable = event
-                .data
-                .get("recoverable")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "true")
-                .unwrap_or(false);
+            let recoverable = json_bool_or_default(&event.data, "recoverable", false);
             Some(uc_engine::AgentEventType::SubtaskFailed {
                 task_id,
                 subtask_id,
@@ -1127,16 +1130,21 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         {
             // Try NATS publish first
             if let Some(nats_client) = &self.inner.nats_client {
-                let mut store = self.inner.task_store.lock().await;
+                // Create task in Planning status and extract the data we need,
+                // then release the lock BEFORE the async NATS publish.
+                // Holding the lock across an async publish would block all
+                // other TaskStore operations (get_task, list_tasks, etc.).
+                let (task_id_str, submit_payload) = {
+                    let mut store = self.inner.task_store.lock().await;
+                    let task =
+                        store.submit_task_pending(req.description.clone(), req.project_id.clone());
 
-                // Create task in Planning status (awaiting Python decomposition)
-                let task =
-                    store.submit_task_pending(req.description.clone(), req.project_id.clone());
-
-                let submit_payload = NatsTaskSubmit {
-                    task_id: task.id.0.clone(),
-                    description: req.description.clone(),
-                    project_id: req.project_id.clone(),
+                    let payload = NatsTaskSubmit {
+                        task_id: task.id.0.clone(),
+                        description: req.description.clone(),
+                        project_id: req.project_id.clone(),
+                    };
+                    (task.id.0.clone(), payload)
                 };
 
                 let payload_bytes = match serde_json::to_vec(&submit_payload) {
@@ -1146,8 +1154,14 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             error = %e,
                             "Failed to serialize NATS submit payload, falling back to local decomposition"
                         );
-                        // Fall back to local decomposition
-                        drop(store);
+                        // Remove the Planning placeholder before falling back
+                        {
+                            let mut store = self.inner.task_store.lock().await;
+                            store.tasks.remove(&task_id_str);
+                            store.events.retain(|e| {
+                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
+                            });
+                        }
                         return self.submit_task_local(req).await;
                     }
                 };
@@ -1158,15 +1172,18 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 {
                     Ok(()) => {
                         tracing::info!(
-                            task_id = %task.id.0,
+                            task_id = %task_id_str,
                             "Task submitted via NATS, awaiting Python Orchestrator"
                         );
+                        // Read the task back to build the response
+                        let store = self.inner.task_store.lock().await;
+                        let task = store.get_task(&task_id_str).expect("task just inserted");
                         let subtask_protos: Vec<SubtaskProto> =
                             task.subtasks.clone().into_iter().map(Into::into).collect();
 
                         return Ok(Response::new(SubmitTaskResponse {
                             success: true,
-                            task_id: task.id.0,
+                            task_id: task.id.0.clone(),
                             status: task_status_to_proto(&task.status).to_string(),
                             subtask_count: task.subtasks.len() as u32,
                             subtasks: subtask_protos,
@@ -1180,13 +1197,13 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         );
                         // NATS publish failed — fall back to local decomposition.
                         // Remove the Planning task and re-create with local decomposition.
-                        let task_id_str = task.id.0.clone();
-                        store.tasks.remove(&task_id_str);
-                        // Remove the TaskCreated event we just added
-                        store.events.retain(|e| {
-                            !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                        });
-                        drop(store);
+                        {
+                            let mut store = self.inner.task_store.lock().await;
+                            store.tasks.remove(&task_id_str);
+                            store.events.retain(|e| {
+                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
+                            });
+                        }
                         return self.submit_task_local(req).await;
                     }
                 }
@@ -1964,5 +1981,40 @@ mod tests {
             }
             _ => panic!("Expected ToolInvoked"),
         }
+    }
+
+    #[test]
+    fn json_bool_or_default_bool_values() {
+        let mut data = serde_json::Map::new();
+        data.insert("flag".to_string(), serde_json::Value::Bool(true));
+        data.insert("off".to_string(), serde_json::Value::Bool(false));
+
+        assert!(json_bool_or_default(&data, "flag", false));
+        assert!(!json_bool_or_default(&data, "off", true));
+    }
+
+    #[test]
+    fn json_bool_or_default_string_values() {
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "flag".to_string(),
+            serde_json::Value::String("true".to_string()),
+        );
+        data.insert(
+            "off".to_string(),
+            serde_json::Value::String("false".to_string()),
+        );
+
+        assert!(json_bool_or_default(&data, "flag", false));
+        assert!(!json_bool_or_default(&data, "off", true));
+    }
+
+    #[test]
+    fn json_bool_or_default_missing_key() {
+        let data = serde_json::Map::new();
+
+        // Default is returned when key is missing
+        assert!(json_bool_or_default(&data, "missing", true));
+        assert!(!json_bool_or_default(&data, "missing", false));
     }
 }

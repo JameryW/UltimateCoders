@@ -277,6 +277,47 @@ class TestNatsPublisher:
         data = json.loads(args[0][1].decode("utf-8"))
         assert data["data"] == {}
 
+    async def test_publish_submit(self, publisher, mock_nc):
+        """publish_submit sends a uc.task.submit message with correct payload."""
+        await publisher.publish_submit(
+            task_id="task-abc",
+            description="Fix the login bug",
+            project_id="proj-1",
+        )
+
+        mock_nc.publish.assert_called_once()
+        args = mock_nc.publish.call_args
+        subject = args[0][0]
+        data = json.loads(args[0][1].decode("utf-8"))
+
+        assert subject == NATS_SUBJECT_TASK_SUBMIT
+        assert data["task_id"] == "task-abc"
+        assert data["description"] == "Fix the login bug"
+        assert data["project_id"] == "proj-1"
+
+    async def test_publish_submit_no_project(self, publisher, mock_nc):
+        """publish_submit defaults project_id to empty string."""
+        await publisher.publish_submit(
+            task_id="task-abc",
+            description="Fix the login bug",
+        )
+
+        mock_nc.publish.assert_called_once()
+        args = mock_nc.publish.call_args
+        data = json.loads(args[0][1].decode("utf-8"))
+        assert data["project_id"] == ""
+
+    async def test_publish_submit_failure_does_not_raise(self, mock_nc):
+        """Graceful degradation: publish_submit failure logs but does not raise."""
+        mock_nc.publish.side_effect = ConnectionError("NATS down")
+        publisher = NatsPublisher(mock_nc)
+
+        # Should not raise
+        await publisher.publish_submit(
+            task_id="task-1",
+            description="Test",
+        )
+
 
 # ── NatsWorker message handling tests ───────────────────────────
 
