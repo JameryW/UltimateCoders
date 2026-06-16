@@ -319,7 +319,7 @@ subtasks.map((desc, i) => ({
 - Uses `string-width` (v8) for all display-width calculations
 - Uses `grapheme-splitter` (v1) for grapheme-cluster-based cursor movement
 - Deletes whole grapheme clusters on backspace/delete (not single code units)
-- Positions the real terminal cursor via `onCursorMove` callback with display-width column
+- Renders an inline inverse-video cursor indicator (`\x1B[7m...\x1B[27m`) instead of positioning the real terminal cursor
 
 **Example**:
 ```typescript
@@ -332,6 +332,41 @@ setCursorPosition({x: 5 + stringWidth(value), y: 0});  // "中文" → 5+4=9
 ```
 
 **Extensibility**: The `onCursorMove(displayCol: number)` callback pattern decouples cursor positioning from the input component, allowing any parent to position the real terminal cursor correctly regardless of layout changes.
+
+**Important (updated 2026-06-16)**: The `onCursorMove` callback is currently a no-op in `TaskInput`. The real terminal cursor is hidden (`\x1B[?25l`) on mount by `useCursor` and restored on unmount. Only the inline inverse-video cursor is visible. This avoids the dual-cursor problem where the real cursor (not positioned by Ink) and the fake cursor appear simultaneously. See Design Decision "Fake-only cursor strategy" below.
+
+### Decision: Fake-only cursor strategy (hide real terminal cursor)
+
+**Context**: The TUI had a "dual cursor" problem where two cursors were visible simultaneously: (1) CjkTextInput's inline inverse-video cursor indicator, and (2) the real terminal cursor (block/line). The real cursor appeared at whatever position Ink's render cycle left it, which was never aligned with the fake cursor because `useCursor.setCursorPosition` was a no-op.
+
+**Options Considered**:
+1. Implement real ANSI cursor positioning (`\x1B[row;colH`) — Fights with Ink's render cycle; Ink redraws the screen on every state change, moving the real cursor to the end of its output. Any ANSI positioning sequence would be overwritten. Also requires accounting for borders, padding, prompt prefix, and multi-line y-offset — brittle.
+2. Hide real cursor, use only fake cursor — Simple and reliable; CjkTextInput's inverse-video block is visually clear and positioned correctly by Ink's normal rendering.
+
+**Decision**: Option 2. `useCursor` hides the real terminal cursor on mount (`\x1B[?25l`) and restores it on unmount (`\x1B[?25h`). `setCursorPosition` is a pure no-op. Only CjkTextInput's inline inverse-video cursor is visible.
+
+**Example**:
+```typescript
+// useCursor.ts — hide real cursor, never show it during TUI session
+useEffect(() => {
+    hideCursor();  // \x1B[?25l
+    return () => {
+        showCursor();  // \x1B[?25h — restore on exit
+    };
+}, [showCursor, hideCursor]);
+
+// TaskInput.tsx — onCursorMove is a no-op
+const handleCursorMove = useCallback(
+    (_displayCol: number) => {
+        // No-op: CjkTextInput handles cursor display via inline inverse video.
+    },
+    [],
+);
+```
+
+**IME consideration**: Most terminals position the IME candidate window near the last text output position, which is close enough to the inline cursor. This is acceptable for CJK input composition.
+
+**Extensibility**: If real ANSI cursor positioning becomes feasible (e.g., Ink provides a hook for post-render cursor placement), the `onCursorMove(displayCol)` callback and `setCursorPosition` API are preserved for future use.
 
 ### Decision: Subtask state as Map<string, SubtaskItem>
 
@@ -485,6 +520,10 @@ useEffect(() => {
 15. **Truncate width not accounting for nested marginLeft** — When a component uses nested `<Box marginLeft={2}>` and inner `<Box marginLeft={1}>`, the total indent is 3 columns, not 2. `truncateToWidth` must subtract the full indent from `maxWidth`. Always count: outer margin + inner margin + label prefix width.
 
 16. **hasShownOfflineMsg not resetting on connected→error transition** — If the server was connected, then goes down, and the user submits a task, the offline message should appear again. Track `prevConnectionState` with a ref and reset `hasShownOfflineMsg` on both `'connected'` and `connected → non-connected` transitions.
+
+17. **Showing the real terminal cursor alongside a fake cursor** — Ink-based TUIs that render inline cursor indicators (inverse video, underline, etc.) must hide the real terminal cursor (`\x1B[?25l`). If both are visible, the real cursor (positioned by Ink's render cycle, not by the app) will appear at an unpredictable location, creating a confusing "two cursors" visual. Never call `showCursor()` during the TUI session if you're using an inline fake cursor. Restore the real cursor only on unmount (`\x1B[?25h`) so the terminal returns to normal after the TUI exits.
+
+18. **Implementing ANSI cursor positioning inside an Ink app** — Writing `\x1B[row;colH` to position the real terminal cursor fights with Ink's render cycle. Ink redraws the screen on every state change and leaves the cursor at the end of its output. Any ANSI positioning is overwritten. If you need a visible cursor, render it inline (as CjkTextInput does with `\x1B[7m...\x1B[27m`) and hide the real cursor entirely.
 
 ---
 

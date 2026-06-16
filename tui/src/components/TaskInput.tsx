@@ -17,8 +17,8 @@
  * - Submitting: shows "submitting..." and disables Enter
  *
  * No border — the parent App component provides the unified outer frame.
- * The custom useCursor hook positions the real terminal cursor for IME
- * composition.
+ * The custom useCursor hook hides the real terminal cursor (CjkTextInput
+ * renders its own inline inverse-video cursor indicator).
  */
 import React, {useState, useCallback, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
@@ -53,7 +53,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const [savedDraft, setSavedDraft] = useState('');
   const [showEmptyHint, setShowEmptyHint] = useState(false);
   const emptyHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const {setCursorPosition, showCursor} = useCursor();
+  useCursor(); // manages real terminal cursor visibility (hides it)
 
   // Cleanup empty hint timer on unmount
   useEffect(() => {
@@ -103,13 +103,17 @@ const TaskInput: React.FC<TaskInputProps> = ({
   );
 
   // Called by CjkTextInput whenever the cursor moves (including arrow keys)
+  // Note: setCursorPosition is a no-op — CjkTextInput renders its own
+  // inline cursor indicator. This callback is kept for future use if
+  // we ever implement real ANSI cursor positioning.
   const handleCursorMove = useCallback(
-    (displayCol: number) => {
-      // x offset: 1 (paddingX) + 2 ("> " prefix) = 3 display columns
-      setCursorPosition({x: 3 + displayCol, y: 0});
-      showCursor();
+    (_displayCol: number) => {
+      // No-op: CjkTextInput handles cursor display via inline inverse video.
+      // Previously tried: setCursorPosition({x: 3 + displayCol, y: 0}) + showCursor()
+      // but that caused dual-cursor because setCursorPosition was a no-op
+      // and the real cursor didn't align with the fake one.
     },
-    [setCursorPosition, showCursor],
+    [],
   );
 
   // Handle history navigation via Up/Down
