@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证错误处理模式：EmbeddingService 失败时的降级策略需与 spec 一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试模式：确保新增测试符合项目 quality guidelines"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "AC2: PostgreSQL migration 模式 + IndexState schema 变更规范"}

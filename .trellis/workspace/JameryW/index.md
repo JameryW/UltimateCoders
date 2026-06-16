@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-06-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~651 | Active |
+| `journal-1.md` | ~685 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-06-16 | Fix TUI cursor misalignment and backspace not working | `0ba0691`, `f9f15af` | `feat/tui-tests-and-fixes` |
 | 18 | 2026-06-16 | Fix dual-cursor bug in Ink TUI | `c653072`, `d0020dd` | `feat/tui-tests-and-fixes` |
 | 17 | 2026-06-15 | PR #17: Ink/React TUI + Dashboard + Sandbox + Codegraph + Scheduler | `614b99c` | `feat/tui-ink-react` |
 | 16 | 2026-06-15 | TUI Interaction Polish — subtask Home/End/f, help overlay, reconnect feedback, connection-aware placeholder, README | `846087c`, `b11df48` | `feat/tui-ink-react` |

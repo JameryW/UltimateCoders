@@ -649,3 +649,37 @@ Fixed the dual-cursor bug where CjkTextInput's inline inverse-video cursor and t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: Fix TUI cursor misalignment and backspace not working
+
+**Date**: 2026-06-16
+**Task**: Fix TUI cursor misalignment and backspace not working
+**Branch**: `feat/tui-tests-and-fixes`
+
+### Summary
+
+Fixed two TUI input bugs: (1) dual cursor display — real terminal cursor was visible alongside CjkTextInput's inline inverse-video cursor, fixed by hiding real cursor on mount and restoring on unmount in useCursor; (2) Backspace not deleting — Ink 5 parses terminal \x7f as key.delete not key.backspace, unified both to backward delete. Also resolved merge conflicts with main (PR #23).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0ba0691` | (see git log) |
+| `f9f15af` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
