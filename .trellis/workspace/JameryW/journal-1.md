@@ -856,3 +856,41 @@ Confirmed backend-engine-api-fixes fully implemented (search_memory embeddings, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Local worker bridge — TUI end-to-end task execution without NATS
+
+**Date**: 2026-06-16
+**Task**: Local worker bridge — TUI end-to-end task execution without NATS
+**Branch**: `main`
+
+### Summary
+
+Implemented local_worker.py (Python JSON-RPC 2.0 worker) + LocalWorkerBridge (Rust subprocess manager) + three-level degradation in GrpcServer (NATS → local_worker → newline-split). Health endpoint exposes worker status. 62 Rust tests + Python lint green. CI green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f2da666` | (see git log) |
+| `3f13695` | (see git log) |
+| `cd8ad3a` | (see git log) |
+| `2100453` | (see git log) |
+| `473a34c` | (see git log) |
+| `687a779` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
