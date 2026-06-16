@@ -14,6 +14,7 @@ const defaultArgs = {
   activeMainPane: 'chat' as const,
   retryCount: 0,
   focusedAreaHelp: 'S-Tab focus  ? help',
+  brandChar: '◆',
 };
 
 // ── buildSegments ──────────────────────────────────────────

@@ -17,6 +17,9 @@ export type SymbolMode = 'unicode' | 'ascii' | 'auto';
 // ── Symbol Sets ─────────────────────────────────────────────
 
 export interface SymbolSet {
+  // Brand
+  brand: string;
+
   // Subtask status icons
   pending: string;
   assigned: string;
@@ -51,6 +54,7 @@ export interface SymbolSet {
 }
 
 const UNICODE: SymbolSet = {
+  brand: '◆',
   pending: '○',
   assigned: '◌',
   inProgress: '◉',
@@ -74,6 +78,7 @@ const UNICODE: SymbolSet = {
 };
 
 const ASCII: SymbolSet = {
+  brand: '*',
   pending: '[ ]',
   assigned: '[~]',
   inProgress: '[*]',
