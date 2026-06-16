@@ -3,8 +3,8 @@
  *
  * Ink 5.x does not include a built-in useCursor hook.
  * This implementation provides minimal cursor management:
- * - Shows the real terminal cursor on mount
- * - Hides it on unmount
+ * - Hides the real terminal cursor on mount
+ * - Shows it again on unmount
  * - Provides setCursorPosition for IME (but relies on Ink's
  *   natural cursor position rather than fighting it with ANSI)
  *
@@ -15,9 +15,8 @@
  * the cursor to jump to wrong positions.
  *
  * Instead, CjkTextInput renders an inverse-video cursor indicator
- * inline, and the real terminal cursor visibility is managed here.
- * For IME composition, the terminal positions the candidate window
- * near the visible cursor automatically.
+ * inline, and the real terminal cursor is hidden while the TUI is
+ * active to avoid showing two cursors at different positions.
  */
 import {useCallback, useEffect} from 'react';
 import {useStdout} from 'ink';
@@ -60,21 +59,21 @@ export function useCursor(): UseCursorReturn {
     }
   }, [stdout]);
 
-  // No-op: Ink manages cursor position via its render cycle.
-  // We keep the API for compatibility but don't write ANSI sequences.
+  // No-op: CjkTextInput renders the visible cursor inline. We keep the
+  // API for compatibility but don't write ANSI positioning sequences.
   const setCursorPosition = useCallback(
     (_pos: CursorPosition) => {
-      // Just ensure cursor is visible when input is active
-      showCursor();
     },
-    [showCursor],
+    [],
   );
 
-  // Show cursor on mount, hide on unmount
+  // Hide the real terminal cursor while the TUI is active. The input
+  // component renders its own inline cursor and we restore the terminal
+  // cursor before exiting.
   useEffect(() => {
-    showCursor();
+    hideCursor();
     return () => {
-      hideCursor();
+      showCursor();
     };
   }, [showCursor, hideCursor]);
 

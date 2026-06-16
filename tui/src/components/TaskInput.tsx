@@ -53,7 +53,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const [savedDraft, setSavedDraft] = useState('');
   const [showEmptyHint, setShowEmptyHint] = useState(false);
   const emptyHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const {setCursorPosition, showCursor} = useCursor();
+  const {setCursorPosition} = useCursor();
 
   // Cleanup empty hint timer on unmount
   useEffect(() => {
@@ -107,9 +107,8 @@ const TaskInput: React.FC<TaskInputProps> = ({
     (displayCol: number) => {
       // x offset: 1 (paddingX) + 2 ("> " prefix) = 3 display columns
       setCursorPosition({x: 3 + displayCol, y: 0});
-      showCursor();
     },
-    [setCursorPosition, showCursor],
+    [setCursorPosition],
   );
 
   // Handle history navigation via Up/Down

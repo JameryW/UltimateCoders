@@ -486,6 +486,8 @@ useEffect(() => {
 
 16. **hasShownOfflineMsg not resetting on connected→error transition** — If the server was connected, then goes down, and the user submits a task, the offline message should appear again. Track `prevConnectionState` with a ref and reset `hasShownOfflineMsg` on both `'connected'` and `connected → non-connected` transitions.
 
+17. **Treating Ink `key.delete` as forward-delete only** — Ink 5 parses the common terminal Backspace byte (`\x7f`) as `key.delete`, not `key.backspace`. In custom text inputs, treating `key.delete` only as "delete after cursor" makes Backspace appear broken at the end of the input. Handle `key.delete` as backward delete unless you have a lower-level raw key parser that can distinguish true Delete (`ESC [3~`) from Backspace (`\x7f`).
+
 ---
 
 ## TUI Testing Conventions
