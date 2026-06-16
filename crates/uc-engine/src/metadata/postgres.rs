@@ -246,6 +246,24 @@ impl PostgresMetadataStore {
                 })?;
         }
 
+        // Additive migration: add count columns to index_state if they don't exist
+        let count_migrations = [
+            "ALTER TABLE index_state ADD COLUMN IF NOT EXISTS files_count BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE index_state ADD COLUMN IF NOT EXISTS symbols_count BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE index_state ADD COLUMN IF NOT EXISTS chunks_count BIGINT NOT NULL DEFAULT 0",
+        ];
+        for mig_sql in &count_migrations {
+            sqlx::query(mig_sql)
+                .execute(pool.as_ref())
+                .await
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!(
+                        "Migration error (index_state count columns): {}",
+                        e
+                    ))
+                })?;
+        }
+
         tracing::info!("PostgreSQL migrations completed");
         Ok(())
     }
@@ -444,8 +462,8 @@ impl PostgresMetadataStore {
     pub async fn get_index_state(&self, repo_id: &str) -> Result<Option<IndexState>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
-            let row = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i32, String)>(
-                "SELECT repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health FROM index_state WHERE repo_id = $1",
+            let row = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i32, String, i64, i64, i64)>(
+                "SELECT repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count FROM index_state WHERE repo_id = $1",
             )
             .bind(repo_id)
             .fetch_optional(pool.as_ref())
@@ -460,6 +478,9 @@ impl PostgresMetadataStore {
                     last_full_reindex,
                     index_version,
                     health,
+                    files_count,
+                    symbols_count,
+                    chunks_count,
                 )| IndexState {
                     repo_id,
                     last_indexed_sha,
@@ -467,6 +488,9 @@ impl PostgresMetadataStore {
                     last_full_reindex,
                     index_version: index_version as u32,
                     health: parse_health(&health),
+                    files_count: files_count as u64,
+                    symbols_count: symbols_count as u64,
+                    chunks_count: chunks_count as u64,
                 },
             ))
         } else {
@@ -497,14 +521,17 @@ impl PostgresMetadataStore {
         if let Some(pool) = &self.pool {
             sqlx::query(
                 r#"
-                INSERT INTO index_state (repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO index_state (repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 ON CONFLICT (repo_id) DO UPDATE SET
                     last_indexed_sha = EXCLUDED.last_indexed_sha,
                     last_indexed_at = EXCLUDED.last_indexed_at,
                     last_full_reindex = EXCLUDED.last_full_reindex,
                     index_version = EXCLUDED.index_version,
-                    health = EXCLUDED.health
+                    health = EXCLUDED.health,
+                    files_count = EXCLUDED.files_count,
+                    symbols_count = EXCLUDED.symbols_count,
+                    chunks_count = EXCLUDED.chunks_count
                 "#,
             )
             .bind(&state.repo_id)
@@ -513,6 +540,9 @@ impl PostgresMetadataStore {
             .bind(state.last_full_reindex)
             .bind(state.index_version as i32)
             .bind(health_str)
+            .bind(state.files_count as i64)
+            .bind(state.symbols_count as i64)
+            .bind(state.chunks_count as i64)
             .execute(pool.as_ref())
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Index state upsert error: {}", e)))?;
@@ -1126,6 +1156,9 @@ mod tests {
             last_full_reindex: chrono::Utc::now(),
             index_version: 1,
             health: IndexHealth::Healthy,
+            files_count: 0,
+            symbols_count: 0,
+            chunks_count: 0,
         };
 
         store.update_index_state(&state).await.unwrap();
@@ -1133,6 +1166,32 @@ mod tests {
         let result = store.get_index_state("test-repo").await.unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().last_indexed_sha, "abc123");
+    }
+
+    #[tokio::test]
+    async fn test_fallback_index_state_with_counts() {
+        let store = PostgresMetadataStore::new_fallback();
+
+        let state = IndexState {
+            repo_id: "test-repo-counts".to_string(),
+            last_indexed_sha: "def456".to_string(),
+            last_indexed_at: chrono::Utc::now(),
+            last_full_reindex: chrono::Utc::now(),
+            index_version: 1,
+            health: IndexHealth::Healthy,
+            files_count: 42,
+            symbols_count: 100,
+            chunks_count: 75,
+        };
+
+        store.update_index_state(&state).await.unwrap();
+
+        let result = store.get_index_state("test-repo-counts").await.unwrap();
+        assert!(result.is_some());
+        let fetched = result.unwrap();
+        assert_eq!(fetched.files_count, 42);
+        assert_eq!(fetched.symbols_count, 100);
+        assert_eq!(fetched.chunks_count, 75);
     }
 
     #[tokio::test]

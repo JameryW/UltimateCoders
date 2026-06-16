@@ -119,6 +119,9 @@ impl IndexPipeline {
                 last_full_reindex: now,
                 index_version: CURRENT_INDEX_VERSION,
                 health: IndexHealth::Indexing,
+                files_count: 0,
+                symbols_count: 0,
+                chunks_count: 0,
             })
             .await?;
 
@@ -160,6 +163,9 @@ impl IndexPipeline {
                 last_full_reindex: now,
                 index_version: CURRENT_INDEX_VERSION,
                 health: IndexHealth::Healthy,
+                files_count: files_indexed as u64,
+                symbols_count: symbols_extracted as u64,
+                chunks_count: chunks_embedded as u64,
             })
             .await?;
 
@@ -233,6 +239,9 @@ impl IndexPipeline {
                 last_full_reindex: existing_state.last_full_reindex,
                 index_version: existing_state.index_version,
                 health: IndexHealth::Indexing,
+                files_count: existing_state.files_count,
+                symbols_count: existing_state.symbols_count,
+                chunks_count: existing_state.chunks_count,
             })
             .await?;
 
@@ -268,7 +277,10 @@ impl IndexPipeline {
             }
         }
 
-        // 4. Update index state with new SHA
+        // 4. Update index state with new SHA and updated counts.
+        // NOTE: counts are additive here — deleted files are removed from the
+        // index but not decremented from the counts. Counts become accurate
+        // again after the next full reindex (which resets to absolute values).
         self.metadata
             .update_index_state(&IndexState {
                 repo_id: repo_spec.repo_id.clone(),
@@ -277,6 +289,9 @@ impl IndexPipeline {
                 last_full_reindex: existing_state.last_full_reindex,
                 index_version: CURRENT_INDEX_VERSION,
                 health: IndexHealth::Healthy,
+                files_count: existing_state.files_count + files_indexed as u64,
+                symbols_count: existing_state.symbols_count + symbols_extracted as u64,
+                chunks_count: existing_state.chunks_count + chunks_embedded as u64,
             })
             .await?;
 
@@ -1330,6 +1345,66 @@ impl Database {
             .unwrap();
         assert_eq!(state_after_inc.last_indexed_sha, sha2);
         assert_ne!(state_after_inc.last_indexed_sha, sha_after_full);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_index_state_stores_counts_after_full_index() {
+        let temp_dir = std::env::temp_dir().join("uc-test-index-state-counts");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::fs::write(
+            temp_dir.join("main.rs"),
+            r#"fn main() {
+    let database = Database::connect();
+    database.query("SELECT * FROM users");
+}"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            temp_dir.join("lib.rs"),
+            r#"struct Database { url: String }
+impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &str) {} }"#,
+        )
+        .unwrap();
+
+        let metadata = Arc::new(PostgresMetadataStore::new_fallback());
+        let pipeline = IndexPipeline::new(Arc::clone(&metadata));
+
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "test-state-counts".to_string(),
+                remote_url: "https://github.com/test/repo".to_string(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+
+        let response = pipeline.index_repo(&request).await.unwrap();
+        assert_eq!(response.repo_id, "test-state-counts");
+        assert!(response.files_indexed >= 2);
+
+        // Verify counts are stored in IndexState
+        let state = metadata
+            .get_index_state("test-state-counts")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.health, IndexHealth::Healthy);
+        assert!(
+            state.files_count > 0,
+            "files_count should be > 0, got {}",
+            state.files_count
+        );
+        assert!(
+            state.files_count >= 2,
+            "files_count should be >= 2 (indexed at least 2 files), got {}",
+            state.files_count
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
