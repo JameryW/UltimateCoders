@@ -615,3 +615,37 @@ Created PR #17 (feat/tui-ink-react → main) covering Ink/React TUI with CJK inp
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Fix dual-cursor bug in Ink TUI
+
+**Date**: 2026-06-16
+**Task**: Fix dual-cursor bug in Ink TUI
+**Branch**: `feat/tui-tests-and-fixes`
+
+### Summary
+
+Fixed the dual-cursor bug where CjkTextInput's inline inverse-video cursor and the real terminal cursor were both visible. Root cause: useCursor called showCursor() but setCursorPosition was a no-op, so the real cursor sat at Ink's render position instead of the input position. Fix: hide real terminal cursor on mount, restore on unmount; setCursorPosition is a pure no-op; TaskInput no longer calls showCursor in handleCursorMove. Also added 29 unit tests for SubtaskTree/ChatLog pure functions and 3 reducer tests for TOGGLE_EXPAND_ALL_MESSAGES. Updated spec with fake-only cursor design decision and 2 new common mistakes. PR #22 created.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c653072` | (see git log) |
+| `d0020dd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
