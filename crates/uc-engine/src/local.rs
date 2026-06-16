@@ -85,15 +85,16 @@ impl LocalEngine {
         // Initialize metadata store (PostgreSQL)
         let metadata_store = Arc::new(PostgresMetadataStore::new(&config.storage.pg_url).await?);
 
+        // Create embedding service
+        let embedding_service = Arc::new(EmbeddingService::new(config.embedding.clone()));
+
         // Create unified memory store
         let memory_store = Arc::new(MemoryStore::new(
             short_term,
             long_term.clone(),
+            embedding_service.clone(),
             config.memory.clone(),
         ));
-
-        // Create embedding service
-        let embedding_service = Arc::new(EmbeddingService::new(config.embedding.clone()));
 
         // Create index pipeline with semantic support
         let index_pipeline = Arc::new(IndexPipeline::with_semantic(
@@ -156,12 +157,13 @@ impl LocalEngine {
         let long_term = Arc::new(LongTermMemory::new_fallback());
         let metadata_store = Arc::new(PostgresMetadataStore::new_fallback());
 
+        let embedding_service = Arc::new(EmbeddingService::new_fallback());
+
         let memory_store = Arc::new(MemoryStore::new_with_default_config(
             short_term,
             long_term.clone(),
+            embedding_service.clone(),
         ));
-
-        let embedding_service = Arc::new(EmbeddingService::new_fallback());
 
         let index_pipeline = Arc::new(IndexPipeline::with_semantic(
             metadata_store.clone(),
@@ -213,13 +215,14 @@ impl LocalEngine {
         let long_term = Arc::new(LongTermMemory::new_fallback());
         let metadata_store = Arc::new(PostgresMetadataStore::new_fallback());
 
+        let embedding_service = Arc::new(EmbeddingService::new(config.embedding.clone()));
+
         let memory_store = Arc::new(MemoryStore::new(
             short_term,
             long_term.clone(),
+            embedding_service.clone(),
             config.memory.clone(),
         ));
-
-        let embedding_service = Arc::new(EmbeddingService::new(config.embedding.clone()));
 
         let index_pipeline = Arc::new(IndexPipeline::with_semantic(
             metadata_store.clone(),
@@ -447,9 +450,9 @@ impl EngineApi for LocalEngine {
                 repo_id: state.repo_id,
                 indexed: true,
                 last_indexed_sha: Some(state.last_indexed_sha),
-                files_count: 0,
-                symbols_count: 0,
-                chunks_count: 0,
+                files_count: state.files_count as u32,
+                symbols_count: state.symbols_count as u32,
+                chunks_count: state.chunks_count as u32,
             }),
             None => Ok(RepoIndexState {
                 repo_id: repo_id.to_string(),
@@ -1013,5 +1016,52 @@ fn load_index() -> Index { Index::new() }"#,
         assert!(result.timed_out);
 
         engine.stop_sandbox(&handle).await.unwrap();
+    }
+
+    /// AC2: get_index_state returns real counts (not hardcoded 0)
+    #[cfg(feature = "indexing")]
+    #[tokio::test]
+    async fn local_engine_get_index_state_returns_real_counts() {
+        let engine = LocalEngine::new_fallback();
+
+        // Create a temp directory with test files
+        let temp_dir = std::env::temp_dir().join("uc-test-get-index-state-counts");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::fs::write(
+            temp_dir.join("main.rs"),
+            r#"fn main() {
+    let config = Config::new();
+    println!("Hello!");
+}"#,
+        )
+        .unwrap();
+
+        // Index the repo
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "test-counts-repo".to_string(),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+
+        let response = engine.index_repo(request).await.unwrap();
+        assert!(response.files_indexed >= 1);
+
+        // get_index_state should return non-zero counts
+        let state = engine.get_index_state("test-counts-repo").await.unwrap();
+        assert_eq!(state.repo_id, "test-counts-repo");
+        assert!(state.indexed);
+        assert!(
+            state.files_count > 0,
+            "files_count should be > 0 after indexing, got {}",
+            state.files_count
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
