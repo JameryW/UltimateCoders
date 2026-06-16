@@ -51,6 +51,8 @@ pub mod repo_manager {
             Self { _private: () }
         }
 
+        /// Returns an empty path — indexing feature is disabled.
+        /// Callers should check the `indexing` feature before relying on this.
         pub fn repo_path(&self, _repo_id: &str) -> std::path::PathBuf {
             std::path::PathBuf::new()
         }

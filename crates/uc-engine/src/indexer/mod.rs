@@ -426,7 +426,9 @@ impl IndexPipeline {
         #[cfg(not(feature = "indexing"))]
         {
             let _ = repo_spec;
-            Ok(String::new())
+            Err(EngineError::IndexingError(
+                "Indexing feature is disabled, cannot get HEAD SHA".into(),
+            ))
         }
     }
 

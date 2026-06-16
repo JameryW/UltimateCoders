@@ -644,34 +644,37 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                     .collect(),
             ),
             uc_engine::AgentEventType::SubtaskAssigned {
+                task_id,
                 subtask_id,
                 worker_id,
             } => (
                 "subtask_assigned".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![("worker_id".to_string(), worker_id.0)]
                     .into_iter()
                     .collect(),
             ),
             uc_engine::AgentEventType::SubtaskStarted {
+                task_id,
                 subtask_id,
                 worker_id,
             } => (
                 "subtask_started".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![("worker_id".to_string(), worker_id.0)]
                     .into_iter()
                     .collect(),
             ),
             uc_engine::AgentEventType::ToolInvoked {
+                task_id,
                 subtask_id,
                 tool_name,
                 tool_input,
             } => (
                 "tool_call".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![
                     ("tool_name".to_string(), tool_name),
@@ -681,12 +684,13 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .collect(),
             ),
             uc_engine::AgentEventType::ToolResult {
+                task_id,
                 subtask_id,
                 tool_output,
                 success,
             } => (
                 "tool_result".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![
                     ("tool_output".to_string(), tool_output),
@@ -696,12 +700,13 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .collect(),
             ),
             uc_engine::AgentEventType::FileModified {
+                task_id,
                 subtask_id,
                 file_path,
                 diff,
             } => (
                 "file_modified".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![
                     ("file_path".to_string(), file_path),
@@ -711,12 +716,13 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .collect(),
             ),
             uc_engine::AgentEventType::SubtaskCompleted {
+                task_id,
                 subtask_id,
                 summary,
                 success,
             } => (
                 "subtask_completed".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![
                     ("summary".to_string(), summary),
@@ -726,12 +732,13 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .collect(),
             ),
             uc_engine::AgentEventType::SubtaskFailed {
+                task_id,
                 subtask_id,
                 error,
                 recoverable,
             } => (
                 "subtask_failed".to_string(),
-                String::new(),
+                task_id.0,
                 subtask_id.0,
                 vec![
                     ("error".to_string(), error),
