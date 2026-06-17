@@ -928,3 +928,36 @@ Wire subtask overlay keyboard navigation (Up/Down/Enter/R), add subtaskDetailOpe
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: TUI polish — adaptive visibleLines, LogoBanner cleanup, StatusBar dedup
+
+**Date**: 2026-06-17
+**Task**: TUI polish — adaptive visibleLines, LogoBanner cleanup, StatusBar dedup
+**Branch**: `feat/integration-tests-local-worker`
+
+### Summary
+
+Fix ChatLog visibleLines to adapt to logo height (6/1/0 based on terminal width). Remove LogoBanner compact prop, merge duplicate compact branches. Deduplicate MAX_RETRY_DISPLAY: export from statusbar-utils, import in StatusBar.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c80efff` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
