@@ -42,44 +42,44 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks } = useGrpcWeb({
+  const grpcConnected = grpcState === "connected";
+  const {
+    connectionState: grpcState, submitTask: grpcSubmitTask, pauseTask: grpcPauseTask,
+    resumeTask: grpcResumeTask, healthCheck, connect: grpcConnect, listTasks,
+  } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
 
-  // Loading state -- show spinner until initial data arrives
+  // Loading state — show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     dashboard.fetchInitial().finally(() => setLoading(false));
   }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
-  // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch tasks via gRPC
+  // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch data via gRPC
   useEffect(() => {
-    if (!connected && grpcState === "connected") {
-      listTasks().then((data) => {
-        if (data.available) dashboard.mergeGrpcTasks(data);
-      }).catch(() => { /* ignore */ });
+    if (!connected && grpcConnected) {
+      listTasks().then((data) => { if (data.available) dashboard.mergeGrpcTasks(data); }).catch(() => {});
+      healthCheck().then((h) => dashboard.mergeGrpcHealth(h)).catch(() => {});
     }
-  }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
+  }, [connected, grpcConnected, listTasks, healthCheck, dashboard.mergeGrpcTasks, dashboard.mergeGrpcHealth]);
 
-  // Periodic gRPC health check -- poll every 30s when connected
+  // Periodic gRPC health check — poll every 30s when connected
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
   useEffect(() => {
-    if (grpcState !== "connected") {
-      setGrpcHealthComponents([]);
-      return;
-    }
+    if (!grpcConnected) { setGrpcHealthComponents([]); return; }
     const poll = async () => {
       try {
         const h = await healthCheck();
         setGrpcHealthComponents(h.components);
-      } catch { /* ignore — next poll will retry */ }
+      } catch { /* ignore */ }
     };
     poll();
     const timer = setInterval(poll, 30000);
     return () => clearInterval(timer);
-  }, [grpcState, healthCheck]);
+  }, [grpcConnected, healthCheck]);
 
   // Merge gRPC-Web connection + gRPC health components into HealthData
   const healthWithGrpc = useMemo<HealthData>(() => {
@@ -100,15 +100,32 @@ function App() {
     return { ...dashboard.health, components };
   }, [dashboard.health, grpcState, grpcHealthComponents]);
 
+  // Task actions: prefer gRPC when connected, fall back to REST
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try { const r = await api.pauseTask(taskId); r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
+    try {
+      if (grpcConnected) {
+        const r = await grpcPauseTask(taskId);
+        r.success ? showToast("Task paused (gRPC)", "success") : showToast(`Pause failed: ${r.status}`, "error");
+      } else {
+        const r = await api.pauseTask(taskId);
+        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+      }
+    } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
   };
   const handleResumeTask = async (taskId: string) => {
     const ok = await confirmAction("Resume Task", `Resume task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try { const r = await api.resumeTask(taskId); r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
+    try {
+      if (grpcConnected) {
+        const r = await grpcResumeTask(taskId);
+        r.success ? showToast("Task resumed (gRPC)", "success") : showToast(`Resume failed: ${r.status}`, "error");
+      } else {
+        const r = await api.resumeTask(taskId);
+        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+      }
+    } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
   };
   const handleResetCB = async () => {
     const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
@@ -142,7 +159,7 @@ function App() {
       <ToastContainer />
       <ConfirmDialog />
       <Header connected={connected} grpcState={grpcState} />
-      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
+      <TaskSubmitForm grpcSubmitTask={grpcConnected ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
           <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} /></div>

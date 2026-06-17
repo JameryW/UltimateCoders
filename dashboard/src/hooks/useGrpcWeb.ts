@@ -4,10 +4,17 @@ import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
-import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema } from "@/grpc/engine_pb";
+import {
+  WatchTaskRequestSchema,
+  SubmitTaskRequestSchema,
+  HealthRequestSchema,
+  ListTasksRequestSchema,
+  PauseTaskRequestSchema,
+  ResumeTaskRequestSchema,
+} from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
-/** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
+/** gRPC-Web server address — empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
   import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
@@ -52,7 +59,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
   optsRef.current = opts;
-  // Ref breaks connect<->scheduleReconnect cycle
+  // Ref breaks connect↔scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
 
   const clearRetryTimer = useCallback(() => {
@@ -157,6 +164,28 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     [],
   );
 
+  const pauseTask = useCallback(
+    async (taskId: string) => {
+      const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+      const client = createClient(TaskService, transport);
+      const req = create(PauseTaskRequestSchema, { taskId });
+      const resp = await client.pauseTask(req);
+      return { success: resp.success, taskId: resp.taskId, status: resp.status };
+    },
+    [],
+  );
+
+  const resumeTask = useCallback(
+    async (taskId: string) => {
+      const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+      const client = createClient(TaskService, transport);
+      const req = create(ResumeTaskRequestSchema, { taskId });
+      const resp = await client.resumeTask(req);
+      return { success: resp.success, taskId: resp.taskId, status: resp.status };
+    },
+    [],
+  );
+
   const healthCheck = useCallback(async () => {
     const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
     const client = createClient(EngineService, transport);
@@ -193,6 +222,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
           status: s.status,
           depends_on: [...s.dependsOn],
         })),
+        // ponytail: proto int64 = epoch seconds, dashboard uses ISO 8601
         created_at: new Date(Number(t.createdAt) * 1000).toISOString(),
         updated_at: new Date(Number(t.updatedAt) * 1000).toISOString(),
       })),
@@ -207,5 +237,5 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     return disconnect;
   }, [connect, disconnect]);
 
-  return { connectionState, connect, disconnect, submitTask, healthCheck, listTasks };
+  return { connectionState, connect, disconnect, submitTask, pauseTask, resumeTask, healthCheck, listTasks };
 }
