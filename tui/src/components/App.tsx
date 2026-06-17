@@ -435,7 +435,12 @@ const App: React.FC = () => {
 
     // Esc: context-dependent escape
     if (key.escape) {
-      // Close subtask overlay first if open
+      // Close subtask detail first if open
+      if (state.subtaskOverlayOpen && state.subtaskDetailOpen) {
+        dispatch({type: 'TOGGLE_SUBTASK_DETAIL'});
+        return;
+      }
+      // Close subtask overlay if open
       if (state.subtaskOverlayOpen) {
         dispatch({type: 'TOGGLE_SUBTASK_OVERLAY'});
         return;
@@ -458,16 +463,22 @@ const App: React.FC = () => {
     // ── Subtask overlay shortcuts ────────────────────────
     if (state.subtaskOverlayOpen) {
       if (key.upArrow) {
-        const nextIdx = state.selectedSubtaskIndex <= 0
-          ? state.subtasks.length - 1
-          : state.selectedSubtaskIndex - 1;
+        // If no selection yet, select first item; otherwise wrap
+        const nextIdx = state.selectedSubtaskIndex < 0
+          ? 0
+          : state.selectedSubtaskIndex === 0
+            ? state.subtasks.length - 1
+            : state.selectedSubtaskIndex - 1;
         dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
         return;
       }
       if (key.downArrow) {
-        const nextIdx = state.selectedSubtaskIndex >= state.subtasks.length - 1
+        // If no selection yet, select first item; otherwise wrap
+        const nextIdx = state.selectedSubtaskIndex < 0
           ? 0
-          : state.selectedSubtaskIndex + 1;
+          : state.selectedSubtaskIndex >= state.subtasks.length - 1
+            ? 0
+            : state.selectedSubtaskIndex + 1;
         dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
         return;
       }

@@ -199,7 +199,7 @@ export type TuiAction =
   | {type: 'JUMP_TO_FAILED_SUBTASK'}
   | {type: 'TOGGLE_HELP_OVERLAY'}
   | {type: 'TOGGLE_EXPAND_ALL_MESSAGES'}
-  // ── Subtask retry (placeholder) ──
+  // ── Subtask retry ──
   | {type: 'RETRY_SUBTASK'; subtaskId: string};
 
 // ── Reducer ─────────────────────────────────────────────────
@@ -283,9 +283,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       if (state.focusedArea === 'input') {
         return {...state, focusedArea: 'chat'};
       }
-      // Esc from subtask overlay: close overlay
+      // Esc from subtask overlay: close overlay (also resets detail)
       if (state.subtaskOverlayOpen) {
-        return {...state, subtaskOverlayOpen: false};
+        return {...state, subtaskOverlayOpen: false, subtaskDetailOpen: false};
       }
       // Esc from chat: focus returns to input
       return {...state, focusedArea: 'input'};
@@ -395,8 +395,19 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       };
     }
 
-    case 'TOGGLE_SUBTASK_OVERLAY':
-      return {...state, subtaskOverlayOpen: !state.subtaskOverlayOpen, subtaskDetailOpen: false};
+    case 'TOGGLE_SUBTASK_OVERLAY': {
+      const opening = !state.subtaskOverlayOpen;
+      // Auto-select first subtask when opening (if any exist)
+      const selectedSubtaskIndex = opening && state.subtasks.length > 0 ? 0 : -1;
+      const selectedSubtaskId = opening && state.subtasks.length > 0 ? state.subtasks[0].id : null;
+      return {
+        ...state,
+        subtaskOverlayOpen: opening,
+        subtaskDetailOpen: false,
+        selectedSubtaskIndex: opening ? selectedSubtaskIndex : state.selectedSubtaskIndex,
+        selectedSubtaskId: opening ? selectedSubtaskId : state.selectedSubtaskId,
+      };
+    }
 
     case 'TOGGLE_SUBTASK_DETAIL':
       return {...state, subtaskDetailOpen: !state.subtaskDetailOpen};
@@ -426,7 +437,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'RETRY_SUBTASK': {
       const subtasks = state.subtasks.map((st) =>
-        st.id === action.subtaskId
+        st.id === action.subtaskId && st.status === 'failed'
           ? {...st, status: 'pending' as SubtaskStatusType, errorSummary: undefined}
           : st,
       );
