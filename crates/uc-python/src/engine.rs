@@ -504,9 +504,7 @@ impl PyEngine {
             .allow_threads(|| {
                 async_support::block_on(async {
                     let stream = inner.search_stream(uc_query).await?;
-                    Ok::<_, uc_types::EngineError>(
-                        futures::StreamExt::collect(stream).await,
-                    )
+                    Ok::<_, uc_types::EngineError>(futures::StreamExt::collect(stream).await)
                 })
             })
             .map_err(engine_error_to_pyerr)?;
