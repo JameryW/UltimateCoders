@@ -68,6 +68,7 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
+            aria-label="Task description"
             className="flex-1 bg-dark-900 border border-dark-700 rounded-md px-3 py-2 text-sm text-gray-200 resize-vertical focus:border-blue-500 focus:outline-none"
             placeholder="Describe the coding task..."
           />
@@ -75,6 +76,7 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
             type="text"
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
+            aria-label="Project ID (optional)"
             className="w-full md:w-40 bg-dark-900 border border-dark-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
             placeholder="Project ID (optional)"
           />

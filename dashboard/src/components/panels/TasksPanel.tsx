@@ -49,6 +49,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           {data.pending_task_count > 0 && onFlush && (
             <button
               onClick={onFlush}
+              aria-label="Flush pending tasks"
               className="bg-blue-900/50 text-blue-300 hover:bg-blue-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
             >
               Flush
@@ -84,11 +85,16 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
             {data.tasks.map((task) => (
               <li key={task.id}>
                 <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedTaskId === task.id}
+                  aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
                     "border-l-2 pl-2 py-1 cursor-pointer hover:bg-dark-700/50 rounded-r",
                     statusBorderColor(task.status)
                   )}
                   onClick={() => toggleExpand(task.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}
                 >
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-gray-300">
@@ -98,6 +104,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                       {task.status === "in_progress" && onPauseTask && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onPauseTask(task.id); }}
+                          aria-label={`Pause task ${shortId(task.id)}`}
                           className="bg-yellow-900/50 text-yellow-300 hover:bg-yellow-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
                         >
                           Pause
@@ -106,6 +113,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                       {task.status === "paused" && onResumeTask && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onResumeTask(task.id); }}
+                          aria-label={`Resume task ${shortId(task.id)}`}
                           className="bg-green-900/50 text-green-300 hover:bg-green-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
                         >
                           Resume
