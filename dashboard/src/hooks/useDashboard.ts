@@ -80,14 +80,13 @@ export function useDashboard() {
       ...prev,
       [tid]: [...(prev[tid] ?? []), ev],
     }));
-    // Also prepend to event log
     setEventLog((prev) => [
       {
         timestamp: ev.timestamp,
         type: ev.type,
         details: { task_id: ev.task_id, ...ev.data },
       },
-      ...prev.slice(0, 199), // keep max 200
+      ...prev.slice(0, 199),
     ]);
 
     switch (ev.type) {
@@ -200,32 +199,13 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data
   const fetchInitial = useCallback(async () => {
-    try {
-      const h = await api.getHealth();
-      setHealth(h);
-    } catch { /* ignore */ }
-    try {
-      const w = await api.getWorkers();
-      setWorkers(w);
-    } catch { /* ignore */ }
-    try {
-      const t = await api.getTasks();
-      setTasks(t);
-    } catch { /* ignore */ }
-    try {
-      const s = await api.getScheduler();
-      setScheduler(s);
-    } catch { /* ignore */ }
-    try {
-      const c = await api.getCircuitBreaker();
-      setCircuitBreaker(c);
-    } catch { /* ignore */ }
-    try {
-      const e = await api.getEvents();
-      setEventLog(e.events);
-    } catch { /* ignore */ }
+    try { const h = await api.getHealth(); setHealth(h); } catch { /* ignore */ }
+    try { const w = await api.getWorkers(); setWorkers(w); } catch { /* ignore */ }
+    try { const t = await api.getTasks(); setTasks(t); } catch { /* ignore */ }
+    try { const s = await api.getScheduler(); setScheduler(s); } catch { /* ignore */ }
+    try { const c = await api.getCircuitBreaker(); setCircuitBreaker(c); } catch { /* ignore */ }
+    try { const e = await api.getEvents(); setEventLog(e.events); } catch { /* ignore */ }
   }, []);
 
   /** Merge task list from gRPC-Web into state (for when SSE is unavailable). */
@@ -245,6 +225,10 @@ export function useDashboard() {
     });
   }, []);
 
+  const mergeGrpcHealth = useCallback((data: { status: string; version?: string; uptimeSeconds?: number; components: Array<{ name: string; status: string; details?: string }> }) => {
+    setHealth({ available: true, status: data.status, version: data.version, uptime_seconds: data.uptimeSeconds, components: data.components });
+  }, []);
+
   return {
     health,
     workers,
@@ -258,6 +242,7 @@ export function useDashboard() {
     handleSnapshot,
     handleTaskEvent,
     mergeGrpcTasks,
+    mergeGrpcHealth,
     fetchInitial,
   };
 }

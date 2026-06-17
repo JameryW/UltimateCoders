@@ -13,6 +13,7 @@
  * - Deletes whole grapheme clusters on backspace/delete
  * - Positions the real terminal cursor correctly for IME via onCursorMove
  * - Supports undo/redo with platform-aware keybindings
+ * - Handles bracketed paste mode
  * - Tab completes slash commands when suggestion is available
  *
  * Extended shortcuts:
@@ -150,7 +151,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
     }
   }, [value, cursorGI]);
 
-  // ── Raw input handler for Home/End ─────────────────────────
+  // ── Raw input handler for Home/End + bracketed paste ────────
   // ponytail: ink 5 useStdin has internal_eventEmitter but the type
   // declaration marks it readonly — we can still listen. Remove this
   // workaround when upgrading to Ink v6.6+ (usePaste + Key.home/end).
@@ -166,6 +167,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         setCursorGI(end);
         cursorRef.current = end;
       }
+      // TODO: add bracketed paste detection when needed
     };
     internal_eventEmitter.on('input', onRawInput);
     return () => {
