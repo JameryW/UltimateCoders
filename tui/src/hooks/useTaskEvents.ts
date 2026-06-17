@@ -25,6 +25,12 @@ import type {TaskServiceClient} from '../grpc/client.js';
 /** Maximum events to keep in memory. Matches reducer's MAX_MESSAGES. */
 const MAX_EVENTS = 2000;
 
+/** Maximum stream resubscribe retries before giving up. */
+const MAX_STREAM_RETRIES = 3;
+
+/** Delay before retrying stream subscription (ms). */
+const STREAM_RETRY_DELAY = 5000;
+
 export interface UseTaskEventsReturn {
   /** Current active task (null if no task submitted). */
   task: TaskProto | null;
@@ -148,9 +154,20 @@ export function useTaskEvents(
   const [events, setEvents] = useState<TaskEventProto[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const streamRef = useRef<any>(null);
+  const streamRetryCount = useRef(0);
+  const streamRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Convert the subtask map to an array for display
   const subtasks = Array.from(subtaskMap.values());
+
+  // Cleanup retry timer on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRetryTimerRef.current) {
+        clearTimeout(streamRetryTimerRef.current);
+      }
+    };
+  }, []);
 
   // Subscribe to WatchTask stream when client becomes available
   useEffect(() => {
@@ -160,62 +177,84 @@ export function useTaskEvents(
         streamRef.current.cancel();
         streamRef.current = null;
       }
+      streamRetryCount.current = 0;
+      if (streamRetryTimerRef.current) {
+        clearTimeout(streamRetryTimerRef.current);
+        streamRetryTimerRef.current = null;
+      }
       return;
     }
 
-    // Watch specific task if active, otherwise watch all
     const watchId = activeTaskId ?? '';
     let cancelled = false;
 
-    try {
-      const stream = client.watchTask({taskId: watchId});
-      streamRef.current = stream;
+    const subscribe = () => {
+      if (cancelled) return;
+      try {
+        const stream = client.watchTask({taskId: watchId});
+        streamRef.current = stream;
 
-      stream.on('data', (event: any) => {
-        if (cancelled) return;
-
-        // With keepCase: false, proto fields are converted to camelCase
-        const taskEvent: TaskEventProto = {
-          timestamp: event.timestamp ?? new Date().toISOString(),
-          type: event.type ?? 'unknown',
-          taskId: event.taskId ?? '',
-          subtaskId: event.subtaskId ?? undefined,
-          data: event.data ?? {},
-        };
-
-        setEvents((prev) => {
-          const next = [...prev, taskEvent];
-          // Cap at MAX_EVENTS to prevent unbounded memory growth
-          return next.length > MAX_EVENTS
-            ? next.slice(next.length - MAX_EVENTS)
-            : next;
+        stream.on('data', (event: any) => {
+          if (cancelled) return;
+          const taskEvent: TaskEventProto = {
+            timestamp: event.timestamp ?? new Date().toISOString(),
+            type: event.type ?? 'unknown',
+            taskId: event.taskId ?? '',
+            subtaskId: event.subtaskId ?? undefined,
+            data: event.data ?? {},
+          };
+          setEvents((prev) => {
+            const next = [...prev, taskEvent];
+            return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+          });
+          setSubtaskMap((prev) => processEvent(taskEvent, prev));
         });
-        setSubtaskMap((prev) => processEvent(taskEvent, prev));
-      });
 
-      stream.on('end', () => {
-        if (!cancelled) {
-          setIsStreaming(false);
-        }
-      });
+        stream.on('end', () => {
+          if (!cancelled) {
+            setIsStreaming(false);
+            // ponytail: retry with backoff instead of giving up
+            if (streamRetryCount.current < MAX_STREAM_RETRIES) {
+              streamRetryCount.current++;
+              streamRetryTimerRef.current = setTimeout(() => {
+                streamRetryTimerRef.current = null;
+                subscribe();
+              }, STREAM_RETRY_DELAY);
+            }
+          }
+        });
 
-      stream.on('error', (err: any) => {
-        if (!cancelled) {
-          // Stream errors are expected when server disconnects
-          setIsStreaming(false);
-        }
-      });
+        stream.on('error', (_err: any) => {
+          if (!cancelled) {
+            setIsStreaming(false);
+            if (streamRetryCount.current < MAX_STREAM_RETRIES) {
+              streamRetryCount.current++;
+              streamRetryTimerRef.current = setTimeout(() => {
+                streamRetryTimerRef.current = null;
+                subscribe();
+              }, STREAM_RETRY_DELAY);
+            }
+          }
+        });
 
-      setIsStreaming(true);
-    } catch (err) {
-      setIsStreaming(false);
-    }
+        setIsStreaming(true);
+        streamRetryCount.current = 0;
+      } catch (_err) {
+        if (!cancelled) setIsStreaming(false);
+      }
+    };
+
+    subscribe();
 
     return () => {
       cancelled = true;
       if (streamRef.current) {
         streamRef.current.cancel();
         streamRef.current = null;
+      }
+      if (streamRetryTimerRef.current) {
+        clearTimeout(streamRetryTimerRef.current);
+        streamRetryTimerRef.current = null;
       }
     };
   }, [client, connectionState, activeTaskId]);

@@ -11,20 +11,13 @@
  * - Event filtering: filter by event type (task/subtask/tool/error)
  * - Unread count: when followLog is off, shows "+N new" in header
  * - Home/End: jump to top/bottom (handled by parent via scrollCommand)
- *
- * Scroll offset is managed locally because it must be relative to the
- * filtered message list. The reducer tracks followLog (auto-follow state)
- * and issues scroll commands (via scrollCommand prop) that ChatLog applies
- * to its local offset.
- *
- * Message format:
- * - User input: [HH:MM] > message  (cyan > prefix, bold)
- * - System output: [HH:MM] message  (with optional color)
+ * - Markdown rendering: system messages with markdown are rendered via marked-terminal
  */
 import React, {useState, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 import type {EventFilter} from '../reducer.js';
 import {eventFilterLabel} from '../reducer.js';
+import {renderMarkdown, hasMarkdown} from '../markdown.js';
 
 export interface ChatMessage {
   id: string;
@@ -48,30 +41,22 @@ export interface ScrollCommand {
 
 export interface ChatLogProps {
   messages: ChatMessage[];
-  /** Whether auto-follow is active. */
   followLog: boolean;
-  /** Number of visible lines for the message area. */
   visibleLines: number;
-  /** Whether the chat pane is currently focused. */
   isFocused: boolean;
-  /** Current event type filter. */
   eventFilter?: EventFilter;
-  /** Scroll command from parent. Processed once per tick. */
   scrollCommand?: ScrollCommand;
-  /** Callback to update followLog in reducer. */
   onSetFollowLog?: (follow: boolean) => void;
-  /** Unread message count (when followLog is off). */
   unreadCount?: number;
-  /** Whether all collapsed messages should be expanded (toggled by Enter in chat focus). */
   expandAll?: boolean;
+  terminalWidth?: number;
 }
 
 function formatTime(): string {
   const now = new Date();
-  return now.toTimeString().slice(0, 5); // HH:MM instead of HH:MM:SS
+  return now.toTimeString().slice(0, 5);
 }
 
-/** Helper to create a ChatMessage object. */
 export function createUserMessage(text: string): ChatMessage {
   return {
     id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -83,7 +68,7 @@ export function createUserMessage(text: string): ChatMessage {
 
 export function createSystemMessage(
   text: string,
-  options?: {color?: string; bold?: boolean; dim?: boolean},
+  options?: {color?: string; bold?: boolean; dim?: boolean; eventType?: string},
 ): ChatMessage {
   return {
     id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -94,16 +79,11 @@ export function createSystemMessage(
   };
 }
 
-/**
- * Pure function: filter messages by event type.
- * Exported for independent testing (filterMessages.test.ts).
- */
 export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter): ChatMessage[] {
   if (eventFilter === 'all') return messages;
   return messages.filter((msg) => {
-    if (msg.isUser) return true; // Always show user messages
-    if (!msg.eventType) return true; // Show messages without eventType
-    // Map event types to filter categories
+    if (msg.isUser) return true;
+    if (!msg.eventType) return true;
     const et = msg.eventType;
     if (eventFilter === 'task') return et.startsWith('task_');
     if (eventFilter === 'subtask') return et.startsWith('subtask_');
@@ -114,11 +94,8 @@ export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter
 }
 
 const COLLAPSE_THRESHOLD = 3;
-
-/** Tool-related event types that default to collapsed (summary only). */
 const TOOL_EVENT_TYPES = new Set(['tool_call', 'tool_result', 'file_modified']);
 
-/** Event type icon prefix mapping for visual scanning. */
 export const EVENT_ICONS: Record<string, string> = {
   task_submitted: '📋',
   task_completed: '✓',
@@ -131,32 +108,26 @@ export const EVENT_ICONS: Record<string, string> = {
   tool_call: '⚙',
   tool_result: '📄',
   file_modified: '✏',
+  task_list: '📋',
+  command_result: '▸',
 };
 
-/**
- * Get icon prefix for an event type. Returns empty string for unknown types.
- * Exported for testing.
- */
 export function getEventIcon(eventType?: string): string {
   if (!eventType) return '';
   return EVENT_ICONS[eventType] ? `${EVENT_ICONS[eventType]} ` : '';
 }
 
-const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg, expandAll}) => {
+const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean; terminalWidth?: number}> = ({msg, expandAll, terminalWidth}) => {
   const [expanded, setExpanded] = useState(false);
   const lines = msg.text.split('\n');
 
-  // Tool events always start collapsed (show summary only)
   const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
-  // Non-tool long messages collapse after COLLAPSE_THRESHOLD
   const isLong = !msg.isUser && (isToolEvent || lines.length > COLLAPSE_THRESHOLD);
 
-  // When expandAll changes, sync local expanded state
   useEffect(() => {
     setExpanded(expandAll ?? false);
   }, [expandAll]);
 
-  // Auto-color status change events based on eventType
   const statusColor = msg.color ?? (
     msg.eventType === 'subtask_completed' || msg.eventType === 'task_completed'
       ? 'green'
@@ -167,14 +138,16 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
           : undefined
   );
 
-  // Collapsed messages show only the first line
-  const visibleLines = (isLong && !expanded)
-    ? lines.slice(0, 1)
-    : lines;
+  const visibleLines = (isLong && !expanded) ? lines.slice(0, 1) : lines;
+
+  // ponytail: render markdown for system messages that contain markdown syntax
+  const shouldRenderMarkdown = !msg.isUser && !isToolEvent && hasMarkdown(msg.text);
+  const renderedText = shouldRenderMarkdown
+    ? renderMarkdown(msg.text, terminalWidth)
+    : visibleLines.join('\n');
 
   const renderText = () => {
     if (msg.isUser) {
-      // User message: bold ">" prefix + content (like Claude Code)
       return (
         <>
           <Text bold color="cyan">{'> '}</Text>
@@ -185,14 +158,9 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean}> = ({msg
         </>
       );
     }
-    // System/tool messages
     return (
-      <Text
-        color={statusColor}
-        bold={msg.bold}
-        dimColor={msg.dim ? true : isToolEvent}
-      >
-        {msg.eventType ? getEventIcon(msg.eventType) : ''}{visibleLines.join('\n')}
+      <Text color={statusColor} bold={msg.bold} dimColor={msg.dim ? true : isToolEvent}>
+        {msg.eventType ? getEventIcon(msg.eventType) : ''}{renderedText}
       </Text>
     );
   };
@@ -224,53 +192,38 @@ const ChatLog: React.FC<ChatLogProps> = ({
   onSetFollowLog,
   unreadCount = 0,
   expandAll = false,
+  terminalWidth,
 }) => {
-  // Local scroll offset into the filtered message list.
   const [localOffset, setLocalOffset] = useState(0);
-
-  // Track last processed scroll command tick to avoid double-processing
   const lastScrollTick = useRef(0);
-
-  // Track previous eventFilter to reset scroll when filter changes
   const prevFilterRef = useRef(eventFilter);
-
-  // Apply event filter using pure function
   const filteredMessages = filterMessages(messages, eventFilter);
-
   const totalMessages = filteredMessages.length;
   const maxOffset = Math.max(0, totalMessages - visibleLines);
 
-  // When filter changes, snap to bottom (re-enable follow)
   useEffect(() => {
     if (eventFilter !== prevFilterRef.current) {
       prevFilterRef.current = eventFilter;
       setLocalOffset(0);
-      if (!followLog) {
-        onSetFollowLog?.(true);
-      }
+      if (!followLog) onSetFollowLog?.(true);
     }
   }, [eventFilter, followLog, onSetFollowLog]);
 
-  // Process scroll commands from parent
   useEffect(() => {
     if (!scrollCommand || scrollCommand.tick <= lastScrollTick.current) return;
     lastScrollTick.current = scrollCommand.tick;
-
     if (scrollCommand.direction === 'up') {
       setLocalOffset((prev) => Math.max(0, prev - scrollCommand.lines));
       onSetFollowLog?.(false);
     } else {
       setLocalOffset((prev) => {
         const newOffset = Math.min(maxOffset, prev + scrollCommand.lines);
-        if (newOffset >= maxOffset) {
-          onSetFollowLog?.(true);
-        }
+        if (newOffset >= maxOffset) onSetFollowLog?.(true);
         return newOffset;
       });
     }
   }, [scrollCommand, maxOffset, onSetFollowLog]);
 
-  // When followLog is true, offset is always at the bottom of the filtered list
   const effectiveOffset = followLog ? maxOffset : Math.min(localOffset, maxOffset);
 
   if (totalMessages === 0) {
@@ -284,27 +237,12 @@ const ChatLog: React.FC<ChatLogProps> = ({
   const endIdx = Math.min(effectiveOffset + visibleLines, totalMessages);
   const visibleMessages = filteredMessages.slice(effectiveOffset, endIdx);
 
-  // Scroll indicator
   const atTop = effectiveOffset === 0;
   const atBottom = effectiveOffset >= maxOffset;
-  const scrollIndicator = atTop && atBottom
-    ? ''
-    : atTop
-      ? ' ↓'
-      : atBottom
-        ? ' ↑'
-        : ` ↑${effectiveOffset + 1}-${endIdx}/${totalMessages}↓`;
-
-  // Follow indicator
+  const scrollIndicator = atTop && atBottom ? '' : atTop ? ' ↓' : atBottom ? ' ↑' : ` ↑${effectiveOffset + 1}-${endIdx}/${totalMessages}↓`;
   const followIndicator = followLog ? '' : ' [paused]';
-
-  // Unread indicator
   const unreadIndicator = unreadCount > 0 ? ` [+${unreadCount} new]` : '';
-
-  // Filter count indicator
-  const filterIndicator = eventFilter !== 'all'
-    ? ` [filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}]`
-    : '';
+  const filterIndicator = eventFilter !== 'all' ? ` [filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}]` : '';
 
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
@@ -313,7 +251,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
       {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
       {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
       {visibleMessages.map((msg) => (
-        <ChatMessageItem key={msg.id} msg={msg} expandAll={expandAll} />
+        <ChatMessageItem key={msg.id} msg={msg} expandAll={expandAll} terminalWidth={terminalWidth} />
       ))}
     </Box>
   );

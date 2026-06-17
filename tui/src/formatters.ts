@@ -1,12 +1,45 @@
 /**
  * Event formatters — pure functions that convert TaskEventProto to ChatMessage.
  *
- * Moved out of App.tsx render path to eliminate render-side setState.
- * Called from useEffect when events array changes.
+ * Tool events (tool_call, tool_result, file_modified) use markdown formatting
+ * for better readability when rendered by ChatLog's markdown renderer.
  */
 import type {TaskEventProto} from './grpc/types.js';
 import type {ChatMessage} from './components/ChatLog.js';
 import {createSystemMessage} from './components/ChatLog.js';
+
+/**
+ * Format tool event data as markdown for better terminal display.
+ * Returns empty string for non-tool events.
+ */
+function formatToolData(eventType: string, data: Record<string, string>): string {
+  switch (eventType) {
+    case 'tool_call': {
+      const toolName = data.tool_name ?? 'unknown';
+      const args = data.args ?? data.query ?? '';
+      if (!args) return `Tool call: **${toolName}**`;
+      const shortArgs = args.length > 200 ? args.slice(0, 197) + '...' : args;
+      return `Tool call: **${toolName}**\n\`\`\`\n${shortArgs}\n\`\`\``;
+    }
+    case 'tool_result': {
+      const success = data.success === 'true';
+      const result = data.result ?? data.output ?? '';
+      const icon = success ? '✓' : '✗';
+      if (!result) return `Tool result: ${icon}`;
+      const shortResult = result.length > 300 ? result.slice(0, 297) + '...' : result;
+      return `Tool result: ${icon}\n\`\`\`\n${shortResult}\n\`\`\``;
+    }
+    case 'file_modified': {
+      const filePath = data.file_path ?? data.path ?? 'unknown';
+      const diff = data.diff ?? '';
+      if (!diff) return `File modified: \`${filePath}\``;
+      const shortDiff = diff.length > 500 ? diff.slice(0, 497) + '...' : diff;
+      return `File modified: \`${filePath}\`\n\`\`\`diff\n${shortDiff}\n\`\`\``;
+    }
+    default:
+      return '';
+  }
+}
 
 /**
  * Convert a single TaskEventProto to a ChatMessage for the ChatLog.
@@ -46,15 +79,26 @@ export function formatTaskEvent(event: TaskEventProto): ChatMessage | null {
       bold = true;
       break;
 
-    case 'tool_call':
-      text = `Tool call: ${event.data?.tool_name ?? 'unknown'}`;
+    case 'tool_call': {
+      const md = formatToolData('tool_call', event.data ?? {});
+      text = md || `Tool call: ${event.data?.tool_name ?? 'unknown'}`;
       dim = true;
       break;
+    }
 
-    case 'tool_result':
-      text = `Tool result: ${event.data?.success === 'true' ? '✓' : '✗'}`;
+    case 'tool_result': {
+      const md = formatToolData('tool_result', event.data ?? {});
+      text = md || `Tool result: ${event.data?.success === 'true' ? '✓' : '✗'}`;
       dim = true;
       break;
+    }
+
+    case 'file_modified': {
+      const md = formatToolData('file_modified', event.data ?? {});
+      text = md || `File modified: ${event.data?.file_path ?? event.data?.path ?? 'unknown'}`;
+      dim = true;
+      break;
+    }
 
     case 'task_completed':
       text = `Task completed: ${event.taskId.slice(0, 8)}...`;
