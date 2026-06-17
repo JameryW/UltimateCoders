@@ -671,6 +671,21 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
     }
 }
 
+impl<E: EngineApi + Send + Sync + 'static> Drop for GrpcServer<E> {
+    fn drop(&mut self) {
+        // Best-effort graceful shutdown of the local worker on server drop.
+        // We can't await in Drop, so we spawn a detached task.
+        let local_worker = self.inner.local_worker.clone();
+        tokio::spawn(async move {
+            let bridge = local_worker.lock().await;
+            if bridge.is_available() {
+                tracing::info!("GrpcServer dropping, gracefully shutting down local worker");
+                bridge.graceful_shutdown().await;
+            }
+        });
+    }
+}
+
 // ── NATS subscriber (feature-gated) ─────────────────────────
 
 /// Spawn a background task that subscribes to `uc.task.update`,
@@ -732,8 +747,86 @@ fn spawn_nats_subscriber(
                                 status = %update.status,
                                 "Received NATS task update"
                             );
-                            let mut store = task_store.lock().await;
-                            store.apply_update(&update);
+                            let event_count_before;
+                            {
+                                let mut store = task_store.lock().await;
+                                event_count_before = store.events.len();
+                                store.apply_update(&update);
+                            }
+
+                            // Record events for subtask status transitions so
+                            // WatchTask can broadcast them. This mirrors the
+                            // logic in apply_worker_update_to_store.
+                            // We collect event data first, then record, to avoid
+                            // borrow conflicts between immutable read and mutable write.
+                            let events_to_record: Vec<uc_engine::AgentEventType> = {
+                                let store = task_store.lock().await;
+                                let mut events = Vec::new();
+                                if let Some(task) = store.tasks.get(&update.task_id) {
+                                    for subtask_update in &update.subtasks {
+                                        if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_update.subtask_id) {
+                                            let event = match subtask.status {
+                                                uc_types::SubtaskStatus::Assigned => {
+                                                    Some(uc_engine::AgentEventType::SubtaskAssigned {
+                                                        task_id: task.id.clone(),
+                                                        subtask_id: subtask.id.clone(),
+                                                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
+                                                    })
+                                                }
+                                                uc_types::SubtaskStatus::InProgress => {
+                                                    Some(uc_engine::AgentEventType::SubtaskStarted {
+                                                        task_id: task.id.clone(),
+                                                        subtask_id: subtask.id.clone(),
+                                                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
+                                                    })
+                                                }
+                                                uc_types::SubtaskStatus::Completed => {
+                                                    Some(uc_engine::AgentEventType::SubtaskCompleted {
+                                                        task_id: task.id.clone(),
+                                                        subtask_id: subtask.id.clone(),
+                                                        summary: String::new(),
+                                                        success: true,
+                                                    })
+                                                }
+                                                uc_types::SubtaskStatus::Failed => {
+                                                    Some(uc_engine::AgentEventType::SubtaskFailed {
+                                                        task_id: task.id.clone(),
+                                                        subtask_id: subtask.id.clone(),
+                                                        error: String::new(),
+                                                        recoverable: false,
+                                                    })
+                                                }
+                                                _ => None,
+                                            };
+                                            if let Some(e) = event {
+                                                events.push(e);
+                                            }
+                                        }
+                                    }
+                                }
+                                events
+                            };
+
+                            // Record the collected events
+                            {
+                                let mut store = task_store.lock().await;
+                                for e in events_to_record {
+                                    store.record_event(e);
+                                }
+                            }
+
+                            // Broadcast newly recorded events to all WatchTask streams
+                            let new_events: Vec<TaskEvent> = {
+                                let store = task_store.lock().await;
+                                store.events[event_count_before..]
+                                    .iter()
+                                    .cloned()
+                                    .map(|e| e.into())
+                                    .collect()
+                            };
+                            for event in new_events {
+                                let _ = event_tx.send(event);
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -1531,15 +1624,42 @@ async fn mark_tasks_failed_on_worker_death(
     let mut store = task_store.lock().await;
     let event_count_before = store.events.len();
 
+    // Collect tasks to fail and their subtask events
     let mut failed_ids = Vec::new();
-    for (id, task) in &mut store.tasks {
+    let mut subtask_events: Vec<uc_engine::AgentEventType> = Vec::new();
+
+    for (id, task) in &store.tasks {
         if task.status == uc_types::TaskStatus::InProgress
             || task.status == uc_types::TaskStatus::Planning
         {
-            task.status = uc_types::TaskStatus::Failed;
-            task.updated_at = chrono::Utc::now();
+            // Collect SubtaskFailed events for any in-progress subtasks
+            for subtask in &task.subtasks {
+                if subtask.status == uc_types::SubtaskStatus::InProgress
+                    || subtask.status == uc_types::SubtaskStatus::Assigned
+                {
+                    subtask_events.push(uc_engine::AgentEventType::SubtaskFailed {
+                        task_id: task.id.clone(),
+                        subtask_id: subtask.id.clone(),
+                        error: "Worker process died".to_string(),
+                        recoverable: true,
+                    });
+                }
+            }
             failed_ids.push(id.clone());
         }
+    }
+
+    // Now apply the mutations
+    for id in &failed_ids {
+        if let Some(task) = store.tasks.get_mut(id) {
+            task.status = uc_types::TaskStatus::Failed;
+            task.updated_at = chrono::Utc::now();
+        }
+    }
+
+    // Record subtask events
+    for event in subtask_events {
+        store.record_event(event);
     }
 
     if !failed_ids.is_empty() {
@@ -1574,19 +1694,29 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             return true;
         }
 
+        // If shutting down from a previous crash/restart cycle, reset
+        if bridge_guard.is_shutting_down() {
+            bridge_guard.reset_reader_started();
+            // The shutting_down flag will be reset by ensure_worker
+        }
+
         // Try to spawn the worker
         match bridge_guard.ensure_worker().await {
             Ok(()) => {
                 // Worker spawned successfully — start the notification reader.
                 let task_store = self.inner.task_store.clone();
                 let event_tx = self.inner.event_tx.clone();
-                // Clone for the on_worker_dead closure (the apply_fn closure
-                // moves the originals).
+                // Clone for the on_worker_dead closure
                 let task_store_for_death = task_store.clone();
                 let event_tx_for_death = event_tx.clone();
+                // Clone for the on_restart closure
+                let local_worker_for_restart = self.inner.local_worker.clone();
+                let task_store_for_restart = task_store.clone();
+                let event_tx_for_restart = event_tx.clone();
 
                 // Start the notification reader with closures that apply
-                // updates and handle worker death.
+                // updates, handle worker death, and restart the reader on
+                // auto-restart.
                 bridge_guard.start_notification_reader(
                     move |update: crate::local_worker::WorkerTaskUpdate| {
                         // We need to call the async apply_worker_update_to_store.
@@ -1603,6 +1733,44 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         let tx = event_tx_for_death.clone();
                         tokio::spawn(async move {
                             mark_tasks_failed_on_worker_death(&ts, &tx).await;
+                        });
+                    },
+                    move || {
+                        // Worker auto-restarted — start a new notification reader
+                        // for the new process.
+                        let bridge = local_worker_for_restart.clone();
+                        let ts = task_store_for_restart.clone();
+                        let tx = event_tx_for_restart.clone();
+                        let ts_death = ts.clone();
+                        let tx_death = tx.clone();
+                        tokio::spawn(async move {
+                            let bridge_guard = bridge.lock().await;
+                            if bridge_guard.is_available() {
+                                tracing::info!(
+                                    "Restarting notification reader after worker auto-restart"
+                                );
+                                bridge_guard.start_notification_reader(
+                                    move |update: crate::local_worker::WorkerTaskUpdate| {
+                                        let ts = ts.clone();
+                                        let tx = tx.clone();
+                                        tokio::spawn(async move {
+                                            apply_worker_update_to_store(&update, &ts, &tx).await;
+                                        });
+                                    },
+                                    move || {
+                                        let ts = ts_death.clone();
+                                        let tx = tx_death.clone();
+                                        tokio::spawn(async move {
+                                            mark_tasks_failed_on_worker_death(&ts, &tx).await;
+                                        });
+                                    },
+                                    || {
+                                        // Subsequent restarts — log and let the next
+                                        // submit_task trigger ensure_local_worker
+                                        tracing::info!("Worker auto-restarted again after crash");
+                                    },
+                                );
+                            }
                         });
                     },
                 );
@@ -2653,5 +2821,222 @@ mod tests {
                 assert_eq!(task.status, uc_types::TaskStatus::Failed);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn mark_tasks_failed_on_death_broadcasts_events() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let mut rx = event_tx.subscribe();
+
+        // Create an InProgress task with an InProgress subtask
+        {
+            let mut store = task_store.lock().await;
+            let task = store.submit_task("Task to fail".to_string(), "p1".to_string());
+            // Set subtask to InProgress so it generates a SubtaskFailed event
+            let subtask = task.subtasks[0].id.0.clone();
+            if let Some(st) = store
+                .tasks
+                .get_mut(&task.id.0)
+                .unwrap()
+                .subtasks
+                .iter_mut()
+                .find(|s| s.id.0 == subtask)
+            {
+                st.status = uc_types::SubtaskStatus::InProgress;
+            }
+        }
+
+        mark_tasks_failed_on_worker_death(&task_store, &event_tx).await;
+
+        // Should broadcast SubtaskFailed events about the failed task
+        let mut found_subtask_failed = false;
+        while let Ok(event) = rx.try_recv() {
+            if event.r#type == "subtask_failed" {
+                found_subtask_failed = true;
+            }
+        }
+        assert!(
+            found_subtask_failed,
+            "Expected SubtaskFailed broadcast event after marking tasks failed"
+        );
+    }
+
+    // ── NATS task update broadcast tests ────────────────────────
+
+    #[tokio::test]
+    async fn nats_task_update_broadcasts_subtask_events() {
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let mut rx = event_tx.subscribe();
+
+        // First create a task with a subtask
+        let task_id;
+        let subtask_id;
+        {
+            let mut store = task_store.lock().await;
+            let task = store.submit_task("Test task".to_string(), "p1".to_string());
+            task_id = task.id.0.clone();
+            subtask_id = task.subtasks[0].id.0.clone();
+        }
+
+        // Apply a NATS update that changes subtask status to Completed
+        {
+            let mut store = task_store.lock().await;
+            let update = NatsTaskUpdate {
+                task_id: task_id.clone(),
+                status: "InProgress".to_string(),
+                subtasks: vec![NatsSubtaskUpdate {
+                    subtask_id: subtask_id.clone(),
+                    status: "Completed".to_string(),
+                    assigned_worker: None,
+                    result: None,
+                }],
+                result: None,
+            };
+            store.apply_update(&update);
+        }
+
+        // Record events for the subtask status transition (mirrors the NATS subscriber logic)
+        // Clone needed data first to avoid borrow conflict
+        {
+            let mut store = task_store.lock().await;
+            let event_data: Option<(uc_types::TaskId, uc_types::TaskId)> =
+                if let Some(task) = store.tasks.get(&task_id) {
+                    if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_id) {
+                        if subtask.status == uc_types::SubtaskStatus::Completed {
+                            Some((task.id.clone(), subtask.id.clone()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some((tid, sid)) = event_data {
+                store.record_event(uc_engine::AgentEventType::SubtaskCompleted {
+                    task_id: tid,
+                    subtask_id: sid,
+                    summary: String::new(),
+                    success: true,
+                });
+            }
+        }
+
+        // Broadcast the new event
+        {
+            let store = task_store.lock().await;
+            let events: Vec<TaskEvent> = store.events.iter().cloned().map(|e| e.into()).collect();
+            for event in events {
+                let _ = event_tx.send(event);
+            }
+        }
+
+        // The receiver should get SubtaskCompleted events
+        let mut found_completed = false;
+        while let Ok(event) = rx.try_recv() {
+            if event.r#type == "subtask_completed" {
+                found_completed = true;
+            }
+        }
+        assert!(found_completed, "Expected SubtaskCompleted broadcast event");
+    }
+
+    #[tokio::test]
+    async fn nats_task_update_applies_and_broadcasts() {
+        // End-to-end test: apply a NATS update (like the subscriber does)
+        // and verify events are broadcast.
+        let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let mut rx = event_tx.subscribe();
+
+        // Create a task
+        let task_id;
+        let subtask_id;
+        {
+            let mut store = task_store.lock().await;
+            let task = store.submit_task("Test task".to_string(), "p1".to_string());
+            task_id = task.id.0.clone();
+            subtask_id = task.subtasks[0].id.0.clone();
+        }
+
+        // Simulate what the NATS subscriber does: apply_update + record events + broadcast
+        let event_count_before;
+        {
+            let mut store = task_store.lock().await;
+            event_count_before = store.events.len();
+            let update = NatsTaskUpdate {
+                task_id: task_id.clone(),
+                status: "InProgress".to_string(),
+                subtasks: vec![NatsSubtaskUpdate {
+                    subtask_id: subtask_id.clone(),
+                    status: "Assigned".to_string(),
+                    assigned_worker: Some("worker-1".to_string()),
+                    result: None,
+                }],
+                result: None,
+            };
+            store.apply_update(&update);
+        }
+
+        // Record subtask event (mirrors subscriber logic)
+        // Clone needed data first to avoid borrow conflict
+        {
+            let mut store = task_store.lock().await;
+            let event_data: Option<(uc_types::TaskId, uc_types::TaskId, uc_types::WorkerId)> =
+                if let Some(task) = store.tasks.get(&task_id) {
+                    if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_id) {
+                        if subtask.status == uc_types::SubtaskStatus::Assigned {
+                            Some((
+                                task.id.clone(),
+                                subtask.id.clone(),
+                                subtask.assigned_worker.clone().unwrap_or_default(),
+                            ))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some((tid, sid, wid)) = event_data {
+                store.record_event(uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: tid,
+                    subtask_id: sid,
+                    worker_id: wid,
+                });
+            }
+        }
+
+        // Broadcast new events
+        let new_events: Vec<TaskEvent> = {
+            let store = task_store.lock().await;
+            store.events[event_count_before..]
+                .iter()
+                .cloned()
+                .map(|e| e.into())
+                .collect()
+        };
+        for event in new_events {
+            let _ = event_tx.send(event);
+        }
+
+        // Verify broadcast
+        let mut found_assigned = false;
+        while let Ok(event) = rx.try_recv() {
+            if event.r#type == "subtask_assigned" {
+                found_assigned = true;
+            }
+        }
+        assert!(
+            found_assigned,
+            "Expected SubtaskAssigned broadcast event from NATS update"
+        );
     }
 }

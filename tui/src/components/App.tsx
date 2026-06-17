@@ -39,7 +39,7 @@ import SubtaskTree, {
 import TaskInput from './TaskInput.js';
 import StatusBar from './StatusBar.js';
 import StatusIndicator from './StatusIndicator.js';
-import LogoBanner from './LogoBanner.js';
+import LogoBanner, {getLogoHeight} from './LogoBanner.js';
 import useGrpcClient from '../hooks/useGrpcClient.js';
 import useTaskEvents from '../hooks/useTaskEvents.js';
 import {
@@ -279,11 +279,18 @@ const App: React.FC = () => {
     [updateSubtaskStatus],
   );
 
+  // ── Derive display info ────────────────────────────────
+  const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
+  const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
+  const terminalWidth = stdout?.columns ?? 80;
+
   // ── Calculate ChatLog visible lines ────────────────────
-  // Full logo(6) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2) = 12
+  // logo height adapts to terminal width (6 / 1 / 0) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2)
+  const logoHeight = getLogoHeight(terminalWidth);
+  const fixedLines = logoHeight + 6;
   const visibleLines = Math.max(
     5,
-    (stdout?.rows ?? 24) - 12,
+    (stdout?.rows ?? 24) - fixedLines,
   );
 
   // ── Build scroll command for ChatLog ────────────────────
@@ -558,11 +565,6 @@ const App: React.FC = () => {
       }
     }
   });
-
-  // ── Derive display info ────────────────────────────────
-  const workerId = connectionState === 'connected' ? 'grpc-worker' : 'offline';
-  const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
-  const terminalWidth = stdout?.columns ?? 80;
 
   // ── Symbols ─────────────────────────────────────────────
   const S = getSymbols(state.symbolMode);
