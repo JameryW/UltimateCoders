@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "generate": "cd .. && PATH=dashboard/node_modules/.bin:$PATH buf generate"
   },
   "dependencies": {
     "dompurify": "^3.4.10",
@@ -28,5 +29,10 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@bufbuild/buf"
+    ]
   }
 }

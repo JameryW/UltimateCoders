@@ -14,7 +14,9 @@ uc-engine = { path = "../uc-engine" }
 uc-grpc = { path = "../uc-grpc", features = ["messaging"] }
 tokio = { workspace = true }
 tonic = { workspace = true }
+tonic-web = { workspace = true }
 tonic-health = "0.12"
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }

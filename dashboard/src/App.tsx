@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useSSE } from "@/hooks/useSSE";
+import { useGrpcWeb } from "@/hooks/useGrpcWeb";
+import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/layout/Header";
 import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
@@ -16,150 +18,81 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import * as api from "@/api/endpoints";
+import type { TaskEvent } from "@/types/dashboard";
+
+function eventKey(ev: TaskEvent): string {
+  return `${ev.task_id}:${ev.type}:${ev.timestamp}`;
+}
 
 function App() {
-  // Auth placeholder (no-op for now)
   void useAuth();
-
   const dashboard = useDashboard();
 
-  // SSE connection
+  const seenKeys = useRef(new Set<string>());
+  const dedupedHandleTaskEvent = (ev: TaskEvent) => {
+    const key = eventKey(ev);
+    if (seenKeys.current.has(key)) return;
+    seenKeys.current.add(key);
+    if (seenKeys.current.size > 10_000) seenKeys.current.clear();
+    dashboard.handleTaskEvent(ev);
+  };
+
   const { connected } = useSSE({
     onUpdate: dashboard.handleSnapshot,
-    onTaskEvent: dashboard.handleTaskEvent,
+    onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  // Fetch initial data on mount
-  useEffect(() => {
-    void dashboard.fetchInitial();
-  }, [dashboard.fetchInitial]);
+  const { connectionState: grpcState } = useGrpcWeb({
+    onTaskEvent: dedupedHandleTaskEvent,
+    enabled: true,
+  });
 
-  // Sync connected state back to dashboard
-  useEffect(() => {
-    dashboard.setConnected(connected);
-  }, [connected, dashboard.setConnected]);
+  useEffect(() => { void dashboard.fetchInitial(); }, [dashboard.fetchInitial]);
+  useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
-  // Action handlers
   const handlePauseTask = async (taskId: string) => {
-    const ok = await confirmAction(
-      "Pause Task",
-      `Pause task ${taskId.substring(0, 8)}?`,
-    );
+    const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try {
-      const result = await api.pauseTask(taskId);
-      if (result.success) showToast("Task paused", "success");
-      else showToast(`Pause failed: ${result.error ?? "unknown"}`, "error");
-    } catch (e) {
-      showToast(`Pause failed: ${String(e)}`, "error");
-    }
+    try { const r = await api.pauseTask(taskId); r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
   };
-
   const handleResumeTask = async (taskId: string) => {
-    const ok = await confirmAction(
-      "Resume Task",
-      `Resume task ${taskId.substring(0, 8)}?`,
-    );
+    const ok = await confirmAction("Resume Task", `Resume task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try {
-      const result = await api.resumeTask(taskId);
-      if (result.success) showToast("Task resumed", "success");
-      else showToast(`Resume failed: ${result.error ?? "unknown"}`, "error");
-    } catch (e) {
-      showToast(`Resume failed: ${String(e)}`, "error");
-    }
+    try { const r = await api.resumeTask(taskId); r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
   };
-
   const handleResetCB = async () => {
-    const ok = await confirmAction(
-      "Reset Circuit Breaker",
-      "Force circuit breaker to closed state?",
-    );
+    const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
     if (!ok) return;
-    try {
-      const result = await api.resetCircuitBreaker();
-      if (result.success) showToast("Circuit breaker reset", "success");
-      else showToast(`Reset failed: ${result.error ?? "unknown"}`, "error");
-    } catch (e) {
-      showToast(`Reset failed: ${String(e)}`, "error");
-    }
+    try { const r = await api.resetCircuitBreaker(); r.success ? showToast("Circuit breaker reset", "success") : showToast(`Reset failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Reset failed: ${String(e)}`, "error"); }
   };
-
   const handleTriggerJob = async (jobId: string) => {
-    const ok = await confirmAction(
-      "Trigger Job",
-      `Trigger scheduled job?`,
-    );
+    const ok = await confirmAction("Trigger Job", `Trigger scheduled job?`);
     if (!ok) return;
-    try {
-      const result = await api.triggerJob(jobId);
-      if (result.success) showToast("Job triggered", "success");
-      else showToast(`Trigger failed: ${result.error ?? "unknown"}`, "error");
-    } catch (e) {
-      showToast(`Trigger failed: ${String(e)}`, "error");
-    }
+    try { const r = await api.triggerJob(jobId); r.success ? showToast("Job triggered", "success") : showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
   };
-
   const handleFlush = async () => {
-    const ok = await confirmAction(
-      "Flush Pending Tasks",
-      "Execute all queued tasks?",
-    );
+    const ok = await confirmAction("Flush Pending Tasks", "Execute all queued tasks?");
     if (!ok) return;
-    try {
-      const result = await api.flushPending();
-      if (result.success) showToast("Pending tasks flushed", "success");
-      else showToast(`Flush failed: ${result.error ?? "unknown"}`, "error");
-    } catch (e) {
-      showToast(`Flush failed: ${String(e)}`, "error");
-    }
+    try { const r = await api.flushPending(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
   return (
     <div className="text-gray-200 min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-
-      <Header connected={connected} />
-
+      <Header connected={connected} grpcState={grpcState} />
       <TaskSubmitForm />
-
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Row 1: Health (2-col), Circuit Breaker, Workers */}
-        <div className="md:col-span-2">
-          <HealthPanel data={dashboard.health} />
-        </div>
-        <CircuitBreakerPanel
-          data={dashboard.circuitBreaker}
-          onReset={handleResetCB}
-        />
+        <div className="md:col-span-2"><HealthPanel data={dashboard.health} /></div>
+        <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
         <WorkersPanel data={dashboard.workers} />
-
-        {/* Row 2: Tasks, Event Log */}
-        <TasksPanel
-          data={dashboard.tasks}
-          interactionLog={dashboard.interactionLog}
-          onFlush={handleFlush}
-          onPauseTask={handlePauseTask}
-          onResumeTask={handleResumeTask}
-        />
+        <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
         <EventLogPanel events={dashboard.eventLog} />
-
-        {/* Row 3: Scheduler (2-col), Chart (2-col) */}
-        <div className="md:col-span-2">
-          <SchedulerPanel
-            data={dashboard.scheduler}
-            onTriggerJob={handleTriggerJob}
-          />
-        </div>
-        <div className="md:col-span-2">
-          <TaskTrendChart />
-        </div>
+        <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} /></div>
+        <div className="md:col-span-2"><TaskTrendChart /></div>
       </main>
-
-      <ConnectionIndicator connected={connected} />
+      <ConnectionIndicator connected={connected} grpcState={grpcState} />
     </div>
   );
 }
-
 export default App;
