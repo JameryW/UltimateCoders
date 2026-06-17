@@ -443,6 +443,30 @@ class Engine:
             query, scope_type, project_id, max_results, min_score,
         )
 
+    def watch_task(
+        self,
+        task_id: str,
+        max_events: int = 50,
+        timeout_secs: float = 10.0,
+    ) -> list:
+        """Watch a task for events (gRPC mode only).
+
+        Collects events from the server-streaming WatchTask RPC,
+        returning up to max_events within timeout_secs.
+        Use in a polling loop for continuous monitoring.
+
+        Args:
+            task_id: The task to watch (empty string watches all tasks).
+            max_events: Maximum events to collect (default: 50).
+            timeout_secs: Timeout in seconds (default: 10.0).
+
+        Returns:
+            List of event dicts with event_type, task_id, event_id, timestamp.
+        """
+        return self._try_grpc_with_fallback(
+            "watch_task", task_id, max_events, timeout_secs,
+        )
+
     # ── Async methods ──────────────────────────────────────────
 
     async def health_async(self) -> object:
@@ -632,6 +656,32 @@ class Engine:
         """
         await self._try_grpc_with_fallback_async(
             "remove_index_async", repo_id,
+        )
+
+    async def watch_task_async(
+        self,
+        task_id: str,
+        max_events: int = 50,
+        timeout_secs: float = 10.0,
+    ) -> list:
+        """Async version of watch_task() (gRPC mode only).
+
+        Collects events from the server-streaming WatchTask RPC,
+        returning up to max_events within timeout_secs.
+
+        Args:
+            task_id: The task to watch (empty string watches all tasks).
+            max_events: Maximum events to collect (default: 50).
+            timeout_secs: Timeout in seconds (default: 10.0).
+
+        Returns:
+            List of event dicts.
+
+        Usage:
+            events = await engine.watch_task_async("task-123", max_events=20)
+        """
+        return await self._try_grpc_with_fallback_async(
+            "watch_task_async", task_id, max_events, timeout_secs,
         )
 
 
