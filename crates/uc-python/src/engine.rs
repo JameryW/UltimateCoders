@@ -516,6 +516,65 @@ impl PyEngine {
         Ok(items)
     }
 
+    // ── Task Orchestration ──────────────────────────────────────
+
+    /// Submit a new task for orchestration.
+    ///
+    /// Args:
+    ///     description: Task description
+    ///     project_id: Project ID (default: empty string)
+    #[pyo3(signature = (description, project_id=None))]
+    pub fn submit_task(
+        &self,
+        py: Python<'_>,
+        description: String,
+        project_id: Option<String>,
+    ) -> PyResult<PyTask> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| {
+                async_support::block_on(inner.submit_task(description, project_id.unwrap_or_default()))
+            })
+            .map_err(engine_error_to_pyerr)?;
+        Ok(PyTask::from(result))
+    }
+
+    /// Get a task by ID.
+    pub fn get_task(&self, py: Python<'_>, task_id: String) -> PyResult<PyTask> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.get_task(&task_id)))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(PyTask::from(result))
+    }
+
+    /// List all tasks.
+    pub fn list_tasks(&self, py: Python<'_>) -> PyResult<Vec<PyTask>> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.list_tasks()))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(result.into_iter().map(PyTask::from).collect())
+    }
+
+    /// Pause a running task.
+    pub fn pause_task(&self, py: Python<'_>, task_id: String) -> PyResult<PyTask> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.pause_task(&task_id)))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(PyTask::from(result))
+    }
+
+    /// Resume a paused task.
+    pub fn resume_task(&self, py: Python<'_>, task_id: String) -> PyResult<PyTask> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.resume_task(&task_id)))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(PyTask::from(result))
+    }
+
     // ── Async methods ─────────────────────────────────────────
 
     /// Async version of health(). Returns full HealthStatus.
@@ -847,6 +906,86 @@ impl PyEngine {
                 .map(Into::into)
                 .collect();
             Ok(items)
+        })
+    }
+
+    // ── Async Task Orchestration ──────────────────────────────────
+
+    /// Async version of submit_task().
+    #[pyo3(signature = (description, project_id=None))]
+    pub fn submit_task_async<'py>(
+        &self,
+        py: Python<'py>,
+        description: String,
+        project_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner
+                .submit_task(description, project_id.unwrap_or_default())
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(PyTask::from(result))
+        })
+    }
+
+    /// Async version of get_task().
+    pub fn get_task_async<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner
+                .get_task(&task_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(PyTask::from(result))
+        })
+    }
+
+    /// Async version of list_tasks().
+    pub fn list_tasks_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner.list_tasks().await.map_err(engine_error_to_pyerr)?;
+            Ok(result
+                .into_iter()
+                .map(PyTask::from)
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// Async version of pause_task().
+    pub fn pause_task_async<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner
+                .pause_task(&task_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(PyTask::from(result))
+        })
+    }
+
+    /// Async version of resume_task().
+    pub fn resume_task_async<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner
+                .resume_task(&task_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(PyTask::from(result))
         })
     }
 }

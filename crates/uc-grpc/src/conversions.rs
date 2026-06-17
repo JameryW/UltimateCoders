@@ -8,7 +8,7 @@ use uc_types::{
     MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest, MemorySearchRequest,
     MemorySearchResponse, MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
     RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult, SearchResultItem, Subtask,
-    SubtaskStatus, Task, TaskStatus,
+    SubtaskStatus, Task, TaskId, TaskStatus,
 };
 
 // ── Import generated proto types ──────────────────────────
@@ -676,6 +676,56 @@ impl From<Subtask> for SubtaskProto {
             status: subtask_status_to_proto(&st.status).to_string(),
             depends_on: st.depends_on.iter().map(|id| id.0.clone()).collect(),
             assigned_worker: st.assigned_worker.map(|w| w.0),
+        }
+    }
+}
+
+impl From<TaskProto> for Task {
+    fn from(proto: TaskProto) -> Self {
+        let status = match proto.status.as_str() {
+            "Created" => TaskStatus::Created,
+            "Planning" => TaskStatus::Planning,
+            "InProgress" => TaskStatus::InProgress,
+            "Completed" => TaskStatus::Completed,
+            "Failed" => TaskStatus::Failed,
+            "Paused" => TaskStatus::Paused,
+            _ => TaskStatus::InProgress,
+        };
+        Self {
+            id: TaskId(proto.id),
+            description: proto.description,
+            project_id: proto.project_id,
+            status,
+            subtasks: proto.subtasks.into_iter().map(Into::into).collect(),
+            created_at: chrono::DateTime::from_timestamp(proto.created_at, 0)
+                .unwrap_or_else(chrono::Utc::now),
+            updated_at: chrono::DateTime::from_timestamp(proto.updated_at, 0)
+                .unwrap_or_else(chrono::Utc::now),
+        }
+    }
+}
+
+impl From<SubtaskProto> for Subtask {
+    fn from(proto: SubtaskProto) -> Self {
+        let status = match proto.status.as_str() {
+            "Pending" => SubtaskStatus::Pending,
+            "Assigned" => SubtaskStatus::Assigned,
+            "InProgress" => SubtaskStatus::InProgress,
+            "Completed" => SubtaskStatus::Completed,
+            "Failed" => SubtaskStatus::Failed,
+            "Conflicted" => SubtaskStatus::Conflicted,
+            _ => SubtaskStatus::Pending,
+        };
+        Self {
+            id: TaskId(proto.id),
+            parent_id: TaskId(String::new()), // not available in proto, will be inferred from context
+            description: proto.description,
+            status,
+            assigned_worker: proto.assigned_worker.map(uc_types::WorkerId),
+            depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
         }
     }
 }

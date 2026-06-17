@@ -596,3 +596,49 @@ impl From<uc_types::IndexState> for PyIndexState {
         }
     }
 }
+
+// ── Task types ──────────────────────────────────────────────
+
+/// Python Task wrapper representing an orchestration task.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyTask {
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub description: String,
+    #[pyo3(get)]
+    pub project_id: String,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub subtask_count: usize,
+    #[pyo3(get)]
+    pub created_at: i64,
+    #[pyo3(get)]
+    pub updated_at: i64,
+}
+
+#[pymethods]
+impl PyTask {
+    fn __repr__(&self) -> String {
+        format!(
+            "Task(id={}, status={}, project_id={}, subtasks={})",
+            self.id, self.status, self.project_id, self.subtask_count
+        )
+    }
+}
+
+impl From<uc_types::Task> for PyTask {
+    fn from(task: uc_types::Task) -> Self {
+        Self {
+            id: task.id.0,
+            description: task.description,
+            project_id: task.project_id,
+            status: format!("{:?}", task.status).to_lowercase(),
+            subtask_count: task.subtasks.len(),
+            created_at: task.created_at.timestamp(),
+            updated_at: task.updated_at.timestamp(),
+        }
+    }
+}
