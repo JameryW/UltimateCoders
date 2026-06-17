@@ -785,7 +785,12 @@ impl PyEngine {
             let description = get_str("description")?;
             let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
             let mem_content = build_memory_content(
-                &content_type, content, language, file_path, uri, description,
+                &content_type,
+                content,
+                language,
+                file_path,
+                uri,
+                description,
             );
             write_requests.push(uc_types::MemoryWriteRequest {
                 key: mem_key,
@@ -803,7 +808,10 @@ impl PyEngine {
                 .batch_write_memory(write_requests)
                 .await
                 .map_err(engine_error_to_pyerr)?;
-            Ok(result.into_iter().map(PyMemoryEntry::from).collect::<Vec<_>>())
+            Ok(result
+                .into_iter()
+                .map(PyMemoryEntry::from)
+                .collect::<Vec<_>>())
         })
     }
 
@@ -812,7 +820,10 @@ impl PyEngine {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let result = inner.list_repos().await.map_err(engine_error_to_pyerr)?;
-            Ok(result.into_iter().map(PyRepoIndexState::from).collect::<Vec<_>>())
+            Ok(result
+                .into_iter()
+                .map(PyRepoIndexState::from)
+                .collect::<Vec<_>>())
         })
     }
 
@@ -825,9 +836,11 @@ impl PyEngine {
         let inner = self.inner.clone();
         let uc_query: uc_types::SearchQuery = query.into();
         future_into_py(py, async move {
-            let stream = inner.search_stream(uc_query).await.map_err(engine_error_to_pyerr)?;
-            let results: Vec<uc_types::SearchResult> =
-                futures::StreamExt::collect(stream).await;
+            let stream = inner
+                .search_stream(uc_query)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            let results: Vec<uc_types::SearchResult> = futures::StreamExt::collect(stream).await;
             let items: Vec<PySearchResultItem> = results
                 .into_iter()
                 .flat_map(|r| r.items)
