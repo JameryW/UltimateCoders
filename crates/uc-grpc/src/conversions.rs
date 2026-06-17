@@ -4,22 +4,23 @@
 //! and return proto responses — while the client can do the reverse.
 
 use uc_types::{
-    ComponentHealth, HealthStatus, IndexRequest, IndexResponse, MemoryContent, MemoryEntry,
-    MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest, MemorySearchRequest,
-    MemorySearchResponse, MemorySearchResult, MemorySearchScope, MemoryWriteRequest,
-    RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult, SearchResultItem, Subtask,
-    SubtaskStatus, Task, TaskStatus,
+    AgentEvent, AgentEventPayload, ComponentHealth, HealthStatus, IndexRequest, IndexResponse,
+    MemoryContent, MemoryEntry, MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest,
+    MemorySearchRequest, MemorySearchResponse, MemorySearchResult, MemorySearchScope,
+    MemoryWriteRequest, RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult,
+    SearchResultItem, Subtask, SubtaskStatus, Task, TaskId, TaskStatus, WorkerId,
 };
 
 // ── Import generated proto types ──────────────────────────
 
 use crate::ultimate_coders::{
     ComponentHealthProto, DeleteMemoryRequest, GetIndexStateRequest, GetIndexStateResponse,
-    HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto, MemorySearchResultProto,
-    ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest, RepoIndexStateProto,
-    SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
-    SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubtaskProto,
-    TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
+    GetTaskResponse, HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto,
+    MemorySearchResultProto, PauseTaskResponse, ReadMemoryRequest, ReadMemoryResponse,
+    RemoveIndexRequest, RepoIndexStateProto, ResumeTaskResponse, SearchMemoryRequest,
+    SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
+    SearchStreamRequest, SubmitTaskResponse, SubtaskProto, TaskEvent as TaskEventProto, TaskProto,
+    WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -846,6 +847,303 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
     }
 }
 
+// ── Reverse Task conversions (for client) ──────────────────
+
+/// Convert a proto TaskStatus string to domain TaskStatus.
+fn task_status_from_proto(s: &str) -> TaskStatus {
+    match s {
+        "Created" => TaskStatus::Created,
+        "Planning" => TaskStatus::Planning,
+        "InProgress" => TaskStatus::InProgress,
+        "Completed" => TaskStatus::Completed,
+        "Failed" => TaskStatus::Failed,
+        "Paused" => TaskStatus::Paused,
+        _ => TaskStatus::Planning, // Default fallback
+    }
+}
+
+/// Convert a proto SubtaskStatus string to domain SubtaskStatus.
+fn subtask_status_from_proto(s: &str) -> SubtaskStatus {
+    match s {
+        "Pending" => SubtaskStatus::Pending,
+        "Assigned" => SubtaskStatus::Assigned,
+        "InProgress" => SubtaskStatus::InProgress,
+        "Completed" => SubtaskStatus::Completed,
+        "Failed" => SubtaskStatus::Failed,
+        "Conflicted" => SubtaskStatus::Conflicted,
+        _ => SubtaskStatus::Pending, // Default fallback
+    }
+}
+
+impl From<TaskProto> for Task {
+    fn from(proto: TaskProto) -> Self {
+        Self {
+            id: TaskId(proto.id),
+            description: proto.description,
+            project_id: proto.project_id,
+            status: task_status_from_proto(&proto.status),
+            subtasks: proto.subtasks.into_iter().map(Into::into).collect(),
+            created_at: chrono::DateTime::from_timestamp(proto.created_at, 0)
+                .unwrap_or_else(chrono::Utc::now),
+            updated_at: chrono::DateTime::from_timestamp(proto.updated_at, 0)
+                .unwrap_or_else(chrono::Utc::now),
+        }
+    }
+}
+
+impl From<SubtaskProto> for Subtask {
+    fn from(proto: SubtaskProto) -> Self {
+        Self {
+            id: TaskId(proto.id),
+            // SubtaskProto does not carry parent_id; we set a placeholder.
+            // The server's TaskProto always nests subtasks under a Task,
+            // so the parent_id can be inferred from the enclosing Task.
+            parent_id: TaskId::new(), // placeholder — should be set by caller
+            description: proto.description,
+            status: subtask_status_from_proto(&proto.status),
+            assigned_worker: proto.assigned_worker.map(WorkerId),
+            depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
+            file_constraints: Vec::new(),   // not carried by proto
+            expected_output: String::new(), // not carried by proto
+            result: None,                   // not carried by proto
+        }
+    }
+}
+
+impl From<SubmitTaskResponse> for Task {
+    /// Convert a SubmitTaskResponse into a Task.
+    ///
+    /// The response may carry subtask protos. If `success` is false, we still
+    /// construct a Task (the caller can inspect the error field separately).
+    fn from(resp: SubmitTaskResponse) -> Self {
+        Self {
+            id: TaskId(resp.task_id),
+            description: String::new(), // SubmitTaskResponse does not carry description
+            project_id: String::new(),  // SubmitTaskResponse does not carry project_id
+            status: task_status_from_proto(&resp.status),
+            subtasks: resp.subtasks.into_iter().map(Into::into).collect(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+}
+
+impl From<GetTaskResponse> for Task {
+    /// Convert a GetTaskResponse into a Task.
+    ///
+    /// If the task is not available (`available = false`, `task = None`),
+    /// returns a default placeholder Task. The caller should check
+    /// `available` before using this conversion if needed.
+    fn from(resp: GetTaskResponse) -> Self {
+        match resp.task {
+            Some(proto) => proto.into(),
+            None => Task {
+                id: TaskId::new(),
+                description: String::new(),
+                project_id: String::new(),
+                status: TaskStatus::Created,
+                subtasks: Vec::new(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+        }
+    }
+}
+
+impl From<PauseTaskResponse> for Task {
+    /// Convert a PauseTaskResponse into a Task.
+    ///
+    /// The response only carries task_id and status, not the full Task.
+    /// We construct a partial Task with the available fields.
+    fn from(resp: PauseTaskResponse) -> Self {
+        Self {
+            id: TaskId(resp.task_id),
+            description: String::new(),
+            project_id: String::new(),
+            status: if resp.success {
+                task_status_from_proto(&resp.status)
+            } else {
+                TaskStatus::Failed
+            },
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+}
+
+impl From<ResumeTaskResponse> for Task {
+    /// Convert a ResumeTaskResponse into a Task.
+    ///
+    /// The response only carries task_id and status, not the full Task.
+    /// We construct a partial Task with the available fields.
+    fn from(resp: ResumeTaskResponse) -> Self {
+        Self {
+            id: TaskId(resp.task_id),
+            description: String::new(),
+            project_id: String::new(),
+            status: if resp.success {
+                task_status_from_proto(&resp.status)
+            } else {
+                TaskStatus::Failed
+            },
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+}
+
+impl From<TaskEventProto> for AgentEvent {
+    /// Convert a proto TaskEvent into a domain AgentEvent.
+    ///
+    /// The proto TaskEvent carries a type string and a data map, which we
+    /// map to the corresponding AgentEventPayload variant. Fields not
+    /// present in the proto (e.g., full Task structs, SubtaskResult) are
+    /// filled with placeholders.
+    fn from(proto: TaskEventProto) -> Self {
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&proto.timestamp)
+            .map(|dt| dt.to_utc())
+            .unwrap_or_else(|_| chrono::Utc::now());
+
+        let payload = match proto.r#type.as_str() {
+            "task_submitted" => {
+                let description = proto.data.get("description").cloned().unwrap_or_default();
+                AgentEventPayload::TaskCreated {
+                    task: Task {
+                        id: TaskId(proto.task_id.clone()),
+                        description,
+                        project_id: String::new(),
+                        status: TaskStatus::Created,
+                        subtasks: Vec::new(),
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                    },
+                }
+            }
+            "subtask_assigned" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
+                AgentEventPayload::SubtaskAssigned {
+                    subtask_id,
+                    worker_id,
+                }
+            }
+            "subtask_started" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
+                AgentEventPayload::WorkerStarted {
+                    subtask_id,
+                    worker_id,
+                }
+            }
+            "tool_call" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let tool_name = proto.data.get("tool_name").cloned().unwrap_or_default();
+                let tool_input = proto.data.get("tool_input").cloned().unwrap_or_default();
+                AgentEventPayload::ToolInvoked {
+                    subtask_id,
+                    tool_name,
+                    tool_input,
+                }
+            }
+            "tool_result" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let tool_output = proto.data.get("tool_output").cloned().unwrap_or_default();
+                let exit_code = proto
+                    .data
+                    .get("exit_code")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                AgentEventPayload::ToolResult {
+                    subtask_id,
+                    tool_output,
+                    exit_code,
+                }
+            }
+            "file_modified" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let file_path = proto.data.get("file_path").cloned().unwrap_or_default();
+                let diff = proto.data.get("diff").cloned().unwrap_or_default();
+                AgentEventPayload::FileModified {
+                    subtask_id,
+                    file_path,
+                    diff,
+                }
+            }
+            "subtask_completed" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let summary = proto.data.get("summary").cloned().unwrap_or_default();
+                let success = proto
+                    .data
+                    .get("success")
+                    .map(|s| s == "true")
+                    .unwrap_or(true);
+                AgentEventPayload::SubtaskCompleted {
+                    result: uc_types::SubtaskResult {
+                        subtask_id,
+                        worker_id: WorkerId::new(),
+                        modified_files: Vec::new(),
+                        summary,
+                        success,
+                        completed_at: timestamp,
+                    },
+                }
+            }
+            "subtask_failed" => {
+                let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
+                let error = proto.data.get("error").cloned().unwrap_or_default();
+                let recoverable = proto
+                    .data
+                    .get("recoverable")
+                    .map(|s| s == "true")
+                    .unwrap_or(false);
+                AgentEventPayload::SubtaskFailed {
+                    subtask_id,
+                    error,
+                    recoverable,
+                }
+            }
+            "checkpoint_created" => {
+                let task_id = TaskId(proto.task_id);
+                let snapshot_id = proto.data.get("snapshot_id").cloned().unwrap_or_default();
+                AgentEventPayload::CheckpointCreated {
+                    task_id,
+                    snapshot_id,
+                }
+            }
+            "edit_intent" => {
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
+                let file_path = proto.data.get("file_path").cloned().unwrap_or_default();
+                // regions are serialized as a debug string in the proto;
+                // Vec<(u32, u32)> does not implement FromStr, so we use
+                // an empty vec as placeholder. Full region data would need
+                // a structured proto field instead of a string map entry.
+                let regions: Vec<(u32, u32)> = Vec::new();
+                AgentEventPayload::EditIntent {
+                    worker_id,
+                    file_path,
+                    regions,
+                }
+            }
+            // Unknown event type — store as a generic placeholder
+            _ => AgentEventPayload::CheckpointCreated {
+                task_id: TaskId(proto.task_id),
+                snapshot_id: proto.r#type, // store type name as snapshot_id for debug
+            },
+        };
+
+        // Use a deterministic event_id based on timestamp + type
+        let event_id = timestamp.timestamp_millis() as u64;
+
+        Self {
+            event_id,
+            timestamp,
+            payload,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,5 +1217,179 @@ mod tests {
         assert_eq!(task_id, "t1");
         assert_eq!(project_id, "");
         assert_eq!(k, "k");
+    }
+
+    // ── Task conversion tests ────────────────────────────────
+
+    #[test]
+    fn task_proto_to_domain() {
+        let proto = TaskProto {
+            id: "task-1".to_string(),
+            description: "Fix the bug".to_string(),
+            status: "InProgress".to_string(),
+            project_id: "proj-1".to_string(),
+            subtask_count: 1,
+            created_at: 1700000000,
+            updated_at: 1700000001,
+            subtasks: vec![SubtaskProto {
+                id: "st-1".to_string(),
+                description: "Analyze code".to_string(),
+                status: "Pending".to_string(),
+                depends_on: vec![],
+                assigned_worker: None,
+            }],
+        };
+        let task: Task = proto.into();
+        assert_eq!(task.id.0, "task-1");
+        assert_eq!(task.description, "Fix the bug");
+        assert_eq!(task.project_id, "proj-1");
+        assert_eq!(task.status, TaskStatus::InProgress);
+        assert_eq!(task.subtasks.len(), 1);
+        assert_eq!(task.subtasks[0].id.0, "st-1");
+        assert_eq!(task.subtasks[0].status, SubtaskStatus::Pending);
+    }
+
+    #[test]
+    fn task_status_from_proto_roundtrip() {
+        assert_eq!(task_status_from_proto("Created"), TaskStatus::Created);
+        assert_eq!(task_status_from_proto("Planning"), TaskStatus::Planning);
+        assert_eq!(task_status_from_proto("InProgress"), TaskStatus::InProgress);
+        assert_eq!(task_status_from_proto("Completed"), TaskStatus::Completed);
+        assert_eq!(task_status_from_proto("Failed"), TaskStatus::Failed);
+        assert_eq!(task_status_from_proto("Paused"), TaskStatus::Paused);
+        assert_eq!(task_status_from_proto("unknown"), TaskStatus::Planning);
+    }
+
+    #[test]
+    fn subtask_status_from_proto_roundtrip() {
+        assert_eq!(subtask_status_from_proto("Pending"), SubtaskStatus::Pending);
+        assert_eq!(
+            subtask_status_from_proto("Assigned"),
+            SubtaskStatus::Assigned
+        );
+        assert_eq!(
+            subtask_status_from_proto("InProgress"),
+            SubtaskStatus::InProgress
+        );
+        assert_eq!(
+            subtask_status_from_proto("Completed"),
+            SubtaskStatus::Completed
+        );
+        assert_eq!(subtask_status_from_proto("Failed"), SubtaskStatus::Failed);
+        assert_eq!(
+            subtask_status_from_proto("Conflicted"),
+            SubtaskStatus::Conflicted
+        );
+        assert_eq!(subtask_status_from_proto("unknown"), SubtaskStatus::Pending);
+    }
+
+    #[test]
+    fn submit_task_response_to_domain() {
+        let resp = SubmitTaskResponse {
+            success: true,
+            task_id: "task-1".to_string(),
+            status: "Planning".to_string(),
+            subtask_count: 0,
+            subtasks: vec![],
+            error: None,
+        };
+        let task: Task = resp.into();
+        assert_eq!(task.id.0, "task-1");
+        assert_eq!(task.status, TaskStatus::Planning);
+    }
+
+    #[test]
+    fn get_task_response_to_domain_available() {
+        let resp = GetTaskResponse {
+            available: true,
+            task: Some(TaskProto {
+                id: "task-1".to_string(),
+                description: "Test".to_string(),
+                status: "Completed".to_string(),
+                project_id: "p1".to_string(),
+                subtask_count: 0,
+                created_at: 0,
+                updated_at: 0,
+                subtasks: vec![],
+            }),
+        };
+        let task: Task = resp.into();
+        assert_eq!(task.id.0, "task-1");
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[test]
+    fn get_task_response_to_domain_not_available() {
+        let resp = GetTaskResponse {
+            available: false,
+            task: None,
+        };
+        let task: Task = resp.into();
+        assert_eq!(task.status, TaskStatus::Created); // placeholder
+    }
+
+    #[test]
+    fn pause_task_response_to_domain() {
+        let resp = PauseTaskResponse {
+            success: true,
+            task_id: "task-1".to_string(),
+            status: "Paused".to_string(),
+            error: None,
+        };
+        let task: Task = resp.into();
+        assert_eq!(task.id.0, "task-1");
+        assert_eq!(task.status, TaskStatus::Paused);
+    }
+
+    #[test]
+    fn resume_task_response_to_domain() {
+        let resp = ResumeTaskResponse {
+            success: true,
+            task_id: "task-1".to_string(),
+            status: "InProgress".to_string(),
+            error: None,
+        };
+        let task: Task = resp.into();
+        assert_eq!(task.id.0, "task-1");
+        assert_eq!(task.status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn task_event_proto_to_domain_task_submitted() {
+        let proto = TaskEventProto {
+            timestamp: "2024-01-01T00:00:00+00:00".to_string(),
+            r#type: "task_submitted".to_string(),
+            task_id: "task-1".to_string(),
+            subtask_id: None,
+            data: vec![("description".to_string(), "Fix bug".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let event: AgentEvent = proto.into();
+        assert!(matches!(
+            event.payload,
+            AgentEventPayload::TaskCreated { .. }
+        ));
+    }
+
+    #[test]
+    fn task_event_proto_to_domain_subtask_completed() {
+        let proto = TaskEventProto {
+            timestamp: "2024-01-01T00:00:00+00:00".to_string(),
+            r#type: "subtask_completed".to_string(),
+            task_id: "task-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data: vec![
+                ("summary".to_string(), "Done".to_string()),
+                ("success".to_string(), "true".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let event: AgentEvent = proto.into();
+        assert!(matches!(
+            event.payload,
+            AgentEventPayload::SubtaskCompleted { .. }
+        ));
     }
 }
