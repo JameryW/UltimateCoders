@@ -165,6 +165,27 @@ export function useDashboard() {
     } catch { /* ignore */ }
   }, []);
 
+  // Merge gRPC Health components (local_worker, engine, etc.) into existing health state
+  const mergeGrpcComponents = useCallback(
+    (components: { name: string; status: string; details?: string }[]) => {
+      setHealth((prev) => {
+        // Merge: keep existing Python components, add/update gRPC ones (prefixed)
+        const existingNames = new Set(prev.components.map((c) => c.name));
+        const grpcComps = components.map((c) => ({
+          name: existingNames.has(c.name) ? `gRPC: ${c.name}` : c.name,
+          status: c.status,
+          details: c.details,
+        }));
+        return {
+          ...prev,
+          available: true,
+          components: [...prev.components.filter((c) => !c.name.startsWith("gRPC:")), ...grpcComps],
+        };
+      });
+    },
+    [],
+  );
+
   return {
     health,
     workers,
@@ -178,5 +199,6 @@ export function useDashboard() {
     handleSnapshot,
     handleTaskEvent,
     fetchInitial,
+    mergeGrpcComponents,
   };
 }

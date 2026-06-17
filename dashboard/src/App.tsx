@@ -42,13 +42,27 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
 
   useEffect(() => { void dashboard.fetchInitial(); }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
+
+  // Poll gRPC Health when connected — merge Rust engine components (local_worker, etc.)
+  useEffect(() => {
+    if (grpcState !== "connected") return;
+    const poll = async () => {
+      try {
+        const h = await healthCheck();
+        dashboard.mergeGrpcComponents(h.components);
+      } catch { /* ignore */ }
+    };
+    void poll();
+    const id = setInterval(() => { void poll(); }, 5000);
+    return () => clearInterval(id);
+  }, [grpcState, healthCheck, dashboard.mergeGrpcComponents]);
 
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
