@@ -289,12 +289,15 @@ describe('tuiReducer: focus and layout actions', () => {
     expect(state.focusedArea).toBe('input');
   });
 
-  it('ESC_TO_MAIN with subtaskOverlayOpen closes overlay', () => {
+  it('ESC_TO_MAIN with subtaskOverlayOpen closes overlay and resets detail', () => {
     let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_FOCUS', area: 'chat'});
     state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_DETAIL'});
     expect(state.subtaskOverlayOpen).toBe(true);
+    expect(state.subtaskDetailOpen).toBe(true);
     state = tuiReducer(state, {type: 'ESC_TO_MAIN'});
     expect(state.subtaskOverlayOpen).toBe(false);
+    expect(state.subtaskDetailOpen).toBe(false);
   });
 });
 
@@ -363,6 +366,15 @@ describe('tuiReducer: subtask navigation actions', () => {
     // Overlay can be opened even without selecting a subtask
     const state = tuiReducer(INITIAL_TUI_STATE, {type: 'TOGGLE_SUBTASK_OVERLAY'});
     expect(state.subtaskOverlayOpen).toBe(true);
+  });
+
+  it('TOGGLE_SUBTASK_OVERLAY auto-selects first subtask when opening', () => {
+    const items = [subtask('a'), subtask('b'), subtask('c')];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    state = tuiReducer(state, {type: 'TOGGLE_SUBTASK_OVERLAY'});
+    expect(state.subtaskOverlayOpen).toBe(true);
+    expect(state.selectedSubtaskIndex).toBe(0);
+    expect(state.selectedSubtaskId).toBe('a');
   });
 
   it('JUMP_TO_FAILED_SUBTASK selects next failed after current', () => {
@@ -503,13 +515,22 @@ describe('tuiReducer: TOGGLE_EXPAND_ALL_MESSAGES', () => {
   });
 });
 
-// ── RETRY_SUBTASK (placeholder) ───────────────────────────
+// ── RETRY_SUBTASK (non-failed subtask) ─────────────────────
 
-describe('tuiReducer: RETRY_SUBTASK', () => {
-  it('is a no-op (placeholder)', () => {
-    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'RETRY_SUBTASK', subtaskId: 'a'});
-    // State unchanged (placeholder action)
-    expect(state).toEqual(INITIAL_TUI_STATE);
+describe('tuiReducer: RETRY_SUBTASK on non-failed subtask', () => {
+  it('is a no-op for completed subtask (status unchanged)', () => {
+    const items = [subtask('a', 'completed'), subtask('b', 'pending')];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    const next = tuiReducer(state, {type: 'RETRY_SUBTASK', subtaskId: 'a'});
+    // 'a' is completed, not failed — reducer only resets failed subtasks
+    expect(next.subtasks[0].status).toBe('completed');
+  });
+
+  it('is a no-op for pending subtask (status unchanged)', () => {
+    const items = [subtask('a', 'pending')];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_SUBTASKS', subtasks: items});
+    const next = tuiReducer(state, {type: 'RETRY_SUBTASK', subtaskId: 'a'});
+    expect(next.subtasks[0].status).toBe('pending');
   });
 });
 

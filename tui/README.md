@@ -92,7 +92,7 @@ When a subtask is selected and you press Enter, a detail panel expands below the
 - Dependencies (IDs)
 - Error summary (for failed subtasks)
 
-Press Enter again or Esc to close the detail.
+Press Enter again to close the detail, or Esc to close detail first then overlay.
 
 ### Input Indicators
 
