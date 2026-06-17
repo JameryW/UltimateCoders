@@ -11,6 +11,7 @@ import { TasksPanel } from "@/components/panels/TasksPanel";
 import { SchedulerPanel } from "@/components/panels/SchedulerPanel";
 import { CircuitBreakerPanel } from "@/components/panels/CircuitBreakerPanel";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
+import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { TaskSubmitForm } from "@/components/forms/TaskSubmitForm";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -42,7 +43,6 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const grpcConnected = grpcState === "connected";
   const {
     connectionState: grpcState, submitTask: grpcSubmitTask, pauseTask: grpcPauseTask,
     resumeTask: grpcResumeTask, healthCheck, connect: grpcConnect, listTasks,
@@ -51,22 +51,26 @@ function App() {
     enabled: true,
   });
 
-  // Loading state — show spinner until initial data arrives
+  // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     dashboard.fetchInitial().finally(() => setLoading(false));
   }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
+  const grpcConnected = grpcState === "connected";
+
   // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch data via gRPC
   useEffect(() => {
     if (!connected && grpcConnected) {
-      listTasks().then((data) => { if (data.available) dashboard.mergeGrpcTasks(data); }).catch(() => {});
+      listTasks().then((data) => {
+        if (data.available) dashboard.mergeGrpcTasks(data);
+      }).catch(() => { /* ignore */ });
       healthCheck().then((h) => dashboard.mergeGrpcHealth(h)).catch(() => {});
     }
   }, [connected, grpcConnected, listTasks, healthCheck, dashboard.mergeGrpcTasks, dashboard.mergeGrpcHealth]);
 
-  // Periodic gRPC health check — poll every 30s when connected
+  // Periodic gRPC health check -- poll every 30s when connected
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
   useEffect(() => {
     if (!grpcConnected) { setGrpcHealthComponents([]); return; }
@@ -181,6 +185,9 @@ function App() {
         </ErrorBoundary>
         <ErrorBoundary name="Task Activity">
           <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Code Search">
+          <div className="md:col-span-2"><SearchPanel /></div>
         </ErrorBoundary>
       </main>
       <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />

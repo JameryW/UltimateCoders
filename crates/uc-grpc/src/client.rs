@@ -2,11 +2,17 @@
 //!
 //! Connects to a remote UltimateCoders gRPC server and delegates
 //! all EngineApi calls over the network.
+//!
+//! Also provides TaskService methods as inherent impl on GrpcEngineClient,
+//! since TaskService is not part of the EngineApi trait.
 
+use std::pin::Pin;
+
+use futures::Stream;
 use uc_types::{
-    async_trait, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse, MemoryEntry,
-    MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
-    RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
+    async_trait, AgentEvent, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse,
+    MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse,
+    MemoryWriteRequest, RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
 };
 
 use crate::conversions::memory_key_to_parts;
@@ -14,7 +20,13 @@ use crate::ultimate_coders::engine_service_client::EngineServiceClient;
 use crate::ultimate_coders::task_service_client::TaskServiceClient;
 use crate::ultimate_coders::*;
 
+/// Stream type returned by `watch_task`.
+type TaskEventStream = Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
+
 /// gRPC client that implements EngineApi by calling a remote server.
+///
+/// Also holds a `TaskServiceClient` for TaskService RPCs (submit_task,
+/// get_task, list_tasks, watch_task, pause_task, resume_task).
 pub struct GrpcEngineClient {
     inner: EngineServiceClient<tonic::transport::Channel>,
     task_client: TaskServiceClient<tonic::transport::Channel>,
@@ -37,6 +49,93 @@ impl GrpcEngineClient {
             inner: EngineServiceClient::new(channel.clone()),
             task_client: TaskServiceClient::new(channel),
         }
+    }
+
+    // ── TaskService methods ──────────────────────────────────
+    //
+    // These are inherent methods on GrpcEngineClient, NOT trait impl methods.
+    // TaskService is a server-side orchestration concern and does not belong
+    // in the EngineApi trait. The PyO3 bridge will need a separate design
+    // (either extending EngineApi or adding a TaskClient trait) to expose
+    // these to Python.
+
+    /// Submit a new task for orchestration.
+    pub async fn submit_task(
+        &self,
+        description: &str,
+        project_id: &str,
+    ) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = SubmitTaskRequest {
+            description: description.to_string(),
+            project_id: project_id.to_string(),
+        };
+        let response = client.submit_task(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    /// Get a task by ID.
+    pub async fn get_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = GetTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.get_task(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    /// List all tasks.
+    pub async fn list_tasks(&self) -> Result<Vec<Task>, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = ListTasksRequest {};
+        let response = client.list_tasks(req).await.map_err(from_status)?;
+        Ok(response
+            .into_inner()
+            .tasks
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Watch a task for real-time events (server-streaming).
+    ///
+    /// Returns a stream of `AgentEvent` items. If `task_id` is empty,
+    /// watches all tasks. Stream errors are silently skipped.
+    pub async fn watch_task(&self, task_id: &str) -> Result<TaskEventStream, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = WatchTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.watch_task(req).await.map_err(from_status)?;
+        let stream = response.into_inner();
+        use futures::StreamExt;
+        let mapped = stream.filter_map(|event_result| async move {
+            match event_result {
+                Ok(proto_event) => Some(AgentEvent::from(proto_event)),
+                Err(_) => None, // Skip stream errors
+            }
+        });
+        Ok(Box::pin(mapped))
+    }
+
+    /// Pause a running task.
+    pub async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = PauseTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.pause_task(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
+    }
+
+    /// Resume a paused task.
+    pub async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = ResumeTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.resume_task(req).await.map_err(from_status)?;
+        Ok(response.into_inner().into())
     }
 }
 
@@ -399,7 +498,8 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error.unwrap_or_else(|| "Unknown task submission error".to_string()),
+                resp.error
+                    .unwrap_or_else(|| "Unknown task submission error".to_string()),
             ));
         }
         // The SubmitTaskResponse doesn't contain a full TaskProto in all cases,
@@ -416,10 +516,7 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         match resp.task {
             Some(task_proto) => Ok(task_proto.into()),
-            None => Err(EngineError::NotFound(format!(
-                "Task {} not found",
-                task_id
-            ))),
+            None => Err(EngineError::NotFound(format!("Task {} not found", task_id))),
         }
     }
 
@@ -444,7 +541,8 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error.unwrap_or_else(|| "Unknown pause error".to_string()),
+                resp.error
+                    .unwrap_or_else(|| "Unknown pause error".to_string()),
             ));
         }
         // Fetch the updated task to return the complete object
@@ -460,7 +558,8 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error.unwrap_or_else(|| "Unknown resume error".to_string()),
+                resp.error
+                    .unwrap_or_else(|| "Unknown resume error".to_string()),
             ));
         }
         // Fetch the updated task to return the complete object

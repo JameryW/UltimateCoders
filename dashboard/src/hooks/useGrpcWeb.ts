@@ -14,7 +14,7 @@ import {
 } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
-/** gRPC-Web server address — empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
+/** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
   import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
@@ -59,7 +59,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
   optsRef.current = opts;
-  // Ref breaks connect↔scheduleReconnect cycle
+  // Ref breaks connect<->scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
 
   const clearRetryTimer = useCallback(() => {

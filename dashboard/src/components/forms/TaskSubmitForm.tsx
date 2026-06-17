@@ -4,6 +4,7 @@ import { showToast } from "@/components/ui/toast";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 
 interface TaskSubmitFormProps {
+  /** If provided, submit via gRPC-Web (Rust server). Falls back to REST (Python) if undefined. */
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
 }
 
@@ -25,12 +26,12 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
     setSubmitting(true);
     try {
       if (grpcSubmitTask) {
-        // gRPC-Web path → Rust server → local_worker
+        // gRPC-Web path -> Rust server -> local_worker
         const resp = await grpcSubmitTask(desc, projectId.trim());
         if (resp.success) {
           showToast(
             resp.subtaskCount > 0
-              ? `Task submitted ${modeLabel}: ${shortId(resp.taskId)} — ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}`
+              ? `Task submitted ${modeLabel}: ${shortId(resp.taskId)} -- ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}`
               : `Task submitted ${modeLabel}: ${shortId(resp.taskId)}`,
             "success",
           );
@@ -40,7 +41,7 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
           showToast(`Submit failed ${modeLabel}: ${resp.status}`, "error");
         }
       } else {
-        // REST path → Python FastAPI
+        // REST path -> Python FastAPI
         const result = await api.submitTask(desc, projectId.trim());
         if (result.success) {
           showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");

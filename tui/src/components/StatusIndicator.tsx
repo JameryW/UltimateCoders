@@ -1,5 +1,5 @@
-import React from 'react';
-import {Box, Text, useAnimation} from 'ink';
+import React, {useState, useEffect} from 'react';
+import {Box, Text} from 'ink';
 
 // spinner chars — standard braille pattern at 80ms
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -35,13 +35,22 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
 }) => {
   const active = isSubmitting || isStreaming;
 
-  // useAnimation shares a single timer across all animated components
-  const {frame, time} = useAnimation({interval: 80, isActive: active});
+  // ponytail: ink 5 lacks useAnimation; use setInterval + useState for frame/time
+  const [frame, setFrame] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!active) { setFrame(0); setElapsed(0); return; }
+    const start = Date.now();
+    const id = setInterval(() => {
+      setFrame(f => f + 1);
+      setElapsed(Date.now() - start);
+    }, 80);
+    return () => clearInterval(id);
+  }, [active]);
 
   if (!active) return null;
 
   const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-  const elapsed = startedAt ? time : 0;
   const elapsedStr = startedAt ? ` ${formatElapsed(elapsed)}` : '';
   const label = isSubmitting ? 'Working' : 'Streaming';
   const cancelHint = isSubmitting ? '  Esc cancel' : '';

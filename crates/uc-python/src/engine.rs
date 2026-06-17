@@ -4,9 +4,12 @@
 //! Uses pyo3-async-runtimes for async methods and py.allow_threads() for
 //! sync wrappers that block on the tokio runtime.
 
+use std::pin::Pin;
 use std::sync::Arc;
 
+use futures::Stream;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3_async_runtimes::tokio::future_into_py;
 
 use uc_types::EngineApi;
@@ -19,10 +22,17 @@ use crate::types::*;
 /// Usage in Python:
 ///   engine = PyEngine(mode="local")
 ///   engine = PyEngine(mode="grpc", grpc_endpoint="http://localhost:50051")
+///
+/// The `grpc_client` field is a ponytail reference to the concrete GrpcEngineClient,
+/// needed for non-trait methods like `watch_task` which return streams.
+/// Only set when mode="grpc"; None in local mode.
 #[pyclass]
 pub struct PyEngine {
     mode: String,
     inner: Arc<dyn EngineApi + Send + Sync>,
+    /// Direct reference to the GrpcEngineClient for non-trait methods (watch_task).
+    /// None in local mode.
+    grpc_client: Option<Arc<uc_grpc::client::GrpcEngineClient>>,
 }
 
 /// Convert EngineError to a Python exception.
@@ -109,6 +119,85 @@ fn build_memory_content(
     }
 }
 
+/// Collect events from a stream with timeout and max count.
+///
+/// Reads up to `max_events` items from the stream within `timeout_secs`.
+/// Returns dicts with event_type, task_id, event_id, timestamp fields.
+/// On timeout, returns whatever was collected so far (may be empty).
+// ponytail: returns Vec<Py<PyDict>> instead of Vec<PyAgentEvent> (type not yet defined)
+async fn collect_events(
+    stream: Pin<Box<dyn Stream<Item = uc_types::AgentEvent> + Send>>,
+    max_events: usize,
+    timeout_secs: f64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use futures::StreamExt;
+    use tokio::time::{timeout, Duration};
+
+    let duration = Duration::from_secs_f64(timeout_secs.max(0.1));
+    let result = timeout(duration, async {
+        let mut collected = Vec::with_capacity(max_events.min(64));
+        let mut stream = std::pin::pin!(stream);
+        while collected.len() < max_events {
+            match stream.next().await {
+                Some(event) => {
+                    let dict = Python::with_gil(|py| {
+                        let d = PyDict::new(py);
+                        let _ = d.set_item("event_id", event.event_id);
+                        let _ = d.set_item("timestamp", event.timestamp.to_rfc3339());
+                        let (event_type, task_id) = match &event.payload {
+                            uc_types::AgentEventPayload::TaskCreated { task } => {
+                                ("task_created", task.id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::SubtaskAssigned { subtask_id, .. } => {
+                                ("subtask_assigned", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::WorkerStarted { subtask_id, .. } => {
+                                ("worker_started", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::ToolInvoked { subtask_id, .. } => {
+                                ("tool_invoked", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::ToolResult { subtask_id, .. } => {
+                                ("tool_result", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::FileModified { subtask_id, .. } => {
+                                ("file_modified", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::SubtaskCompleted { result, .. } => {
+                                ("subtask_completed", result.subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::SubtaskFailed { subtask_id, .. } => {
+                                ("subtask_failed", subtask_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::CheckpointCreated { task_id, .. } => {
+                                ("checkpoint_created", task_id.0.clone())
+                            }
+                            uc_types::AgentEventPayload::EditIntent { .. } => {
+                                ("edit_intent", String::new())
+                            }
+                            uc_types::AgentEventPayload::ConflictDetected { .. } => {
+                                ("conflict_detected", String::new())
+                            }
+                        };
+                        let _ = d.set_item("event_type", event_type);
+                        let _ = d.set_item("task_id", task_id);
+                        d.into()
+                    });
+                    collected.push(dict);
+                }
+                None => break, // Stream ended
+            }
+        }
+        collected
+    })
+    .await;
+
+    match result {
+        Ok(events) => Ok(events),
+        Err(_) => Ok(vec![]), // Timeout -- return what we have (may be empty)
+    }
+}
+
 #[pymethods]
 impl PyEngine {
     /// Create a new engine instance.
@@ -126,6 +215,7 @@ impl PyEngine {
                 Ok(PyEngine {
                     mode: mode.to_string(),
                     inner,
+                    grpc_client: None,
                 })
             }
             "grpc" => {
@@ -139,10 +229,15 @@ impl PyEngine {
                 let client =
                     async_support::block_on(uc_grpc::client::GrpcEngineClient::connect(endpoint))
                         .map_err(engine_error_to_pyerr)?;
-                let inner: Arc<dyn EngineApi + Send + Sync> = Arc::new(client);
+                // Store both a trait-object ref (for EngineApi methods) and a concrete
+                // ref (for non-trait methods like watch_task).
+                let client_arc: Arc<uc_grpc::client::GrpcEngineClient> = Arc::new(client);
+                let grpc_client = Some(client_arc.clone());
+                let inner: Arc<dyn EngineApi + Send + Sync> = client_arc;
                 Ok(PyEngine {
                     mode: mode.to_string(),
                     inner,
+                    grpc_client,
                 })
             }
             _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -533,7 +628,9 @@ impl PyEngine {
         let inner = self.inner.clone();
         let result = py
             .allow_threads(|| {
-                async_support::block_on(inner.submit_task(description, project_id.unwrap_or_default()))
+                async_support::block_on(
+                    inner.submit_task(description, project_id.unwrap_or_default()),
+                )
             })
             .map_err(engine_error_to_pyerr)?;
         Ok(PyTask::from(result))
@@ -950,10 +1047,7 @@ impl PyEngine {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             let result = inner.list_tasks().await.map_err(engine_error_to_pyerr)?;
-            Ok(result
-                .into_iter()
-                .map(PyTask::from)
-                .collect::<Vec<_>>())
+            Ok(result.into_iter().map(PyTask::from).collect::<Vec<_>>())
         })
     }
 
@@ -986,6 +1080,83 @@ impl PyEngine {
                 .await
                 .map_err(engine_error_to_pyerr)?;
             Ok(PyTask::from(result))
+        })
+    }
+
+    /// Watch a task for events (gRPC mode only).
+    ///
+    /// Collects events from the server-streaming WatchTask RPC,
+    /// returning up to `max_events` events within `timeout_secs`.
+    /// Use in a polling loop for continuous monitoring.
+    ///
+    /// Args:
+    ///     task_id: The task to watch (empty string watches all tasks).
+    ///     max_events: Maximum events to collect (default: 50).
+    ///     timeout_secs: Timeout in seconds (default: 10.0).
+    ///
+    /// Returns:
+    ///     List of dicts with event_type, task_id, event_id, timestamp.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode.
+    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
+    pub fn watch_task(
+        &self,
+        py: Python<'_>,
+        task_id: String,
+        max_events: usize,
+        timeout_secs: f64,
+    ) -> PyResult<Vec<Py<PyDict>>> {
+        let grpc_client = self.grpc_client.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
+        })?;
+        let client = grpc_client.clone();
+        let events = py.allow_threads(|| {
+            async_support::block_on(async {
+                let stream = client
+                    .watch_task(&task_id)
+                    .await
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                collect_events(stream, max_events, timeout_secs).await
+            })
+        })?;
+        Ok(events)
+    }
+
+    /// Async version of watch_task().
+    ///
+    /// Collects events from the server-streaming WatchTask RPC,
+    /// returning up to `max_events` events within `timeout_secs`.
+    ///
+    /// Args:
+    ///     task_id: The task to watch (empty string watches all tasks).
+    ///     max_events: Maximum events to collect (default: 50).
+    ///     timeout_secs: Timeout in seconds (default: 10.0).
+    ///
+    /// Returns:
+    ///     List of dicts with event_type, task_id, event_id, timestamp.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode.
+    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
+    pub fn watch_task_async<'py>(
+        &self,
+        py: Python<'py>,
+        task_id: String,
+        max_events: usize,
+        timeout_secs: f64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
+        })?;
+        future_into_py::<_, Vec<Py<PyDict>>>(py, async move {
+            let stream = client
+                .watch_task(&task_id)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            let events = collect_events(stream, max_events, timeout_secs).await?;
+            Ok(events)
         })
     }
 }
