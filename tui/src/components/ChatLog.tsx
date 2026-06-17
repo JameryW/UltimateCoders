@@ -57,6 +57,26 @@ function formatTime(): string {
   return now.toTimeString().slice(0, 5);
 }
 
+/** Parse HH:MM timestamp and return minutes since midnight. Returns -1 on parse failure. */
+function parseHHMM(ts: string): number {
+  const parts = ts.split(':');
+  if (parts.length !== 2) return -1;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return -1;
+  return h * 60 + m;
+}
+
+/** Minutes between two HH:MM timestamps. Handles midnight wraparound. */
+function timeDiffMinutes(earlier: string, later: string): number {
+  const a = parseHHMM(earlier);
+  const b = parseHHMM(later);
+  if (a < 0 || b < 0) return 0;
+  const diff = b - a;
+  // Handle midnight wraparound (e.g., 23:55 → 00:05)
+  return diff < 0 ? diff + 24 * 60 : diff;
+}
+
 export function createUserMessage(text: string): ChatMessage {
   return {
     id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -250,9 +270,19 @@ const ChatLog: React.FC<ChatLogProps> = ({
       {followIndicator && <Text color="yellow">{followIndicator}</Text>}
       {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
       {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
-      {visibleMessages.map((msg) => (
-        <ChatMessageItem key={msg.id} msg={msg} expandAll={expandAll} terminalWidth={terminalWidth} />
-      ))}
+      {visibleMessages.map((msg, i) => {
+        // Time separator when >5min gap between messages
+        const prevMsg = i > 0 ? visibleMessages[i - 1] : null;
+        const showSeparator = prevMsg && timeDiffMinutes(prevMsg.timestamp, msg.timestamp) >= 5;
+        return (
+          <React.Fragment key={msg.id}>
+            {showSeparator && (
+              <Text dimColor>{`── ${msg.timestamp} ──`}</Text>
+            )}
+            <ChatMessageItem msg={msg} expandAll={expandAll} terminalWidth={terminalWidth} />
+          </React.Fragment>
+        );
+      })}
     </Box>
   );
 };
