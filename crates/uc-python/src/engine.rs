@@ -628,9 +628,7 @@ impl PyEngine {
         let inner = self.inner.clone();
         let result = py
             .allow_threads(|| {
-                async_support::block_on(
-                    inner.submit_task(description, project_id.unwrap_or_default()),
-                )
+                async_support::block_on(inner.submit_task(description, project_id.unwrap_or_default()))
             })
             .map_err(engine_error_to_pyerr)?;
         Ok(PyTask::from(result))
