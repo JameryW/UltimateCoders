@@ -14,6 +14,11 @@ use crate::memory::{
 };
 use crate::search::{SearchQuery, SearchResult};
 use async_trait::async_trait;
+use futures_core::Stream;
+use std::pin::Pin;
+
+/// Type alias for the stream returned by `search_stream`.
+pub type SearchStream = Pin<Box<dyn Stream<Item = SearchResult> + Send>>;
 
 /// The core engine API — all operations the system supports.
 ///
@@ -63,15 +68,26 @@ pub trait EngineApi: Send + Sync {
     /// Check engine health.
     async fn health(&self) -> Result<HealthStatus, EngineError>;
 
-    // ── Future Extension Points ────────────────────────────────
-    // TODO(future): Batch memory write for high-throughput agent coordination
-    // async fn batch_write_memory(&self, requests: Vec<MemoryWriteRequest>) -> Result<Vec<MemoryEntry>, EngineError>;
+    // ── Batch / List / Stream ────────────────────────────────
 
-    // TODO(future): List all indexed repositories
-    // async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError>;
+    /// Batch memory write for high-throughput agent coordination.
+    ///
+    /// Writes multiple memory entries in a single call. Returns the
+    /// written entries in order, or the first error encountered.
+    async fn batch_write_memory(
+        &self,
+        requests: Vec<MemoryWriteRequest>,
+    ) -> Result<Vec<MemoryEntry>, EngineError>;
 
-    // TODO(future): Stream search results for large result sets
-    // async fn search_stream(&self, query: SearchQuery) -> Result<tokio_stream::BoxStream<'static, SearchResult>, EngineError>;
+    /// List all indexed repositories.
+    async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError>;
+
+    /// Stream search results for large result sets.
+    ///
+    /// The default implementation wraps a single `search()` call in
+    /// a one-element stream. Implementors may override this to
+    /// provide true streaming (e.g., server-side cursor).
+    async fn search_stream(&self, query: SearchQuery) -> Result<SearchStream, EngineError>;
 }
 
 /// Index state returned by get_index_state.

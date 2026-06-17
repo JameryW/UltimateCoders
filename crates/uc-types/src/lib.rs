@@ -17,7 +17,7 @@ pub use agent::{
     Task, TaskId, TaskStatus, WorkerId, WorkerInfo,
 };
 pub use async_trait::async_trait;
-pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState};
+pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState, SearchStream};
 pub use error::EngineError;
 pub use index::{
     ChunkType, CodeChunk, IndexHealth, IndexRequest, IndexResponse, IndexState, RepoSpec,

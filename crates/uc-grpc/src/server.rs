@@ -1287,6 +1287,84 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
 
         Ok(Response::new(result.into()))
     }
+
+    async fn batch_write_memory(
+        &self,
+        request: Request<BatchWriteMemoryRequest>,
+    ) -> Result<Response<BatchWriteMemoryResponse>, Status> {
+        let proto = request.into_inner();
+        let write_requests: Vec<uc_types::MemoryWriteRequest> = proto
+            .requests
+            .into_iter()
+            .map(|req| {
+                let key_scope = req.key_scope.as_str();
+                if !matches!(key_scope, "task" | "project" | "global") {
+                    return Err(Status::invalid_argument(format!(
+                        "Invalid key_scope: '{}'. Must be 'task', 'project', or 'global'",
+                        key_scope
+                    )));
+                }
+                if key_scope == "task" && req.task_id.is_empty() {
+                    return Err(Status::invalid_argument(
+                        "task_id is required for task-scoped memory",
+                    ));
+                }
+                if key_scope == "project" && req.project_id.is_empty() {
+                    return Err(Status::invalid_argument(
+                        "project_id is required for project-scoped memory",
+                    ));
+                }
+                Ok(req.into())
+            })
+            .collect::<Result<Vec<_>, Status>>()?;
+        let entries = self
+            .inner
+            .engine
+            .batch_write_memory(write_requests)
+            .await
+            .map_err(to_status)?;
+        let response = BatchWriteMemoryResponse {
+            entries: entries.into_iter().map(Into::into).collect(),
+        };
+        Ok(Response::new(response))
+    }
+
+    async fn list_repos(
+        &self,
+        _request: Request<ListReposRequest>,
+    ) -> Result<Response<ListReposResponse>, Status> {
+        let repos = self.inner.engine.list_repos().await.map_err(to_status)?;
+        let response = ListReposResponse {
+            repos: repos.into_iter().map(Into::into).collect(),
+        };
+        Ok(Response::new(response))
+    }
+
+    type SearchStreamStream = std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<SearchResultItem, Status>> + Send>,
+    >;
+
+    async fn search_stream(
+        &self,
+        request: Request<SearchStreamRequest>,
+    ) -> Result<Response<Self::SearchStreamStream>, Status> {
+        let proto = request.into_inner();
+        let query: uc_types::SearchQuery = proto.into();
+        let stream = self
+            .inner
+            .engine
+            .search_stream(query)
+            .await
+            .map_err(to_status)?;
+        // Flatten: each SearchResult contains multiple items, but the
+        // proto stream sends one SearchResultItem at a time.
+        use futures::StreamExt;
+        let flattened = stream.flat_map(|result| {
+            let items: Vec<SearchResultItem> = result.items.into_iter().map(Into::into).collect();
+            tokio_stream::iter(items.into_iter().map(Ok::<_, Status>))
+        });
+        Ok(Response::new(Box::pin(flattened)))
+    }
 }
 
 #[tonic::async_trait]
