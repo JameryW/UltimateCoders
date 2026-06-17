@@ -679,48 +679,59 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
     fn from(event: uc_types::AgentEvent) -> Self {
         use uc_types::AgentEventPayload::*;
 
+        // Extract event_type, task_id, subtask_id from the payload variant.
         let (event_type, task_id, subtask_id) = match &event.payload {
-            TaskCreated { task } => ("task_created".to_string(), task.id.0.clone(), None),
-            SubtaskAssigned { subtask_id, .. } => (
-                "subtask_assigned".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
+            TaskCreated { task } => (
+                "task_created".to_string(),
+                task.id.0.clone(),
+                None,
             ),
-            WorkerStarted { subtask_id, .. } => (
-                "worker_started".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
-            ),
-            ToolInvoked { subtask_id, .. } => (
-                "tool_invoked".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
-            ),
-            ToolResult { subtask_id, .. } => (
-                "tool_result".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
-            ),
-            FileModified { subtask_id, .. } => (
-                "file_modified".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
-            ),
+            SubtaskAssigned {
+                subtask_id,
+                worker_id: _,
+            } => ("subtask_assigned".to_string(), String::new(), Some(subtask_id.0.clone())),
+            WorkerStarted {
+                subtask_id,
+                worker_id: _,
+            } => ("worker_started".to_string(), String::new(), Some(subtask_id.0.clone())),
+            ToolInvoked {
+                subtask_id,
+                tool_name: _,
+                tool_input: _,
+            } => ("tool_invoked".to_string(), String::new(), Some(subtask_id.0.clone())),
+            ToolResult {
+                subtask_id,
+                tool_output: _,
+                exit_code: _,
+            } => ("tool_result".to_string(), String::new(), Some(subtask_id.0.clone())),
+            FileModified {
+                subtask_id,
+                file_path: _,
+                diff: _,
+            } => ("file_modified".to_string(), String::new(), Some(subtask_id.0.clone())),
             SubtaskCompleted { result } => (
                 "subtask_completed".to_string(),
                 String::new(),
                 Some(result.subtask_id.0.clone()),
             ),
-            SubtaskFailed { subtask_id, .. } => (
-                "subtask_failed".to_string(),
-                String::new(),
-                Some(subtask_id.0.clone()),
-            ),
-            CheckpointCreated { task_id, .. } => {
-                ("checkpoint_created".to_string(), task_id.0.clone(), None)
-            }
-            EditIntent { .. } => ("edit_intent".to_string(), String::new(), None),
-            ConflictDetected { .. } => ("conflict_detected".to_string(), String::new(), None),
+            SubtaskFailed {
+                subtask_id,
+                error: _,
+                recoverable: _,
+            } => ("subtask_failed".to_string(), String::new(), Some(subtask_id.0.clone())),
+            CheckpointCreated {
+                task_id,
+                snapshot_id: _,
+            } => ("checkpoint_created".to_string(), task_id.0.clone(), None),
+            EditIntent {
+                worker_id: _,
+                file_path: _,
+                regions: _,
+            } => ("edit_intent".to_string(), String::new(), None),
+            ConflictDetected {
+                file_path: _,
+                workers: _,
+            } => ("conflict_detected".to_string(), String::new(), None),
         };
 
         Self {

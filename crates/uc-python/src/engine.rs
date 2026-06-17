@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use futures::Stream;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use pyo3_async_runtimes::tokio::future_into_py;
 
 use uc_types::EngineApi;
@@ -122,14 +121,12 @@ fn build_memory_content(
 /// Collect events from a stream with timeout and max count.
 ///
 /// Reads up to `max_events` items from the stream within `timeout_secs`.
-/// Returns dicts with event_type, task_id, event_id, timestamp fields.
 /// On timeout, returns whatever was collected so far (may be empty).
-// ponytail: returns Vec<Py<PyDict>> instead of Vec<PyAgentEvent> (type not yet defined)
 async fn collect_events(
     stream: Pin<Box<dyn Stream<Item = uc_types::AgentEvent> + Send>>,
     max_events: usize,
     timeout_secs: f64,
-) -> PyResult<Vec<Py<PyDict>>> {
+) -> PyResult<Vec<PyAgentEvent>> {
     use futures::StreamExt;
     use tokio::time::{timeout, Duration};
 
@@ -139,52 +136,7 @@ async fn collect_events(
         let mut stream = std::pin::pin!(stream);
         while collected.len() < max_events {
             match stream.next().await {
-                Some(event) => {
-                    let dict = Python::with_gil(|py| {
-                        let d = PyDict::new(py);
-                        let _ = d.set_item("event_id", event.event_id);
-                        let _ = d.set_item("timestamp", event.timestamp.to_rfc3339());
-                        let (event_type, task_id) = match &event.payload {
-                            uc_types::AgentEventPayload::TaskCreated { task } => {
-                                ("task_created", task.id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::SubtaskAssigned { subtask_id, .. } => {
-                                ("subtask_assigned", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::WorkerStarted { subtask_id, .. } => {
-                                ("worker_started", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::ToolInvoked { subtask_id, .. } => {
-                                ("tool_invoked", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::ToolResult { subtask_id, .. } => {
-                                ("tool_result", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::FileModified { subtask_id, .. } => {
-                                ("file_modified", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::SubtaskCompleted { result, .. } => {
-                                ("subtask_completed", result.subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::SubtaskFailed { subtask_id, .. } => {
-                                ("subtask_failed", subtask_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::CheckpointCreated { task_id, .. } => {
-                                ("checkpoint_created", task_id.0.clone())
-                            }
-                            uc_types::AgentEventPayload::EditIntent { .. } => {
-                                ("edit_intent", String::new())
-                            }
-                            uc_types::AgentEventPayload::ConflictDetected { .. } => {
-                                ("conflict_detected", String::new())
-                            }
-                        };
-                        let _ = d.set_item("event_type", event_type);
-                        let _ = d.set_item("task_id", task_id);
-                        d.into()
-                    });
-                    collected.push(dict);
-                }
+                Some(event) => collected.push(PyAgentEvent::from(event)),
                 None => break, // Stream ended
             }
         }
@@ -628,7 +580,9 @@ impl PyEngine {
         let inner = self.inner.clone();
         let result = py
             .allow_threads(|| {
-                async_support::block_on(inner.submit_task(description, project_id.unwrap_or_default()))
+                async_support::block_on(
+                    inner.submit_task(description, project_id.unwrap_or_default()),
+                )
             })
             .map_err(engine_error_to_pyerr)?;
         Ok(PyTask::from(result))
@@ -668,6 +622,45 @@ impl PyEngine {
             .allow_threads(|| async_support::block_on(inner.resume_task(&task_id)))
             .map_err(engine_error_to_pyerr)?;
         Ok(PyTask::from(result))
+    }
+
+    /// Watch a task for events (gRPC mode only).
+    ///
+    /// Collects events from the server-streaming WatchTask RPC,
+    /// returning up to `max_events` events within `timeout_secs`.
+    /// Use in a polling loop for continuous monitoring.
+    ///
+    /// Args:
+    ///     task_id: The task to watch (empty string watches all tasks).
+    ///     max_events: Maximum events to collect (default: 50).
+    ///     timeout_secs: Timeout in seconds (default: 10.0).
+    ///
+    /// Returns:
+    ///     List of PyAgentEvent objects.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode.
+    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
+    pub fn watch_task(
+        &self,
+        py: Python<'_>,
+        task_id: String,
+        max_events: usize,
+        timeout_secs: f64,
+    ) -> PyResult<Vec<PyAgentEvent>> {
+        let grpc_client = self.grpc_client.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
+        })?;
+        let client = grpc_client.clone();
+        let events = py.allow_threads(|| {
+            async_support::block_on(async {
+                let stream = client.watch_task(&task_id).await.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(e.to_string())
+                })?;
+                collect_events(stream, max_events, timeout_secs).await
+            })
+        })?;
+        Ok(events)
     }
 
     // ── Async methods ─────────────────────────────────────────
@@ -1081,45 +1074,6 @@ impl PyEngine {
         })
     }
 
-    /// Watch a task for events (gRPC mode only).
-    ///
-    /// Collects events from the server-streaming WatchTask RPC,
-    /// returning up to `max_events` events within `timeout_secs`.
-    /// Use in a polling loop for continuous monitoring.
-    ///
-    /// Args:
-    ///     task_id: The task to watch (empty string watches all tasks).
-    ///     max_events: Maximum events to collect (default: 50).
-    ///     timeout_secs: Timeout in seconds (default: 10.0).
-    ///
-    /// Returns:
-    ///     List of dicts with event_type, task_id, event_id, timestamp.
-    ///
-    /// Raises:
-    ///     RuntimeError: If not in gRPC mode.
-    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
-    pub fn watch_task(
-        &self,
-        py: Python<'_>,
-        task_id: String,
-        max_events: usize,
-        timeout_secs: f64,
-    ) -> PyResult<Vec<Py<PyDict>>> {
-        let grpc_client = self.grpc_client.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
-        })?;
-        let client = grpc_client.clone();
-        let events = py.allow_threads(|| {
-            async_support::block_on(async {
-                let stream = client
-                    .watch_task(&task_id)
-                    .await
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                collect_events(stream, max_events, timeout_secs).await
-            })
-        })?;
-        Ok(events)
-    }
 
     /// Async version of watch_task().
     ///
@@ -1132,7 +1086,7 @@ impl PyEngine {
     ///     timeout_secs: Timeout in seconds (default: 10.0).
     ///
     /// Returns:
-    ///     List of dicts with event_type, task_id, event_id, timestamp.
+    ///     List of PyAgentEvent objects.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode.
@@ -1148,7 +1102,7 @@ impl PyEngine {
         let client = grpc_client.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
         })?;
-        future_into_py::<_, Vec<Py<PyDict>>>(py, async move {
+        future_into_py::<_, Vec<PyAgentEvent>>(py, async move {
             let stream = client
                 .watch_task(&task_id)
                 .await
