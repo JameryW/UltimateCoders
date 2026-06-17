@@ -54,6 +54,9 @@ import {getSymbols} from '../symbols.js';
 import {getCommandsForArea} from '../keymap.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
 import {mapSubtaskStatus} from '../grpc/types.js';
+import {parseCommand, isCommandInput, formatHelpText, matchCommands, COMMANDS} from '../commands.js';
+import type {SlashCommand} from '../commands.js';
+import {buildTaskListText} from '../task-list-utils.js';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -95,6 +98,7 @@ const App: React.FC = () => {
   const {
     connectionState,
     submitTask: grpcSubmitTask,
+    listTasks: grpcListTasks,
     reconnect,
     pauseTask,
     resumeTask,
@@ -302,6 +306,22 @@ const App: React.FC = () => {
   const handleSubmit = useCallback(
     async (description: string) => {
       if (state.isSubmitting) return;
+
+      // ── Slash command interception ──
+      if (isCommandInput(description)) {
+        const parsed = parseCommand(description);
+        if (!parsed) {
+          addMessage(createSystemMessage(`Unknown command: ${description}`, {color: 'red'}));
+          return;
+        }
+        dispatch({type: 'ADD_INPUT_HISTORY', text: description});
+        handleSlashCommand(parsed.command, parsed.args, {
+          addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit,
+          listTasks: grpcListTasks, activeTaskId: state.activeTaskId,
+          subtasks: state.subtasks, isStreaming,
+        });
+        return;
+      }
 
       addMessage(createUserMessage(description));
       dispatch({type: 'ADD_INPUT_HISTORY', text: description});
@@ -649,12 +669,26 @@ const App: React.FC = () => {
         unreadCount={state.unreadCount}
         onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
         expandAll={state.expandAllMessages}
+        terminalWidth={terminalWidth}
       />
 
       {/* ── Separator ────────────────────────────────── */}
       <Box>
         <Text color="gray">{S.divider.repeat(Math.max(1, terminalWidth - 2))}</Text>
       </Box>
+
+      {/* ── Command suggestion panel (between separator and input) ── */}
+      {state.commandSuggestions && state.commandSuggestions.length > 0 && (
+        <Box paddingX={1}>
+          <Text dimColor>{'Commands: '}</Text>
+          {state.commandSuggestions.map((cmd, i) => (
+            <React.Fragment key={cmd.name}>
+              <Text color="cyan">{`/${cmd.name}`}</Text>
+              <Text dimColor>{i < state.commandSuggestions!.length - 1 ? '  ' : ''}</Text>
+            </React.Fragment>
+          ))}
+        </Box>
+      )}
 
       {/* ── Status indicator (spinner + elapsed) ────── */}
       <StatusIndicator
@@ -672,6 +706,17 @@ const App: React.FC = () => {
         historyIndex={state.historyIndex}
         onHistoryIndexChange={(index: number) => dispatch({type: 'SET_HISTORY_INDEX', index})}
         isOffline={connectionState !== 'connected'}
+        commandSuggestions={state.commandSuggestions}
+        onValueChange={(val: string) => {
+          const trimmed = val.trimStart();
+          if (trimmed.startsWith('/')) {
+            const prefix = trimmed.slice(1).split(' ')[0];
+            const matched = matchCommands(prefix);
+            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: matched.length < COMMANDS.length ? matched : null});
+          } else if (state.commandSuggestions) {
+            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: null});
+          }
+        }}
       />
 
       {/* ── Status bar ──────────────────────────────── */}
@@ -689,6 +734,92 @@ const App: React.FC = () => {
     </Box>
   );
 };
+
+// ── Slash Command Handler ────────────────────────────────────
+
+function handleSlashCommand(
+  command: SlashCommand,
+  args: string,
+  deps: {
+    addMessage: (msg: ChatMessage) => void;
+    dispatch: React.Dispatch<TuiAction>;
+    connectionState: string;
+    client: import('../grpc/client.js').TaskServiceClient | null;
+    serverAddr: string;
+    reconnect: () => void;
+    exit: () => void;
+    listTasks: (req: {}) => Promise<import('../grpc/types.js').ListTasksResponse | null>;
+    activeTaskId: string | null;
+    subtasks: SubtaskItem[];
+    isStreaming: boolean;
+  },
+): void {
+  const {addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit, listTasks, activeTaskId, subtasks, isStreaming} = deps;
+
+  switch (command.name) {
+    case 'help':
+      addMessage(createSystemMessage(formatHelpText(), {eventType: 'command_result'}));
+      break;
+    case 'clear':
+      dispatch({type: 'CLEAR_LOG'});
+      break;
+    case 'reconnect':
+      addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
+      reconnect();
+      break;
+    case 'quit':
+      exit();
+      break;
+    case 'status': {
+      const lines: string[] = [];
+      lines.push(`**Connection:** ${connectionState === 'connected' ? '● Connected' : connectionState === 'connecting' ? '◌ Connecting' : '○ Disconnected'}`);
+      lines.push(`**Server:** ${serverAddr}`);
+      if (activeTaskId) {
+        lines.push(`**Active task:** ${activeTaskId.slice(0, 8)}...`);
+        const completed = subtasks.filter((s) => s.status === 'completed').length;
+        lines.push(`**Progress:** ${completed}/${subtasks.length}`);
+      } else {
+        lines.push(`**Active task:** none`);
+      }
+      lines.push(`**Streaming:** ${isStreaming ? 'yes' : 'no'}`);
+      addMessage(createSystemMessage(lines.join('\n'), {eventType: 'command_result'}));
+      break;
+    }
+    case 'tasks': {
+      if (connectionState !== 'connected' || !client) {
+        addMessage(createSystemMessage('Not connected. Use /reconnect first.', {color: 'yellow'}));
+        break;
+      }
+      dispatch({type: 'SET_TASK_LIST_LOADING', loading: true});
+      addMessage(createSystemMessage('Fetching task list...', {dim: true}));
+      listTasks({}).then((response) => {
+        dispatch({type: 'SET_TASK_LIST_LOADING', loading: false});
+        if (response && response.available) {
+          dispatch({type: 'SET_TASK_LIST', tasks: response.tasks});
+          const taskLines = buildTaskListText(response.tasks);
+          addMessage(createSystemMessage(taskLines.join('\n'), {eventType: 'task_list'}));
+        } else if (response && !response.available) {
+          addMessage(createSystemMessage('Task store not available.', {color: 'yellow'}));
+        } else {
+          addMessage(createSystemMessage('Failed to fetch task list.', {color: 'red'}));
+        }
+      });
+      break;
+    }
+    case 'task': {
+      if (!args) {
+        addMessage(createSystemMessage('Usage: /task <task-id>', {color: 'yellow'}));
+        break;
+      }
+      dispatch({type: 'SET_ACTIVE_TASK', taskId: args});
+      dispatch({type: 'CLEAR_TASK'});
+      addMessage(createSystemMessage(`Switched to task: ${args.slice(0, 8)}...`, {color: 'cyan'}));
+      break;
+    }
+    default:
+      addMessage(createSystemMessage(`Unknown command: /${command.name}`, {color: 'red'}));
+  }
+}
 
 // ── Offline Simulation ──────────────────────────────────────
 

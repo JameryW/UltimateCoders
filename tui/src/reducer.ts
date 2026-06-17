@@ -20,6 +20,8 @@
 import type {ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem, SubtaskStatusType} from './components/SubtaskTree.js';
 import type {SymbolMode} from './symbols.js';
+import type {SlashCommand} from './commands.js';
+import type {TaskProto} from './grpc/types.js';
 
 // ── Focus & Layout Types ────────────────────────────────────
 
@@ -129,6 +131,15 @@ export interface TuiState {
 
   /** Timestamp (ms) when the current task submission started. Null when idle. */
   startedAt: number | null;
+
+  /** Task list from /tasks command. */
+  taskList: TaskProto[];
+
+  /** Whether a listTasks request is in progress. */
+  taskListLoading: boolean;
+
+  /** Currently matching slash commands for autocomplete (null = no suggestion). */
+  commandSuggestions: SlashCommand[] | null;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -156,6 +167,9 @@ export const INITIAL_TUI_STATE: TuiState = {
   subtaskDetailOpen: false,
   expandAllMessages: false,
   startedAt: null,
+  taskList: [],
+  taskListLoading: false,
+  commandSuggestions: null,
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -200,7 +214,12 @@ export type TuiAction =
   | {type: 'TOGGLE_HELP_OVERLAY'}
   | {type: 'TOGGLE_EXPAND_ALL_MESSAGES'}
   // ── Subtask retry ──
-  | {type: 'RETRY_SUBTASK'; subtaskId: string};
+  | {type: 'RETRY_SUBTASK'; subtaskId: string}
+  // ── Task list ──
+  | {type: 'SET_TASK_LIST'; tasks: TaskProto[]}
+  | {type: 'SET_TASK_LIST_LOADING'; loading: boolean}
+  // ── Command suggestions ──
+  | {type: 'SET_COMMAND_SUGGESTIONS'; suggestions: SlashCommand[] | null};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -448,6 +467,19 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         progress: {completed, total: subtasks.length},
       };
     }
+
+    // ── Task list ─────────────────────────────────────────────
+
+    case 'SET_TASK_LIST':
+      return {...state, taskList: action.tasks, taskListLoading: false};
+
+    case 'SET_TASK_LIST_LOADING':
+      return {...state, taskListLoading: action.loading};
+
+    // ── Command suggestions ───────────────────────────────────
+
+    case 'SET_COMMAND_SUGGESTIONS':
+      return {...state, commandSuggestions: action.suggestions};
 
     default:
       return state;

@@ -24,20 +24,19 @@ import React, {useState, useCallback, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 import CjkTextInput from './CjkTextInput.js';
 import useCursor from '../hooks/useCursor.js';
+import type {SlashCommand} from '../commands.js';
 
 export interface TaskInputProps {
   onSubmit: (value: string) => void;
   isFocused?: boolean;
-  /** Whether a task submission is in progress (disables Enter). */
   isSubmitting?: boolean;
-  /** Previously submitted task descriptions (most recent first). */
   inputHistory?: string[];
-  /** Current index into inputHistory (-1 = not browsing). */
   historyIndex?: number;
-  /** Called when the history index changes (Up/Down navigation). */
   onHistoryIndexChange?: (index: number) => void;
-  /** Whether gRPC is connected (affects placeholder text). */
   isOffline?: boolean;
+  commandSuggestions?: SlashCommand[] | null;
+  /** Called when the input value changes (for slash command detection). */
+  onValueChange?: (value: string) => void;
 }
 
 const TaskInput: React.FC<TaskInputProps> = ({
@@ -48,6 +47,8 @@ const TaskInput: React.FC<TaskInputProps> = ({
   historyIndex = -1,
   onHistoryIndexChange,
   isOffline = false,
+  commandSuggestions,
+  onValueChange,
 }) => {
   const [value, setValue] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
@@ -98,8 +99,9 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const handleChange = useCallback(
     (newValue: string) => {
       setValue(newValue);
+      onValueChange?.(newValue);
     },
-    [],
+    [onValueChange],
   );
 
   // Called by CjkTextInput whenever the cursor moves (including arrow keys)
@@ -175,6 +177,9 @@ const TaskInput: React.FC<TaskInputProps> = ({
       )}
       {historyIndex >= 0 && !isSubmitting && (
         <Text dimColor>{` history ${historyIndex + 1}/${inputHistory.length}`}</Text>
+      )}
+      {commandSuggestions && commandSuggestions.length > 0 && !isSubmitting && (
+        <Text dimColor>{` ${commandSuggestions.map((c) => `/${c.name}`).join(' ')}`}</Text>
       )}
     </Box>
   );

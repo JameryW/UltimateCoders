@@ -7,9 +7,9 @@ import { create } from "@bufbuild/protobuf";
 import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
-/** gRPC-Web server address — defaults to same-origin (tonic-web on :50051). */
+/** gRPC-Web server address — empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
-  import.meta.env.VITE_GRPC_WEB_ADDR ?? "http://localhost:50051";
+  import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
 /** Exponential backoff intervals (ms) for reconnection. */
 const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000];
@@ -44,12 +44,29 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
   optsRef.current = opts;
+  // ponytail: ref breaks connect↔scheduleReconnect cycle
+  const connectRef = useRef<() => void>(() => {});
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current !== null) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
     }
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (retryCountRef.current >= MAX_RETRY) {
+      console.warn("[gRPC-Web] Max retries reached, giving up");
+      return;
+    }
+    const delay = RETRY_INTERVALS[retryCountRef.current] ?? 16000;
+    retryCountRef.current += 1;
+    console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current}/${MAX_RETRY})`);
+    retryTimerRef.current = setTimeout(() => {
+      if (optsRef.current.enabled) {
+        connectRef.current();
+      }
+    }, delay);
   }, []);
 
   const connect = useCallback(() => {
@@ -97,22 +114,10 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         scheduleReconnect();
       }
     })();
-  }, [clearRetryTimer]);
+  }, [clearRetryTimer, scheduleReconnect]);
 
-  const scheduleReconnect = useCallback(() => {
-    if (retryCountRef.current >= MAX_RETRY) {
-      console.warn("[gRPC-Web] Max retries reached, giving up");
-      return;
-    }
-    const delay = RETRY_INTERVALS[retryCountRef.current] ?? 16000;
-    retryCountRef.current += 1;
-    console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current}/${MAX_RETRY})`);
-    retryTimerRef.current = setTimeout(() => {
-      if (optsRef.current.enabled) {
-        connect();
-      }
-    }, delay);
-  }, [connect]);
+  // Keep ref in sync so scheduleReconnect always calls the latest connect
+  connectRef.current = connect;
 
   const disconnect = useCallback(() => {
     abortRef.current?.abort();
@@ -142,7 +147,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
       status: resp.status,
       version: resp.version,
       uptimeSeconds: resp.uptimeSeconds,
-      components: resp.components.map((c) => ({
+      components: resp.components.map((c: { name: string; status: string; details?: string }) => ({
         name: c.name,
         status: c.status,
         details: c.details ?? undefined,

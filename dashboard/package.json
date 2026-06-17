@@ -11,6 +11,9 @@
     "generate": "cd .. && PATH=dashboard/node_modules/.bin:$PATH buf generate"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.12.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-web": "^2.1.2",
     "dompurify": "^3.4.10",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

@@ -590,3 +590,41 @@ describe('tuiReducer: SET_LAST_ERROR', () => {
     expect(INITIAL_TUI_STATE.lastError).toBeNull();
   });
 });
+
+// ── Task List & Command Suggestions ──────────────────────────
+
+describe('task list and command suggestions', () => {
+  it('SET_TASK_LIST stores tasks', () => {
+    const tasks = [{id: 't1', description: 'test', status: 'InProgress', projectId: 'default', subtaskCount: 0, createdAt: 0, updatedAt: 0, subtasks: []}];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_TASK_LIST', tasks: tasks as any});
+    expect(state.taskList).toHaveLength(1);
+    expect(state.taskListLoading).toBe(false);
+  });
+
+  it('SET_TASK_LIST_LOADING sets loading flag', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_TASK_LIST_LOADING', loading: true});
+    expect(state.taskListLoading).toBe(true);
+  });
+
+  it('initial state has empty taskList', () => {
+    expect(INITIAL_TUI_STATE.taskList).toEqual([]);
+    expect(INITIAL_TUI_STATE.taskListLoading).toBe(false);
+  });
+
+  it('SET_COMMAND_SUGGESTIONS stores suggestions', () => {
+    const suggestions = [{name: 'help', description: 'Show help', usage: '/help', hasArgs: false}];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_COMMAND_SUGGESTIONS', suggestions: suggestions as any});
+    expect(state.commandSuggestions).toHaveLength(1);
+  });
+
+  it('SET_COMMAND_SUGGESTIONS clears with null', () => {
+    const suggestions = [{name: 'help', description: 'Show help', usage: '/help', hasArgs: false}];
+    let state = tuiReducer(INITIAL_TUI_STATE, {type: 'SET_COMMAND_SUGGESTIONS', suggestions: suggestions as any});
+    state = tuiReducer(state, {type: 'SET_COMMAND_SUGGESTIONS', suggestions: null});
+    expect(state.commandSuggestions).toBeNull();
+  });
+
+  it('initial state has null commandSuggestions', () => {
+    expect(INITIAL_TUI_STATE.commandSuggestions).toBeNull();
+  });
+});
