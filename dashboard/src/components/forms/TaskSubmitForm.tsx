@@ -2,10 +2,18 @@ import { useState } from "react";
 import * as api from "@/api/endpoints";
 import { showToast } from "@/components/ui/toast";
 
-export function TaskSubmitForm() {
+interface TaskSubmitFormProps {
+  /** If provided, submit via gRPC-Web (Rust server). Falls back to REST (Python) if undefined. */
+  grpcSubmitTask?: (description: string, projectId: string) => Promise<{ success: boolean; taskId: string; status: string }>;
+}
+
+export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const mode = grpcSubmitTask ? "gRPC" : "REST";
+  const modeLabel = grpcSubmitTask ? "via gRPC-Web" : "via REST";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,16 +24,29 @@ export function TaskSubmitForm() {
     }
     setSubmitting(true);
     try {
-      const result = await api.submitTask(desc, projectId.trim());
-      if (result.success) {
-        showToast(`Task submitted: ${shortId(result.task_id ?? "")}`, "success");
-        setDescription("");
-        setProjectId("");
+      if (grpcSubmitTask) {
+        // gRPC-Web path → Rust server → local_worker
+        const resp = await grpcSubmitTask(desc, projectId.trim());
+        if (resp.success) {
+          showToast(`Task submitted ${modeLabel}: ${shortId(resp.taskId)}`, "success");
+          setDescription("");
+          setProjectId("");
+        } else {
+          showToast(`Submit failed ${modeLabel}: ${resp.status}`, "error");
+        }
       } else {
-        showToast(`Submit failed: ${result.error ?? "unknown"}`, "error");
+        // REST path → Python FastAPI
+        const result = await api.submitTask(desc, projectId.trim());
+        if (result.success) {
+          showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");
+          setDescription("");
+          setProjectId("");
+        } else {
+          showToast(`Submit failed ${modeLabel}: ${result.error ?? "unknown"}`, "error");
+        }
       }
     } catch (err) {
-      showToast(`Submit failed: ${String(err)}`, "error");
+      showToast(`Submit failed ${modeLabel}: ${String(err)}`, "error");
     } finally {
       setSubmitting(false);
     }
@@ -34,9 +55,14 @@ export function TaskSubmitForm() {
   return (
     <div className="max-w-7xl mx-auto px-4 pt-4">
       <div className="rounded-lg border border-dark-700 bg-dark-800 p-4">
-        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
-          Submit Task
-        </h2>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+            Submit Task
+          </h2>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "bg-blue-900/50 text-blue-300" : "bg-green-900/50 text-green-300"}`}>
+            {mode}
+          </span>
+        </div>
         <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-3">
           <textarea
             value={description}

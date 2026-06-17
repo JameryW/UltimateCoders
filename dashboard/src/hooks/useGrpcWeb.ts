@@ -1,10 +1,10 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { createClient } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
-import { TaskService } from "@/grpc/engine_pb";
+import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
-import { WatchTaskRequestSchema, SubmitTaskRequestSchema } from "@/grpc/engine_pb";
+import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
 /** gRPC-Web server address — defaults to same-origin (tonic-web on :50051). */
@@ -133,10 +133,27 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     [],
   );
 
+  const healthCheck = useCallback(async () => {
+    const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    const client = createClient(EngineService, transport);
+    const req = create(HealthRequestSchema, {});
+    const resp = await client.health(req);
+    return {
+      status: resp.status,
+      version: resp.version,
+      uptimeSeconds: resp.uptimeSeconds,
+      components: resp.components.map((c) => ({
+        name: c.name,
+        status: c.status,
+        details: c.details ?? undefined,
+      })),
+    };
+  }, []);
+
   useEffect(() => {
     connect();
     return disconnect;
   }, [connect, disconnect]);
 
-  return { connectionState, connect, disconnect, submitTask };
+  return { connectionState, connect, disconnect, submitTask, healthCheck };
 }
