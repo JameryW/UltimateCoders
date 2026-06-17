@@ -7,7 +7,7 @@ describe('keymap: getCommand', () => {
     const cmd = getCommand('cycleFocus');
     expect(cmd).toBeDefined();
     expect(cmd!.id).toBe('cycleFocus');
-    expect(cmd!.key).toBe('Shift+Tab');
+    expect(cmd!.key).toBe('Shift+Tab / Ctrl+W');
     expect(cmd!.global).toBe(true);
   });
 

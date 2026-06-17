@@ -20,7 +20,7 @@
  * - Up/Down: delegate to parent for input history navigation
  */
 import React, {useState, useEffect, useRef} from 'react';
-import {Text, useInput} from 'ink';
+import {Text, useInput, useStdin} from 'ink';
 import GraphemeSplitter from 'grapheme-splitter';
 import stringWidth from 'string-width';
 import {
@@ -31,6 +31,8 @@ import {
   deleteToEnd,
   renderInputWithCursor,
   cursorDisplayCol,
+  wordBoundaryBackward,
+  wordBoundaryForward,
 } from '../cjk-input-utils.js';
 
 const splitter = new GraphemeSplitter();
@@ -204,6 +206,22 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         return;
       }
 
+      // Ctrl+Left: word backward
+      if (key.ctrl && key.leftArrow) {
+        const next = wordBoundaryBackward(value, cursorRef.current);
+        setCursorGI(next);
+        cursorRef.current = next;
+        return;
+      }
+
+      // Ctrl+Right: word forward
+      if (key.ctrl && key.rightArrow) {
+        const next = wordBoundaryForward(value, cursorRef.current);
+        setCursorGI(next);
+        cursorRef.current = next;
+        return;
+      }
+
       if (key.leftArrow) {
         if (showCursor && cursorRef.current > 0) {
           const next = cursorRef.current - 1;
@@ -261,6 +279,31 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
     },
     {isActive: focus},
   );
+
+  // ── Raw input handler for Home/End (Ink v5 Key type lacks these) ──
+  // Detect raw escape sequences: Home: ESC[H / ESC[1~  |  End: ESC[F / ESC[4~
+  // ponytail: remove this workaround when upgrading to Ink v6.6+
+  const {stdin: rawStdin, internal_eventEmitter: rawEmitter} = useStdin();
+  useEffect(() => {
+    if (!focus || !rawStdin || !rawEmitter) return;
+    const onRawInput = (data: string) => {
+      // Home sequences
+      if (data === '\x1b[H' || data === '\x1b[1~') {
+        setCursorGI(0);
+        cursorRef.current = 0;
+      }
+      // End sequences
+      else if (data === '\x1b[F' || data === '\x1b[4~') {
+        const end = splitter.countGraphemes(value);
+        setCursorGI(end);
+        cursorRef.current = end;
+      }
+    };
+    rawEmitter.on('input', onRawInput);
+    return () => {
+      rawEmitter.off('input', onRawInput);
+    };
+  }, [focus, rawStdin, rawEmitter, value]);
 
   // ── Rendering ──────────────────────────────────────────────
 
