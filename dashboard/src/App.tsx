@@ -1,8 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useSSE } from "@/hooks/useSSE";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
-import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { Header } from "@/components/layout/Header";
 import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
@@ -18,7 +17,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import * as api from "@/api/endpoints";
-import type { TaskEvent } from "@/types/dashboard";
+import type { TaskEvent, HealthData } from "@/types/dashboard";
 
 function eventKey(ev: TaskEvent): string {
   return `${ev.task_id}:${ev.type}:${ev.timestamp}`;
@@ -49,6 +48,22 @@ function App() {
 
   useEffect(() => { void dashboard.fetchInitial(); }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
+
+  // Merge gRPC-Web connection status into HealthData as a virtual component
+  const healthWithGrpc = useMemo<HealthData>(() => {
+    const grpcStatus = grpcState === "connected" ? "ok"
+      : grpcState === "connecting" ? "degraded"
+      : grpcState === "error" ? "error"
+      : "unavailable";
+    const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
+    const hasGrpc = dashboard.health.components.some((c) => c.name === "gRPC-Web");
+    return {
+      ...dashboard.health,
+      components: hasGrpc
+        ? dashboard.health.components.map((c) => c.name === "gRPC-Web" ? grpcComponent : c)
+        : [...dashboard.health.components, grpcComponent],
+    };
+  }, [dashboard.health, grpcState]);
 
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
@@ -83,7 +98,7 @@ function App() {
       <Header connected={connected} grpcState={grpcState} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="md:col-span-2"><HealthPanel data={dashboard.health} /></div>
+        <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} /></div>
         <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
         <WorkersPanel data={dashboard.workers} />
         <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
