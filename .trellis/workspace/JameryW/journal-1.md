@@ -961,3 +961,41 @@ Fix ChatLog visibleLines to adapt to logo height (6/1/0 based on terminal width)
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: Backend hardening: broadcast, async worker, crash/restart, integration tests, task queue
+
+**Date**: 2026-06-17
+**Task**: Backend hardening: broadcast, async worker, crash/restart, integration tests, task queue
+**Branch**: `main`
+
+### Summary
+
+5 PRs: (1) broadcast channel + WatchTask stream replaces 500ms polling, (2) async LocalWorkerBridge + notification reader, (3) worker crash/restart + graceful shutdown + unified event source, (4) integration tests + mock worker + UC_MOCK_MODE, (5) mpsc task queue for concurrent submit_task. All backend PRD ACs met.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5279a94` | (see git log) |
+| `0c918f5` | (see git log) |
+| `e039b19` | (see git log) |
+| `57ad35e` | (see git log) |
+| `6bb07de` | (see git log) |
+| `c6a3291` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
