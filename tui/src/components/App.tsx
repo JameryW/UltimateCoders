@@ -25,7 +25,7 @@
  * Keyboard: global useInput, shortcuts defined in keymap.ts.
  */
 import React, {useReducer, useCallback, useEffect, useRef} from 'react';
-import {Box, Text, useApp, useInput, useStdout} from 'ink';
+import {Box, Text, useApp, useInput, useStdout, useStdin} from 'ink';
 import ChatLog, {
   type ChatMessage,
   createUserMessage,
@@ -586,6 +586,31 @@ const App: React.FC = () => {
     }
   });
 
+  // ── Raw input handler for Home/End (Ink v5 Key type lacks these) ──
+  // Ink's useInput doesn't expose home/end. Detect raw escape sequences instead.
+  // Home: \x1b[H or \x1b[1~  |  End: \x1b[F or \x1b[4~
+  // ponytail: remove this workaround when upgrading to Ink v6.6+ (needs React 19)
+  const {stdin: rawStdin, internal_eventEmitter: rawEmitter} = useStdin();
+  useEffect(() => {
+    if (!rawStdin || !rawEmitter) return;
+    const onRawInput = (data: string) => {
+      if (state.focusedArea === 'chat') {
+        // Home sequences: ESC[H or ESC[1~
+        if (data === '\x1b[H' || data === '\x1b[1~') {
+          dispatch({type: 'SCROLL_UP', lines: state.messages.length});
+        }
+        // End sequences: ESC[F or ESC[4~
+        else if (data === '\x1b[F' || data === '\x1b[4~') {
+          dispatch({type: 'SET_FOLLOW_LOG', follow: true});
+        }
+      }
+    };
+    rawEmitter.on('input', onRawInput);
+    return () => {
+      rawEmitter.off('input', onRawInput);
+    };
+  }, [rawStdin, rawEmitter, state.focusedArea, state.messages.length, dispatch]);
+
   // ── Symbols ─────────────────────────────────────────────
   const S = getSymbols(state.symbolMode);
 
@@ -695,6 +720,7 @@ const App: React.FC = () => {
         isSubmitting={state.isSubmitting}
         isStreaming={isStreaming}
         startedAt={state.startedAt}
+        progress={state.progress}
       />
 
       {/* ── Input (fixed at bottom) ─────────────────── */}

@@ -40,10 +40,7 @@ impl GrpcEngineClient {
             .connect()
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Connection failed: {}", e)))?;
-        Ok(Self {
-            inner: EngineServiceClient::new(channel.clone()),
-            task_client: TaskServiceClient::new(channel),
-        })
+        Ok(Self::from_channel(channel))
     }
 
     /// Create a client from an already-connected channel.
@@ -485,6 +482,88 @@ impl EngineApi for GrpcEngineClient {
             }
         });
         Ok(Box::pin(mapped))
+    }
+
+    async fn submit_task(
+        &self,
+        description: String,
+        project_id: String,
+    ) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = SubmitTaskRequest {
+            description,
+            project_id,
+        };
+        let response = client.submit_task(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(EngineError::TaskError(
+                resp.error
+                    .unwrap_or_else(|| "Unknown task submission error".to_string()),
+            ));
+        }
+        // The SubmitTaskResponse doesn't contain a full TaskProto in all cases,
+        // so we fetch the task by ID to get the complete object.
+        self.get_task(&resp.task_id).await
+    }
+
+    async fn get_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = GetTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.get_task(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        match resp.task {
+            Some(task_proto) => Ok(task_proto.into()),
+            None => Err(EngineError::NotFound(format!("Task {} not found", task_id))),
+        }
+    }
+
+    async fn list_tasks(&self) -> Result<Vec<Task>, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = ListTasksRequest {};
+        let response = client.list_tasks(req).await.map_err(from_status)?;
+        Ok(response
+            .into_inner()
+            .tasks
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = PauseTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.pause_task(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(EngineError::TaskError(
+                resp.error
+                    .unwrap_or_else(|| "Unknown pause error".to_string()),
+            ));
+        }
+        // Fetch the updated task to return the complete object
+        self.get_task(task_id).await
+    }
+
+    async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = ResumeTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.resume_task(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(EngineError::TaskError(
+                resp.error
+                    .unwrap_or_else(|| "Unknown resume error".to_string()),
+            ));
+        }
+        // Fetch the updated task to return the complete object
+        self.get_task(task_id).await
     }
 }
 

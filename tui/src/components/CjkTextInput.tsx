@@ -12,17 +12,26 @@
  * - Moves cursor by grapheme index (1 step = 1 grapheme, regardless of width)
  * - Deletes whole grapheme clusters on backspace/delete
  * - Positions the real terminal cursor correctly for IME via onCursorMove
+ * - Supports undo/redo with platform-aware keybindings
+ * - Tab completes slash commands when suggestion is available
  *
  * Extended shortcuts:
- * - Ctrl+J: insert newline (multi-line task editing)
+ * - Tab: complete slash command (when available) or insert indent
+ * - Ctrl+J / Alt+Enter: insert newline (multi-line task editing)
  * - Ctrl+U: clear entire input
  * - Ctrl+K: delete from cursor to end of line
+ * - Ctrl+Left/Right: word navigation
  * - Up/Down: delegate to parent for input history navigation
+ * - Undo: Cmd+Z (macOS) / Alt+Z (Linux)
+ * - Redo: Cmd+Shift+Z (macOS) / Alt+Shift+Z (Linux)
  */
-import React, {useState, useEffect, useRef} from 'react';
-import {Text, useInput} from 'ink';
+import React, {useState, useEffect, useRef, useCallback} from 'react';
+import {Text, useInput, useStdin, type Key} from 'ink';
 import GraphemeSplitter from 'grapheme-splitter';
 import stringWidth from 'string-width';
+
+// ponytail: ink 5 Key lacks 'alt'; extend via intersection. Remove when on ink 6.
+type InkKey = Key & {alt?: boolean};
 import {
   inverseChar,
   dimText,
@@ -31,9 +40,22 @@ import {
   deleteToEnd,
   renderInputWithCursor,
   cursorDisplayCol,
+  wordBoundaryBackward,
+  wordBoundaryForward,
 } from '../cjk-input-utils.js';
 
 const splitter = new GraphemeSplitter();
+
+// ── Undo/Redo Types ─────────────────────────────────────────
+
+interface Snapshot {
+  value: string;
+  cursorGI: number;
+}
+
+const UNDO_LIMIT = 50;
+
+// ── Component ───────────────────────────────────────────────
 
 export interface CjkTextInputProps {
   /** Current input value (controlled). */
@@ -52,6 +74,8 @@ export interface CjkTextInputProps {
   readonly onCursorMove?: (displayCol: number) => void;
   /** Callback for Up/Down history navigation. */
   readonly onHistoryNav?: (direction: 'up' | 'down') => void;
+  /** If set, Tab completes to this command name instead of inserting indent. */
+  readonly tabCompleteCommand?: string | null;
 }
 
 /**
@@ -72,14 +96,28 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
   showCursor = true,
   onCursorMove,
   onHistoryNav,
+  tabCompleteCommand,
 }) => {
   // Cursor position as grapheme index (0 = before first, N = after last).
-  // Kept in both state (for re-render) and ref (for non-stale useInput callbacks).
   const [cursorGI, setCursorGI] = useState(() => splitter.countGraphemes(value));
   const cursorRef = useRef(cursorGI);
 
   // Track previous value to detect external changes (e.g. clear on submit)
   const prevValueRef = useRef(value);
+
+  // ── Undo/Redo stacks ──────────────────────────────────────
+  const undoStackRef = useRef<Snapshot[]>([]);
+  const redoStackRef = useRef<Snapshot[]>([]);
+
+  /** Push current state to undo stack before a mutation. */
+  const pushUndo = useCallback(() => {
+    undoStackRef.current.push({value, cursorGI: cursorRef.current});
+    if (undoStackRef.current.length > UNDO_LIMIT) {
+      undoStackRef.current.shift();
+    }
+    // Any new mutation clears redo
+    redoStackRef.current = [];
+  }, [value]);
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -112,47 +150,110 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
     }
   }, [value, cursorGI]);
 
+  // ── Raw input handler for Home/End ─────────────────────────
+  // ponytail: ink 5 useStdin has internal_eventEmitter but the type
+  // declaration marks it readonly — we can still listen. Remove this
+  // workaround when upgrading to Ink v6.6+ (usePaste + Key.home/end).
+  const {stdin, internal_eventEmitter} = useStdin();
+  useEffect(() => {
+    if (!focus || !stdin || !internal_eventEmitter) return;
+    const onRawInput = (data: string) => {
+      if (data === '\x1b[H' || data === '\x1b[1~') {
+        setCursorGI(0);
+        cursorRef.current = 0;
+      } else if (data === '\x1b[F' || data === '\x1b[4~') {
+        const end = splitter.countGraphemes(value);
+        setCursorGI(end);
+        cursorRef.current = end;
+      }
+    };
+    internal_eventEmitter.on('input', onRawInput);
+    return () => {
+      internal_eventEmitter.off('input', onRawInput);
+    };
+  }, [focus, stdin, internal_eventEmitter, value]);
+
   useInput(
     (input, key) => {
+      const k = key as InkKey;
       // Shift+Tab: do NOT handle locally — let it bubble to App's useInput
-      // which dispatches CYCLE_FOCUS. Calling onShiftTab here would cause
-      // a double dispatch since both useInput handlers fire on the same keypress.
-      if (key.shift && key.tab) {
+      if (k.shift && k.tab) {
         return;
       }
 
-      // Tab: insert spaces for indentation
-      if (key.tab) {
-        const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, '  ');
-        setCursorGI(nextCursorGI);
-        cursorRef.current = nextCursorGI;
-        prevValueRef.current = nextValue;
-        onChange(nextValue);
+      // Tab: complete slash command if suggestion exists, otherwise indent
+      if (k.tab) {
+        if (tabCompleteCommand) {
+          const completed = `/${tabCompleteCommand} `;
+          setCursorGI(splitter.countGraphemes(completed));
+          cursorRef.current = splitter.countGraphemes(completed);
+          prevValueRef.current = completed;
+          onChange(completed);
+        } else {
+          pushUndo();
+          const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, '  ');
+          setCursorGI(nextCursorGI);
+          cursorRef.current = nextCursorGI;
+          prevValueRef.current = nextValue;
+          onChange(nextValue);
+        }
         return;
       }
 
-      // Ctrl+C is handled by the parent App, not by the input
-      if (key.ctrl && input === 'c') {
+      // Ctrl+C is handled by the parent App
+      if (k.ctrl && input === 'c') {
         return;
       }
 
       // Ctrl+R is handled by the parent App for reconnect
-      if (key.ctrl && input === 'r') {
+      if (k.ctrl && input === 'r') {
         return;
       }
 
       // Ctrl+P is handled by the parent App for pause/resume
-      if (key.ctrl && input === 'p') {
+      if (k.ctrl && input === 'p') {
         return;
       }
 
       // Ctrl+Q is handled by the parent App for quit
-      if (key.ctrl && input === 'q') {
+      if (k.ctrl && input === 'q') {
         return;
       }
 
-      // ── Ctrl+J: insert newline (multi-line task) ───────
-      if (key.ctrl && input === 'j') {
+      // Ctrl+W is handled by the parent App for cycle focus
+      if (k.ctrl && input === 'w') {
+        return;
+      }
+
+      // ── Undo: Cmd+Z (macOS) / Alt+Z (Linux/macOS) ───────
+      if ((k.meta && input === 'z' && !k.shift) || (k.alt && input === 'z' && !k.shift)) {
+        const snapshot = undoStackRef.current.pop();
+        if (snapshot) {
+          redoStackRef.current.push({value, cursorGI: cursorRef.current});
+          setCursorGI(snapshot.cursorGI);
+          cursorRef.current = snapshot.cursorGI;
+          prevValueRef.current = snapshot.value;
+          onChange(snapshot.value);
+        }
+        return;
+      }
+
+      // ── Redo: Cmd+Shift+Z (macOS) / Alt+Shift+Z (Linux/macOS) ──
+      if ((k.meta && input === 'z' && k.shift) || (k.alt && input === 'z' && k.shift)) {
+        const snapshot = redoStackRef.current.pop();
+        if (snapshot) {
+          undoStackRef.current.push({value, cursorGI: cursorRef.current});
+          setCursorGI(snapshot.cursorGI);
+          cursorRef.current = snapshot.cursorGI;
+          prevValueRef.current = snapshot.value;
+          onChange(snapshot.value);
+        }
+        return;
+      }
+
+      // ── Ctrl+J / Alt+Enter: insert newline (multi-line task) ──
+      if ((k.ctrl && input === 'j') || (k.alt && k.return)) {
+        pushUndo();
         const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, '\n');
         setCursorGI(nextCursorGI);
         cursorRef.current = nextCursorGI;
@@ -162,7 +263,8 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       }
 
       // ── Ctrl+U: clear entire input ─────────────────────
-      if (key.ctrl && input === 'u') {
+      if (k.ctrl && input === 'u') {
+        pushUndo();
         setCursorGI(0);
         cursorRef.current = 0;
         prevValueRef.current = '';
@@ -171,15 +273,15 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       }
 
       // ── Ctrl+K: delete from cursor to end ──────────────
-      if (key.ctrl && input === 'k') {
+      if (k.ctrl && input === 'k') {
+        pushUndo();
         const {nextValue, nextCursorGI} = deleteToEnd(value, cursorRef.current);
         prevValueRef.current = nextValue;
-        // cursor stays at same position (nextCursorGI === cursorRef.current)
         onChange(nextValue);
         return;
       }
 
-      if (key.return) {
+      if (k.return) {
         if (onSubmit) {
           onSubmit(value);
         }
@@ -187,16 +289,15 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       }
 
       // ── Up/Down: delegate to parent for history nav ────
-      if (key.upArrow) {
+      if (k.upArrow) {
         if (onHistoryNav) {
           onHistoryNav('up');
           return;
         }
-        // Without history nav, ignore
         return;
       }
 
-      if (key.downArrow) {
+      if (k.downArrow) {
         if (onHistoryNav) {
           onHistoryNav('down');
           return;
@@ -204,7 +305,23 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         return;
       }
 
-      if (key.leftArrow) {
+      // Ctrl+Left: word backward
+      if (k.ctrl && k.leftArrow) {
+        const next = wordBoundaryBackward(value, cursorRef.current);
+        setCursorGI(next);
+        cursorRef.current = next;
+        return;
+      }
+
+      // Ctrl+Right: word forward
+      if (k.ctrl && k.rightArrow) {
+        const next = wordBoundaryForward(value, cursorRef.current);
+        setCursorGI(next);
+        cursorRef.current = next;
+        return;
+      }
+
+      if (k.leftArrow) {
         if (showCursor && cursorRef.current > 0) {
           const next = cursorRef.current - 1;
           setCursorGI(next);
@@ -213,7 +330,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
         return;
       }
 
-      if (key.rightArrow) {
+      if (k.rightArrow) {
         if (showCursor) {
           const maxIndex = splitter.countGraphemes(value);
           const next = Math.min(cursorRef.current + 1, maxIndex);
@@ -224,22 +341,23 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       }
 
       // Home (Ctrl+A): move cursor to start
-      if (key.ctrl && input === 'a') {
+      if (k.ctrl && input === 'a') {
         setCursorGI(0);
         cursorRef.current = 0;
         return;
       }
 
       // End (Ctrl+E): move cursor to end
-      if (key.ctrl && input === 'e') {
+      if (k.ctrl && input === 'e') {
         const end = splitter.countGraphemes(value);
         setCursorGI(end);
         cursorRef.current = end;
         return;
       }
 
-      if (key.backspace || key.delete) {
+      if (k.backspace || k.delete) {
         if (value.length === 0) return;
+        pushUndo();
         const result = deleteBackward(value, cursorRef.current);
         if (result) {
           setCursorGI(result.nextCursorGI);
@@ -251,7 +369,8 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       }
 
       // Printable input: insert at cursor position
-      if (input.length > 0 && !key.ctrl && !key.meta) {
+      if (input.length > 0 && !k.ctrl && !k.meta) {
+        pushUndo();
         const {nextValue, nextCursorGI} = insertAtCursor(value, cursorRef.current, input);
         setCursorGI(nextCursorGI);
         cursorRef.current = nextCursorGI;

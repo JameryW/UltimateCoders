@@ -7,6 +7,7 @@
 //! Python consumers switch between modes at construction time via the
 //! `uc-python` binding layer.
 
+use crate::agent::Task;
 use crate::error::EngineError;
 use crate::index::{IndexRequest, IndexResponse};
 use crate::memory::{
@@ -88,6 +89,27 @@ pub trait EngineApi: Send + Sync {
     /// a one-element stream. Implementors may override this to
     /// provide true streaming (e.g., server-side cursor).
     async fn search_stream(&self, query: SearchQuery) -> Result<SearchStream, EngineError>;
+
+    // ── Task Orchestration ───────────────────────────────────
+
+    /// Submit a new task for orchestration.
+    async fn submit_task(
+        &self,
+        description: String,
+        project_id: String,
+    ) -> Result<Task, EngineError>;
+
+    /// Get a task by ID.
+    async fn get_task(&self, task_id: &str) -> Result<Task, EngineError>;
+
+    /// List all tasks.
+    async fn list_tasks(&self) -> Result<Vec<Task>, EngineError>;
+
+    /// Pause a running task.
+    async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError>;
+
+    /// Resume a paused task.
+    async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError>;
 }
 
 /// Index state returned by get_index_state.

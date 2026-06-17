@@ -596,3 +596,139 @@ impl From<uc_types::IndexState> for PyIndexState {
         }
     }
 }
+
+// ── Task types ──────────────────────────────────────────────
+
+/// Python Task wrapper representing an orchestration task.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyTask {
+    #[pyo3(get)]
+    pub id: String,
+    #[pyo3(get)]
+    pub description: String,
+    #[pyo3(get)]
+    pub project_id: String,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub subtask_count: usize,
+    #[pyo3(get)]
+    pub created_at: i64,
+    #[pyo3(get)]
+    pub updated_at: i64,
+}
+
+#[pymethods]
+impl PyTask {
+    fn __repr__(&self) -> String {
+        format!(
+            "Task(id={}, status={}, project_id={}, subtasks={})",
+            self.id, self.status, self.project_id, self.subtask_count
+        )
+    }
+}
+
+impl From<uc_types::Task> for PyTask {
+    fn from(task: uc_types::Task) -> Self {
+        Self {
+            id: task.id.0,
+            description: task.description,
+            project_id: task.project_id,
+            status: format!("{:?}", task.status).to_lowercase(),
+            subtask_count: task.subtasks.len(),
+            created_at: task.created_at.timestamp(),
+            updated_at: task.updated_at.timestamp(),
+        }
+    }
+}
+
+// ── Agent Event types ──────────────────────────────────────
+
+/// Python wrapper for an agent event from the watch_task stream.
+///
+/// Represents a single event emitted during task orchestration,
+/// such as task creation, subtask progress, tool invocations, etc.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyAgentEvent {
+    #[pyo3(get)]
+    pub event_type: String,
+    #[pyo3(get)]
+    pub task_id: String,
+    #[pyo3(get)]
+    pub subtask_id: Option<String>,
+    /// JSON-serialized payload data specific to the event type.
+    #[pyo3(get)]
+    pub data: String,
+    #[pyo3(get)]
+    pub timestamp: String,
+}
+
+#[pymethods]
+impl PyAgentEvent {
+    fn __repr__(&self) -> String {
+        format!(
+            "AgentEvent(type={}, task={})",
+            self.event_type, self.task_id
+        )
+    }
+}
+
+impl From<uc_types::AgentEvent> for PyAgentEvent {
+    fn from(event: uc_types::AgentEvent) -> Self {
+        use uc_types::AgentEventPayload::*;
+
+        let (event_type, task_id, subtask_id) = match &event.payload {
+            TaskCreated { task } => ("task_created".to_string(), task.id.0.clone(), None),
+            SubtaskAssigned { subtask_id, .. } => (
+                "subtask_assigned".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            WorkerStarted { subtask_id, .. } => (
+                "worker_started".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            ToolInvoked { subtask_id, .. } => (
+                "tool_invoked".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            ToolResult { subtask_id, .. } => (
+                "tool_result".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            FileModified { subtask_id, .. } => (
+                "file_modified".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            SubtaskCompleted { result } => (
+                "subtask_completed".to_string(),
+                String::new(),
+                Some(result.subtask_id.0.clone()),
+            ),
+            SubtaskFailed { subtask_id, .. } => (
+                "subtask_failed".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
+            CheckpointCreated { task_id, .. } => {
+                ("checkpoint_created".to_string(), task_id.0.clone(), None)
+            }
+            EditIntent { .. } => ("edit_intent".to_string(), String::new(), None),
+            ConflictDetected { .. } => ("conflict_detected".to_string(), String::new(), None),
+        };
+
+        Self {
+            event_type,
+            task_id,
+            subtask_id,
+            data: serde_json::to_string(&event.payload).unwrap_or_default(),
+            timestamp: event.timestamp.to_rfc3339(),
+        }
+    }
+}

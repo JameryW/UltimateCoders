@@ -13,7 +13,7 @@
 use uc_types::{
     async_trait, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse, MemoryEntry,
     MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
-    RepoIndexState, SearchQuery, SearchResult, SearchStream,
+    RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
 };
 
 use crate::checkpoint::{CheckpointConfig, CheckpointManager};
@@ -34,6 +34,7 @@ use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 /// Local engine that runs all components in-process.
@@ -52,6 +53,8 @@ pub struct LocalEngine {
     circuit_breaker: Arc<CircuitBreaker>,
     /// Sandbox for executing coding agents in isolated environments.
     sandbox: Arc<dyn Sandbox>,
+    /// Task store for task orchestration methods.
+    task_store: Arc<Mutex<crate::task_store::TaskStore>>,
     #[allow(dead_code)]
     config: EngineConfig,
     start_time: Instant,
@@ -136,6 +139,7 @@ impl LocalEngine {
             rate_limiter,
             circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
+            task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config,
             start_time: Instant::now(),
         })
@@ -203,6 +207,7 @@ impl LocalEngine {
             rate_limiter,
             circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
+            task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config: EngineConfig::default(),
             start_time: Instant::now(),
         }
@@ -263,6 +268,7 @@ impl LocalEngine {
             rate_limiter,
             circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
+            task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config,
             start_time: Instant::now(),
         }
@@ -659,6 +665,38 @@ impl EngineApi for LocalEngine {
     async fn search_stream(&self, query: SearchQuery) -> Result<SearchStream, EngineError> {
         let result = self.search_engine.search(&query).await?;
         Ok(Box::pin(tokio_stream::once(result)))
+    }
+
+    async fn submit_task(
+        &self,
+        description: String,
+        project_id: String,
+    ) -> Result<Task, EngineError> {
+        let mut store = self.task_store.lock().unwrap();
+        Ok(store.submit_task(description, project_id))
+    }
+
+    async fn get_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let store = self.task_store.lock().unwrap();
+        store
+            .get_task(task_id)
+            .cloned()
+            .ok_or_else(|| EngineError::NotFound(format!("Task {} not found", task_id)))
+    }
+
+    async fn list_tasks(&self) -> Result<Vec<Task>, EngineError> {
+        let store = self.task_store.lock().unwrap();
+        Ok(store.list_tasks())
+    }
+
+    async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut store = self.task_store.lock().unwrap();
+        store.pause_task(task_id).map_err(EngineError::TaskError)
+    }
+
+    async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
+        let mut store = self.task_store.lock().unwrap();
+        store.resume_task(task_id).map_err(EngineError::TaskError)
     }
 }
 
@@ -1443,5 +1481,87 @@ fn load_index() -> Index { Index::new() }"#,
 
         engine.remove_index("test-search-stream").await.unwrap();
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn local_engine_submit_and_get_task() {
+        let engine = LocalEngine::new_fallback();
+
+        let task = engine
+            .submit_task(
+                "1. Analyze code\n2. Fix bug".to_string(),
+                "project-1".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(task.subtasks.len(), 2);
+        assert_eq!(task.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(task.project_id, "project-1");
+
+        // Get the task back
+        let retrieved = engine.get_task(&task.id.0).await.unwrap();
+        assert_eq!(retrieved.description, "1. Analyze code\n2. Fix bug");
+    }
+
+    #[tokio::test]
+    async fn local_engine_list_tasks() {
+        let engine = LocalEngine::new_fallback();
+
+        engine
+            .submit_task("Task 1".to_string(), "p1".to_string())
+            .await
+            .unwrap();
+        engine
+            .submit_task("Task 2".to_string(), "p2".to_string())
+            .await
+            .unwrap();
+
+        let tasks = engine.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn local_engine_pause_and_resume_task() {
+        let engine = LocalEngine::new_fallback();
+
+        let task = engine
+            .submit_task("Test task".to_string(), "p1".to_string())
+            .await
+            .unwrap();
+        let task_id = task.id.0.clone();
+
+        let paused = engine.pause_task(&task_id).await.unwrap();
+        assert_eq!(paused.status, uc_types::TaskStatus::Paused);
+
+        let resumed = engine.resume_task(&task_id).await.unwrap();
+        assert_eq!(resumed.status, uc_types::TaskStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn local_engine_get_task_not_found() {
+        let engine = LocalEngine::new_fallback();
+
+        let result = engine.get_task("nonexistent").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EngineError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn local_engine_pause_task_invalid_status() {
+        let engine = LocalEngine::new_fallback();
+
+        let task = engine
+            .submit_task("Test task".to_string(), "p1".to_string())
+            .await
+            .unwrap();
+
+        // Pause (valid)
+        engine.pause_task(&task.id.0).await.unwrap();
+
+        // Pause again (invalid: already Paused)
+        let result = engine.pause_task(&task.id.0).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EngineError::TaskError(_)));
     }
 }

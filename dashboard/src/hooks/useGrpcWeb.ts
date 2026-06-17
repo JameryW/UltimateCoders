@@ -4,10 +4,10 @@ import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
-import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema } from "@/grpc/engine_pb";
+import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
-/** gRPC-Web server address — empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
+/** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
   import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
@@ -25,6 +25,14 @@ export type GrpcConnectionState =
   | "connecting"
   | "connected"
   | "error";
+
+export interface GrpcSubmitResult {
+  success: boolean;
+  taskId: string;
+  status: string;
+  subtaskCount: number;
+  subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[] }>;
+}
 
 function grpcEventToDashboardEvent(ev: GrpcTaskEvent): TaskEvent {
   return {
@@ -44,7 +52,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
   optsRef.current = opts;
-  // ponytail: ref breaks connect↔scheduleReconnect cycle
+  // Ref breaks connect<->scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
 
   const clearRetryTimer = useCallback(() => {
@@ -102,7 +110,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
           optsRef.current.onTaskEvent?.(dashboardEvent);
         }
 
-        // Stream ended normally (server closed) — reconnect
+        // Stream ended normally (server closed) -- reconnect
         if (!ac.signal.aborted) {
           setConnectionState("error");
           scheduleReconnect();
@@ -128,12 +136,23 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, [clearRetryTimer]);
 
   const submitTask = useCallback(
-    async (description: string, projectId: string = "") => {
+    async (description: string, projectId: string = ""): Promise<GrpcSubmitResult> => {
       const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
       const client = createClient(TaskService, transport);
       const req = create(SubmitTaskRequestSchema, { description, projectId });
       const resp = await client.submitTask(req);
-      return { success: resp.success, taskId: resp.taskId, status: resp.status };
+      return {
+        success: resp.success,
+        taskId: resp.taskId,
+        status: resp.status,
+        subtaskCount: resp.subtaskCount,
+        subtasks: resp.subtasks.map((s) => ({
+          id: s.id,
+          description: s.description,
+          status: s.status,
+          dependsOn: [...s.dependsOn],
+        })),
+      };
     },
     [],
   );
@@ -155,10 +174,38 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     };
   }, []);
 
+  /** Fetch task list via gRPC-Web. Returns TasksData-compatible structure. */
+  const listTasks = useCallback(async () => {
+    const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    const client = createClient(TaskService, transport);
+    const resp = await client.listTasks(create(ListTasksRequestSchema, {}));
+    return {
+      available: resp.available,
+      tasks: resp.tasks.map((t) => ({
+        id: t.id,
+        description: t.description,
+        status: t.status,
+        project_id: t.projectId,
+        subtask_count: t.subtaskCount,
+        subtasks: t.subtasks.map((s) => ({
+          id: s.id,
+          description: s.description,
+          status: s.status,
+          depends_on: [...s.dependsOn],
+        })),
+        created_at: new Date(Number(t.createdAt) * 1000).toISOString(),
+        updated_at: new Date(Number(t.updatedAt) * 1000).toISOString(),
+      })),
+      total: resp.total,
+      status_counts: resp.statusCounts as Record<string, number>,
+      pending_task_count: 0,
+    };
+  }, []);
+
   useEffect(() => {
     connect();
     return disconnect;
   }, [connect, disconnect]);
 
-  return { connectionState, connect, disconnect, submitTask, healthCheck };
+  return { connectionState, connect, disconnect, submitTask, healthCheck, listTasks };
 }

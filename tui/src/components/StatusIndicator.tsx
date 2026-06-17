@@ -1,7 +1,7 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect} from 'react';
 import {Box, Text} from 'ink';
 
-// spinner chars — standard braille pattern, no extra deps
+// spinner chars — standard braille pattern at 80ms
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export interface StatusIndicatorProps {
@@ -11,6 +11,8 @@ export interface StatusIndicatorProps {
   isStreaming: boolean;
   /** Timestamp (ms) when the current task started. */
   startedAt: number | null;
+  /** Subtask progress (completed/total). */
+  progress?: {completed: number; total: number};
 }
 
 /** Format elapsed ms into compact string: (5s) / (1m 30s) / (2h 15m 00s) */
@@ -29,49 +31,44 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   isSubmitting,
   isStreaming,
   startedAt,
+  progress,
 }) => {
-  const [frame, setFrame] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const active = isSubmitting || isStreaming;
 
+  // ponytail: ink 5 lacks useAnimation; use setInterval + useState for frame/time
+  const [frame, setFrame] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (!active) {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      return;
-    }
-
-    // Tick spinner + elapsed every 100ms
-    timerRef.current = setInterval(() => {
-      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-      if (startedAt) {
-        setElapsed(Date.now() - startedAt);
-      }
-    }, 100);
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [active, startedAt]);
+    if (!active) { setFrame(0); setElapsed(0); return; }
+    const start = Date.now();
+    const id = setInterval(() => {
+      setFrame(f => f + 1);
+      setElapsed(Date.now() - start);
+    }, 80);
+    return () => clearInterval(id);
+  }, [active]);
 
   if (!active) return null;
 
-  const spinner = SPINNER_FRAMES[frame];
+  const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
   const elapsedStr = startedAt ? ` ${formatElapsed(elapsed)}` : '';
   const label = isSubmitting ? 'Working' : 'Streaming';
   const cancelHint = isSubmitting ? '  Esc cancel' : '';
+
+  // Subtask progress bar
+  let progressStr = '';
+  if (progress && progress.total > 0) {
+    const pct = progress.completed / progress.total;
+    const filled = Math.round(pct * 10);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+    progressStr = ` [${bar}] ${progress.completed}/${progress.total}`;
+  }
 
   return (
     <Box paddingX={1}>
       <Text color="cyan">{spinner}</Text>
       <Text color="cyan">{` ${label}...${elapsedStr}`}</Text>
+      {progressStr && <Text color="cyan">{progressStr}</Text>}
       {cancelHint && <Text dimColor>{cancelHint}</Text>}
     </Box>
   );

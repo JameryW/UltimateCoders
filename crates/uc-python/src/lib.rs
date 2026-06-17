@@ -29,6 +29,9 @@ fn _uc_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<types::PyIndexResponse>()?;
     m.add_class::<types::PyRepoIndexState>()?;
     m.add_class::<types::PyIndexState>()?;
+    // Task types
+    m.add_class::<types::PyTask>()?;
+    m.add_class::<types::PyAgentEvent>()?;
     // Scheduler types
     m.add_class::<scheduler::PySchedulerService>()?;
     m.add_class::<scheduler::PyScheduledTask>()?;
