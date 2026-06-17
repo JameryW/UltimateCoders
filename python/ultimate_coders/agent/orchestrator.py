@@ -584,6 +584,22 @@ class Orchestrator:
 
     # ── Private helpers ─────────────────────────────────────────
 
+    def select_next_subtask(self, task: Task) -> Subtask | None:
+        """Public wrapper for ``_select_next_subtask``.
+
+        Returns the next subtask to assign, respecting priority and
+        dependencies.  This method is used by external callers (e.g.
+        ``local_worker``) that need to iterate subtasks without
+        accessing the private implementation.
+
+        Args:
+            task: The task whose subtasks to consider.
+
+        Returns:
+            The next Subtask to assign, or None if no subtask is ready.
+        """
+        return self._select_next_subtask(task)
+
     def _select_worker(self, subtask: Subtask) -> str | None:
         """Select the best available worker for a subtask.
 

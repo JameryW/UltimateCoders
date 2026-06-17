@@ -15,6 +15,15 @@
 //!   notifications and responses, applies updates to the TaskStore, and
 //!   broadcasts events via a ``broadcast::Sender<TaskEvent>``
 //! - ``WatchTask`` streams subscribe to the broadcast channel for real-time delivery
+//!
+//! ## Worker lifecycle
+//!
+//! - **Spawn**: ``ensure_worker()`` spawns the process and health-checks with ping
+//! - **Restart**: ``restart()`` kills the old process and spawns a new one
+//! - **Graceful shutdown**: ``graceful_shutdown()`` sends a ``shutdown`` JSON-RPC
+//!   method, waits 5 seconds, then SIGKILL
+//! - **Crash recovery**: The notification reader detects stdout EOF, marks tasks
+//!   as Failed, and attempts auto-restart with exponential backoff (max 3 retries)
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -27,6 +36,15 @@ use tokio::sync::Mutex;
 
 /// JSON-RPC request ID counter (shared across all calls).
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Maximum number of auto-restart attempts after worker crash.
+const MAX_RESTART_ATTEMPTS: u32 = 3;
+
+/// Base delay for exponential backoff on restart (milliseconds).
+const RESTART_BASE_DELAY_MS: u64 = 1000;
+
+/// Graceful shutdown timeout before SIGKILL (seconds).
+const GRACEFUL_SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
 // ── JSON-RPC types ────────────────────────────────────────────
 
@@ -100,6 +118,15 @@ pub struct WorkerSubtaskUpdate {
 ///
 /// A background notification reader task reads the worker's stdout and
 /// dispatches updates to the TaskStore and broadcast channel.
+///
+/// ## Crash recovery
+///
+/// When the notification reader detects stdout EOF (worker process died),
+/// it calls the ``on_worker_dead`` callback and then attempts to restart
+/// the worker with exponential backoff (up to 3 attempts). If restart
+/// succeeds, the notification reader is restarted for the new process.
+/// If all restart attempts fail, the bridge stays in unavailable state
+/// and the server falls back to local decomposition.
 pub struct LocalWorkerBridge {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     stdout: Arc<Mutex<Option<BufReader<tokio::process::ChildStdout>>>>,
@@ -109,6 +136,8 @@ pub struct LocalWorkerBridge {
     child: Arc<Mutex<Option<Child>>>,
     /// Whether the notification reader has been started.
     reader_started: Arc<AtomicBool>,
+    /// Whether a graceful shutdown is in progress (prevents auto-restart).
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl LocalWorkerBridge {
@@ -124,6 +153,7 @@ impl LocalWorkerBridge {
             alive: Arc::new(AtomicBool::new(false)),
             child: Arc::new(Mutex::new(None)),
             reader_started: Arc::new(AtomicBool::new(false)),
+            shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -324,7 +354,10 @@ impl LocalWorkerBridge {
     /// - For ``task_update`` notifications: calls ``apply_fn`` with the update
     /// - For responses matching a request ID: parses as WorkerTaskUpdate and
     ///   calls ``apply_fn``
-    /// - On stdout EOF: marks the worker as dead and calls ``on_worker_dead``
+    /// - On stdout EOF: marks the worker as dead, calls ``on_worker_dead``,
+    ///   then attempts auto-restart with exponential backoff (up to 3 attempts).
+    ///   On successful restart, calls ``on_restart`` so the caller can restart
+    ///   the notification reader for the new process.
     ///
     /// This method takes ownership of the stored stdout. It should be called
     /// exactly once after ``ensure_worker`` succeeds.
@@ -335,10 +368,12 @@ impl LocalWorkerBridge {
     pub fn start_notification_reader<
         F: Fn(WorkerTaskUpdate) + Send + Sync + 'static,
         G: Fn() + Send + Sync + 'static,
+        H: Fn() + Send + Sync + 'static,
     >(
         &self,
         apply_fn: F,
         on_worker_dead: G,
+        on_restart: H,
     ) {
         if self.reader_started.swap(true, Ordering::Relaxed) {
             tracing::warn!("Notification reader already started, skipping");
@@ -347,6 +382,10 @@ impl LocalWorkerBridge {
 
         let alive = self.alive.clone();
         let stdout = self.stdout.clone();
+        let stdin = self.stdin.clone();
+        let child = self.child.clone();
+        let reader_started = self.reader_started.clone();
+        let shutting_down = self.shutting_down.clone();
 
         tokio::spawn(async move {
             // Take stdout from the bridge
@@ -418,8 +457,8 @@ impl LocalWorkerBridge {
                                     .get("status")
                                     .is_some_and(|v| v.as_str() == Some("ok"))
                                 {
-                                    // ping response — already handled during ensure_worker
-                                    tracing::debug!("Worker ping response received (in reader)");
+                                    // ping or shutdown response
+                                    tracing::debug!("Worker response received (status=ok)");
                                 }
                             } else if let Some(err) = resp.error {
                                 tracing::warn!(
@@ -442,12 +481,47 @@ impl LocalWorkerBridge {
                         tracing::warn!("LocalWorkerBridge: worker stdout closed (process exited)");
                         alive.store(false, Ordering::Relaxed);
                         on_worker_dead();
+
+                        // Attempt auto-restart (unless we're shutting down)
+                        if shutting_down.load(Ordering::Relaxed) {
+                            tracing::info!("Shutting down, not attempting auto-restart");
+                            break;
+                        }
+
+                        attempt_auto_restart(
+                            &alive,
+                            &stdin,
+                            &stdout,
+                            &child,
+                            &reader_started,
+                            &shutting_down,
+                            &on_restart,
+                        )
+                        .await;
+
                         break;
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Error reading worker stdout");
                         alive.store(false, Ordering::Relaxed);
                         on_worker_dead();
+
+                        // Attempt auto-restart (unless we're shutting down)
+                        if shutting_down.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        attempt_auto_restart(
+                            &alive,
+                            &stdin,
+                            &stdout,
+                            &child,
+                            &reader_started,
+                            &shutting_down,
+                            &on_restart,
+                        )
+                        .await;
+
                         break;
                     }
                 }
@@ -459,11 +533,134 @@ impl LocalWorkerBridge {
 
     /// Kill the worker subprocess.
     pub async fn kill(&self) {
+        self.shutting_down.store(true, Ordering::Relaxed);
         self.alive.store(false, Ordering::Relaxed);
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
             let _ = child.kill().await;
         }
+    }
+
+    /// Restart the worker subprocess.
+    ///
+    /// Kills the existing process (if any), resets state, and spawns a new
+    /// worker. Returns ``Ok(())`` if the new worker passes the health check.
+    /// Returns ``Err`` if the restart fails.
+    ///
+    /// After a successful restart, the caller must call
+    /// ``start_notification_reader()`` again for the new process.
+    pub async fn restart(&self) -> Result<(), String> {
+        tracing::info!("LocalWorkerBridge: restarting worker");
+
+        // Kill existing process
+        self.kill().await;
+
+        // Clean up state
+        {
+            let mut stdin_guard = self.stdin.lock().await;
+            *stdin_guard = None;
+        }
+        {
+            let mut stdout_guard = self.stdout.lock().await;
+            *stdout_guard = None;
+        }
+
+        // Reset reader_started so a new reader can be started
+        self.reader_started.store(false, Ordering::Relaxed);
+        self.shutting_down.store(false, Ordering::Relaxed);
+
+        // Spawn new worker
+        self.ensure_worker().await
+    }
+
+    /// Gracefully shut down the worker process.
+    ///
+    /// Sends a ``shutdown`` JSON-RPC method to the worker, waits up to 5
+    /// seconds for it to exit, then sends SIGKILL if it hasn't exited.
+    pub async fn graceful_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Relaxed);
+
+        // Send shutdown JSON-RPC request
+        let shutdown_sent = self.send_shutdown().await;
+
+        if shutdown_sent {
+            // Wait for the process to exit
+            let timeout = tokio::time::timeout(
+                std::time::Duration::from_secs(GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
+                async {
+                    let mut child_guard = self.child.lock().await;
+                    if let Some(child) = child_guard.as_mut() {
+                        let _ = child.wait().await;
+                    }
+                    child_guard.take();
+                },
+            )
+            .await;
+
+            if timeout.is_err() {
+                tracing::warn!(
+                    "Worker did not exit within {}s, sending SIGKILL",
+                    GRACEFUL_SHUTDOWN_TIMEOUT_SECS
+                );
+            }
+        }
+
+        // Ensure the process is dead
+        self.alive.store(false, Ordering::Relaxed);
+        let mut child_guard = self.child.lock().await;
+        if let Some(mut child) = child_guard.take() {
+            let _ = child.kill().await;
+        }
+    }
+
+    /// Send a ``shutdown`` JSON-RPC request to the worker.
+    ///
+    /// Returns true if the request was sent successfully, false otherwise.
+    async fn send_shutdown(&self) -> bool {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0",
+            id,
+            method: "shutdown",
+            params: serde_json::json!({}),
+        };
+
+        let mut line = match serde_json::to_string(&req) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to serialize shutdown request");
+                return false;
+            }
+        };
+        line.push('\n');
+
+        let mut stdin_guard = self.stdin.lock().await;
+        if let Some(stdin) = stdin_guard.as_mut() {
+            match stdin.write_all(line.as_bytes()).await {
+                Ok(()) => {
+                    let _ = stdin.flush().await;
+                    tracing::info!("Sent shutdown request to local worker");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to send shutdown request to worker");
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Whether a graceful shutdown is in progress.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Relaxed)
+    }
+
+    /// Reset the reader_started flag so a new notification reader can be
+    /// started. Called after an auto-restart or manual restart.
+    pub fn reset_reader_started(&self) {
+        self.reader_started.store(false, Ordering::Relaxed);
     }
 }
 
@@ -476,6 +673,223 @@ impl Default for LocalWorkerBridge {
 impl Drop for LocalWorkerBridge {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::Relaxed);
+        self.shutting_down.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Attempt to auto-restart the worker after a crash.
+///
+/// Uses exponential backoff: 1s, 2s, 4s between attempts (max 3 attempts).
+/// On success, resets the bridge state and calls ``on_restart`` so the
+/// caller can start a new notification reader.
+///
+/// This function is called from the notification reader task when it
+/// detects that the worker process has exited.
+async fn attempt_auto_restart(
+    alive: &Arc<AtomicBool>,
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    stdout: &Arc<Mutex<Option<BufReader<tokio::process::ChildStdout>>>>,
+    child: &Arc<Mutex<Option<Child>>>,
+    reader_started: &Arc<AtomicBool>,
+    shutting_down: &Arc<AtomicBool>,
+    on_restart: &(dyn Fn() + Send + Sync),
+) {
+    for attempt in 1..=MAX_RESTART_ATTEMPTS {
+        if shutting_down.load(Ordering::Relaxed) {
+            tracing::info!("Shutting down, aborting auto-restart");
+            return;
+        }
+
+        let delay_ms = RESTART_BASE_DELAY_MS * 2u64.pow(attempt - 1);
+        tracing::info!(
+            attempt = attempt,
+            max_attempts = MAX_RESTART_ATTEMPTS,
+            delay_ms = delay_ms,
+            "Attempting to restart local worker"
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+
+        if shutting_down.load(Ordering::Relaxed) {
+            tracing::info!("Shutting down, aborting auto-restart after sleep");
+            return;
+        }
+
+        // Clean up old state
+        {
+            let mut stdin_guard = stdin.lock().await;
+            *stdin_guard = None;
+        }
+        {
+            let mut stdout_guard = stdout.lock().await;
+            *stdout_guard = None;
+        }
+        {
+            let mut child_guard = child.lock().await;
+            if let Some(mut old_child) = child_guard.take() {
+                let _ = old_child.kill().await;
+            }
+        }
+
+        // Try to spawn a new worker
+        match Command::new("python3")
+            .arg("-m")
+            .arg("ultimate_coders.local_worker")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+        {
+            Ok(mut new_child) => {
+                let new_stdin = match new_child.stdin.take() {
+                    Some(s) => s,
+                    None => {
+                        tracing::warn!("Failed to get stdin from restarted worker");
+                        let _ = new_child.kill().await;
+                        continue;
+                    }
+                };
+                let new_stdout = match new_child.stdout.take() {
+                    Some(s) => s,
+                    None => {
+                        tracing::warn!("Failed to get stdout from restarted worker");
+                        let _ = new_child.kill().await;
+                        continue;
+                    }
+                };
+
+                // Store new handles
+                {
+                    let mut stdin_guard = stdin.lock().await;
+                    *stdin_guard = Some(new_stdin);
+                }
+                {
+                    let mut stdout_guard = stdout.lock().await;
+                    *stdout_guard = Some(BufReader::new(new_stdout));
+                }
+                {
+                    let mut child_guard = child.lock().await;
+                    *child_guard = Some(new_child);
+                }
+
+                // Health check: send ping
+                alive.store(true, Ordering::Relaxed);
+
+                let ping_ok = perform_health_check(stdin, stdout, alive).await;
+
+                if ping_ok {
+                    tracing::info!(attempt = attempt, "Local worker restarted successfully");
+                    // Reset reader_started so a new reader can be started
+                    reader_started.store(false, Ordering::Relaxed);
+                    on_restart();
+                    return;
+                } else {
+                    tracing::warn!(
+                        attempt = attempt,
+                        "Health check failed for restarted worker"
+                    );
+                    alive.store(false, Ordering::Relaxed);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    attempt = attempt,
+                    error = %e,
+                    "Failed to spawn new worker process"
+                );
+            }
+        }
+    }
+
+    tracing::error!(
+        attempts = MAX_RESTART_ATTEMPTS,
+        "All auto-restart attempts failed, worker remains unavailable"
+    );
+}
+
+/// Perform a health check on the worker by sending a ping and reading the response.
+///
+/// Returns true if the worker responded successfully within 5 seconds.
+async fn perform_health_check(
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    stdout: &Arc<Mutex<Option<BufReader<tokio::process::ChildStdout>>>>,
+    alive: &Arc<AtomicBool>,
+) -> bool {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "ping",
+        params: serde_json::json!({}),
+    };
+    let mut line = match serde_json::to_string(&req) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to serialize ping");
+            return false;
+        }
+    };
+    line.push('\n');
+
+    // Write ping
+    {
+        let mut stdin_guard = stdin.lock().await;
+        if let Some(s) = stdin_guard.as_mut() {
+            if let Err(e) = s.write_all(line.as_bytes()).await {
+                tracing::warn!(error = %e, "Failed to write ping");
+                return false;
+            }
+            if let Err(e) = s.flush().await {
+                tracing::warn!(error = %e, "Failed to flush ping");
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // Read response with timeout
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut stdout_guard = stdout.lock().await;
+        if let Some(reader) = stdout_guard.as_mut() {
+            let mut buf = String::new();
+            match reader.read_line(&mut buf).await {
+                Ok(0) => {
+                    alive.store(false, Ordering::Relaxed);
+                    false // stdout closed
+                }
+                Ok(_) => {
+                    let trimmed = buf.trim();
+                    match serde_json::from_str::<JsonRpcResponse>(trimmed) {
+                        Ok(resp) => resp.error.is_none(),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to parse ping response");
+                            false
+                        }
+                    }
+                }
+                Err(e) => {
+                    alive.store(false, Ordering::Relaxed);
+                    tracing::warn!(error = %e, "Failed to read ping response");
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    })
+    .await;
+
+    match result {
+        Ok(true) => true,
+        Ok(false) => {
+            tracing::warn!("Health check failed");
+            false
+        }
+        Err(_) => {
+            tracing::warn!("Health check timed out");
+            false
+        }
     }
 }
 
@@ -601,5 +1015,43 @@ mod tests {
         // Trying to send a task should fail gracefully
         let result = bridge.send_submit_task("test task", "").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn shutdown_request_serializes() {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0",
+            id,
+            method: "shutdown",
+            params: serde_json::json!({}),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        assert!(s.contains("\"method\":\"shutdown\""));
+        assert!(!s.contains('\n'));
+    }
+
+    #[test]
+    fn bridge_shutting_down_flag() {
+        let bridge = LocalWorkerBridge::new();
+        assert!(!bridge.is_shutting_down());
+        // After kill, shutting_down should be true
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_without_worker() {
+        // Graceful shutdown on a bridge without a worker should not panic
+        let bridge = LocalWorkerBridge::new();
+        bridge.graceful_shutdown().await;
+        assert!(!bridge.is_available());
+        assert!(bridge.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn restart_without_worker_fails() {
+        let bridge = LocalWorkerBridge::new();
+        let result = bridge.restart().await;
+        assert!(result.is_err());
+        assert!(!bridge.is_available());
     }
 }
