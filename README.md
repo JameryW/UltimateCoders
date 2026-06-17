@@ -1,12 +1,13 @@
 # UltimateCoders
 
-[![CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/JameryW/UltimateCoders)](https://github.com/JameryW/UltimateCoders/releases)
+[![Rust CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml)
+[![Python CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml)
+[![TUI CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-tui.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-tui.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. An Ink-based TUI provides real-time task monitoring with CJK/IME support.
+Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to TUI and Dashboard consumers. An Ink-based TUI provides terminal monitoring with CJK/IME support, and a FastAPI Dashboard offers web-based cluster oversight with SSE streaming.
 
 ## Quick Start
 
@@ -85,32 +86,68 @@ npm start
 
 The TUI connects to the gRPC server and provides real-time task monitoring with CJK/IME input support. See [tui/README.md](tui/README.md) for keyboard shortcuts and architecture details.
 
+### 7. Start the Dashboard
+
+```bash
+python -m ultimate_coders.dashboard
+```
+
+The Dashboard is a FastAPI web UI with SSE streaming for real-time cluster monitoring. It can optionally publish/subscribe to NATS for cross-component event sync.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the full architecture document.
 
 ```
-+-------------------+     +-------------------+     +---------------+
-|   Python Agent    |     |   Python Agent    |     |  Ink TUI      |
-|   Orchestrator    |     |     Worker        |     |  (Node.js)    |
-+--------+----------+     +--------+----------+     +-------+-------+
-         |                         |                         |
-         |  Engine API (PyO3)      |                         | gRPC
-         |                         |                         |
-+--------v-------------------------v----------+     +--------v-------+
-|              Rust Core Engine               |     |  uc-grpc-server|
-|  +----------+ +--------+ +---------+       |     +--------+-------+
-|  | Indexer  | | Search | | Memory  |       |              |
-|  +----------+ +--------+ +---------+       |              |
-|  +----------+ +----------+ +---------+     |              |
-|  |Scheduler | |Checkpoint| |Conflict|      |              |
-|  +----------+ +----------+ +---------+     |              |
-+--------+----------+---------+---------+-----+              |
-         |          |         |         |                     |
-    +----v---+ +----v---+ +--v----+ +--v----+                |
-    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<---------------+
-    +--------+ +--------+ +-------+ +-------+
++-------------------+     +-------------------+     +---------------+     +---------------+
+|   Python Agent    |     |   Python Agent    |     |  Ink TUI      |     |  Dashboard    |
+|   Orchestrator    |     |     Worker        |     |  (Node.js)    |     |  (FastAPI)    |
++--------+----------+     +--------+----------+     +-------+-------+     +-------+-------+
+         |                         |                         |                     |
+         |  Engine API (PyO3)      |                         | gRPC                | SSE
+         |                         |                         |                     |
++--------v-------------------------v----------+     +--------v-------+             |
+|              Rust Core Engine               |     |  uc-grpc-server|             |
+|  +----------+ +--------+ +---------+       |     +--------+-------+             |
+|  | Indexer  | | Search | | Memory  |       |            |                       |
+|  +----------+ +--------+ +---------+       |            | broadcast channel     |
+|  +----------+ +----------+ +---------+     |            | (TaskEvent)            |
+|  |Scheduler | |Checkpoint| |Conflict|      |            |                       |
+|  +----------+ +----------+ +---------+     |            |                       |
++--------+----------+---------+---------+-----+            |                       |
+         |          |         |         |                  |                       |
+    +----v---+ +----v---+ +--v----+ +--v----+              |                       |
+    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<-------------+-----------------------+
+    +--------+ +--------+ +-------+ +-------+    NATS pub/sub (task events)
 ```
+
+### Real-Time Event Flow
+
+All task events flow through a unified **broadcast channel** (capacity 256) in the gRPC server:
+
+1. **Local decomposition** — TaskStore records events and broadcasts them
+2. **LocalWorkerBridge** — Python subprocess sends JSON-RPC notifications; the bridge applies updates and broadcasts
+3. **NATS subscriber** — Receives `uc.task.update` and `uc.task.event` from the Python NATS Worker; applies and broadcasts
+4. **WatchTask stream** — Subscribes to the broadcast channel for instant delivery (replaces polling)
+
+### LocalWorkerBridge
+
+When NATS is unavailable, the gRPC server can execute tasks locally via a Python subprocess (`python -m ultimate_coders.local_worker`). Communication uses JSON-RPC 2.0 over stdin/stdout. The bridge:
+
+- Spawns and manages the worker lifecycle
+- Sends `submit_task` requests and reads progress notifications
+- Applies worker updates to TaskStore and broadcasts events
+- Falls back to newline-split decomposition if the worker is unavailable
+
+### NATS Worker
+
+An independent process that bridges the gRPC TaskService with the Python Orchestrator:
+
+1. Subscribes to `uc.task.submit` (from gRPC server)
+2. Calls `Orchestrator.submit_task()` for LLM/sandbox decomposition
+3. Publishes status updates to `uc.task.update`
+4. Publishes real-time events to `uc.task.event`
+5. Sends heartbeats to `uc.heartbeat` every 30 seconds
 
 ### Repository Structure
 
@@ -122,19 +159,22 @@ ultimate-coders/
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
 │   ├── uc-engine/            # Core engine (LocalEngine implementation)
-│   ├── uc-grpc/              # gRPC server/client + proto
+│   ├── uc-grpc/              # gRPC server/client + proto + broadcast + LocalWorkerBridge
 │   ├── uc-grpc-server/       # Standalone gRPC server binary
 │   └── uc-python/            # PyO3 Python binding
 ├── python/
 │   └── ultimate_coders/      # Python ergonomic layer
 │       ├── engine.py         # create_engine() factory
-│       ├── agent/            # Orchestrator + Worker
+│       ├── agent/            # Orchestrator + Worker + Sandbox + Scheduler
+│       ├── dashboard/        # FastAPI web dashboard + SSE streaming
+│       ├── local_worker.py   # JSON-RPC worker subprocess
+│       ├── nats_worker.py    # NATS consumer/producer bridge
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
 ├── tui/                      # Ink-based Terminal UI
 │   ├── src/
-│   │   ├── components/       # React/Ink UI components
+│   │   ├── components/       # React/Ink UI components (App, SubtaskTree, StatusBar, CjkTextInput, TaskInput)
 │   │   ├── hooks/            # gRPC connection + event hooks
 │   │   ├── grpc/             # Node.js gRPC client
 │   │   ├── reducer.ts        # Central state management
@@ -174,7 +214,7 @@ pytest tests/python/ -v        # Run Python tests
 cd tui
 npm install                    # Install dependencies
 npm start                      # Start TUI
-npm test                       # Run 280+ unit tests (vitest)
+npm test                       # Run unit tests (vitest)
 npm run typecheck              # TypeScript type checking
 ```
 
@@ -184,18 +224,24 @@ npm run typecheck              # TypeScript type checking
 # Start all storage backends
 docker compose up -d
 
-# Start with development tools (pgAdmin, NATS box)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile tools up -d
-
-# Start with gRPC server
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile engine up -d
-
 # Stop everything
 docker compose down
 
 # Stop and remove volumes
 docker compose down -v
 ```
+
+## CI
+
+Three independent CI workflows run on PRs targeting `main`:
+
+| Workflow | Trigger paths | Checks |
+|----------|--------------|--------|
+| **Rust CI** | `crates/`, `Cargo.toml`, `Cargo.lock` | check, clippy, fmt, test (3 feature combos) |
+| **Python CI** | `python/`, `tests/`, `pyproject.toml` | ruff lint, pytest (3.9 + 3.12) |
+| **TUI CI** | `tui/` | tsc --noEmit, vitest |
+
+Storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
 
 ## Configuration
 
@@ -211,6 +257,8 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_QDRANT_API_KEY` | - | Qdrant API key (optional) |
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
+| `UC_SANDBOX_MODE` | - | Sandbox mode: `subprocess` or empty |
+| `UC_PROJECT_PATH` | - | Project path for sandbox execution |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for LLM calls |
 
 Docker Compose default credentials:
@@ -237,6 +285,7 @@ Docker Compose default credentials:
 - ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
 - ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
 - ✅ PR11-20: TUI 实时监控 (Ink + React, gRPC streaming, CJK/IME input, segment-based StatusBar, 280+ tests)
+- ✅ PR21-30: Broadcast channel + LocalWorkerBridge + Dashboard SSE + NATS Worker + TUI CI
 
 ## Development
 
