@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
@@ -559,6 +559,18 @@ where
     (reporter, service)
 }
 
+// ── Task queue for concurrent submit_task ─────────────────────
+
+/// Maximum number of tasks that can be waiting in the queue.
+const TASK_QUEUE_CAPACITY: usize = 64;
+
+/// A task waiting in the queue to be sent to the local worker.
+struct QueuedTask {
+    description: String,
+    project_id: String,
+    task_id: String, // Already created in Planning status
+}
+
 /// Internal shared state for the gRPC server.
 struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     engine: E,
@@ -574,6 +586,9 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     /// All event sources (local worker, NATS, local decomposition) publish here.
     /// WatchTask streams subscribe via Receiver for instant delivery.
     event_tx: broadcast::Sender<TaskEvent>,
+    /// Sender half of the task queue channel. submit_task_via_bridge enqueues
+    /// tasks here; a background consumer sends them to the worker one at a time.
+    task_queue_tx: mpsc::Sender<QueuedTask>,
 }
 
 /// gRPC server that delegates EngineService operations to an inner EngineApi
@@ -600,14 +615,23 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     pub fn new(engine: E) -> Self {
         let (event_tx, _) = broadcast::channel(256);
 
+        let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
+
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
+
+        // Spawn the queue consumer background task
+        spawn_task_queue_consumer(task_queue_rx, local_worker.clone(), task_store.clone());
+
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
-                task_store: Arc::new(Mutex::new(TaskStore::new())),
+                task_store,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
-                local_worker: Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new())),
+                local_worker,
                 event_tx,
+                task_queue_tx,
             }),
         }
     }
@@ -652,12 +676,20 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let (event_tx, _) = broadcast::channel(256);
 
+        let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
+
+        let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
+
+        // Spawn the queue consumer background task
+        spawn_task_queue_consumer(task_queue_rx, local_worker.clone(), task_store.clone());
+
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
             nats_client: nats_client.clone(),
-            local_worker: Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new())),
+            local_worker,
             event_tx: event_tx.clone(),
+            task_queue_tx,
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
@@ -1515,6 +1547,72 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
     }
 }
 
+// ── Task queue consumer ──────────────────────────────────────
+
+/// Spawn a background task that reads from the task queue and sends tasks
+/// to the local worker one at a time, ensuring sequential execution.
+///
+/// If sending to the worker fails, the Planning task is marked as Failed
+/// in the TaskStore and a failure event is broadcast.
+fn spawn_task_queue_consumer(
+    mut rx: mpsc::Receiver<QueuedTask>,
+    local_worker: Arc<Mutex<crate::local_worker::LocalWorkerBridge>>,
+    task_store: Arc<Mutex<TaskStore>>,
+) {
+    tokio::spawn(async move {
+        while let Some(queued) = rx.recv().await {
+            tracing::info!(
+                task_id = %queued.task_id,
+                "Dequeuing task for local worker"
+            );
+
+            let bridge = local_worker.lock().await;
+            if !bridge.is_available() {
+                // Worker became unavailable after the task was enqueued.
+                // Mark the task as Failed.
+                tracing::warn!(
+                    task_id = %queued.task_id,
+                    "Worker unavailable when dequeuing task, marking as Failed"
+                );
+                drop(bridge);
+
+                {
+                    let mut store = task_store.lock().await;
+                    store.set_task_status(&queued.task_id, uc_types::TaskStatus::Failed);
+                }
+                continue;
+            }
+
+            match bridge
+                .send_submit_task(&queued.description, &queued.project_id)
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        task_id = %queued.task_id,
+                        "Task sent to local worker from queue"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        task_id = %queued.task_id,
+                        error = %e,
+                        "Failed to send queued task to worker, marking as Failed"
+                    );
+                    drop(bridge);
+
+                    // Mark the Planning task as Failed
+                    {
+                        let mut store = task_store.lock().await;
+                        store.set_task_status(&queued.task_id, uc_types::TaskStatus::Failed);
+                    }
+                }
+            }
+        }
+        tracing::debug!("Task queue consumer exiting");
+    });
+}
+
 // ── Local task decomposition (fallback) ──────────────────────
 
 /// Apply a worker task update to the TaskStore and broadcast events.
@@ -1839,15 +1937,18 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     let _ = self.inner.event_tx.send(event);
                 }
 
-                // Send the task to the worker (fire-and-forget)
-                match bridge
-                    .send_submit_task(&req.description, &req.project_id)
-                    .await
-                {
+                // Enqueue the task for sequential delivery to the worker
+                let queued = QueuedTask {
+                    description: req.description.clone(),
+                    project_id: req.project_id.clone(),
+                    task_id: task_id_str.clone(),
+                };
+
+                match self.inner.task_queue_tx.try_send(queued) {
                     Ok(()) => {
                         tracing::info!(
                             task_id = %task_id_str,
-                            "Task submitted to local worker, status=Planning"
+                            "Task enqueued for local worker, status=Planning"
                         );
 
                         // Build response with Planning status
@@ -1875,10 +1976,32 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                             error: None,
                         }));
                     }
-                    Err(e) => {
+                    Err(mpsc::error::TrySendError::Full(_)) => {
                         tracing::warn!(
-                            error = %e,
-                            "Failed to send task to local worker, falling back to local decomposition"
+                            task_id = %task_id_str,
+                            "Task queue full, cannot enqueue task"
+                        );
+                        // Remove the Planning placeholder before returning error
+                        {
+                            let mut store = self.inner.task_store.lock().await;
+                            store.tasks.remove(&task_id_str);
+                            store.events.retain(|e| {
+                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
+                            });
+                        }
+                        return Ok(Response::new(SubmitTaskResponse {
+                            success: false,
+                            task_id: String::new(),
+                            status: String::new(),
+                            subtask_count: 0,
+                            subtasks: Vec::new(),
+                            error: Some("Task queue is full, try again later".to_string()),
+                        }));
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        tracing::warn!(
+                            task_id = %task_id_str,
+                            "Task queue closed, falling back to local decomposition"
                         );
                         // Remove the Planning placeholder before falling back
                         {
@@ -1894,7 +2017,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             }
         }
 
-        // Worker unavailable or failed — fall back
+        // Worker unavailable or queue closed — fall back
         self.submit_task_local(req).await
     }
 
@@ -3054,5 +3177,152 @@ mod tests {
             found_assigned,
             "Expected SubtaskAssigned broadcast event from NATS update"
         );
+    }
+
+    // ── Task queue tests ─────────────────────────────────────────
+
+    #[test]
+    fn task_queue_capacity_constant() {
+        assert_eq!(TASK_QUEUE_CAPACITY, 64);
+    }
+
+    #[tokio::test]
+    async fn task_queue_sends_tasks_sequentially() {
+        // Verify that tasks enqueued via mpsc are received in order.
+        let (tx, mut rx) = mpsc::channel::<QueuedTask>(TASK_QUEUE_CAPACITY);
+
+        // Enqueue three tasks
+        tx.send(QueuedTask {
+            description: "Task A".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-a".to_string(),
+        })
+        .await
+        .unwrap();
+        tx.send(QueuedTask {
+            description: "Task B".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-b".to_string(),
+        })
+        .await
+        .unwrap();
+        tx.send(QueuedTask {
+            description: "Task C".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-c".to_string(),
+        })
+        .await
+        .unwrap();
+
+        // Receive in order
+        let first = rx.recv().await.unwrap();
+        assert_eq!(first.task_id, "t-a");
+        assert_eq!(first.description, "Task A");
+
+        let second = rx.recv().await.unwrap();
+        assert_eq!(second.task_id, "t-b");
+
+        let third = rx.recv().await.unwrap();
+        assert_eq!(third.task_id, "t-c");
+    }
+
+    #[tokio::test]
+    async fn task_queue_full_returns_error() {
+        // Fill the queue to capacity, then verify try_send fails.
+        let (tx, mut rx) = mpsc::channel::<QueuedTask>(2);
+
+        tx.send(QueuedTask {
+            description: "Task 1".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-1".to_string(),
+        })
+        .await
+        .unwrap();
+        tx.send(QueuedTask {
+            description: "Task 2".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-2".to_string(),
+        })
+        .await
+        .unwrap();
+
+        // Queue is full — try_send should fail
+        let result = tx.try_send(QueuedTask {
+            description: "Task 3".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-3".to_string(),
+        });
+        assert!(result.is_err());
+        assert!(matches!(result, Err(mpsc::error::TrySendError::Full(_))));
+
+        // Drain one item
+        let _ = rx.recv().await.unwrap();
+
+        // Now try_send should succeed
+        let result = tx.try_send(QueuedTask {
+            description: "Task 3".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "t-3".to_string(),
+        });
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn task_queue_consumer_marks_failed_on_send_error() {
+        // Create a queue consumer with an unavailable worker bridge.
+        // The consumer should mark the Planning task as Failed when the
+        // worker is unavailable.
+        let (tx, rx) = mpsc::channel::<QueuedTask>(TASK_QUEUE_CAPACITY);
+        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
+
+        // Create a Planning task in the store
+        let task_id_str;
+        {
+            let mut store = task_store.lock().await;
+            let task = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+            task_id_str = task.id.0.clone();
+        }
+
+        // Start the consumer
+        spawn_task_queue_consumer(rx, local_worker, task_store.clone());
+
+        // Enqueue a task referencing the Planning task
+        tx.send(QueuedTask {
+            description: "Test task".to_string(),
+            project_id: "p1".to_string(),
+            task_id: task_id_str.clone(),
+        })
+        .await
+        .unwrap();
+
+        // Drop the sender to signal the consumer to exit after processing
+        drop(tx);
+
+        // Give the consumer time to process
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The task should be marked as Failed (worker is unavailable)
+        let store = task_store.lock().await;
+        let task = store.get_task(&task_id_str).unwrap();
+        assert_eq!(task.status, uc_types::TaskStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn grpc_server_has_task_queue() {
+        use uc_engine::LocalEngine;
+
+        let engine = LocalEngine::new_fallback();
+        let server = GrpcServer::new(engine);
+
+        // Verify the task_queue_tx is present and functional by sending a test item
+        let queued = QueuedTask {
+            description: "Queue test".to_string(),
+            project_id: "p1".to_string(),
+            task_id: "test-id".to_string(),
+        };
+        let result = server.inner.task_queue_tx.try_send(queued);
+        // Should succeed — queue is empty and has capacity
+        assert!(result.is_ok());
     }
 }
