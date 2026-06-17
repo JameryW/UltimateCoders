@@ -625,6 +625,46 @@ impl PyEngine {
         Ok(PyTask::from(result))
     }
 
+    /// Watch a task for events (gRPC mode only).
+    ///
+    /// Collects events from the server-streaming WatchTask RPC,
+    /// returning up to `max_events` events within `timeout_secs`.
+    /// Use in a polling loop for continuous monitoring.
+    ///
+    /// Args:
+    ///     task_id: The task to watch (empty string watches all tasks).
+    ///     max_events: Maximum events to collect (default: 50).
+    ///     timeout_secs: Timeout in seconds (default: 10.0).
+    ///
+    /// Returns:
+    ///     List of PyAgentEvent objects.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode.
+    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
+    pub fn watch_task(
+        &self,
+        py: Python<'_>,
+        task_id: String,
+        max_events: usize,
+        timeout_secs: f64,
+    ) -> PyResult<Vec<PyAgentEvent>> {
+        let grpc_client = self.grpc_client.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
+        })?;
+        let client = grpc_client.clone();
+        let events = py.allow_threads(|| {
+            async_support::block_on(async {
+                let stream = client
+                    .watch_task(&task_id)
+                    .await
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+                collect_events(stream, max_events, timeout_secs).await
+            })
+        })?;
+        Ok(events)
+    }
+
     // ── Async methods ─────────────────────────────────────────
 
     /// Async version of health(). Returns full HealthStatus.
@@ -1036,46 +1076,6 @@ impl PyEngine {
         })
     }
 
-    /// Watch a task for events (gRPC mode only).
-    ///
-    /// Collects events from the server-streaming WatchTask RPC,
-    /// returning up to `max_events` events within `timeout_secs`.
-    /// Use in a polling loop for continuous monitoring.
-    ///
-    /// Args:
-    ///     task_id: The task to watch (empty string watches all tasks).
-    ///     max_events: Maximum events to collect (default: 50).
-    ///     timeout_secs: Timeout in seconds (default: 10.0).
-    ///
-    /// Returns:
-    ///     List of AgentEvent objects.
-    ///
-    /// Raises:
-    ///     RuntimeError: If not in gRPC mode.
-    #[pyo3(signature = (task_id, max_events=50, timeout_secs=10.0))]
-    pub fn watch_task(
-        &self,
-        py: Python<'_>,
-        task_id: String,
-        max_events: usize,
-        timeout_secs: f64,
-    ) -> PyResult<Vec<PyAgentEvent>> {
-        let grpc_client = self.grpc_client.as_ref().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
-        })?;
-        let client = grpc_client.clone();
-        let events = py.allow_threads(|| {
-            async_support::block_on(async {
-                let stream = client
-                    .watch_task(&task_id)
-                    .await
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-                collect_events(stream, max_events, timeout_secs).await
-            })
-        })?;
-        Ok(events)
-    }
-
     /// Async version of watch_task().
     ///
     /// Collects events from the server-streaming WatchTask RPC,
@@ -1087,7 +1087,7 @@ impl PyEngine {
     ///     timeout_secs: Timeout in seconds (default: 10.0).
     ///
     /// Returns:
-    ///     List of AgentEvent objects.
+    ///     List of PyAgentEvent objects.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode.
