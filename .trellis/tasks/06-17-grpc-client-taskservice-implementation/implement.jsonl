@@ -1,0 +1,3 @@
+{"path":".trellis/tasks/06-17-grpc-client-taskservice-implementation/prd.md","scope":"implement","why":"PRD with requirements and architecture decisions"}
+{"path":"crates/uc-grpc/src/client.rs","scope":"implement","why":"Add TaskServiceClient field and implement 6 TaskService methods"}
+{"path":"crates/uc-grpc/src/conversions.rs","scope":"implement","why":"Add missing proto-domain From impls for TaskService messages"}

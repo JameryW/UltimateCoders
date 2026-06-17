@@ -461,7 +461,8 @@ class Engine:
             timeout_secs: Timeout in seconds (default: 10.0).
 
         Returns:
-            List of event dicts with event_type, task_id, event_id, timestamp.
+            List of AgentEvent objects with event_type, task_id,
+            subtask_id, data, and timestamp attributes.
         """
         return self._try_grpc_with_fallback(
             "watch_task", task_id, max_events, timeout_secs,
@@ -675,7 +676,7 @@ class Engine:
             timeout_secs: Timeout in seconds (default: 10.0).
 
         Returns:
-            List of event dicts.
+            List of AgentEvent objects.
 
         Usage:
             events = await engine.watch_task_async("task-123", max_events=20)
