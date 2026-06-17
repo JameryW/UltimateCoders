@@ -17,6 +17,7 @@ pub mod rate_limiter;
 pub mod sandbox;
 pub mod scheduler;
 pub mod search;
+pub mod task_store;
 
 pub use checkpoint::{CheckpointConfig, CheckpointManager};
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryPolicy};
