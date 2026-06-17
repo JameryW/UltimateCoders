@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use futures::Stream;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use pyo3_async_runtimes::tokio::future_into_py;
 
 use uc_types::EngineApi;
@@ -582,7 +581,9 @@ impl PyEngine {
         let inner = self.inner.clone();
         let result = py
             .allow_threads(|| {
-                async_support::block_on(inner.submit_task(description, project_id.unwrap_or_default()))
+                async_support::block_on(
+                    inner.submit_task(description, project_id.unwrap_or_default()),
+                )
             })
             .map_err(engine_error_to_pyerr)?;
         Ok(PyTask::from(result))
@@ -1086,7 +1087,7 @@ impl PyEngine {
     ///     timeout_secs: Timeout in seconds (default: 10.0).
     ///
     /// Returns:
-    ///     List of dicts with event_type, task_id, event_id, timestamp.
+    ///     List of AgentEvent objects.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode.
@@ -1102,7 +1103,7 @@ impl PyEngine {
         let client = grpc_client.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("watch_task requires gRPC mode")
         })?;
-        future_into_py::<_, Vec<Py<PyDict>>>(py, async move {
+        future_into_py::<_, Vec<PyAgentEvent>>(py, async move {
             let stream = client
                 .watch_task(&task_id)
                 .await

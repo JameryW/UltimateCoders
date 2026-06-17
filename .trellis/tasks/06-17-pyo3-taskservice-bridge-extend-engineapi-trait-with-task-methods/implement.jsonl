@@ -1,0 +1,5 @@
+{"path":".trellis/tasks/06-17-pyo3-taskservice-bridge-extend-engineapi-trait-with-task-methods/prd.md","scope":"implement","why":"PRD with architecture decision and acceptance criteria"}
+{"path":"crates/uc-types/src/engine.rs","scope":"implement","why":"Add 5 task methods to EngineApi trait"}
+{"path":"crates/uc-engine/src/local.rs","scope":"implement","why":"Implement 5 task methods in LocalEngine with internal TaskStore"}
+{"path":"crates/uc-grpc/src/client.rs","scope":"implement","why":"Move 5 task methods from inherent to trait impl"}
+{"path":"crates/uc-python/src/engine.rs","scope":"implement","why":"Add PyO3 sync + async methods for task operations"}
