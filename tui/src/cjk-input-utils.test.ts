@@ -7,6 +7,8 @@ import {
   deleteToEnd,
   renderInputWithCursor,
   cursorDisplayCol,
+  wordBoundaryBackward,
+  wordBoundaryForward,
 } from './cjk-input-utils.js';
 
 // ── inverseChar ──────────────────────────────────────────────
@@ -253,5 +255,46 @@ describe('cursorDisplayCol', () => {
 
   it('returns 0 for empty string at cursor 0', () => {
     expect(cursorDisplayCol('', 0)).toBe(0);
+  });
+});
+
+// ── Word Boundary Tests ────────────────────────────────────
+describe('wordBoundaryBackward', () => {
+  it('returns 0 when already at start', () => {
+    expect(wordBoundaryBackward('hello', 0)).toBe(0);
+  });
+
+  it('skips whitespace then stops at word boundary', () => {
+    expect(wordBoundaryBackward('hello world', 11)).toBe(6);
+  });
+
+  it('stops at CJK character boundary', () => {
+    expect(wordBoundaryBackward('hello你好', 7)).toBe(6);
+  });
+
+  it('each CJK char is its own word', () => {
+    expect(wordBoundaryBackward('你好世界', 3)).toBe(2);
+  });
+
+  it('skips multiple spaces', () => {
+    expect(wordBoundaryBackward('hello   world', 13)).toBe(8);
+  });
+});
+
+describe('wordBoundaryForward', () => {
+  it('returns max when already at end', () => {
+    expect(wordBoundaryForward('hello', 5)).toBe(5);
+  });
+
+  it('skips current word then whitespace', () => {
+    expect(wordBoundaryForward('hello world', 0)).toBe(6);
+  });
+
+  it('each CJK char is its own word', () => {
+    expect(wordBoundaryForward('你好世界', 0)).toBe(1);
+  });
+
+  it('skips CJK then lands on next word', () => {
+    expect(wordBoundaryForward('你 hello', 0)).toBe(1);
   });
 });
