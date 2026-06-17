@@ -42,19 +42,28 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
 
-  // Loading state — show spinner until initial data arrives
+  // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     dashboard.fetchInitial().finally(() => setLoading(false));
   }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
-  // Periodic gRPC health check — poll every 30s when connected
+  // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch tasks via gRPC
+  useEffect(() => {
+    if (!connected && grpcState === "connected") {
+      listTasks().then((data) => {
+        if (data.available) dashboard.mergeGrpcTasks(data);
+      }).catch(() => { /* ignore */ });
+    }
+  }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
+
+  // Periodic gRPC health check -- poll every 30s when connected
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
   useEffect(() => {
     if (grpcState !== "connected") {

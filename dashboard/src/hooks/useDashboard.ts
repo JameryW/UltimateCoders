@@ -5,6 +5,7 @@ import type {
   HealthData,
   WorkersData,
   TasksData,
+  SubtaskSummary,
   SchedulerData,
   CircuitBreakerData,
   DashboardEvent,
@@ -88,52 +89,114 @@ export function useDashboard() {
       },
       ...prev.slice(0, 199), // keep max 200
     ]);
-    // When a new task appears via gRPC-Web that's not in our task list, add a placeholder
-    if (ev.type === "task_submitted") {
-      setTasks((prev) => {
-        if (prev.tasks.some((t) => t.id === tid)) return prev;
-        return {
+
+    switch (ev.type) {
+      // -- Task lifecycle --
+      case "task_submitted": {
+        setTasks((prev) => {
+          if (prev.tasks.some((t) => t.id === tid)) return prev;
+          // Extract subtask summaries from event data if present
+          const rawSubtasks = ev.data.subtasks as Array<Record<string, unknown>> | undefined;
+          const subtasks: SubtaskSummary[] = rawSubtasks?.map((s) => ({
+            id: String(s.id ?? ""),
+            description: String(s.description ?? ""),
+            status: String(s.status ?? "pending"),
+            depends_on: (s.depends_on as string[]) ?? [],
+          })) ?? [];
+          return {
+            ...prev,
+            tasks: [
+              {
+                id: tid,
+                description: String(ev.data.description ?? ""),
+                status: "in_progress",
+                project_id: String(ev.data.project_id ?? ""),
+                subtask_count: subtasks.length || Number(ev.data.subtask_count ?? 0),
+                subtasks: subtasks.length > 0 ? subtasks : undefined,
+                created_at: ev.timestamp,
+                updated_at: ev.timestamp,
+              },
+              ...prev.tasks,
+            ],
+            total: prev.total + 1,
+          };
+        });
+        break;
+      }
+      case "task_completed": {
+        setTasks((prev) => ({
           ...prev,
-          tasks: [
-            {
-              id: tid,
-              description: String(ev.data.description ?? ""),
-              status: "in_progress",
-              project_id: String(ev.data.project_id ?? ""),
-              subtask_count: 0,
-              created_at: ev.timestamp,
-              updated_at: ev.timestamp,
-            },
-            ...prev.tasks,
-          ],
-          total: prev.total + 1,
-        };
-      });
-    }
-    // Update subtask counts from events
-    if (ev.type === "subtask_assigned" || ev.type === "subtask_started") {
-      setTasks((prev) => ({
-        ...prev,
-        tasks: prev.tasks.map((t) =>
-          t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t,
-        ),
-      }));
-    }
-    if (ev.type === "task_completed") {
-      setTasks((prev) => ({
-        ...prev,
-        tasks: prev.tasks.map((t) =>
-          t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t,
-        ),
-      }));
-    }
-    if (ev.type === "subtask_failed" && ev.data.recoverable === "false") {
-      setTasks((prev) => ({
-        ...prev,
-        tasks: prev.tasks.map((t) =>
-          t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t,
-        ),
-      }));
+          tasks: prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t,
+          ),
+        }));
+        break;
+      }
+      case "task_failed": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t,
+          ),
+        }));
+        break;
+      }
+      case "task_paused": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "paused" as const, updated_at: ev.timestamp } : t,
+          ),
+        }));
+        break;
+      }
+      case "task_resumed": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t,
+          ),
+        }));
+        break;
+      }
+
+      // -- Subtask lifecycle --
+      case "subtask_assigned":
+      case "subtask_started": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => {
+            if (t.id !== tid) return t;
+            const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
+            return { ...t, status: "in_progress" as const, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+          }),
+        }));
+        break;
+      }
+      case "subtask_completed": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => {
+            if (t.id !== tid) return t;
+            const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
+            return { ...t, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+          }),
+        }));
+        break;
+      }
+      case "subtask_failed": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => {
+            if (t.id !== tid) return t;
+            const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
+            // If unrecoverable, mark parent task failed too
+            const taskFailed = ev.data.recoverable === "false" || ev.data.recoverable === false;
+            return { ...t, status: taskFailed ? "failed" as const : t.status, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+          }),
+        }));
+        break;
+      }
     }
   }, []);
 
@@ -165,6 +228,23 @@ export function useDashboard() {
     } catch { /* ignore */ }
   }, []);
 
+  /** Merge task list from gRPC-Web into state (for when SSE is unavailable). */
+  const mergeGrpcTasks = useCallback((data: TasksData) => {
+    setTasks((prev) => {
+      if (!data.available) return prev;
+      const merged = [...prev.tasks];
+      for (const t of data.tasks) {
+        const idx = merged.findIndex((m) => m.id === t.id);
+        if (idx >= 0) {
+          merged[idx] = { ...merged[idx], ...t };
+        } else {
+          merged.push(t);
+        }
+      }
+      return { ...prev, tasks: merged, total: merged.length };
+    });
+  }, []);
+
   return {
     health,
     workers,
@@ -177,6 +257,38 @@ export function useDashboard() {
     setConnected,
     handleSnapshot,
     handleTaskEvent,
+    mergeGrpcTasks,
     fetchInitial,
   };
+}
+
+/** Merge a subtask event into existing subtask list, upserting by subtask_id. */
+function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSummary[] {
+  const sid = ev.subtask_id;
+  if (!sid) return subtasks;
+
+  const statusMap: Record<string, string> = {
+    subtask_assigned: "assigned",
+    subtask_started: "in_progress",
+    subtask_completed: "completed",
+    subtask_failed: "failed",
+  };
+  const newStatus = statusMap[ev.type];
+  if (!newStatus) return subtasks;
+
+  const existing = subtasks.find((s) => s.id === sid);
+  if (existing) {
+    return subtasks.map((s) =>
+      s.id === sid ? { ...s, status: newStatus } : s,
+    );
+  }
+  return [
+    ...subtasks,
+    {
+      id: sid,
+      description: String(ev.data.description ?? ""),
+      status: newStatus,
+      depends_on: (ev.data.depends_on as string[]) ?? [],
+    },
+  ];
 }
