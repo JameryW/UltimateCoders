@@ -19,6 +19,7 @@ import type {ConnectionState} from '../grpc/types.js';
 import type {FocusedArea} from '../reducer.js';
 import {getStatusBarHelp} from '../keymap.js';
 import {getSymbols} from '../symbols.js';
+import {MAX_RETRY_DISPLAY} from '../statusbar-utils.js';
 
 export interface StatusBarProps {
   workerId?: string;
@@ -39,8 +40,6 @@ const FOCUS_LABELS: Record<FocusedArea, string> = {
   input: 'Input',
   chat: 'Chat',
 };
-
-const MAX_RETRY_DISPLAY = 5;
 
 // ── Segment-based width budget ────────────────────────────────
 
