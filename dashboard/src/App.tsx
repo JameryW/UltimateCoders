@@ -42,7 +42,7 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
@@ -81,7 +81,7 @@ function App() {
       <ToastContainer />
       <ConfirmDialog />
       <Header connected={connected} grpcState={grpcState} />
-      <TaskSubmitForm />
+      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="md:col-span-2"><HealthPanel data={dashboard.health} /></div>
         <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
