@@ -18,9 +18,10 @@ Notifications (worker → server):
 from __future__ import annotations
 
 import asyncio
-import signal
+import json
 import logging
 import os
+import signal
 import sys
 from typing import Any
 
