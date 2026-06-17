@@ -70,7 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    tracing::info!("UltimateCoders gRPC server listening on {} (gRPC-Web enabled)", addr);
+    tracing::info!(
+        "UltimateCoders gRPC server listening on {} (gRPC-Web enabled)",
+        addr
+    );
 
     Server::builder()
         // Accept both gRPC and gRPC-Web (HTTP/1.1) requests
