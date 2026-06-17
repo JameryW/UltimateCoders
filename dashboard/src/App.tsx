@@ -16,6 +16,7 @@ import { TaskSubmitForm } from "@/components/forms/TaskSubmitForm";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import * as api from "@/api/endpoints";
 import type { TaskEvent, HealthData } from "@/types/dashboard";
 
@@ -36,17 +37,21 @@ function App() {
     dashboard.handleTaskEvent(ev);
   };
 
-  const { connected } = useSSE({
+  const { connected, reconnect: sseReconnect } = useSSE({
     onUpdate: dashboard.handleSnapshot,
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
 
-  useEffect(() => { void dashboard.fetchInitial(); }, [dashboard.fetchInitial]);
+  // Loading state — show spinner until initial data arrives
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    dashboard.fetchInitial().finally(() => setLoading(false));
+  }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
   // Periodic gRPC health check — poll every 30s when connected
@@ -74,15 +79,12 @@ function App() {
       : grpcState === "error" ? "error"
       : "unavailable";
     const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
-    // Start with SSE health components, then overlay gRPC ones
     let components = [...dashboard.health.components];
-    // Merge gRPC health components (replace if same name, append if new)
     for (const gc of grpcHealthComponents) {
       const idx = components.findIndex((c) => c.name === gc.name);
       if (idx >= 0) components[idx] = gc;
       else components.push(gc);
     }
-    // Add/replace gRPC-Web connection indicator
     const grpcIdx = components.findIndex((c) => c.name === "gRPC-Web");
     if (grpcIdx >= 0) components[grpcIdx] = grpcComponent;
     else components.push(grpcComponent);
@@ -115,6 +117,17 @@ function App() {
     try { const r = await api.flushPending(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-gray-400">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mb-3" />
+          <p className="text-sm">Loading dashboard…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="text-gray-200 min-h-screen">
       <ToastContainer />
@@ -122,15 +135,29 @@ function App() {
       <Header connected={connected} grpcState={grpcState} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} /></div>
-        <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
-        <WorkersPanel data={dashboard.workers} />
-        <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
-        <EventLogPanel events={dashboard.eventLog} />
-        <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} /></div>
-        <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
+        <ErrorBoundary name="Health">
+          <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Circuit Breaker">
+          <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
+        </ErrorBoundary>
+        <ErrorBoundary name="Workers">
+          <WorkersPanel data={dashboard.workers} />
+        </ErrorBoundary>
+        <ErrorBoundary name="Tasks">
+          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
+        </ErrorBoundary>
+        <ErrorBoundary name="Event Log">
+          <EventLogPanel events={dashboard.eventLog} />
+        </ErrorBoundary>
+        <ErrorBoundary name="Scheduler">
+          <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Task Activity">
+          <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
+        </ErrorBoundary>
       </main>
-      <ConnectionIndicator connected={connected} grpcState={grpcState} />
+      <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />
     </div>
   );
 }
