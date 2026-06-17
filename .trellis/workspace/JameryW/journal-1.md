@@ -894,3 +894,37 @@ Implemented local_worker.py (Python JSON-RPC 2.0 worker) + LocalWorkerBridge (Ru
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: TUI功能完善 — overlay交互、retry、清理deprecated
+
+**Date**: 2026-06-17
+**Task**: TUI功能完善 — overlay交互、retry、清理deprecated
+**Branch**: `feat/broadcast-task-events`
+
+### Summary
+
+Wire subtask overlay keyboard navigation (Up/Down/Enter/R), add subtaskDetailOpen state + TOGGLE_SUBTASK_DETAIL action, implement RETRY_SUBTASK (offline simulation), clean deprecated SelectedPane/ActiveMainPane/selectedPane/activeMainPane/SET_SELECTED_PANE/SWAP_MAIN_PANE, remove ink-text-input dead dependency, update README to 2-area focus model, update tui-grpc-spec.md with overlay interaction model decision.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d850e38` | (see git log) |
+| `e427ee0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
