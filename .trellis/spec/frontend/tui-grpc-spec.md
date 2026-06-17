@@ -125,8 +125,6 @@ export function cursorDisplayCol(value: string, cursorGI: number): number;
 
 Segment-based layout with width budget. Priority order: brand > connection > worker > backend > progress > focus > retry > help. Each segment has an `id`, `width`, and `render` function. `buildSegments()` produces ordered segments; `selectSegments()` trims them to fit `terminalWidth`.
 
-> **v3 change**: `view` segment removed (no split pane). `activeMainPane` prop deprecated.
-
 ```typescript
 interface Segment {
     id: string;        // unique identifier for testing/debugging
@@ -155,12 +153,10 @@ export function selectSegments(segments: Segment[], budget: number): Segment[];
 
 ### TUI Reducer (`tui/src/reducer.ts`)
 
-> **v3 change**: `FocusedArea` is `'input' | 'chat'` only (no `'subtask'`). `ActiveMainPane` deprecated. New actions: `UPDATE_MESSAGE`, `REMOVE_MESSAGE`, `TOGGLE_SUBTASK_OVERLAY`. Removed: `SET_ACTIVE_MAIN_PANE` (no-op), `SWAP_MAIN_PANE` (no-op), `TOGGLE_SUBTASK_DETAIL`, `CLOSE_SUBTASK_DETAIL`, `subtaskDetailOpen` state field.
+> **v3 change**: `FocusedArea` is `'input' | 'chat'` only (no `'subtask'`). `ActiveMainPane` and `SelectedPane` types removed. New actions: `UPDATE_MESSAGE`, `REMOVE_MESSAGE`, `TOGGLE_SUBTASK_OVERLAY`, `TOGGLE_SUBTASK_DETAIL`, `RETRY_SUBTASK`. Removed: `SET_ACTIVE_MAIN_PANE`, `SWAP_MAIN_PANE`, `SET_SELECTED_PANE` (all deprecated), `ActiveMainPane`/`SelectedPane` types, `selectedPane`/`activeMainPane` state fields.
 
 ```typescript
 type FocusedArea = 'input' | 'chat';
-/** @deprecated No longer used in single-column layout. */
-type ActiveMainPane = 'chat' | 'subtask';
 type EventFilter = 'all' | 'task' | 'subtask' | 'tool' | 'error';
 type SymbolMode = 'unicode' | 'ascii' | 'auto';
 
@@ -185,12 +181,10 @@ interface TuiState {
     selectedSubtaskIndex: number;  // Keyboard nav index (-1 = none)
     selectedSubtaskId: string | null;  // Synced with index
     subtaskOverlayOpen: boolean;   // Whether Ctrl+T subtask overlay is showing
+    subtaskDetailOpen: boolean;    // Whether selected subtask detail panel is open (overlay)
     helpOverlayOpen: boolean;      // Whether ? overlay is showing
     expandAllMessages: boolean;    // Toggle expand/collapse all long messages
     startedAt: number | null;      // Timestamp when task submission started (null = idle)
-    // Backward compat:
-    selectedPane: FocusedArea;     // @deprecated — mirrors focusedArea
-    activeMainPane: ActiveMainPane; // @deprecated — no-op in single-column layout
 }
 ```
 
@@ -559,6 +553,24 @@ useEffect(() => {
     if (connectionState === 'connected') hasShownOfflineMsg.current = false;
 }, [connectionState]);
 ```
+
+---
+
+### Decision: Subtask overlay interaction model
+
+**Context**: SubtaskTree needed keyboard navigation and detail view in the Ctrl+T overlay. Multiple interaction models were possible.
+
+**Options Considered**:
+1. Subtask as 3rd focus area (input/chat/subtask cycle) — Adds complexity; overlay is transient, not a permanent layout area
+2. Overlay-only interaction (Up/Down/Enter/R/Esc in overlay mode) — Simpler; overlay captures all keys except global shortcuts; Esc layers (detail → overlay → focus)
+
+**Decision**: Option 2. When `subtaskOverlayOpen` is true, App's `useInput` handler processes overlay keys (Up/Down/Enter/R) and blocks them from reaching focus-area handlers. Esc is layered: if `subtaskDetailOpen`, first press closes detail; next press closes overlay; next press toggles focus.
+
+**Key behaviors**:
+- `TOGGLE_SUBTASK_OVERLAY`: When opening, auto-selects first subtask (index=0); when closing, preserves selection
+- `TOGGLE_SUBTASK_DETAIL`: Toggles `subtaskDetailOpen` boolean; SubtaskTree renders `SubtaskDetail` when `detailOpen && idx === selectedIndex`
+- `RETRY_SUBTASK`: Only resets `status === 'failed'` subtasks to `'pending'` and clears `errorSummary`; offline mode re-runs simulation timers in App.tsx
+- All overlay-close paths (Esc, Ctrl+T, CLEAR_TASK) reset `subtaskDetailOpen: false`
 
 ---
 
