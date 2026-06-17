@@ -72,7 +72,7 @@ export function useDashboard() {
     if (data.events) setEventLog(data.events);
   }, []);
 
-  // Handle SSE real-time task event
+  // Handle SSE/gRPC-Web real-time task event
   const handleTaskEvent = useCallback((ev: TaskEvent) => {
     const tid = ev.task_id;
     setInteractionLog((prev) => ({
@@ -88,6 +88,53 @@ export function useDashboard() {
       },
       ...prev.slice(0, 199), // keep max 200
     ]);
+    // When a new task appears via gRPC-Web that's not in our task list, add a placeholder
+    if (ev.type === "task_submitted") {
+      setTasks((prev) => {
+        if (prev.tasks.some((t) => t.id === tid)) return prev;
+        return {
+          ...prev,
+          tasks: [
+            {
+              id: tid,
+              description: String(ev.data.description ?? ""),
+              status: "in_progress",
+              project_id: String(ev.data.project_id ?? ""),
+              subtask_count: 0,
+              created_at: ev.timestamp,
+              updated_at: ev.timestamp,
+            },
+            ...prev.tasks,
+          ],
+          total: prev.total + 1,
+        };
+      });
+    }
+    // Update subtask counts from events
+    if (ev.type === "subtask_assigned" || ev.type === "subtask_started") {
+      setTasks((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((t) =>
+          t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t,
+        ),
+      }));
+    }
+    if (ev.type === "task_completed") {
+      setTasks((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((t) =>
+          t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t,
+        ),
+      }));
+    }
+    if (ev.type === "subtask_failed" && ev.data.recoverable === "false") {
+      setTasks((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((t) =>
+          t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t,
+        ),
+      }));
+    }
   }, []);
 
   // Fetch initial data
