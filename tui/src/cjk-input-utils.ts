@@ -140,3 +140,72 @@ export function cursorDisplayCol(value: string, cursorGI: number): number {
   const textBeforeCursor = graphemes.slice(0, cursorGI).join('');
   return stringWidth(textBeforeCursor);
 }
+
+// ── Word Boundary Helpers ────────────────────────────────────
+
+/** Whether a grapheme is whitespace. */
+function isWhitespace(g: string): boolean {
+  return /^\s$/.test(g);
+}
+
+/**
+ * Whether a grapheme is a CJK ideograph (Han, Hiragana, Katakana, etc.).
+ * Each CJK character is its own "word" for navigation purposes.
+ */
+function isCjk(g: string): boolean {
+  const cp = g.codePointAt(0)!;
+  return (
+    (cp >= 0x4e00 && cp <= 0x9fff)   // CJK Unified Ideographs
+    || (cp >= 0x3040 && cp <= 0x30ff) // Hiragana + Katakana
+    || (cp >= 0xac00 && cp <= 0xd7af) // Hangul Syllables
+    || (cp >= 0x3400 && cp <= 0x4dbf) // CJK Extension A
+    || (cp >= 0xf900 && cp <= 0xfaff) // CJK Compatibility Ideographs
+  );
+}
+
+/** Categorize a grapheme for word-boundary purposes. */
+type CharClass = 'space' | 'cjk' | 'word';
+function charClass(g: string): CharClass {
+  if (isWhitespace(g)) return 'space';
+  if (isCjk(g)) return 'cjk';
+  return 'word';
+}
+
+/**
+ * Find the grapheme index of the previous word boundary.
+ * Skips whitespace, then stops at the boundary between different char classes.
+ * Each CJK character is its own word.
+ */
+export function wordBoundaryBackward(value: string, cursorGI: number): number {
+  if (cursorGI <= 0) return 0;
+  const graphemes = splitter.splitGraphemes(value);
+  let i = cursorGI - 1;
+  // Skip whitespace
+  while (i > 0 && isWhitespace(graphemes[i])) i--;
+  if (i < 0) return 0;
+  // Find boundary: stop when char class changes
+  const startClass = charClass(graphemes[i]);
+  if (startClass === 'cjk') return i; // CJK: each char is a word
+  while (i > 0 && charClass(graphemes[i - 1]) === startClass) i--;
+  return i;
+}
+
+/**
+ * Find the grapheme index of the next word boundary.
+ * Skips current run of same char class, then whitespace.
+ * Each CJK character is its own word.
+ */
+export function wordBoundaryForward(value: string, cursorGI: number): number {
+  const graphemes = splitter.splitGraphemes(value);
+  const max = graphemes.length;
+  if (cursorGI >= max) return max;
+  let i = cursorGI;
+  // If on a CJK char, skip just this one
+  if (i < max && charClass(graphemes[i]) === 'cjk') return i + 1;
+  // Skip current run of same char class
+  const startClass = charClass(graphemes[i]);
+  while (i < max && charClass(graphemes[i]) === startClass) i++;
+  // Skip whitespace
+  while (i < max && isWhitespace(graphemes[i])) i++;
+  return i;
+}

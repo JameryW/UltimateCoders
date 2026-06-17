@@ -6,7 +6,7 @@
  * this single source of truth, ensuring "status bar says it, key does it."
  *
  * Convention (v3 — single-column vertical):
- *   - Shift+Tab: cycle focus (input→chat→input)
+ *   - Shift+Tab / Ctrl+W: cycle focus (input→chat→input)
  *   - Tab: indent in input; no-op elsewhere
  *   - Esc: from input→chat; from chat→input; closes overlays
  *   - Ctrl+T: toggle subtask overlay (global)
@@ -15,8 +15,9 @@
  *   - Ctrl+R: reconnect gRPC (global)
  *   - Ctrl+L: clear chat log (chat focus)
  *   - Ctrl+Q: quit (global)
- *   - PageUp/PageDown: scroll chat (chat focus)
- *   - Home/End: jump top/bottom of chat (chat focus)
+ *   - PageUp/PageDown: scroll chat by page (chat focus)
+ *   - Home/End: jump top/bottom of chat (chat focus); cursor start/end (input)
+ *   - Ctrl+Left/Right: word navigation (input)
  *   - Up/Down: scroll 1 line (chat focus)
  *   - Enter: submit (input) or expand/collapse (chat focus)
  */
@@ -42,7 +43,7 @@ export interface KeyCommand {
 
 const COMMANDS: KeyCommand[] = [
   // ── Global ──
-  {id: 'cycleFocus', label: 'Cycle focus', shortLabel: 'S-Tab', key: 'Shift+Tab', areas: [], global: true},
+  {id: 'cycleFocus', label: 'Cycle focus', shortLabel: 'S-Tab', key: 'Shift+Tab / Ctrl+W', areas: [], global: true},
   {id: 'escToMain', label: 'Escape / close overlay', shortLabel: 'Esc', key: 'Esc', areas: [], global: true},
   {id: 'subtaskOverlay', label: 'Toggle subtask overlay', shortLabel: 'C-T', key: 'Ctrl+T', areas: [], global: true},
   {id: 'filter', label: 'Cycle event filter', shortLabel: 'C-F', key: 'Ctrl+F', areas: [], global: true},
@@ -60,6 +61,10 @@ const COMMANDS: KeyCommand[] = [
   {id: 'deleteToEnd', label: 'Delete to end', shortLabel: 'C-K', key: 'Ctrl+K', areas: ['input'], global: false},
   {id: 'historyUp', label: 'History back', shortLabel: '↑', key: 'Up', areas: ['input'], global: false},
   {id: 'historyDown', label: 'History forward', shortLabel: '↓', key: 'Down', areas: ['input'], global: false},
+  {id: 'wordBack', label: 'Word backward', shortLabel: 'C-←', key: 'Ctrl+Left', areas: ['input'], global: false},
+  {id: 'wordForward', label: 'Word forward', shortLabel: 'C-→', key: 'Ctrl+Right', areas: ['input'], global: false},
+  {id: 'inputHome', label: 'Cursor to start', shortLabel: 'Home', key: 'Home', areas: ['input'], global: false},
+  {id: 'inputEnd', label: 'Cursor to end', shortLabel: 'End', key: 'End', areas: ['input'], global: false},
 
   // ── Chat ──
   {id: 'scrollUp', label: 'Scroll up', shortLabel: '↑', key: 'Up', areas: ['chat'], global: false},
