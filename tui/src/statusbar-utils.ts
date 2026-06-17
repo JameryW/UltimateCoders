@@ -13,7 +13,7 @@ export interface ConnectionIndicator {
   color: string;
 }
 
-const MAX_RETRY_DISPLAY = 5;
+export const MAX_RETRY_DISPLAY = 5;
 
 /**
  * Map connection state + streaming status to a dot character and color.

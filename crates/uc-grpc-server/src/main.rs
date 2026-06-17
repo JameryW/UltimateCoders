@@ -6,11 +6,16 @@
 //! When NATS is available (via `UC_NATS_URL` env var), TaskService will
 //! publish task submissions to NATS for the Python Orchestrator to process.
 //! When NATS is unavailable, falls back to local task decomposition.
+//!
+//! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
+//! CORS is configured to allow dashboard origins.
 
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
 
 use tonic::transport::Server;
+use tonic_web::GrpcWebLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -58,9 +63,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "[::]:50051".to_string())
         .parse()?;
 
-    tracing::info!("UltimateCoders gRPC server listening on {}", addr);
+    // CORS layer — allow dashboard origins for gRPC-Web browser requests
+    // ponytail: Any for dev, restrict to known origins in production
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    tracing::info!(
+        "UltimateCoders gRPC server listening on {} (gRPC-Web enabled)",
+        addr
+    );
 
     Server::builder()
+        // Accept both gRPC and gRPC-Web (HTTP/1.1) requests
+        .accept_http1(true)
+        .layer(GrpcWebLayer::new())
+        .layer(cors)
         .add_service(engine_service)
         .add_service(task_service)
         .add_service(health_service)
