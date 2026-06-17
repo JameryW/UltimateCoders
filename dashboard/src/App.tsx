@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useSSE } from "@/hooks/useSSE";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
@@ -41,7 +41,7 @@ function App() {
     onTaskEvent: dedupedHandleTaskEvent,
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
@@ -49,21 +49,45 @@ function App() {
   useEffect(() => { void dashboard.fetchInitial(); }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
-  // Merge gRPC-Web connection status into HealthData as a virtual component
+  // Periodic gRPC health check — poll every 30s when connected
+  const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
+  useEffect(() => {
+    if (grpcState !== "connected") {
+      setGrpcHealthComponents([]);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const h = await healthCheck();
+        setGrpcHealthComponents(h.components);
+      } catch { /* ignore — next poll will retry */ }
+    };
+    poll();
+    const timer = setInterval(poll, 30000);
+    return () => clearInterval(timer);
+  }, [grpcState, healthCheck]);
+
+  // Merge gRPC-Web connection + gRPC health components into HealthData
   const healthWithGrpc = useMemo<HealthData>(() => {
     const grpcStatus = grpcState === "connected" ? "ok"
       : grpcState === "connecting" ? "degraded"
       : grpcState === "error" ? "error"
       : "unavailable";
     const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
-    const hasGrpc = dashboard.health.components.some((c) => c.name === "gRPC-Web");
-    return {
-      ...dashboard.health,
-      components: hasGrpc
-        ? dashboard.health.components.map((c) => c.name === "gRPC-Web" ? grpcComponent : c)
-        : [...dashboard.health.components, grpcComponent],
-    };
-  }, [dashboard.health, grpcState]);
+    // Start with SSE health components, then overlay gRPC ones
+    let components = [...dashboard.health.components];
+    // Merge gRPC health components (replace if same name, append if new)
+    for (const gc of grpcHealthComponents) {
+      const idx = components.findIndex((c) => c.name === gc.name);
+      if (idx >= 0) components[idx] = gc;
+      else components.push(gc);
+    }
+    // Add/replace gRPC-Web connection indicator
+    const grpcIdx = components.findIndex((c) => c.name === "gRPC-Web");
+    if (grpcIdx >= 0) components[grpcIdx] = grpcComponent;
+    else components.push(grpcComponent);
+    return { ...dashboard.health, components };
+  }, [dashboard.health, grpcState, grpcHealthComponents]);
 
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
@@ -104,7 +128,7 @@ function App() {
         <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
         <EventLogPanel events={dashboard.eventLog} />
         <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} /></div>
-        <div className="md:col-span-2"><TaskTrendChart /></div>
+        <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
       </main>
       <ConnectionIndicator connected={connected} grpcState={grpcState} />
     </div>
