@@ -654,9 +654,10 @@ impl PyEngine {
         let client = grpc_client.clone();
         let events = py.allow_threads(|| {
             async_support::block_on(async {
-                let stream = client.watch_task(&task_id).await.map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(e.to_string())
-                })?;
+                let stream = client
+                    .watch_task(&task_id)
+                    .await
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
                 collect_events(stream, max_events, timeout_secs).await
             })
         })?;
@@ -1073,7 +1074,6 @@ impl PyEngine {
             Ok(PyTask::from(result))
         })
     }
-
 
     /// Async version of watch_task().
     ///

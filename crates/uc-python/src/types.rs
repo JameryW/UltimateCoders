@@ -681,34 +681,50 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
 
         // Extract event_type, task_id, subtask_id from the payload variant.
         let (event_type, task_id, subtask_id) = match &event.payload {
-            TaskCreated { task } => (
-                "task_created".to_string(),
-                task.id.0.clone(),
-                None,
-            ),
+            TaskCreated { task } => ("task_created".to_string(), task.id.0.clone(), None),
             SubtaskAssigned {
                 subtask_id,
                 worker_id: _,
-            } => ("subtask_assigned".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "subtask_assigned".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             WorkerStarted {
                 subtask_id,
                 worker_id: _,
-            } => ("worker_started".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "worker_started".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             ToolInvoked {
                 subtask_id,
                 tool_name: _,
                 tool_input: _,
-            } => ("tool_invoked".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "tool_invoked".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             ToolResult {
                 subtask_id,
                 tool_output: _,
                 exit_code: _,
-            } => ("tool_result".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "tool_result".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             FileModified {
                 subtask_id,
                 file_path: _,
                 diff: _,
-            } => ("file_modified".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "file_modified".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             SubtaskCompleted { result } => (
                 "subtask_completed".to_string(),
                 String::new(),
@@ -718,7 +734,11 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
                 subtask_id,
                 error: _,
                 recoverable: _,
-            } => ("subtask_failed".to_string(), String::new(), Some(subtask_id.0.clone())),
+            } => (
+                "subtask_failed".to_string(),
+                String::new(),
+                Some(subtask_id.0.clone()),
+            ),
             CheckpointCreated {
                 task_id,
                 snapshot_id: _,
