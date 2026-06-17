@@ -9,6 +9,7 @@ stderr is used for logging.
 Supported methods:
     - ``submit_task``: decompose + execute a task via Orchestrator
     - ``ping``: health check
+    - ``shutdown``: graceful shutdown signal
 
 Notifications (worker → server):
     - ``task_update``: task/subtask status changes during execution
@@ -20,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 from typing import Any
 
@@ -148,6 +150,8 @@ class LocalWorker:
             self._writer.write_response(id_, {"status": "ok"})
         elif method == "submit_task":
             await self._handle_submit(id_, params)
+        elif method == "shutdown":
+            await self._handle_shutdown(id_)
         else:
             self._writer.write_error(id_, -32601, f"Method not found: {method}")
 
@@ -188,7 +192,7 @@ class LocalWorker:
 
         max_iterations = len(task.subtasks) * 2 + 1
         for _ in range(max_iterations):
-            next_subtask = self._orchestrator._select_next_subtask(task)
+            next_subtask = self._orchestrator.select_next_subtask(task)
             if next_subtask is None:
                 break
 
@@ -239,6 +243,16 @@ class LocalWorker:
     def stop(self) -> None:
         self._running = False
 
+    async def _handle_shutdown(self, id_: int | str | None) -> None:
+        """Handle the shutdown JSON-RPC method.
+
+        Sends an acknowledgment and then stops the read loop so the
+        process can exit gracefully.
+        """
+        logger.info("Received shutdown request, stopping worker")
+        self._writer.write_response(id_, {"status": "ok", "message": "shutting down"})
+        self._running = False
+
 
 async def main() -> None:
     logging.basicConfig(
@@ -247,6 +261,17 @@ async def main() -> None:
         stream=sys.stderr,  # stderr for logs, stdout for JSON-RPC
     )
     worker = LocalWorker()
+
+    # Register signal handlers for graceful shutdown
+    loop = asyncio.get_running_loop()
+
+    def _signal_handler() -> None:
+        logger.info("Received shutdown signal, stopping worker")
+        worker.stop()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _signal_handler)
+
     try:
         await worker.start()
     except Exception:
