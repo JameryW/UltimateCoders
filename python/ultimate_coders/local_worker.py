@@ -57,18 +57,44 @@ class JsonRpcWriter:
 
 
 class LocalWorker:
-    """Long-running worker that reads JSON-RPC from stdin and executes tasks."""
+    """Long-running worker that reads JSON-RPC from stdin and executes tasks.
+
+    When ``UC_MOCK_MODE=1`` is set, the worker uses simple newline-split
+    decomposition and auto-completes subtasks without LLM, instead of
+    initializing the full Orchestrator/Worker stack. This is useful for
+    testing without LLM or maturin dependencies.
+
+    The ``UC_MOCK_DELAY_MS`` environment variable controls the delay
+    between subtask state transitions in mock mode (default: 50ms).
+    """
 
     def __init__(self) -> None:
         self._orchestrator: Orchestrator | None = None
         self._worker: Worker | None = None
         self._writer = JsonRpcWriter()
         self._running = False
+        self._mock_mode = os.environ.get("UC_MOCK_MODE", "") == "1"
+        self._mock_delay_ms = int(os.environ.get("UC_MOCK_DELAY_MS", "50"))
 
     async def start(self) -> None:
         """Initialize Engine, Orchestrator, Worker; then read stdin."""
         self._running = True
-        await self._init_components()
+
+        # Register signal handlers for graceful shutdown
+        loop = asyncio.get_running_loop()
+
+        def _signal_handler() -> None:
+            logger.info("Received shutdown signal, stopping worker")
+            self._running = False
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _signal_handler)
+
+        if self._mock_mode:
+            logger.info("LocalWorker starting in MOCK mode")
+        else:
+            await self._init_components()
+
         logger.info("LocalWorker ready, reading stdin for JSON-RPC messages")
         # ponytail: synchronous line-by-line stdin read in async context
         # — fine for single-worker sequential task execution
@@ -149,7 +175,10 @@ class LocalWorker:
         if method == "ping":
             self._writer.write_response(id_, {"status": "ok"})
         elif method == "submit_task":
-            await self._handle_submit(id_, params)
+            if self._mock_mode:
+                await self._handle_submit_mock(id_, params)
+            else:
+                await self._handle_submit(id_, params)
         elif method == "shutdown":
             await self._handle_shutdown(id_)
         else:
@@ -243,6 +272,92 @@ class LocalWorker:
     def stop(self) -> None:
         self._running = False
 
+    async def _handle_submit_mock(
+        self, id_: int | str | None, params: dict[str, Any]
+    ) -> None:
+        """Submit a task using mock decomposition (newline-split, no LLM).
+
+        Same protocol as _handle_submit but uses simple decomposition and
+        auto-completes subtasks with configurable delays. Useful for testing
+        without LLM access.
+        """
+        import uuid
+
+        description = params.get("description", "")
+        project_id = params.get("project_id", "")
+
+        if not description:
+            self._writer.write_error(id_, -32602, "Empty description")
+            return
+
+        # Decompose by splitting on newlines
+        task_id = f"t-{uuid.uuid4().hex[:8]}"
+        lines = [line.strip() for line in description.split("\n") if line.strip()]
+        if not lines:
+            lines = [description]
+
+        subtasks = []
+        for i, line in enumerate(lines):
+            subtasks.append({
+                "id": f"{task_id}-s{i}",
+                "description": line,
+                "status": "Pending",
+                "assigned_worker": None,
+                "depends_on": [],
+            })
+
+        # Notification 1: task InProgress, all subtasks Assigned
+        for st in subtasks:
+            st["status"] = "Assigned"
+            st["assigned_worker"] = "mock-worker"
+
+        self._writer.write_notification("task_update", {
+            "task_id": task_id,
+            "description": description,
+            "project_id": project_id,
+            "status": "InProgress",
+            "subtasks": subtasks,
+            "result": None,
+        })
+
+        # Per-subtask: InProgress -> Completed with delays
+        delay = self._mock_delay_ms / 1000.0
+        for st in subtasks:
+            # InProgress
+            st["status"] = "InProgress"
+            self._writer.write_notification("task_update", {
+                "task_id": task_id,
+                "description": description,
+                "project_id": project_id,
+                "status": "InProgress",
+                "subtasks": subtasks,
+                "result": None,
+            })
+            await asyncio.sleep(delay)
+
+            # Completed
+            st["status"] = "Completed"
+            self._writer.write_notification("task_update", {
+                "task_id": task_id,
+                "description": description,
+                "project_id": project_id,
+                "status": "InProgress",
+                "subtasks": subtasks,
+                "result": None,
+            })
+            await asyncio.sleep(delay)
+
+        # Final response: task Completed
+        result = {
+            "task_id": task_id,
+            "description": description,
+            "project_id": project_id,
+            "status": "Completed",
+            "subtasks": subtasks,
+            "result": "All subtasks completed",
+        }
+        self._writer.write_response(id_, result)
+
     async def _handle_shutdown(self, id_: int | str | None) -> None:
         """Handle the shutdown JSON-RPC method.
 
@@ -261,16 +376,6 @@ async def main() -> None:
         stream=sys.stderr,  # stderr for logs, stdout for JSON-RPC
     )
     worker = LocalWorker()
-
-    # Register signal handlers for graceful shutdown
-    loop = asyncio.get_running_loop()
-
-    def _signal_handler() -> None:
-        logger.info("Received shutdown signal, stopping worker")
-        worker.stop()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _signal_handler)
 
     try:
         await worker.start()
