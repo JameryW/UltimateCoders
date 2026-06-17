@@ -720,6 +720,7 @@ const App: React.FC = () => {
         isSubmitting={state.isSubmitting}
         isStreaming={isStreaming}
         startedAt={state.startedAt}
+        progress={state.progress}
       />
 
       {/* ── Input (fixed at bottom) ─────────────────── */}
