@@ -18,10 +18,9 @@ use crate::ultimate_coders::{
     GetTaskResponse, HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto,
     MemorySearchResultProto, PauseTaskResponse, ReadMemoryRequest, ReadMemoryResponse,
     RemoveIndexRequest, RepoIndexStateProto, ResumeTaskResponse, SearchMemoryRequest,
-    SearchMemoryResponse, SearchRequest, SearchResponse,
-    SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubmitTaskResponse,
-    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest,
-    WriteMemoryResponse,
+    SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
+    SearchStreamRequest, SubmitTaskResponse, SubtaskProto, TaskEvent as TaskEventProto, TaskProto,
+    WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -904,9 +903,9 @@ impl From<SubtaskProto> for Subtask {
             status: subtask_status_from_proto(&proto.status),
             assigned_worker: proto.assigned_worker.map(WorkerId),
             depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
-            file_constraints: Vec::new(), // not carried by proto
+            file_constraints: Vec::new(),   // not carried by proto
             expected_output: String::new(), // not carried by proto
-            result: None,                  // not carried by proto
+            result: None,                   // not carried by proto
         }
     }
 }
@@ -1009,11 +1008,7 @@ impl From<TaskEventProto> for AgentEvent {
 
         let payload = match proto.r#type.as_str() {
             "task_submitted" => {
-                let description = proto
-                    .data
-                    .get("description")
-                    .cloned()
-                    .unwrap_or_default();
+                let description = proto.data.get("description").cloned().unwrap_or_default();
                 AgentEventPayload::TaskCreated {
                     task: Task {
                         id: TaskId(proto.task_id.clone()),
@@ -1028,25 +1023,19 @@ impl From<TaskEventProto> for AgentEvent {
             }
             "subtask_assigned" => {
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
-                let worker_id = WorkerId(
-                    proto
-                        .data
-                        .get("worker_id")
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-                AgentEventPayload::SubtaskAssigned { subtask_id, worker_id }
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
+                AgentEventPayload::SubtaskAssigned {
+                    subtask_id,
+                    worker_id,
+                }
             }
             "subtask_started" => {
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
-                let worker_id = WorkerId(
-                    proto
-                        .data
-                        .get("worker_id")
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-                AgentEventPayload::WorkerStarted { subtask_id, worker_id }
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
+                AgentEventPayload::WorkerStarted {
+                    subtask_id,
+                    worker_id,
+                }
             }
             "tool_call" => {
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
@@ -1118,16 +1107,13 @@ impl From<TaskEventProto> for AgentEvent {
             "checkpoint_created" => {
                 let task_id = TaskId(proto.task_id);
                 let snapshot_id = proto.data.get("snapshot_id").cloned().unwrap_or_default();
-                AgentEventPayload::CheckpointCreated { task_id, snapshot_id }
+                AgentEventPayload::CheckpointCreated {
+                    task_id,
+                    snapshot_id,
+                }
             }
             "edit_intent" => {
-                let worker_id = WorkerId(
-                    proto
-                        .data
-                        .get("worker_id")
-                        .cloned()
-                        .unwrap_or_default(),
-                );
+                let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
                 let file_path = proto.data.get("file_path").cloned().unwrap_or_default();
                 // regions are serialized as a debug string in the proto;
                 // Vec<(u32, u32)> does not implement FromStr, so we use
@@ -1277,7 +1263,10 @@ mod tests {
     #[test]
     fn subtask_status_from_proto_roundtrip() {
         assert_eq!(subtask_status_from_proto("Pending"), SubtaskStatus::Pending);
-        assert_eq!(subtask_status_from_proto("Assigned"), SubtaskStatus::Assigned);
+        assert_eq!(
+            subtask_status_from_proto("Assigned"),
+            SubtaskStatus::Assigned
+        );
         assert_eq!(
             subtask_status_from_proto("InProgress"),
             SubtaskStatus::InProgress
@@ -1377,7 +1366,10 @@ mod tests {
                 .collect(),
         };
         let event: AgentEvent = proto.into();
-        assert!(matches!(event.payload, AgentEventPayload::TaskCreated { .. }));
+        assert!(matches!(
+            event.payload,
+            AgentEventPayload::TaskCreated { .. }
+        ));
     }
 
     #[test]
