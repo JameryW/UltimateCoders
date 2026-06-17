@@ -52,7 +52,7 @@ export function EventLogPanel({ events }: { events: DashboardEvent[] }) {
       {events.length === 0 ? (
         <p className="text-sm text-gray-500">No events</p>
       ) : (
-        <ul className="space-y-1 max-h-64 overflow-y-auto">
+        <ul className="space-y-1 max-h-64 overflow-y-auto" aria-label="Event log" aria-live="polite">
           {events.map((evt, i) => (
             <li
               key={`${evt.timestamp}-${i}`}

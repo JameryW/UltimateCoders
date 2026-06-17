@@ -50,7 +50,7 @@ export function HealthPanel({ data }: { data: HealthData }) {
         <Badge variant={statusVariant(data.status)}>{data.status}</Badge>
       </CardHeader>
 
-      <ul className="space-y-1.5 mb-3">
+      <ul className="space-y-1.5 mb-3" aria-label="Engine components">
         {data.components.map((comp) => (
           <li key={comp.name} className="flex items-center justify-between text-sm">
             <span className="text-gray-400">{comp.name}</span>
