@@ -55,7 +55,7 @@ const COMMANDS: KeyCommand[] = [
 
   // ── Input ──
   {id: 'indent', label: 'Insert indent', shortLabel: 'Tab', key: 'Tab', areas: ['input'], global: false},
-  {id: 'newline', label: 'Insert newline', shortLabel: 'C-J', key: 'Ctrl+J', areas: ['input'], global: false},
+  {id: 'newline', label: 'Insert newline', shortLabel: 'C-J', key: 'Ctrl+J / Alt+Enter', areas: ['input'], global: false},
   {id: 'submit', label: 'Submit task', shortLabel: 'Enter', key: 'Enter', areas: ['input'], global: false},
   {id: 'clearInput', label: 'Clear input', shortLabel: 'C-U', key: 'Ctrl+U', areas: ['input'], global: false},
   {id: 'deleteToEnd', label: 'Delete to end', shortLabel: 'C-K', key: 'Ctrl+K', areas: ['input'], global: false},
@@ -65,6 +65,9 @@ const COMMANDS: KeyCommand[] = [
   {id: 'wordForward', label: 'Word forward', shortLabel: 'C-→', key: 'Ctrl+Right', areas: ['input'], global: false},
   {id: 'inputHome', label: 'Cursor to start', shortLabel: 'Home', key: 'Home', areas: ['input'], global: false},
   {id: 'inputEnd', label: 'Cursor to end', shortLabel: 'End', key: 'End', areas: ['input'], global: false},
+  {id: 'undo', label: 'Undo', shortLabel: 'M-Z', key: 'Cmd+Z / Alt+Z', areas: ['input'], global: false},
+  {id: 'redo', label: 'Redo', shortLabel: 'M-S-Z', key: 'Cmd+Shift+Z / Alt+Shift+Z', areas: ['input'], global: false},
+  {id: 'paste', label: 'Paste text', shortLabel: 'Paste', key: 'Ctrl+V / Cmd+V', areas: ['input'], global: false},
 
   // ── Chat ──
   {id: 'scrollUp', label: 'Scroll up', shortLabel: '↑', key: 'Up', areas: ['chat'], global: false},
