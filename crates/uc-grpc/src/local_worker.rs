@@ -165,16 +165,42 @@ impl LocalWorkerBridge {
     ///
     /// If the worker is already alive, this is a no-op.
     pub async fn ensure_worker(&self) -> Result<(), String> {
+        self.ensure_worker_with_env(&[]).await
+    }
+
+    /// Try to spawn the local Python worker with extra environment variables.
+    ///
+    /// Each element of ``env`` is a ``(key, value)`` pair that is set on the
+    /// child process in addition to the current environment.
+    ///
+    /// This is primarily useful for testing (e.g. setting ``UC_MOCK_MODE=1``
+    /// to use mock decomposition without LLM).
+    ///
+    /// The worker module path defaults to ``ultimate_coders.local_worker``.
+    /// Override with the ``UC_WORKER_MODULE`` environment variable.
+    ///
+    /// If the worker is already alive, this is a no-op.
+    pub async fn ensure_worker_with_env(&self, env: &[(&str, &str)]) -> Result<(), String> {
         if self.alive.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        let mut child = Command::new("python3")
-            .arg("-m")
-            .arg("ultimate_coders.local_worker")
+        // Allow overriding the worker module for testing
+        let worker_module = std::env::var("UC_WORKER_MODULE")
+            .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
+
+        let mut cmd = Command::new("python3");
+        cmd.arg("-m")
+            .arg(&worker_module)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit()) // logs go to stderr
+            .stderr(std::process::Stdio::inherit()); // logs go to stderr
+
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn local_worker: {}", e))?;
 

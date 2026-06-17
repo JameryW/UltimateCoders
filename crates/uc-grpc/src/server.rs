@@ -407,6 +407,22 @@ impl TaskStore {
         self.last_heartbeat
     }
 
+    /// Update the status of a task by ID.
+    ///
+    /// Used by tests and by worker-death handlers to change task status.
+    /// Returns the previous status, or None if the task was not found.
+    pub fn set_task_status(
+        &mut self,
+        task_id: &str,
+        new_status: uc_types::TaskStatus,
+    ) -> Option<uc_types::TaskStatus> {
+        let task = self.tasks.get_mut(task_id)?;
+        let old = task.status.clone();
+        task.status = new_status;
+        task.updated_at = chrono::Utc::now();
+        Some(old)
+    }
+
     /// Mark tasks as Failed if no heartbeat has been received within
     /// the specified timeout AND there are tasks in InProgress or Planning status.
     ///
@@ -1617,7 +1633,7 @@ pub async fn apply_worker_update_to_store(
 /// Mark all in-progress tasks as Failed in the TaskStore and broadcast events.
 ///
 /// Called when the local worker process dies unexpectedly.
-async fn mark_tasks_failed_on_worker_death(
+pub async fn mark_tasks_failed_on_worker_death(
     task_store: &Arc<Mutex<TaskStore>>,
     event_tx: &broadcast::Sender<TaskEvent>,
 ) {
