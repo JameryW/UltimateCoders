@@ -104,10 +104,11 @@ impl LocalEngine {
         ));
 
         // Create semantic search engine
-        let semantic_search = Arc::new(SemanticSearchEngine::new(
-            index_pipeline.semantic_indexer().unwrap().clone(),
-            long_term,
-        ));
+        let semantic_indexer = index_pipeline
+            .semantic_indexer()
+            .expect("semantic indexer required — use with_semantic constructor")
+            .clone();
+        let semantic_search = Arc::new(SemanticSearchEngine::new(semantic_indexer, long_term));
 
         // Create hybrid search engine with semantic
         let search_engine = Arc::new(HybridSearchEngine::with_semantic(
@@ -171,10 +172,11 @@ impl LocalEngine {
             long_term.clone(),
         ));
 
-        let semantic_search = Arc::new(SemanticSearchEngine::new(
-            index_pipeline.semantic_indexer().unwrap().clone(),
-            long_term,
-        ));
+        let semantic_indexer = index_pipeline
+            .semantic_indexer()
+            .expect("semantic indexer required — use with_semantic constructor")
+            .clone();
+        let semantic_search = Arc::new(SemanticSearchEngine::new(semantic_indexer, long_term));
 
         let search_engine = Arc::new(HybridSearchEngine::with_semantic(
             index_pipeline.clone(),
@@ -230,10 +232,11 @@ impl LocalEngine {
             long_term.clone(),
         ));
 
-        let semantic_search = Arc::new(SemanticSearchEngine::new(
-            index_pipeline.semantic_indexer().unwrap().clone(),
-            long_term,
-        ));
+        let semantic_indexer = index_pipeline
+            .semantic_indexer()
+            .expect("semantic indexer required — use with_semantic constructor")
+            .clone();
+        let semantic_search = Arc::new(SemanticSearchEngine::new(semantic_indexer, long_term));
 
         let search_engine = Arc::new(HybridSearchEngine::with_semantic(
             index_pipeline.clone(),

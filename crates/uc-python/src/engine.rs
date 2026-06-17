@@ -739,4 +739,114 @@ impl PyEngine {
             Ok(())
         })
     }
+
+    /// Async version of batch_write_memory().
+    pub fn batch_write_memory_async<'py>(
+        &self,
+        py: Python<'py>,
+        requests: Vec<pyo3::Bound<'py, pyo3::types::PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let mut write_requests = Vec::with_capacity(requests.len());
+        for req_dict in &requests {
+            let get_str = |key: &str| -> PyResult<Option<String>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<String>()?)),
+                    None => Ok(None),
+                }
+            };
+            let get_f32 = |key: &str| -> PyResult<Option<f32>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<f32>()?)),
+                    None => Ok(None),
+                }
+            };
+            let get_str_list = |key: &str| -> PyResult<Option<Vec<String>>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<Vec<String>>()?)),
+                    None => Ok(None),
+                }
+            };
+            let key_scope = get_str("key_scope")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key_scope is required"))?;
+            let key = get_str("key")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?;
+            let task_id = get_str("task_id")?;
+            let project_id = get_str("project_id")?;
+            let content = get_str("content")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("content is required"))?;
+            let content_type = get_str("content_type")?.unwrap_or_else(|| "text".to_string());
+            let source_agent = get_str("source_agent")?.unwrap_or_else(|| "python".to_string());
+            let importance = get_f32("importance")?.unwrap_or(0.5);
+            let tags = get_str_list("tags")?;
+            let language = get_str("language")?;
+            let file_path = get_str("file_path")?;
+            let uri = get_str("uri")?;
+            let description = get_str("description")?;
+            let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+            let mem_content = build_memory_content(
+                &content_type,
+                content,
+                language,
+                file_path,
+                uri,
+                description,
+            );
+            write_requests.push(uc_types::MemoryWriteRequest {
+                key: mem_key,
+                content: mem_content,
+                metadata: uc_types::MemoryMetadata {
+                    source_agent,
+                    importance,
+                    tags: tags.unwrap_or_default(),
+                    embedding: None,
+                },
+            });
+        }
+        future_into_py(py, async move {
+            let result = inner
+                .batch_write_memory(write_requests)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(result
+                .into_iter()
+                .map(PyMemoryEntry::from)
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// Async version of list_repos().
+    pub fn list_repos_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner.list_repos().await.map_err(engine_error_to_pyerr)?;
+            Ok(result
+                .into_iter()
+                .map(PyRepoIndexState::from)
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// Async version of search_stream(). Collects stream into a list.
+    pub fn search_stream_async<'py>(
+        &self,
+        py: Python<'py>,
+        query: PySearchQuery,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let uc_query: uc_types::SearchQuery = query.into();
+        future_into_py(py, async move {
+            let stream = inner
+                .search_stream(uc_query)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            let results: Vec<uc_types::SearchResult> = futures::StreamExt::collect(stream).await;
+            let items: Vec<PySearchResultItem> = results
+                .into_iter()
+                .flat_map(|r| r.items)
+                .map(Into::into)
+                .collect();
+            Ok(items)
+        })
+    }
 }
