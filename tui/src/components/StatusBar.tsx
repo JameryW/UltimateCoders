@@ -13,8 +13,8 @@
  *   ✗ offline  — error / unavailable (yellow, not red — offline is expected)
  *   ✗ offline | retry 3/5 — retrying after error
  */
-import React from 'react';
-import {Box, Text, useAnimation} from 'ink';
+import React, {useState, useEffect} from 'react';
+import {Box, Text} from 'ink';
 import type {ConnectionState} from '../grpc/types.js';
 import type {FocusedArea} from '../reducer.js';
 import {getStatusBarHelp} from '../keymap.js';
@@ -267,9 +267,15 @@ const StatusBar: React.FC<StatusBarProps> = ({
   retryCount = 0,
   nextRetryAt = null,
 }) => {
-  // Drive 1-second re-renders when retrying, so countdown updates visually
   const isRetrying = connectionState === 'error' && retryCount > 0;
-  useAnimation({interval: 1000, isActive: isRetrying});
+  // Drive 1-second re-renders when retrying, so countdown updates visually
+  // ponytail: ink 5 lacks useAnimation; use setInterval + useState tick instead
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!isRetrying) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isRetrying]);
 
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
   const S = getSymbols();
