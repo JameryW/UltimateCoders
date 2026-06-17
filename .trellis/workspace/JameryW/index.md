@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
+- **Total Sessions**: 28
 - **Last Active**: 2026-06-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~963 | Active |
+| `journal-1.md` | ~1001 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-06-17 | Backend hardening: broadcast, async worker, crash/restart, integration tests, task queue | `5279a94`, `0c918f5`, `e039b19`, `57ad35e`, `6bb07de`, `c6a3291` | `main` |
 | 27 | 2026-06-17 | TUI polish — adaptive visibleLines, LogoBanner cleanup, StatusBar dedup | `c80efff` | `feat/integration-tests-local-worker` |
 | 26 | 2026-06-17 | TUI功能完善 — overlay交互、retry、清理deprecated | `d850e38`, `e427ee0` | `feat/broadcast-task-events` |
 | 25 | 2026-06-16 | Local worker bridge — TUI end-to-end task execution without NATS | `f2da666`, `3f13695`, `cd8ad3a`, `2100453`, `473a34c`, `687a779` | `main` |
