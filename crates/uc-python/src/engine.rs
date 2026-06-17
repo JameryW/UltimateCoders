@@ -121,7 +121,8 @@ fn build_memory_content(
 /// Collect events from a stream with timeout and max count.
 ///
 /// Reads up to `max_events` items from the stream within `timeout_secs`.
-/// On timeout, returns whatever was collected so far (may be empty).
+/// Returns PyAgentEvent objects. On timeout, returns whatever was collected
+/// so far (may be empty).
 async fn collect_events(
     stream: Pin<Box<dyn Stream<Item = uc_types::AgentEvent> + Send>>,
     max_events: usize,
