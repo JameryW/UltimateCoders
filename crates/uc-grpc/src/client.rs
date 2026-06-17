@@ -498,8 +498,7 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error
-                    .unwrap_or_else(|| "Unknown task submission error".to_string()),
+                resp.error.unwrap_or_else(|| "Unknown task submission error".to_string()),
             ));
         }
         // The SubmitTaskResponse doesn't contain a full TaskProto in all cases,
@@ -516,7 +515,10 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         match resp.task {
             Some(task_proto) => Ok(task_proto.into()),
-            None => Err(EngineError::NotFound(format!("Task {} not found", task_id))),
+            None => Err(EngineError::NotFound(format!(
+                "Task {} not found",
+                task_id
+            ))),
         }
     }
 
@@ -541,8 +543,7 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error
-                    .unwrap_or_else(|| "Unknown pause error".to_string()),
+                resp.error.unwrap_or_else(|| "Unknown pause error".to_string()),
             ));
         }
         // Fetch the updated task to return the complete object
@@ -558,8 +559,7 @@ impl EngineApi for GrpcEngineClient {
         let resp = response.into_inner();
         if !resp.success {
             return Err(EngineError::TaskError(
-                resp.error
-                    .unwrap_or_else(|| "Unknown resume error".to_string()),
+                resp.error.unwrap_or_else(|| "Unknown resume error".to_string()),
             ));
         }
         // Fetch the updated task to return the complete object

@@ -1488,10 +1488,7 @@ fn load_index() -> Index { Index::new() }"#,
         let engine = LocalEngine::new_fallback();
 
         let task = engine
-            .submit_task(
-                "1. Analyze code\n2. Fix bug".to_string(),
-                "project-1".to_string(),
-            )
+            .submit_task("1. Analyze code\n2. Fix bug".to_string(), "project-1".to_string())
             .await
             .unwrap();
 
