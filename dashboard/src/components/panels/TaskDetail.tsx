@@ -94,12 +94,65 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   );
 }
 
+
+function SubtaskProgressBar({ subtasks }: { subtasks: SubtaskSummary[] }) {
+  if (subtasks.length === 0) return null;
+  const completed = subtasks.filter((s) => s.status === "completed").length;
+  const failed = subtasks.filter((s) => s.status === "failed").length;
+  const total = subtasks.length;
+  const pct = Math.round((completed / total) * 100);
+  return (
+    <div className="mb-2">
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-xs text-gray-400">Progress</span>
+        <span className="text-xs text-gray-500">{completed}/{total} ({pct}%)</span>
+      </div>
+      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden flex">
+        {completed > 0 && <div className="bg-green-500 h-full" style={{ width: (completed / total) * 100 + "%" }} />}
+        {failed > 0 && <div className="bg-red-500 h-full" style={{ width: (failed / total) * 100 + "%" }} />}
+      </div>
+      {failed > 0 && <span className="text-[10px] text-red-400">{failed} failed</span>}
+    </div>
+  );
+}
+
+function EventTimeline({ events }: { events: TaskEvent[] }) {
+  if (events.length === 0) return null;
+  const recent = events.slice(-20).reverse();
+  const typeIcon: Record<string, string> = {
+    task_submitted: "📤", subtask_started: "▶️", subtask_assigned: "👤",
+    subtask_completed: "✅", subtask_failed: "❌", tool_call: "🔧",
+    tool_result: "📋", task_completed: "🏁",
+  };
+  return (
+    <div className="mb-2">
+      <p className="text-xs text-gray-400 mb-1">Timeline:</p>
+      <div className="space-y-0.5 max-h-48 overflow-y-auto">
+        {recent.map((ev, i) => (
+          <div key={i} className="flex items-center gap-1.5 text-xs">
+            <span>{typeIcon[ev.type] ?? "•"}</span>
+            <span className="text-gray-500 w-16 shrink-0">{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ""}</span>
+            <span className="text-gray-300 truncate">{ev.type}</span>
+            {ev.subtask_id && <span className="text-gray-600 font-mono">{shortId(ev.subtask_id)}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
   const subtasks = task.subtasks ?? [];
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
 
   return (
     <div className="pl-5 py-2 text-xs text-gray-400 space-y-3">
+      {/* Progress bar */}
+      <SubtaskProgressBar subtasks={subtasks} />
+
+      {/* Event timeline */}
+      <EventTimeline events={interactionLog} />
+
       {/* Subtask list */}
       {subtasks.length > 0 && (
         <div>
