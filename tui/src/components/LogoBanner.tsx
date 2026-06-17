@@ -1,10 +1,12 @@
 /**
  * LogoBanner — Brand banner for the TUI header.
  *
- * Full mode: pixel-game-style "UC" logo (5 lines) + version line.
- * Compact mode: single-line brand + version (for space-efficient layout).
+ * Responsive:
+ *   >=80 cols: pixel-game-style "UC" logo (5 lines) + version line = 6 lines
+ *   60-79 cols: compact single-line brand + version = 1 line
+ *   <60 cols: hidden = 0 lines
  *
- * Hidden on narrow terminals (<60 cols).
+ * Export getLogoHeight(terminalWidth) so App can compute ChatLog visibleLines.
  */
 import React from 'react';
 import {Box, Text} from 'ink';
@@ -16,8 +18,6 @@ export interface LogoBannerProps {
   brandChar: string;
   /** Version string. */
   version?: string;
-  /** Show compact single-line banner instead of full logo. */
-  compact?: boolean;
 }
 
 // ── Pixel-game-style UC Logos ──────────────────────────────
@@ -38,27 +38,22 @@ const UC_ASCII = [
   ' ####  ####',
 ];
 
+/** Logo height in terminal rows, given terminal width. */
+export function getLogoHeight(terminalWidth: number): number {
+  if (terminalWidth < 60) return 0;
+  if (terminalWidth < 80) return 1;
+  return 6; // 5 logo lines + 1 version line
+}
+
 export function LogoBanner({
   terminalWidth = 80,
   brandChar = '◆',
   version = '',
-  compact = false,
 }: LogoBannerProps): React.ReactNode | null {
   // Hide on very narrow terminals
   if (terminalWidth < 60) return null;
 
-  // Compact mode: single-line brand
-  if (compact) {
-    return (
-      <Box paddingX={1}>
-        <Text color="magenta" bold>{brandChar}</Text>
-        <Text bold color="magenta">{' UC'}</Text>
-        {version && <Text dimColor>{` v${version}`}</Text>}
-      </Box>
-    );
-  }
-
-  // Full mode: hide on narrow terminals (<80 cols)
+  // Compact on narrow terminals (60-79 cols)
   if (terminalWidth < 80) {
     return (
       <Box paddingX={1}>
@@ -69,6 +64,7 @@ export function LogoBanner({
     );
   }
 
+  // Full pixel-game logo (>=80 cols)
   const isUnicode = brandChar === '◆';
   const lines = isUnicode ? UC_UNICODE : UC_ASCII;
 
