@@ -1372,6 +1372,7 @@ fn load_index() -> Index { Index::new() }"#,
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[cfg(feature = "indexing")]
     #[tokio::test]
     async fn local_engine_search_stream() {
         use futures::StreamExt;

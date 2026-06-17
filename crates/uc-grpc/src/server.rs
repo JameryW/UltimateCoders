@@ -1288,15 +1288,17 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         Ok(Response::new(result.into()))
     }
 
+    #[allow(clippy::result_large_err)]
     async fn batch_write_memory(
         &self,
         request: Request<BatchWriteMemoryRequest>,
     ) -> Result<Response<BatchWriteMemoryResponse>, Status> {
         let proto = request.into_inner();
+        #[allow(clippy::result_large_err)]
         let write_requests: Vec<uc_types::MemoryWriteRequest> = proto
             .requests
             .into_iter()
-            .map(|req| {
+            .map(|req| -> Result<uc_types::MemoryWriteRequest, Status> {
                 let key_scope = req.key_scope.as_str();
                 if !matches!(key_scope, "task" | "project" | "global") {
                     return Err(Status::invalid_argument(format!(
