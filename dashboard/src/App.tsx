@@ -11,6 +11,7 @@ import { TasksPanel } from "@/components/panels/TasksPanel";
 import { SchedulerPanel } from "@/components/panels/SchedulerPanel";
 import { CircuitBreakerPanel } from "@/components/panels/CircuitBreakerPanel";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
+import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { TaskSubmitForm } from "@/components/forms/TaskSubmitForm";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -155,6 +156,9 @@ function App() {
         </ErrorBoundary>
         <ErrorBoundary name="Task Activity">
           <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Code Search">
+          <div className="md:col-span-2"><SearchPanel /></div>
         </ErrorBoundary>
       </main>
       <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />
