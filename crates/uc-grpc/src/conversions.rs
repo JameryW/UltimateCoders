@@ -16,9 +16,10 @@ use uc_types::{
 use crate::ultimate_coders::{
     ComponentHealthProto, DeleteMemoryRequest, GetIndexStateRequest, GetIndexStateResponse,
     HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto, MemorySearchResultProto,
-    ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest, SearchMemoryRequest,
-    SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
-    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
+    ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest, RepoIndexStateProto,
+    SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
+    SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubtaskProto,
+    TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -570,6 +571,58 @@ impl From<ComponentHealthProto> for ComponentHealth {
             name: proto.name,
             status: proto.status,
             details: proto.details,
+        }
+    }
+}
+
+// ── RepoIndexState conversions ────────────────────────────
+
+impl From<RepoIndexState> for RepoIndexStateProto {
+    fn from(state: RepoIndexState) -> Self {
+        Self {
+            repo_id: state.repo_id,
+            indexed: state.indexed,
+            last_indexed_sha: state.last_indexed_sha,
+            files_count: state.files_count,
+            symbols_count: state.symbols_count,
+            chunks_count: state.chunks_count,
+        }
+    }
+}
+
+impl From<RepoIndexStateProto> for RepoIndexState {
+    fn from(proto: RepoIndexStateProto) -> Self {
+        Self {
+            repo_id: proto.repo_id,
+            indexed: proto.indexed,
+            last_indexed_sha: proto.last_indexed_sha,
+            files_count: proto.files_count,
+            symbols_count: proto.symbols_count,
+            chunks_count: proto.chunks_count,
+        }
+    }
+}
+
+// ── Batch / List / Stream conversions ────────────────────
+
+impl From<SearchStreamRequest> for SearchQuery {
+    fn from(req: SearchStreamRequest) -> Self {
+        Self {
+            query: req.query,
+            modes: req
+                .modes
+                .iter()
+                .map(|m| match m.as_str() {
+                    "text" => SearchMode::Text,
+                    "semantic" => SearchMode::Semantic,
+                    "ast" => SearchMode::Ast,
+                    _ => SearchMode::Hybrid,
+                })
+                .collect(),
+            repo_ids: req.repo_ids,
+            languages: req.languages,
+            path_patterns: req.path_patterns,
+            max_results: req.max_results,
         }
     }
 }

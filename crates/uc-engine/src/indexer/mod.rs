@@ -854,7 +854,7 @@ impl Database {
         let head = repo.head().ok();
         let parent_commit = head.as_ref().and_then(|h| h.peel_to_commit().ok());
 
-        let parents: Vec<&git2::Commit> = parent_commit.as_ref().map(|c| c).into_iter().collect();
+        let parents: Vec<&git2::Commit> = parent_commit.as_ref().into_iter().collect();
 
         let commit_id = repo
             .commit(Some("HEAD"), &sig, &sig, message, &tree, parents.as_slice())

@@ -11,6 +11,9 @@ service EngineService {
     rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
     rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
+    rpc BatchWriteMemory(BatchWriteMemoryRequest) returns (BatchWriteMemoryResponse);
+    rpc ListRepos(ListReposRequest) returns (ListReposResponse);
+    rpc SearchStream(SearchStreamRequest) returns (stream SearchResultItem);
 }
 
 // ── Task Service (for TUI / Dashboard clients) ─────────
@@ -273,4 +276,38 @@ message SubtaskProto {
     string status = 3;
     repeated string depends_on = 4;
     optional string assigned_worker = 5;
+}
+
+// ── Batch / List / Stream ─────────────────────────────────
+
+message BatchWriteMemoryRequest {
+    repeated WriteMemoryRequest requests = 1;
+}
+
+message BatchWriteMemoryResponse {
+    repeated MemoryEntryProto entries = 1;
+}
+
+message ListReposRequest {}
+
+message ListReposResponse {
+    repeated RepoIndexStateProto repos = 1;
+}
+
+message RepoIndexStateProto {
+    string repo_id = 1;
+    bool indexed = 2;
+    optional string last_indexed_sha = 3;
+    uint32 files_count = 4;
+    uint32 symbols_count = 5;
+    uint32 chunks_count = 6;
+}
+
+message SearchStreamRequest {
+    string query = 1;
+    repeated string modes = 2;
+    repeated string repo_ids = 3;
+    repeated string languages = 4;
+    repeated string path_patterns = 5;
+    uint32 max_results = 6;
 }

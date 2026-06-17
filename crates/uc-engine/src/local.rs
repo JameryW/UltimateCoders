@@ -13,7 +13,7 @@
 use uc_types::{
     async_trait, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse, MemoryEntry,
     MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
-    RepoIndexState, SearchQuery, SearchResult,
+    RepoIndexState, SearchQuery, SearchResult, SearchStream,
 };
 
 use crate::checkpoint::{CheckpointConfig, CheckpointManager};
@@ -630,17 +630,43 @@ impl EngineApi for LocalEngine {
             components,
         })
     }
+
+    async fn batch_write_memory(
+        &self,
+        requests: Vec<MemoryWriteRequest>,
+    ) -> Result<Vec<MemoryEntry>, EngineError> {
+        let mut results = Vec::with_capacity(requests.len());
+        for req in requests {
+            let entry = self.write_memory(req).await?;
+            results.push(entry);
+        }
+        Ok(results)
+    }
+
+    async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError> {
+        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+        let mut states = Vec::with_capacity(repos.len());
+        for repo in repos {
+            let state = self.get_index_state(&repo.repo_id).await?;
+            states.push(state);
+        }
+        Ok(states)
+    }
+
+    async fn search_stream(&self, query: SearchQuery) -> Result<SearchStream, EngineError> {
+        let result = self.search_engine.search(&query).await?;
+        Ok(Box::pin(tokio_stream::once(result)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use uc_types::memory::{MemoryContent, MemoryMetadata, MemoryReadRequest};
+    use uc_types::search::SearchMode;
 
     #[cfg(feature = "indexing")]
     use uc_types::index::{IndexRequest, RepoSpec};
-    #[cfg(feature = "indexing")]
-    use uc_types::search::SearchMode;
 
     #[tokio::test]
     async fn local_engine_fallback_creates() {
@@ -1195,5 +1221,224 @@ fn load_index() -> Index { Index::new() }"#,
         for c in &health.components {
             assert!(c.details.is_some(), "component {} missing details", c.name);
         }
+    }
+
+    #[tokio::test]
+    async fn local_engine_batch_write_memory() {
+        let engine = LocalEngine::new_fallback();
+
+        let requests = vec![
+            MemoryWriteRequest {
+                key: MemoryKey::Global {
+                    key: "batch-1".to_string(),
+                },
+                content: MemoryContent::Text("First entry".to_string()),
+                metadata: MemoryMetadata {
+                    source_agent: "test".to_string(),
+                    importance: 0.5,
+                    tags: vec!["batch".to_string()],
+                    embedding: None,
+                },
+            },
+            MemoryWriteRequest {
+                key: MemoryKey::Global {
+                    key: "batch-2".to_string(),
+                },
+                content: MemoryContent::Text("Second entry".to_string()),
+                metadata: MemoryMetadata {
+                    source_agent: "test".to_string(),
+                    importance: 0.7,
+                    tags: vec!["batch".to_string()],
+                    embedding: None,
+                },
+            },
+            MemoryWriteRequest {
+                key: MemoryKey::Task {
+                    task_id: "task-1".to_string(),
+                    key: "notes".to_string(),
+                },
+                content: MemoryContent::Text("Task notes".to_string()),
+                metadata: MemoryMetadata {
+                    source_agent: "test".to_string(),
+                    importance: 0.3,
+                    tags: vec![],
+                    embedding: None,
+                },
+            },
+        ];
+
+        let results = engine.batch_write_memory(requests).await.unwrap();
+        assert_eq!(results.len(), 3);
+
+        assert_eq!(
+            results[0].key,
+            MemoryKey::Global {
+                key: "batch-1".to_string()
+            }
+        );
+        assert_eq!(
+            results[1].key,
+            MemoryKey::Global {
+                key: "batch-2".to_string()
+            }
+        );
+        assert_eq!(
+            results[2].key,
+            MemoryKey::Task {
+                task_id: "task-1".to_string(),
+                key: "notes".to_string()
+            }
+        );
+
+        let read_1 = engine
+            .read_memory(MemoryReadRequest {
+                key: MemoryKey::Global {
+                    key: "batch-1".to_string(),
+                },
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
+        assert!(read_1.is_some());
+
+        let read_2 = engine
+            .read_memory(MemoryReadRequest {
+                key: MemoryKey::Global {
+                    key: "batch-2".to_string(),
+                },
+                include_semantic: false,
+            })
+            .await
+            .unwrap();
+        assert!(read_2.is_some());
+    }
+
+    #[tokio::test]
+    async fn local_engine_batch_write_memory_empty() {
+        let engine = LocalEngine::new_fallback();
+
+        let results = engine.batch_write_memory(vec![]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_engine_list_repos_empty() {
+        let engine = LocalEngine::new_fallback();
+
+        let repos = engine.list_repos().await.unwrap();
+        assert!(repos.is_empty());
+    }
+
+    #[cfg(feature = "indexing")]
+    #[tokio::test]
+    async fn local_engine_list_repos_after_index() {
+        let engine = LocalEngine::new_fallback();
+
+        let temp_dir = std::env::temp_dir().join("uc-test-list-repos");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::fs::write(
+            temp_dir.join("main.rs"),
+            r#"fn main() { println!("hello"); }"#,
+        )
+        .unwrap();
+
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "test-list-repos".to_string(),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+
+        engine.index_repo(request).await.unwrap();
+
+        let repos = engine.list_repos().await.unwrap();
+        assert!(
+            !repos.is_empty(),
+            "list_repos should return at least one repo after indexing"
+        );
+
+        let found = repos.iter().find(|r| r.repo_id == "test-list-repos");
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert!(found.indexed);
+        assert!(found.files_count > 0);
+
+        engine.remove_index("test-list-repos").await.unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(feature = "indexing")]
+    #[tokio::test]
+    async fn local_engine_search_stream() {
+        use futures::StreamExt;
+
+        let engine = LocalEngine::new_fallback();
+
+        let query = SearchQuery {
+            query: "nonexistent_search_term_xyz".to_string(),
+            modes: vec![SearchMode::Hybrid],
+            repo_ids: vec![],
+            languages: vec![],
+            path_patterns: vec![],
+            max_results: 10,
+        };
+
+        let mut stream = engine.search_stream(query).await.unwrap();
+
+        let result = stream.next().await;
+        assert!(result.is_some());
+
+        let second = stream.next().await;
+        assert!(second.is_none());
+    }
+
+    #[cfg(feature = "indexing")]
+    #[tokio::test]
+    async fn local_engine_search_stream_with_results() {
+        use futures::StreamExt;
+
+        let engine = LocalEngine::new_fallback();
+
+        let temp_dir = std::env::temp_dir().join("uc-test-search-stream");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::fs::write(temp_dir.join("main.rs"), r#"fn calculate() -> i32 { 42 }"#).unwrap();
+
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "test-search-stream".to_string(),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+
+        engine.index_repo(request).await.unwrap();
+
+        let query = SearchQuery {
+            query: "calculate".to_string(),
+            modes: vec![SearchMode::Text],
+            repo_ids: vec![],
+            languages: vec![],
+            path_patterns: vec![],
+            max_results: 10,
+        };
+
+        let mut stream = engine.search_stream(query).await.unwrap();
+        let result = stream.next().await;
+        assert!(result.is_some());
+
+        let search_result = result.unwrap();
+        assert!(!search_result.items.is_empty());
+
+        engine.remove_index("test-search-stream").await.unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

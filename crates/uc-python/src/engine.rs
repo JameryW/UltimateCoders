@@ -398,6 +398,124 @@ impl PyEngine {
         &self.mode
     }
 
+    /// Batch write multiple memory entries.
+    ///
+    /// Args:
+    ///     requests: List of dicts, each with keys:
+    ///         key_scope, key, content, content_type, source_agent, importance, tags,
+    ///         task_id, project_id, language, file_path, uri, description
+    ///
+    /// Returns list of MemoryEntry objects.
+    pub fn batch_write_memory(
+        &self,
+        py: Python<'_>,
+        requests: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Vec<PyMemoryEntry>> {
+        let inner = self.inner.clone();
+        let mut write_requests = Vec::with_capacity(requests.len());
+        for req_dict in &requests {
+            let get_str = |key: &str| -> PyResult<Option<String>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<String>()?)),
+                    None => Ok(None),
+                }
+            };
+            let get_f32 = |key: &str| -> PyResult<Option<f32>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<f32>()?)),
+                    None => Ok(None),
+                }
+            };
+            let get_str_list = |key: &str| -> PyResult<Option<Vec<String>>> {
+                match req_dict.get_item(key)? {
+                    Some(val) => Ok(Some(val.extract::<Vec<String>>()?)),
+                    None => Ok(None),
+                }
+            };
+
+            let key_scope = get_str("key_scope")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key_scope is required"))?;
+            let key = get_str("key")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?;
+            let task_id = get_str("task_id")?;
+            let project_id = get_str("project_id")?;
+            let content = get_str("content")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("content is required"))?;
+            let content_type = get_str("content_type")?.unwrap_or_else(|| "text".to_string());
+            let source_agent = get_str("source_agent")?.unwrap_or_else(|| "python".to_string());
+            let importance = get_f32("importance")?.unwrap_or(0.5);
+            let tags = get_str_list("tags")?;
+            let language = get_str("language")?;
+            let file_path = get_str("file_path")?;
+            let uri = get_str("uri")?;
+            let description = get_str("description")?;
+
+            let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+            let mem_content = build_memory_content(
+                &content_type,
+                content,
+                language,
+                file_path,
+                uri,
+                description,
+            );
+            write_requests.push(uc_types::MemoryWriteRequest {
+                key: mem_key,
+                content: mem_content,
+                metadata: uc_types::MemoryMetadata {
+                    source_agent,
+                    importance,
+                    tags: tags.unwrap_or_default(),
+                    embedding: None,
+                },
+            });
+        }
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.batch_write_memory(write_requests)))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(result.into_iter().map(Into::into).collect())
+    }
+
+    /// List all indexed repositories.
+    ///
+    /// Returns list of RepoIndexState objects.
+    pub fn list_repos(&self, py: Python<'_>) -> PyResult<Vec<PyRepoIndexState>> {
+        let inner = self.inner.clone();
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.list_repos()))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(result.into_iter().map(Into::into).collect())
+    }
+
+    /// Stream search results, collecting all items into a list.
+    ///
+    /// Currently returns a single batch (the underlying engine is not truly streaming).
+    /// Returns list of PySearchResultItem.
+    // ponytail: collect stream into Vec since current stream is single-element;
+    // expose as async generator if true streaming is needed later.
+    pub fn search_stream(
+        &self,
+        py: Python<'_>,
+        query: PySearchQuery,
+    ) -> PyResult<Vec<PySearchResultItem>> {
+        let inner = self.inner.clone();
+        let uc_query: uc_types::SearchQuery = query.into();
+        let results: Vec<uc_types::SearchResult> = py
+            .allow_threads(|| {
+                async_support::block_on(async {
+                    let stream = inner.search_stream(uc_query).await?;
+                    Ok::<_, uc_types::EngineError>(futures::StreamExt::collect(stream).await)
+                })
+            })
+            .map_err(engine_error_to_pyerr)?;
+        let items: Vec<PySearchResultItem> = results
+            .into_iter()
+            .flat_map(|r| r.items)
+            .map(Into::into)
+            .collect();
+        Ok(items)
+    }
+
     // ── Async methods ─────────────────────────────────────────
 
     /// Async version of health(). Returns full HealthStatus.

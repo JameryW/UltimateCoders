@@ -393,7 +393,7 @@ mod tests {
 
         // Should have 59 available (approximately)
         let available = bucket.available();
-        assert!(available >= 58.0 && available <= 60.0);
+        assert!((58.0..=60.0).contains(&available));
     }
 
     #[test]
