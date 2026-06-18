@@ -1569,7 +1569,18 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             skipped = n,
                             "WatchTask broadcast receiver lagged, some events dropped"
                         );
-                        continue;
+                        // Notify client that it missed events and should re-sync
+                        let sync_event = TaskEvent {
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            r#type: "sync_required".to_string(),
+                            task_id: String::new(),
+                            subtask_id: None,
+                            data: HashMap::from([
+                                ("reason".to_string(), "broadcast_lagged".to_string()),
+                                ("skipped".to_string(), n.to_string()),
+                            ]),
+                        };
+                        yield Ok(sync_event);
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         tracing::debug!("WatchTask broadcast channel closed, ending stream");

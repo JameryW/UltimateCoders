@@ -24,8 +24,9 @@ import type { TaskEvent, HealthData, DashboardSnapshot } from "@/types/dashboard
 function eventKey(ev: TaskEvent): string {
   // ponytail: exclude timestamp — SSE and gRPC-Web emit the same logical event
   // with slightly different timestamps, causing double-processing.
-  // task_id + subtask_id + type is sufficient to identify a unique event.
-  return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}`;
+  // Include a data hash so pause→resume→start within 2s doesn't get deduped.
+  const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 40);
+  return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}:${dataHash}`;
 }
 
 function App() {
@@ -72,13 +73,11 @@ function App() {
 
   // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
+  // ponytail: fetchInitial always loads all data; gRPC connect does its own listTasks merge.
+  // Old skipTasks logic was broken — grpcState is always "disconnected" on first render.
   useEffect(() => {
-    // ponytail: when gRPC-Web is connected, it provides live task data via
-    // WatchTask + listTasks — skip the REST tasks fetch to avoid overwrite flicker.
-    // REST fetch for health/workers/scheduler/circuit-breaker/events is still needed
-    // since gRPC-Web only handles tasks and events.
-    dashboard.fetchInitial({ skipTasks: grpcState === "connected" }).finally(() => setLoading(false));
-  }, [dashboard.fetchInitial, grpcState]);
+    dashboard.fetchInitial().finally(() => setLoading(false));
+  }, [dashboard.fetchInitial]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
   // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch tasks via gRPC
@@ -89,6 +88,18 @@ function App() {
       }).catch(() => { /* ignore */ });
     }
   }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
+
+  // Handle sync_required from broadcast lag — do full listTasks re-sync
+  useEffect(() => {
+    if (dashboard.needsSync && grpcState === "connected") {
+      dashboard.setNeedsSync(false);
+      listTasks().then((data) => {
+        if (data.available) dashboard.mergeGrpcTasks(data);
+      }).catch(() => { /* ignore */ });
+    } else if (dashboard.needsSync) {
+      dashboard.setNeedsSync(false);
+    }
+  }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks, dashboard.setNeedsSync]);
 
   // Periodic gRPC health check -- poll every 30s when connected
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);

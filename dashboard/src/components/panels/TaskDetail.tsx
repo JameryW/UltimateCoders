@@ -117,8 +117,10 @@ function SubtaskProgressBar({ subtasks }: { subtasks: SubtaskSummary[] }) {
 }
 
 function EventTimeline({ events }: { events: TaskEvent[] }) {
+  const [showAll, setShowAll] = useState(false);
   if (events.length === 0) return null;
-  const recent = events.slice(-20).reverse();
+  const EVENT_PREVIEW_COUNT = 50;
+  const recent = showAll ? [...events].reverse() : events.slice(-EVENT_PREVIEW_COUNT).reverse();
   const typeIcon: Record<string, string> = {
     task_submitted: "📤", subtask_started: "▶️", subtask_assigned: "👤",
     subtask_completed: "✅", subtask_failed: "❌", tool_call: "🔧",
@@ -137,6 +139,11 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
           </div>
         ))}
       </div>
+      {!showAll && events.length > EVENT_PREVIEW_COUNT && (
+        <button onClick={() => setShowAll(true)} className="text-[10px] text-blue-400 hover:underline mt-1">
+          Show all {events.length} events
+        </button>
+      )}
     </div>
   );
 }
