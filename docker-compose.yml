@@ -99,8 +99,10 @@ services:
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.
   # The dashboard is available at http://localhost:8080/dashboard/
+  # Use: docker compose --profile app up
   orchestrator:
     build: .
+    profiles: ["app"]
     ports:
       - "8080:8080"   # Dashboard web UI + SSE
     depends_on:
@@ -126,8 +128,10 @@ services:
   # and executes them via the Python Orchestrator + Worker.
   # Required for gRPC/TUI task submissions to be processed by the
   # real Orchestrator (LLM decomposition + Worker execution).
+  # Use: docker compose --profile app up
   nats-worker:
     build: .
+    profiles: ["app"]
     depends_on:
       pd:
         condition: service_healthy

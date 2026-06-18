@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+*.pyc
+__pycache__/
+.trellis/
+.claude/
+node_modules/
