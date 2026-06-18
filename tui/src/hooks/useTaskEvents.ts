@@ -78,8 +78,16 @@ export function processEvent(
             status: 'assigned',
             assignedWorker: event.data?.worker_id,
           });
+        } else {
+          updated.set(event.subtaskId, {
+            id: event.subtaskId,
+            index: updated.size,
+            description: String(event.data?.description ?? ''),
+            status: 'assigned',
+            assignedWorker: event.data?.worker_id,
+            dependsOn: parseDependsOn(event.data?.depends_on),
+          });
         }
-        // If not existing, it will be added from the submit response subtasks
       }
       break;
     }
@@ -91,6 +99,15 @@ export function processEvent(
             ...existing,
             status: 'in_progress',
             assignedWorker: event.data?.worker_id ?? existing.assignedWorker,
+          });
+        } else {
+          updated.set(event.subtaskId, {
+            id: event.subtaskId,
+            index: updated.size,
+            description: String(event.data?.description ?? ''),
+            status: 'in_progress',
+            assignedWorker: event.data?.worker_id,
+            dependsOn: parseDependsOn(event.data?.depends_on),
           });
         }
       }
@@ -104,6 +121,14 @@ export function processEvent(
             ...existing,
             status: 'completed',
           });
+        } else {
+          updated.set(event.subtaskId, {
+            id: event.subtaskId,
+            index: updated.size,
+            description: String(event.data?.description ?? ''),
+            status: 'completed',
+            dependsOn: parseDependsOn(event.data?.depends_on),
+          });
         }
       }
       break;
@@ -116,6 +141,15 @@ export function processEvent(
             ...existing,
             status: 'failed',
             errorSummary: event.data?.error_summary ?? event.data?.error ?? undefined,
+          });
+        } else {
+          updated.set(event.subtaskId, {
+            id: event.subtaskId,
+            index: updated.size,
+            description: String(event.data?.description ?? ''),
+            status: 'failed',
+            errorSummary: event.data?.error_summary ?? event.data?.error ?? undefined,
+            dependsOn: parseDependsOn(event.data?.depends_on),
           });
         }
       }

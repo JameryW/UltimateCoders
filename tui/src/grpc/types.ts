@@ -116,7 +116,16 @@ export function mapSubtaskStatus(protoStatus: string): SubtaskStatusType {
   }
 }
 
-/** Map proto TaskStatus string to a display-friendly form. */
+/** Map proto TaskStatus string to a normalized form for state comparison. */
 export function mapTaskStatus(protoStatus: string): string {
-  return protoStatus; // Proto strings are already display-friendly (Created, InProgress, etc.)
+  switch (protoStatus) {
+    case 'Created': return 'created';
+    case 'InProgress': return 'in_progress';
+    case 'Planning': return 'planning';
+    case 'Paused': return 'paused';
+    case 'Completed': return 'completed';
+    case 'Failed': return 'failed';
+    case 'Conflicted': return 'conflicted';
+    default: return protoStatus.toLowerCase();
+  }
 }
