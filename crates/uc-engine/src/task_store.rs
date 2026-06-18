@@ -313,9 +313,9 @@ impl TaskStoreBackend for PostgresTaskBackend {
                 .map_err(|e| EngineError::StorageError(format!("Task select failed: {}", e)))?;
 
             match row {
-                Some((id, desc, proj, status, st_json, created, updated)) => {
-                    Ok(Some(Self::row_to_task(id, desc, proj, status, st_json, created, updated)?))
-                }
+                Some((id, desc, proj, status, st_json, created, updated)) => Ok(Some(
+                    Self::row_to_task(id, desc, proj, status, st_json, created, updated)?,
+                )),
                 None => Ok(None),
             }
         } else {
@@ -375,9 +375,10 @@ impl TaskStoreBackend for PostgresTaskBackend {
                 .map_err(|e| EngineError::StorageError(format!("Task pause failed: {}", e)))?;
 
             if result.rows_affected() == 0 {
-                return Err(EngineError::InvalidOperation(
-                    format!("Cannot pause task {} (not found or wrong status)", task_id)
-                ));
+                return Err(EngineError::InvalidOperation(format!(
+                    "Cannot pause task {} (not found or wrong status)",
+                    task_id
+                )));
             }
             self.get_task(task_id).await.map(|t| t.unwrap())
         } else {
@@ -396,9 +397,10 @@ impl TaskStoreBackend for PostgresTaskBackend {
                 .map_err(|e| EngineError::StorageError(format!("Task resume failed: {}", e)))?;
 
             if result.rows_affected() == 0 {
-                return Err(EngineError::InvalidOperation(
-                    format!("Cannot resume task {} (not found or not paused)", task_id)
-                ));
+                return Err(EngineError::InvalidOperation(format!(
+                    "Cannot resume task {} (not found or not paused)",
+                    task_id
+                )));
             }
             self.get_task(task_id).await.map(|t| t.unwrap())
         } else {
@@ -527,7 +529,8 @@ impl TaskStore {
         // ponytail: bulk-insert — acceptable for one-time migration
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
         for (_, task) in tasks {
-            rt.block_on(backend.submit_task(task)).expect("submit_task infallible");
+            rt.block_on(backend.submit_task(task))
+                .expect("submit_task infallible");
         }
         backend
     }

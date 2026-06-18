@@ -445,10 +445,18 @@ impl TaskStore {
         // Derive subject from event type
         let subject = match &event {
             uc_engine::AgentEventType::TaskCreated { task_id, .. } => format!("task.{}", task_id.0),
-            uc_engine::AgentEventType::SubtaskAssigned { task_id, .. } => format!("task.{}", task_id.0),
-            uc_engine::AgentEventType::SubtaskStarted { task_id, .. } => format!("task.{}", task_id.0),
-            uc_engine::AgentEventType::SubtaskCompleted { task_id, .. } => format!("task.{}", task_id.0),
-            uc_engine::AgentEventType::SubtaskFailed { task_id, .. } => format!("task.{}", task_id.0),
+            uc_engine::AgentEventType::SubtaskAssigned { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskStarted { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskCompleted { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskFailed { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
             _ => "events".to_string(),
         };
         self.events.push(event.clone());
