@@ -90,11 +90,12 @@ services:
     ports:
       - "4222:4222"   # Client connections
       - "8222:8222"   # Management / monitoring
-    command: --js --store_dir /data --max_mem_store 256MB
     volumes:
       - nats_data:/data
+      - ./docker/nats.conf:/etc/nats/nats.conf:ro
+    command: --config /etc/nats/nats.conf
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
       interval: 10s
       retries: 5
 
