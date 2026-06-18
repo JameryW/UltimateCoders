@@ -448,7 +448,9 @@ class NatsWorker:
             # After submit_task completes, the Orchestrator's nats_publisher
             # hook has already published the update. But we also need to
             # assign and execute subtasks if workers are available.
-            await self._execute_subtasks(task)
+            # Fire as background task so _handle_submit returns immediately
+            # and NATS can process the next message concurrently.
+            asyncio.create_task(self._execute_subtasks(task))
 
         except Exception:
             logger.error(

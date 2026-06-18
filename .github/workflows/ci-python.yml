@@ -49,7 +49,7 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install pytest pytest-asyncio pytest-cov pyyaml httpx
+          pip install pytest pytest-asyncio pytest-cov pyyaml httpx anthropic litellm
           maturin develop --release --manifest-path crates/uc-python/Cargo.toml
       - name: Run tests
         run: |
