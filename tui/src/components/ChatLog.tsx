@@ -18,7 +18,7 @@ import React, {useState, useEffect, useRef, useCallback} from 'react';
 import {Box, Text, useInput} from 'ink';
 import type {EventFilter} from '../reducer.js';
 import {eventFilterLabel} from '../reducer.js';
-import {renderMarkdown, hasMarkdown} from '../markdown.js';
+import {renderMarkdown, hasMarkdown, isDiffText, colorDiff} from '../markdown.js';
 
 export interface ChatMessage {
   id: string;
@@ -52,6 +52,12 @@ export interface ChatLogProps {
   terminalWidth?: number;
   /** Whether older messages were truncated (show hint at top). */
   messagesTruncated?: boolean;
+  /** Search query for highlighting matches. */
+  searchQuery?: string;
+  /** Whether search mode is active. */
+  searchActive?: boolean;
+  /** Current search match index. */
+  searchMatchIndex?: number;
 }
 
 function formatTime(): string {
@@ -139,7 +145,7 @@ export function getEventIcon(eventType?: string): string {
   return EVENT_ICONS[eventType] ? `${EVENT_ICONS[eventType]} ` : '';
 }
 
-const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number}> = ({msg, isExpanded, isSelected, terminalWidth}) => {
+const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number; isSearchMatch?: boolean; isCurrentMatch?: boolean}> = ({msg, isExpanded, isSelected, terminalWidth, isSearchMatch, isCurrentMatch}) => {
   const lines = msg.text.split('\n');
 
   const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
@@ -159,9 +165,12 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelect
 
   // ponytail: render markdown for system messages that contain markdown syntax
   const shouldRenderMarkdown = !msg.isUser && !isToolEvent && hasMarkdown(msg.text);
-  const renderedText = shouldRenderMarkdown
-    ? renderMarkdown(msg.text, terminalWidth)
-    : visibleLines.join('\n');
+  const isDiff = !msg.isUser && (msg.eventType === 'file_modified' || isDiffText(msg.text));
+  const renderedText = isDiff
+    ? colorDiff(visibleLines.join('\n'))
+    : shouldRenderMarkdown
+      ? renderMarkdown(msg.text, terminalWidth)
+      : visibleLines.join('\n');
 
   const renderText = () => {
     if (msg.isUser) {
@@ -190,6 +199,9 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelect
         <Text dimColor>{`[${msg.timestamp}] `}</Text>
         {isSelected && <Text color="yellow">{'▸'}</Text>}
         {!isSelected && <Text>{' '}</Text>}
+        {isCurrentMatch && <Text color="yellow">{'◆'}</Text>}
+        {isSearchMatch && !isCurrentMatch && <Text color="yellow">{'◇'}</Text>}
+        {!isSearchMatch && !isCurrentMatch && <Text>{' '}</Text>}
         {renderText()}
       </Box>
       {collapsedCount > 0 && (
@@ -212,6 +224,9 @@ const ChatLog: React.FC<ChatLogProps> = ({
   unreadCount = 0,
   terminalWidth,
   messagesTruncated,
+  searchQuery = '',
+  searchActive = false,
+  searchMatchIndex = 0,
 }) => {
   const [localOffset, setLocalOffset] = useState(0);
   const [selectedVisibleIndex, setSelectedVisibleIndex] = useState(-1);
@@ -221,6 +236,25 @@ const ChatLog: React.FC<ChatLogProps> = ({
   const filteredMessages = filterMessages(messages, eventFilter);
   const totalMessages = filteredMessages.length;
   const maxOffset = Math.max(0, totalMessages - visibleLines);
+
+  // Search match computation
+  const searchMatches = searchActive && searchQuery
+    ? filteredMessages.reduce<Array<{msgIdx: number; pos: number}>>((acc, msg, idx) => {
+        const lower = msg.text.toLowerCase();
+        const query = searchQuery.toLowerCase();
+        let pos = 0;
+        while (true) {
+          const found = lower.indexOf(query, pos);
+          if (found < 0) break;
+          acc.push({msgIdx: idx, pos: found});
+          pos = found + 1;
+        }
+        return acc;
+      }, [])
+    : [];
+  const totalSearchMatches = searchMatches.length;
+  const currentMatchIdx = searchMatchIndex % Math.max(1, totalSearchMatches);
+  const currentMatch = searchMatches[currentMatchIdx] ?? null;
 
   // Computed visible window
   const effectiveOffset = followLog ? maxOffset : Math.min(localOffset, maxOffset);
@@ -251,6 +285,16 @@ const ChatLog: React.FC<ChatLogProps> = ({
       });
     }
   }, [scrollCommand, maxOffset, onSetFollowLog]);
+
+  // Auto-scroll to search match
+  useEffect(() => {
+    if (!currentMatch) return;
+    const targetOffset = Math.max(0, currentMatch.msgIdx - Math.floor(visibleLines / 2));
+    if (targetOffset !== localOffset) {
+      setLocalOffset(targetOffset);
+      onSetFollowLog?.(false);
+    }
+  }, [currentMatch, visibleLines, onSetFollowLog]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle Enter key locally: toggle expand on selected message
   useInput(useCallback((_input: string, key: {return?: boolean}) => {
@@ -321,16 +365,33 @@ const ChatLog: React.FC<ChatLogProps> = ({
   if (scrollIndicator) parts.push(scrollIndicator.trim());
   const indicatorBar = parts.join(' │ ');
 
+  // Search highlight: which messages match
+  const searchMatchMsgIds = new Set(searchMatches.map((m) => filteredMessages[m.msgIdx]?.id));
+  const currentMatchMsgId = currentMatch ? filteredMessages[currentMatch.msgIdx]?.id : null;
+
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
       {indicatorBar && <Text color={eventFilter !== 'all' || !followLog ? 'yellow' : 'dim'} dimColor={eventFilter === 'all' && followLog}>{indicatorBar}</Text>}
+      {searchActive && (
+        <Box>
+          <Text color="yellow" bold>{'Search: '}</Text>
+          <Text color="yellow">{searchQuery || '(type to search)'}</Text>
+          {totalSearchMatches > 0 && (
+            <Text dimColor>{` [${currentMatchIdx + 1}/${totalSearchMatches}] N next · Shift+N prev · Esc exit`}</Text>
+          )}
+          {totalSearchMatches === 0 && searchQuery && (
+            <Text dimColor>{' — no matches'}</Text>
+          )}
+        </Box>
+      )}
       {messagesTruncated && effectiveOffset === 0 && (
         <Text dimColor>{'↕ Earlier messages truncated'}</Text>
       )}
       {visibleMessages.map((msg, i) => {
-        // Time separator when >5min gap between messages
         const prevMsg = i > 0 ? visibleMessages[i - 1] : null;
         const showSeparator = prevMsg && timeDiffMinutes(prevMsg.timestamp, msg.timestamp) >= 5;
+        const isSearchMatch = searchActive && searchMatchMsgIds.has(msg.id);
+        const isCurrentMatch = searchActive && msg.id === currentMatchMsgId;
         return (
           <React.Fragment key={msg.id}>
             {showSeparator && (
@@ -338,9 +399,11 @@ const ChatLog: React.FC<ChatLogProps> = ({
             )}
             <ChatMessageItem
               msg={msg}
-              isExpanded={expandedIds.has(msg.id)}
+              isExpanded={expandedIds.has(msg.id) || isCurrentMatch}
               isSelected={isFocused && i === selectedVisibleIndex}
               terminalWidth={terminalWidth}
+              isSearchMatch={isSearchMatch}
+              isCurrentMatch={isCurrentMatch}
             />
           </React.Fragment>
         );

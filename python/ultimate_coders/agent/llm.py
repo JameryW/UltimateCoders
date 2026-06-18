@@ -84,13 +84,13 @@ class LLMClient:
         env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
         self.api_key = api_key or os.environ.get(env_key) or os.environ.get("ANTHROPIC_API_KEY")
         # ponytail: model defaults per provider, easy to extend
-        default_models: dict[str, str] = {
+        _DEFAULT_MODELS: dict[str, str] = {
             "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o",
             "gemini": "gemini-2.5-pro",
             "deepseek": "deepseek/deepseek-chat",
         }
-        self.model = model or default_models.get(provider, "claude-sonnet-4-6")
+        self.model = model or _DEFAULT_MODELS.get(provider, "claude-sonnet-4-6")
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit

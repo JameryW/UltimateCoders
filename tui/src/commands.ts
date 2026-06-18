@@ -32,6 +32,8 @@ export const COMMANDS: SlashCommand[] = [
   {name: 'clear', description: 'Clear chat log', usage: '/clear', hasArgs: false},
   {name: 'status', description: 'Show connection & task status', usage: '/status', hasArgs: false},
   {name: 'reconnect', description: 'Reconnect to gRPC server', usage: '/reconnect', hasArgs: false},
+  {name: 'symbols', description: 'Set symbol mode (unicode/ascii/auto)', usage: '/symbols <mode>', hasArgs: true},
+  {name: 'export', description: 'Export chat log to file', usage: '/export [path]', hasArgs: true},
   {name: 'quit', description: 'Exit the TUI', usage: '/quit', hasArgs: false},
 ];
 

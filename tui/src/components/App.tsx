@@ -500,8 +500,19 @@ const App: React.FC = () => {
       return;
     }
 
+    // Ctrl+S: toggle search mode (chat focus only)
+    if (key.ctrl && input === 's' && state.focusedArea === 'chat') {
+      dispatch({type: 'SET_SEARCH_ACTIVE', active: !state.searchActive});
+      return;
+    }
+
     // Esc: context-dependent escape
     if (key.escape) {
+      // Close search mode first if active
+      if (state.searchActive) {
+        dispatch({type: 'SET_SEARCH_ACTIVE', active: false});
+        return;
+      }
       // Cancel submitting task if Esc pressed during submission
       if (state.isSubmitting) {
         dispatch({type: 'CANCEL_TASK'});
@@ -556,12 +567,23 @@ const App: React.FC = () => {
         return;
       }
       if (key.downArrow) {
-        // If no selection yet, select first item; otherwise wrap
         const nextIdx = state.selectedSubtaskIndex < 0
           ? 0
           : state.selectedSubtaskIndex >= state.subtasks.length - 1
             ? 0
             : state.selectedSubtaskIndex + 1;
+        dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+        return;
+      }
+      if (key.pageUp) {
+        const step = Math.max(1, Math.floor(visibleLines / 2));
+        const nextIdx = Math.max(0, state.selectedSubtaskIndex - step);
+        dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
+        return;
+      }
+      if (key.pageDown) {
+        const step = Math.max(1, Math.floor(visibleLines / 2));
+        const nextIdx = Math.min(state.subtasks.length - 1, state.selectedSubtaskIndex + step);
         dispatch({type: 'SELECT_SUBTASK', index: nextIdx});
         return;
       }
@@ -614,6 +636,18 @@ const App: React.FC = () => {
         dispatch({type: 'SELECT_TASK_LIST', index: nextIdx});
         return;
       }
+      if (key.pageUp) {
+        const step = Math.max(1, Math.floor(visibleLines / 2));
+        const nextIdx = Math.max(0, state.selectedTaskListIndex - step);
+        dispatch({type: 'SELECT_TASK_LIST', index: nextIdx});
+        return;
+      }
+      if (key.pageDown) {
+        const step = Math.max(1, Math.floor(visibleLines / 2));
+        const nextIdx = Math.min(state.taskList.length - 1, state.selectedTaskListIndex + step);
+        dispatch({type: 'SELECT_TASK_LIST', index: nextIdx});
+        return;
+      }
       if (key.return) {
         const selectedTask = state.taskList[state.selectedTaskListIndex];
         if (selectedTask) {
@@ -651,6 +685,17 @@ const App: React.FC = () => {
         if (key.ctrl && input === 'l') {
           dispatch({type: 'CLEAR_LOG'});
           return;
+        }
+        // Search navigation: n = next match, N = prev match
+        if (state.searchActive && !key.ctrl && !key.meta) {
+          if (input === 'n' && !key.shift) {
+            dispatch({type: 'SEARCH_NEXT'});
+            return;
+          }
+          if (input === 'N' || (input === 'n' && key.shift)) {
+            dispatch({type: 'SEARCH_PREV'});
+            return;
+          }
         }
         // Enter handled by ChatLog internally (per-message expand)
         break;
@@ -750,6 +795,8 @@ const App: React.FC = () => {
           symbols={S}
           selectedIndex={state.selectedSubtaskIndex}
           detailOpen={state.subtaskDetailOpen}
+          maxVisibleLines={(stdout?.rows ?? 24) - 5}
+          scrollOffset={state.overlayScrollOffset}
         />
       </Box>
     );
@@ -795,6 +842,9 @@ const App: React.FC = () => {
         onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
         terminalWidth={terminalWidth}
         messagesTruncated={state.messagesTruncated}
+        searchQuery={state.searchQuery}
+        searchActive={state.searchActive}
+        searchMatchIndex={state.searchMatchIndex}
       />
 
       {/* ── Separator ────────────────────────────────── */}
