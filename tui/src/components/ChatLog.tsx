@@ -264,12 +264,17 @@ const ChatLog: React.FC<ChatLogProps> = ({
   const unreadIndicator = unreadCount > 0 ? ` [+${unreadCount} new]` : '';
   const filterIndicator = eventFilter !== 'all' ? ` [filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}]` : '';
 
+  // Compact single-line indicator bar
+  const parts: string[] = [];
+  if (eventFilter !== 'all') parts.push(`filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}`);
+  if (!followLog) parts.push('paused');
+  if (unreadCount > 0) parts.push(`+${unreadCount} new`);
+  if (scrollIndicator) parts.push(scrollIndicator.trim());
+  const indicatorBar = parts.join(' │ ');
+
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
-      {filterIndicator && <Text color="yellow">{filterIndicator}</Text>}
-      {followIndicator && <Text color="yellow">{followIndicator}</Text>}
-      {unreadIndicator && <Text color="red" bold>{unreadIndicator}</Text>}
-      {scrollIndicator && <Text dimColor>{scrollIndicator}</Text>}
+      {indicatorBar && <Text color={eventFilter !== 'all' || !followLog ? 'yellow' : 'dim'} dimColor={eventFilter === 'all' && followLog}>{indicatorBar}</Text>}
       {visibleMessages.map((msg, i) => {
         // Time separator when >5min gap between messages
         const prevMsg = i > 0 ? visibleMessages[i - 1] : null;
