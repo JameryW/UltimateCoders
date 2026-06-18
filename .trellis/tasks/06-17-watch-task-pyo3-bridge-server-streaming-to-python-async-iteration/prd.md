@@ -81,12 +81,12 @@ def watch_task(self, task_id: str, max_events: int = 50, timeout_secs: float = 1
 
 ## Acceptance Criteria
 
-* [ ] PyEngine 有 watch_task 和 watch_task_async 方法
-* [ ] gRPC 模式下可收集事件（带 timeout + max_events）
-* [ ] local 模式下返回明确错误（"watch_task requires gRPC mode"）
-* [ ] PyAgentEvent 类型可用
-* [ ] Python Engine.watch_task 方法可用
-* [ ] cargo check + clippy + test 全绿
+* [x] PyEngine 有 watch_task 和 watch_task_async 方法
+* [x] gRPC 模式下可收集事件（带 timeout + max_events）
+* [x] local 模式下返回明确错误（"watch_task requires gRPC mode"）
+* [x] PyAgentEvent 类型可用
+* [x] Python Engine.watch_task 方法可用
+* [x] cargo check + clippy + test 全绿
 
 ## Out of Scope
 

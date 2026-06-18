@@ -25,7 +25,7 @@
 
 * [x] GrpcEngineClient 可调用全部 6 个 TaskService RPC
 * [x] 所有 proto ↔ domain From conversions 存在
-* [ ] PyEngine 暴露 task 方法（推迟——需要架构设计）
+* [x] PyEngine 暴露 task 方法（通过 EngineApi trait 实现，已完成）
 * [x] cargo check + clippy + test 全绿
 * [x] CI green (PR #60)
 

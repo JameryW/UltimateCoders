@@ -25,13 +25,13 @@
 
 ## Acceptance Criteria
 
-* [ ] batch_write_memory: 写入多条 memory，返回所有 entry
-* [ ] list_repos: 返回已索引仓库列表
-* [ ] search_stream: 返回 stream，consumer 逐条接收 SearchResult
-* [ ] LocalEngine 实现全部 3 个方法
-* [ ] gRPC proto + client/server 实现全部 3 个 RPC
-* [ ] PyO3 bridge 暴露全部 3 个方法
-* [ ] 测试覆盖
+* [x] batch_write_memory: 写入多条 memory，返回所有 entry
+* [x] list_repos: 返回已索引仓库列表
+* [x] search_stream: 返回 stream，consumer 逐条接收 SearchResult
+* [x] LocalEngine 实现全部 3 个方法
+* [x] gRPC proto + client/server 实现全部 3 个 RPC
+* [x] PyO3 bridge 暴露全部 3 个方法
+* [x] 测试覆盖
 
 ## Out of Scope
 

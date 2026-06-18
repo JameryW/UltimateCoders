@@ -72,11 +72,11 @@ For each new method, add `_async` variant following the existing pattern.
 
 ## Acceptance Criteria
 
-* [ ] batch_write_memory, list_repos, search_stream in Engine class
-* [ ] submit_task, get_task, list_tasks, pause_task, resume_task in Engine class
-* [ ] All new methods have async variants
-* [ ] All methods use _try_grpc_with_fallback pattern
-* [ ] Python import works: `from ultimate_coders import Engine`
+* [x] batch_write_memory, list_repos, search_stream in Engine class
+* [x] submit_task, get_task, list_tasks, pause_task, resume_task in Engine class
+* [x] All new methods have async variants
+* [x] All methods use _try_grpc_with_fallback pattern
+* [x] Python import works: `from ultimate_coders import Engine`
 
 ## Out of Scope
 

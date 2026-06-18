@@ -11,6 +11,7 @@ const GRPC_LABELS: Record<GrpcConnectionState, { text: string; color: string }> 
   connecting: { text: "gRPC…", color: "bg-yellow-400 animate-pulse" },
   disconnected: { text: "gRPC off", color: "bg-gray-500" },
   error: { text: "gRPC err", color: "bg-red-400" },
+  exhausted: { text: "gRPC ⚠", color: "bg-orange-400" },
 };
 
 export function Header({ connected, grpcState, lastUpdate }: HeaderProps) {

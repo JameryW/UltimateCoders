@@ -54,11 +54,11 @@ async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError>;
 
 ## Acceptance Criteria
 
-* [ ] EngineApi trait 包含 5 个 task 方法
-* [ ] LocalEngine 实现全部 5 个方法
-* [ ] GrpcEngineClient 实现全部 5 个方法（从 inherent 移到 trait）
-* [ ] PyEngine 暴露全部 5 个方法（sync + async）
-* [ ] cargo check + clippy + test 全绿
+* [x] EngineApi trait 包含 5 个 task 方法
+* [x] LocalEngine 实现全部 5 个方法
+* [x] GrpcEngineClient 实现全部 5 个方法（从 inherent 移到 trait）
+* [x] PyEngine 暴露全部 5 个方法（sync + async）
+* [x] cargo check + clippy + test 全绿
 
 ## Out of Scope
 
