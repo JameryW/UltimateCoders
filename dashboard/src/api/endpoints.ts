@@ -11,9 +11,23 @@ import type {
 
 const BASE = "/dashboard/api";
 
+async function throwApiError(res: Response): Promise<never> {
+  let detail = "";
+  try {
+    const text = await res.text();
+    // Try to extract a JSON error message
+    const json = JSON.parse(text);
+    detail = json.error ?? json.message ?? json.detail ?? text;
+  } catch {
+    // Response was not JSON (e.g. HTML from 502/503)
+    detail = res.statusText || `HTTP ${res.status}`;
+  }
+  throw new Error(`API error ${res.status}: ${detail}`);
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) await throwApiError(res);
   return res.json() as Promise<T>;
 }
 
@@ -23,6 +37,7 @@ async function postJson<T>(url: string, body?: unknown): Promise<T> {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (!res.ok) await throwApiError(res);
   return res.json() as Promise<T>;
 }
 

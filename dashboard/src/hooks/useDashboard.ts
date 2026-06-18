@@ -5,6 +5,7 @@ import type {
   HealthData,
   WorkersData,
   TasksData,
+  TaskSummary,
   SubtaskSummary,
   SchedulerData,
   CircuitBreakerData,
