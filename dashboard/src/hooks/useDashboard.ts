@@ -82,10 +82,12 @@ export function useDashboard() {
         const merged = snapshotTasks.tasks.map((st) => {
           const existing = prev.tasks.find((t) => t.id === st.id);
           if (!existing) return st;
-          // If our existing version is newer (from gRPC-Web event), keep it
+          // If our existing version is newer or equal (from gRPC-Web event), keep it.
+          // Equal timestamp means same second — gRPC incremental updates are more
+          // granular than SSE snapshot, so prefer them on ties.
           const existingTime = new Date(existing.updated_at).getTime();
           const snapshotTime = new Date(st.updated_at).getTime();
-          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime > snapshotTime) {
+          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime >= snapshotTime) {
             return existing;
           }
           // Snapshot is newer or equal → merge subtask-level data
@@ -280,10 +282,22 @@ export function useDashboard() {
         const idx = merged.findIndex((m) => m.id === t.id);
         if (idx >= 0) {
           const existing = merged[idx]!;
-          // ponytail: don't spread subtasks — keep the version with more entries
-          // (gRPC listTasks snapshot may be stale vs real-time subtask events)
-          const subtasks = (existing.subtasks?.length ?? 0) >= (t.subtasks?.length ?? 0)
-            ? existing.subtasks : t.subtasks;
+          // Deep-merge subtasks: for each subtask, keep the version with more advanced status
+          let subtasks = t.subtasks;
+          if (existing.subtasks && t.subtasks) {
+            subtasks = t.subtasks.map((gs) => {
+              const es = existing.subtasks!.find((s) => s.id === gs.id);
+              if (es) return subtaskStatusRank(es.status) >= subtaskStatusRank(gs.status) ? es : gs;
+              return gs;
+            });
+            // Keep subtasks from existing that aren't in gRPC response
+            for (const es of existing.subtasks) {
+              if (!subtasks.some((s) => s.id === es.id)) subtasks.push(es);
+            }
+          } else if (existing.subtasks && !t.subtasks) {
+            // gRPC response has no subtasks — keep existing
+            subtasks = existing.subtasks;
+          }
           merged[idx] = { ...existing, ...t, subtasks };
         } else {
           merged.push(t);

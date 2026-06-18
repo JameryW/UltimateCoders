@@ -116,16 +116,19 @@ describe('processEvent', () => {
     expect(result.get('sub-1')).toEqual(original);
   });
 
-  it('handles event with subtaskId not in map gracefully', () => {
+  it('creates subtask entry when event arrives before submit response', () => {
     const map = new Map<string, SubtaskItem>();
     const event = makeEvent({
       type: 'subtask_assigned',
       subtaskId: 'sub-999',
-      data: {worker_id: 'worker-1'},
+      data: {worker_id: 'worker-1', description: 'New subtask'},
     });
     const result = processEvent(event, map);
-    // No crash, map unchanged
-    expect(result.size).toBe(0);
+    // Should create entry for unknown subtask
+    expect(result.size).toBe(1);
+    const created = result.get('sub-999')!;
+    expect(created.status).toBe('assigned');
+    expect(created.assignedWorker).toBe('worker-1');
   });
 
   it('does not mutate the original map (immutability)', () => {
