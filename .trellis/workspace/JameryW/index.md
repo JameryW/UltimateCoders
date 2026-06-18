@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-06-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1070 | Active |
+| `journal-1.md` | ~1103 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-06-18 | PR82 conflict resolution + ruff lint fixes | `3e57111` | `feat/tui-interaction-polish` |
 | 30 | 2026-06-18 | Dashboard Theme + UX + Mobile Nav Polish | `faf2e8c`, `176c001`, `d3009cb` | `main` |
 | 29 | 2026-06-18 | TUI Polish: Ctrl+W, Tab completion, StatusBar retry countdown | `269b8ce`, `ffe7233` | `feat/watch-task-pyo3-bridge` |
 | 28 | 2026-06-17 | Backend hardening: broadcast, async worker, crash/restart, integration tests, task queue | `5279a94`, `0c918f5`, `e039b19`, `57ad35e`, `6bb07de`, `c6a3291` | `main` |
