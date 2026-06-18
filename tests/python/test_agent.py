@@ -234,6 +234,57 @@ class TestLLMClient:
         assert result.tool_calls[0].input == {"query": "test"}
         assert result.stop_reason == "tool_use"
 
+    @pytest.mark.asyncio
+    async def test_litellm_tool_calling_loop(self):
+        """Test _complete_with_tools_litellm multi-round tool execution."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = LLMClient(provider="openai", api_key="sk-test")
+
+        # Mock litellm module
+        mock_litellm = MagicMock()
+
+        # First response: LLM requests a tool call
+        mock_tc = MagicMock()
+        mock_tc.id = "call_1"
+        mock_tc.function.name = "search"
+        mock_tc.function.arguments = '{"query": "test"}'
+
+        first_response = MagicMock()
+        first_response.choices = [MagicMock()]
+        first_response.choices[0].message.content = ""
+        first_response.choices[0].message.tool_calls = [mock_tc]
+        first_response.choices[0].finish_reason = "tool_calls"
+
+        # Second response: LLM gives final text answer
+        second_response = MagicMock()
+        second_response.choices = [MagicMock()]
+        second_response.choices[0].message.content = "Found 3 results"
+        second_response.choices[0].message.tool_calls = None
+        second_response.choices[0].finish_reason = "stop"
+
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[first_response, second_response]
+        )
+
+        # Inject mock litellm
+        client._client = mock_litellm
+
+        tools = [make_tool_definition(name="search", description="Search")]
+        tool_executor = AsyncMock(return_value="result text")
+
+        response, log = await client._complete_with_tools_litellm(
+            [{"role": "user", "content": "Search for test"}],
+            tools,
+            tool_executor=tool_executor,
+        )
+
+        assert response.text == "Found 3 results"
+        assert not response.has_tool_calls
+        assert len(log) == 1
+        assert log[0]["tool_call"]["name"] == "search"
+        assert mock_litellm.acompletion.call_count == 2
+
 
 class TestLLMResponse:
     """Tests for LLMResponse."""

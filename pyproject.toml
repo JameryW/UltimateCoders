@@ -21,8 +21,14 @@ tui = [
     "textual>=0.40",
     "rich>=13.0",
 ]
+llm = [
+    "anthropic>=0.30.0",
+    "litellm>=1.0.0",
+]
 test = [
     "httpx>=0.24.0",
+    "anthropic>=0.30.0",
+    "litellm>=1.0.0",
 ]
 
 [tool.maturin]

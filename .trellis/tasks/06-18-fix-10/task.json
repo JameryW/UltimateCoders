@@ -1,7 +1,7 @@
 {
   "id": "fix-10",
   "name": "fix-10",
-  "title": "fix: 前后端交互10项逻辑与体验问题",
+  "title": "fix: 前后端交互10项深度问题(第二轮)",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -13,7 +13,7 @@
   "createdAt": "2026-06-18",
   "completedAt": null,
   "branch": null,
-  "base_branch": "main",
+  "base_branch": "fix/pr11-placeholder-fixes-test-infra",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,

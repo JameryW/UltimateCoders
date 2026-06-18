@@ -58,6 +58,21 @@ class LLMResponse:
         return len(self.tool_calls) > 0
 
 
+@dataclass
+class GenericStreamingChunk:
+    """A single chunk from a streaming LLM response.
+
+    Normalizes streaming output across providers (Anthropic native + litellm).
+    Each chunk is a delta — callers accumulate to build the full response.
+    """
+
+    # ponytail: minimal chunk type, add fields when needed
+    text_delta: str = ""
+    tool_call_delta: ToolCall | None = None
+    finish_reason: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+
+
 class LLMClient:
     """Abstract LLM client for agent interactions.
 
@@ -263,6 +278,121 @@ class LLMClient:
             max_tool_rounds=max_tool_rounds, tool_executor=tool_executor,
             on_tool_call=on_tool_call, tool_calls_log=tool_calls_log, **kwargs,
         )
+
+    async def complete_stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """Stream a completion response, yielding GenericStreamingChunk deltas.
+
+        Args:
+            messages: Conversation messages.
+            system: Optional system prompt.
+            max_tokens: Maximum tokens in the response.
+            **kwargs: Additional parameters for the API.
+
+        Yields:
+            GenericStreamingChunk objects with text_delta, finish_reason, usage.
+        """
+        from collections.abc import AsyncIterator
+
+        if self.provider == "anthropic":
+            async for chunk in self._stream_anthropic(
+                messages, system=system, max_tokens=max_tokens, **kwargs,
+            ):
+                yield chunk
+        else:
+            async for chunk in self._stream_litellm(
+                messages, system=system, max_tokens=max_tokens, **kwargs,
+            ):
+                yield chunk
+
+    async def _stream_anthropic(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """Anthropic-native streaming path."""
+        from collections.abc import AsyncIterator
+
+        client = self._get_client()
+        request_params: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if system:
+            request_params["system"] = system
+        request_params.update(kwargs)
+
+        async with client.messages.stream(**request_params) as stream:
+            async for event in stream:
+                if event.type == "content_block_delta":
+                    if hasattr(event.delta, "text"):
+                        yield GenericStreamingChunk(text_delta=event.delta.text)
+                elif event.type == "message_stop":
+                    yield GenericStreamingChunk(finish_reason="end_turn")
+                elif event.type == "message_delta":
+                    # Final delta with usage
+                    usage = {}
+                    if hasattr(event, "usage"):
+                        usage = {
+                            "output_tokens": getattr(event.usage, "output_tokens", 0),
+                        }
+                    stop_reason = getattr(event.delta, "stop_reason", "end_turn") or "end_turn"
+                    yield GenericStreamingChunk(finish_reason=stop_reason, usage=usage)
+
+    async def _stream_litellm(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> AsyncIterator[GenericStreamingChunk]:
+        """litellm streaming path — OpenAI-format SSE."""
+        from collections.abc import AsyncIterator
+
+        client = self._get_client()
+        openai_messages = list(messages)
+        if system:
+            openai_messages.insert(0, {"role": "system", "content": system})
+
+        request_params: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": openai_messages,
+            "stream": True,
+        }
+        if self.api_key:
+            request_params["api_key"] = self.api_key
+        request_params.update(kwargs)
+
+        response = await client.acompletion(**request_params)
+        async for chunk in response:
+            choice = chunk.choices[0] if chunk.choices else None
+            if choice is None:
+                continue
+            delta = choice.delta
+            text_delta = ""
+            if hasattr(delta, "content") and delta.content:
+                text_delta = delta.content
+            finish_reason = getattr(choice, "finish_reason", None)
+            usage = {}
+            if hasattr(chunk, "usage") and chunk.usage:
+                usage = {
+                    "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
+                    "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
+                }
+            yield GenericStreamingChunk(
+                text_delta=text_delta,
+                finish_reason=finish_reason,
+                usage=usage,
+            )
 
     async def _complete_with_tools_anthropic(
         self,
