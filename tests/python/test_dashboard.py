@@ -1310,7 +1310,7 @@ class TestDashboardNatsSubmit:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["status"] == "Planning"
+        assert data["status"] == "submitted"
         assert data["subtask_count"] == 0
         assert "task_id" in data
         # Verify publish_submit was called with correct args
