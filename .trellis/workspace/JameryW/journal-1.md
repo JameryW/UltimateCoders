@@ -1033,3 +1033,38 @@ Fixed 3 TUI keybinding gaps: Ctrl+W cycle focus, Tab slash command completion, S
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: Fix 8 frontend-backend interaction bugs + PR82 conflict resolution
+
+**Date**: 2026-06-18
+**Task**: Fix 8 frontend-backend interaction bugs + PR82 conflict resolution
+**Branch**: `feat/tui-interaction-polish`
+
+### Summary
+
+Fixed 8 frontend-backend interaction bugs (PR#84): subtasks in task data, flush_pending execution, NATS status confirmation, parallel fetchInitial, 5xx auth handling, NATS submit real data, infinite retry, merge-based fetchInitial. Also resolved PR#82 merge conflicts and ruff lint failures.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `75a11fc` | (see git log) |
+| `43cdf14` | (see git log) |
+| `3e57111` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
