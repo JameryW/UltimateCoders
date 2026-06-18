@@ -343,12 +343,14 @@ class ConflictResolver:
     def _auto_merge(self, base: str, ours: str, theirs: str) -> MergeResult:
         """Attempt auto-merge via three-way diff.
 
-        This is a simplified implementation. The full implementation
-        in the Rust engine uses imara-diff for proper diffing.
+        Implements a line-level three-way merge:
+        - If only one side changed, take that side.
+        - If both sides changed the same lines differently, flag as conflict.
+        - If both sides changed different lines, merge both changes.
         """
-        base_lines = base.splitlines()
-        ours_lines = ours.splitlines()
-        theirs_lines = theirs.splitlines()
+        base_lines = base.splitlines(keepends=True)
+        ours_lines = ours.splitlines(keepends=True)
+        theirs_lines = theirs.splitlines(keepends=True)
 
         # If only one side changed, take that side
         if ours == base:
@@ -360,40 +362,149 @@ class ConflictResolver:
         if ours == theirs:
             return MergeResult(merged=ours, success=True, tier=ResolutionTier.AUTO_MERGE)
 
-        # Both sides changed differently — flag as conflict
-        # A proper three-way merge would be done by the Rust engine
-        conflict_marker = ConflictMarker(
-            start_line=1,
-            end_line=max(len(base_lines), len(ours_lines), len(theirs_lines)),
-            ours=ours,
-            theirs=theirs,
-            base=base,
-        )
+        # Three-way merge: compute which lines changed from base
+        ours_changed = self._compute_changes(base_lines, ours_lines)
+        theirs_changed = self._compute_changes(base_lines, theirs_lines)
 
-        # Produce conflict-marked output
+        # Check for overlapping changes
+        conflicts = []
+        for o_start, o_end in ours_changed:
+            for t_start, t_end in theirs_changed:
+                if o_start < t_end and t_start < o_end:
+                    conflicts.append(ConflictMarker(
+                        start_line=o_start + 1,
+                        end_line=max(o_end, t_end),
+                        ours="".join(ours_lines[o_start:o_end]) or ours,
+                        theirs="".join(theirs_lines[t_start:t_end]) or theirs,
+                        base="".join(base_lines[o_start:max(o_end, t_end)]) or base,
+                    ))
+
+        if not conflicts:
+            # Non-overlapping changes: merge by applying both sets
+            merged = self._apply_non_conflicting(base_lines, ours_lines, theirs_lines, ours_changed, theirs_changed)
+            return MergeResult(merged=merged, success=True, tier=ResolutionTier.AUTO_MERGE)
+
+        # Overlapping changes: produce conflict markers
         merged = f"<<<<<<< ours\n{ours}\n=======\n{theirs}\n>>>>>>> theirs"
         return MergeResult(
             merged=merged,
-            conflicts=[conflict_marker],
+            conflicts=conflicts,
             success=False,
             tier=ResolutionTier.AUTO_MERGE,
         )
 
+    @staticmethod
+    def _compute_changes(
+        base_lines: list[str], changed_lines: list[str],
+    ) -> list[tuple[int, int]]:
+        """Compute (start, end) ranges of lines that differ from base.
+
+        Returns list of (start, end) tuples where lines differ.
+        """
+        changes = []
+        i = 0
+        max_len = max(len(base_lines), len(changed_lines))
+        while i < max_len:
+            base_line = base_lines[i] if i < len(base_lines) else None
+            changed_line = changed_lines[i] if i < len(changed_lines) else None
+            if base_line != changed_line:
+                start = i
+                while i < max_len:
+                    base_line = base_lines[i] if i < len(base_lines) else None
+                    changed_line = changed_lines[i] if i < len(changed_lines) else None
+                    if base_line == changed_line:
+                        break
+                    i += 1
+                changes.append((start, i))
+            else:
+                i += 1
+        return changes
+
+    @staticmethod
+    def _apply_non_conflicting(
+        base_lines: list[str],
+        ours_lines: list[str],
+        theirs_lines: list[str],
+        ours_changed: list[tuple[int, int]],
+        theirs_changed: list[tuple[int, int]],
+    ) -> str:
+        """Apply non-overlapping changes from both sides to base."""
+        # Collect all change regions with their source
+        all_changes: list[tuple[int, int, list[str]]] = []
+        for start, end in ours_changed:
+            all_changes.append((start, end, ours_lines[start:end]))
+        for start, end in theirs_changed:
+            all_changes.append((start, end, theirs_lines[start:end]))
+        all_changes.sort(key=lambda c: c[0])
+
+        result = []
+        base_idx = 0
+        for start, end, new_lines in all_changes:
+            # Copy unchanged base lines before this change
+            while base_idx < start and base_idx < len(base_lines):
+                result.append(base_lines[base_idx])
+                base_idx += 1
+            # Skip replaced base lines
+            if base_idx < end:
+                base_idx = end
+            # Apply the change
+            result.extend(new_lines)
+        # Copy remaining base lines
+        while base_idx < len(base_lines):
+            result.append(base_lines[base_idx])
+            base_idx += 1
+        return "".join(result)
+
     def _llm_assisted_merge(self, base: str, ours: str, theirs: str) -> MergeResult:
         """Attempt LLM-assisted merge.
 
-        Requires an LLM client to be configured. Falls back to auto-merge
+        Requires an LLM client to be configured. Falls back to reassign
         if no LLM client is available.
         """
         if self._llm_client is None:
             logger.warning("No LLM client for assisted merge, escalating to reassign")
             return self._reassign(base, ours, theirs)
 
-        # The actual LLM-assisted merge would:
-        # 1. Send the base + ours + theirs to the LLM
-        # 2. Ask it to produce a merged version
-        # 3. Validate the result
-        # For now, this is a placeholder that returns the conflict as-is.
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        prompt = (
+            "You are a code merge assistant. Merge the two modified versions of a file "
+            "into a single, correct version. Resolve all conflicts intelligently.\n\n"
+            f"## BASE (original):\n```\n{base}\n```\n\n"
+            f"## OURS (one modification):\n```\n{ours}\n```\n\n"
+            f"## THEIRS (another modification):\n```\n{theirs}\n```\n\n"
+            "Output ONLY the merged file content, no explanations or markers."
+        )
+
+        try:
+            if loop is not None and loop.is_running():
+                # Already in async context — create task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    merged = pool.submit(
+                        asyncio.run,
+                        self._llm_client.complete(prompt=prompt, max_tokens=8192),
+                    ).result()
+            else:
+                merged = asyncio.run(
+                    self._llm_client.complete(prompt=prompt, max_tokens=8192),
+                )
+            if merged and hasattr(merged, "text"):
+                merged_text = merged.text
+            elif isinstance(merged, str):
+                merged_text = merged
+            else:
+                merged_text = str(merged) if merged else ""
+
+            if merged_text.strip():
+                return MergeResult(merged=merged_text, success=True, tier=ResolutionTier.LLM_ASSISTED)
+        except Exception as e:
+            logger.warning("LLM-assisted merge failed: %s", e)
+
         return MergeResult(
             merged=None,
             success=False,

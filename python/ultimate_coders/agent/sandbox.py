@@ -7,6 +7,7 @@ that execute coding agents (Claude Code, Codex) in isolated settings.
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -387,17 +388,17 @@ class SandboxManager:
             )
 
 
-class AgentAdapter:
+class AgentAdapter(ABC):
     """Base class for agent adapters."""
 
-    def name(self) -> str:
-        raise NotImplementedError
+    @abstractmethod
+    def name(self) -> str: ...
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
-        raise NotImplementedError
+    @abstractmethod
+    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]: ...
 
-    def parse_output(self, result: ExecResult) -> AgentOutput:
-        raise NotImplementedError
+    @abstractmethod
+    def parse_output(self, result: ExecResult) -> AgentOutput: ...
 
 
 class DecomposeAdapter(AgentAdapter):

@@ -70,8 +70,8 @@ const COMMANDS: KeyCommand[] = [
   {id: 'paste', label: 'Paste text', shortLabel: 'Paste', key: 'Ctrl+V / Cmd+V', areas: ['input'], global: false},
 
   // ── Chat ──
-  {id: 'scrollUp', label: 'Scroll up', shortLabel: '↑', key: 'Up', areas: ['chat'], global: false},
-  {id: 'scrollDown', label: 'Scroll down', shortLabel: '↓', key: 'Down', areas: ['chat'], global: false},
+  {id: 'scrollUp', label: 'Select previous message', shortLabel: '↑', key: 'Up', areas: ['chat'], global: false},
+  {id: 'scrollDown', label: 'Select next message', shortLabel: '↓', key: 'Down', areas: ['chat'], global: false},
   {id: 'pageUp', label: 'Page up', shortLabel: 'PgUp', key: 'PageUp', areas: ['chat'], global: false},
   {id: 'pageDown', label: 'Page down', shortLabel: 'PgDn', key: 'PageDown', areas: ['chat'], global: false},
   {id: 'home', label: 'Jump to top', shortLabel: 'Home', key: 'Home', areas: ['chat'], global: false},

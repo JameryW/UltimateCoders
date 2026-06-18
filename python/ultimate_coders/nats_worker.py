@@ -474,9 +474,7 @@ class NatsWorker:
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
             # Find the next ready subtask
-            # TODO: _select_next_subtask is a private method; Orchestrator
-            # should expose a public API for this.
-            next_subtask = self._orchestrator._select_next_subtask(task)
+            next_subtask = self._orchestrator.select_next_subtask(task)
             if next_subtask is None:
                 # No more ready subtasks — either all done or blocked
                 break

@@ -1,1 +1,10 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD acceptance criteria and definition of done"}
+{"path": "python/ultimate_coders/agent/conflict.py", "kind": "spec", "note": "Verify _llm_assisted_merge and _auto_merge are implemented, not placeholder"}
+{"path": "python/ultimate_coders/config.py", "kind": "spec", "note": "Verify load_config reads TOML/YAML files"}
+{"path": "python/ultimate_coders/agent/sandbox.py", "kind": "spec", "note": "Verify AgentAdapter uses ABC/@abstractmethod"}
+{"path": "python/ultimate_coders/agent/worker.py", "kind": "spec", "note": "Verify _collect_modified_files returns actual diff content"}
+{"path": "python/ultimate_coders/nats_worker.py", "kind": "spec", "note": "Verify uses public select_next_subtask not private _select_next_subtask"}
+{"path": "python/ultimate_coders/agent/llm.py", "kind": "spec", "note": "Verify LiteLLMClient supports 3+ providers with tool calling"}
+{"path": "crates/uc-grpc/src/server.rs", "kind": "spec", "note": "Verify CORS configurable, TaskStore uses Arc<dyn TaskStoreBackend>"}
+{"path": "crates/uc-engine/src/task_store.rs", "kind": "spec", "note": "Verify TaskStoreBackend trait + InMemoryTaskBackend + PostgresTaskBackend"}
+{"path": "crates/uc-engine/src/events.rs", "kind": "spec", "note": "Verify EventStore is sole event source, no inline events in TaskStore"}

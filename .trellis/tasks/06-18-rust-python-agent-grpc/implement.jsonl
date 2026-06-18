@@ -1,1 +1,18 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/prd.md", "kind": "spec", "note": "PRD with requirements, technical approach, PR decomposition"}
+{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/multi-llm-provider.md", "kind": "research", "note": "litellm delegation pattern, 7 Anthropic coupling points, tool calling format differences"}
+{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/taskstore-persistence.md", "kind": "research", "note": "swap-in replacement strategy, PostgresMetadataStore dual-path pattern, EventStore trait pattern"}
+{"path": ".trellis/tasks/06-18-rust-python-agent-grpc/research/python-testing.md", "kind": "research", "note": "StubEngine Protocol pattern, conftest.py extraction, pytest-cov config"}
+{"path": "python/ultimate_coders/agent/llm.py", "kind": "spec", "note": "Current LLMClient - 7 Anthropic coupling points to refactor"}
+{"path": "python/ultimate_coders/agent/conflict.py", "kind": "spec", "note": "ConflictResolver._llm_assisted_merge placeholder + _auto_merge simplified"}
+{"path": "python/ultimate_coders/config.py", "kind": "spec", "note": "LlmConfig provider field unused, load_config() TODO TOML/YAML"}
+{"path": "python/ultimate_coders/agent/sandbox.py", "kind": "spec", "note": "AgentAdapter base class lacks ABC enforcement"}
+{"path": "python/ultimate_coders/agent/worker.py", "kind": "spec", "note": "Worker._collect_modified_files() diff always empty"}
+{"path": "python/ultimate_coders/nats_worker.py", "kind": "spec", "note": "Calls private _select_next_subtask instead of public API"}
+{"path": "crates/uc-grpc/src/server.rs", "kind": "spec", "note": "TaskStore in-memory HashMap + inline events, CORS AllowOrigin::Any"}
+{"path": "crates/uc-engine/src/events.rs", "kind": "spec", "note": "EventStore trait + InMemoryEventStore + NatsEventStore"}
+{"path": "crates/uc-engine/src/metadata/postgres.rs", "kind": "spec", "note": "PostgresMetadataStore dual-path pattern to follow for TaskStore"}
+{"path": "crates/uc-engine/src/checkpoint.rs", "kind": "spec", "note": "CheckpointManager snapshot + replay, needs PG persistence"}
+{"path": "crates/uc-types/src/agent.rs", "kind": "spec", "note": "Task, Subtask, AgentEventType type definitions"}
+{"path": "crates/uc-grpc/src/local_worker.rs", "kind": "spec", "note": "LocalWorkerBridge - applies updates to TaskStore"}
+{"path": "crates/uc-grpc/Cargo.toml", "kind": "spec", "note": "No sqlx dependency, depends on uc-engine default-features=false"}
+{"path": "crates/uc-engine/Cargo.toml", "kind": "spec", "note": "sqlx feature-gated under storage feature"}

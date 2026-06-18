@@ -657,6 +657,14 @@ class Orchestrator:
         candidates.sort(key=lambda st: -st.priority)
         return candidates[0]
 
+    def select_next_subtask(self, task: Task) -> Subtask | None:
+        """Public API for selecting the next ready subtask.
+
+        Delegates to _select_next_subtask. Use this instead of the
+        private method from external callers (e.g., NatsWorker).
+        """
+        return self._select_next_subtask(task)
+
     def _check_dependencies(self, subtask: Subtask, task: Task) -> bool:
         """Check whether all dependencies of a subtask are completed.
 

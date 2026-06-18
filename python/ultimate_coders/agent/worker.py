@@ -1134,8 +1134,9 @@ class Worker:
     ) -> list[FileChange]:
         """Extract file modifications from the tool call log.
 
-        Looks for write_file or edit_file tool calls in the log
-        and collects them as FileChange objects.
+        Looks for edit_file tool calls in the log and collects them as
+        FileChange objects with diff content. Also tracks read_file calls
+        as MODIFIED (implies interest).
 
         Args:
             tool_log: Log of tool calls and results.
@@ -1143,37 +1144,54 @@ class Worker:
         Returns:
             List of FileChange objects.
         """
-        # For now, we track files that were read (which implies interest)
-        # Actual file modification tracking would come from a write_file tool
-        # or from the worker's execution environment
         modified = []
         for entry in tool_log:
             tool_name = entry.get("tool_call", {}).get("name", "")
             tool_input = entry.get("tool_call", {}).get("input", {})
 
-            if tool_name == "read_file":
+            if tool_name == "edit_file":
+                file_path = tool_input.get("file_path", "")
+                create = tool_input.get("create", False)
+                content = tool_input.get("content", "")
+                if file_path:
+                    # Build diff from content vs original file
+                    diff = self._compute_file_diff(file_path, content)
+                    modified.append(
+                        FileChange(
+                            file_path=file_path,
+                            change_type=ChangeType.CREATED if create else ChangeType.MODIFIED,
+                            diff=diff,
+                        )
+                    )
+            elif tool_name == "read_file":
                 file_path = tool_input.get("file_path", "")
                 if file_path:
                     modified.append(
                         FileChange(
                             file_path=file_path,
                             change_type=ChangeType.MODIFIED,
-                            diff="",  # Actual diff would come from write_file
-                        )
-                    )
-            elif tool_name == "edit_file":
-                file_path = tool_input.get("file_path", "")
-                create = tool_input.get("create", False)
-                if file_path:
-                    modified.append(
-                        FileChange(
-                            file_path=file_path,
-                            change_type=ChangeType.CREATED if create else ChangeType.MODIFIED,
-                            diff="",  # Actual diff not available from tool log
+                            diff="",
                         )
                     )
 
         return modified
+
+    @staticmethod
+    def _compute_file_diff(file_path: str, new_content: str) -> str:
+        """Compute a unified diff between the current file and new content."""
+        import difflib
+        try:
+            with open(file_path) as f:
+                old_lines = f.readlines()
+        except FileNotFoundError:
+            old_lines = []
+        new_lines = new_content.splitlines(keepends=True)
+        diff_lines = difflib.unified_diff(
+            old_lines, new_lines,
+            fromfile=f"a/{file_path}", tofile=f"b/{file_path}",
+            lineterm="",
+        )
+        return "\n".join(diff_lines)
 
     # ── Fault Tolerance Methods ────────────────────────────────────
 
