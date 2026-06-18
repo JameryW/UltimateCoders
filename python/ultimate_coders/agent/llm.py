@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import random
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -297,7 +298,6 @@ class LLMClient:
         Yields:
             GenericStreamingChunk objects with text_delta, finish_reason, usage.
         """
-        from collections.abc import AsyncIterator
 
         if self.provider == "anthropic":
             async for chunk in self._stream_anthropic(
@@ -318,7 +318,6 @@ class LLMClient:
         **kwargs: Any,
     ) -> AsyncIterator[GenericStreamingChunk]:
         """Anthropic-native streaming path."""
-        from collections.abc import AsyncIterator
 
         client = self._get_client()
         request_params: dict[str, Any] = {
@@ -355,7 +354,6 @@ class LLMClient:
         **kwargs: Any,
     ) -> AsyncIterator[GenericStreamingChunk]:
         """litellm streaming path — OpenAI-format SSE."""
-        from collections.abc import AsyncIterator
 
         client = self._get_client()
         openai_messages = list(messages)

@@ -258,7 +258,7 @@ class DashboardApp:
                     # Check both event sources fairly: first drain NATS queue
                     # (non-blocking), then wait on local emitter. This prevents
                     # a busy local emitter from starving NATS events.
-                    nats_drained = False
+                    _nats_drained = False
                     if self._nats_client is not None:
                         try:
                             while True:
@@ -271,7 +271,7 @@ class DashboardApp:
                                         "event": "task_event",
                                         "data": json.dumps(nats_event),
                                     }
-                                    nats_drained = True
+                                    _ = True  # ponytail: drained flag for future use
                                 else:
                                     break
                         except asyncio.QueueEmpty:
@@ -354,31 +354,35 @@ class DashboardApp:
                     orch = self.orchestrator
                     if orch is not None and task_id in orch.tasks:
                         task = orch.tasks[task_id]
-                        return JSONResponse({
-                            "success": True,
-                            "task_id": task.id,
-                            "status": _status_str(task),
-                            "subtask_count": len(task.subtasks),
-                            "subtasks": [
-                                {
-                                    "id": st.id,
-                                    "description": st.description,
-                                    "status": _status_str(st),
-                                    "depends_on": st.depends_on,
-                                }
-                                for st in task.subtasks
-                            ],
-                        })
+                        return JSONResponse(
+                            {
+                                "success": True,
+                                "task_id": task.id,
+                                "status": _status_str(task),
+                                "subtask_count": len(task.subtasks),
+                                "subtasks": [
+                                    {
+                                        "id": st.id,
+                                        "description": st.description,
+                                        "status": _status_str(st),
+                                        "depends_on": st.depends_on,
+                                    }
+                                    for st in task.subtasks
+                                ],
+                            }
+                        )
                     # Task not yet in Orchestrator state — return with pending flag.
                     # Status "submitted" matches the SSE task_submitted event type.
-                    return JSONResponse({
-                        "success": True,
-                        "task_id": task_id,
-                        "status": "submitted",
-                        "subtask_count": 0,
-                        "subtasks": [],
-                        "pending": True,
-                    })
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "task_id": task_id,
+                            "status": "submitted",
+                            "subtask_count": 0,
+                            "subtasks": [],
+                            "pending": True,
+                        }
+                    )
                 except Exception as e:
                     logger.warning("NATS publish failed: %s, falling back", e)
 
@@ -440,13 +444,21 @@ class DashboardApp:
                         task = orch.tasks[task_id]
                         actual_status = _status_str(task)
                         if actual_status == "paused":
-                            return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
+                            return JSONResponse(
+                                {"success": True, "task_id": task_id, "status": "paused"}
+                            )
                         return JSONResponse(
-                            {"success": False, "task_id": task_id, "error": f"Task not paused (status: {actual_status})"},
+                            {
+                                "success": False,
+                                "task_id": task_id,
+                                "error": f"Task not paused (status: {actual_status})",
+                            },
                             status_code=409,
                         )
                     # Task not in local Orchestrator — assume NATS path will handle it
-                    return JSONResponse({"success": True, "task_id": task_id, "status": "paused", "pending": True})
+                    return JSONResponse(
+                        {"success": True, "task_id": task_id, "status": "paused", "pending": True}
+                    )
                 except Exception as e:
                     logger.warning("NATS pause publish failed: %s, falling back", e)
 
@@ -488,11 +500,22 @@ class DashboardApp:
                                 {"success": True, "task_id": task_id, "status": "in_progress"}
                             )
                         return JSONResponse(
-                            {"success": False, "task_id": task_id, "error": f"Task not resumed (status: {actual_status})"},
+                            {
+                                "success": False,
+                                "task_id": task_id,
+                                "error": f"Task not resumed (status: {actual_status})",
+                            },
                             status_code=409,
                         )
                     # Task not in local Orchestrator — assume NATS path will handle it
-                    return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress", "pending": True})
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "task_id": task_id,
+                            "status": "in_progress",
+                            "pending": True,
+                        }
+                    )
                 except Exception as e:
                     logger.warning("NATS resume publish failed: %s, falling back", e)
 
@@ -1047,9 +1070,7 @@ class DashboardApp:
 
         # Normalize to TaskEvent format
         event_dict: dict[str, Any] = {
-            "timestamp": payload.get(
-                "timestamp", datetime.now(timezone.utc).isoformat()
-            ),
+            "timestamp": payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
             "type": payload.get("type", "unknown"),
             "task_id": payload.get("task_id", ""),
         }

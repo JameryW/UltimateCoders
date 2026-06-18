@@ -237,7 +237,7 @@ class TestLLMClient:
     @pytest.mark.asyncio
     async def test_litellm_tool_calling_loop(self):
         """Test _complete_with_tools_litellm multi-round tool execution."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         client = LLMClient(provider="openai", api_key="sk-test")
 
