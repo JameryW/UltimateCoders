@@ -156,11 +156,16 @@ class DashboardApp:
         """Configure FastAPI routes and middleware."""
         app = self._app
 
-        # CORS middleware — allows CDN scripts (Tailwind) and
-        # cross-origin SSE clients to work without errors.
+        # CORS middleware — when DASHBOARD_PASSWORD is set, restrict origins
+        # to UC_CORS_ORIGINS env var (comma-separated); otherwise allow all.
+        cors_origins: list[str] = ["*"]
+        if self._dashboard_password:
+            env_origins = os.environ.get("UC_CORS_ORIGINS", "")
+            if env_origins:
+                cors_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=cors_origins,
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
@@ -600,12 +605,18 @@ class DashboardApp:
         # ── Event Log Endpoint ─────────────────────────────────
 
         @app.get("/dashboard/api/events")
-        async def events_api(request: Request, task_id: Optional[str] = None, limit: int = 100):  # noqa: UP045
-            """Return recent event log entries.
+        async def events_api(
+            request: Request,
+            task_id: Optional[str] = None,  # noqa: UP045
+            limit: int = 100,
+            offset: int = 0,
+        ):
+            """Return recent event log entries with pagination.
 
             Args:
                 task_id: Optional filter by task ID.
-                limit: Maximum events to return (default: 100).
+                limit: Maximum events to return (default: 100, max: 500).
+                offset: Number of events to skip from the most recent (default: 0).
             """
             if (resp := self._check_auth(request)) is not None:
                 return resp
@@ -615,23 +626,27 @@ class DashboardApp:
                 all_events = (
                     self.event_emitter.get_recent_events(
                         task_id=task_id,
-                        limit=limit,
+                        limit=500,
                     )
                     + all_events
                 )
             if task_id:
-                # Filter by task_id: emitter events have top-level task_id,
-                # local _event_log events have it inside details dict
                 all_events = [
                     e
                     for e in all_events
                     if e.get("task_id") == task_id or e.get("details", {}).get("task_id") == task_id
                 ]
+            # Apply pagination
+            limit = min(limit, 500)
+            offset = max(offset, 0)
+            paginated = all_events[offset : offset + limit]
             return JSONResponse(
                 {
                     "available": True,
-                    "events": all_events[:limit],
+                    "events": paginated,
                     "total": len(all_events),
+                    "offset": offset,
+                    "limit": limit,
                 }
             )
 
