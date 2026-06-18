@@ -38,6 +38,13 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
+
+def _status_str(obj: Any) -> str:
+    """Extract status string from an object with .status attribute."""
+    s = obj.status
+    return s.value if hasattr(s, "value") else str(s)
+
+
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -344,13 +351,13 @@ class DashboardApp:
                         return JSONResponse({
                             "success": True,
                             "task_id": task.id,
-                            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                            "status": _status_str(task),
                             "subtask_count": len(task.subtasks),
                             "subtasks": [
                                 {
                                     "id": st.id,
                                     "description": st.description,
-                                    "status": st.status.value if hasattr(st.status, "value") else str(st.status),
+                                    "status": _status_str(st),
                                     "depends_on": st.depends_on,
                                 }
                                 for st in task.subtasks
@@ -677,7 +684,7 @@ class DashboardApp:
         tasks = []
         status_counts: dict[str, int] = {}
         for tid, t in orch.tasks.items():
-            status_val = t.status.value if hasattr(t.status, "value") else str(t.status)
+            status_val = _status_str(t)
             status_counts[status_val] = status_counts.get(status_val, 0) + 1
             tasks.append(
                 {
