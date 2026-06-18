@@ -11,6 +11,25 @@ import type {
 
 const BASE = "/dashboard/api";
 
+/** Read the auth token from localStorage (if any). */
+function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem("uc_dashboard_token");
+  } catch {
+    return null;
+  }
+}
+
+/** Build headers with optional Authorization Bearer token. */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function throwApiError(res: Response): Promise<never> {
   let detail = "";
   try {
@@ -26,15 +45,18 @@ async function throwApiError(res: Response): Promise<never> {
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) await throwApiError(res);
   return res.json() as Promise<T>;
 }
 
 async function postJson<T>(url: string, body?: unknown): Promise<T> {
+  const headers = authHeaders(
+    body ? { "Content-Type": "application/json" } : undefined,
+  );
   const res = await fetch(url, {
     method: "POST",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) await throwApiError(res);

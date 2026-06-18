@@ -136,7 +136,10 @@ class DashboardApp:
 
         # Auth failed
         return JSONResponse(
-            {"error": "Unauthorized", "detail": "Valid Bearer token or token query parameter required"},
+            {
+                "error": "Unauthorized",
+                "detail": "Valid Bearer token or token query parameter required",
+            },
             status_code=401,
         )
 

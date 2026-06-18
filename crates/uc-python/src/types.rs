@@ -126,7 +126,12 @@ impl PySearchQuery {
     }
 
     fn __repr__(&self) -> String {
-        format!("SearchQuery(query={}, modes={}, max={})", self.query, self.modes.join(","), self.max_results)
+        format!(
+            "SearchQuery(query={}, modes={}, max={})",
+            self.query,
+            self.modes.join(","),
+            self.max_results
+        )
     }
 }
 
