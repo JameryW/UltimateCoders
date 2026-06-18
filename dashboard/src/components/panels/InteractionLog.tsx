@@ -14,7 +14,7 @@ function eventTypeStyle(type: string): { border: string; dot: string } {
   if (type === "subtask_failed") return { border: "border-l-red-500", dot: "text-red-400" };
   if (type === "task_completed") return { border: "border-l-green-500", dot: "text-green-400" };
   if (type === "sync_required") return { border: "border-l-orange-500", dot: "text-orange-400" };
-  return { border: "border-l-gray-600", dot: "text-gray-400" };
+  return { border: "border-[var(--border-color)]", dot: "text-[var(--text-secondary)]" };
 }
 
 function eventContent(ev: TaskEvent): string {
@@ -36,7 +36,7 @@ export function InteractionLog({ events, filterSubtaskId }: InteractionLogProps)
     : events;
 
   if (filtered.length === 0) {
-    return <p className="text-xs text-gray-500">No interaction events yet</p>;
+    return <p className="text-xs text-[var(--text-muted)]">No interaction events yet</p>;
   }
 
   return (
@@ -51,7 +51,7 @@ export function InteractionLog({ events, filterSubtaskId }: InteractionLogProps)
             key={`${ev.timestamp}-${i}`}
             className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs`}
           >
-            <span className="text-gray-500 mr-1">{time}</span>
+            <span className="text-[var(--text-muted)] mr-1">{time}</span>
             <span className={style.dot}>●</span>{" "}
             <span className="text-[var(--text-primary)]">{eventContent(ev)}</span>
           </div>
