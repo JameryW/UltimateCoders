@@ -53,7 +53,7 @@ import {formatTaskEvents} from '../formatters.js';
 import {getSymbols} from '../symbols.js';
 import {getCommandsForArea} from '../keymap.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
-import {mapSubtaskStatus} from '../grpc/types.js';
+import {mapSubtaskStatus, mapTaskStatus} from '../grpc/types.js';
 import {parseCommand, isCommandInput, formatHelpText, matchCommands, COMMANDS} from '../commands.js';
 import type {SlashCommand} from '../commands.js';
 import {buildTaskListText} from '../task-list-utils.js';
@@ -432,7 +432,7 @@ const App: React.FC = () => {
     if (key.ctrl && input === 'p') {
       if (state.activeTaskId) {
         // ponytail: check task status (not subtask status) for pause/resume decision
-        const taskStatus = task?.status?.toLowerCase();
+        const taskStatus = task?.status ? mapTaskStatus(task.status) : undefined;
         if (taskStatus === 'in_progress' || taskStatus === 'planning') {
           pauseTask({taskId: state.activeTaskId});
           addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
