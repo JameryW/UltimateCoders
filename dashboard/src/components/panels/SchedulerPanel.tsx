@@ -56,8 +56,8 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
             className={cn(
               "text-xs px-1.5 py-0.5 rounded",
               data.night_window.is_active
-                ? "bg-yellow-900/50 text-yellow-300"
-                : "bg-green-900/50 text-green-300"
+                ? "status-paused"
+                : "status-completed"
             )}
           >
             {data.night_window.is_active ? "ACTIVE" : "INACTIVE"}
@@ -90,7 +90,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
                 {onTriggerJob && (
                   <button
                     onClick={() => onTriggerJob(job.id)}
-                    className="bg-blue-900/50 text-blue-300 hover:bg-blue-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+                    className="btn-action-info px-2 py-0.5 rounded text-xs cursor-pointer"
                   >
                     Trigger
                   </button>

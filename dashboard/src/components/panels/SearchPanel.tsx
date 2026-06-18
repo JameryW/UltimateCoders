@@ -69,7 +69,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
           onClick={handleSearch}
           disabled={searching || !query.trim()}
           aria-label="Run search"
-          className="bg-blue-900/50 text-blue-300 border border-blue-500 rounded-md px-4 py-2 text-sm font-medium cursor-pointer hover:bg-blue-900/70 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          className="btn-action-info border border-blue-500 rounded-md px-4 py-2 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
         >
           {searching ? "Searching…" : "Search"}
         </button>

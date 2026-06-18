@@ -48,7 +48,7 @@ export function CircuitBreakerPanel({ data, onReset, stale }: CircuitBreakerPane
           <button
             onClick={onReset}
             aria-label="Reset circuit breaker to closed state"
-            className="bg-red-900/50 text-red-300 hover:bg-red-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+            className="btn-action-error px-2 py-0.5 rounded text-xs cursor-pointer"
           >
             Reset
           </button>
