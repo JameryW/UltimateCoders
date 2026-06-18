@@ -677,6 +677,9 @@ impl From<Subtask> for SubtaskProto {
             status: subtask_status_to_proto(&st.status).to_string(),
             depends_on: st.depends_on.iter().map(|id| id.0.clone()).collect(),
             assigned_worker: st.assigned_worker.map(|w| w.0),
+            parent_id: st.parent_id.0,
+            file_constraints: st.file_constraints,
+            expected_output: st.expected_output,
         }
     }
 }
@@ -895,17 +898,14 @@ impl From<SubtaskProto> for Subtask {
     fn from(proto: SubtaskProto) -> Self {
         Self {
             id: TaskId(proto.id),
-            // SubtaskProto does not carry parent_id; we set a placeholder.
-            // The server's TaskProto always nests subtasks under a Task,
-            // so the parent_id can be inferred from the enclosing Task.
-            parent_id: TaskId::new(), // placeholder — should be set by caller
+            parent_id: TaskId(proto.parent_id),
             description: proto.description,
             status: subtask_status_from_proto(&proto.status),
             assigned_worker: proto.assigned_worker.map(WorkerId),
             depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
-            file_constraints: Vec::new(),   // not carried by proto
-            expected_output: String::new(), // not carried by proto
-            result: None,                   // not carried by proto
+            file_constraints: proto.file_constraints,
+            expected_output: proto.expected_output,
+            result: None, // not carried by proto
         }
     }
 }
@@ -1237,6 +1237,9 @@ mod tests {
                 status: "Pending".to_string(),
                 depends_on: vec![],
                 assigned_worker: None,
+                parent_id: "task-1".to_string(),
+                file_constraints: vec![],
+                expected_output: String::new(),
             }],
         };
         let task: Task = proto.into();

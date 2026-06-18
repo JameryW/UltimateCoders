@@ -660,6 +660,12 @@ const App: React.FC = () => {
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">{'Subtasks'}</Text>
+          {state.progress.total > 0 && (
+            <>
+              <Text dimColor>{` [${state.progress.completed}/${state.progress.total}]`}</Text>
+              <Text dimColor>{` ${'█'.repeat(Math.round(state.progress.completed / state.progress.total * 10))}${'░'.repeat(10 - Math.round(state.progress.completed / state.progress.total * 10))}`}</Text>
+            </>
+          )}
           <Text dimColor>{' (Ctrl+T or Esc to close · ↑↓ navigate · Enter detail · R retry)'}</Text>
         </Box>
         <SubtaskTree

@@ -57,11 +57,18 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
 
 function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   const [svg, setSvg] = useState<string | null>(null);
-  const idRef = useRef(`mermaid-${Date.now()}`);
+  const [renderFailed, setRenderFailed] = useState(false);
+  // Counter ensures a fresh Mermaid DOM ID on every render cycle,
+  // preventing collisions when the same task is closed and re-opened.
+  const idCounter = useRef(0);
 
   useEffect(() => {
     const hasDeps = subtasks.some((st) => st.depends_on.length > 0);
-    if (!hasDeps || subtasks.length === 0) return;
+    if (!hasDeps || subtasks.length === 0) {
+      setSvg(null);
+      setRenderFailed(false);
+      return;
+    }
 
     const idMap: Record<string, string> = {};
     subtasks.forEach((st, i) => {
@@ -79,17 +86,36 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
       }
     }
 
-    renderMermaid(idRef.current, graphDef).then((svg) => {
-      if (svg) setSvg(DOMPurify.sanitize(svg));
+    // Increment counter each effect run so Mermaid gets a unique container ID
+    idCounter.current += 1;
+    const mermaidId = `mermaid-dag-${idCounter.current}-${Date.now()}`;
+
+    renderMermaid(mermaidId, graphDef).then((result) => {
+      if (result) {
+        setSvg(DOMPurify.sanitize(result));
+        setRenderFailed(false);
+      } else {
+        setSvg(null);
+        setRenderFailed(true);
+      }
     });
   }, [subtasks]);
 
-  if (!svg) return null;
+  if (!svg && !renderFailed) return null;
+
+  if (renderFailed && !svg) {
+    return (
+      <div className="mb-2">
+        <p className="text-xs text-gray-400 mb-1">Subtask DAG:</p>
+        <p className="text-xs text-gray-500 italic">No dependency graph available</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-2">
       <p className="text-xs text-gray-400 mb-1">Subtask DAG:</p>
-      <div dangerouslySetInnerHTML={{ __html: svg }} />
+      <div dangerouslySetInnerHTML={{ __html: svg! }} />
     </div>
   );
 }
@@ -117,8 +143,10 @@ function SubtaskProgressBar({ subtasks }: { subtasks: SubtaskSummary[] }) {
 }
 
 function EventTimeline({ events }: { events: TaskEvent[] }) {
+  const [showAll, setShowAll] = useState(false);
   if (events.length === 0) return null;
-  const recent = events.slice(-20).reverse();
+  const EVENT_PREVIEW_COUNT = 50;
+  const recent = showAll ? [...events].reverse() : events.slice(-EVENT_PREVIEW_COUNT).reverse();
   const typeIcon: Record<string, string> = {
     task_submitted: "📤", subtask_started: "▶️", subtask_assigned: "👤",
     subtask_completed: "✅", subtask_failed: "❌", tool_call: "🔧",
@@ -137,6 +165,11 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
           </div>
         ))}
       </div>
+      {!showAll && events.length > EVENT_PREVIEW_COUNT && (
+        <button onClick={() => setShowAll(true)} className="text-[10px] text-blue-400 hover:underline mt-1">
+          Show all {events.length} events
+        </button>
+      )}
     </div>
   );
 }

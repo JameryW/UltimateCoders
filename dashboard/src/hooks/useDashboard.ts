@@ -5,6 +5,7 @@ import type {
   HealthData,
   WorkersData,
   TasksData,
+  TaskSummary,
   SubtaskSummary,
   SchedulerData,
   CircuitBreakerData,
@@ -62,6 +63,7 @@ export function useDashboard() {
     Record<string, TaskEvent[]>
   >({});
   const [connected, setConnected] = useState(false);
+  const [needsSync, setNeedsSync] = useState(false);
 
   // Handle SSE full snapshot — merge with existing state to avoid overwriting
   // fresher gRPC-Web incremental updates with stale SSE snapshot data.
@@ -128,11 +130,18 @@ export function useDashboard() {
     ]);
 
     switch (ev.type) {
+      // -- Sync recovery --
+      case "sync_required": {
+        // Broadcast lag detected — caller should do a full listTasks re-sync.
+        // We don't have listTasks here, so set a flag for App.tsx to act on.
+        setNeedsSync(true);
+        break;
+      }
+
       // -- Task lifecycle --
       case "task_submitted": {
         setTasks((prev) => {
           if (prev.tasks.some((t) => t.id === tid)) return prev;
-          // Extract subtask summaries from event data if present
           const rawSubtasks = ev.data.subtasks as Array<Record<string, unknown>> | undefined;
           const subtasks: SubtaskSummary[] = rawSubtasks?.map((s) => ({
             id: String(s.id ?? ""),
@@ -140,60 +149,57 @@ export function useDashboard() {
             status: String(s.status ?? "pending"),
             depends_on: (s.depends_on as string[]) ?? [],
           })) ?? [];
-          return {
-            ...prev,
-            tasks: [
-              {
-                id: tid,
-                description: String(ev.data.description ?? ""),
-                status: "in_progress",
-                project_id: String(ev.data.project_id ?? ""),
-                subtask_count: subtasks.length || Number(ev.data.subtask_count ?? 0),
-                subtasks: subtasks.length > 0 ? subtasks : undefined,
-                created_at: ev.timestamp,
-                updated_at: ev.timestamp,
-              },
-              ...prev.tasks,
-            ],
-            total: prev.total + 1,
-          };
+          const tasks = [
+            {
+              id: tid,
+              description: String(ev.data.description ?? ""),
+              status: "in_progress",
+              project_id: String(ev.data.project_id ?? ""),
+              subtask_count: subtasks.length || Number(ev.data.subtask_count ?? 0),
+              subtasks: subtasks.length > 0 ? subtasks : undefined,
+              created_at: ev.timestamp,
+              updated_at: ev.timestamp,
+            },
+            ...prev.tasks,
+          ];
+          return { ...prev, tasks, total: tasks.length, status_counts: recountStatus(tasks) };
         });
         break;
       }
       case "task_completed": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) =>
-            t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t,
-          ),
-        }));
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "completed" as const, updated_at: ev.timestamp } : t
+          );
+          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+        });
         break;
       }
       case "task_failed": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) =>
-            t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t,
-          ),
-        }));
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "failed" as const, updated_at: ev.timestamp } : t
+          );
+          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+        });
         break;
       }
       case "task_paused": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) =>
-            t.id === tid ? { ...t, status: "paused" as const, updated_at: ev.timestamp } : t,
-          ),
-        }));
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "paused" as const, updated_at: ev.timestamp } : t
+          );
+          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+        });
         break;
       }
       case "task_resumed": {
-        setTasks((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((t) =>
-            t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t,
-          ),
-        }));
+        setTasks((prev) => {
+          const tasks = prev.tasks.map((t) =>
+            t.id === tid ? { ...t, status: "in_progress" as const, updated_at: ev.timestamp } : t
+          );
+          return { ...prev, tasks, status_counts: recountStatus(tasks) };
+        });
         break;
       }
 
@@ -237,8 +243,8 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data — optionally skip tasks (gRPC-Web provides live task data)
-  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }) => {
+  // Fetch initial data — always fetch everything; gRPC-Web merges separately
+  const fetchInitial = useCallback(async () => {
     try {
       const h = await api.getHealth();
       setHealth(h);
@@ -247,13 +253,10 @@ export function useDashboard() {
       const w = await api.getWorkers();
       setWorkers(w);
     } catch { /* ignore */ }
-    // ponytail: skip REST tasks fetch when gRPC-Web is connected to avoid overwrite flicker
-    if (!opts?.skipTasks) {
-      try {
-        const t = await api.getTasks();
-        setTasks(t);
-      } catch { /* ignore */ }
-    }
+    try {
+      const t = await api.getTasks();
+      setTasks(t);
+    } catch { /* ignore */ }
     try {
       const s = await api.getScheduler();
       setScheduler(s);
@@ -295,6 +298,8 @@ export function useDashboard() {
     interactionLog,
     connected,
     setConnected,
+    needsSync,
+    setNeedsSync,
     handleSnapshot,
     handleTaskEvent,
     mergeGrpcTasks,
@@ -312,6 +317,13 @@ function subtaskStatusRank(status: string): number {
     case "pending": return 1;
     default: return 0;
   }
+}
+
+/** Recompute status_counts from a task list. */
+function recountStatus(tasks: TaskSummary[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const t of tasks) counts[t.status] = (counts[t.status] || 0) + 1;
+  return counts;
 }
 
 /** Merge a subtask event into existing subtask list, upserting by subtask_id. */

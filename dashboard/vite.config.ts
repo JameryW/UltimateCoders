@@ -18,7 +18,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       // gRPC-Web: tonic-web serves at :50051 under /ultimate_coders.*/ paths
-      "^/ultimate_coders\\.": {
+      "/ultimate_coders.": {
         target: "http://localhost:50051",
         changeOrigin: true,
       },
