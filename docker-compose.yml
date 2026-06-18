@@ -41,11 +41,13 @@ services:
         condition: service_healthy
     volumes:
       - tikv_data:/data
+      - ./docker/tikv.toml:/etc/tikv/tikv.toml:ro
     command:
       - --pd-endpoints=pd:2379
       - --addr=0.0.0.0:20160
       - --advertise-addr=tikv:20160
       - --data-dir=/data
+      - --config=/etc/tikv/tikv.toml
     healthcheck:
       test: ["CMD-SHELL", "tikv-ctl --host tikv:20160 health || exit 1"]
       interval: 15s

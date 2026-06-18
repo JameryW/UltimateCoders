@@ -1,0 +1,24 @@
+# TiKV config tuned for CI / resource-constrained environments.
+# Default config targets production with 8+ GB RAM; this caps memory so
+# TiKV can run on a GitHub Actions runner (~7 GB total, shared with other
+# containers).
+
+[storage]
+# Default is half of system memory; cap at 256 MB for CI.
+block-cache-capacity = "256MB"
+
+[rocksdb]
+max-open-files = 256
+
+[raftdb]
+max-open-files = 256
+
+[server]
+# Reduce GRPC keepalive to avoid idle disconnects in CI.
+grpc-keepalive-time = "30s"
+grpc-keepalive-timeout = "10s"
+
+[raftstore]
+# Smaller region size means less memory per region.
+region-max-size = "64MiB"
+region-split-size = "48MiB"
