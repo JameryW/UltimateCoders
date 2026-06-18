@@ -5,7 +5,9 @@
 
 [storage]
 # Default is half of system memory; cap at 256 MB for CI.
-block-cache-capacity = "256MB"
+
+[storage.block-cache]
+capacity = "256MB"
 
 [rocksdb]
 max-open-files = 256
