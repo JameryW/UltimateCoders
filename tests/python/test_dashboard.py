@@ -1473,8 +1473,8 @@ class TestDashboardNatsEventHandling:
             loop.close()
 
         # Event should be in the queue
-        assert not dashboard._nats_event_queue.empty()
-        event = dashboard._nats_event_queue.get_nowait()
+        assert not dashboard._get_nats_event_queue().empty()
+        event = dashboard._get_nats_event_queue().get_nowait()
         assert event["type"] == "subtask_completed"
         assert event["task_id"] == "task-1"
         assert event["subtask_id"] == "st-1"
@@ -1498,7 +1498,7 @@ class TestDashboardNatsEventHandling:
             loop.close()
 
         # Queue should remain empty
-        assert dashboard._nats_event_queue.empty()
+        assert dashboard._get_nats_event_queue().empty()
 
     def test_handle_nats_event_minimal_payload(self):
         """_handle_nats_event handles payload with only required fields."""
@@ -1521,7 +1521,7 @@ class TestDashboardNatsEventHandling:
         finally:
             loop.close()
 
-        event = dashboard._nats_event_queue.get_nowait()
+        event = dashboard._get_nats_event_queue().get_nowait()
         assert event["type"] == "task_submitted"
         assert event["task_id"] == "task-1"
         # subtask_id and data should not be present
@@ -1605,11 +1605,11 @@ class TestDashboardNatsEventQueueFull:
         try:
             # First event fills the queue
             loop.run_until_complete(dashboard._handle_nats_event(msg1))
-            assert dashboard._nats_event_queue.qsize() == 1
+            assert dashboard._get_nats_event_queue().qsize() == 1
 
             # Second event should be dropped (QueueFull)
             loop.run_until_complete(dashboard._handle_nats_event(msg2))
             # Queue should still have only 1 item
-            assert dashboard._nats_event_queue.qsize() == 1
+            assert dashboard._get_nats_event_queue().qsize() == 1
         finally:
             loop.close()

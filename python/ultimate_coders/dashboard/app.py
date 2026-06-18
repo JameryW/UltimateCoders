@@ -94,7 +94,8 @@ class DashboardApp:
         # event loop at init time, which doesn't exist in synchronous tests.
         self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] | None = None
         self._nats_subscriptions: list[Any] = []
-        self._app = FastAPI(title="UltimateCoders Dashboard")        self._server: uvicorn.Server | None = None
+        self._app = FastAPI(title="UltimateCoders Dashboard")
+        self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
         # Auth configuration
@@ -897,12 +898,6 @@ class DashboardApp:
 
         # Subscribe to NATS uc.task.event if client is available
         self._subscribe_nats_events()
-
-    def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
-        """Lazily create the NATS event asyncio.Queue on first use."""
-        if self._nats_event_queue is None:
-            self._nats_event_queue = asyncio.Queue()
-        return self._nats_event_queue
 
     def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
         """Lazily create the NATS event asyncio.Queue on first use."""
