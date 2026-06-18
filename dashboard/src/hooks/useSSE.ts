@@ -12,6 +12,16 @@ interface SSEHandlers {
 const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RETRY = RETRY_INTERVALS.length;
 
+/** Build the SSE URL with optional auth token as query parameter. */
+function sseUrl(): string {
+  const base = "/dashboard/api/stream";
+  try {
+    const token = localStorage.getItem("uc_dashboard_token");
+    if (token) return `${base}?token=${encodeURIComponent(token)}`;
+  } catch { /* ignore */ }
+  return base;
+}
+
 export function useSSE(handlers: SSEHandlers) {
   const [connected, setConnected] = useState(false);
   const wasConnectedRef = useRef(false);
@@ -32,7 +42,7 @@ export function useSSE(handlers: SSEHandlers) {
     if (esRef.current) esRef.current.close();
     clearRetryTimer();
 
-    const es = new EventSource("/dashboard/api/stream");
+    const es = new EventSource(sseUrl());
     esRef.current = es;
 
     es.addEventListener("update", (e: MessageEvent) => {

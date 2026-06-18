@@ -1009,11 +1009,12 @@ impl From<TaskEventProto> for AgentEvent {
         let payload = match proto.r#type.as_str() {
             "task_submitted" => {
                 let description = proto.data.get("description").cloned().unwrap_or_default();
+                let project_id = proto.data.get("project_id").cloned().unwrap_or_default();
                 AgentEventPayload::TaskCreated {
                     task: Task {
                         id: TaskId(proto.task_id.clone()),
                         description,
-                        project_id: String::new(),
+                        project_id,
                         status: TaskStatus::Created,
                         subtasks: Vec::new(),
                         created_at: timestamp,

@@ -124,6 +124,15 @@ impl PySearchQuery {
     pub fn query(&self) -> &str {
         &self.query
     }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SearchQuery(query={}, modes={}, max={})",
+            self.query,
+            self.modes.join(","),
+            self.max_results
+        )
+    }
 }
 
 impl From<PySearchQuery> for uc_types::SearchQuery {

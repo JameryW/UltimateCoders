@@ -53,6 +53,13 @@ class DashboardApp:
     scheduler) and engine health via PyO3/Rust. Pushes updates to
     the browser via SSE every 5 seconds.
 
+    Auth gate:
+        When the ``DASHBOARD_PASSWORD`` environment variable is set,
+        non-localhost requests must include the password as a
+        ``Bearer`` token (Authorization header) or ``?token=`` query
+        parameter.  Localhost (127.0.0.1, ::1) bypasses auth.
+        If the variable is unset, auth is disabled entirely.
+
     Usage:
         app = DashboardApp(orchestrator)
         app.start(host="0.0.0.0", port=8080)
@@ -89,9 +96,52 @@ class DashboardApp:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
+        # Auth configuration
+        self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
         # Connect to Orchestrator's event emitter if available
         self.event_emitter = getattr(orchestrator, "event_emitter", None) if orchestrator else None
         self._setup_routes()
+
+    # ── Auth ─────────────────────────────────────────────────────────
+
+    def _check_auth(self, request: Request) -> JSONResponse | None:
+        """Return a 401 JSON response if auth is required and fails.
+
+        Auth logic:
+        - If ``DASHBOARD_PASSWORD`` is not set, auth is disabled (returns None).
+        - Localhost requests (127.0.0.1, ::1) bypass auth.
+        - Non-localhost must supply the password via ``Authorization: Bearer <pwd>``
+          header or ``?token=<pwd>`` query parameter.
+        - Returns None on success, or a 401 JSONResponse on failure.
+        """
+        if not self._dashboard_password:
+            return None
+
+        # Localhost bypass
+        client_host = request.client.host if request.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            return None
+
+        # Check Bearer token
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            if token == self._dashboard_password:
+                return None
+
+        # Check query parameter
+        token_param = request.query_params.get("token")
+        if token_param == self._dashboard_password:
+            return None
+
+        # Auth failed
+        return JSONResponse(
+            {
+                "error": "Unauthorized",
+                "detail": "Valid Bearer token or token query parameter required",
+            },
+            status_code=401,
+        )
 
     def _setup_routes(self) -> None:
         """Configure FastAPI routes and middleware."""
@@ -112,28 +162,38 @@ class DashboardApp:
         # API endpoints
 
         @app.get("/dashboard/api/health")
-        async def health_api():
+        async def health_api(request: Request):
             """Return engine health JSON."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return JSONResponse(self._get_health_data())
 
         @app.get("/dashboard/api/workers")
-        async def workers_api():
+        async def workers_api(request: Request):
             """Return worker list JSON."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return JSONResponse(self._get_workers_data())
 
         @app.get("/dashboard/api/tasks")
-        async def tasks_api():
+        async def tasks_api(request: Request):
             """Return task status JSON."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return JSONResponse(self._get_tasks_data())
 
         @app.get("/dashboard/api/scheduler")
-        async def scheduler_api():
+        async def scheduler_api(request: Request):
             """Return scheduler status JSON."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return JSONResponse(self._get_scheduler_data())
 
         @app.get("/dashboard/api/circuit-breaker")
-        async def circuit_breaker_api():
+        async def circuit_breaker_api(request: Request):
             """Return circuit breaker and rate limiter JSON."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return JSONResponse(self._get_circuit_breaker_data())
 
         @app.get("/dashboard/api/stream")
@@ -147,7 +207,14 @@ class DashboardApp:
 
             When NATS is available, events from the independent NATS consumer
             (e.g., tasks submitted via gRPC/TUI) are merged into the stream.
+
+            Auth: respects the same DASHBOARD_PASSWORD gate as other endpoints.
+            Token can be passed as ``?token=<pwd>`` query parameter.
             """
+            # Auth check for SSE — token must come via query param (no headers in EventSource)
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+
             from sse_starlette.sse import EventSourceResponse
 
             # ponytail: monotonic event id for SSE resume + heartbeat
@@ -239,6 +306,8 @@ class DashboardApp:
             - description (required): Task description.
             - project_id (optional): Project/repository context.
             """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             try:
                 body = await request.json()
             except Exception:
@@ -315,8 +384,10 @@ class DashboardApp:
         # ── POST Endpoints (Interactive Operations) ────────────
 
         @app.post("/dashboard/api/tasks/{task_id}/pause")
-        async def pause_task_api(task_id: str):
+        async def pause_task_api(task_id: str, request: Request):
             """Pause a running task."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
                 try:
@@ -344,8 +415,10 @@ class DashboardApp:
             )
 
         @app.post("/dashboard/api/tasks/{task_id}/resume")
-        async def resume_task_api(task_id: str):
+        async def resume_task_api(task_id: str, request: Request):
             """Resume a paused task."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             # NATS path: publish control event for gRPC server / nats_worker
             if self._nats_publisher is not None:
                 try:
@@ -375,8 +448,10 @@ class DashboardApp:
             )
 
         @app.post("/dashboard/api/circuit-breaker/reset")
-        async def circuit_breaker_reset_api():
+        async def circuit_breaker_reset_api(request: Request):
             """Reset the circuit breaker to closed state."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             orch = self.orchestrator
             if orch is None:
                 return JSONResponse(
@@ -393,8 +468,10 @@ class DashboardApp:
             )
 
         @app.post("/dashboard/api/scheduler/jobs/{job_id}/trigger")
-        async def trigger_job_api(job_id: str):
+        async def trigger_job_api(job_id: str, request: Request):
             """Manually trigger a scheduled job."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             orch = self.orchestrator
             if orch is None or orch.scheduler is None:
                 return JSONResponse(
@@ -411,8 +488,10 @@ class DashboardApp:
             )
 
         @app.post("/dashboard/api/tasks/flush-pending")
-        async def flush_pending_api():
+        async def flush_pending_api(request: Request):
             """Flush all tasks queued during the night window."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             orch = self.orchestrator
             if orch is None:
                 return JSONResponse(
@@ -428,13 +507,15 @@ class DashboardApp:
         # ── Event Log Endpoint ─────────────────────────────────
 
         @app.get("/dashboard/api/events")
-        async def events_api(task_id: Optional[str] = None, limit: int = 100):  # noqa: UP045
+        async def events_api(request: Request, task_id: Optional[str] = None, limit: int = 100):  # noqa: UP045
             """Return recent event log entries.
 
             Args:
                 task_id: Optional filter by task ID.
                 limit: Maximum events to return (default: 100).
             """
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             # Combine local event log with emitter's recent events
             all_events = list(self._event_log)
             if self.event_emitter is not None:

@@ -126,9 +126,6 @@ export interface TuiState {
   /** Whether the selected subtask's detail panel is open (in overlay). */
   subtaskDetailOpen: boolean;
 
-  /** Whether all collapsed ChatLog messages are expanded (toggled by Enter in chat focus). */
-  expandAllMessages: boolean;
-
   /** Timestamp (ms) when the current task submission started. Null when idle. */
   startedAt: number | null;
 
@@ -165,7 +162,6 @@ export const INITIAL_TUI_STATE: TuiState = {
   subtaskOverlayOpen: false,
   helpOverlayOpen: false,
   subtaskDetailOpen: false,
-  expandAllMessages: false,
   startedAt: null,
   taskList: [],
   taskListLoading: false,
@@ -212,7 +208,6 @@ export type TuiAction =
   | {type: 'TOGGLE_SUBTASK_DETAIL'}
   | {type: 'JUMP_TO_FAILED_SUBTASK'}
   | {type: 'TOGGLE_HELP_OVERLAY'}
-  | {type: 'TOGGLE_EXPAND_ALL_MESSAGES'}
   // ── Subtask retry ──
   | {type: 'RETRY_SUBTASK'; subtaskId: string}
   // ── Task list ──
@@ -448,9 +443,6 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'TOGGLE_HELP_OVERLAY':
       return {...state, helpOverlayOpen: !state.helpOverlayOpen};
-
-    case 'TOGGLE_EXPAND_ALL_MESSAGES':
-      return {...state, expandAllMessages: !state.expandAllMessages};
 
     // ── Subtask retry ─────────────────────────────────────────
 

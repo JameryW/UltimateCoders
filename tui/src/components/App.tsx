@@ -556,14 +556,7 @@ const App: React.FC = () => {
           dispatch({type: 'SCROLL_DOWN', lines: visibleLines});
           return;
         }
-        if (key.upArrow) {
-          dispatch({type: 'SCROLL_UP', lines: 1});
-          return;
-        }
-        if (key.downArrow) {
-          dispatch({type: 'SCROLL_DOWN', lines: 1});
-          return;
-        }
+        // Up/Down/Enter handled by ChatLog internally (message selection + expand)
         if ((key as any).home) {
           dispatch({type: 'SCROLL_UP', lines: state.messages.length});
           return;
@@ -576,10 +569,7 @@ const App: React.FC = () => {
           dispatch({type: 'CLEAR_LOG'});
           return;
         }
-        if (key.return) {
-          dispatch({type: 'TOGGLE_EXPAND_ALL_MESSAGES'});
-          return;
-        }
+        // Enter handled by ChatLog internally (per-message expand)
         break;
       }
 
@@ -702,7 +692,6 @@ const App: React.FC = () => {
         scrollCommand={scrollCommand}
         unreadCount={state.unreadCount}
         onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
-        expandAll={state.expandAllMessages}
         terminalWidth={terminalWidth}
       />
 
