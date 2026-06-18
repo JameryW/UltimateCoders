@@ -271,7 +271,7 @@ class DashboardApp:
                                         "event": "task_event",
                                         "data": json.dumps(nats_event),
                                     }
-                                    had_event = True
+                                    had_event = True  # noqa: F841 — used for side-effect tracking
                                 else:
                                     break
                         except asyncio.QueueEmpty:
@@ -290,19 +290,21 @@ class DashboardApp:
                             }
                             continue  # Check for more events immediately
 
-                    # Timeout or no events: send full snapshot then wait
-                    snapshot = self._get_full_snapshot()
-                    event_id += 1
-                    yield {
-                        "id": str(event_id),
-                        "event": "update",
-                        "data": json.dumps(snapshot),
-                    }
-                    # ponytail: cancellable sleep — detects disconnect within 0.5s
-                    if self.event_emitter is None and self._nats_client is None:
-                        await cancellable_sleep(5)
-                    else:
-                        await cancellable_sleep(2)
+                    # Periodic full snapshot — interval adapts to activity.
+                    # Active (events this cycle): 3s. Idle: 10s.
+                    snapshot_interval = 3.0 if had_event else 10.0
+                    now = loop.time()
+                    if now - last_snapshot >= snapshot_interval:
+                        snapshot = self._get_full_snapshot()
+                        last_snapshot = now
+                        event_id += 1
+                        yield {
+                            "id": str(event_id),
+                            "event": "update",
+                            "data": json.dumps(snapshot),
+                        }
+                    # ponytail: short sleep — detects disconnect within 0.5s
+                    await cancellable_sleep(1)
 
             return EventSourceResponse(event_generator())
 
@@ -440,13 +442,21 @@ class DashboardApp:
                         task = orch.tasks[task_id]
                         actual_status = _status_str(task)
                         if actual_status == "paused":
-                            return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
+                            return JSONResponse(
+                                {"success": True, "task_id": task_id, "status": "paused"}
+                            )
                         return JSONResponse(
-                            {"success": False, "task_id": task_id, "error": f"Task not paused (status: {actual_status})"},
+                            {
+                                "success": False,
+                                "task_id": task_id,
+                                "error": f"Task not paused (status: {actual_status})",
+                            },
                             status_code=409,
                         )
                     # Task not in local Orchestrator — assume NATS path will handle it
-                    return JSONResponse({"success": True, "task_id": task_id, "status": "paused", "pending": True})
+                    return JSONResponse(
+                        {"success": True, "task_id": task_id, "status": "paused", "pending": True}
+                    )
                 except Exception as e:
                     logger.warning("NATS pause publish failed: %s, falling back", e)
 
@@ -488,11 +498,22 @@ class DashboardApp:
                                 {"success": True, "task_id": task_id, "status": "in_progress"}
                             )
                         return JSONResponse(
-                            {"success": False, "task_id": task_id, "error": f"Task not resumed (status: {actual_status})"},
+                            {
+                                "success": False,
+                                "task_id": task_id,
+                                "error": f"Task not resumed (status: {actual_status})",
+                            },
                             status_code=409,
                         )
                     # Task not in local Orchestrator — assume NATS path will handle it
-                    return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress", "pending": True})
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "task_id": task_id,
+                            "status": "in_progress",
+                            "pending": True,
+                        }
+                    )
                 except Exception as e:
                     logger.warning("NATS resume publish failed: %s, falling back", e)
 
