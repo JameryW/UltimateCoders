@@ -430,13 +430,16 @@ const App: React.FC = () => {
     // Ctrl+P: pause/resume task
     if (key.ctrl && input === 'p') {
       if (state.activeTaskId) {
-        const hasInProgress = state.subtasks.some((s) => s.status === 'in_progress');
-        if (hasInProgress) {
+        // ponytail: check task status (not subtask status) for pause/resume decision
+        const taskStatus = task?.status?.toLowerCase();
+        if (taskStatus === 'in_progress' || taskStatus === 'planning') {
           pauseTask({taskId: state.activeTaskId});
           addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
-        } else {
+        } else if (taskStatus === 'paused') {
           resumeTask({taskId: state.activeTaskId});
           addMessage(createSystemMessage(`Resuming task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'cyan'}));
+        } else {
+          addMessage(createSystemMessage(`Cannot pause/resume task in ${taskStatus ?? 'unknown'} state`, {color: 'gray'}));
         }
       }
       return;
@@ -454,8 +457,8 @@ const App: React.FC = () => {
       return;
     }
 
-    // Shift+Tab: cycle focus (input→chat→input)
-    if (key.shift && key.tab) {
+    // Shift+Tab / Ctrl+W: cycle focus (input→chat→input)
+    if ((key.shift && key.tab) || (key.ctrl && input === 'w')) {
       dispatch({type: 'CYCLE_FOCUS'});
       return;
     }
@@ -738,7 +741,7 @@ const App: React.FC = () => {
           if (trimmed.startsWith('/')) {
             const prefix = trimmed.slice(1).split(' ')[0];
             const matched = matchCommands(prefix);
-            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: matched.length < COMMANDS.length ? matched : null});
+            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: matched.length > 0 ? matched : null});
           } else if (state.commandSuggestions) {
             dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: null});
           }

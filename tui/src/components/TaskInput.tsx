@@ -165,6 +165,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
         onSubmit={handleSubmit}
         onCursorMove={handleCursorMove}
         onHistoryNav={handleHistoryNav}
+        tabCompleteCommand={commandSuggestions && commandSuggestions.length > 0 ? commandSuggestions[0].name : null}
         placeholder={isSubmitting ? 'submitting...' : isOffline ? 'offline demo: type task description...' : 'type task description and press Enter...'}
         focus={isFocused}
       />

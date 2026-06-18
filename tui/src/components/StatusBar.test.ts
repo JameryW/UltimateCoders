@@ -12,6 +12,7 @@ const defaultArgs = {
   progress: {completed: 2, total: 5},
   focusedArea: 'input' as const,
   retryCount: 0,
+  nextRetryAt: null as number | null,
   focusedAreaHelp: 'S-Tab focus  C-T subtasks  ? help',
   brandChar: '◆',
 };
@@ -30,10 +31,24 @@ describe('buildSegments', () => {
       ...defaultArgs,
       connectionState: 'error',
       retryCount: 3,
+      nextRetryAt: Date.now() + 5000,
     });
     const ids = segs.map((s) => s.id);
     expect(ids).toContain('retry');
     // retry segment is present when error + retrying
+  });
+
+  it('shows countdown in retry segment when nextRetryAt is set', () => {
+    const segs = buildSegments({
+      ...defaultArgs,
+      connectionState: 'error',
+      retryCount: 3,
+      nextRetryAt: Date.now() + 5000,
+    });
+    const retrySeg = segs.find((s) => s.id === 'retry')!;
+    expect(retrySeg).toBeDefined();
+    // Width includes "in Xs" countdown text
+    expect(retrySeg.width).toBeGreaterThan(10);
   });
 
   it('shows "C-R reconnect" segment when offline and not retrying', () => {
