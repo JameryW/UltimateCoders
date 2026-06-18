@@ -23,6 +23,8 @@
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
+  --status-completed: #22c55e;
+  --status-failed: #ef4444;
 }
 
 /* ── Light theme ───────────────────────────────────────── */
@@ -35,6 +37,8 @@
   --text-primary: var(--color-light-text);
   --text-secondary: var(--color-light-text-secondary);
   --text-muted: #94a3b8;
+  --status-completed: #16a34a;
+  --status-failed: #dc2626;
 }
 
 body {
@@ -86,3 +90,71 @@ body {
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 
 .mermaid { background: transparent !important; }
+
+/* ── Status colors (theme-aware) ─────────────────────── */
+
+.status-ok, .status-completed { background-color: #16653480; color: #86efac; }
+.status-error, .status-failed { background-color: #7f1d1d80; color: #fca5a5; }
+.status-warn, .status-paused { background-color: #713f1280; color: #fde047; }
+.status-info, .status-in_progress { background-color: #1e3a5f80; color: #93c5fd; }
+.status-default { background-color: #37415180; color: #9ca3af; }
+
+[data-theme="light"] .status-ok, [data-theme="light"] .status-completed { background-color: #dcfce7; color: #166534; }
+[data-theme="light"] .status-error, [data-theme="light"] .status-failed { background-color: #fee2e2; color: #991b1b; }
+[data-theme="light"] .status-warn, [data-theme="light"] .status-paused { background-color: #fef9c3; color: #713f12; }
+[data-theme="light"] .status-info, [data-theme="light"] .status-in_progress { background-color: #dbeafe; color: #1e40af; }
+[data-theme="light"] .status-default { background-color: #f3f4f6; color: #4b5563; }
+
+/* ── Event type tints (theme-aware) ──────────────────── */
+
+.evt-submitted { background-color: #1e3a5f30; }
+.evt-completed { background-color: #16653430; }
+.evt-failed { background-color: #7f1d1d30; }
+.evt-pause { background-color: #713f1230; }
+.evt-resume { background-color: #16653430; }
+.evt-started { background-color: #1e3a5f20; }
+.evt-cb-reset { background-color: #713f1230; }
+.evt-trigger { background-color: #16653430; }
+.evt-default { background-color: #37415140; }
+
+[data-theme="light"] .evt-submitted { background-color: #dbeafe; }
+[data-theme="light"] .evt-completed { background-color: #dcfce7; }
+[data-theme="light"] .evt-failed { background-color: #fee2e2; }
+[data-theme="light"] .evt-pause { background-color: #fef9c3; }
+[data-theme="light"] .evt-resume { background-color: #dcfce7; }
+[data-theme="light"] .evt-started { background-color: #eff6ff; }
+[data-theme="light"] .evt-cb-reset { background-color: #fef9c3; }
+[data-theme="light"] .evt-trigger { background-color: #dcfce7; }
+[data-theme="light"] .evt-default { background-color: #f3f4f6; }
+
+/* ── Action button tints (theme-aware) ───────────────── */
+
+.btn-action-ok { background-color: #16653480; color: #86efac; }
+.btn-action-warn { background-color: #713f1280; color: #fde047; }
+.btn-action-error { background-color: #7f1d1d80; color: #fca5a5; }
+.btn-action-info { background-color: #1e3a5f80; color: #93c5fd; }
+
+[data-theme="light"] .btn-action-ok { background-color: #bbf7d0; color: #166534; }
+[data-theme="light"] .btn-action-warn { background-color: #fef08a; color: #713f12; }
+[data-theme="light"] .btn-action-error { background-color: #fecaca; color: #991b1b; }
+[data-theme="light"] .btn-action-info { background-color: #bfdbfe; color: #1e40af; }
+
+/* ── Highlight ring (theme-aware) ────────────────────── */
+
+.highlight-ring { box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.5); background-color: #1e3a5f20; }
+[data-theme="light"] .highlight-ring { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5); background-color: #eff6ff; }
+
+/* ── Stale indicator (theme-aware) ───────────────────── */
+
+.stale-badge { color: #fbbf24; background-color: #713f1240; }
+[data-theme="light"] .stale-badge { color: #92400e; background-color: #fef3c7; }
+
+/* ── Output file tints (theme-aware) ─────────────────── */
+
+.file-created { background-color: #16653420; }
+.file-deleted { background-color: #7f1d1d20; }
+.file-modified { background-color: #713f1220; }
+
+[data-theme="light"] .file-created { background-color: #dcfce7; }
+[data-theme="light"] .file-deleted { background-color: #fee2e2; }
+[data-theme="light"] .file-modified { background-color: #fef9c3; }

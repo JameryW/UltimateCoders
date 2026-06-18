@@ -30,16 +30,16 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.props.fallback) return this.props.fallback;
 
     return (
-      <div className="rounded-lg border border-red-800/50 bg-red-900/20 p-4">
-        <p className="text-sm text-red-400 font-medium">
+      <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-4">
+        <p className="text-sm text-red-500 font-medium">
           {this.props.name ? `${this.props.name} — ` : ""}Error
         </p>
-        <p className="text-xs text-red-300/70 mt-1 font-mono">
+        <p className="text-xs text-red-400 mt-1 font-mono">
           {this.state.error?.message ?? "Unknown error"}
         </p>
         <button
           onClick={this.handleRetry}
-          className="mt-2 text-xs text-red-300 hover:text-red-200 underline"
+          className="mt-2 text-xs text-red-500 hover:text-red-400 underline"
         >
           Retry
         </button>
