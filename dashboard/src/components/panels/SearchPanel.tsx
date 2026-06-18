@@ -62,7 +62,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
           aria-label="Search query"
-          className="flex-1 bg-dark-900 border border-dark-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+          className="flex-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
           placeholder="Search indexed repos… (e.g. 'fn search' or 'class EngineApi')"
         />
         <button
@@ -88,7 +88,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
           {results.map((r, i) => (
             <li key={`${r.filePath}-${r.startLine}-${i}`} className="border-l-2 border-l-blue-500 pl-2 py-1">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-300 font-mono truncate">
+                <span className="text-[var(--text-primary)] font-mono truncate">
                   {r.filePath}
                   {r.symbolName && <span className="text-blue-400 ml-1 font-sans not-italic">{r.symbolName}</span>}
                 </span>
@@ -101,7 +101,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
                 </div>
               </div>
               {r.contentSnippet && (
-                <pre className="text-xs text-gray-500 mt-0.5 overflow-x-auto whitespace-pre-wrap font-mono bg-dark-900/50 rounded p-1.5 max-h-20 overflow-y-auto">
+                <pre className="text-xs text-[var(--text-muted)] mt-0.5 overflow-x-auto whitespace-pre-wrap font-mono bg-[var(--bg-primary)]/50 rounded p-1.5 max-h-20 overflow-y-auto">
                   {r.contentSnippet}
                 </pre>
               )}

@@ -106,7 +106,7 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search events..."
-            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-500 focus:outline-none focus:border-gray-500"
+            className="w-full bg-[var(--bg-surface-alt)] border border-[var(--border-color)] rounded px-2 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--text-secondary)]"
           />
         </div>
       )}

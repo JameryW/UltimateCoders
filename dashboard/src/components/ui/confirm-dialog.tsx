@@ -56,14 +56,14 @@ export function ConfirmDialog() {
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-      <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 max-w-sm w-[90%]">
-        <h3 className="text-lg font-semibold text-white mb-2">
+      <div className="bg-[var(--bg-surface)] border border-[var(--border-color)] rounded-xl p-6 max-w-sm w-[90%]">
+        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
           {state.title}
         </h3>
-        <p className="text-sm text-gray-300 mb-4">{state.message}</p>
+        <p className="text-sm text-[var(--text-secondary)] mb-4">{state.message}</p>
         <div className="flex justify-end gap-3">
           <button
-            className="px-4 py-2 text-sm rounded bg-gray-700 text-gray-300 hover:bg-gray-600"
+            className="px-4 py-2 text-sm rounded bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] hover:bg-[var(--border-color)]"
             onClick={handleCancel}
           >
             Cancel

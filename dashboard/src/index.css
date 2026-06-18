@@ -63,6 +63,16 @@ body {
 .badge-open { background-color: #7f1d1d; color: #fecaca; }
 .badge-half_open { background-color: #713f12; color: #fef08a; }
 
+/* ── Light theme badge overrides ──────────────────────── */
+
+[data-theme="light"] .badge-ok { background-color: #dcfce7; color: #166534; }
+[data-theme="light"] .badge-degraded { background-color: #fef9c3; color: #713f12; }
+[data-theme="light"] .badge-error, [data-theme="light"] .badge-fallback { background-color: #fee2e2; color: #991b1b; }
+[data-theme="light"] .badge-unavailable { background-color: #f3f4f6; color: #4b5563; }
+[data-theme="light"] .badge-closed { background-color: #dcfce7; color: #166534; }
+[data-theme="light"] .badge-open { background-color: #fee2e2; color: #991b1b; }
+[data-theme="light"] .badge-half_open { background-color: #fef9c3; color: #713f12; }
+
 .load-bar { height: 6px; border-radius: 3px; background-color: var(--bg-surface-alt); }
 .load-bar-fill { height: 6px; border-radius: 3px; transition: width 0.3s ease; }
 

@@ -7,6 +7,7 @@ interface HeaderProps {
   lastUpdate?: string;
   theme: Theme;
   onToggleTheme: () => void;
+  onLogout?: () => void;
 }
 
 const GRPC_LABELS: Record<GrpcConnectionState, { text: string; color: string }> = {
@@ -28,7 +29,7 @@ const NAV_SECTIONS = [
   { hash: "search", label: "Search" },
 ];
 
-export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme }: HeaderProps) {
+export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout }: HeaderProps) {
   const grpc = grpcState ? GRPC_LABELS[grpcState] : null;
   return (
     <header className="border-b border-[var(--border-color)] px-6 py-3">
@@ -74,6 +75,18 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme 
               </svg>
             )}
           </button>
+          {/* Logout */}
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              title="Logout"
+              className="p-1.5 rounded-md border border-[var(--border-color)] hover:bg-[var(--bg-surface-alt)] transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </header>
