@@ -900,8 +900,22 @@ class DashboardApp:
         self._subscribe_nats_events()
 
     def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
-        """Lazily create the NATS event asyncio.Queue on first use."""
+        """Lazily create the NATS event asyncio.Queue on first use.
+
+        Python 3.9 asyncio.Queue() requires a running event loop at creation
+        time. If no loop is running (e.g. in synchronous tests), we create
+        a new event loop and set it as the current loop for this thread.
+        """
         if self._nats_event_queue is None:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                # ponytail: no running loop — set one so Queue() works on 3.9
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                except Exception:
+                    pass
             self._nats_event_queue = asyncio.Queue()
         return self._nats_event_queue
 
