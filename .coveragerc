@@ -1,0 +1,14 @@
+[run]
+source = ultimate_coders
+omit =
+    ultimate_coders/_uc_core*
+    ultimate_coders/tui/*
+    tests/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING
+    pass
+    \.\.\.
+    raise NotImplementedError

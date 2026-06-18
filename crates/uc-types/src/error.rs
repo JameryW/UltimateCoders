@@ -52,6 +52,12 @@ pub enum EngineError {
 
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
 }
 
 impl EngineError {

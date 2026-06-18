@@ -59,6 +59,8 @@ fn engine_error_to_pyerr(err: uc_types::EngineError) -> PyErr {
         SandboxError(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),
         ConfigError(msg) => pyo3::exceptions::PyValueError::new_err(msg),
         InternalError(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
+        StorageError(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
+        InvalidOperation(msg) => pyo3::exceptions::PyValueError::new_err(msg),
     }
 }
 
