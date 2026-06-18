@@ -38,6 +38,13 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
+
+def _status_str(obj: Any) -> str:
+    """Extract status string from an object with .status attribute."""
+    s = obj.status
+    return s.value if hasattr(s, "value") else str(s)
+
+
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -336,12 +343,34 @@ class DashboardApp:
                         description=description,
                         project_id=project_id,
                     )
+                    # Wait briefly for nats_worker to process, then verify task state
+                    await asyncio.sleep(0.5)
+                    orch = self.orchestrator
+                    if orch is not None and task_id in orch.tasks:
+                        task = orch.tasks[task_id]
+                        return JSONResponse({
+                            "success": True,
+                            "task_id": task.id,
+                            "status": _status_str(task),
+                            "subtask_count": len(task.subtasks),
+                            "subtasks": [
+                                {
+                                    "id": st.id,
+                                    "description": st.description,
+                                    "status": _status_str(st),
+                                    "depends_on": st.depends_on,
+                                }
+                                for st in task.subtasks
+                            ],
+                        })
+                    # Task not yet in Orchester state — return with pending flag
                     return JSONResponse({
                         "success": True,
                         "task_id": task_id,
                         "status": "Planning",
                         "subtask_count": 0,
                         "subtasks": [],
+                        "pending": True,
                     })
                 except Exception as e:
                     logger.warning("NATS publish failed: %s, falling back", e)
@@ -655,7 +684,7 @@ class DashboardApp:
         tasks = []
         status_counts: dict[str, int] = {}
         for tid, t in orch.tasks.items():
-            status_val = t.status.value if hasattr(t.status, "value") else str(t.status)
+            status_val = _status_str(t)
             status_counts[status_val] = status_counts.get(status_val, 0) + 1
             tasks.append(
                 {
