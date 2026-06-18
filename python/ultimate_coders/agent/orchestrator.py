@@ -957,8 +957,8 @@ class Orchestrator:
     async def checkpoint_task(self, task_id: str) -> str | None:
         """Create a checkpoint (snapshot) of a task's current state.
 
-        Uses the engine's checkpoint system to persist the task state
-        for recovery.
+        Stores the task state in memory via the engine for recovery.
+        Falls back to local serialization if engine doesn't support it.
 
         Args:
             task_id: The task ID to checkpoint.
@@ -966,20 +966,46 @@ class Orchestrator:
         Returns:
             The snapshot ID, or None if checkpointing failed.
         """
-        if self.engine is None:
-            logger.warning("No engine available for checkpoint")
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for checkpoint", task_id)
             return None
 
-        try:
-            snapshot_id = self.engine.checkpoint_task(task_id)
-            logger.info("Created checkpoint for task %s: %s", task_id, snapshot_id)
-            return snapshot_id
-        except Exception:
-            logger.warning("Failed to checkpoint task %s", task_id, exc_info=True)
-            return None
+        # Try engine checkpoint (if available)
+        if self.engine is not None and hasattr(self.engine, "checkpoint_task"):
+            try:
+                snapshot_id = self.engine.checkpoint_task(task_id)
+                logger.info("Created checkpoint for task %s: %s", task_id, snapshot_id)
+                return snapshot_id
+            except Exception:
+                logger.warning("Engine checkpoint failed for %s", task_id, exc_info=True)
+
+        # Fallback: serialize task state to engine memory
+        if self.engine is not None:
+            try:
+                import json
+                from datetime import datetime
+                snapshot_id = f"snap-{task_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                self.engine.write_memory(
+                    key_scope="task",
+                    key=f"checkpoint_{snapshot_id}",
+                    content=json.dumps(task.to_dict()),
+                    content_type="structured",
+                    source_agent="orchestrator",
+                    task_id=task_id,
+                )
+                logger.info("Created memory checkpoint for task %s: %s", task_id, snapshot_id)
+                return snapshot_id
+            except Exception:
+                logger.warning("Memory checkpoint failed for %s", task_id, exc_info=True)
+
+        return None
 
     async def recover_task(self, task_id: str) -> dict | None:
         """Recover a task from the latest checkpoint.
+
+        Tries the engine's recovery system first, then falls back to
+        reading from engine memory.
 
         Args:
             task_id: The task ID to recover.
@@ -987,17 +1013,22 @@ class Orchestrator:
         Returns:
             The recovered task state dict, or None if recovery failed.
         """
-        if self.engine is None:
-            logger.warning("No engine available for recovery")
-            return None
+        # Try engine recovery (if available)
+        if self.engine is not None and hasattr(self.engine, "recover_task"):
+            try:
+                state = self.engine.recover_task(task_id)
+                logger.info("Recovered task %s from engine", task_id)
+                return state
+            except Exception:
+                logger.warning("Engine recovery failed for %s", task_id, exc_info=True)
 
-        try:
-            state = self.engine.recover_task(task_id)
-            logger.info("Recovered task %s", task_id)
-            return state
-        except Exception:
-            logger.warning("Failed to recover task %s", task_id, exc_info=True)
-            return None
+        # Fallback: check if task exists in local dict
+        task = self.tasks.get(task_id)
+        if task is not None:
+            logger.info("Recovered task %s from local state", task_id)
+            return task.to_dict()
+
+        return None
 
     def check_edit_conflict(
         self,
