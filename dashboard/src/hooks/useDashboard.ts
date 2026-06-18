@@ -255,7 +255,28 @@ export function useDashboard() {
     } catch { /* ignore */ }
     try {
       const t = await api.getTasks();
-      setTasks(t);
+      // ponytail: merge tasks instead of direct replace — avoids overwriting gRPC-Web
+      // incremental updates that arrived while this REST fetch was in-flight
+      setTasks((prev) => {
+        if (!t.available) return prev;
+        if (prev.tasks.length === 0) return t;
+        const merged = [...prev.tasks];
+        for (const rt of t.tasks) {
+          const idx = merged.findIndex((m) => m.id === rt.id);
+          if (idx >= 0) {
+            // Keep existing if it has fresher updated_at
+            const existingTime = new Date(merged[idx].updated_at).getTime();
+            const restTime = new Date(rt.updated_at).getTime();
+            if (!isNaN(existingTime) && !isNaN(restTime) && existingTime > restTime) continue;
+            const subtasks = (merged[idx].subtasks?.length ?? 0) >= (rt.subtasks?.length ?? 0)
+              ? merged[idx].subtasks : rt.subtasks;
+            merged[idx] = { ...merged[idx], ...rt, subtasks };
+          } else {
+            merged.push(rt);
+          }
+        }
+        return { ...prev, tasks: merged, total: merged.length, status_counts: recountStatus(merged) };
+      });
     } catch { /* ignore */ }
     try {
       const s = await api.getScheduler();

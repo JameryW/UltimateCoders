@@ -48,8 +48,11 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
     if (highlightTaskId) {
       setExpandedTaskId(highlightTaskId);
       setStatusFilter(null); // clear filter so the task is visible
+      // Double rAF to wait for DOM render after state changes
       requestAnimationFrame(() => {
-        highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        requestAnimationFrame(() => {
+          highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
       });
       onHighlightShown?.();
     }
