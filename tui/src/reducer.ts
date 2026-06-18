@@ -111,6 +111,9 @@ export interface TuiState {
   /** Whether a task submission is in progress (prevents duplicate submits). */
   isSubmitting: boolean;
 
+  /** Whether older messages were truncated (to show a hint in ChatLog). */
+  messagesTruncated: boolean;
+
   /** Currently selected subtask index for keyboard navigation (-1 = none). */
   selectedSubtaskIndex: number;
 
@@ -135,6 +138,12 @@ export interface TuiState {
   /** Whether a listTasks request is in progress. */
   taskListLoading: boolean;
 
+  /** Whether the task list overlay is showing. */
+  taskListOverlayOpen: boolean;
+
+  /** Currently selected task index in task list overlay (-1 = none). */
+  selectedTaskListIndex: number;
+
   /** Currently matching slash commands for autocomplete (null = no suggestion). */
   commandSuggestions: SlashCommand[] | null;
 }
@@ -157,6 +166,7 @@ export const INITIAL_TUI_STATE: TuiState = {
   symbolMode: 'auto',
   unreadCount: 0,
   isSubmitting: false,
+  messagesTruncated: false,
   selectedSubtaskIndex: -1,
   selectedSubtaskId: null,
   subtaskOverlayOpen: false,
@@ -165,6 +175,8 @@ export const INITIAL_TUI_STATE: TuiState = {
   startedAt: null,
   taskList: [],
   taskListLoading: false,
+  taskListOverlayOpen: false,
+  selectedTaskListIndex: -1,
   commandSuggestions: null,
 };
 
@@ -213,6 +225,8 @@ export type TuiAction =
   // ── Task list ──
   | {type: 'SET_TASK_LIST'; tasks: TaskProto[]}
   | {type: 'SET_TASK_LIST_LOADING'; loading: boolean}
+  | {type: 'TOGGLE_TASK_LIST_OVERLAY'}
+  | {type: 'SELECT_TASK_LIST'; index: number}
   // ── Command suggestions ──
   | {type: 'SET_COMMAND_SUGGESTIONS'; suggestions: SlashCommand[] | null};
 
@@ -223,7 +237,8 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     case 'ADD_MESSAGES': {
       const newMessages = [...state.messages, ...action.messages];
       // Cap at 2000 messages
-      const messages = newMessages.length > 2000
+      const wasTruncated = newMessages.length > 2000;
+      const messages = wasTruncated
         ? newMessages.slice(newMessages.length - 2000)
         : newMessages;
 
@@ -232,7 +247,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         ? 0 // followLog on: unread is always 0 (view is at bottom)
         : state.unreadCount + action.messages.length;
 
-      return {...state, messages, unreadCount};
+      return {...state, messages, unreadCount, messagesTruncated: state.messagesTruncated || wasTruncated};
     }
 
     case 'UPDATE_MESSAGE': {
@@ -367,7 +382,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
       };
 
     case 'CLEAR_LOG':
-      return {...state, messages: [], followLog: true, unreadCount: 0};
+      return {...state, messages: [], followLog: true, unreadCount: 0, messagesTruncated: false};
 
     // ── Offline timers ────────────────────────────────────────
 
@@ -467,6 +482,18 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_TASK_LIST_LOADING':
       return {...state, taskListLoading: action.loading};
+
+    case 'TOGGLE_TASK_LIST_OVERLAY': {
+      const opening = !state.taskListOverlayOpen;
+      return {
+        ...state,
+        taskListOverlayOpen: opening,
+        selectedTaskListIndex: opening ? 0 : -1,
+      };
+    }
+
+    case 'SELECT_TASK_LIST':
+      return {...state, selectedTaskListIndex: action.index};
 
     // ── Command suggestions ───────────────────────────────────
 
