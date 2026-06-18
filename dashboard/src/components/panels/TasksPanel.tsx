@@ -21,7 +21,7 @@ function statusBorderColor(status: string): string {
     case "failed": return "border-l-red-500";
     case "paused": return "border-l-yellow-500";
     case "in_progress": return "border-l-blue-500";
-    default: return "border-l-gray-600";
+    default: return "border-[var(--border-color)]";
   }
 }
 

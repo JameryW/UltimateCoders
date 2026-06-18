@@ -17,7 +17,7 @@ function executionStatusColor(status: string): string {
     case "in_progress":
       return "text-blue-400";
     default:
-      return "text-gray-400";
+      return "text-[var(--text-secondary)]";
   }
 }
 
@@ -35,7 +35,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
           <CardTitle>Scheduler</CardTitle>
           <Badge variant="unavailable">Not Available</Badge>
         </CardHeader>
-        <p className="text-sm text-gray-500">Scheduler not available</p>
+        <p className="text-sm text-[var(--text-muted)]">Scheduler not available</p>
       </Card>
     );
   }
@@ -51,7 +51,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
 
       {data.night_window && (
         <div className="flex items-center gap-2 mb-3 text-sm">
-          <span className="text-gray-400">Night Window:</span>
+          <span className="text-[var(--text-secondary)]">Night Window:</span>
           <span
             className={cn(
               "text-xs px-1.5 py-0.5 rounded",
@@ -62,7 +62,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
           >
             {data.night_window.is_active ? "ACTIVE" : "INACTIVE"}
           </span>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-[var(--text-muted)]">
             {data.night_window.start} - {data.night_window.end} ({data.night_window.timezone})
           </span>
         </div>
@@ -76,14 +76,14 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
                 <span
                   className={cn(
                     "w-2 h-2 rounded-full",
-                    job.enabled ? "bg-green-500" : "bg-gray-600"
+                    job.enabled ? "bg-green-500" : "bg-[var(--bg-surface-alt)]"
                   )}
                 />
                 <span className="text-[var(--text-primary)]">{job.description}</span>
               </div>
               <div className="flex items-center gap-2">
                 {job.cron_expression && (
-                  <span className="text-xs text-gray-500 font-mono">
+                  <span className="text-xs text-[var(--text-muted)] font-mono">
                     {job.cron_expression}
                   </span>
                 )}
@@ -103,13 +103,13 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
 
       {data.execution_history.length > 0 && (
         <div className="border-t border-[var(--border-color)] pt-2">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">
+          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
             Execution History
           </p>
           <ul className="space-y-1">
             {data.execution_history.map((exec, i) => (
               <li key={`${exec.task_id}-${i}`} className="flex items-center gap-2 text-xs">
-                <span className="font-mono text-gray-400">{shortId(exec.task_id)}</span>
+                <span className="font-mono text-[var(--text-secondary)]">{shortId(exec.task_id)}</span>
                 <span className={executionStatusColor(exec.status)}>{exec.status}</span>
               </li>
             ))}

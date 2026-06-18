@@ -22,31 +22,31 @@ function WorkerDetail({ worker }: { worker: WorkerInfo }) {
   return (
     <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-[var(--border-color)] pt-2">
       <div className="flex items-start gap-2">
-        <span className="text-gray-500 shrink-0 w-20">Full ID</span>
+        <span className="text-[var(--text-muted)] shrink-0 w-20">Full ID</span>
         <span className="font-mono text-[var(--text-primary)] break-all">{worker.id}</span>
       </div>
       <div className="flex items-start gap-2">
-        <span className="text-gray-500 shrink-0 w-20">Heartbeat</span>
+        <span className="text-[var(--text-muted)] shrink-0 w-20">Heartbeat</span>
         <span className="text-[var(--text-primary)]">
           {new Date(worker.last_heartbeat).toLocaleString()}
         </span>
       </div>
       <div className="flex items-start gap-2">
-        <span className="text-gray-500 shrink-0 w-20">Age</span>
+        <span className="text-[var(--text-muted)] shrink-0 w-20">Age</span>
         <span className={cn(worker.heartbeat_stale ? "text-yellow-400" : "text-[var(--text-primary)]")}>
           {formatHeartbeatAge(worker.heartbeat_age_seconds)}
           {worker.heartbeat_stale && " (stale)"}
         </span>
       </div>
       <div className="flex items-start gap-2">
-        <span className="text-gray-500 shrink-0 w-20">Load</span>
+        <span className="text-[var(--text-muted)] shrink-0 w-20">Load</span>
         <span className="text-[var(--text-primary)]">
           {worker.current_load} / {worker.max_capacity} ({worker.load_percent}%)
         </span>
       </div>
       {worker.capabilities.length > 0 && (
         <div className="flex items-start gap-2">
-          <span className="text-gray-500 shrink-0 w-20">Capabilities</span>
+          <span className="text-[var(--text-muted)] shrink-0 w-20">Capabilities</span>
           <div className="flex flex-wrap gap-1">
             {worker.capabilities.map((cap) => (
               <span
@@ -80,9 +80,9 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
       </CardHeader>
 
       {!data.available ? (
-        <p className="text-sm text-gray-500">Workers not available</p>
+        <p className="text-sm text-[var(--text-muted)]">Workers not available</p>
       ) : data.workers.length === 0 ? (
-        <p className="text-sm text-gray-500">No workers connected</p>
+        <p className="text-sm text-[var(--text-muted)]">No workers connected</p>
       ) : (
         <ul className="space-y-2">
           {data.workers.map((w) => (
@@ -118,7 +118,7 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
                       style={{ width: `${Math.min(w.load_percent, 100)}%` }}
                     />
                   </div>
-                  <div className="flex justify-between text-xs text-gray-500 mt-0.5">
+                  <div className="flex justify-between text-xs text-[var(--text-muted)] mt-0.5">
                     <span>
                       {w.current_load}/{w.max_capacity}
                     </span>

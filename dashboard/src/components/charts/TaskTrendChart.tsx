@@ -82,6 +82,9 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   const tooltipBg = cssVar("--bg-surface") || "#1e293b";
   const tooltipBorder = cssVar("--border-color") || "#334155";
 
+  const completedColor = cssVar("--status-completed") || "#22c55e";
+  const failedColor = cssVar("--status-failed") || "#ef4444";
+
   return (
     <div className={cn("rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4 relative", stale && "opacity-70")}>
       {stale && (
@@ -127,11 +130,11 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
             <Legend
               wrapperStyle={{ fontSize: 11, color: axisStroke }}
               formatter={(value: string) => (
-                <span style={{ color: value === "completed" ? "#22c55e" : "#ef4444" }}>{value}</span>
+                <span style={{ color: value === "completed" ? completedColor : failedColor }}>{value}</span>
               )}
             />
-            <Bar dataKey="completed" fill="#22c55e" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="failed" fill="#ef4444" radius={[2, 2, 0, 0]} />
+            <Bar dataKey="completed" fill={completedColor} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="failed" fill={failedColor} radius={[2, 2, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       ) : (
