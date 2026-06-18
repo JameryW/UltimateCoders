@@ -79,7 +79,7 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
           <h2 className="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
             Submit Task
           </h2>
-          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "bg-blue-900/50 text-blue-300" : "bg-green-900/50 text-green-300"}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "status-in_progress" : "status-completed"}`}>
             {mode}
           </span>
         </div>
@@ -103,7 +103,7 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
           <button
             type="submit"
             disabled={submitting}
-            className="bg-blue-900/50 text-blue-300 border border-blue-500 rounded-md px-5 py-2 text-sm font-medium cursor-pointer hover:bg-blue-900/70 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            className="btn-action-info border border-blue-500 rounded-md px-5 py-2 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {submitting ? "Submitting..." : "Submit Task"}
           </button>
