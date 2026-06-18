@@ -904,6 +904,12 @@ class DashboardApp:
             self._nats_event_queue = asyncio.Queue()
         return self._nats_event_queue
 
+    def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
+        """Lazily create the NATS event asyncio.Queue on first use."""
+        if self._nats_event_queue is None:
+            self._nats_event_queue = asyncio.Queue()
+        return self._nats_event_queue
+
     def _subscribe_nats_events(self) -> None:
         """Register a FastAPI startup event to subscribe to NATS events.
 
