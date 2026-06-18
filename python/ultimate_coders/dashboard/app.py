@@ -104,7 +104,7 @@ class DashboardApp:
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
-        self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
+        self._event_log: deque[dict[str, Any]] = deque(maxlen=500)
         # Auth configuration
         self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
         # Connect to Orchestrator's event emitter if available
@@ -258,7 +258,7 @@ class DashboardApp:
                     # Check both event sources fairly: first drain NATS queue
                     # (non-blocking), then wait on local emitter. This prevents
                     # a busy local emitter from starving NATS events.
-                    _nats_drained = False
+                    had_event = False
                     if self._nats_client is not None:
                         try:
                             while True:
@@ -271,7 +271,7 @@ class DashboardApp:
                                         "event": "task_event",
                                         "data": json.dumps(nats_event),
                                     }
-                                    _ = True  # ponytail: drained flag for future use
+                                    had_event = True  # noqa: F841 — used for side-effect tracking
                                 else:
                                     break
                         except asyncio.QueueEmpty:
@@ -290,19 +290,21 @@ class DashboardApp:
                             }
                             continue  # Check for more events immediately
 
-                    # Timeout or no events: send full snapshot then wait
-                    snapshot = self._get_full_snapshot()
-                    event_id += 1
-                    yield {
-                        "id": str(event_id),
-                        "event": "update",
-                        "data": json.dumps(snapshot),
-                    }
-                    # ponytail: cancellable sleep — detects disconnect within 0.5s
-                    if self.event_emitter is None and self._nats_client is None:
-                        await cancellable_sleep(5)
-                    else:
-                        await cancellable_sleep(2)
+                    # Periodic full snapshot — interval adapts to activity.
+                    # Active (events this cycle): 3s. Idle: 10s.
+                    snapshot_interval = 3.0 if had_event else 10.0
+                    now = loop.time()
+                    if now - last_snapshot >= snapshot_interval:
+                        snapshot = self._get_full_snapshot()
+                        last_snapshot = now
+                        event_id += 1
+                        yield {
+                            "id": str(event_id),
+                            "event": "update",
+                            "data": json.dumps(snapshot),
+                        }
+                    # ponytail: short sleep — detects disconnect within 0.5s
+                    await cancellable_sleep(1)
 
             return EventSourceResponse(event_generator())
 
@@ -354,35 +356,31 @@ class DashboardApp:
                     orch = self.orchestrator
                     if orch is not None and task_id in orch.tasks:
                         task = orch.tasks[task_id]
-                        return JSONResponse(
-                            {
-                                "success": True,
-                                "task_id": task.id,
-                                "status": _status_str(task),
-                                "subtask_count": len(task.subtasks),
-                                "subtasks": [
-                                    {
-                                        "id": st.id,
-                                        "description": st.description,
-                                        "status": _status_str(st),
-                                        "depends_on": st.depends_on,
-                                    }
-                                    for st in task.subtasks
-                                ],
-                            }
-                        )
+                        return JSONResponse({
+                            "success": True,
+                            "task_id": task.id,
+                            "status": _status_str(task),
+                            "subtask_count": len(task.subtasks),
+                            "subtasks": [
+                                {
+                                    "id": st.id,
+                                    "description": st.description,
+                                    "status": _status_str(st),
+                                    "depends_on": st.depends_on,
+                                }
+                                for st in task.subtasks
+                            ],
+                        })
                     # Task not yet in Orchestrator state — return with pending flag.
                     # Status "submitted" matches the SSE task_submitted event type.
-                    return JSONResponse(
-                        {
-                            "success": True,
-                            "task_id": task_id,
-                            "status": "submitted",
-                            "subtask_count": 0,
-                            "subtasks": [],
-                            "pending": True,
-                        }
-                    )
+                    return JSONResponse({
+                        "success": True,
+                        "task_id": task_id,
+                        "status": "submitted",
+                        "subtask_count": 0,
+                        "subtasks": [],
+                        "pending": True,
+                    })
                 except Exception as e:
                     logger.warning("NATS publish failed: %s, falling back", e)
 
@@ -1070,7 +1068,9 @@ class DashboardApp:
 
         # Normalize to TaskEvent format
         event_dict: dict[str, Any] = {
-            "timestamp": payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "timestamp": payload.get(
+                "timestamp", datetime.now(timezone.utc).isoformat()
+            ),
             "type": payload.get("type", "unknown"),
             "task_id": payload.get("task_id", ""),
         }

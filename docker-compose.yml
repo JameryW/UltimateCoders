@@ -51,7 +51,8 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "tikv-ctl --host tikv:20160 health || exit 1"]
       interval: 15s
-      retries: 5
+      retries: 10
+      start_period: 60s
 
   # ── Qdrant vector database ────────────────────────────────────
   qdrant:
