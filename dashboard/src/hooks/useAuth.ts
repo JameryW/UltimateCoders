@@ -59,13 +59,14 @@ export function useAuth(): AuthState {
             setIsAuthenticated(true);
           } else if (res.status === 401) {
             setIsAuthenticated(false);
+          } else if (res.status >= 500 || res.status === 0) {
+            // Server down or unreachable — show connection error
+            setConnectionError(true);
           } else {
-            // Other errors (503, etc.) — assume not auth-related
-            setIsAuthenticated(true);
+            setIsAuthenticated(false);
           }
         })
         .catch(() => {
-          // Network error — can't reach server, show connection error
           setConnectionError(true);
         })
         .finally(() => setIsChecking(false));
@@ -78,15 +79,19 @@ export function useAuth(): AuthState {
           if (res.ok) {
             setToken(stored);
             setIsAuthenticated(true);
+          } else if (res.status === 401) {
+            setStoredToken(null);
+            setToken(null);
+            setIsAuthenticated(false);
+          } else if (res.status >= 500 || res.status === 0) {
+            setConnectionError(true);
           } else {
-            // Token is invalid — clear it
             setStoredToken(null);
             setToken(null);
             setIsAuthenticated(false);
           }
         })
         .catch(() => {
-          // Network error — can't reach server, show connection error
           setConnectionError(true);
         })
         .finally(() => setIsChecking(false));

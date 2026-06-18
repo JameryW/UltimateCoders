@@ -223,7 +223,7 @@ function App() {
   const healthWithGrpc = useMemo<HealthData>(() => {
     const grpcStatus = grpcState === "connected" ? "ok"
       : grpcState === "connecting" ? "degraded"
-      : grpcState === "error" || grpcState === "exhausted" ? "error"
+      : grpcState === "error" || grpcState === "reconnecting" ? "error"
       : "unavailable";
     const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
     let components = [...dashboard.health.components];

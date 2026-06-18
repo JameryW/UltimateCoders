@@ -21,9 +21,10 @@ export function getSharedTransport() {
   return _sharedTransport;
 }
 
-/** Exponential backoff intervals (ms) for reconnection. */
-const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000];
-const MAX_RETRY = RETRY_INTERVALS.length;
+/** Exponential backoff intervals (ms) for reconnection.
+ *  No upper limit — keeps retrying indefinitely with capped delay. */
+const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
+const MAX_RETRY_INTERVAL = 60000;
 
 interface UseGrpcWebOptions {
   onTaskEvent?: (event: TaskEvent) => void;
@@ -35,7 +36,7 @@ export type GrpcConnectionState =
   | "connecting"
   | "connected"
   | "error"
-  | "exhausted"; // auto-retry exhausted, user must manually reconnect
+  | "reconnecting";
 
 export interface GrpcSubmitResult {
   success: boolean;
@@ -89,14 +90,10 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, []);
 
   const scheduleReconnect = useCallback(() => {
-    if (retryCountRef.current >= MAX_RETRY) {
-      console.warn("[gRPC-Web] Max retries reached, entering exhausted state");
-      setConnectionState("exhausted");
-      return;
-    }
-    const delay = RETRY_INTERVALS[retryCountRef.current] ?? 16000;
+    const delay = RETRY_INTERVALS[retryCountRef.current] ?? MAX_RETRY_INTERVAL;
     retryCountRef.current += 1;
-    console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current}/${MAX_RETRY})`);
+    console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
+    setConnectionState("reconnecting");
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {
         connectRef.current();
