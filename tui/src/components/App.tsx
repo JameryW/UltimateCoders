@@ -319,7 +319,8 @@ const App: React.FC = () => {
         handleSlashCommand(parsed.command, parsed.args, {
           addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit,
           listTasks: grpcListTasks, activeTaskId: state.activeTaskId,
-          subtasks: state.subtasks, isStreaming,
+          subtasks: state.subtasks, isStreaming, symbolMode: state.symbolMode,
+          messages: state.messages,
         });
         return;
       }
@@ -815,6 +816,7 @@ const App: React.FC = () => {
           tasks={state.taskList}
           selectedIndex={state.selectedTaskListIndex}
           maxWidth={terminalWidth - 4}
+          maxVisibleLines={(stdout?.rows ?? 24) - 5}
         />
       </Box>
     );
@@ -935,9 +937,11 @@ function handleSlashCommand(
     activeTaskId: string | null;
     subtasks: SubtaskItem[];
     isStreaming: boolean;
+    symbolMode: string;
+    messages: ChatMessage[];
   },
 ): void {
-  const {addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit, listTasks, activeTaskId, subtasks, isStreaming} = deps;
+  const {addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit, listTasks, activeTaskId, subtasks, isStreaming, symbolMode, messages} = deps;
 
   switch (command.name) {
     case 'help':
@@ -1011,6 +1015,39 @@ function handleSlashCommand(
       dispatch({type: 'SET_ACTIVE_TASK', taskId: args});
       dispatch({type: 'CLEAR_TASK'});
       addMessage(createSystemMessage(`Switched to task: ${args.slice(0, 8)}...`, {color: 'cyan'}));
+      break;
+    }
+    case 'symbols': {
+      const validModes = ['unicode', 'ascii', 'auto'];
+      const mode = args.trim().toLowerCase();
+      if (!validModes.includes(mode)) {
+        addMessage(createSystemMessage(`Usage: /symbols <unicode|ascii|auto>\nCurrent: ${deps.symbolMode}`, {color: 'yellow'}));
+        break;
+      }
+      dispatch({type: 'SET_SYMBOL_MODE', mode: mode as any});
+      addMessage(createSystemMessage(`Symbol mode set to: ${mode}`, {color: 'cyan'}));
+      break;
+    }
+    case 'export': {
+      const exportPath = args.trim() || 'uc-export';
+      const jsonPath = exportPath.endsWith('.json') ? exportPath : exportPath + '.json';
+      const txtPath = exportPath.endsWith('.txt') ? exportPath : exportPath + '.txt';
+      try {
+        const fs = require('fs') as typeof import('fs');
+        const path = require('path') as typeof import('path');
+        const resolvedJson = path.resolve(jsonPath);
+        const resolvedTxt = path.resolve(txtPath);
+        const data = deps.messages.map((m: any) => ({
+          id: m.id, timestamp: m.timestamp, text: m.text,
+          isUser: m.isUser, eventType: m.eventType,
+        }));
+        fs.writeFileSync(resolvedJson, JSON.stringify(data, null, 2));
+        const plain = deps.messages.map((m: any) => `[${m.timestamp}] ${m.isUser ? '>' : ' '} ${m.text}`).join('\n');
+        fs.writeFileSync(resolvedTxt, plain);
+        addMessage(createSystemMessage(`Exported to ${resolvedJson} + ${resolvedTxt}`, {color: 'green'}));
+      } catch (e: any) {
+        addMessage(createSystemMessage(`Export failed: ${e.message}`, {color: 'red'}));
+      }
       break;
     }
     default:

@@ -1068,3 +1068,36 @@ Three PRs merged: #80 (dark-theme colors → CSS variables across all panels), #
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: PR82 conflict resolution + ruff lint fixes
+
+**Date**: 2026-06-18
+**Task**: PR82 conflict resolution + ruff lint fixes
+**Branch**: `feat/tui-interaction-polish`
+
+### Summary
+
+Resolved PR#82 merge conflicts (4 files: task_store.rs, server.rs, llm.py, config.py) and fixed ruff N806/E501 lint failures. PR#82 and PR#84 both passing CI.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3e57111` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
