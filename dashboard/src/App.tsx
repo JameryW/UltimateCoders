@@ -182,8 +182,9 @@ function App() {
     );
   }
 
-  // ponytail: SSE disconnected → panels that rely on SSE data are stale
-  const stale = !connected;
+  // ponytail: panels are stale only when both SSE and gRPC-Web are disconnected;
+  // if either source is live, data is still flowing.
+  const stale = !connected && grpcState !== "connected";
 
   return (
     <div className="text-gray-200 min-h-screen">

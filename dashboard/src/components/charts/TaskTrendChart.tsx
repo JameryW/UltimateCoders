@@ -46,7 +46,7 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   return (
     <div className={cn("rounded-lg border border-dark-700 bg-dark-800 p-4 relative", stale && "opacity-70")}>
       {stale && (
-        <div className="absolute top-2 right-2 text-[10px] text-yellow-400 bg-yellow-900/40 px-1.5 py-0.5 rounded font-medium z-10">
+        <div className="absolute top-2 left-2 text-[10px] text-yellow-400 bg-yellow-900/40 px-1.5 py-0.5 rounded font-medium z-10">
           STALE
         </div>
       )}
