@@ -48,6 +48,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'subtaskOverlay', label: 'Toggle subtask overlay', shortLabel: 'C-T', key: 'Ctrl+T', areas: [], global: true},
   {id: 'filter', label: 'Cycle event filter', shortLabel: 'C-F', key: 'Ctrl+F', areas: [], global: true},
   {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
+  {id: 'cancel', label: 'Cancel active task', shortLabel: 'C-X', key: 'Ctrl+X', areas: [], global: true},
   {id: 'reconnect', label: 'Reconnect gRPC', shortLabel: 'C-R', key: 'Ctrl+R', areas: [], global: true},
   {id: 'quit', label: 'Quit', shortLabel: 'C-Q', key: 'Ctrl+Q', areas: [], global: true},
   // Note: ? is global except in input focus (where it types a character)

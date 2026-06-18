@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
-    ConflictMarker,
-    ConflictResult,
     ConflictResolver,
+    ConflictResult,
     EditIntent,
     EditType,
     LineRange,
-    MergeResult,
     ResolutionTier,
 )
 
@@ -128,11 +126,15 @@ class TestLlmAssistedMerge:
         assert not result.success
 
     def test_with_mock_llm_client(self):
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.text = "merged content"
-        mock_client.complete = MagicMock(return_value=mock_response)
+
+        async def _complete(**kwargs):
+            return mock_response
+
+        mock_client.complete = _complete
         resolver = ConflictResolver(llm_client=mock_client)
         result = resolver._llm_assisted_merge("base", "ours", "theirs")
         assert result.tier == ResolutionTier.LLM_ASSISTED

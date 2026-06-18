@@ -413,9 +413,36 @@ const App: React.FC = () => {
 
   // ── Global keyboard handler ────────────────────────────
   useInput((input, key) => {
-    // ── Global shortcuts (work in any focus area) ────────
+    // ── Ctrl+C / Ctrl+Q: quit with confirmation if active task ──
     if (key.ctrl && (input === 'c' || input === 'q')) {
-      exit();
+      if (state.exitConfirmPending) {
+        // Second Ctrl+C — confirm exit
+        exit();
+        return;
+      }
+      dispatch({type: 'REQUEST_EXIT'});
+      return;
+    }
+
+    // Dismiss exit confirm on any other key
+    if (state.exitConfirmPending) {
+      dispatch({type: 'DISMISS_EXIT_CONFIRM'});
+      return;
+    }
+
+    // ── Ctrl+X: cancel active task ──
+    if (key.ctrl && input === 'x') {
+      if (state.activeTaskId || state.isSubmitting || isStreaming) {
+        dispatch({type: 'CANCEL_TASK'});
+        for (const tid of state.offlineTimerIds) clearTimeout(tid);
+        dispatch({type: 'CLEAR_OFFLINE_TIMERS'});
+        dispatch({type: 'SET_SUBMITTING', submitting: false});
+        dispatch({type: 'CLEAR_TASK'});
+        clearStreamTask();
+        addMessage(createSystemMessage('Task cancelled.', {color: 'yellow'}));
+      } else {
+        addMessage(createSystemMessage('No active task to cancel.', {color: 'gray'}));
+      }
       return;
     }
 
@@ -428,20 +455,29 @@ const App: React.FC = () => {
       return;
     }
 
-    // Ctrl+P: pause/resume task
+    // Ctrl+P: pause/resume task (with error feedback)
     if (key.ctrl && input === 'p') {
       if (state.activeTaskId) {
-        // ponytail: check task status (not subtask status) for pause/resume decision
         const taskStatus = task?.status ? mapTaskStatus(task.status) : undefined;
         if (taskStatus === 'in_progress' || taskStatus === 'planning') {
-          pauseTask({taskId: state.activeTaskId});
-          addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
+          const result = pauseTask({taskId: state.activeTaskId});
+          if (result === null || result === undefined) {
+            addMessage(createSystemMessage(`Pause request sent to server.`, {color: 'yellow'}));
+          } else {
+            addMessage(createSystemMessage(`Pausing task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'yellow'}));
+          }
         } else if (taskStatus === 'paused') {
-          resumeTask({taskId: state.activeTaskId});
-          addMessage(createSystemMessage(`Resuming task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'cyan'}));
+          const result = resumeTask({taskId: state.activeTaskId});
+          if (result === null || result === undefined) {
+            addMessage(createSystemMessage(`Resume request sent to server.`, {color: 'yellow'}));
+          } else {
+            addMessage(createSystemMessage(`Resuming task: ${state.activeTaskId.slice(0, 8)}...`, {color: 'cyan'}));
+          }
         } else {
           addMessage(createSystemMessage(`Cannot pause/resume task in ${taskStatus ?? 'unknown'} state`, {color: 'gray'}));
         }
+      } else {
+        addMessage(createSystemMessage('No active task to pause/resume.', {color: 'gray'}));
       }
       return;
     }
@@ -466,6 +502,17 @@ const App: React.FC = () => {
 
     // Esc: context-dependent escape
     if (key.escape) {
+      // Cancel submitting task if Esc pressed during submission
+      if (state.isSubmitting) {
+        dispatch({type: 'CANCEL_TASK'});
+        for (const tid of state.offlineTimerIds) clearTimeout(tid);
+        dispatch({type: 'CLEAR_OFFLINE_TIMERS'});
+        dispatch({type: 'SET_SUBMITTING', submitting: false});
+        dispatch({type: 'CLEAR_TASK'});
+        clearStreamTask();
+        addMessage(createSystemMessage('Task submission cancelled.', {color: 'yellow'}));
+        return;
+      }
       // Close subtask detail first if open
       if (state.subtaskOverlayOpen && state.subtaskDetailOpen) {
         dispatch({type: 'TOGGLE_SUBTASK_DETAIL'});
@@ -768,6 +815,13 @@ const App: React.FC = () => {
         </Box>
       )}
 
+      {/* ── Exit confirmation prompt ── */}
+      {state.exitConfirmPending && (
+        <Box paddingX={1}>
+          <Text color="red" bold>{'⚠ Task active — Ctrl+C again to confirm exit, any other key to dismiss'}</Text>
+        </Box>
+      )}
+
       {/* ── Status indicator (spinner + elapsed) ────── */}
       <StatusIndicator
         isSubmitting={state.isSubmitting}
@@ -841,6 +895,16 @@ function handleSlashCommand(
       break;
     case 'clear':
       dispatch({type: 'CLEAR_LOG'});
+      break;
+    case 'cancel':
+      if (activeTaskId || isStreaming) {
+        dispatch({type: 'CANCEL_TASK'});
+        dispatch({type: 'SET_SUBMITTING', submitting: false});
+        dispatch({type: 'CLEAR_TASK'});
+        addMessage(createSystemMessage('Task cancelled.', {color: 'yellow'}));
+      } else {
+        addMessage(createSystemMessage('No active task to cancel.', {color: 'gray'}));
+      }
       break;
     case 'reconnect':
       addMessage(createSystemMessage(`Reconnecting to ${serverAddr}...`, {color: 'yellow'}));
