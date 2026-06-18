@@ -3,6 +3,7 @@ import { useDashboard } from "@/hooks/useDashboard";
 import { useSSE } from "@/hooks/useSSE";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
 import { Header } from "@/components/layout/Header";
 import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
 import { HealthPanel } from "@/components/panels/HealthPanel";
@@ -29,24 +30,82 @@ function eventKey(ev: TaskEvent): string {
   return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}:${dataHash}`;
 }
 
+/** Login modal shown when auth is required but user is not authenticated. */
+function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolean> }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    const ok = await onLogin(password);
+    if (!ok) {
+      setError("Invalid password");
+    }
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-[var(--bg-surface)] border border-[var(--border-color)] rounded-xl p-6 max-w-sm w-[90%] shadow-xl"
+      >
+        <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2">Dashboard Login</h2>
+        <p className="text-sm text-[var(--text-secondary)] mb-4">Enter the dashboard password to continue.</p>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          autoFocus
+          className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none mb-3"
+        />
+        {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+        <button
+          type="submit"
+          disabled={submitting || !password}
+          className="w-full px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 transition-colors"
+        >
+          {submitting ? "Verifying..." : "Login"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function App() {
-  void useAuth();
+  const auth = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const dashboard = useDashboard();
 
-  // Dedup: track last-seen key → timestamp to allow re-processing after a
-  // reasonable window (same type for same entity can happen again later).
-  const seenKeys = useRef(new Map<string, number>());
+  // Dedup: prefer SSE event id (monotonic, server-assigned) for exact dedup.
+  // Fallback to content key + 2s window for gRPC-Web events (no server id).
+  const seenSseIds = useRef(new Set<string>());
+  const seenContentKeys = useRef(new Map<string, number>());
   const dedupedHandleTaskEvent = (ev: TaskEvent) => {
-    const key = eventKey(ev);
-    const now = Date.now();
-    const lastSeen = seenKeys.current.get(key);
-    // Skip if we saw this exact event key within the last 2 seconds
-    if (lastSeen !== undefined && now - lastSeen < 2000) return;
-    seenKeys.current.set(key, now);
-    // Prune entries older than 60s to bound memory
-    if (seenKeys.current.size > 5000) {
-      for (const [k, ts] of seenKeys.current) {
-        if (now - ts > 60_000) seenKeys.current.delete(k);
+    // SSE event id dedup — exact, no time window needed
+    if (ev._sseId) {
+      if (seenSseIds.current.has(ev._sseId)) return;
+      seenSseIds.current.add(ev._sseId);
+      // Prune: keep last 10000 SSE ids (monotonic, so old ones never match)
+      if (seenSseIds.current.size > 10000) {
+        const arr = Array.from(seenSseIds.current);
+        seenSseIds.current = new Set(arr.slice(arr.length - 5000));
+      }
+    } else {
+      // gRPC-Web: content key + 2s window fallback
+      const key = eventKey(ev);
+      const now = Date.now();
+      const lastSeen = seenContentKeys.current.get(key);
+      if (lastSeen !== undefined && now - lastSeen < 2000) return;
+      seenContentKeys.current.set(key, now);
+      if (seenContentKeys.current.size > 5000) {
+        for (const [k, ts] of seenContentKeys.current) {
+          if (now - ts > 60_000) seenContentKeys.current.delete(k);
+        }
       }
     }
     dashboard.handleTaskEvent(ev);
@@ -67,8 +126,8 @@ function App() {
       setLastUpdate(ev.timestamp);
     },
     onReconnect: () => {
-      // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
-      dashboard.fetchInitial();
+      // SSE reconnected — fetch fresh non-task data; tasks come via gRPC events if connected
+      dashboard.fetchInitial({ skipTasks: grpcState === "connected" });
     },
   });
 
@@ -79,11 +138,12 @@ function App() {
 
   // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
-  // ponytail: fetchInitial always loads all data; gRPC connect does its own listTasks merge.
-  // Old skipTasks logic was broken — grpcState is always "disconnected" on first render.
   useEffect(() => {
-    dashboard.fetchInitial().finally(() => setLoading(false));
-  }, [dashboard.fetchInitial]);
+    // On initial load, fetch everything. When gRPC is already connected,
+    // skip tasks — they come via gRPC listTasks + events, avoiding a race.
+    const skipTasks = grpcState === "connected";
+    dashboard.fetchInitial({ skipTasks }).finally(() => setLoading(false));
+  }, [dashboard.fetchInitial, grpcState]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
   // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch tasks via gRPC
@@ -145,6 +205,26 @@ function App() {
     return { ...dashboard.health, components };
   }, [dashboard.health, grpcState, grpcHealthComponents]);
 
+  // ── Hash routing ──────────────────────────────────────────────
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (hash) {
+        const el = document.getElementById(hash);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    // Scroll on initial load if hash is present
+    if (window.location.hash) {
+      // Defer so the DOM is ready
+      setTimeout(onHashChange, 100);
+    }
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
@@ -188,51 +268,72 @@ function App() {
     try { const r = await api.flushPending(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
-  if (loading) {
+  // ── Auth gate ─────────────────────────────────────────────────
+  if (auth.isChecking) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-gray-400">
+      <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mb-3" />
-          <p className="text-sm">Loading dashboard…</p>
+          <p className="text-sm">Checking access...</p>
         </div>
       </div>
     );
   }
 
-  // ponytail: panels are stale only when both SSE and gRPC-Web are disconnected;
-  // if either source is live, data is still flowing.
-  const stale = !connected && grpcState !== "connected";
+  if (!auth.isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[var(--bg-primary)]">
+        <LoginModal onLogin={auth.login} />
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mb-3" />
+          <p className="text-sm">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Data-source-aware stale: SSE-only panels (health, workers, scheduler, CB) are stale
+  // when SSE disconnects; gRPC-backed panels (tasks, events) are stale only when both disconnect.
+  const sseStale = !connected;
+  const grpcStale = !connected && grpcState !== "connected";
 
   return (
-    <div className="text-gray-200 min-h-screen">
+    <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} />
+      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
-          <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} stale={stale} /></div>
+          <div id="health" className="md:col-span-2 scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Circuit Breaker">
-          <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={stale} />
+          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
-          <WorkersPanel data={dashboard.workers} stale={stale} />
+          <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Tasks">
-          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={stale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} />
+          <div id="tasks" className="scroll-mt-20"><TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={grpcStale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Event Log">
-          <EventLogPanel events={dashboard.eventLog} stale={stale} />
+          <div id="events" className="scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Scheduler">
-          <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={stale} /></div>
+          <div id="scheduler" className="md:col-span-2 scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Task Activity">
-          <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={stale} /></div>
+          <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
-          <div className="md:col-span-2"><SearchPanel grpcState={grpcState} /></div>
+          <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} /></div>
         </ErrorBoundary>
       </main>
       <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />

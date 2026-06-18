@@ -59,6 +59,8 @@ export function useSSE(handlers: SSEHandlers) {
     es.addEventListener("task_event", (e: MessageEvent) => {
       try {
         const ev = JSON.parse(e.data) as TaskEvent;
+        // Inject SSE event id for dedup — this comes from server's monotonic id field
+        if (e.lastEventId) ev._sseId = e.lastEventId;
         handlersRef.current.onTaskEvent?.(ev);
         setConnected(true);
         retryCountRef.current = 0;

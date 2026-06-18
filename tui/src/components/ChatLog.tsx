@@ -240,14 +240,33 @@ const ChatLog: React.FC<ChatLogProps> = ({
     if (scrollCommand.direction === 'up') {
       setLocalOffset((prev) => Math.max(0, prev - scrollCommand.lines));
       onSetFollowLog?.(false);
+      // Keep selection within visible window
+      setSelectedVisibleIndex((prev) => {
+        if (prev < 0) return -1; // no selection → leave it
+        return Math.max(0, prev - scrollCommand.lines);
+      });
     } else {
       setLocalOffset((prev) => {
         const newOffset = Math.min(maxOffset, prev + scrollCommand.lines);
         if (newOffset >= maxOffset) onSetFollowLog?.(true);
         return newOffset;
       });
+      setSelectedVisibleIndex((prev) => {
+        if (prev < 0) return -1;
+        return Math.min(visibleCount - 1, prev + scrollCommand.lines);
+      });
     }
-  }, [scrollCommand, maxOffset, onSetFollowLog]);
+  }, [scrollCommand, maxOffset, onSetFollowLog, visibleCount]);
+
+  // When chat gains focus with no selection, auto-select last visible message
+  useEffect(() => {
+    if (isFocused && selectedVisibleIndex < 0 && visibleCount > 0) {
+      setSelectedVisibleIndex(visibleCount - 1);
+    }
+    if (!isFocused) {
+      setSelectedVisibleIndex(-1);
+    }
+  }, [isFocused, visibleCount]);
 
   // Handle Enter key locally: toggle expand on selected message
   useInput(useCallback((_input: string, key: {return?: boolean}) => {

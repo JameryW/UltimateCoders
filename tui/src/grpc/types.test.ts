@@ -60,15 +60,31 @@ describe('mapSubtaskStatus', () => {
 // ── mapTaskStatus ────────────────────────────────────────────
 
 describe('mapTaskStatus', () => {
-  it('returns the proto status string unchanged', () => {
-    expect(mapTaskStatus('InProgress')).toBe('InProgress');
+  it('maps "InProgress" to "in_progress"', () => {
+    expect(mapTaskStatus('InProgress')).toBe('in_progress');
+  });
+
+  it('maps "Paused" to "paused"', () => {
+    expect(mapTaskStatus('Paused')).toBe('paused');
+  });
+
+  it('maps "Completed" to "completed"', () => {
+    expect(mapTaskStatus('Completed')).toBe('completed');
+  });
+
+  it('maps "Failed" to "failed"', () => {
+    expect(mapTaskStatus('Failed')).toBe('failed');
+  });
+
+  it('maps "Planning" to "planning"', () => {
+    expect(mapTaskStatus('Planning')).toBe('planning');
+  });
+
+  it('falls back to lowercase for unknown status', () => {
+    expect(mapTaskStatus('anything')).toBe('anything');
   });
 
   it('returns empty string for empty input', () => {
     expect(mapTaskStatus('')).toBe('');
-  });
-
-  it('returns arbitrary string unchanged (identity function)', () => {
-    expect(mapTaskStatus('anything')).toBe('anything');
   });
 });

@@ -56,6 +56,13 @@ export interface UseTaskEventsReturn {
 
 // ── Event Processing ────────────────────────────────────────
 
+/** Parse depends_on from event data (may be string or string[]). */
+function parseDependsOn(val: string | string[] | undefined): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return val.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 /** Process a TaskEvent and update subtask state accordingly. */
 export function processEvent(
   event: TaskEventProto,
