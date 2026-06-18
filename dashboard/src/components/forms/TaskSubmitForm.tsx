@@ -63,7 +63,11 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
         }
       }
     } catch (err) {
-      showToast(`Submit failed ${modeLabel}: ${String(err)}`, "error");
+      // #7: Distinguish connection errors from other failures
+      const msg = err instanceof Error && err.message.includes("not connected")
+        ? `Cannot submit — gRPC-Web disconnected. Try reconnecting.`
+        : `Submit failed ${modeLabel}: ${String(err)}`;
+      showToast(msg, "error");
     } finally {
       setSubmitting(false);
     }

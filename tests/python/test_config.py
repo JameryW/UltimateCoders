@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-from ultimate_coders.config import Config, load_config
+from ultimate_coders.config import load_config
 
 
 class TestLoadConfigDefaults:

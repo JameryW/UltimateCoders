@@ -144,6 +144,12 @@ export interface TuiState {
   /** Currently selected task index in task list overlay (-1 = none). */
   selectedTaskListIndex: number;
 
+  /** Whether a task cancellation is pending (shows confirm prompt). */
+  exitConfirmPending: boolean;
+
+  /** Whether the active task has been cancelled by user. */
+  taskCancelled: boolean;
+
   /** Currently matching slash commands for autocomplete (null = no suggestion). */
   commandSuggestions: SlashCommand[] | null;
 }
@@ -178,6 +184,8 @@ export const INITIAL_TUI_STATE: TuiState = {
   taskListOverlayOpen: false,
   selectedTaskListIndex: -1,
   commandSuggestions: null,
+  exitConfirmPending: false,
+  taskCancelled: false,
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -228,7 +236,13 @@ export type TuiAction =
   | {type: 'TOGGLE_TASK_LIST_OVERLAY'}
   | {type: 'SELECT_TASK_LIST'; index: number}
   // ── Command suggestions ──
-  | {type: 'SET_COMMAND_SUGGESTIONS'; suggestions: SlashCommand[] | null};
+  | {type: 'SET_COMMAND_SUGGESTIONS'; suggestions: SlashCommand[] | null}
+  // ── Exit confirm ──
+  | {type: 'REQUEST_EXIT'}
+  | {type: 'DISMISS_EXIT_CONFIRM'}
+  // ── Task cancel ──
+  | {type: 'CANCEL_TASK'}
+  | {type: 'CLEAR_CANCEL'};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -499,6 +513,28 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_COMMAND_SUGGESTIONS':
       return {...state, commandSuggestions: action.suggestions};
+
+    // ── Exit confirm ──────────────────────────────────────────
+
+    case 'REQUEST_EXIT':
+      // Always set confirm — App.tsx checks active task/streaming to decide behavior
+      return {...state, exitConfirmPending: true};
+
+    case 'DISMISS_EXIT_CONFIRM':
+      return {...state, exitConfirmPending: false};
+
+    // ── Task cancel ───────────────────────────────────────────
+
+    case 'CANCEL_TASK':
+      return {
+        ...state,
+        taskCancelled: true,
+        isSubmitting: false,
+        startedAt: null,
+      };
+
+    case 'CLEAR_CANCEL':
+      return {...state, taskCancelled: false};
 
     default:
       return state;

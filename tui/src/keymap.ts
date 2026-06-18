@@ -48,6 +48,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'subtaskOverlay', label: 'Toggle subtask overlay', shortLabel: 'C-T', key: 'Ctrl+T', areas: [], global: true},
   {id: 'filter', label: 'Cycle event filter', shortLabel: 'C-F', key: 'Ctrl+F', areas: [], global: true},
   {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
+  {id: 'cancel', label: 'Cancel active task', shortLabel: 'C-X', key: 'Ctrl+X', areas: [], global: true},
   {id: 'reconnect', label: 'Reconnect gRPC', shortLabel: 'C-R', key: 'Ctrl+R', areas: [], global: true},
   {id: 'quit', label: 'Quit', shortLabel: 'C-Q', key: 'Ctrl+Q', areas: [], global: true},
   // Note: ? is global except in input focus (where it types a character)
@@ -78,6 +79,9 @@ const COMMANDS: KeyCommand[] = [
   {id: 'end', label: 'Jump to bottom', shortLabel: 'End', key: 'End', areas: ['chat'], global: false},
   {id: 'expandSelected', label: 'Expand/collapse selected message', shortLabel: 'Enter', key: 'Enter', areas: ['chat'], global: false},
   {id: 'clearLog', label: 'Clear log', shortLabel: 'C-L', key: 'Ctrl+L', areas: ['chat'], global: false},
+  {id: 'search', label: 'Search messages', shortLabel: 'C-S', key: 'Ctrl+S', areas: ['chat'], global: false},
+  {id: 'searchNext', label: 'Next search match', shortLabel: 'N', key: 'N', areas: ['chat'], global: false},
+  {id: 'searchPrev', label: 'Previous search match', shortLabel: 'S-N', key: 'Shift+N', areas: ['chat'], global: false},
 
   // ── Overlay (subtask Ctrl+T) ──
   {id: 'overlayUp', label: 'Navigate subtask up', shortLabel: '↑', key: 'Up', areas: [], global: false},

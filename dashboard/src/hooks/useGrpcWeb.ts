@@ -163,6 +163,10 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
   const submitTask = useCallback(
     async (description: string, projectId: string = ""): Promise<GrpcSubmitResult> => {
+      // ponytail: fail fast if not connected — prevents unhandled rejections
+      if (connectionState !== "connected") {
+        throw new Error(`gRPC-Web not connected (state: ${connectionState})`);
+      }
       const transport = getTransport();
       const client = createClient(TaskService, transport);
       const req = create(SubmitTaskRequestSchema, { description, projectId });
@@ -180,7 +184,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         })),
       };
     },
-    [],
+    [connectionState],
   );
 
   const healthCheck = useCallback(async () => {
@@ -219,8 +223,9 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
           status: s.status,
           depends_on: [...s.dependsOn],
         })),
-        created_at: new Date(Number(t.createdAt) * 1000).toISOString(),
-        updated_at: new Date(Number(t.updatedAt) * 1000).toISOString(),
+        // ponytail: divide bigint first to avoid Number precision loss on large values
+        created_at: new Date(Number(t.createdAt / 1000n) * 1000).toISOString(),
+        updated_at: new Date(Number(t.updatedAt / 1000n) * 1000).toISOString(),
       })),
       total: resp.total,
       status_counts: resp.statusCounts as Record<string, number>,

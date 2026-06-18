@@ -135,7 +135,9 @@ function App() {
     },
     onReconnect: () => {
       // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
-      dashboard.fetchInitial();
+      dashboard.fetchInitial().then((errors) => {
+        if (Object.keys(errors).length > 0) showToast(`Reconnect fetch partially failed`, "error");
+      });
     },
   });
 
@@ -154,7 +156,10 @@ function App() {
     if (auth.isChecking || !auth.isAuthenticated || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     const skipTasks = grpcState === "connected";
-    dashboard.fetchInitial({ skipTasks }).finally(() => setLoading(false));
+    dashboard.fetchInitial({ skipTasks }).then((errors) => {
+      setLoading(false);
+      if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
+    });
   }, [auth.isChecking, auth.isAuthenticated, dashboard.fetchInitial, grpcState]);
 
   // When auth transitions to authenticated, reconnect SSE with the stored token.
@@ -179,15 +184,19 @@ function App() {
     }
   }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
-  // Handle sync_required from broadcast lag — do full listTasks re-sync
+  // Handle sync_required from broadcast lag — re-sync via gRPC or REST
   useEffect(() => {
-    if (dashboard.needsSync && grpcState === "connected") {
-      dashboard.setNeedsSync(false);
+    if (!dashboard.needsSync) return;
+    dashboard.setNeedsSync(false);
+    if (grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch(() => { /* ignore */ });
-    } else if (dashboard.needsSync) {
-      dashboard.setNeedsSync(false);
+    } else {
+      // REST fallback: re-fetch tasks to fill gap
+      api.getTasks().then((data) => {
+        if (data.available) dashboard.mergeGrpcTasks(data);
+      }).catch(() => { /* ignore */ });
     }
   }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks, dashboard.setNeedsSync]);
 
@@ -250,10 +259,8 @@ function App() {
   }, []);
 
   const handlePauseTask = async (taskId: string) => {
-    const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
-    if (!ok) return;
+    // ponytail: no confirm — pause is reversible
     try {
-      // ponytail: prefer gRPC-Web, fall back to REST
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
         r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
@@ -264,8 +271,7 @@ function App() {
     } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
   };
   const handleResumeTask = async (taskId: string) => {
-    const ok = await confirmAction("Resume Task", `Resume task ${taskId.substring(0, 8)}?`);
-    if (!ok) return;
+    // ponytail: no confirm — resume is reversible
     try {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);

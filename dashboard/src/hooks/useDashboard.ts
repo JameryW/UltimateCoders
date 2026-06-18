@@ -13,6 +13,10 @@ import type {
 } from "@/types/dashboard";
 import * as api from "@/api/endpoints";
 
+/** #12: Maximum number of task entries to keep in interactionLog.
+ *  Oldest entries are evicted when this limit is exceeded. */
+const INTERACTION_LOG_MAX_ENTRIES = 50;
+
 export function useDashboard() {
   const [health, setHealth] = useState<HealthData>({
     available: false,
@@ -64,6 +68,7 @@ export function useDashboard() {
   >({});
   const [connected, setConnected] = useState(false);
   const [needsSync, setNeedsSync] = useState(false);
+  /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
 
   // Handle SSE full snapshot — merge with existing state to avoid overwriting
@@ -83,15 +88,21 @@ export function useDashboard() {
         const merged = snapshotTasks.tasks.map((st) => {
           const existing = prev.tasks.find((t) => t.id === st.id);
           if (!existing) return st;
-          // If our existing version is newer or equal (from gRPC-Web event), keep it.
-          // Equal timestamp means same second — gRPC incremental updates are more
-          // granular than SSE snapshot, so prefer them on ties.
+          // If our existing version is newer (from gRPC-Web event), keep it.
           const existingTime = new Date(existing.updated_at).getTime();
           const snapshotTime = new Date(st.updated_at).getTime();
-          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime >= snapshotTime) {
+          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime > snapshotTime) {
             return existing;
           }
-          // Snapshot is newer or equal → merge subtask-level data
+          // #5: On timestamp tie, prefer the source that has more non-pending subtasks.
+          // gRPC incremental updates carry live status transitions (assigned, in_progress,
+          // completed) while the SSE snapshot may lag behind on the same second.
+          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime === snapshotTime) {
+            const existingNonPending = countNonPendingSubtasks(existing);
+            const snapshotNonPending = countNonPendingSubtasks(st);
+            if (existingNonPending >= snapshotNonPending) return existing;
+          }
+          // Snapshot is newer → merge subtask-level data
           if (existing.subtasks && st.subtasks) {
             const mergedSubtasks = st.subtasks.map((ss) => {
               const es = existing.subtasks!.find((s) => s.id === ss.id);
@@ -118,10 +129,26 @@ export function useDashboard() {
   // Handle SSE/gRPC-Web real-time task event
   const handleTaskEvent = useCallback((ev: TaskEvent) => {
     const tid = ev.task_id;
-    setInteractionLog((prev) => ({
-      ...prev,
-      [tid]: [...(prev[tid] ?? []), ev],
-    }));
+    setInteractionLog((prev) => {
+      const updated = {
+        ...prev,
+        [tid]: [...(prev[tid] ?? []), ev],
+      };
+      // #12: LRU eviction — keep max INTERACTION_LOG_MAX_ENTRIES task entries.
+      // Evict oldest (by first event timestamp) when exceeded.
+      const keys = Object.keys(updated);
+      if (keys.length > INTERACTION_LOG_MAX_ENTRIES) {
+        // Sort by the timestamp of the first event in each entry
+        const sorted = keys.sort((a, b) => {
+          const ta = updated[a]?.[0]?.timestamp ?? "";
+          const tb = updated[b]?.[0]?.timestamp ?? "";
+          return ta.localeCompare(tb);
+        });
+        const toEvict = sorted.slice(0, keys.length - INTERACTION_LOG_MAX_ENTRIES);
+        for (const k of toEvict) delete updated[k];
+      }
+      return updated;
+    });
     // Also prepend to event log
     setEventLog((prev) => [
       {
@@ -247,6 +274,7 @@ export function useDashboard() {
   }, []);
 
   // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
+  // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
   const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }): Promise<Record<string, string>> => {
     const errors: Record<string, string> = {};
     try {
@@ -401,4 +429,11 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
       depends_on: (ev.data.depends_on as string[]) ?? [],
     },
   ];
+}
+
+/** #5: Count subtasks with non-pending status, used to break timestamp ties
+ *  in SSE vs gRPC-Web snapshot merge. */
+function countNonPendingSubtasks(task: TaskSummary): number {
+  if (!task.subtasks) return 0;
+  return task.subtasks.filter((s) => s.status !== "pending").length;
 }

@@ -1,0 +1,13 @@
+{"path": ".trellis/tasks/06-18-tui/prd.md", "kind": "spec", "note": "PRD with 20 requirements across 5 categories, 4 PR decomposition, acceptance criteria"}
+{"path": ".trellis/tasks/06-18-tui/research/tui-ux-patterns.md", "kind": "research", "note": "7 TUI UX patterns: mouse, search, code rendering, progress, config, themes, export + Ink v5 constraints"}
+{"path": "tui/src/reducer.ts", "kind": "spec", "note": "TuiState + TuiAction definitions — add new actions for cancel, search, symbolMode toggle, export"}
+{"path": "tui/src/keymap.ts", "kind": "spec", "note": "Centralized keyboard shortcuts — add Ctrl+C confirm, Ctrl+S search, Ctrl+E expand all"}
+{"path": "tui/src/commands.ts", "kind": "spec", "note": "Slash command definitions — add /cancel, /symbols, /export commands"}
+{"path": "tui/src/symbols.ts", "kind": "spec", "note": "Symbol mode system — consolidate hardcoded emoji/unicode into this module"}
+{"path": "tui/src/components/App.tsx", "kind": "spec", "note": "Root layout + global keyboard handler — add Ctrl+C confirmation, task cancel, search mode"}
+{"path": "tui/src/components/ChatLog.tsx", "kind": "spec", "note": "Message log — add search highlight, code syntax highlighting, diff coloring"}
+{"path": "tui/src/components/SubtaskTree.tsx", "kind": "spec", "note": "Subtask overlay — add scrolling when content exceeds terminal height"}
+{"path": "tui/src/components/TaskListOverlay.tsx", "kind": "spec", "note": "Task list overlay — add scrolling when content exceeds terminal height"}
+{"path": "tui/src/components/StatusBar.tsx", "kind": "spec", "note": "Status bar — add focus indicator enhancement, task complete notification"}
+{"path": "tui/src/components/StatusIndicator.tsx", "kind": "spec", "note": "Spinner/progress — wire Esc cancel to actually cancel task submission"}
+{"path": "tui/src/markdown.ts", "kind": "spec", "note": "Markdown rendering — add cli-highlight for code blocks, cache renderer by width"}

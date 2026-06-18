@@ -28,6 +28,7 @@ export const COMMANDS: SlashCommand[] = [
   {name: 'help', description: 'Show command list', usage: '/help', hasArgs: false},
   {name: 'tasks', description: 'List all tasks', usage: '/tasks', hasArgs: false},
   {name: 'task', description: 'Switch to a task', usage: '/task <id>', hasArgs: true},
+  {name: 'cancel', description: 'Cancel active task', usage: '/cancel', hasArgs: false},
   {name: 'clear', description: 'Clear chat log', usage: '/clear', hasArgs: false},
   {name: 'status', description: 'Show connection & task status', usage: '/status', hasArgs: false},
   {name: 'reconnect', description: 'Reconnect to gRPC server', usage: '/reconnect', hasArgs: false},

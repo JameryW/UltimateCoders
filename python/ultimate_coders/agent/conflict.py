@@ -381,7 +381,9 @@ class ConflictResolver:
 
         if not conflicts:
             # Non-overlapping changes: merge by applying both sets
-            merged = self._apply_non_conflicting(base_lines, ours_lines, theirs_lines, ours_changed, theirs_changed)
+            merged = self._apply_non_conflicting(
+                base_lines, ours_lines, theirs_lines, ours_changed, theirs_changed
+            )
             return MergeResult(merged=merged, success=True, tier=ResolutionTier.AUTO_MERGE)
 
         # Overlapping changes: produce conflict markers
@@ -501,7 +503,9 @@ class ConflictResolver:
                 merged_text = str(merged) if merged else ""
 
             if merged_text.strip():
-                return MergeResult(merged=merged_text, success=True, tier=ResolutionTier.LLM_ASSISTED)
+                return MergeResult(
+                    merged=merged_text, success=True, tier=ResolutionTier.LLM_ASSISTED
+                )
         except Exception as e:
             logger.warning("LLM-assisted merge failed: %s", e)
 

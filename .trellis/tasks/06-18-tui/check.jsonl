@@ -1,0 +1,8 @@
+{"path": ".trellis/tasks/06-18-tui/prd.md", "kind": "spec", "note": "PRD acceptance criteria and definition of done"}
+{"path": ".trellis/tasks/06-18-tui/research/tui-ux-patterns.md", "kind": "research", "note": "TUI UX patterns research — Ink v5 constraints, cli-highlight availability, SGR-1006 not feasible"}
+{"path": "tui/src/reducer.ts", "kind": "spec", "note": "Verify new actions added: CANCEL_TASK, SET_SEARCH_QUERY, SEARCH_NEXT, SEARCH_PREV, SET_SYMBOL_MODE, EXPORT_LOG, EXPAND_ALL, CONFIRM_EXIT"}
+{"path": "tui/src/keymap.ts", "kind": "spec", "note": "Verify new keybindings: Ctrl+C confirm, Ctrl+S search, Ctrl+E expand all"}
+{"path": "tui/src/commands.ts", "kind": "spec", "note": "Verify new commands: /cancel, /symbols <mode>, /export [path]"}
+{"path": "tui/src/symbols.ts", "kind": "spec", "note": "Verify no hardcoded emoji/unicode outside symbols.ts — grep for emoji patterns"}
+{"path": "tui/src/components/ChatLog.tsx", "kind": "spec", "note": "Verify search highlighting works, code blocks have syntax coloring, diff lines are colored"}
+{"path": "tui/src/components/SubtaskTree.tsx", "kind": "spec", "note": "Verify overlay scrolls when content exceeds terminal height"}
