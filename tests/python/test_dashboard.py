@@ -725,16 +725,16 @@ class TestEventLog:
         assert dashboard._event_log[1]["type"] == "test_event"
 
     def test_event_log_maxlen(self):
-        """Event log is bounded by maxlen=200."""
+        """Event log is bounded by maxlen=500."""
         from ultimate_coders.dashboard.app import DashboardApp
 
         orch = _make_orchestrator()
         dashboard = DashboardApp(orch)
 
-        for i in range(250):
+        for i in range(600):
             dashboard._record_event("event", idx=i)
 
-        assert len(dashboard._event_log) == 200
+        assert len(dashboard._event_log) == 500
 
     def test_events_api_endpoint(self):
         """GET /dashboard/api/events returns event log."""
