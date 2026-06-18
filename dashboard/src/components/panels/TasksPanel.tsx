@@ -31,17 +31,19 @@ interface TasksPanelProps {
   onFlush?: () => void;
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
+  stale?: boolean;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
   const toggleExpand = (taskId: string) => {
     setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
   };
 
   return (
-    <Card className="md:col-span-2">
+    <Card className="md:col-span-2" stale={stale}>
       <CardHeader>
         <CardTitle>Tasks</CardTitle>
         <div className="flex items-center gap-2">
@@ -65,12 +67,17 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           {Object.keys(data.status_counts).length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {Object.entries(data.status_counts).map(([status, count]) => (
-                <span
+                <button
                   key={status}
-                  className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(status))}
+                  onClick={() => setStatusFilter(statusFilter === status ? null : status)}
+                  className={cn(
+                    "text-xs px-1.5 py-0.5 rounded cursor-pointer",
+                    statusBadgeClass(status),
+                    statusFilter === status && "ring-1 ring-white/50"
+                  )}
                 >
                   {status}: {count}
-                </span>
+                </button>
               ))}
             </div>
           )}
@@ -82,7 +89,9 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           )}
 
           <ul className="space-y-1.5 max-h-[600px] overflow-y-auto">
-            {data.tasks.map((task) => (
+            {data.tasks
+              .filter((task) => !statusFilter || task.status === statusFilter)
+              .map((task) => (
               <li key={task.id}>
                 <div
                   role="button"

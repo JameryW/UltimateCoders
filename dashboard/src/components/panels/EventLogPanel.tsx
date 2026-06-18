@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -49,19 +50,74 @@ function eventSummary(details: Record<string, unknown>): string {
   return `${first}: ${JSON.stringify(val)}`;
 }
 
-export function EventLogPanel({ events }: { events: DashboardEvent[] }) {
+export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const uniqueTypes = useMemo(
+    () => [...new Set(events.map((e) => e.type))],
+    [events]
+  );
+
+  const filteredEvents = useMemo(() => {
+    let result = events;
+    if (typeFilter) {
+      result = result.filter((e) => e.type === typeFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((e) =>
+        e.type.toLowerCase().includes(q) ||
+        JSON.stringify(e.details).toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [events, typeFilter, searchQuery]);
+
   return (
-    <Card>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Event Log</CardTitle>
-        <Badge>{events.length}</Badge>
+        <Badge>{filteredEvents.length}</Badge>
       </CardHeader>
 
-      {events.length === 0 ? (
-        <p className="text-sm text-gray-500">No events</p>
+      {events.length > 0 && (
+        <div className="space-y-2 mb-2">
+          {uniqueTypes.length > 1 && (
+            <div className="flex flex-wrap gap-1">
+              {uniqueTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setTypeFilter(typeFilter === type ? null : type)}
+                  className={cn(
+                    "text-xs px-1.5 py-0.5 rounded cursor-pointer",
+                    eventTypeBg(type),
+                    eventTypeColor(type),
+                    typeFilter === type && "ring-1 ring-white/50"
+                  )}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search events..."
+            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-500 focus:outline-none focus:border-gray-500"
+          />
+        </div>
+      )}
+
+      {filteredEvents.length === 0 ? (
+        <p className="text-sm text-gray-500">
+          {events.length === 0 ? "No events" : "No matching events"}
+        </p>
       ) : (
         <ul className="space-y-1 max-h-64 overflow-y-auto" aria-label="Event log" aria-live="polite">
-          {events.map((evt, i) => (
+          {filteredEvents.map((evt, i) => (
             <li
               key={`${evt.timestamp}-${i}`}
               className={cn("flex items-start gap-2 px-2 py-1 rounded text-xs", eventTypeBg(evt.type))}

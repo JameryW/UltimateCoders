@@ -29,10 +29,15 @@ function componentStatusColor(status: string): string {
   }
 }
 
-export function HealthPanel({ data }: { data: HealthData }) {
+interface HealthPanelProps {
+  data: HealthData;
+  stale?: boolean;
+}
+
+export function HealthPanel({ data, stale }: HealthPanelProps) {
   if (!data.available) {
     return (
-      <Card>
+      <Card stale={stale}>
         <CardHeader>
           <CardTitle>Engine Health</CardTitle>
           <Badge variant="unavailable">unavailable</Badge>
@@ -44,7 +49,7 @@ export function HealthPanel({ data }: { data: HealthData }) {
   }
 
   return (
-    <Card>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Engine Health</CardTitle>
         <Badge variant={statusVariant(data.status)}>{data.status}</Badge>

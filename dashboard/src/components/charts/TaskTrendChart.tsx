@@ -9,10 +9,12 @@ import {
   Tooltip,
 } from "recharts";
 import type { TasksData, DashboardEvent } from "@/types/dashboard";
+import { cn } from "@/lib/utils";
 
 interface TaskTrendChartProps {
   tasks: TasksData;
   eventLog: DashboardEvent[];
+  stale?: boolean;
 }
 
 /** Bucket events by hour (last 24h) and count completions vs failures. */
@@ -34,7 +36,7 @@ function bucketByHour(events: DashboardEvent[]): { name: string; completed: numb
     .map(([name, counts]) => ({ name, ...counts }));
 }
 
-export function TaskTrendChart({ tasks, eventLog }: TaskTrendChartProps) {
+export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) {
   const trendData = useMemo(() => bucketByHour(eventLog), [eventLog]);
 
   // Current status summary from tasks
@@ -42,7 +44,12 @@ export function TaskTrendChart({ tasks, eventLog }: TaskTrendChartProps) {
   const total = tasks.available ? tasks.total : 0;
 
   return (
-    <div className="rounded-lg border border-dark-700 bg-dark-800 p-4">
+    <div className={cn("rounded-lg border border-dark-700 bg-dark-800 p-4 relative", stale && "opacity-70")}>
+      {stale && (
+        <div className="absolute top-2 left-2 text-[10px] text-yellow-400 bg-yellow-900/40 px-1.5 py-0.5 rounded font-medium z-10">
+          STALE
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
           Task Activity

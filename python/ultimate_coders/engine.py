@@ -131,18 +131,32 @@ class Engine:
         """
         if not self._should_use_fallback():
             # No fallback configured — call the engine directly
-            return getattr(self._engine, method_name)(*args, **kwargs)
+            try:
+                return getattr(self._engine, method_name)(*args, **kwargs)
+            except AttributeError:
+                raise AttributeError(
+                    f"Engine has no method '{method_name}'"
+                ) from None
 
         if self._fallback_active:
             # Already in fallback — check for recovery opportunity
             self._check_grpc_recovery()
             if self._fallback_active:
-                return getattr(self._local_engine, method_name)(*args, **kwargs)
+                try:
+                    return getattr(self._local_engine, method_name)(*args, **kwargs)
+                except AttributeError:
+                    raise AttributeError(
+                        f"Local engine has no method '{method_name}'"
+                    ) from None
 
         # Try gRPC first
         try:
             result = getattr(self._grpc_engine, method_name)(*args, **kwargs)
             return result
+        except AttributeError:
+            raise AttributeError(
+                f"gRPC engine has no method '{method_name}'"
+            ) from None
         except (ConnectionError, TimeoutError, OSError) as exc:
             logger.warning(
                 "gRPC %s failed (%s), falling back to local engine",
@@ -166,16 +180,30 @@ class Engine:
             The result of the async method call.
         """
         if not self._should_use_fallback():
-            return await getattr(self._engine, method_name)(*args, **kwargs)
+            try:
+                return await getattr(self._engine, method_name)(*args, **kwargs)
+            except AttributeError:
+                raise AttributeError(
+                    f"Engine has no async method '{method_name}'"
+                ) from None
 
         if self._fallback_active:
             self._check_grpc_recovery()
             if self._fallback_active:
-                return await getattr(self._local_engine, method_name)(*args, **kwargs)
+                try:
+                    return await getattr(self._local_engine, method_name)(*args, **kwargs)
+                except AttributeError:
+                    raise AttributeError(
+                        f"Local engine has no async method '{method_name}'"
+                    ) from None
 
         try:
             result = await getattr(self._grpc_engine, method_name)(*args, **kwargs)
             return result
+        except AttributeError:
+            raise AttributeError(
+                f"gRPC engine has no async method '{method_name}'"
+            ) from None
         except (ConnectionError, TimeoutError, OSError) as exc:
             logger.warning(
                 "gRPC %s failed (%s), falling back to local engine",
@@ -443,77 +471,6 @@ class Engine:
             query, scope_type, project_id, max_results, min_score,
         )
 
-    # ── Batch / List / Stream ────────────────────────────────
-
-    def batch_write_memory(self, requests: list[dict]) -> list:
-        """Write multiple memory entries in a single call.
-
-        Args:
-            requests: List of dicts with keys: key_scope, key, content,
-                and optional task_id, project_id, content_type, source_agent,
-                importance, tags.
-
-        Returns:
-            List of MemoryEntry objects.
-        """
-        return self._try_grpc_with_fallback("batch_write_memory", requests)
-
-    def list_repos(self) -> list:
-        """List all indexed repositories.
-
-        Returns:
-            List of RepoIndexState objects.
-        """
-        return self._try_grpc_with_fallback("list_repos")
-
-    def search_stream(self, query) -> list:
-        """Stream search results, collected into a list.
-
-        Args:
-            query: A SearchQuery object, PySearchQuery, or dict.
-
-        Returns:
-            List of SearchResultItem objects.
-        """
-        py_query = self._convert_search_query(query)
-        return self._try_grpc_with_fallback("search_stream", py_query)
-
-    # ── Task Orchestration ───────────────────────────────────
-
-    def submit_task(self, description: str, project_id: str | None = None) -> object:
-        """Submit a new task for orchestration.
-
-        Args:
-            description: Task description.
-            project_id: Optional project context.
-
-        Returns:
-            Task object with id, description, status, subtask_count.
-        """
-        return self._try_grpc_with_fallback(
-            "submit_task", description, project_id or "",
-        )
-
-    def get_task(self, task_id: str) -> object:
-        """Get a task by ID."""
-        return self._try_grpc_with_fallback("get_task", task_id)
-
-    def list_tasks(self) -> list:
-        """List all tasks.
-
-        Returns:
-            List of Task objects.
-        """
-        return self._try_grpc_with_fallback("list_tasks")
-
-    def pause_task(self, task_id: str) -> object:
-        """Pause a running task."""
-        return self._try_grpc_with_fallback("pause_task", task_id)
-
-    def resume_task(self, task_id: str) -> object:
-        """Resume a paused task."""
-        return self._try_grpc_with_fallback("resume_task", task_id)
-
     def watch_task(
         self,
         task_id: str,
@@ -538,6 +495,100 @@ class Engine:
         return self._try_grpc_with_fallback(
             "watch_task", task_id, max_events, timeout_secs,
         )
+
+    # ── Batch / List / Stream ──────────────────────────────────
+
+    def batch_write_memory(self, requests: list[dict]) -> list:
+        """Write multiple memory entries in a single call.
+
+        Args:
+            requests: List of dicts, each with keys:
+                key_scope (str), key (str), content (str), and optionally
+                content_type, source_agent, importance, tags, task_id,
+                project_id, language, file_path, uri, description.
+
+        Returns:
+            List of MemoryEntry objects.
+        """
+        return self._try_grpc_with_fallback("batch_write_memory", requests)
+
+    def list_repos(self) -> list:
+        """List all indexed repositories.
+
+        Returns:
+            List of RepoIndexState objects.
+        """
+        return self._try_grpc_with_fallback("list_repos")
+
+    def search_stream(self, query) -> list:
+        """Stream search results, collected into a list.
+
+        Args:
+            query: A SearchQuery object (builder), PySearchQuery, or dict.
+
+        Returns:
+            List of SearchResultItem objects.
+        """
+        py_query = self._convert_search_query(query)
+        return self._try_grpc_with_fallback("search_stream", py_query)
+
+    # ── Task Orchestration ─────────────────────────────────────
+
+    def submit_task(self, description: str, project_id: str | None = None) -> object:
+        """Submit a new task for orchestration.
+
+        Args:
+            description: Task description.
+            project_id: Project ID (default: empty string).
+
+        Returns:
+            Task object with id, description, status, etc.
+        """
+        return self._try_grpc_with_fallback(
+            "submit_task", description, project_id or ""
+        )
+
+    def get_task(self, task_id: str) -> object:
+        """Get a task by ID.
+
+        Args:
+            task_id: The task ID.
+
+        Returns:
+            Task object.
+        """
+        return self._try_grpc_with_fallback("get_task", task_id)
+
+    def list_tasks(self) -> list:
+        """List all tasks.
+
+        Returns:
+            List of Task objects.
+        """
+        return self._try_grpc_with_fallback("list_tasks")
+
+    def pause_task(self, task_id: str) -> object:
+        """Pause a running task.
+
+        Args:
+            task_id: The task ID.
+
+        Returns:
+            Updated Task object.
+        """
+        return self._try_grpc_with_fallback("pause_task", task_id)
+
+    def resume_task(self, task_id: str) -> object:
+        """Resume a paused task.
+
+        Args:
+            task_id: The task ID.
+
+        Returns:
+            Updated Task object.
+        """
+        return self._try_grpc_with_fallback("resume_task", task_id)
+
     # ── Async methods ──────────────────────────────────────────
 
     async def health_async(self) -> object:
@@ -729,51 +780,6 @@ class Engine:
             "remove_index_async", repo_id,
         )
 
-    # ── Async: Batch / List / Stream ────────────────────────
-
-    async def batch_write_memory_async(self, requests: list[dict]) -> list:
-        """Async version of batch_write_memory()."""
-        return await self._try_grpc_with_fallback_async(
-            "batch_write_memory_async", requests,
-        )
-
-    async def list_repos_async(self) -> list:
-        """Async version of list_repos()."""
-        return await self._try_grpc_with_fallback_async("list_repos_async")
-
-    async def search_stream_async(self, query) -> list:
-        """Async version of search_stream()."""
-        py_query = self._convert_search_query(query)
-        return await self._try_grpc_with_fallback_async(
-            "search_stream_async", py_query,
-        )
-
-    # ── Async: Task Orchestration ───────────────────────────
-
-    async def submit_task_async(
-        self, description: str, project_id: str | None = None,
-    ) -> object:
-        """Async version of submit_task()."""
-        return await self._try_grpc_with_fallback_async(
-            "submit_task_async", description, project_id or "",
-        )
-
-    async def get_task_async(self, task_id: str) -> object:
-        """Async version of get_task()."""
-        return await self._try_grpc_with_fallback_async("get_task_async", task_id)
-
-    async def list_tasks_async(self) -> list:
-        """Async version of list_tasks()."""
-        return await self._try_grpc_with_fallback_async("list_tasks_async")
-
-    async def pause_task_async(self, task_id: str) -> object:
-        """Async version of pause_task()."""
-        return await self._try_grpc_with_fallback_async("pause_task_async", task_id)
-
-    async def resume_task_async(self, task_id: str) -> object:
-        """Async version of resume_task()."""
-        return await self._try_grpc_with_fallback_async("resume_task_async", task_id)
-
     async def watch_task_async(
         self,
         task_id: str,
@@ -799,6 +805,93 @@ class Engine:
         return await self._try_grpc_with_fallback_async(
             "watch_task_async", task_id, max_events, timeout_secs,
         )
+
+    # ── Async Batch / List / Stream ────────────────────────────
+
+    async def batch_write_memory_async(self, requests: list[dict]) -> list:
+        """Async version of batch_write_memory().
+
+        Args:
+            requests: List of dicts (see batch_write_memory).
+
+        Returns:
+            List of MemoryEntry objects.
+        """
+        return await self._try_grpc_with_fallback_async(
+            "batch_write_memory_async", requests
+        )
+
+    async def list_repos_async(self) -> list:
+        """Async version of list_repos().
+
+        Returns:
+            List of RepoIndexState objects.
+        """
+        return await self._try_grpc_with_fallback_async("list_repos_async")
+
+    async def search_stream_async(self, query) -> list:
+        """Async version of search_stream().
+
+        Args:
+            query: A SearchQuery object (builder), PySearchQuery, or dict.
+
+        Returns:
+            List of SearchResultItem objects.
+        """
+        py_query = self._convert_search_query(query)
+        return await self._try_grpc_with_fallback_async(
+            "search_stream_async", py_query
+        )
+
+    # ── Async Task Orchestration ───────────────────────────────
+
+    async def submit_task_async(
+        self, description: str, project_id: str | None = None
+    ) -> object:
+        """Async version of submit_task().
+
+        Args:
+            description: Task description.
+            project_id: Project ID (default: empty string).
+        """
+        return await self._try_grpc_with_fallback_async(
+            "submit_task_async", description, project_id or ""
+        )
+
+    async def get_task_async(self, task_id: str) -> object:
+        """Async version of get_task().
+
+        Args:
+            task_id: The task ID.
+        """
+        return await self._try_grpc_with_fallback_async(
+            "get_task_async", task_id
+        )
+
+    async def list_tasks_async(self) -> list:
+        """Async version of list_tasks()."""
+        return await self._try_grpc_with_fallback_async("list_tasks_async")
+
+    async def pause_task_async(self, task_id: str) -> object:
+        """Async version of pause_task().
+
+        Args:
+            task_id: The task ID.
+        """
+        return await self._try_grpc_with_fallback_async(
+            "pause_task_async", task_id
+        )
+
+    async def resume_task_async(self, task_id: str) -> object:
+        """Async version of resume_task().
+
+        Args:
+            task_id: The task ID.
+        """
+        return await self._try_grpc_with_fallback_async(
+            "resume_task_async", task_id
+        )
+
 
 def create_engine(
     mode: str = "local",

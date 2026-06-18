@@ -9,9 +9,9 @@ function loadBarColor(percent: number): string {
   return "bg-green-500";
 }
 
-export function WorkersPanel({ data }: { data: WorkersData }) {
+export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boolean }) {
   return (
-    <Card>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Workers</CardTitle>
         <Badge variant="ok">

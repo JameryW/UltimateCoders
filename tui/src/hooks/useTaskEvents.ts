@@ -170,6 +170,9 @@ export function useTaskEvents(
   }, []);
 
   // Subscribe to WatchTask stream when client becomes available
+  // ponytail: always watch ALL tasks (taskId='') to avoid stream rebuilds
+  // when activeTaskId changes. Individual event processing filters by
+  // activeTaskId where needed. Stream rebuilds only on connect/disconnect.
   useEffect(() => {
     if (!client || connectionState !== 'connected') {
       setIsStreaming(false);
@@ -185,13 +188,12 @@ export function useTaskEvents(
       return;
     }
 
-    const watchId = activeTaskId ?? '';
     let cancelled = false;
 
     const subscribe = () => {
       if (cancelled) return;
       try {
-        const stream = client.watchTask({taskId: watchId});
+        const stream = client.watchTask({taskId: ''}); // watch all tasks
         streamRef.current = stream;
 
         stream.on('data', (event: any) => {
@@ -220,6 +222,8 @@ export function useTaskEvents(
                 streamRetryTimerRef.current = null;
                 subscribe();
               }, STREAM_RETRY_DELAY);
+            } else {
+              console.warn('[useTaskEvents] Stream retry exhausted — manual reconnect needed (Ctrl+R)');
             }
           }
         });
@@ -233,6 +237,8 @@ export function useTaskEvents(
                 streamRetryTimerRef.current = null;
                 subscribe();
               }, STREAM_RETRY_DELAY);
+            } else {
+              console.warn('[useTaskEvents] Stream retry exhausted after error — manual reconnect needed (Ctrl+R)');
             }
           }
         });
@@ -257,7 +263,7 @@ export function useTaskEvents(
         streamRetryTimerRef.current = null;
       }
     };
-  }, [client, connectionState, activeTaskId]);
+  }, [client, connectionState]); // ponytail: removed activeTaskId — always watch all tasks
 
   /** Update subtask state from a SubmitTaskResponse. */
   const setSubtasksFromSubmit = useCallback(

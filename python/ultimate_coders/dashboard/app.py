@@ -150,10 +150,33 @@ class DashboardApp:
             """
             from sse_starlette.sse import EventSourceResponse
 
+            # ponytail: monotonic event id for SSE resume + heartbeat
+            event_id = 0
+            loop = asyncio.get_running_loop()
+            last_heartbeat = loop.time()
+
+            async def cancellable_sleep(seconds: float) -> None:
+                """Sleep that checks client disconnect every 0.5s."""
+                elapsed = 0.0
+                step = 0.5
+                while elapsed < seconds:
+                    if await request.is_disconnected():
+                        return
+                    await asyncio.sleep(min(step, seconds - elapsed))
+                    elapsed += step
+
             async def event_generator():
+                nonlocal event_id, last_heartbeat
+
                 while True:
                     if await request.is_disconnected():
                         break
+
+                    # Heartbeat comment every 15s to prevent browser timeout
+                    now = loop.time()
+                    if now - last_heartbeat >= 15:
+                        last_heartbeat = now
+                        yield {"comment": "heartbeat"}
 
                     # Try to get a real-time event from local emitter first
                     if self.event_emitter is not None:
@@ -161,7 +184,9 @@ class DashboardApp:
                         if event is not None:
                             # Also record in our local event log
                             self._event_log.appendleft(event.to_dict())
+                            event_id += 1
                             yield {
+                                "id": str(event_id),
                                 "event": "task_event",
                                 "data": json.dumps(event.to_dict()),
                             }
@@ -173,7 +198,9 @@ class DashboardApp:
                             nats_event = self._nats_event_queue.get_nowait()
                             if nats_event is not None:
                                 self._event_log.appendleft(nats_event)
+                                event_id += 1
                                 yield {
+                                    "id": str(event_id),
                                     "event": "task_event",
                                     "data": json.dumps(nats_event),
                                 }
@@ -183,17 +210,17 @@ class DashboardApp:
 
                     # Timeout or no events: send full snapshot then wait
                     snapshot = self._get_full_snapshot()
+                    event_id += 1
                     yield {
+                        "id": str(event_id),
                         "event": "update",
                         "data": json.dumps(snapshot),
                     }
-                    # When no emitter and no NATS, we must sleep to avoid
-                    # spinning the loop without any delay (infinite fast loop).
+                    # ponytail: cancellable sleep — detects disconnect within 0.5s
                     if self.event_emitter is None and self._nats_client is None:
-                        await asyncio.sleep(5)
+                        await cancellable_sleep(5)
                     else:
-                        # Short sleep to avoid busy-wait between snapshot intervals
-                        await asyncio.sleep(2)
+                        await cancellable_sleep(2)
 
             return EventSourceResponse(event_generator())
 

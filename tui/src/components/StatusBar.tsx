@@ -64,6 +64,7 @@ export function buildSegments(props: {
   progress: {completed: number; total: number};
   focusedArea: FocusedArea;
   retryCount: number;
+  nextRetryAt: number | null;
   focusedAreaHelp: string;
   /** Brand symbol from getSymbols().brand (◆ or *). */
   brandChar: string;
@@ -76,6 +77,7 @@ export function buildSegments(props: {
     progress,
     focusedArea,
     retryCount,
+    nextRetryAt,
     focusedAreaHelp,
     brandChar,
   } = props;
@@ -174,7 +176,12 @@ export function buildSegments(props: {
 
   // ── 6. Retry (only when error + retrying) ────────────────
   if (connectionState === 'error' && retryCount > 0) {
-    const retryText = `retry ${retryCount}/${MAX_RETRY_DISPLAY}`;
+    const retrySecondsLeft = nextRetryAt
+      ? Math.max(0, Math.ceil((nextRetryAt - Date.now()) / 1000))
+      : 0;
+    const retryText = retrySecondsLeft > 0
+      ? `retry ${retryCount}/${MAX_RETRY_DISPLAY} in ${retrySecondsLeft}s`
+      : `retry ${retryCount}/${MAX_RETRY_DISPLAY}`;
     segments.push({
       id: 'retry',
       width: 3 + retryText.length,
@@ -288,6 +295,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
     progress,
     focusedArea,
     retryCount,
+    nextRetryAt,
     focusedAreaHelp: helpText,
     brandChar: S.brand,
   });

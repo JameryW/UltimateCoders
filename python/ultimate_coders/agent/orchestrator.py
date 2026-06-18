@@ -190,6 +190,13 @@ class Orchestrator:
         )
         self.tasks[task.id] = task
 
+        # Sync to Engine task store so gRPC consumers can query it
+        if self.engine is not None:
+            try:
+                self.engine.submit_task(description, project_id=project_id)
+            except Exception:
+                logger.debug("Engine submit_task sync failed", exc_info=True)
+
         # Store in memory
         if self.engine is not None:
             try:
@@ -1119,6 +1126,12 @@ class Orchestrator:
             return False
         task.status = TaskStatus.PAUSED
         task.update_timestamp()
+        # Sync to Engine task store so gRPC consumers see the update
+        if self.engine is not None:
+            try:
+                self.engine.pause_task(task_id)
+            except Exception:
+                logger.debug("Engine pause_task sync failed for %s", task_id, exc_info=True)
         logger.info("Task %s paused", task_id)
         return True
 
@@ -1146,6 +1159,12 @@ class Orchestrator:
             return False
         task.status = TaskStatus.IN_PROGRESS
         task.update_timestamp()
+        # Sync to Engine task store so gRPC consumers see the update
+        if self.engine is not None:
+            try:
+                self.engine.resume_task(task_id)
+            except Exception:
+                logger.debug("Engine resume_task sync failed for %s", task_id, exc_info=True)
         logger.info("Task %s resumed", task_id)
         return True
 

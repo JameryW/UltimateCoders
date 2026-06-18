@@ -151,13 +151,13 @@ export interface TaskEvent {
 // ── SSE Full Snapshot ───────────────────────────────────
 
 export interface DashboardSnapshot {
-  timestamp: string;
-  health: HealthData;
-  workers: WorkersData;
-  tasks: TasksData;
-  scheduler: SchedulerData;
-  circuit_breaker: CircuitBreakerData;
-  events: DashboardEvent[];
+  timestamp?: string;
+  health?: HealthData;
+  workers?: WorkersData;
+  tasks?: TasksData;
+  scheduler?: SchedulerData;
+  circuit_breaker?: CircuitBreakerData;
+  events?: DashboardEvent[];
 }
 
 // ── POST Response ───────────────────────────────────────

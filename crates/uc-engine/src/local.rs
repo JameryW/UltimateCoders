@@ -672,12 +672,12 @@ impl EngineApi for LocalEngine {
         description: String,
         project_id: String,
     ) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().unwrap();
+        let mut store = self.task_store.lock().expect("task_store lock poisoned");
         Ok(store.submit_task(description, project_id))
     }
 
     async fn get_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let store = self.task_store.lock().unwrap();
+        let store = self.task_store.lock().expect("task_store lock poisoned");
         store
             .get_task(task_id)
             .cloned()
@@ -685,17 +685,17 @@ impl EngineApi for LocalEngine {
     }
 
     async fn list_tasks(&self) -> Result<Vec<Task>, EngineError> {
-        let store = self.task_store.lock().unwrap();
+        let store = self.task_store.lock().expect("task_store lock poisoned");
         Ok(store.list_tasks())
     }
 
     async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().unwrap();
+        let mut store = self.task_store.lock().expect("task_store lock poisoned");
         store.pause_task(task_id).map_err(EngineError::TaskError)
     }
 
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().unwrap();
+        let mut store = self.task_store.lock().expect("task_store lock poisoned");
         store.resume_task(task_id).map_err(EngineError::TaskError)
     }
 }

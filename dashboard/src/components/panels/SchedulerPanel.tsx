@@ -24,12 +24,13 @@ function executionStatusColor(status: string): string {
 interface SchedulerPanelProps {
   data: SchedulerData;
   onTriggerJob?: (jobId: string) => void;
+  stale?: boolean;
 }
 
-export function SchedulerPanel({ data, onTriggerJob }: SchedulerPanelProps) {
+export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProps) {
   if (!data.available) {
     return (
-      <Card>
+      <Card stale={stale}>
         <CardHeader>
           <CardTitle>Scheduler</CardTitle>
           <Badge variant="unavailable">Not Available</Badge>
@@ -40,7 +41,7 @@ export function SchedulerPanel({ data, onTriggerJob }: SchedulerPanelProps) {
   }
 
   return (
-    <Card>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Scheduler</CardTitle>
         <Badge variant={schedulerStatusBadge(data.is_running)}>

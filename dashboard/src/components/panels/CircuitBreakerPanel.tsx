@@ -19,15 +19,16 @@ function cbStateVariant(state: string): "closed" | "open" | "half_open" {
 interface CircuitBreakerPanelProps {
   data: CircuitBreakerData;
   onReset?: () => void;
+  stale?: boolean;
 }
 
-export function CircuitBreakerPanel({ data, onReset }: CircuitBreakerPanelProps) {
+export function CircuitBreakerPanel({ data, onReset, stale }: CircuitBreakerPanelProps) {
   const cb = data.circuit_breaker;
   const rl = data.rate_limiter;
 
   if (!data.available) {
     return (
-      <Card>
+      <Card stale={stale}>
         <CardHeader>
           <CardTitle>Circuit Breaker</CardTitle>
           <Badge variant="unavailable">unavailable</Badge>
@@ -40,7 +41,7 @@ export function CircuitBreakerPanel({ data, onReset }: CircuitBreakerPanelProps)
   const showReset = cb.state === "open" || cb.state === "half_open";
 
   return (
-    <Card>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Circuit Breaker</CardTitle>
         {showReset && onReset && (

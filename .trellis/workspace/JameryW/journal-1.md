@@ -999,3 +999,37 @@ Fix ChatLog visibleLines to adapt to logo height (6/1/0 based on terminal width)
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: TUI Polish: Ctrl+W, Tab completion, StatusBar retry countdown
+
+**Date**: 2026-06-18
+**Task**: TUI Polish: Ctrl+W, Tab completion, StatusBar retry countdown
+**Branch**: `feat/watch-task-pyo3-bridge`
+
+### Summary
+
+Fixed 3 TUI keybinding gaps: Ctrl+W cycle focus, Tab slash command completion, StatusBar retry countdown. Added Common Mistakes #20 #21 to tui-grpc-spec.md. Resolved merge conflicts. Archived 9 completed tasks.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `269b8ce` | (see git log) |
+| `ffe7233` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
