@@ -8,9 +8,10 @@ interface SSEHandlers {
   onReconnect?: () => void;
 }
 
-/** Exponential backoff (ms) when EventSource exhausts its native reconnect. */
-const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000];
-const MAX_RETRY = RETRY_INTERVALS.length;
+/** Exponential backoff (ms) when EventSource exhausts its native reconnect.
+ *  No upper limit — keeps retrying indefinitely with capped delay. */
+const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
+const MAX_RETRY_INTERVAL = 60000;
 
 /** Build the SSE URL with optional auth token as query parameter.
  *
@@ -104,11 +105,10 @@ export function useSSE(handlers: SSEHandlers) {
         // wasConnectedRef preserves its current value (true if data was ever received).
         // This correctly marks the next successful open as a reconnect.
         // Native reconnect exhausted — schedule manual reconnect with backoff
-        if (retryCountRef.current < MAX_RETRY) {
-          const delay = RETRY_INTERVALS[retryCountRef.current];
-          retryCountRef.current += 1;
-          retryTimerRef.current = setTimeout(connect, delay);
-        }
+        // No upper limit — keeps retrying indefinitely (capped at 60s intervals)
+        const delay = RETRY_INTERVALS[retryCountRef.current] ?? MAX_RETRY_INTERVAL;
+        retryCountRef.current += 1;
+        retryTimerRef.current = setTimeout(connect, delay);
       } else {
         // CONNECTING = browser is retrying natively, just mark disconnected
         // #2: Removed duplicate setConnected(false) — only call once.

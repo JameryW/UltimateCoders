@@ -9,8 +9,7 @@ interface ConnectionIndicatorProps {
 
 export function ConnectionIndicator({ connected, grpcState, onReconnectSSE, onReconnectGrpc }: ConnectionIndicatorProps) {
   const grpcOk = grpcState === "connected";
-  const grpcError = grpcState === "error";
-  const grpcExhausted = grpcState === "exhausted";
+  const grpcReconnecting = grpcState === "reconnecting";
 
   return (
     <div className="fixed bottom-4 right-4 flex flex-col gap-1 z-50">
@@ -24,20 +23,13 @@ export function ConnectionIndicator({ connected, grpcState, onReconnectSSE, onRe
       </div>
       {grpcState && (
         <div
-          className={`px-3 py-1.5 rounded-md text-xs cursor-pointer ${grpcOk ? "bg-blue-500/20 text-blue-400" : grpcState === "connecting" ? "bg-yellow-500/20 text-yellow-400" : grpcExhausted ? "bg-orange-500/20 text-orange-400" : "bg-red-500/20 text-red-400"}`}
+          className={`px-3 py-1.5 rounded-md text-xs cursor-pointer ${grpcOk ? "bg-blue-500/20 text-blue-400" : grpcState === "connecting" || grpcReconnecting ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}
           onClick={!grpcOk && onReconnectGrpc ? onReconnectGrpc : undefined}
-          title={grpcExhausted ? "gRPC retry exhausted — click to reconnect" : grpcError ? "gRPC error — click to reconnect" : grpcOk ? "gRPC connected" : "gRPC connecting…"}
+          title={grpcReconnecting ? "gRPC reconnecting…" : grpcState === "error" ? "gRPC error — click to reconnect" : grpcOk ? "gRPC connected" : "gRPC connecting…"}
         >
-          gRPC {grpcOk ? "●" : grpcState === "connecting" ? "◐" : "○"}
+          gRPC {grpcOk ? "●" : grpcState === "connecting" || grpcReconnecting ? "◐" : "○"}
           {!grpcOk && onReconnectGrpc && " ↻"}
-          {grpcExhausted && " ⚠"}
-        </div>
-      )}
-      {/* Persistent banner when gRPC retries exhausted */}
-      {grpcExhausted && (
-        <div className="px-3 py-2 rounded-md text-xs bg-orange-500/20 text-orange-300 border border-orange-500/40">
-          <p className="font-medium mb-1">gRPC connection lost</p>
-          <p className="text-orange-400">Auto-retry exhausted. Click gRPC ↻ above or check your server.</p>
+          {grpcReconnecting && " ⏳"}
         </div>
       )}
     </div>

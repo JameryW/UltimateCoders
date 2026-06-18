@@ -336,12 +336,34 @@ class DashboardApp:
                         description=description,
                         project_id=project_id,
                     )
+                    # Wait briefly for nats_worker to process, then verify task state
+                    await asyncio.sleep(0.5)
+                    orch = self.orchestrator
+                    if orch is not None and task_id in orch.tasks:
+                        task = orch.tasks[task_id]
+                        return JSONResponse({
+                            "success": True,
+                            "task_id": task.id,
+                            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                            "subtask_count": len(task.subtasks),
+                            "subtasks": [
+                                {
+                                    "id": st.id,
+                                    "description": st.description,
+                                    "status": st.status.value if hasattr(st.status, "value") else str(st.status),
+                                    "depends_on": st.depends_on,
+                                }
+                                for st in task.subtasks
+                            ],
+                        })
+                    # Task not yet in Orchester state — return with pending flag
                     return JSONResponse({
                         "success": True,
                         "task_id": task_id,
                         "status": "Planning",
                         "subtask_count": 0,
                         "subtasks": [],
+                        "pending": True,
                     })
                 except Exception as e:
                     logger.warning("NATS publish failed: %s, falling back", e)
