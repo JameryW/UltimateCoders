@@ -276,6 +276,9 @@ message SubtaskProto {
     string status = 3;
     repeated string depends_on = 4;
     optional string assigned_worker = 5;
+    string parent_id = 6;
+    repeated string file_constraints = 7;
+    string expected_output = 8;
 }
 
 // ── Batch / List / Stream ─────────────────────────────────
