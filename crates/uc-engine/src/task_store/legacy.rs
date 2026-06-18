@@ -1,14 +1,18 @@
-//! In-memory task store for LocalEngine.
-//!
-//! This is a simplified version of the TaskStore in uc-grpc server.
-//! It provides basic task lifecycle management without NATS integration
-//! or local worker bridge.
+// Legacy synchronous TaskStore for LocalEngine backward compatibility.
+//
+// The `TaskStore` struct is a thin synchronous wrapper that the
+// `LocalEngine` uses for its `EngineApi` task methods. For the new
+// async `TaskStoreBackend` trait and PostgreSQL persistence, see
+// the `mod.rs` in this module.
 
 use std::collections::HashMap;
-use uc_types::{Subtask, SubtaskStatus, Task, TaskId, TaskStatus};
+use uc_types::{Task, TaskId, TaskStatus};
 
 /// In-memory store for tasks, used by LocalEngine to implement
 /// the task orchestration methods on the EngineApi trait.
+///
+/// This is the legacy synchronous struct. For the new async
+/// `TaskStoreBackend` trait, use `InMemoryTaskBackend` instead.
 pub struct TaskStore {
     tasks: HashMap<String, Task>,
 }
@@ -32,8 +36,7 @@ impl TaskStore {
         let task_id = TaskId::new();
         let now = chrono::Utc::now();
 
-        // Simple decomposition: split by newlines, creating one subtask per line
-        let subtasks = decompose_task(&task_id, &description);
+        let subtasks = super::decompose_task(&task_id, &description);
 
         let task = Task {
             id: task_id.clone(),
@@ -98,75 +101,6 @@ impl TaskStore {
     }
 }
 
-/// Simple task decomposition heuristic: split description by newlines
-/// or numbered items, creating one subtask per line/item.
-fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
-    let lines: Vec<&str> = description
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .collect();
-
-    if lines.is_empty() {
-        // Single subtask if description has no newlines
-        return vec![Subtask {
-            id: TaskId::new(),
-            parent_id: parent_id.clone(),
-            description: description.to_string(),
-            status: SubtaskStatus::Pending,
-            assigned_worker: None,
-            depends_on: Vec::new(),
-            file_constraints: Vec::new(),
-            expected_output: String::new(),
-            result: None,
-        }];
-    }
-
-    // Create subtasks from lines, with sequential dependencies
-    let mut subtasks = Vec::new();
-    let mut prev_id: Option<TaskId> = None;
-
-    for (i, line) in lines.iter().enumerate() {
-        // Strip leading numbers like "1. " or "1) "
-        let cleaned = line
-            .trim_start_matches(|c: char| c.is_numeric())
-            .trim_start_matches(['.', ')', ' '])
-            .to_string();
-
-        let desc = if cleaned.is_empty() {
-            line.to_string()
-        } else {
-            cleaned
-        };
-
-        let st_id = TaskId::new();
-        let depends_on = if i > 0 {
-            prev_id
-                .as_ref()
-                .map(|id| vec![id.clone()])
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
-        subtasks.push(Subtask {
-            id: st_id.clone(),
-            parent_id: parent_id.clone(),
-            description: desc,
-            status: SubtaskStatus::Pending,
-            assigned_worker: None,
-            depends_on,
-            file_constraints: Vec::new(),
-            expected_output: String::new(),
-            result: None,
-        });
-
-        prev_id = Some(st_id);
-    }
-
-    subtasks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,7 +116,6 @@ mod tests {
         assert_eq!(task.subtasks.len(), 3);
         assert_eq!(task.status, TaskStatus::InProgress);
 
-        // Get the task back
         let retrieved = store.get_task(&task.id.0).unwrap();
         assert_eq!(
             retrieved.description,
@@ -226,11 +159,9 @@ mod tests {
         let task = store.submit_task("Test task".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
 
-        // Pause (valid: InProgress -> Paused)
         let paused = store.pause_task(&task_id).unwrap();
         assert_eq!(paused.status, TaskStatus::Paused);
 
-        // Pause again (invalid: Paused -> Paused)
         let result = store.pause_task(&task_id);
         assert!(result.is_err());
     }
@@ -241,7 +172,6 @@ mod tests {
         let task = store.submit_task("Test task".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
 
-        // Resume without pausing (invalid: InProgress -> InProgress)
         let result = store.resume_task(&task_id);
         assert!(result.is_err());
     }
