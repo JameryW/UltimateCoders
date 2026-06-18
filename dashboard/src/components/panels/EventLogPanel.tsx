@@ -7,8 +7,12 @@ import type { DashboardEvent } from "@/types/dashboard";
 function eventTypeColor(type: string): string {
   if (type.startsWith("task_submitted")) return "text-blue-400";
   if (type.startsWith("task_completed")) return "text-green-400";
+  if (type.startsWith("task_failed")) return "text-red-400";
   if (type.startsWith("task_pause")) return "text-yellow-400";
   if (type.startsWith("task_resume")) return "text-green-400";
+  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "text-blue-300";
+  if (type.startsWith("subtask_completed")) return "text-green-300";
+  if (type.startsWith("subtask_failed")) return "text-red-300";
   if (type.startsWith("circuit_breaker_reset")) return "text-yellow-400";
   if (type.startsWith("scheduler_trigger")) return "text-green-400";
   return "text-gray-400";
@@ -17,8 +21,12 @@ function eventTypeColor(type: string): string {
 function eventTypeBg(type: string): string {
   if (type.startsWith("task_submitted")) return "bg-blue-900/30";
   if (type.startsWith("task_completed")) return "bg-green-900/30";
+  if (type.startsWith("task_failed")) return "bg-red-900/30";
   if (type.startsWith("task_pause")) return "bg-yellow-900/30";
   if (type.startsWith("task_resume")) return "bg-green-900/30";
+  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "bg-blue-900/20";
+  if (type.startsWith("subtask_completed")) return "bg-green-900/20";
+  if (type.startsWith("subtask_failed")) return "bg-red-900/20";
   if (type.startsWith("circuit_breaker_reset")) return "bg-yellow-900/30";
   if (type.startsWith("scheduler_trigger")) return "bg-green-900/30";
   return "bg-gray-800/50";
