@@ -873,6 +873,22 @@ impl PyEngine {
         })
     }
 
+    /// Async version of get_detailed_index_state().
+    pub fn get_detailed_index_state_async<'py>(
+        &self,
+        py: Python<'py>,
+        repo_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let result = inner
+                .get_index_state(&repo_id)
+                .await
+                .map_err(engine_error_to_pyerr)?;
+            Ok(PyIndexState::from_repo_index_state(result))
+        })
+    }
+
     /// Async version of remove_index().
     pub fn remove_index_async<'py>(
         &self,

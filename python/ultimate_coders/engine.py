@@ -767,6 +767,16 @@ class Engine:
             "get_index_state_async", repo_id,
         )
 
+    async def get_detailed_index_state_async(self, repo_id: str) -> dict:
+        """Async version of get_detailed_index_state().
+
+        Args:
+            repo_id: The repository identifier.
+        """
+        return await self._try_grpc_with_fallback_async(
+            "get_detailed_index_state_async", repo_id,
+        )
+
     async def remove_index_async(self, repo_id: str) -> None:
         """Async version of remove_index().
 
