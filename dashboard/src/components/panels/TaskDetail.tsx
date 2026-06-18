@@ -45,7 +45,7 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
           return (
             <div key={i} className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs", bg)}>
               <span className={cn("font-mono font-bold w-3 text-center", color)}>{icon}</span>
-              <span className="font-mono text-gray-300 truncate flex-1" title={f.path}>{f.path}</span>
+              <span className="font-mono text-[var(--text-primary)] truncate flex-1" title={f.path}>{f.path}</span>
               <span className={cn("text-[10px] px-1 rounded", color)}>{f.type.toUpperCase()}</span>
             </div>
           );
@@ -160,7 +160,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
           <div key={i} className="flex items-center gap-1.5 text-xs">
             <span>{typeIcon[ev.type] ?? "•"}</span>
             <span className="text-gray-500 w-16 shrink-0">{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ""}</span>
-            <span className="text-gray-300 truncate">{ev.type}</span>
+            <span className="text-[var(--text-primary)] truncate">{ev.type}</span>
             {ev.subtask_id && <span className="text-gray-600 font-mono">{shortId(ev.subtask_id)}</span>}
           </div>
         ))}
@@ -189,7 +189,7 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
       {/* Subtask list */}
       {subtasks.length > 0 && (
         <div>
-          <p className="text-gray-300 font-medium mb-1">Subtasks:</p>
+          <p className="text-[var(--text-primary)] font-medium mb-1">Subtasks:</p>
           <div className="space-y-0.5">
             {subtasks.map((st) => (
               <div key={st.id} className="flex items-center justify-between">
@@ -213,13 +213,13 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
       {/* Interaction log with subtask filter */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-gray-300 font-medium">Interaction Log:</span>
+          <span className="text-[var(--text-primary)] font-medium">Interaction Log:</span>
           {subtasks.length > 1 && (
             <select
               value={filterSubtaskId}
               onChange={(e) => setFilterSubtaskId(e.target.value)}
               aria-label="Filter by subtask"
-              className="text-xs bg-dark-900 border border-dark-700 text-gray-300 rounded px-2 py-1"
+              className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-2 py-1"
             >
               <option value="">All subtasks</option>
               {subtasks.map((st) => (

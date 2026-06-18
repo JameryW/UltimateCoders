@@ -79,7 +79,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
                     job.enabled ? "bg-green-500" : "bg-gray-600"
                   )}
                 />
-                <span className="text-gray-300">{job.description}</span>
+                <span className="text-[var(--text-primary)]">{job.description}</span>
               </div>
               <div className="flex items-center gap-2">
                 {job.cron_expression && (
@@ -102,7 +102,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
       )}
 
       {data.execution_history.length > 0 && (
-        <div className="border-t border-dark-700 pt-2">
+        <div className="border-t border-[var(--border-color)] pt-2">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">
             Execution History
           </p>

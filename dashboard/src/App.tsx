@@ -324,7 +324,7 @@ function App() {
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} />
+      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} onLogout={auth.logout} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} onOptimisticAdd={dashboard.optimisticAddTask} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">

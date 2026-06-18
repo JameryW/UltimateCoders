@@ -71,7 +71,7 @@ export function HealthPanel({ data, stale }: HealthPanelProps) {
         ))}
       </ul>
 
-      <div className="flex items-center justify-between text-xs text-gray-500 border-t border-dark-700 pt-2">
+      <div className="flex items-center justify-between text-xs text-[var(--text-muted)] border-t border-[var(--border-color)] pt-2">
         {data.version && <span>v{data.version}</span>}
         {data.uptime_seconds != null && (
           <span>uptime {formatUptime(data.uptime_seconds)}</span>

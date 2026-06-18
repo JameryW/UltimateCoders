@@ -116,7 +116,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   aria-expanded={expandedTaskId === task.id}
                   aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
-                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-dark-700/50 rounded-r",
+                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r",
                     statusBorderColor(task.status),
                     task.id === highlightTaskId && "ring-1 ring-blue-400/50 bg-blue-900/20"
                   )}
@@ -124,7 +124,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}
                 >
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-300">
+                    <span className="text-[var(--text-primary)]">
                       {truncate(task.description, 40)}
                     </span>
                     <div className="flex items-center gap-1.5">
