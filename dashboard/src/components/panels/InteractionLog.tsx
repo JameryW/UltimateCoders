@@ -13,6 +13,7 @@ function eventTypeStyle(type: string): { border: string; dot: string } {
   if (type === "subtask_completed") return { border: "border-l-green-500", dot: "text-green-400" };
   if (type === "subtask_failed") return { border: "border-l-red-500", dot: "text-red-400" };
   if (type === "task_completed") return { border: "border-l-green-500", dot: "text-green-400" };
+  if (type === "sync_required") return { border: "border-l-orange-500", dot: "text-orange-400" };
   return { border: "border-l-gray-600", dot: "text-gray-400" };
 }
 
@@ -25,6 +26,7 @@ function eventContent(ev: TaskEvent): string {
   if (ev.type === "subtask_completed") return `Completed: ${String(d.summary ?? "").substring(0, 60)}`;
   if (ev.type === "subtask_failed") return `Failed: ${String(d.error ?? "").substring(0, 60)}`;
   if (ev.type === "task_completed") return `Task ${String(d.status ?? "completed")}`;
+  if (ev.type === "sync_required") return `Sync required: ${String(d.reason ?? "unknown")}`;
   return ev.type;
 }
 

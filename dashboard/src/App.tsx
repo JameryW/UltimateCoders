@@ -66,6 +66,10 @@ function App() {
       dedupedHandleTaskEvent(ev);
       setLastUpdate(ev.timestamp);
     },
+    onReconnect: () => {
+      // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
+      dashboard.fetchInitial();
+    },
   });
 
   const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({

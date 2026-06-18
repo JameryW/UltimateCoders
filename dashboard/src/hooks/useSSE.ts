@@ -4,6 +4,8 @@ import type { DashboardSnapshot, TaskEvent } from "@/types/dashboard";
 interface SSEHandlers {
   onUpdate?: (snapshot: DashboardSnapshot) => void;
   onTaskEvent?: (event: TaskEvent) => void;
+  /** Called when SSE reconnects — use to fetch missed data since last update. */
+  onReconnect?: () => void;
 }
 
 /** Exponential backoff (ms) when EventSource exhausts its native reconnect. */
@@ -12,6 +14,7 @@ const MAX_RETRY = RETRY_INTERVALS.length;
 
 export function useSSE(handlers: SSEHandlers) {
   const [connected, setConnected] = useState(false);
+  const wasConnectedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
@@ -55,14 +58,19 @@ export function useSSE(handlers: SSEHandlers) {
     });
 
     es.addEventListener("open", () => {
+      const isReconnect = wasConnectedRef.current; // was connected before, now reconnecting
       setConnected(true);
+      wasConnectedRef.current = true;
       retryCountRef.current = 0;
+      // ponytail: on reconnect, notify caller to fetch missed data
+      if (isReconnect) handlersRef.current.onReconnect?.();
     });
 
     // ponytail: leverage EventSource native reconnect; manual reconnect only when CLOSED
     es.addEventListener("error", () => {
       if (es.readyState === EventSource.CLOSED) {
         setConnected(false);
+        wasConnectedRef.current = true; // was connected, now lost — marks as reconnect on next open
         // Native reconnect exhausted — schedule manual reconnect with backoff
         if (retryCountRef.current < MAX_RETRY) {
           const delay = RETRY_INTERVALS[retryCountRef.current];
@@ -71,6 +79,8 @@ export function useSSE(handlers: SSEHandlers) {
         }
       } else {
         // CONNECTING = browser is retrying natively, just mark disconnected
+        setConnected(false);
+        wasConnectedRef.current = true; // will be reconnect when open fires
         setConnected(false);
       }
     });
@@ -83,6 +93,7 @@ export function useSSE(handlers: SSEHandlers) {
     }
     clearRetryTimer();
     retryCountRef.current = 0;
+    wasConnectedRef.current = false;
     setConnected(false);
   }, [clearRetryTimer]);
 

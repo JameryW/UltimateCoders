@@ -45,13 +45,25 @@ export interface GrpcSubmitResult {
   subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[] }>;
 }
 
+/** Convert gRPC TaskEvent to dashboard TaskEvent.
+ *  gRPC proto data is map<string,string> — values that look like JSON
+ *  arrays/objects are parsed, others kept as-is. */
 function grpcEventToDashboardEvent(ev: GrpcTaskEvent): TaskEvent {
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(ev.data)) {
+    // ponytail: try JSON parse for structured values (subtasks, depends_on, etc.)
+    if (value.startsWith("[") || value.startsWith("{")) {
+      try { data[key] = JSON.parse(value); } catch { data[key] = value; }
+    } else {
+      data[key] = value;
+    }
+  }
   return {
     timestamp: ev.timestamp,
     type: ev.type,
     task_id: ev.taskId,
     subtask_id: ev.subtaskId ?? undefined,
-    data: { ...ev.data },
+    data,
   };
 }
 
