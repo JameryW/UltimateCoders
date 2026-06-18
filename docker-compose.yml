@@ -86,7 +86,7 @@ services:
 
   # ── NATS with JetStream ───────────────────────────────────────
   nats:
-    image: nats:2.10
+    image: nats:2.10-alpine
     ports:
       - "4222:4222"   # Client connections
       - "8222:8222"   # Management / monitoring
