@@ -11,6 +11,7 @@
  * - Event filtering: filter by event type (task/subtask/tool/error)
  * - Unread count: when followLog is off, shows "+N new" in header
  * - Home/End: jump to top/bottom (handled by parent via scrollCommand)
+ * - Message selection: Up/Down navigates, Enter expands selected message
  * - Markdown rendering: system messages with markdown are rendered via marked-terminal
  */
 import React, {useState, useEffect, useRef, useCallback} from 'react';
