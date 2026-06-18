@@ -100,7 +100,15 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Start storage infrastructure
-        run: docker compose up -d --wait
+        run: |
+          # TiKV can OOM on first start in CI; retry once after a short pause.
+          docker compose up -d --wait || {
+            echo "::warning::First attempt failed, printing logs and retrying..."
+            docker compose logs tikv || true
+            docker compose down -v
+            sleep 5
+            docker compose up -d --wait
+          }
       - name: Run storage integration tests
         run: cargo test --features storage -- --ignored
         env:
