@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, truncate, shortId } from "@/lib/utils";
@@ -32,11 +32,28 @@ interface TasksPanelProps {
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
   stale?: boolean;
+  /** Task ID to highlight and auto-scroll to (set after submit). */
+  highlightTaskId?: string | null;
+  /** Callback to clear highlight after it's been shown. */
+  onHighlightShown?: () => void;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const highlightRef = useRef<HTMLLIElement>(null);
+
+  // ponytail: auto-expand and scroll to highlighted task after submit
+  useEffect(() => {
+    if (highlightTaskId) {
+      setExpandedTaskId(highlightTaskId);
+      setStatusFilter(null); // clear filter so the task is visible
+      requestAnimationFrame(() => {
+        highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      onHighlightShown?.();
+    }
+  }, [highlightTaskId, onHighlightShown]);
 
   const toggleExpand = (taskId: string) => {
     setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
@@ -88,11 +105,11 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
             </p>
           )}
 
-          <ul className="space-y-1.5 max-h-[600px] overflow-y-auto">
+          <ul className="space-y-1.5 max-h-[600px] overflow-y-auto" aria-label="Task list">
             {data.tasks
               .filter((task) => !statusFilter || task.status === statusFilter)
               .map((task) => (
-              <li key={task.id}>
+              <li key={task.id} ref={task.id === highlightTaskId ? highlightRef : undefined}>
                 <div
                   role="button"
                   tabIndex={0}
@@ -100,7 +117,8 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
                     "border-l-2 pl-2 py-1 cursor-pointer hover:bg-dark-700/50 rounded-r",
-                    statusBorderColor(task.status)
+                    statusBorderColor(task.status),
+                    task.id === highlightTaskId && "ring-1 ring-blue-400/50 bg-blue-900/20"
                   )}
                   onClick={() => toggleExpand(task.id)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}

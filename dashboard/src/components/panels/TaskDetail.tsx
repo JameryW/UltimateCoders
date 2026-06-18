@@ -179,7 +179,7 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
 
   return (
-    <div className="pl-5 py-2 text-xs text-gray-400 space-y-3">
+    <div className="pl-5 py-2 text-xs text-gray-400 space-y-3" role="region" aria-label={`Task detail: ${task.description}`}>
       {/* Progress bar */}
       <SubtaskProgressBar subtasks={subtasks} />
 
@@ -218,6 +218,7 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
             <select
               value={filterSubtaskId}
               onChange={(e) => setFilterSubtaskId(e.target.value)}
+              aria-label="Filter by subtask"
               className="text-xs bg-dark-900 border border-dark-700 text-gray-300 rounded px-2 py-1"
             >
               <option value="">All subtasks</option>
