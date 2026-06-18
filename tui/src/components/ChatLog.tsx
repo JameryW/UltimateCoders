@@ -13,8 +13,8 @@
  * - Home/End: jump to top/bottom (handled by parent via scrollCommand)
  * - Markdown rendering: system messages with markdown are rendered via marked-terminal
  */
-import React, {useState, useEffect, useRef} from 'react';
-import {Box, Text} from 'ink';
+import React, {useState, useEffect, useRef, useCallback} from 'react';
+import {Box, Text, useInput} from 'ink';
 import type {EventFilter} from '../reducer.js';
 import {eventFilterLabel} from '../reducer.js';
 import {renderMarkdown, hasMarkdown} from '../markdown.js';
@@ -48,7 +48,6 @@ export interface ChatLogProps {
   scrollCommand?: ScrollCommand;
   onSetFollowLog?: (follow: boolean) => void;
   unreadCount?: number;
-  expandAll?: boolean;
   terminalWidth?: number;
 }
 
@@ -137,16 +136,11 @@ export function getEventIcon(eventType?: string): string {
   return EVENT_ICONS[eventType] ? `${EVENT_ICONS[eventType]} ` : '';
 }
 
-const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean; terminalWidth?: number}> = ({msg, expandAll, terminalWidth}) => {
-  const [expanded, setExpanded] = useState(false);
+const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number}> = ({msg, isExpanded, isSelected, terminalWidth}) => {
   const lines = msg.text.split('\n');
 
   const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
   const isLong = !msg.isUser && (isToolEvent || lines.length > COLLAPSE_THRESHOLD);
-
-  useEffect(() => {
-    setExpanded(expandAll ?? false);
-  }, [expandAll]);
 
   const statusColor = msg.color ?? (
     msg.eventType === 'subtask_completed' || msg.eventType === 'task_completed'
@@ -158,7 +152,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean; terminal
           : undefined
   );
 
-  const visibleLines = (isLong && !expanded) ? lines.slice(0, 1) : lines;
+  const visibleLines = (isLong && !isExpanded) ? lines.slice(0, 1) : lines;
 
   // ponytail: render markdown for system messages that contain markdown syntax
   const shouldRenderMarkdown = !msg.isUser && !isToolEvent && hasMarkdown(msg.text);
@@ -185,16 +179,18 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; expandAll?: boolean; terminal
     );
   };
 
-  const collapsedCount = isLong && !expanded ? lines.length - 1 : 0;
+  const collapsedCount = isLong && !isExpanded ? lines.length - 1 : 0;
 
   return (
     <Box flexDirection="column">
       <Box>
         <Text dimColor>{`[${msg.timestamp}] `}</Text>
+        {isSelected && <Text color="yellow">{'▸'}</Text>}
+        {!isSelected && <Text>{' '}</Text>}
         {renderText()}
       </Box>
       {collapsedCount > 0 && (
-        <Box marginLeft={7}>
+        <Box marginLeft={9}>
           <Text dimColor>{isToolEvent ? `[+${collapsedCount} lines — Enter to expand]` : `[+${collapsedCount} more]`}</Text>
         </Box>
       )}
@@ -211,20 +207,28 @@ const ChatLog: React.FC<ChatLogProps> = ({
   scrollCommand,
   onSetFollowLog,
   unreadCount = 0,
-  expandAll = false,
   terminalWidth,
 }) => {
   const [localOffset, setLocalOffset] = useState(0);
+  const [selectedVisibleIndex, setSelectedVisibleIndex] = useState(-1);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const lastScrollTick = useRef(0);
   const prevFilterRef = useRef(eventFilter);
   const filteredMessages = filterMessages(messages, eventFilter);
   const totalMessages = filteredMessages.length;
   const maxOffset = Math.max(0, totalMessages - visibleLines);
 
+  // Computed visible window
+  const effectiveOffset = followLog ? maxOffset : Math.min(localOffset, maxOffset);
+  const endIdx = Math.min(effectiveOffset + visibleLines, totalMessages);
+  const visibleMessages = filteredMessages.slice(effectiveOffset, endIdx);
+  const visibleCount = visibleMessages.length;
+
   useEffect(() => {
     if (eventFilter !== prevFilterRef.current) {
       prevFilterRef.current = eventFilter;
       setLocalOffset(0);
+      setSelectedVisibleIndex(-1);
       if (!followLog) onSetFollowLog?.(true);
     }
   }, [eventFilter, followLog, onSetFollowLog]);
@@ -244,7 +248,54 @@ const ChatLog: React.FC<ChatLogProps> = ({
     }
   }, [scrollCommand, maxOffset, onSetFollowLog]);
 
-  const effectiveOffset = followLog ? maxOffset : Math.min(localOffset, maxOffset);
+  // Handle Enter key locally: toggle expand on selected message
+  useInput(useCallback((_input: string, key: {return?: boolean}) => {
+    if (!isFocused || !key.return) return;
+    // If no selection, select the last visible message
+    if (selectedVisibleIndex < 0) {
+      setSelectedVisibleIndex(visibleCount - 1);
+      return;
+    }
+    const msg = visibleMessages[selectedVisibleIndex];
+    if (msg) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(msg.id)) next.delete(msg.id);
+        else next.add(msg.id);
+        return next;
+      });
+    }
+  }, [isFocused, selectedVisibleIndex, visibleMessages, visibleCount]));
+
+  // Handle Up/Down to move selection (scrolls window to keep selection visible)
+  useInput(useCallback((_input: string, key: {upArrow?: boolean; downArrow?: boolean}) => {
+    if (!isFocused) return;
+    if (key.upArrow) {
+      setSelectedVisibleIndex((prev) => {
+        if (prev < 0) return visibleCount > 0 ? visibleCount - 1 : -1;
+        if (prev > 0) return prev - 1;
+        // At top of visible window — scroll up
+        onSetFollowLog?.(false);
+        setLocalOffset((off) => Math.max(0, off - 1));
+        return 0;
+      });
+      return;
+    }
+    if (key.downArrow) {
+      setSelectedVisibleIndex((prev) => {
+        if (prev < 0) return 0;
+        if (prev < visibleCount - 1) return prev + 1;
+        // At bottom of visible window — scroll down
+        setLocalOffset((off) => {
+          const newOff = Math.min(maxOffset, off + 1);
+          if (newOff >= maxOffset) onSetFollowLog?.(true);
+          return newOff;
+        });
+        return visibleCount - 1;
+      });
+      return;
+    }
+  }, [isFocused, visibleCount, maxOffset, onSetFollowLog]));
 
   if (totalMessages === 0) {
     return (
@@ -254,15 +305,9 @@ const ChatLog: React.FC<ChatLogProps> = ({
     );
   }
 
-  const endIdx = Math.min(effectiveOffset + visibleLines, totalMessages);
-  const visibleMessages = filteredMessages.slice(effectiveOffset, endIdx);
-
   const atTop = effectiveOffset === 0;
   const atBottom = effectiveOffset >= maxOffset;
   const scrollIndicator = atTop && atBottom ? '' : atTop ? ' ↓' : atBottom ? ' ↑' : ` ↑${effectiveOffset + 1}-${endIdx}/${totalMessages}↓`;
-  const followIndicator = followLog ? '' : ' [paused]';
-  const unreadIndicator = unreadCount > 0 ? ` [+${unreadCount} new]` : '';
-  const filterIndicator = eventFilter !== 'all' ? ` [filter:${eventFilterLabel(eventFilter)} ${totalMessages}/${messages.length}]` : '';
 
   // Compact single-line indicator bar
   const parts: string[] = [];
@@ -284,7 +329,12 @@ const ChatLog: React.FC<ChatLogProps> = ({
             {showSeparator && (
               <Text dimColor>{`── ${msg.timestamp} ──`}</Text>
             )}
-            <ChatMessageItem msg={msg} expandAll={expandAll} terminalWidth={terminalWidth} />
+            <ChatMessageItem
+              msg={msg}
+              isExpanded={expandedIds.has(msg.id)}
+              isSelected={isFocused && i === selectedVisibleIndex}
+              terminalWidth={terminalWidth}
+            />
           </React.Fragment>
         );
       })}
