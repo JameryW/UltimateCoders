@@ -73,9 +73,17 @@ class TaskEventEmitter:
             buffer_size: Maximum number of recent events to keep
                 in the ring buffer (default: 500).
         """
-        self._queue: asyncio.Queue[TaskEvent | None] = asyncio.Queue()
+        # ponytail: lazy Queue — Python 3.9 asyncio.Queue() needs a running
+        # event loop at init time, which doesn't exist in synchronous tests.
+        self._queue: asyncio.Queue[TaskEvent | None] | None = None
         self._recent: deque[dict[str, Any]] = deque(maxlen=buffer_size)
         self._listeners: int = 0
+
+    def _get_queue(self) -> asyncio.Queue[TaskEvent | None]:
+        """Lazily create the asyncio.Queue on first use."""
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+        return self._queue
 
     async def emit(
         self,
@@ -105,7 +113,7 @@ class TaskEventEmitter:
 
         # Push to queue for SSE consumers
         try:
-            self._queue.put_nowait(event)
+            self._get_queue().put_nowait(event)
         except asyncio.QueueFull:
             logger.warning("Event queue full, dropping event: %s", event_type)
 
@@ -123,7 +131,7 @@ class TaskEventEmitter:
             The next TaskEvent, or None on timeout.
         """
         try:
-            return await asyncio.wait_for(self._queue.get(), timeout=timeout)
+            return await asyncio.wait_for(self._get_queue().get(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
 
@@ -149,4 +157,4 @@ class TaskEventEmitter:
     @property
     def pending_count(self) -> int:
         """Number of events waiting in the queue."""
-        return self._queue.qsize()
+        return self._get_queue().qsize()
