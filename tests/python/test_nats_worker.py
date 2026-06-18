@@ -668,3 +668,26 @@ class TestSerializationRoundtrip:
         json_str = json.dumps(payload)
         parsed = json.loads(json_str)
         assert parsed["consumer_id"] == "consumer-1"
+
+
+class TestExecuteSubtasksPublicAPI:
+    """Regression tests for _execute_subtasks using public API."""
+
+    @pytest.mark.asyncio
+    async def test_uses_public_select_next_subtask(self):
+        """_execute_subtasks must call public select_next_subtask, not private."""
+        from ultimate_coders.nats_worker import NatsWorker
+
+        worker = NatsWorker.__new__(NatsWorker)
+        orchestrator = MagicMock()
+        orchestrator.select_next_subtask = MagicMock(return_value=None)
+        worker._orchestrator = orchestrator
+        worker._worker = MagicMock()  # must be non-None to enter the loop
+        worker._publisher = None
+
+        task = MagicMock()
+        task.subtasks = []
+        task.status = "PENDING"
+
+        await worker._execute_subtasks(task)
+        orchestrator.select_next_subtask.assert_called_once_with(task)

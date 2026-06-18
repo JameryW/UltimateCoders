@@ -25,8 +25,9 @@ import type { TaskEvent, HealthData, DashboardSnapshot } from "@/types/dashboard
 function eventKey(ev: TaskEvent): string {
   // ponytail: exclude timestamp — SSE and gRPC-Web emit the same logical event
   // with slightly different timestamps, causing double-processing.
-  // Include a data hash so pause→resume→start within 2s doesn't get deduped.
-  const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 40);
+  // Use full data hash (truncated to 80 chars) so subtask_started vs subtask_completed
+  // for the same subtask within 1s don't collide (they have different data fields).
+  const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 80);
   return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}:${dataHash}`;
 }
 
@@ -104,11 +105,11 @@ function App() {
         seenSseIds.current = new Set(arr.slice(arr.length - 5000));
       }
     } else {
-      // gRPC-Web: content key + 2s window fallback
+      // gRPC-Web: content key + 1s window fallback
       const key = eventKey(ev);
       const now = Date.now();
       const lastSeen = seenContentKeys.current.get(key);
-      if (lastSeen !== undefined && now - lastSeen < 2000) return;
+      if (lastSeen !== undefined && now - lastSeen < 1000) return;
       seenContentKeys.current.set(key, now);
       if (seenContentKeys.current.size > 5000) {
         for (const [k, ts] of seenContentKeys.current) {
@@ -379,7 +380,7 @@ function App() {
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} onLogout={auth.logout} />
+      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} onLogout={auth.logout} fetchErrors={dashboard.fetchErrors} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} onOptimisticAdd={dashboard.optimisticAddTask} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">

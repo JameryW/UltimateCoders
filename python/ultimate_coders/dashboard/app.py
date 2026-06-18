@@ -363,11 +363,12 @@ class DashboardApp:
                                 for st in task.subtasks
                             ],
                         })
-                    # Task not yet in Orchester state — return with pending flag
+                    # Task not yet in Orchestrator state — return with pending flag.
+                    # Status "submitted" matches the SSE task_submitted event type.
                     return JSONResponse({
                         "success": True,
                         "task_id": task_id,
-                        "status": "Planning",
+                        "status": "submitted",
                         "subtask_count": 0,
                         "subtasks": [],
                         "pending": True,
@@ -530,10 +531,18 @@ class DashboardApp:
                     status_code=503,
                 )
             count = orch.pending_task_count
-            # flush_pending_tasks is async, but in a sync context we
-            # return the count and let the Orchestrator handle it
-            self._record_event("flush_pending", count=count)
-            return JSONResponse({"success": True, "pending_count": count})
+            try:
+                executed = await orch.flush_pending_tasks()
+                self._record_event("flush_pending", count=count, executed=len(executed))
+                return JSONResponse(
+                    {"success": True, "pending_count": count, "executed": len(executed)}
+                )
+            except Exception as e:
+                logger.error("flush_pending_tasks failed: %s", e, exc_info=True)
+                return JSONResponse(
+                    {"success": False, "error": f"Flush failed: {e}"},
+                    status_code=500,
+                )
 
         # ── Event Log Endpoint ─────────────────────────────────
 

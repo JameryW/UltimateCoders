@@ -632,6 +632,25 @@ class TestWorker:
         assert not result.success
         assert "No LLM client" in result.summary
 
+    def test_collect_modified_files_ignores_reads(self):
+        """read_file tool calls should NOT appear in modified files."""
+        worker = Worker.__new__(Worker)
+        tool_log = [
+            {
+                "tool_call": {"name": "read_file", "input": {"file_path": "/tmp/read.py"}},
+                "result": "file content here",
+            },
+            {
+                "tool_call": {"name": "edit_file", "input": {"file_path": "/tmp/edit.py", "content": "new", "create": False}},
+                "result": "ok",
+            },
+        ]
+        changes = worker._collect_modified_files(tool_log)
+        # read_file should NOT be in the results
+        assert all(c.file_path != "/tmp/read.py" for c in changes)
+        # edit_file SHOULD be in the results
+        assert any(c.file_path == "/tmp/edit.py" for c in changes)
+
     @pytest.mark.asyncio
     async def test_heartbeat(self):
         worker = Worker(worker_id="w1")

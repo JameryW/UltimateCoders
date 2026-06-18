@@ -9,6 +9,8 @@ interface HeaderProps {
   theme: Theme;
   onToggleTheme: () => void;
   onLogout?: () => void;
+  /** Panels that failed to load — show warning banner if non-empty. */
+  fetchErrors?: Record<string, string>;
 }
 
 const GRPC_LABELS: Record<GrpcConnectionState, { text: string; color: string }> = {
@@ -30,7 +32,7 @@ const NAV_SECTIONS = [
   { hash: "search", label: "Search" },
 ];
 
-export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout }: HeaderProps) {
+export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout, fetchErrors }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const grpc = grpcState ? GRPC_LABELS[grpcState] : null;
   return (
@@ -107,6 +109,13 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme,
           )}
         </div>
       </div>
+      {/* Partial failure warning banner */}
+      {fetchErrors && Object.keys(fetchErrors).length > 0 && (
+        <div className="mt-2 px-3 py-1.5 rounded-md text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 flex items-center gap-2">
+          <span>⚠</span>
+          <span>Some panels unavailable: {Object.keys(fetchErrors).join(", ")}</span>
+        </div>
+      )}
       {/* Mobile nav dropdown */}
       {menuOpen && (
         <nav className="md:hidden mt-2 pb-1 flex flex-wrap gap-2">

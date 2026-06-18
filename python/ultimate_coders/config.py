@@ -72,10 +72,21 @@ def load_config(path: str | None = None) -> Config:
     """Load configuration from file or environment.
 
     Priority: file > environment > defaults.
+
+    Auto-discovers config files (uc.toml, uc.yaml, uc.yml, .uc.toml) in
+    the current directory when no path is given.
     """
     config = Config()
 
-    # Load from TOML/YAML file if path is provided
+    # Auto-discover config file if no path given
+    if path is None:
+        for candidate in ("uc.toml", "uc.yaml", "uc.yml", ".uc.toml"):
+            if os.path.isfile(candidate):
+                path = candidate
+                logger.info("Auto-discovered config file: %s", path)
+                break
+
+    # Load from TOML/YAML file if path is provided or discovered
     if path is not None:
         try:
             with open(path) as f:
@@ -129,5 +140,18 @@ def load_config(path: str | None = None) -> Config:
         "UC_QDRANT_URL", config.storage.qdrant_url
     )
     config.nats.url = os.environ.get("UC_NATS_URL", config.nats.url)
+
+    # Additional LLM env var overrides
+    config.llm.model = os.environ.get("UC_LLM_MODEL", config.llm.model)
+    config.llm.fallback_model = os.environ.get("UC_LLM_FALLBACK_MODEL", config.llm.fallback_model)
+    if "UC_LLM_RPM_LIMIT" in os.environ:
+        config.llm.rpm_limit = int(os.environ["UC_LLM_RPM_LIMIT"])
+    if "UC_LLM_TPM_LIMIT" in os.environ:
+        config.llm.tpm_limit = int(os.environ["UC_LLM_TPM_LIMIT"])
+
+    # Storage env var overrides
+    tikv_env = os.environ.get("UC_TIKV_ENDPOINTS")
+    if tikv_env:
+        config.storage.tikv_endpoints = [e.strip() for e in tikv_env.split(",") if e.strip()]
 
     return config

@@ -277,34 +277,21 @@ export function useDashboard() {
 
   // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
   // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
+  // All requests run in parallel for faster initial load.
   const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }): Promise<Record<string, string>> => {
     const errors: Record<string, string> = {};
-    try {
-      const h = await api.getHealth();
-      setHealth(h);
-    } catch (e) { errors["health"] = String(e); }
-    try {
-      const w = await api.getWorkers();
-      setWorkers(w);
-    } catch (e) { errors["workers"] = String(e); }
-    if (!opts?.skipTasks) {
-      try {
-        const t = await api.getTasks();
-        setTasks(t);
-      } catch (e) { errors["tasks"] = String(e); }
-    }
-    try {
-      const s = await api.getScheduler();
-      setScheduler(s);
-    } catch (e) { errors["scheduler"] = String(e); }
-    try {
-      const c = await api.getCircuitBreaker();
-      setCircuitBreaker(c);
-    } catch (e) { errors["circuit_breaker"] = String(e); }
-    try {
-      const e = await api.getEvents();
-      setEventLog(e.events);
-    } catch (e) { errors["events"] = String(e); }
+    const results = await Promise.allSettled([
+      api.getHealth().then((h) => { setHealth(h); }).catch((e) => { errors["health"] = String(e); }),
+      api.getWorkers().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }),
+      opts?.skipTasks
+        ? Promise.resolve()
+        : api.getTasks().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }),
+      api.getScheduler().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }),
+      api.getCircuitBreaker().then((c) => { setCircuitBreaker(c); }).catch((e) => { errors["circuit_breaker"] = String(e); }),
+      api.getEvents().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }),
+    ]);
+    // ponytail: results are handled via .then/.catch above; Promise.allSettled just waits for all
+    void results;
     setFetchErrors(errors);
     return errors;
   }, []);

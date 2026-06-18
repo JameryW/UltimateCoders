@@ -91,3 +91,28 @@ def mock_llm_client() -> MagicMock:
     client.complete.return_value = response
     client.complete_with_tools.return_value = (response, [])
     return client
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "integration: requires infrastructure")
+
+
+def pytest_addoption(parser):
+    """Add --integration CLI flag."""
+    parser.addoption(
+        "--integration",
+        action="store_true",
+        default=False,
+        help="run integration tests that require infrastructure",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip integration tests unless --integration flag is given."""
+    if config.getoption("--integration", default=False):
+        return
+    skip_integration = pytest.mark.skip(reason="needs --integration flag to run")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)

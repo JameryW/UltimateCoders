@@ -88,3 +88,53 @@ llm:
             assert config.llm.provider == "openai"
             assert config.llm.model == "gpt-4"
             os.unlink(f.name)
+
+
+class TestLoadConfigEnvVars:
+    """Tests for environment variable overrides."""
+
+    def test_llm_model_override(self):
+        os.environ["UC_LLM_MODEL"] = "gpt-4o-mini"
+        try:
+            config = load_config()
+            assert config.llm.model == "gpt-4o-mini"
+        finally:
+            del os.environ["UC_LLM_MODEL"]
+
+    def test_llm_rpm_limit_override(self):
+        os.environ["UC_LLM_RPM_LIMIT"] = "120"
+        try:
+            config = load_config()
+            assert config.llm.rpm_limit == 120
+        finally:
+            del os.environ["UC_LLM_RPM_LIMIT"]
+
+    def test_tikv_endpoints_override(self):
+        os.environ["UC_TIKV_ENDPOINTS"] = "10.0.0.1:2379,10.0.0.2:2379"
+        try:
+            config = load_config()
+            assert config.storage.tikv_endpoints == ["10.0.0.1:2379", "10.0.0.2:2379"]
+        finally:
+            del os.environ["UC_TIKV_ENDPOINTS"]
+
+
+class TestLoadConfigAutoDiscovery:
+    """Tests for config file auto-discovery."""
+
+    def test_discovers_uc_toml(self, tmp_path, monkeypatch):
+        """Should find uc.toml in current directory."""
+        config_file = tmp_path / "uc.toml"
+        config_file.write_text('[llm]\nprovider = "openai"\n')
+        monkeypatch.chdir(tmp_path)
+        config = load_config()
+        assert config.llm.provider == "openai"
+
+    def test_no_discovery_when_explicit_path(self, tmp_path, monkeypatch):
+        """Explicit path should skip auto-discovery."""
+        config_file = tmp_path / "uc.toml"
+        config_file.write_text('[llm]\nprovider = "openai"\n')
+        other = tmp_path / "other.toml"
+        other.write_text('[llm]\nprovider = "gemini"\n')
+        monkeypatch.chdir(tmp_path)
+        config = load_config(str(other))
+        assert config.llm.provider == "gemini"

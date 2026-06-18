@@ -115,6 +115,25 @@ class TestAutoMerge:
         assert not result.success
         assert result.conflicts
 
+    def test_overlapping_no_raw_markers(self):
+        """Overlapping changes must not return raw conflict-marker string."""
+        base = "line1\nline2\nline3\nline4"
+        ours = "line1-ours\nline2-ours\nline3\nline4"
+        theirs = "line1-theirs\nline2-theirs\nline3\nline4"
+        result = self.resolver._auto_merge(base, ours, theirs)
+        if not result.success:
+            assert result.merged is None or not result.merged.startswith("<<<<<<<")
+
+    def test_non_overlapping_insertions_merge(self):
+        """Non-overlapping insertions at different positions should merge."""
+        base = "line1\nline2\nline3"
+        ours = "line1\ninsert-ours\nline2\nline3"
+        theirs = "line1\nline2\ninsert-theirs\nline3"
+        result = self.resolver._auto_merge(base, ours, theirs)
+        assert result.success
+        assert "insert-ours" in result.merged
+        assert "insert-theirs" in result.merged
+
 
 class TestLlmAssistedMerge:
     """Tests for ConflictResolver._llm_assisted_merge."""

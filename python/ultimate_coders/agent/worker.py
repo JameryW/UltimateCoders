@@ -1135,8 +1135,7 @@ class Worker:
         """Extract file modifications from the tool call log.
 
         Looks for edit_file tool calls in the log and collects them as
-        FileChange objects with diff content. Also tracks read_file calls
-        as MODIFIED (implies interest).
+        FileChange objects with diff content.
 
         Args:
             tool_log: Log of tool calls and results.
@@ -1161,16 +1160,6 @@ class Worker:
                             file_path=file_path,
                             change_type=ChangeType.CREATED if create else ChangeType.MODIFIED,
                             diff=diff,
-                        )
-                    )
-            elif tool_name == "read_file":
-                file_path = tool_input.get("file_path", "")
-                if file_path:
-                    modified.append(
-                        FileChange(
-                            file_path=file_path,
-                            change_type=ChangeType.MODIFIED,
-                            diff="",
                         )
                     )
 

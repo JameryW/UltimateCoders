@@ -64,45 +64,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
 
     // CORS layer — allow dashboard origins for gRPC-Web browser requests
-    // UC_CORS_ORIGINS: comma-separated list of allowed origins (default: Any for dev)
-    let cors = match std::env::var("UC_CORS_ORIGINS") {
-        Ok(origins) if !origins.is_empty() => {
-            let allowed: Vec<_> = origins
-                .split(',')
-                .map(|o| o.trim())
-                .filter(|o| !o.is_empty())
-                .collect();
-            if allowed.is_empty() {
-                tracing::warn!("UC_CORS_ORIGINS set but no valid origins parsed; allowing Any");
-                CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods(Any)
-                    .allow_headers(Any)
-            } else {
-                // ponytail: AllowOrigin::list + parse via tower-http's re-exported HeaderValue
-                // to avoid http 0.2 vs 1.x type mismatch across tonic/tower-http
-                let parsed: Vec<_> = allowed
-                    .iter()
-                    .filter_map(|o| match o.parse() {
-                        Ok(hv) => Some(hv),
-                        Err(e) => {
-                            tracing::warn!("Invalid CORS origin '{}': {}", o, e);
-                            None
-                        }
-                    })
-                    .collect();
-                CorsLayer::new()
-                    .allow_origin(AllowOrigin::list(parsed))
-                    .allow_methods(Any)
-                    .allow_headers(Any)
-            }
-        }
-        _ => {
-            // Dev mode: allow Any origins
+    // UC_CORS_MODE=dev: allow Any origins (local development only)
+    // UC_CORS_ORIGINS: comma-separated list of allowed origins (production)
+    // Default: restrictive (no origins allowed) — browsers block cross-origin requests
+    let cors = match std::env::var("UC_CORS_MODE").as_deref() {
+        Ok("dev") => {
+            tracing::warn!("CORS running in dev mode — allowing any origin");
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any)
+        }
+        _ => {
+            // Production mode: only allow explicitly listed origins
+            match std::env::var("UC_CORS_ORIGINS") {
+                Ok(origins) if !origins.is_empty() => {
+                    let allowed: Vec<_> = origins
+                        .split(',')
+                        .map(|o| o.trim())
+                        .filter(|o| !o.is_empty())
+                        .collect();
+                    if allowed.is_empty() {
+                        tracing::warn!("UC_CORS_ORIGINS set but no valid origins parsed; no origins allowed");
+                        CorsLayer::new()
+                            .allow_methods(Any)
+                            .allow_headers(Any)
+                    } else {
+                        let parsed: Vec<_> = allowed
+                            .iter()
+                            .filter_map(|o| match o.parse() {
+                                Ok(hv) => Some(hv),
+                                Err(e) => {
+                                    tracing::warn!("Invalid CORS origin '{}': {}", o, e);
+                                    None
+                                }
+                            })
+                            .collect();
+                        CorsLayer::new()
+                            .allow_origin(AllowOrigin::list(parsed))
+                            .allow_methods(Any)
+                            .allow_headers(Any)
+                    }
+                }
+                _ => {
+                    // No origins configured — restrictive by default
+                    tracing::info!("No CORS origins configured; set UC_CORS_ORIGINS or UC_CORS_MODE=dev");
+                    CorsLayer::new()
+                        .allow_methods(Any)
+                        .allow_headers(Any)
+                }
+            }
         }
     };
 

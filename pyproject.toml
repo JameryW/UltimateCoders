@@ -33,6 +33,23 @@ python-source = "python"
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests requiring infrastructure (TiKV/Qdrant/PostgreSQL/NATS)",
+]
+addopts = "--cov=ultimate_coders --cov-report=term-missing --cov-fail-under=0"
+
+[tool.coverage.run]
+source = ["ultimate_coders"]
+omit = [
+    "ultimate_coders/_uc_core*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING",
+    "raise NotImplementedError",
+]
 
 [tool.ruff]
 target-version = "py39"

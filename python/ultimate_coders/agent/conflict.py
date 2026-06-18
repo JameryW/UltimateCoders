@@ -386,10 +386,98 @@ class ConflictResolver:
             )
             return MergeResult(merged=merged, success=True, tier=ResolutionTier.AUTO_MERGE)
 
-        # Overlapping changes: produce conflict markers
-        merged = f"<<<<<<< ours\n{ours}\n=======\n{theirs}\n>>>>>>> theirs"
+        # Overlapping changes: attempt difflib SequenceMatcher-based merge
+        import difflib
+
+        sm_ours = difflib.SequenceMatcher(None, base_lines, ours_lines)
+        sm_theirs = difflib.SequenceMatcher(None, base_lines, theirs_lines)
+
+        # Collect non-equal opcodes from both sides
+        ops_ours = [
+            (tag, i1, i2, j1, j2, "ours")
+            for tag, i1, i2, j1, j2 in sm_ours.get_opcodes()
+            if tag != "equal"
+        ]
+        ops_theirs = [
+            (tag, i1, i2, j1, j2, "theirs")
+            for tag, i1, i2, j1, j2 in sm_theirs.get_opcodes()
+            if tag != "equal"
+        ]
+
+        # Sort by base position, ours before theirs for ties
+        all_ops = sorted(
+            ops_ours + ops_theirs,
+            key=lambda op: (op[1], 0 if op[5] == "ours" else 1),
+        )
+
+        merged_lines: list[str] = []
+        base_pos = 0
+        has_conflict = False
+        seen_conflict_ranges: list[tuple[int, int]] = []
+
+        for tag, i1, i2, j1, j2, side in all_ops:
+            # Add unchanged base lines before this op
+            while base_pos < i1 and base_pos < len(base_lines):
+                merged_lines.append(base_lines[base_pos])
+                base_pos += 1
+            # Advance base past this op's range
+            if base_pos < i2:
+                base_pos = i2
+
+            # Check if the other side also changes this base region
+            other_in_range = [
+                op for op in all_ops
+                if op[5] != side and op[1] < i2 and op[2] > i1
+            ]
+
+            if other_in_range:
+                has_conflict = True
+                # Avoid duplicate ConflictMarker for same region
+                conflict_start = min(i1, min(op[1] for op in other_in_range))
+                conflict_end = max(i2, max(op[2] for op in other_in_range))
+                if not any(s <= conflict_start and e >= conflict_end for s, e in seen_conflict_ranges):
+                    seen_conflict_ranges.append((conflict_start, conflict_end))
+                    # ponytail: flatten list-of-str slices from matching ops
+                    ours_ops = [op for op in other_in_range if op[5] == "ours"]
+                    theirs_ops = [op for op in other_in_range if op[5] == "theirs"]
+                    ours_content = (
+                        "".join(ours_lines[j1:j2]) if side == "ours"
+                        else "".join(s for op in ours_ops for s in ours_lines[op[3]:op[4]])
+                        or "".join(base_lines[conflict_start:conflict_end])
+                    )
+                    theirs_content = (
+                        "".join(theirs_lines[j1:j2]) if side == "theirs"
+                        else "".join(s for op in theirs_ops for s in theirs_lines[op[3]:op[4]])
+                        or "".join(base_lines[conflict_start:conflict_end])
+                    )
+                    conflicts.append(ConflictMarker(
+                        start_line=conflict_start + 1,
+                        end_line=conflict_end + 1,
+                        ours=ours_content,
+                        theirs=theirs_content,
+                        base="".join(base_lines[conflict_start:conflict_end]),
+                    ))
+            else:
+                # Only one side changed — take that side
+                if side == "ours":
+                    merged_lines.extend(ours_lines[j1:j2])
+                else:
+                    merged_lines.extend(theirs_lines[j1:j2])
+
+        # Add remaining base lines
+        while base_pos < len(base_lines):
+            merged_lines.append(base_lines[base_pos])
+            base_pos += 1
+
+        if not has_conflict:
+            return MergeResult(
+                merged="".join(merged_lines),
+                success=True,
+                tier=ResolutionTier.AUTO_MERGE,
+            )
+
         return MergeResult(
-            merged=merged,
+            merged=None,
             conflicts=conflicts,
             success=False,
             tier=ResolutionTier.AUTO_MERGE,
