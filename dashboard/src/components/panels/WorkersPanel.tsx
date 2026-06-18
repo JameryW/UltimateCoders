@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId } from "@/lib/utils";
-import type { WorkersData } from "@/types/dashboard";
+import type { WorkersData, WorkerInfo } from "@/types/dashboard";
 
 function loadBarColor(percent: number): string {
   if (percent >= 100) return "bg-red-500";
@@ -9,7 +10,66 @@ function loadBarColor(percent: number): string {
   return "bg-green-500";
 }
 
+function formatHeartbeatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s ago`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m ago`;
+}
+
+function WorkerDetail({ worker }: { worker: WorkerInfo }) {
+  return (
+    <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-dark-700 pt-2">
+      <div className="flex items-start gap-2">
+        <span className="text-gray-500 shrink-0 w-20">Full ID</span>
+        <span className="font-mono text-gray-300 break-all">{worker.id}</span>
+      </div>
+      <div className="flex items-start gap-2">
+        <span className="text-gray-500 shrink-0 w-20">Heartbeat</span>
+        <span className="text-gray-300">
+          {new Date(worker.last_heartbeat).toLocaleString()}
+        </span>
+      </div>
+      <div className="flex items-start gap-2">
+        <span className="text-gray-500 shrink-0 w-20">Age</span>
+        <span className={cn(worker.heartbeat_stale ? "text-yellow-400" : "text-gray-300")}>
+          {formatHeartbeatAge(worker.heartbeat_age_seconds)}
+          {worker.heartbeat_stale && " (stale)"}
+        </span>
+      </div>
+      <div className="flex items-start gap-2">
+        <span className="text-gray-500 shrink-0 w-20">Load</span>
+        <span className="text-gray-300">
+          {worker.current_load} / {worker.max_capacity} ({worker.load_percent}%)
+        </span>
+      </div>
+      {worker.capabilities.length > 0 && (
+        <div className="flex items-start gap-2">
+          <span className="text-gray-500 shrink-0 w-20">Capabilities</span>
+          <div className="flex flex-wrap gap-1">
+            {worker.capabilities.map((cap) => (
+              <span
+                key={cap}
+                className="bg-dark-700 text-gray-400 px-1.5 py-0.5 rounded"
+              >
+                {cap}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boolean }) {
+  const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
+
+  const toggleExpand = (workerId: string) => {
+    setExpandedWorkerId(expandedWorkerId === workerId ? null : workerId);
+  };
+
   return (
     <Card stale={stale}>
       <CardHeader>
@@ -33,41 +93,56 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
                 w.is_available ? "border-l-green-500" : "border-l-red-500"
               )}
             >
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-mono text-gray-300">{shortId(w.id)}</span>
-                {w.heartbeat_stale && (
-                  <span className="text-yellow-500 text-xs" title="Heartbeat stale">
-                    &#9888;
-                  </span>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-expanded={expandedWorkerId === w.id}
+                aria-label={`Worker ${shortId(w.id)}`}
+                className="cursor-pointer hover:bg-dark-700/50 rounded-r"
+                onClick={() => toggleExpand(w.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(w.id); } }}
+              >
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-mono text-gray-300">{shortId(w.id)}</span>
+                  {w.heartbeat_stale && (
+                    <span className="text-yellow-500 text-xs" title="Heartbeat stale">
+                      &#9888;
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-1">
+                  <div className="load-bar w-full">
+                    <div
+                      className={cn("load-bar-fill", loadBarColor(w.load_percent))}
+                      style={{ width: `${Math.min(w.load_percent, 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-500 mt-0.5">
+                    <span>
+                      {w.current_load}/{w.max_capacity}
+                    </span>
+                    <span>{w.load_percent}%</span>
+                  </div>
+                </div>
+
+                {w.capabilities.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {w.capabilities.map((cap) => (
+                      <span
+                        key={cap}
+                        className="text-xs bg-dark-700 text-gray-400 px-1.5 py-0.5 rounded"
+                      >
+                        {cap}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              <div className="mt-1">
-                <div className="load-bar w-full">
-                  <div
-                    className={cn("load-bar-fill", loadBarColor(w.load_percent))}
-                    style={{ width: `${Math.min(w.load_percent, 100)}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-gray-500 mt-0.5">
-                  <span>
-                    {w.current_load}/{w.max_capacity}
-                  </span>
-                  <span>{w.load_percent}%</span>
-                </div>
-              </div>
-
-              {w.capabilities.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {w.capabilities.map((cap) => (
-                    <span
-                      key={cap}
-                      className="text-xs bg-dark-700 text-gray-400 px-1.5 py-0.5 rounded"
-                    >
-                      {cap}
-                    </span>
-                  ))}
-                </div>
+              {/* Detail expansion */}
+              {expandedWorkerId === w.id && (
+                <WorkerDetail worker={w} />
               )}
             </li>
           ))}
