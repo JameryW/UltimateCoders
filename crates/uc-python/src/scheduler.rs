@@ -85,7 +85,9 @@ fn parse_datetime_str(s: &str) -> PyResult<chrono::DateTime<chrono::Utc>> {
     // Try date only (midnight UTC)
     if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         // ponytail: midnight always valid, but use expect for clarity
-        let naive = naive_date.and_hms_opt(0, 0, 0).expect("midnight is always a valid time");
+        let naive = naive_date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always a valid time");
         return Ok(naive.and_utc());
     }
     Err(pyo3::exceptions::PyValueError::new_err(format!(
