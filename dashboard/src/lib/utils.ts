@@ -31,3 +31,13 @@ export function truncate(s: string, max: number): string {
 export function shortId(id: string, len = 8): string {
   return id ? id.substring(0, len) : "--";
 }
+
+export function statusBadgeClass(status: string): string {
+  switch (status) {
+    case "completed": return "status-completed";
+    case "failed": return "status-failed";
+    case "paused": return "status-paused";
+    case "in_progress": return "status-in_progress";
+    default: return "status-default";
+  }
+}

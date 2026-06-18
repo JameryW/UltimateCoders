@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 interface ConfirmState {
   title: string;
@@ -23,14 +23,13 @@ export function confirmAction(title: string, message: string): Promise<boolean> 
 export function useConfirmDialog() {
   const [, forceUpdate] = useState(0);
 
-  // Subscribe to confirm state changes
-  if (!_listeners.size) {
-    // only subscribe once (react strict mode runs twice but set dedupes)
-  }
-  // Use effect-like subscription pattern
-  const listener = useCallback(() => forceUpdate((n) => n + 1), []);
-  // Simplified: just read global state
-  void listener; // used indirectly through re-render
+  useEffect(() => {
+    const listener = () => forceUpdate((n) => n + 1);
+    _listeners.add(listener);
+    return () => {
+      _listeners.delete(listener);
+    };
+  }, []);
 
   const state = _confirmState;
 
@@ -55,7 +54,15 @@ export function ConfirmDialog() {
   if (!state) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+    <div
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label={state.title}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") handleCancel();
+      }}
+    >
       <div className="bg-[var(--bg-surface)] border border-[var(--border-color)] rounded-xl p-6 max-w-sm w-[90%]">
         <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
           {state.title}

@@ -1,19 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn, truncate, shortId } from "@/lib/utils";
+import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import type { TasksData, TaskEvent } from "@/types/dashboard";
-
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "completed": return "status-completed";
-    case "failed": return "status-failed";
-    case "paused": return "status-paused";
-    case "in_progress": return "status-in_progress";
-    default: return "status-default";
-  }
-}
 
 function statusBorderColor(status: string): string {
   switch (status) {

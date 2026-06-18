@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/utils";
@@ -22,7 +23,7 @@ interface CircuitBreakerPanelProps {
   stale?: boolean;
 }
 
-export function CircuitBreakerPanel({ data, onReset, stale }: CircuitBreakerPanelProps) {
+export const CircuitBreakerPanel = memo(function CircuitBreakerPanel({ data, onReset, stale }: CircuitBreakerPanelProps) {
   const cb = data.circuit_breaker;
   const rl = data.rate_limiter;
 
@@ -106,4 +107,4 @@ export function CircuitBreakerPanel({ data, onReset, stale }: CircuitBreakerPane
       </div>
     </Card>
   );
-}
+});

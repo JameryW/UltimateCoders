@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatUptime } from "@/lib/utils";
@@ -34,7 +35,7 @@ interface HealthPanelProps {
   stale?: boolean;
 }
 
-export function HealthPanel({ data, stale }: HealthPanelProps) {
+export const HealthPanel = memo(function HealthPanel({ data, stale }: HealthPanelProps) {
   if (!data.available) {
     return (
       <Card stale={stale}>
@@ -79,4 +80,4 @@ export function HealthPanel({ data, stale }: HealthPanelProps) {
       </div>
     </Card>
   );
-}
+});
