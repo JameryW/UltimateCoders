@@ -279,7 +279,7 @@ export function useDashboard() {
       for (const t of data.tasks) {
         const idx = merged.findIndex((m) => m.id === t.id);
         if (idx >= 0) {
-          const existing = merged[idx];
+          const existing = merged[idx]!;
           // ponytail: don't spread subtasks — keep the version with more entries
           // (gRPC listTasks snapshot may be stale vs real-time subtask events)
           const subtasks = (existing.subtasks?.length ?? 0) >= (t.subtasks?.length ?? 0)

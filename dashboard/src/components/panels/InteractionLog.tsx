@@ -40,7 +40,7 @@ export function InteractionLog({ events, filterSubtaskId }: InteractionLogProps)
   }
 
   return (
-    <div className="max-h-64 overflow-y-auto space-y-0.5">
+    <div className="max-h-64 overflow-y-auto space-y-0.5" role="log" aria-label="Interaction log" aria-live="polite">
       {filtered.map((ev, i) => {
         const style = eventTypeStyle(ev.type);
         const time = ev.timestamp
