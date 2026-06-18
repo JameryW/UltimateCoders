@@ -57,6 +57,7 @@ import {mapSubtaskStatus} from '../grpc/types.js';
 import {parseCommand, isCommandInput, formatHelpText, matchCommands, COMMANDS} from '../commands.js';
 import type {SlashCommand} from '../commands.js';
 import {buildTaskListText} from '../task-list-utils.js';
+import {TaskListOverlay} from './TaskListOverlay.js';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -480,6 +481,11 @@ const App: React.FC = () => {
         dispatch({type: 'TOGGLE_HELP_OVERLAY'});
         return;
       }
+      // Close task list overlay if open
+      if (state.taskListOverlayOpen) {
+        dispatch({type: 'TOGGLE_TASK_LIST_OVERLAY'});
+        return;
+      }
       dispatch({type: 'ESC_TO_MAIN'});
       return;
     }
@@ -542,6 +548,36 @@ const App: React.FC = () => {
         return;
       }
       // In overlay, block other keys from reaching focus-area handlers
+      return;
+    }
+
+    // ── Task list overlay shortcuts ───────────────────────
+    if (state.taskListOverlayOpen) {
+      if (key.upArrow) {
+        const nextIdx = state.selectedTaskListIndex <= 0
+          ? state.taskList.length - 1
+          : state.selectedTaskListIndex - 1;
+        dispatch({type: 'SELECT_TASK_LIST', index: nextIdx});
+        return;
+      }
+      if (key.downArrow) {
+        const nextIdx = state.selectedTaskListIndex >= state.taskList.length - 1
+          ? 0
+          : state.selectedTaskListIndex + 1;
+        dispatch({type: 'SELECT_TASK_LIST', index: nextIdx});
+        return;
+      }
+      if (key.return) {
+        const selectedTask = state.taskList[state.selectedTaskListIndex];
+        if (selectedTask) {
+          dispatch({type: 'TOGGLE_TASK_LIST_OVERLAY'});
+          dispatch({type: 'SET_ACTIVE_TASK', taskId: selectedTask.id});
+          dispatch({type: 'CLEAR_TASK'});
+          addMessage(createSystemMessage(`Switched to task: ${selectedTask.id.slice(0, 8)}... — ${selectedTask.description.slice(0, 40)}`, {color: 'cyan'}));
+        }
+        return;
+      }
+      // Block other keys
       return;
     }
 
@@ -672,6 +708,24 @@ const App: React.FC = () => {
     );
   }
 
+  // Task list overlay (/tasks then T)
+  if (state.taskListOverlayOpen) {
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={1}>
+        <Box marginBottom={1}>
+          <Text bold color="cyan">{'Tasks'}</Text>
+          <Text dimColor>{` (${state.taskList.length} total)`}</Text>
+          <Text dimColor>{' (Esc to close · ↑↓ navigate · Enter switch)'}</Text>
+        </Box>
+        <TaskListOverlay
+          tasks={state.taskList}
+          selectedIndex={state.selectedTaskListIndex}
+          maxWidth={terminalWidth - 4}
+        />
+      </Box>
+    );
+  }
+
   // ── Render: Main layout (single-column vertical) ──────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
@@ -693,6 +747,7 @@ const App: React.FC = () => {
         unreadCount={state.unreadCount}
         onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
         terminalWidth={terminalWidth}
+        messagesTruncated={state.messagesTruncated}
       />
 
       {/* ── Separator ────────────────────────────────── */}
@@ -822,6 +877,10 @@ function handleSlashCommand(
           dispatch({type: 'SET_TASK_LIST', tasks: response.tasks});
           const taskLines = buildTaskListText(response.tasks);
           addMessage(createSystemMessage(taskLines.join('\n'), {eventType: 'task_list'}));
+          // Open interactive overlay for navigation
+          if (response.tasks.length > 0) {
+            dispatch({type: 'TOGGLE_TASK_LIST_OVERLAY'});
+          }
         } else if (response && !response.available) {
           addMessage(createSystemMessage('Task store not available.', {color: 'yellow'}));
         } else {

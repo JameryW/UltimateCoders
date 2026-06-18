@@ -146,6 +146,8 @@ export interface TaskEvent {
   task_id: string;
   subtask_id?: string;
   data: Record<string, unknown>;
+  /** SSE event id (set by useSSE, not present in gRPC-Web events). Used for dedup. */
+  _sseId?: string;
 }
 
 // ── SSE Full Snapshot ───────────────────────────────────

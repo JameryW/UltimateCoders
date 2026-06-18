@@ -50,6 +50,8 @@ export interface ChatLogProps {
   onSetFollowLog?: (follow: boolean) => void;
   unreadCount?: number;
   terminalWidth?: number;
+  /** Whether older messages were truncated (show hint at top). */
+  messagesTruncated?: boolean;
 }
 
 function formatTime(): string {
@@ -209,6 +211,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   onSetFollowLog,
   unreadCount = 0,
   terminalWidth,
+  messagesTruncated,
 }) => {
   const [localOffset, setLocalOffset] = useState(0);
   const [selectedVisibleIndex, setSelectedVisibleIndex] = useState(-1);
@@ -321,6 +324,9 @@ const ChatLog: React.FC<ChatLogProps> = ({
   return (
     <Box flexDirection="column" flexGrow={2} paddingX={1}>
       {indicatorBar && <Text color={eventFilter !== 'all' || !followLog ? 'yellow' : 'dim'} dimColor={eventFilter === 'all' && followLog}>{indicatorBar}</Text>}
+      {messagesTruncated && effectiveOffset === 0 && (
+        <Text dimColor>{'↕ Earlier messages truncated'}</Text>
+      )}
       {visibleMessages.map((msg, i) => {
         // Time separator when >5min gap between messages
         const prevMsg = i > 0 ? visibleMessages[i - 1] : null;

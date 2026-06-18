@@ -82,10 +82,12 @@ export function useDashboard() {
         const merged = snapshotTasks.tasks.map((st) => {
           const existing = prev.tasks.find((t) => t.id === st.id);
           if (!existing) return st;
-          // If our existing version is newer (from gRPC-Web event), keep it
+          // If our existing version is newer or equal (from gRPC-Web event), keep it.
+          // Equal timestamp means same second — gRPC incremental updates are more
+          // granular than SSE snapshot, so prefer them on ties.
           const existingTime = new Date(existing.updated_at).getTime();
           const snapshotTime = new Date(st.updated_at).getTime();
-          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime > snapshotTime) {
+          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime >= snapshotTime) {
             return existing;
           }
           // Snapshot is newer or equal → merge subtask-level data
@@ -243,8 +245,8 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data — always fetch everything; gRPC-Web merges separately
-  const fetchInitial = useCallback(async () => {
+  // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
+  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }) => {
     try {
       const h = await api.getHealth();
       setHealth(h);
@@ -253,10 +255,12 @@ export function useDashboard() {
       const w = await api.getWorkers();
       setWorkers(w);
     } catch { /* ignore */ }
-    try {
-      const t = await api.getTasks();
-      setTasks(t);
-    } catch { /* ignore */ }
+    if (!opts?.skipTasks) {
+      try {
+        const t = await api.getTasks();
+        setTasks(t);
+      } catch { /* ignore */ }
+    }
     try {
       const s = await api.getScheduler();
       setScheduler(s);
@@ -280,16 +284,47 @@ export function useDashboard() {
         const idx = merged.findIndex((m) => m.id === t.id);
         if (idx >= 0) {
           const existing = merged[idx]!;
-          // ponytail: don't spread subtasks — keep the version with more entries
-          // (gRPC listTasks snapshot may be stale vs real-time subtask events)
-          const subtasks = (existing.subtasks?.length ?? 0) >= (t.subtasks?.length ?? 0)
-            ? existing.subtasks : t.subtasks;
+          // Deep-merge subtasks: for each subtask, keep the version with more advanced status
+          let subtasks = t.subtasks;
+          if (existing.subtasks && t.subtasks) {
+            subtasks = t.subtasks.map((gs) => {
+              const es = existing.subtasks!.find((s) => s.id === gs.id);
+              if (es) return subtaskStatusRank(es.status) >= subtaskStatusRank(gs.status) ? es : gs;
+              return gs;
+            });
+            // Keep subtasks from existing that aren't in gRPC response
+            for (const es of existing.subtasks) {
+              if (!subtasks.some((s) => s.id === es.id)) subtasks.push(es);
+            }
+          } else if (existing.subtasks && !t.subtasks) {
+            // gRPC response has no subtasks — keep existing
+            subtasks = existing.subtasks;
+          }
           merged[idx] = { ...existing, ...t, subtasks };
         } else {
           merged.push(t);
         }
       }
       return { ...prev, tasks: merged, total: merged.length, status_counts: recountStatus(merged) };
+    });
+  }, []);
+
+  /** Optimistic insert: add a task before SSE/gRPC event arrives. */
+  const optimisticAddTask = useCallback((taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: SubtaskSummary[]) => {
+    setTasks((prev) => {
+      if (prev.tasks.some((t) => t.id === taskId)) return prev;
+      const newTask: TaskSummary = {
+        id: taskId,
+        description,
+        status: "in_progress",
+        project_id: projectId,
+        subtask_count: subtaskCount,
+        subtasks,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const tasks = [newTask, ...prev.tasks];
+      return { ...prev, tasks, total: tasks.length, status_counts: recountStatus(tasks) };
     });
   }, []);
 
@@ -309,6 +344,7 @@ export function useDashboard() {
     handleTaskEvent,
     mergeGrpcTasks,
     fetchInitial,
+    optimisticAddTask,
   };
 }
 

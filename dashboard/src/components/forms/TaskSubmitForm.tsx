@@ -8,13 +8,15 @@ interface TaskSubmitFormProps {
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   /** Called after successful submission with the new task ID. */
   onTaskCreated?: (taskId: string) => void;
+  /** Optimistic insert: add task to list before event arrives. */
+  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number) => void;
 }
 
 function shortId(id: string, len = 8): string {
   return id ? id.substring(0, len) : "--";
 }
 
-export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated }: TaskSubmitFormProps) {
+export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd }: TaskSubmitFormProps) {
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -41,6 +43,7 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated }: TaskSubmitForm
               : `Task submitted ${modeLabel}: ${shortId(resp.taskId)}`,
             "success",
           );
+          onOptimisticAdd?.(resp.taskId, desc, projectId.trim(), resp.subtaskCount);
           setDescription("");
           setProjectId("");
           onTaskCreated?.(resp.taskId);
@@ -52,9 +55,12 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated }: TaskSubmitForm
         const result = await api.submitTask(desc, projectId.trim());
         if (result.success) {
           showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");
+          if (result.task_id) {
+            onOptimisticAdd?.(result.task_id, desc, projectId.trim(), 0);
+            onTaskCreated?.(result.task_id);
+          }
           setDescription("");
           setProjectId("");
-          if (result.task_id) onTaskCreated?.(result.task_id);
         } else {
           showToast(`Submit failed ${modeLabel}: ${result.error ?? "unknown"}`, "error");
         }
