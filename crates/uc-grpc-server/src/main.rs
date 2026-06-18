@@ -15,7 +15,7 @@ use uc_grpc::server::{health_reporter, GrpcServer};
 
 use tonic::transport::Server;
 use tonic_web::GrpcWebLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -79,15 +79,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .allow_methods(Any)
                     .allow_headers(Any)
             } else {
-                tracing::info!(origins = ?allowed, "CORS origins configured");
+                // ponytail: AllowOrigin::list + parse via tower-http's re-exported HeaderValue
+                // to avoid http 0.2 vs 1.x type mismatch across tonic/tower-http
+                let parsed: Vec<_> = allowed
+                    .iter()
+                    .filter_map(|o| match o.parse() {
+                        Ok(hv) => Some(hv),
+                        Err(e) => {
+                            tracing::warn!("Invalid CORS origin '{}': {}", o, e);
+                            None
+                        }
+                    })
+                    .collect();
                 CorsLayer::new()
-                    .allow_origin(allowed)
+                    .allow_origin(AllowOrigin::list(parsed))
                     .allow_methods(Any)
                     .allow_headers(Any)
             }
         }
         _ => {
-            // ponytail: Any for dev, set UC_CORS_ORIGINS in production
+            // Dev mode: allow Any origins
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
