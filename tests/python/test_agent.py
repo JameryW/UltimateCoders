@@ -641,7 +641,10 @@ class TestWorker:
                 "result": "file content here",
             },
             {
-                "tool_call": {"name": "edit_file", "input": {"file_path": "/tmp/edit.py", "content": "new", "create": False}},
+                "tool_call": {
+                    "name": "edit_file",
+                    "input": {"file_path": "/tmp/edit.py", "content": "new", "create": False},
+                },
                 "result": "ok",
             },
         ]

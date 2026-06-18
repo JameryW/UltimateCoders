@@ -435,7 +435,10 @@ class ConflictResolver:
                 # Avoid duplicate ConflictMarker for same region
                 conflict_start = min(i1, min(op[1] for op in other_in_range))
                 conflict_end = max(i2, max(op[2] for op in other_in_range))
-                if not any(s <= conflict_start and e >= conflict_end for s, e in seen_conflict_ranges):
+                if not any(
+                    s <= conflict_start and e >= conflict_end
+                    for s, e in seen_conflict_ranges
+                ):
                     seen_conflict_ranges.append((conflict_start, conflict_end))
                     # ponytail: flatten list-of-str slices from matching ops
                     ours_ops = [op for op in other_in_range if op[5] == "ours"]
