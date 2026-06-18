@@ -48,7 +48,15 @@ function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolea
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Dashboard Login"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") return; // Cannot dismiss login modal
+      }}
+    >
       <form
         onSubmit={handleSubmit}
         className="bg-[var(--bg-surface)] border border-[var(--border-color)] rounded-xl p-6 max-w-sm w-[90%] shadow-xl"
@@ -316,6 +324,31 @@ function App() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mb-3" />
           <p className="text-sm">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // All endpoints failed — server is likely down
+  const allFailed = Object.keys(dashboard.fetchErrors).length >= 5;
+  if (allFailed) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
+        <div className="text-center max-w-md">
+          <p className="text-lg font-semibold text-red-400 mb-2">Unable to connect to server</p>
+          <p className="text-sm mb-4">All dashboard endpoints failed. The backend may be down or unreachable.</p>
+          <button
+            onClick={() => {
+              setLoading(true);
+              dashboard.fetchInitial().then((errors) => {
+                setLoading(false);
+                if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
+              });
+            }}
+            className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );

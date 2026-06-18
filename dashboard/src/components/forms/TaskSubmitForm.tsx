@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as api from "@/api/endpoints";
 import { showToast } from "@/components/ui/toast";
+import { shortId } from "@/lib/utils";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 
 interface TaskSubmitFormProps {
@@ -10,10 +11,6 @@ interface TaskSubmitFormProps {
   onTaskCreated?: (taskId: string) => void;
   /** Optimistic insert: add task to list before event arrives. */
   onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number) => void;
-}
-
-function shortId(id: string, len = 8): string {
-  return id ? id.substring(0, len) : "--";
 }
 
 export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd }: TaskSubmitFormProps) {

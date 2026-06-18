@@ -79,6 +79,9 @@ const COMMANDS: KeyCommand[] = [
   {id: 'end', label: 'Jump to bottom', shortLabel: 'End', key: 'End', areas: ['chat'], global: false},
   {id: 'expandSelected', label: 'Expand/collapse selected message', shortLabel: 'Enter', key: 'Enter', areas: ['chat'], global: false},
   {id: 'clearLog', label: 'Clear log', shortLabel: 'C-L', key: 'Ctrl+L', areas: ['chat'], global: false},
+  {id: 'search', label: 'Search messages', shortLabel: 'C-S', key: 'Ctrl+S', areas: ['chat'], global: false},
+  {id: 'searchNext', label: 'Next search match', shortLabel: 'N', key: 'N', areas: ['chat'], global: false},
+  {id: 'searchPrev', label: 'Previous search match', shortLabel: 'S-N', key: 'Shift+N', areas: ['chat'], global: false},
 
   // ── Overlay (subtask Ctrl+T) ──
   {id: 'overlayUp', label: 'Navigate subtask up', shortLabel: '↑', key: 'Up', areas: [], global: false},

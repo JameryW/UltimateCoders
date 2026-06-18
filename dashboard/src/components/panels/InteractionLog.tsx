@@ -48,7 +48,7 @@ export function InteractionLog({ events, filterSubtaskId }: InteractionLogProps)
           : "--";
         return (
           <div
-            key={`${ev.timestamp}-${i}`}
+            key={`${ev.timestamp}-${ev.type}-${i}`}
             className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs`}
           >
             <span className="text-[var(--text-muted)] mr-1">{time}</span>

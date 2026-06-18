@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId } from "@/lib/utils";
@@ -27,7 +28,7 @@ interface SchedulerPanelProps {
   stale?: boolean;
 }
 
-export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProps) {
+export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProps) {
   if (!data.available) {
     return (
       <Card stale={stale}>
@@ -118,4 +119,4 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
       )}
     </Card>
   );
-}
+});

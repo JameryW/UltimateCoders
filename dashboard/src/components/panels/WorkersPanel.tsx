@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId } from "@/lib/utils";
@@ -63,7 +63,7 @@ function WorkerDetail({ worker }: { worker: WorkerInfo }) {
   );
 }
 
-export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boolean }) {
+export const WorkersPanel = memo(function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boolean }) {
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
 
   const toggleExpand = (workerId: string) => {
@@ -150,4 +150,4 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
       )}
     </Card>
   );
-}
+});
