@@ -104,7 +104,20 @@ def load_config(path: str | None = None) -> Config:
             logger.warning("Failed to load config from %s: %s", path, e)
 
     # Override from environment
-    config.llm.api_key = os.environ.get("ANTHROPIC_API_KEY", config.llm.api_key)
+    config.llm.provider = os.environ.get("UC_LLM_PROVIDER", config.llm.provider)
+    # ponytail: resolve API key from provider-specific env var, then fallback
+    provider_key_env = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+    }
+    env_key = provider_key_env.get(config.llm.provider, "ANTHROPIC_API_KEY")
+    config.llm.api_key = (
+        os.environ.get(env_key)
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or config.llm.api_key
+    )
     config.engine.mode = os.environ.get("UC_ENGINE_MODE", config.engine.mode)
     config.engine.grpc_endpoint = os.environ.get(
         "UC_GRPC_ENDPOINT", config.engine.grpc_endpoint or ""

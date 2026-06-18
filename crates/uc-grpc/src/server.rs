@@ -156,9 +156,17 @@ fn json_bool_or_default(
 /// When NATS is available, the store is updated by the Python Orchestrator
 /// via `apply_update()`. When NATS is unavailable, tasks are decomposed
 /// locally using a newline-split heuristic.
+///
+/// Events are recorded via `Arc<dyn EventStore>` (unified with uc-engine's
+/// EventStore trait). WatchTask streams replay from EventStore then switch
+/// to the broadcast channel for real-time delivery.
 pub struct TaskStore {
     tasks: HashMap<String, uc_types::Task>,
+    /// Inline event log — kept for backward compatibility with existing callers.
+    /// New code should use `event_store` for reads.
     events: Vec<uc_engine::AgentEventType>,
+    /// Unified EventStore — the single source of truth for event persistence.
+    event_store: Arc<dyn uc_engine::EventStore>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -174,7 +182,33 @@ impl TaskStore {
         Self {
             tasks: HashMap::new(),
             events: Vec::new(),
+            event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             last_heartbeat: None,
+        }
+    }
+
+    /// Create with a specific EventStore backend.
+    pub fn with_event_store(event_store: Arc<dyn uc_engine::EventStore>) -> Self {
+        Self {
+            tasks: HashMap::new(),
+            events: Vec::new(),
+            event_store,
+            last_heartbeat: None,
+        }
+    }
+
+    /// Record an event: push to inline log AND append to EventStore.
+    fn record_event_with_subject(&mut self, event: uc_engine::AgentEventType, subject: &str) {
+        // Inline log (legacy, for tests and immediate reads)
+        self.events.push(event.clone());
+        // EventStore (unified, persistent source of truth)
+        // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let es = self.event_store.clone();
+            let subj = subject.to_string();
+            handle.spawn(async move {
+                let _ = es.append(&subj, &event).await;
+            });
         }
     }
 
@@ -197,19 +231,24 @@ impl TaskStore {
         };
 
         // Record TaskCreated event
-        self.events.push(uc_engine::AgentEventType::TaskCreated {
-            task_id: task_id.clone(),
-            description: description.clone(),
-        });
+        self.record_event_with_subject(
+            uc_engine::AgentEventType::TaskCreated {
+                task_id: task_id.clone(),
+                description: description.clone(),
+            },
+            &format!("task.{}", task_id.0),
+        );
 
         // Record subtask events
         for st in &task.subtasks {
-            self.events
-                .push(uc_engine::AgentEventType::SubtaskAssigned {
+            self.record_event_with_subject(
+                uc_engine::AgentEventType::SubtaskAssigned {
                     task_id: task_id.clone(),
                     subtask_id: st.id.clone(),
                     worker_id: uc_types::WorkerId::new(),
-                });
+                },
+                &format!("task.{}", task_id.0),
+            );
         }
 
         let task_id_str = task.id.0.clone();
@@ -241,10 +280,13 @@ impl TaskStore {
         };
 
         // Record TaskCreated event
-        self.events.push(uc_engine::AgentEventType::TaskCreated {
-            task_id: task_id.clone(),
-            description,
-        });
+        self.record_event_with_subject(
+            uc_engine::AgentEventType::TaskCreated {
+                task_id: task_id.clone(),
+                description,
+            },
+            &format!("task.{}", task_id.0),
+        );
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
@@ -299,7 +341,8 @@ impl TaskStore {
         }
     }
 
-    /// Read events from the given offset.
+    /// Read events from the given offset (from inline log).
+    /// For persistent reads, use `event_store().read_from()` instead.
     pub fn read_events_from(&self, offset: usize) -> Vec<uc_engine::AgentEventType> {
         if offset >= self.events.len() {
             Vec::new()
@@ -308,9 +351,14 @@ impl TaskStore {
         }
     }
 
-    /// Get current event count (used as latest offset).
+    /// Get current event count (from inline log).
     pub fn event_count(&self) -> usize {
         self.events.len()
+    }
+
+    /// Access the EventStore for persistent reads.
+    pub fn event_store(&self) -> &Arc<dyn uc_engine::EventStore> {
+        &self.event_store
     }
 
     /// Apply a status update from NATS (`uc.task.update`).
@@ -392,9 +440,33 @@ impl TaskStore {
 
     /// Record an event from NATS (`uc.task.event`).
     ///
-    /// Pushes the event into the event log for WatchTask streaming.
+    /// Pushes the event into the inline log AND appends to EventStore.
     pub fn record_event(&mut self, event: uc_engine::AgentEventType) {
-        self.events.push(event);
+        // Derive subject from event type
+        let subject = match &event {
+            uc_engine::AgentEventType::TaskCreated { task_id, .. } => format!("task.{}", task_id.0),
+            uc_engine::AgentEventType::SubtaskAssigned { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskStarted { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskCompleted { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::SubtaskFailed { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
+            _ => "events".to_string(),
+        };
+        self.events.push(event.clone());
+        // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let es = self.event_store.clone();
+            handle.spawn(async move {
+                let _ = es.append(&subject, &event).await;
+            });
+        }
     }
 
     /// Update the last heartbeat timestamp from the Python NATS consumer.
@@ -1111,6 +1183,8 @@ fn to_status(err: uc_types::EngineError) -> Status {
         SandboxError(m) => (tonic::Code::PermissionDenied, m.clone()),
         ConfigError(m) => (tonic::Code::InvalidArgument, m.clone()),
         InternalError(m) => (tonic::Code::Internal, m.clone()),
+        StorageError(m) => (tonic::Code::Unavailable, m.clone()),
+        InvalidOperation(m) => (tonic::Code::FailedPrecondition, m.clone()),
     };
     Status::new(code, msg)
 }

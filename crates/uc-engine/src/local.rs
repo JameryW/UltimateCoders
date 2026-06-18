@@ -680,7 +680,6 @@ impl EngineApi for LocalEngine {
         let store = self.task_store.lock().expect("task_store lock poisoned");
         store
             .get_task(task_id)
-            .cloned()
             .ok_or_else(|| EngineError::NotFound(format!("Task {} not found", task_id)))
     }
 

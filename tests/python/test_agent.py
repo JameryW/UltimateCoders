@@ -147,6 +147,93 @@ class TestLLMClient:
         assert client.api_key == "test-key"
         assert client.max_retries == 3
 
+    def test_init_openai_provider(self):
+        client = LLMClient(provider="openai", api_key="sk-test", model="gpt-4o")
+        assert client.provider == "openai"
+        assert client.model == "gpt-4o"
+        assert client.api_key == "sk-test"
+
+    def test_init_openai_default_model(self):
+        client = LLMClient(provider="openai", api_key="sk-test")
+        assert client.model == "gpt-4o"
+
+    def test_init_gemini_provider(self):
+        client = LLMClient(provider="gemini", api_key="gemini-key")
+        assert client.model == "gemini-2.5-pro"
+
+    def test_init_deepseek_provider(self):
+        client = LLMClient(provider="deepseek", api_key="ds-key")
+        assert client.model == "deepseek/deepseek-chat"
+
+    def test_api_key_env_fallback(self):
+        """ANTHROPIC_API_KEY is the universal fallback."""
+        import os
+        old = os.environ.get("ANTHROPIC_API_KEY")
+        os.environ["ANTHROPIC_API_KEY"] = "anthropic-fallback"
+        try:
+            client = LLMClient(provider="openai")
+            assert client.api_key == "anthropic-fallback"
+        finally:
+            if old is None:
+                del os.environ["ANTHROPIC_API_KEY"]
+            else:
+                os.environ["ANTHROPIC_API_KEY"] = old
+
+    def test_format_tool_anthropic(self):
+        tool = make_tool_definition(name="search", description="Search code")
+        formatted = LLMClient._format_tool_anthropic(tool)
+        assert formatted["name"] == "search"
+        assert "input_schema" in formatted
+        assert "name" not in formatted.get("function", {})
+
+    def test_format_tool_openai(self):
+        tool = make_tool_definition(name="search", description="Search code")
+        formatted = LLMClient._format_tool_openai(tool)
+        assert formatted["type"] == "function"
+        assert formatted["function"]["name"] == "search"
+        assert "parameters" in formatted["function"]
+
+    def test_parse_litellm_response_no_tools(self):
+        """Parse a litellm ModelResponse with text only."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Hello world"
+        mock_response.choices[0].message.tool_calls = None
+        mock_response.choices[0].finish_reason = "stop"
+        mock_response.model = "gpt-4o"
+        mock_response.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+
+        client = LLMClient(provider="openai")
+        result = client._parse_litellm_response(mock_response)
+        assert result.text == "Hello world"
+        assert not result.has_tool_calls
+        assert result.model == "gpt-4o"
+        assert result.usage["input_tokens"] == 10
+        assert result.usage["output_tokens"] == 5
+
+    def test_parse_litellm_response_with_tools(self):
+        """Parse a litellm ModelResponse with tool calls."""
+        mock_tc = MagicMock()
+        mock_tc.id = "call_abc"
+        mock_tc.function.name = "search"
+        mock_tc.function.arguments = '{"query": "test"}'
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = None
+        mock_response.choices[0].message.tool_calls = [mock_tc]
+        mock_response.choices[0].finish_reason = "tool_calls"
+        mock_response.model = "gpt-4o"
+        mock_response.usage = MagicMock(prompt_tokens=20, completion_tokens=15)
+
+        client = LLMClient(provider="openai")
+        result = client._parse_litellm_response(mock_response)
+        assert result.has_tool_calls
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "search"
+        assert result.tool_calls[0].input == {"query": "test"}
+        assert result.stop_reason == "tool_use"
+
 
 class TestLLMResponse:
     """Tests for LLMResponse."""

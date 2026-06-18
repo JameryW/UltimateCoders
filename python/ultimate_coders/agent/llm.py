@@ -2,10 +2,12 @@
 
 Supports tool calling for Worker execution and structured output
 for Orchestrator decomposition. Defaults to the Anthropic API.
+Multi-provider support via litellm delegation (Aider/OpenHands pattern).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -13,6 +15,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Provider-specific API key env var mapping
+_PROVIDER_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
 
 
 @dataclass
@@ -70,36 +80,55 @@ class LLMClient:
         tpm_limit: int = 100000,
     ):
         self.provider = provider
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self.model = model or "claude-sonnet-4-6"
+        # Resolve API key: explicit > provider-specific env > ANTHROPIC_API_KEY fallback
+        env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
+        self.api_key = api_key or os.environ.get(env_key) or os.environ.get("ANTHROPIC_API_KEY")
+        # ponytail: model defaults per provider, easy to extend
+        default_models: dict[str, str] = {
+            "anthropic": "claude-sonnet-4-6",
+            "openai": "gpt-4o",
+            "gemini": "gemini-2.5-pro",
+            "deepseek": "deepseek/deepseek-chat",
+        }
+        self.model = model or default_models.get(provider, "claude-sonnet-4-6")
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
         self._client: Any | None = None
 
     def _get_client(self) -> Any:
-        """Lazily initialize the Anthropic client."""
+        """Lazily initialize the LLM client.
+
+        For provider='anthropic', uses the native Anthropic SDK (stable, zero-change).
+        For any other provider, delegates to litellm (Aider/OpenHands pattern).
+        """
         if self._client is not None:
             return self._client
 
-        if self.provider != "anthropic":
-            raise ValueError(
-                f"Unsupported LLM provider: {self.provider}. "
-                "Only 'anthropic' is supported in the MVP."
-            )
+        if self.provider == "anthropic":
+            try:
+                import anthropic
 
-        try:
-            import anthropic
+                kwargs: dict[str, Any] = {}
+                if self.api_key:
+                    kwargs["api_key"] = self.api_key
+                self._client = anthropic.AsyncAnthropic(**kwargs)
+            except ImportError:
+                raise ImportError(
+                    "The 'anthropic' package is required for LLM integration. "
+                    "Install it with: pip install anthropic"
+                )
+        else:
+            # litellm delegation — lazy import to avoid ~1.5s startup cost
+            try:
+                import litellm
 
-            kwargs: dict[str, Any] = {}
-            if self.api_key:
-                kwargs["api_key"] = self.api_key
-            self._client = anthropic.AsyncAnthropic(**kwargs)
-        except ImportError:
-            raise ImportError(
-                "The 'anthropic' package is required for LLM integration. "
-                "Install it with: pip install anthropic"
-            )
+                self._client = litellm
+            except ImportError:
+                raise ImportError(
+                    f"The 'litellm' package is required for provider '{self.provider}'. "
+                    "Install it with: pip install litellm"
+                )
         return self._client
 
     async def complete(
@@ -122,6 +151,25 @@ class LLMClient:
         Returns:
             LLMResponse with text content.
         """
+        if self.provider == "anthropic":
+            return await self._complete_anthropic(
+                messages, system=system, max_tokens=max_tokens,
+                temperature=temperature, **kwargs,
+            )
+        return await self._complete_litellm(
+            messages, system=system, max_tokens=max_tokens,
+            temperature=temperature, **kwargs,
+        )
+
+    async def _complete_anthropic(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 1.0,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Anthropic-native completion path (zero-change from original)."""
         client = self._get_client()
 
         request_params: dict[str, Any] = {
@@ -135,7 +183,36 @@ class LLMClient:
         request_params.update(kwargs)
 
         response = await self._call_with_retry(client, request_params)
-        return self._parse_response(response)
+        return self._parse_anthropic_response(response)
+
+    async def _complete_litellm(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 1.0,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """litellm completion path — OpenAI-format I/O, provider auto-routing."""
+        client = self._get_client()
+
+        # Inject system as a message (OpenAI convention)
+        openai_messages = list(messages)
+        if system:
+            openai_messages.insert(0, {"role": "system", "content": system})
+
+        request_params: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": openai_messages,
+        }
+        if self.api_key:
+            request_params["api_key"] = self.api_key
+        request_params.update(kwargs)
+
+        response = await self._call_litellm_with_retry(client, request_params)
+        return self._parse_litellm_response(response)
 
     async def complete_with_tools(
         self,
@@ -175,8 +252,35 @@ class LLMClient:
         tool_calls_log: list[dict[str, Any]] = []
         working_messages = list(messages)
 
-        # Format tools for Anthropic API
-        anthropic_tools = [self._format_tool(t) for t in tools]
+        if self.provider == "anthropic":
+            return await self._complete_with_tools_anthropic(
+                working_messages, tools, system=system, max_tokens=max_tokens,
+                max_tool_rounds=max_tool_rounds, tool_executor=tool_executor,
+                on_tool_call=on_tool_call, tool_calls_log=tool_calls_log, **kwargs,
+            )
+        return await self._complete_with_tools_litellm(
+            working_messages, tools, system=system, max_tokens=max_tokens,
+            max_tool_rounds=max_tool_rounds, tool_executor=tool_executor,
+            on_tool_call=on_tool_call, tool_calls_log=tool_calls_log, **kwargs,
+        )
+
+    async def _complete_with_tools_anthropic(
+        self,
+        working_messages: list[dict[str, Any]],
+        tools: list[ToolDefinition],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        max_tool_rounds: int = 20,
+        tool_executor: Any | None = None,
+        on_tool_call: Any | None = None,
+        tool_calls_log: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> tuple[LLMResponse, list[dict[str, Any]]]:
+        """Anthropic-native tool-calling loop (zero-change from original)."""
+        if tool_calls_log is None:
+            tool_calls_log = []
+        anthropic_tools = [self._format_tool_anthropic(t) for t in tools]
+        llm_response = LLMResponse()
 
         for _ in range(max_tool_rounds):
             client = self._get_client()
@@ -192,7 +296,7 @@ class LLMClient:
             request_params.update(kwargs)
 
             response = await self._call_with_retry(client, request_params)
-            llm_response = self._parse_response(response)
+            llm_response = self._parse_anthropic_response(response)
 
             if not llm_response.has_tool_calls:
                 return llm_response, tool_calls_log
@@ -219,7 +323,6 @@ class LLMClient:
                     }
                 )
 
-                # Notify event emitter callback (for Dashboard real-time tracking)
                 if on_tool_call is not None:
                     try:
                         await on_tool_call(tool_call.name, tool_call.input, tool_result_str)
@@ -235,7 +338,6 @@ class LLMClient:
                     }
                 )
 
-                # Append tool result message
                 working_messages.append({"role": "assistant", "content": tool_use_blocks})
                 working_messages.append(
                     {
@@ -250,11 +352,105 @@ class LLMClient:
                     }
                 )
 
-        # Max rounds reached; return the last response
+        return llm_response, tool_calls_log
+
+    async def _complete_with_tools_litellm(
+        self,
+        working_messages: list[dict[str, Any]],
+        tools: list[ToolDefinition],
+        system: str | None = None,
+        max_tokens: int = 4096,
+        max_tool_rounds: int = 20,
+        tool_executor: Any | None = None,
+        on_tool_call: Any | None = None,
+        tool_calls_log: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> tuple[LLMResponse, list[dict[str, Any]]]:
+        """litellm tool-calling loop — OpenAI-format I/O, provider auto-routing."""
+        if tool_calls_log is None:
+            tool_calls_log = []
+        openai_tools = [self._format_tool_openai(t) for t in tools]
+
+        # Inject system message if provided
+        if system and (not working_messages or working_messages[0].get("role") != "system"):
+            working_messages.insert(0, {"role": "system", "content": system})
+
+        llm_response = LLMResponse()
+
+        for _ in range(max_tool_rounds):
+            client = self._get_client()
+
+            request_params: dict[str, Any] = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": working_messages,
+                "tools": openai_tools,
+            }
+            if self.api_key:
+                request_params["api_key"] = self.api_key
+            request_params.update(kwargs)
+
+            response = await self._call_litellm_with_retry(client, request_params)
+            llm_response = self._parse_litellm_response(response)
+
+            if not llm_response.has_tool_calls:
+                return llm_response, tool_calls_log
+
+            # Process tool calls in OpenAI format
+            assistant_msg = {"role": "assistant", "content": llm_response.text or None}
+            if llm_response.tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.input),
+                        },
+                    }
+                    for tc in llm_response.tool_calls
+                ]
+            working_messages.append(assistant_msg)
+
+            for tool_call in llm_response.tool_calls:
+                tool_result_str = ""
+                if tool_executor is not None:
+                    try:
+                        tool_result_str = await tool_executor(tool_call)
+                    except Exception as e:
+                        tool_result_str = f"Error executing tool {tool_call.name}: {e}"
+                        logger.error("Tool execution error: %s", e)
+
+                tool_calls_log.append(
+                    {
+                        "tool_call": {
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "input": tool_call.input,
+                        },
+                        "result": tool_result_str,
+                    }
+                )
+
+                if on_tool_call is not None:
+                    try:
+                        await on_tool_call(tool_call.name, tool_call.input, tool_result_str)
+                    except Exception:
+                        logger.debug("on_tool_call callback error", exc_info=True)
+
+                # OpenAI tool result format
+                working_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result_str,
+                    }
+                )
+
         return llm_response, tool_calls_log
 
     async def _call_with_retry(self, client: Any, params: dict[str, Any]) -> Any:
-        """Call the LLM API with exponential backoff and jitter retry."""
+        """Call the Anthropic API with exponential backoff and jitter retry."""
         base_delay = 1.0
         max_delay = 60.0
 
@@ -289,7 +485,41 @@ class LLMClient:
 
         raise RuntimeError("Unreachable: max retries exceeded")
 
-    def _parse_response(self, response: Any) -> LLMResponse:
+    async def _call_litellm_with_retry(self, litellm_mod: Any, params: dict[str, Any]) -> Any:
+        """Call litellm.acompletion() with exponential backoff and jitter retry."""
+        import asyncio
+
+        base_delay = 1.0
+        max_delay = 60.0
+
+        for attempt in range(self.max_retries):
+            try:
+                return await litellm_mod.acompletion(**params)
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
+
+                if not is_rate_limit:
+                    raise
+
+                if attempt >= self.max_retries - 1:
+                    raise
+
+                exp_delay = base_delay * (2**attempt)
+                jitter = random.uniform(0, 0.5)  # noqa: S311
+                delay = min(exp_delay + jitter, max_delay)
+                logger.warning(
+                    "litellm rate limited (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                    error_str,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("Unreachable: max retries exceeded")
+
+    def _parse_anthropic_response(self, response: Any) -> LLMResponse:
         """Parse an Anthropic API response into LLMResponse."""
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -321,8 +551,47 @@ class LLMClient:
             usage=usage,
         )
 
+    def _parse_litellm_response(self, response: Any) -> LLMResponse:
+        """Parse a litellm ModelResponse (OpenAI-format) into LLMResponse."""
+        choice = response.choices[0]
+        message = choice.message
+
+        text = message.content or ""
+        tool_calls: list[ToolCall] = []
+
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                # OpenAI format: tc.function.name, tc.function.arguments (JSON string)
+                try:
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                tool_calls.append(
+                    ToolCall(id=tc.id, name=tc.function.name, input=args)
+                )
+
+        usage = {}
+        if hasattr(response, "usage") and response.usage:
+            usage = {
+                "input_tokens": getattr(response.usage, "prompt_tokens", 0),
+                "output_tokens": getattr(response.usage, "completion_tokens", 0),
+            }
+
+        # ponytail: finish_reason maps to stop_reason; "tool_calls" → "tool_use"
+        stop_reason = getattr(choice, "finish_reason", "stop") or "stop"
+        if stop_reason == "tool_calls":
+            stop_reason = "tool_use"
+
+        return LLMResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            model=getattr(response, "model", self.model) or self.model,
+            usage=usage,
+        )
+
     @staticmethod
-    def _format_tool(tool: ToolDefinition) -> dict[str, Any]:
+    def _format_tool_anthropic(tool: ToolDefinition) -> dict[str, Any]:
         """Format a ToolDefinition for the Anthropic API."""
         return {
             "name": tool.name,
@@ -331,6 +600,22 @@ class LLMClient:
             or {
                 "type": "object",
                 "properties": {},
+            },
+        }
+
+    @staticmethod
+    def _format_tool_openai(tool: ToolDefinition) -> dict[str, Any]:
+        """Format a ToolDefinition for OpenAI/litellm API."""
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.input_schema
+                or {
+                    "type": "object",
+                    "properties": {},
+                },
             },
         }
 

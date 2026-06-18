@@ -311,6 +311,22 @@ function App() {
   }
 
   if (!auth.isAuthenticated) {
+    if (auth.connectionError) {
+      return (
+        <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
+          <div className="text-center max-w-md">
+            <p className="text-lg font-semibold text-red-400 mb-2">Connection Error</p>
+            <p className="text-sm mb-4">Unable to reach the server. Please check your network connection and try again.</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-[var(--bg-primary)]">
         <LoginModal onLogin={auth.login} />

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 import type { Theme } from "@/hooks/useTheme";
 
@@ -30,6 +31,7 @@ const NAV_SECTIONS = [
 ];
 
 export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout }: HeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const grpc = grpcState ? GRPC_LABELS[grpcState] : null;
   return (
     <header className="border-b border-[var(--border-color)] px-6 py-3">
@@ -38,7 +40,7 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme,
           <h1 className="text-xl font-bold text-[var(--text-primary)]">UltimateCoders</h1>
           <span className="text-sm text-[var(--text-secondary)]">Dashboard</span>
         </div>
-        {/* Nav links */}
+        {/* Nav links — desktop */}
         <nav className="hidden md:flex items-center space-x-3">
           {NAV_SECTIONS.map((s) => (
             <a
@@ -51,6 +53,22 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme,
           ))}
         </nav>
         <div className="flex items-center space-x-4">
+          {/* Hamburger — mobile only */}
+          <button
+            className="md:hidden p-1.5 rounded-md border border-[var(--border-color)] hover:bg-[var(--bg-surface-alt)] transition-colors"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Toggle navigation menu"
+          >
+            {menuOpen ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
           {lastUpdate && <span className="text-xs text-[var(--text-muted)]">{new Date(lastUpdate).toLocaleTimeString()}</span>}
           <span className={`pulse-dot ${connected ? "bg-green-500" : "bg-red-500"}`} title="SSE" />
           {grpc && (
@@ -89,6 +107,21 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme,
           )}
         </div>
       </div>
+      {/* Mobile nav dropdown */}
+      {menuOpen && (
+        <nav className="md:hidden mt-2 pb-1 flex flex-wrap gap-2">
+          {NAV_SECTIONS.map((s) => (
+            <a
+              key={s.hash}
+              href={`#${s.hash}`}
+              onClick={() => setMenuOpen(false)}
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors px-2 py-1 rounded hover:bg-[var(--bg-surface-alt)]"
+            >
+              {s.label}
+            </a>
+          ))}
+        </nav>
+      )}
     </header>
   );
 }

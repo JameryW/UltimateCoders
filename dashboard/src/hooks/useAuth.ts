@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 export interface AuthState {
   isAuthenticated: boolean;
   isChecking: boolean;
+  connectionError: boolean;
   token: string | null;
   login: (password: string) => Promise<boolean>;
   logout: () => void;
@@ -44,6 +45,7 @@ export function useAuth(): AuthState {
   const [token, setToken] = useState<string | null>(getStoredToken);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
+  const [connectionError, setConnectionError] = useState(false);
 
   // Validate current token on mount
   useEffect(() => {
@@ -63,8 +65,8 @@ export function useAuth(): AuthState {
           }
         })
         .catch(() => {
-          // Network error — don't block the UI
-          setIsAuthenticated(true);
+          // Network error — can't reach server, show connection error
+          setConnectionError(true);
         })
         .finally(() => setIsChecking(false));
     } else {
@@ -84,9 +86,8 @@ export function useAuth(): AuthState {
           }
         })
         .catch(() => {
-          // Network error — assume token is fine, don't block
-          setToken(stored);
-          setIsAuthenticated(true);
+          // Network error — can't reach server, show connection error
+          setConnectionError(true);
         })
         .finally(() => setIsChecking(false));
     }
@@ -116,5 +117,5 @@ export function useAuth(): AuthState {
     setIsAuthenticated(false);
   }, []);
 
-  return { isAuthenticated, isChecking, token, login, logout };
+  return { isAuthenticated, isChecking, connectionError, token, login, logout };
 }

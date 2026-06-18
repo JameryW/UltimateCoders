@@ -85,8 +85,9 @@ export function useDashboard() {
         if (snapshotTasks.tasks.length === 0 && prev.available && prev.tasks.length > 0) return prev;
         // Field-level merge: for each task in snapshot, keep the version whose
         // updated_at is more recent (gRPC-Web event updates set updated_at in real-time).
+        const prevMap = new Map(prev.tasks.map((t) => [t.id, t]));
         const merged = snapshotTasks.tasks.map((st) => {
-          const existing = prev.tasks.find((t) => t.id === st.id);
+          const existing = prevMap.get(st.id);
           if (!existing) return st;
           // If our existing version is newer (from gRPC-Web event), keep it.
           const existingTime = new Date(existing.updated_at).getTime();
@@ -115,8 +116,9 @@ export function useDashboard() {
           return st;
         });
         // Add tasks from prev that aren't in snapshot (recently submitted via gRPC)
+        const mergedIds = new Set(merged.map((m) => m.id));
         for (const t of prev.tasks) {
-          if (!merged.some((m) => m.id === t.id)) merged.push(t);
+          if (!mergedIds.has(t.id)) merged.push(t);
         }
         return { ...prev, tasks: merged, total: merged.length };
       });
