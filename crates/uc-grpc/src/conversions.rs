@@ -1237,6 +1237,9 @@ mod tests {
                 status: "Pending".to_string(),
                 depends_on: vec![],
                 assigned_worker: None,
+                parent_id: "task-1".to_string(),
+                file_constraints: vec![],
+                expected_output: String::new(),
             }],
         };
         let task: Task = proto.into();
