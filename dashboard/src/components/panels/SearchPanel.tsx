@@ -80,7 +80,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
       )}
 
       {searched && results.length === 0 && !error && (
-        <p className="text-sm text-gray-500">No results found for "{query}"</p>
+        <p className="text-sm text-[var(--text-muted)]">No results found for "{query}"</p>
       )}
 
       {results.length > 0 && (
@@ -93,8 +93,8 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
                   {r.symbolName && <span className="text-blue-400 ml-1 font-sans not-italic">{r.symbolName}</span>}
                 </span>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs text-gray-500">{r.repoId}</span>
-                  <span className="text-xs text-gray-500">L{r.startLine}{r.endLine > r.startLine ? `-${r.endLine}` : ""}</span>
+                  <span className="text-xs text-[var(--text-muted)]">{r.repoId}</span>
+                  <span className="text-xs text-[var(--text-muted)]">L{r.startLine}{r.endLine > r.startLine ? `-${r.endLine}` : ""}</span>
                   <span className={cn("text-xs px-1.5 py-0.5 rounded", matchTypeClass(r.matchType))}>
                     {r.matchType}
                   </span>
@@ -111,7 +111,7 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
       )}
 
       {!searched && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-[var(--text-muted)]">
           Search across indexed repositories via gRPC-Web.
           {grpcState !== "connected" && " gRPC server is currently disconnected — search requires an active connection."}
         </p>
@@ -136,9 +136,9 @@ function mapResult(item: GrpcSearchResultItem): SearchResult {
 
 function matchTypeClass(type: string): string {
   switch (type) {
-    case "text": return "bg-gray-800 text-gray-400";
-    case "semantic": return "bg-purple-900/50 text-purple-300";
-    case "ast": return "bg-cyan-900/50 text-cyan-300";
-    default: return "bg-gray-800 text-gray-400";
+    case "text": return "bg-[var(--bg-surface-alt)] text-[var(--text-secondary)]";
+    case "semantic": return "bg-purple-500/20 text-purple-400";
+    case "ast": return "bg-cyan-500/20 text-cyan-400";
+    default: return "bg-[var(--bg-surface-alt)] text-[var(--text-secondary)]";
   }
 }

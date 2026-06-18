@@ -25,7 +25,7 @@ function componentStatusColor(status: string): string {
     case "error":
       return "text-red-400";
     default:
-      return "text-gray-500";
+      return "text-[var(--text-muted)]";
   }
 }
 
@@ -42,7 +42,7 @@ export function HealthPanel({ data, stale }: HealthPanelProps) {
           <CardTitle>Engine Health</CardTitle>
           <Badge variant="unavailable">unavailable</Badge>
         </CardHeader>
-        <p className="text-sm text-gray-500">Engine not available</p>
+        <p className="text-sm text-[var(--text-muted)]">Engine not available</p>
         {data.error && <p className="text-xs text-red-400 mt-1">{data.error}</p>}
       </Card>
     );
@@ -58,10 +58,10 @@ export function HealthPanel({ data, stale }: HealthPanelProps) {
       <ul className="space-y-1.5 mb-3" aria-label="Engine components">
         {data.components.map((comp) => (
           <li key={comp.name} className="flex items-center justify-between text-sm">
-            <span className="text-gray-400">{comp.name}</span>
+            <span className="text-[var(--text-secondary)]">{comp.name}</span>
             <span className="flex items-center gap-2">
               {comp.details && (
-                <span className="text-xs text-gray-500">{comp.details}</span>
+                <span className="text-xs text-[var(--text-muted)]">{comp.details}</span>
               )}
               <span className={cn("text-xs font-medium", componentStatusColor(comp.status))}>
                 {comp.status}

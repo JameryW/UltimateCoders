@@ -23,6 +23,8 @@
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
+  --status-completed: #22c55e;
+  --status-failed: #ef4444;
 }
 
 /* ── Light theme ───────────────────────────────────────── */
@@ -35,6 +37,8 @@
   --text-primary: var(--color-light-text);
   --text-secondary: var(--color-light-text-secondary);
   --text-muted: #94a3b8;
+  --status-completed: #16a34a;
+  --status-failed: #dc2626;
 }
 
 body {
