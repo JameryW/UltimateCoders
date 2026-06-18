@@ -614,6 +614,10 @@ useEffect(() => {
 
 19. **Implementing ANSI cursor positioning inside an Ink app** — Writing `\x1B[row;colH` to position the real terminal cursor fights with Ink's render cycle. Ink redraws the screen on every state change and leaves the cursor at the end of its output. Any ANSI positioning is overwritten. If you need a visible cursor, render it inline (as CjkTextInput does with `\x1B[7m...\x1B[27m`) and hide the real cursor entirely.
 
+20. **Defining keybindings in keymap.ts but not dispatching them in App.tsx useInput** — `keymap.ts` is the single source of truth for shortcut definitions, but App's `useInput` handler must explicitly check for each key combination. A shortcut defined in keymap.ts but not handled in App.tsx is dead code — the key event silently passes through. This happened with Ctrl+W: keymap.ts defined it as `cycleFocus`, CjkTextInput correctly passed it through, but App.tsx only checked `Shift+Tab`. Rule: after adding a shortcut to keymap.ts, verify it's dispatched in App.tsx.
+
+21. **Props received but not wired into rendering logic** — A component may accept a prop (like `nextRetryAt`) but never reference it in its render function or segment builders. This creates "dead props" — values that flow through the component tree but produce no visible effect. The StatusBar accepted `nextRetryAt` for months without using it; the retry countdown was invisible despite the prop being passed. Rule: after adding a prop to a component interface, immediately wire it into the rendering logic or mark it as intentionally unused with a comment.
+
 ---
 
 ## TUI Testing Conventions
