@@ -315,37 +315,38 @@ function App() {
     );
   }
 
-  // ponytail: panels are stale only when both SSE and gRPC-Web are disconnected;
-  // if either source is live, data is still flowing.
-  const stale = !connected && grpcState !== "connected";
+  // Data-source-aware stale: SSE-only panels (health, workers, scheduler, CB) are stale
+  // when SSE disconnects; gRPC-backed panels (tasks, events) only stale when both disconnect.
+  const sseStale = !connected;
+  const grpcStale = !connected && grpcState !== "connected";
 
   return (
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
       <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} />
-      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} />
+      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} onOptimisticAdd={dashboard.optimisticAddTask} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
-          <div id="health" className="md:col-span-2 scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={stale} /></div>
+          <div id="health" className="md:col-span-2 scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Circuit Breaker">
-          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={stale} /></div>
+          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
-          <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={stale} /></div>
+          <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Tasks">
-          <div id="tasks" className="scroll-mt-20"><TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={stale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} /></div>
+          <div id="tasks" className="scroll-mt-20"><TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={grpcStale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Event Log">
-          <div id="events" className="scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={stale} /></div>
+          <div id="events" className="scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Scheduler">
-          <div id="scheduler" className="md:col-span-2 scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={stale} /></div>
+          <div id="scheduler" className="md:col-span-2 scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={sseStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Task Activity">
-          <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={stale} /></div>
+          <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
           <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} /></div>
