@@ -6,9 +6,15 @@ import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 interface TaskSubmitFormProps {
   /** If provided, submit via gRPC-Web (Rust server). Falls back to REST (Python) if undefined. */
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
+  /** Called after successful submission with the new task ID. */
+  onTaskCreated?: (taskId: string) => void;
 }
 
-export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
+function shortId(id: string, len = 8): string {
+  return id ? id.substring(0, len) : "--";
+}
+
+export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated }: TaskSubmitFormProps) {
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -37,6 +43,7 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
           );
           setDescription("");
           setProjectId("");
+          onTaskCreated?.(resp.taskId);
         } else {
           showToast(`Submit failed ${modeLabel}: ${resp.status}`, "error");
         }
@@ -47,6 +54,7 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
           showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");
           setDescription("");
           setProjectId("");
+          if (result.task_id) onTaskCreated?.(result.task_id);
         } else {
           showToast(`Submit failed ${modeLabel}: ${result.error ?? "unknown"}`, "error");
         }
@@ -97,8 +105,4 @@ export function TaskSubmitForm({ grpcSubmitTask }: TaskSubmitFormProps) {
       </div>
     </div>
   );
-}
-
-function shortId(id: string, len = 8): string {
-  return id ? id.substring(0, len) : "--";
 }

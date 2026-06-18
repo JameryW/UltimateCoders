@@ -271,7 +271,7 @@ export function useDashboard() {
     } catch { /* ignore */ }
   }, []);
 
-  /** Merge task list from gRPC-Web into state (for when SSE is unavailable). */
+  /** Merge task list from gRPC-Web into state — field-level merge preserving incremental subtask updates. */
   const mergeGrpcTasks = useCallback((data: TasksData) => {
     setTasks((prev) => {
       if (!data.available) return prev;
@@ -279,12 +279,17 @@ export function useDashboard() {
       for (const t of data.tasks) {
         const idx = merged.findIndex((m) => m.id === t.id);
         if (idx >= 0) {
-          merged[idx] = { ...merged[idx], ...t };
+          const existing = merged[idx];
+          // ponytail: don't spread subtasks — keep the version with more entries
+          // (gRPC listTasks snapshot may be stale vs real-time subtask events)
+          const subtasks = (existing.subtasks?.length ?? 0) >= (t.subtasks?.length ?? 0)
+            ? existing.subtasks : t.subtasks;
+          merged[idx] = { ...existing, ...t, subtasks };
         } else {
           merged.push(t);
         }
       }
-      return { ...prev, tasks: merged, total: merged.length };
+      return { ...prev, tasks: merged, total: merged.length, status_counts: recountStatus(merged) };
     });
   }, []);
 

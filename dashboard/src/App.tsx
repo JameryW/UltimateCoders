@@ -54,6 +54,8 @@ function App() {
 
   // Track last update timestamp for Header display
   const [lastUpdate, setLastUpdate] = useState<string | undefined>();
+  // Track newly submitted task for highlight + auto-scroll
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
 
   const { connected, reconnect: sseReconnect } = useSSE({
     onUpdate: (snapshot: DashboardSnapshot) => {
@@ -63,6 +65,10 @@ function App() {
     onTaskEvent: (ev: TaskEvent) => {
       dedupedHandleTaskEvent(ev);
       setLastUpdate(ev.timestamp);
+    },
+    onReconnect: () => {
+      // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
+      dashboard.fetchInitial();
     },
   });
 
@@ -202,7 +208,7 @@ function App() {
       <ToastContainer />
       <ConfirmDialog />
       <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} />
-      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
+      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
           <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} stale={stale} /></div>
@@ -214,7 +220,7 @@ function App() {
           <WorkersPanel data={dashboard.workers} stale={stale} />
         </ErrorBoundary>
         <ErrorBoundary name="Tasks">
-          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={stale} />
+          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={stale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} />
         </ErrorBoundary>
         <ErrorBoundary name="Event Log">
           <EventLogPanel events={dashboard.eventLog} stale={stale} />
