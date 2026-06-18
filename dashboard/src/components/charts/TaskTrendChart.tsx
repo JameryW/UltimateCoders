@@ -63,6 +63,11 @@ function bucketByHour(events: DashboardEvent[]): { name: string; completed: numb
     .map(([key, counts]) => ({ name: formatHourLabel(key), ...counts }));
 }
 
+/** Read a CSS variable value at runtime. */
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) {
   const trendData = useMemo(() => bucketByHour(eventLog), [eventLog]);
 
@@ -70,29 +75,37 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   const statusCounts = tasks.available ? tasks.status_counts : {};
   const total = tasks.available ? tasks.total : 0;
 
+  // ponytail: read CSS vars at render time so recharts uses theme-correct colors.
+  // Recharts doesn't support CSS vars natively, so we bridge via getComputedStyle.
+  const gridStroke = cssVar("--border-color") || "#334155";
+  const axisStroke = cssVar("--text-muted") || "#94a3b8";
+  const tooltipBg = cssVar("--bg-surface") || "#1e293b";
+  const tooltipBorder = cssVar("--border-color") || "#334155";
+
   return (
-    <div className={cn("rounded-lg border border-dark-700 bg-dark-800 p-4 relative", stale && "opacity-70")}>
+    <div className={cn("rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4 relative", stale && "opacity-70")}>
       {stale && (
-        <div className="absolute top-2 left-2 text-[10px] text-yellow-400 bg-yellow-900/40 px-1.5 py-0.5 rounded font-medium z-10">
+        <div className="stale-badge absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded font-medium z-10">
           STALE
         </div>
       )}
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+        <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">
           Task Activity
         </h2>
         {tasks.available && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">{total} total</span>
+            <span className="text-xs text-[var(--text-muted)]">{total} total</span>
             {Object.entries(statusCounts).map(([status, count]) => (
               <span
                 key={status}
-                className={`text-xs px-1.5 py-0.5 rounded ${
-                  status === "completed" ? "bg-green-900/50 text-green-300"
-                  : status === "failed" ? "bg-red-900/50 text-red-300"
-                  : status === "in_progress" ? "bg-blue-900/50 text-blue-300"
-                  : "bg-gray-800 text-gray-400"
-                }`}
+                className={cn(
+                  "text-xs px-1.5 py-0.5 rounded",
+                  status === "completed" ? "status-completed"
+                  : status === "failed" ? "status-failed"
+                  : status === "in_progress" ? "status-in_progress"
+                  : "status-default"
+                )}
               >
                 {status}: {count}
               </span>
@@ -104,15 +117,15 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
       {trendData.length > 0 ? (
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={trendData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} interval="preserveStartEnd" />
-            <YAxis stroke="#94a3b8" fontSize={11} />
+            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+            <XAxis dataKey="name" stroke={axisStroke} fontSize={10} interval="preserveStartEnd" />
+            <YAxis stroke={axisStroke} fontSize={11} />
             <Tooltip
-              contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: 4 }}
-              labelStyle={{ color: "#94a3b8" }}
+              contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${tooltipBorder}`, borderRadius: 4 }}
+              labelStyle={{ color: axisStroke }}
             />
             <Legend
-              wrapperStyle={{ fontSize: 11, color: "#94a3b8" }}
+              wrapperStyle={{ fontSize: 11, color: axisStroke }}
               formatter={(value: string) => (
                 <span style={{ color: value === "completed" ? "#22c55e" : "#ef4444" }}>{value}</span>
               )}
@@ -123,7 +136,7 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
         </ResponsiveContainer>
       ) : (
         <div className="h-[200px] flex items-center justify-center">
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-[var(--text-muted)]">
             {tasks.available ? "No recent task events" : "Task data unavailable"}
           </p>
         </div>

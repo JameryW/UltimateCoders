@@ -20,27 +20,27 @@ function formatHeartbeatAge(seconds: number): string {
 
 function WorkerDetail({ worker }: { worker: WorkerInfo }) {
   return (
-    <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-dark-700 pt-2">
+    <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-[var(--border-color)] pt-2">
       <div className="flex items-start gap-2">
         <span className="text-gray-500 shrink-0 w-20">Full ID</span>
-        <span className="font-mono text-gray-300 break-all">{worker.id}</span>
+        <span className="font-mono text-[var(--text-primary)] break-all">{worker.id}</span>
       </div>
       <div className="flex items-start gap-2">
         <span className="text-gray-500 shrink-0 w-20">Heartbeat</span>
-        <span className="text-gray-300">
+        <span className="text-[var(--text-primary)]">
           {new Date(worker.last_heartbeat).toLocaleString()}
         </span>
       </div>
       <div className="flex items-start gap-2">
         <span className="text-gray-500 shrink-0 w-20">Age</span>
-        <span className={cn(worker.heartbeat_stale ? "text-yellow-400" : "text-gray-300")}>
+        <span className={cn(worker.heartbeat_stale ? "text-yellow-400" : "text-[var(--text-primary)]")}>
           {formatHeartbeatAge(worker.heartbeat_age_seconds)}
           {worker.heartbeat_stale && " (stale)"}
         </span>
       </div>
       <div className="flex items-start gap-2">
         <span className="text-gray-500 shrink-0 w-20">Load</span>
-        <span className="text-gray-300">
+        <span className="text-[var(--text-primary)]">
           {worker.current_load} / {worker.max_capacity} ({worker.load_percent}%)
         </span>
       </div>
@@ -51,7 +51,7 @@ function WorkerDetail({ worker }: { worker: WorkerInfo }) {
             {worker.capabilities.map((cap) => (
               <span
                 key={cap}
-                className="bg-dark-700 text-gray-400 px-1.5 py-0.5 rounded"
+                className="bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"
               >
                 {cap}
               </span>
@@ -98,12 +98,12 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
                 tabIndex={0}
                 aria-expanded={expandedWorkerId === w.id}
                 aria-label={`Worker ${shortId(w.id)}`}
-                className="cursor-pointer hover:bg-dark-700/50 rounded-r"
+                className="cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r"
                 onClick={() => toggleExpand(w.id)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(w.id); } }}
               >
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-mono text-gray-300">{shortId(w.id)}</span>
+                  <span className="font-mono text-[var(--text-primary)]">{shortId(w.id)}</span>
                   {w.heartbeat_stale && (
                     <span className="text-yellow-500 text-xs" title="Heartbeat stale">
                       &#9888;
@@ -131,7 +131,7 @@ export function WorkersPanel({ data, stale }: { data: WorkersData; stale?: boole
                     {w.capabilities.map((cap) => (
                       <span
                         key={cap}
-                        className="text-xs bg-dark-700 text-gray-400 px-1.5 py-0.5 rounded"
+                        className="text-xs bg-[var(--bg-surface-alt)] text-[var(--text-secondary)] px-1.5 py-0.5 rounded"
                       >
                         {cap}
                       </span>

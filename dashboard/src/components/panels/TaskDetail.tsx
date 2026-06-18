@@ -12,11 +12,11 @@ interface TaskDetailProps {
 
 function statusBadgeClass(status: string): string {
   switch (status) {
-    case "completed": return "bg-green-900/50 text-green-300";
-    case "failed": return "bg-red-900/50 text-red-300";
-    case "paused": return "bg-yellow-900/50 text-yellow-300";
-    case "in_progress": return "bg-blue-900/50 text-blue-300";
-    default: return "bg-gray-800 text-gray-400";
+    case "completed": return "status-completed";
+    case "failed": return "status-failed";
+    case "paused": return "status-paused";
+    case "in_progress": return "status-in_progress";
+    default: return "status-default";
   }
 }
 
@@ -34,18 +34,18 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
 
   return (
     <div className="mb-2">
-      <p className="text-xs text-gray-400 mb-1">
-        Output Files: <span className="text-gray-500">{files.length} changed</span>
+      <p className="text-xs text-[var(--text-secondary)] mb-1">
+        Output Files: <span className="text-[var(--text-muted)]">{files.length} changed</span>
       </p>
       <div className="space-y-0.5">
         {files.map((f, i) => {
           const icon = f.type === "created" ? "+" : f.type === "deleted" ? "−" : "~";
-          const color = f.type === "created" ? "text-green-400" : f.type === "deleted" ? "text-red-400" : "text-yellow-400";
-          const bg = f.type === "created" ? "bg-green-900/20" : f.type === "deleted" ? "bg-red-900/20" : "bg-yellow-900/20";
+          const color = f.type === "created" ? "text-green-500" : f.type === "deleted" ? "text-red-500" : "text-yellow-500";
+          const bg = f.type === "created" ? "file-created" : f.type === "deleted" ? "file-deleted" : "file-modified";
           return (
             <div key={i} className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs", bg)}>
               <span className={cn("font-mono font-bold w-3 text-center", color)}>{icon}</span>
-              <span className="font-mono text-gray-300 truncate flex-1" title={f.path}>{f.path}</span>
+              <span className="font-mono text-[var(--text-primary)] truncate flex-1" title={f.path}>{f.path}</span>
               <span className={cn("text-[10px] px-1 rounded", color)}>{f.type.toUpperCase()}</span>
             </div>
           );
@@ -58,8 +58,6 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
 function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   const [svg, setSvg] = useState<string | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
-  // Counter ensures a fresh Mermaid DOM ID on every render cycle,
-  // preventing collisions when the same task is closed and re-opened.
   const idCounter = useRef(0);
 
   useEffect(() => {
@@ -86,7 +84,6 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
       }
     }
 
-    // Increment counter each effect run so Mermaid gets a unique container ID
     idCounter.current += 1;
     const mermaidId = `mermaid-dag-${idCounter.current}-${Date.now()}`;
 
@@ -106,15 +103,15 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   if (renderFailed && !svg) {
     return (
       <div className="mb-2">
-        <p className="text-xs text-gray-400 mb-1">Subtask DAG:</p>
-        <p className="text-xs text-gray-500 italic">No dependency graph available</p>
+        <p className="text-xs text-[var(--text-secondary)] mb-1">Subtask DAG:</p>
+        <p className="text-xs text-[var(--text-muted)] italic">No dependency graph available</p>
       </div>
     );
   }
 
   return (
     <div className="mb-2">
-      <p className="text-xs text-gray-400 mb-1">Subtask DAG:</p>
+      <p className="text-xs text-[var(--text-secondary)] mb-1">Subtask DAG:</p>
       <div dangerouslySetInnerHTML={{ __html: svg! }} />
     </div>
   );
@@ -130,14 +127,14 @@ function SubtaskProgressBar({ subtasks }: { subtasks: SubtaskSummary[] }) {
   return (
     <div className="mb-2">
       <div className="flex items-center justify-between mb-0.5">
-        <span className="text-xs text-gray-400">Progress</span>
-        <span className="text-xs text-gray-500">{completed}/{total} ({pct}%)</span>
+        <span className="text-xs text-[var(--text-secondary)]">Progress</span>
+        <span className="text-xs text-[var(--text-muted)]">{completed}/{total} ({pct}%)</span>
       </div>
-      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden flex">
+      <div className="h-1.5 bg-[var(--bg-surface-alt)] rounded-full overflow-hidden flex">
         {completed > 0 && <div className="bg-green-500 h-full" style={{ width: (completed / total) * 100 + "%" }} />}
         {failed > 0 && <div className="bg-red-500 h-full" style={{ width: (failed / total) * 100 + "%" }} />}
       </div>
-      {failed > 0 && <span className="text-[10px] text-red-400">{failed} failed</span>}
+      {failed > 0 && <span className="text-[10px] text-red-500">{failed} failed</span>}
     </div>
   );
 }
@@ -154,19 +151,19 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
   };
   return (
     <div className="mb-2">
-      <p className="text-xs text-gray-400 mb-1">Timeline:</p>
+      <p className="text-xs text-[var(--text-secondary)] mb-1">Timeline:</p>
       <div className="space-y-0.5 max-h-48 overflow-y-auto">
         {recent.map((ev, i) => (
           <div key={i} className="flex items-center gap-1.5 text-xs">
             <span>{typeIcon[ev.type] ?? "•"}</span>
-            <span className="text-gray-500 w-16 shrink-0">{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ""}</span>
-            <span className="text-gray-300 truncate">{ev.type}</span>
-            {ev.subtask_id && <span className="text-gray-600 font-mono">{shortId(ev.subtask_id)}</span>}
+            <span className="text-[var(--text-muted)] w-16 shrink-0">{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ""}</span>
+            <span className="text-[var(--text-primary)] truncate">{ev.type}</span>
+            {ev.subtask_id && <span className="text-[var(--text-muted)] font-mono">{shortId(ev.subtask_id)}</span>}
           </div>
         ))}
       </div>
       {!showAll && events.length > EVENT_PREVIEW_COUNT && (
-        <button onClick={() => setShowAll(true)} className="text-[10px] text-blue-400 hover:underline mt-1">
+        <button onClick={() => setShowAll(true)} className="text-[10px] text-blue-500 hover:underline mt-1">
           Show all {events.length} events
         </button>
       )}
@@ -179,7 +176,7 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
 
   return (
-    <div className="pl-5 py-2 text-xs text-gray-400 space-y-3" role="region" aria-label={`Task detail: ${task.description}`}>
+    <div className="pl-5 py-2 text-xs text-[var(--text-secondary)] space-y-3" role="region" aria-label={`Task detail: ${task.description}`}>
       {/* Progress bar */}
       <SubtaskProgressBar subtasks={subtasks} />
 
@@ -189,14 +186,14 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
       {/* Subtask list */}
       {subtasks.length > 0 && (
         <div>
-          <p className="text-gray-300 font-medium mb-1">Subtasks:</p>
+          <p className="text-[var(--text-primary)] font-medium mb-1">Subtasks:</p>
           <div className="space-y-0.5">
             {subtasks.map((st) => (
               <div key={st.id} className="flex items-center justify-between">
                 <span className="truncate max-w-[200px]">
                   {truncate(st.description, 50)}
                   {st.depends_on.length > 0 && (
-                    <span className="text-gray-600 ml-2">
+                    <span className="text-[var(--text-muted)] ml-2">
                       deps: {st.depends_on.map((d) => shortId(d)).join(", ")}
                     </span>
                   )}
@@ -213,13 +210,13 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
       {/* Interaction log with subtask filter */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-gray-300 font-medium">Interaction Log:</span>
+          <span className="text-[var(--text-primary)] font-medium">Interaction Log:</span>
           {subtasks.length > 1 && (
             <select
               value={filterSubtaskId}
               onChange={(e) => setFilterSubtaskId(e.target.value)}
               aria-label="Filter by subtask"
-              className="text-xs bg-dark-900 border border-dark-700 text-gray-300 rounded px-2 py-1"
+              className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-2 py-1"
             >
               <option value="">All subtasks</option>
               {subtasks.map((st) => (

@@ -53,7 +53,7 @@ export function InteractionLog({ events, filterSubtaskId }: InteractionLogProps)
           >
             <span className="text-gray-500 mr-1">{time}</span>
             <span className={style.dot}>●</span>{" "}
-            <span className="text-gray-300">{eventContent(ev)}</span>
+            <span className="text-[var(--text-primary)]">{eventContent(ev)}</span>
           </div>
         );
       })}

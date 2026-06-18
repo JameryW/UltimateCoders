@@ -56,8 +56,8 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
             className={cn(
               "text-xs px-1.5 py-0.5 rounded",
               data.night_window.is_active
-                ? "bg-yellow-900/50 text-yellow-300"
-                : "bg-green-900/50 text-green-300"
+                ? "status-paused"
+                : "status-completed"
             )}
           >
             {data.night_window.is_active ? "ACTIVE" : "INACTIVE"}
@@ -79,7 +79,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
                     job.enabled ? "bg-green-500" : "bg-gray-600"
                   )}
                 />
-                <span className="text-gray-300">{job.description}</span>
+                <span className="text-[var(--text-primary)]">{job.description}</span>
               </div>
               <div className="flex items-center gap-2">
                 {job.cron_expression && (
@@ -90,7 +90,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
                 {onTriggerJob && (
                   <button
                     onClick={() => onTriggerJob(job.id)}
-                    className="bg-blue-900/50 text-blue-300 hover:bg-blue-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+                    className="btn-action-info px-2 py-0.5 rounded text-xs cursor-pointer"
                   >
                     Trigger
                   </button>
@@ -102,7 +102,7 @@ export function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProp
       )}
 
       {data.execution_history.length > 0 && (
-        <div className="border-t border-dark-700 pt-2">
+        <div className="border-t border-[var(--border-color)] pt-2">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-1.5">
             Execution History
           </p>

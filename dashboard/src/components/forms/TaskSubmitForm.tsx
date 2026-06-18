@@ -74,12 +74,12 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
 
   return (
     <div className="max-w-7xl mx-auto px-4 pt-4">
-      <div className="rounded-lg border border-dark-700 bg-dark-800 p-4">
+      <div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4">
         <div className="flex items-center gap-2 mb-3">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+          <h2 className="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
             Submit Task
           </h2>
-          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "bg-blue-900/50 text-blue-300" : "bg-green-900/50 text-green-300"}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "status-in_progress" : "status-completed"}`}>
             {mode}
           </span>
         </div>
@@ -89,7 +89,7 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             aria-label="Task description"
-            className="flex-1 bg-dark-900 border border-dark-700 rounded-md px-3 py-2 text-sm text-gray-200 resize-vertical focus:border-blue-500 focus:outline-none"
+            className="flex-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] resize-vertical focus:border-blue-500 focus:outline-none"
             placeholder="Describe the coding task..."
           />
           <input
@@ -97,13 +97,13 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             aria-label="Project ID (optional)"
-            className="w-full md:w-40 bg-dark-900 border border-dark-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+            className="w-full md:w-40 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
             placeholder="Project ID (optional)"
           />
           <button
             type="submit"
             disabled={submitting}
-            className="bg-blue-900/50 text-blue-300 border border-blue-500 rounded-md px-5 py-2 text-sm font-medium cursor-pointer hover:bg-blue-900/70 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            className="btn-action-info border border-blue-500 rounded-md px-5 py-2 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {submitting ? "Submitting..." : "Submit Task"}
           </button>

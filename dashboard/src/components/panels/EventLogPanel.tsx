@@ -5,31 +5,31 @@ import { cn } from "@/lib/utils";
 import type { DashboardEvent } from "@/types/dashboard";
 
 function eventTypeColor(type: string): string {
-  if (type.startsWith("task_submitted")) return "text-blue-400";
-  if (type.startsWith("task_completed")) return "text-green-400";
-  if (type.startsWith("task_failed")) return "text-red-400";
-  if (type.startsWith("task_pause")) return "text-yellow-400";
-  if (type.startsWith("task_resume")) return "text-green-400";
-  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "text-blue-300";
-  if (type.startsWith("subtask_completed")) return "text-green-300";
-  if (type.startsWith("subtask_failed")) return "text-red-300";
-  if (type.startsWith("circuit_breaker_reset")) return "text-yellow-400";
-  if (type.startsWith("scheduler_trigger")) return "text-green-400";
-  return "text-gray-400";
+  if (type.startsWith("task_submitted")) return "text-blue-500";
+  if (type.startsWith("task_completed")) return "text-green-500";
+  if (type.startsWith("task_failed")) return "text-red-500";
+  if (type.startsWith("task_pause")) return "text-yellow-500";
+  if (type.startsWith("task_resume")) return "text-green-500";
+  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "text-blue-400";
+  if (type.startsWith("subtask_completed")) return "text-green-400";
+  if (type.startsWith("subtask_failed")) return "text-red-400";
+  if (type.startsWith("circuit_breaker_reset")) return "text-yellow-500";
+  if (type.startsWith("scheduler_trigger")) return "text-green-500";
+  return "text-[var(--text-secondary)]";
 }
 
 function eventTypeBg(type: string): string {
-  if (type.startsWith("task_submitted")) return "bg-blue-900/30";
-  if (type.startsWith("task_completed")) return "bg-green-900/30";
-  if (type.startsWith("task_failed")) return "bg-red-900/30";
-  if (type.startsWith("task_pause")) return "bg-yellow-900/30";
-  if (type.startsWith("task_resume")) return "bg-green-900/30";
-  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "bg-blue-900/20";
-  if (type.startsWith("subtask_completed")) return "bg-green-900/20";
-  if (type.startsWith("subtask_failed")) return "bg-red-900/20";
-  if (type.startsWith("circuit_breaker_reset")) return "bg-yellow-900/30";
-  if (type.startsWith("scheduler_trigger")) return "bg-green-900/30";
-  return "bg-gray-800/50";
+  if (type.startsWith("task_submitted")) return "evt-submitted";
+  if (type.startsWith("task_completed")) return "evt-completed";
+  if (type.startsWith("task_failed")) return "evt-failed";
+  if (type.startsWith("task_pause")) return "evt-pause";
+  if (type.startsWith("task_resume")) return "evt-resume";
+  if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "evt-started";
+  if (type.startsWith("subtask_completed")) return "evt-completed";
+  if (type.startsWith("subtask_failed")) return "evt-failed";
+  if (type.startsWith("circuit_breaker_reset")) return "evt-cb-reset";
+  if (type.startsWith("scheduler_trigger")) return "evt-trigger";
+  return "evt-default";
 }
 
 function formatTimestamp(ts: string): string {
@@ -93,7 +93,7 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
                     "text-xs px-1.5 py-0.5 rounded cursor-pointer",
                     eventTypeBg(type),
                     eventTypeColor(type),
-                    typeFilter === type && "ring-1 ring-white/50"
+                    typeFilter === type && "ring-1 ring-[var(--text-muted)]"
                   )}
                 >
                   {type}
@@ -106,13 +106,13 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search events..."
-            className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-500 focus:outline-none focus:border-gray-500"
+            className="w-full bg-[var(--bg-surface-alt)] border border-[var(--border-color)] rounded px-2 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--text-secondary)]"
           />
         </div>
       )}
 
       {filteredEvents.length === 0 ? (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-[var(--text-muted)]">
           {events.length === 0 ? "No events" : "No matching events"}
         </p>
       ) : (
@@ -122,14 +122,14 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
               key={`${evt.timestamp}-${i}`}
               className={cn("flex items-start gap-2 px-2 py-1 rounded text-xs", eventTypeBg(evt.type))}
             >
-              <span className="text-gray-500 shrink-0 font-mono">
+              <span className="text-[var(--text-muted)] shrink-0 font-mono">
                 {formatTimestamp(evt.timestamp)}
               </span>
               <span className={cn("shrink-0 font-medium", eventTypeColor(evt.type))}>
                 {evt.type}
               </span>
               {Object.keys(evt.details).length > 0 && (
-                <span className="text-gray-500 truncate">
+                <span className="text-[var(--text-muted)] truncate">
                   {eventSummary(evt.details)}
                 </span>
               )}

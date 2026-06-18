@@ -7,11 +7,11 @@ import type { TasksData, TaskEvent } from "@/types/dashboard";
 
 function statusBadgeClass(status: string): string {
   switch (status) {
-    case "completed": return "bg-green-900/50 text-green-300";
-    case "failed": return "bg-red-900/50 text-red-300";
-    case "paused": return "bg-yellow-900/50 text-yellow-300";
-    case "in_progress": return "bg-blue-900/50 text-blue-300";
-    default: return "bg-gray-800 text-gray-400";
+    case "completed": return "status-completed";
+    case "failed": return "status-failed";
+    case "paused": return "status-paused";
+    case "in_progress": return "status-in_progress";
+    default: return "status-default";
   }
 }
 
@@ -69,7 +69,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
             <button
               onClick={onFlush}
               aria-label="Flush pending tasks"
-              className="bg-blue-900/50 text-blue-300 hover:bg-blue-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+              className="btn-action-info px-2 py-0.5 rounded text-xs cursor-pointer"
             >
               Flush
             </button>
@@ -78,7 +78,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
       </CardHeader>
 
       {!data.available ? (
-        <p className="text-sm text-gray-500">Tasks not available</p>
+        <p className="text-sm text-[var(--text-muted)]">Tasks not available</p>
       ) : (
         <>
           {Object.keys(data.status_counts).length > 0 && (
@@ -90,7 +90,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   className={cn(
                     "text-xs px-1.5 py-0.5 rounded cursor-pointer",
                     statusBadgeClass(status),
-                    statusFilter === status && "ring-1 ring-white/50"
+                    statusFilter === status && "ring-1 ring-[var(--text-muted)]"
                   )}
                 >
                   {status}: {count}
@@ -100,7 +100,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           )}
 
           {data.pending_task_count > 0 && (
-            <p className="text-xs text-yellow-400 mb-2">
+            <p className="text-xs text-yellow-500 mb-2">
               {data.pending_task_count} pending task{data.pending_task_count !== 1 ? "s" : ""}
             </p>
           )}
@@ -116,15 +116,15 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   aria-expanded={expandedTaskId === task.id}
                   aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
-                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-dark-700/50 rounded-r",
+                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r",
                     statusBorderColor(task.status),
-                    task.id === highlightTaskId && "ring-1 ring-blue-400/50 bg-blue-900/20"
+                    task.id === highlightTaskId && "highlight-ring"
                   )}
                   onClick={() => toggleExpand(task.id)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}
                 >
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-300">
+                    <span className="text-[var(--text-primary)]">
                       {truncate(task.description, 40)}
                     </span>
                     <div className="flex items-center gap-1.5">
@@ -132,7 +132,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                         <button
                           onClick={(e) => { e.stopPropagation(); onPauseTask(task.id); }}
                           aria-label={`Pause task ${shortId(task.id)}`}
-                          className="bg-yellow-900/50 text-yellow-300 hover:bg-yellow-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+                          className="btn-action-warn px-2 py-0.5 rounded text-xs cursor-pointer"
                         >
                           Pause
                         </button>
@@ -141,7 +141,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                         <button
                           onClick={(e) => { e.stopPropagation(); onResumeTask(task.id); }}
                           aria-label={`Resume task ${shortId(task.id)}`}
-                          className="bg-green-900/50 text-green-300 hover:bg-green-900/70 px-2 py-0.5 rounded text-xs cursor-pointer"
+                          className="btn-action-ok px-2 py-0.5 rounded text-xs cursor-pointer"
                         >
                           Resume
                         </button>
@@ -153,7 +153,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                  <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5">
                     <span className="font-mono">{shortId(task.id)}</span>
                     {task.project_id && <span>proj: {shortId(task.project_id)}</span>}
                   </div>
