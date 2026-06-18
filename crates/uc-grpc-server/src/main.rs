@@ -85,10 +85,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .filter(|o| !o.is_empty())
                         .collect();
                     if allowed.is_empty() {
-                        tracing::warn!("UC_CORS_ORIGINS set but no valid origins parsed; no origins allowed");
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
+                        tracing::warn!(
+                            "UC_CORS_ORIGINS set but no valid origins parsed; no origins allowed"
+                        );
+                        CorsLayer::new().allow_methods(Any).allow_headers(Any)
                     } else {
                         let parsed: Vec<_> = allowed
                             .iter()
@@ -108,10 +108,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => {
                     // No origins configured — restrictive by default
-                    tracing::info!("No CORS origins configured; set UC_CORS_ORIGINS or UC_CORS_MODE=dev");
-                    CorsLayer::new()
-                        .allow_methods(Any)
-                        .allow_headers(Any)
+                    tracing::info!(
+                        "No CORS origins configured; set UC_CORS_ORIGINS or UC_CORS_MODE=dev"
+                    );
+                    CorsLayer::new().allow_methods(Any).allow_headers(Any)
                 }
             }
         }
