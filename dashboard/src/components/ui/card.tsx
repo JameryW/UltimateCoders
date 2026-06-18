@@ -3,16 +3,24 @@ import { cn } from "@/lib/utils";
 
 const Card = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
+  React.HTMLAttributes<HTMLDivElement> & { stale?: boolean }
+>(({ className, stale, children, ...props }, ref) => (
   <div
     ref={ref}
     className={cn(
-      "rounded-lg border border-dark-700 bg-dark-800 p-4",
+      "rounded-lg border border-dark-700 bg-dark-800 p-4 relative",
+      stale && "opacity-70",
       className,
     )}
     {...props}
-  />
+  >
+    {stale && (
+      <div className="absolute top-2 right-2 text-[10px] text-yellow-400 bg-yellow-900/40 px-1.5 py-0.5 rounded font-medium z-10">
+        STALE
+      </div>
+    )}
+    {children}
+  </div>
 ));
 Card.displayName = "Card";
 

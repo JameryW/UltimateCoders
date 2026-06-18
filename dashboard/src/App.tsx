@@ -65,7 +65,7 @@ function App() {
     },
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks } = useGrpcWeb({
+  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     enabled: true,
   });
@@ -73,8 +73,12 @@ function App() {
   // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    dashboard.fetchInitial().finally(() => setLoading(false));
-  }, [dashboard.fetchInitial]);
+    // ponytail: when gRPC-Web is connected, it provides live task data via
+    // WatchTask + listTasks — skip the REST tasks fetch to avoid overwrite flicker.
+    // REST fetch for health/workers/scheduler/circuit-breaker/events is still needed
+    // since gRPC-Web only handles tasks and events.
+    dashboard.fetchInitial({ skipTasks: grpcState === "connected" }).finally(() => setLoading(false));
+  }, [dashboard.fetchInitial, grpcState]);
   useEffect(() => { dashboard.setConnected(connected); }, [connected, dashboard.setConnected]);
 
   // gRPC-Web fallback: when SSE unavailable but gRPC connected, fetch tasks via gRPC
@@ -109,7 +113,7 @@ function App() {
   const healthWithGrpc = useMemo<HealthData>(() => {
     const grpcStatus = grpcState === "connected" ? "ok"
       : grpcState === "connecting" ? "degraded"
-      : grpcState === "error" ? "error"
+      : grpcState === "error" || grpcState === "exhausted" ? "error"
       : "unavailable";
     const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
     let components = [...dashboard.health.components];
@@ -127,12 +131,29 @@ function App() {
   const handlePauseTask = async (taskId: string) => {
     const ok = await confirmAction("Pause Task", `Pause task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try { const r = await api.pauseTask(taskId); r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
+    try {
+      // ponytail: prefer gRPC-Web, fall back to REST
+      if (grpcState === "connected") {
+        const r = await grpcPauseTask(taskId);
+        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+      } else {
+        const r = await api.pauseTask(taskId);
+        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+      }
+    } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
   };
   const handleResumeTask = async (taskId: string) => {
     const ok = await confirmAction("Resume Task", `Resume task ${taskId.substring(0, 8)}?`);
     if (!ok) return;
-    try { const r = await api.resumeTask(taskId); r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
+    try {
+      if (grpcState === "connected") {
+        const r = await grpcResumeTask(taskId);
+        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+      } else {
+        const r = await api.resumeTask(taskId);
+        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+      }
+    } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
   };
   const handleResetCB = async () => {
     const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
@@ -161,6 +182,9 @@ function App() {
     );
   }
 
+  // ponytail: SSE disconnected → panels that rely on SSE data are stale
+  const stale = !connected;
+
   return (
     <div className="text-gray-200 min-h-screen">
       <ToastContainer />
@@ -169,25 +193,25 @@ function App() {
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
-          <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} /></div>
+          <div className="md:col-span-2"><HealthPanel data={healthWithGrpc} stale={stale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Circuit Breaker">
-          <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} />
+          <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={stale} />
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
-          <WorkersPanel data={dashboard.workers} />
+          <WorkersPanel data={dashboard.workers} stale={stale} />
         </ErrorBoundary>
         <ErrorBoundary name="Tasks">
-          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} />
+          <TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={stale} />
         </ErrorBoundary>
         <ErrorBoundary name="Event Log">
-          <EventLogPanel events={dashboard.eventLog} />
+          <EventLogPanel events={dashboard.eventLog} stale={stale} />
         </ErrorBoundary>
         <ErrorBoundary name="Scheduler">
-          <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} /></div>
+          <div className="md:col-span-2"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={stale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Task Activity">
-          <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
+          <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={stale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
           <div className="md:col-span-2"><SearchPanel grpcState={grpcState} /></div>

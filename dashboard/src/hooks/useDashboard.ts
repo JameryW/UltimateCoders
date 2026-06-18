@@ -210,8 +210,8 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data
-  const fetchInitial = useCallback(async () => {
+  // Fetch initial data — optionally skip tasks (gRPC-Web provides live task data)
+  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }) => {
     try {
       const h = await api.getHealth();
       setHealth(h);
@@ -220,10 +220,13 @@ export function useDashboard() {
       const w = await api.getWorkers();
       setWorkers(w);
     } catch { /* ignore */ }
-    try {
-      const t = await api.getTasks();
-      setTasks(t);
-    } catch { /* ignore */ }
+    // ponytail: skip REST tasks fetch when gRPC-Web is connected to avoid overwrite flicker
+    if (!opts?.skipTasks) {
+      try {
+        const t = await api.getTasks();
+        setTasks(t);
+      } catch { /* ignore */ }
+    }
     try {
       const s = await api.getScheduler();
       setScheduler(s);

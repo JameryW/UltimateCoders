@@ -11,6 +11,16 @@ import type { TaskEvent } from "@/types/dashboard";
 const GRPC_WEB_ADDR =
   import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
+// ponytail: module-level shared transport — single HTTP/2 connection reused by
+// useGrpcWeb, SearchPanel, and any future gRPC-Web consumer.
+let _sharedTransport: ReturnType<typeof createGrpcWebTransport> | null = null;
+export function getSharedTransport() {
+  if (!_sharedTransport) {
+    _sharedTransport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+  }
+  return _sharedTransport;
+}
+
 /** Exponential backoff intervals (ms) for reconnection. */
 const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RETRY = RETRY_INTERVALS.length;
@@ -24,7 +34,8 @@ export type GrpcConnectionState =
   | "disconnected"
   | "connecting"
   | "connected"
-  | "error";
+  | "error"
+  | "exhausted"; // auto-retry exhausted, user must manually reconnect
 
 export interface GrpcSubmitResult {
   success: boolean;
@@ -55,14 +66,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   // Ref breaks connect<->scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
 
-  // ponytail: shared transport — created once, reused across all gRPC-Web calls
-  const transportRef = useRef<ReturnType<typeof createGrpcWebTransport> | null>(null);
-  const getTransport = useCallback(() => {
-    if (!transportRef.current) {
-      transportRef.current = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
-    }
-    return transportRef.current;
-  }, []);
+  // ponytail: use shared transport (single HTTP/2 connection for all gRPC-Web)
+  const getTransport = useCallback(() => getSharedTransport(), []);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current !== null) {
@@ -73,7 +78,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
   const scheduleReconnect = useCallback(() => {
     if (retryCountRef.current >= MAX_RETRY) {
-      console.warn("[gRPC-Web] Max retries reached, giving up");
+      console.warn("[gRPC-Web] Max retries reached, entering exhausted state");
+      setConnectionState("exhausted");
       return;
     }
     const delay = RETRY_INTERVALS[retryCountRef.current] ?? 16000;
@@ -90,7 +96,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     // Tear down any existing stream
     abortRef.current?.abort();
     clearRetryTimer();
-    // ponytail: reset retry count so manual reconnect always works even after auto-retry exhaustion
+    // ponytail: reset retry count so manual reconnect always works even after exhaustion
     retryCountRef.current = 0;
     const ac = new AbortController();
     abortRef.current = ac;
@@ -210,10 +216,26 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     };
   }, []);
 
+  /** Pause a running task via gRPC-Web. */
+  const pauseTask = useCallback(async (taskId: string) => {
+    const transport = getTransport();
+    const client = createClient(TaskService, transport);
+    const resp = await client.pauseTask(create(PauseTaskRequestSchema, { taskId }));
+    return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
+  }, []);
+
+  /** Resume a paused task via gRPC-Web. */
+  const resumeTask = useCallback(async (taskId: string) => {
+    const transport = getTransport();
+    const client = createClient(TaskService, transport);
+    const resp = await client.resumeTask(create(ResumeTaskRequestSchema, { taskId }));
+    return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
+  }, []);
+
   useEffect(() => {
     connect();
     return disconnect;
   }, [connect, disconnect]);
 
-  return { connectionState, connect, disconnect, submitTask, healthCheck, listTasks };
+  return { connectionState, connect, disconnect, submitTask, healthCheck, listTasks, pauseTask, resumeTask };
 }
