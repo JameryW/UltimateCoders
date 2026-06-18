@@ -53,6 +53,10 @@ export interface SubtaskTreeProps {
   selectedIndex?: number;
   /** Whether the selected subtask's detail panel is open. */
   detailOpen?: boolean;
+  /** Max visible lines for scrolling (terminal height minus chrome). 0 = no limit. */
+  maxVisibleLines?: number;
+  /** Scroll offset from parent (for overlay virtual scrolling). */
+  scrollOffset?: number;
 }
 
 // Map status to symbol field key
@@ -227,6 +231,8 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   symbols: symbolsProp,
   selectedIndex = -1,
   detailOpen = false,
+  maxVisibleLines = 0,
+  scrollOffset = 0,
 }) => {
   const symbols = symbolsProp ?? getSymbols();
   const titleSuffix = getProgressText(progress.completed, progress.total);
@@ -244,10 +250,28 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   // Truncate task description for header
   const truncatedTaskDesc = truncateToWidth(taskDescription, maxWidth - 10);
 
+  // Window slicing for scrolling
+  const headerLines = 2 + (progress.total > 0 ? 1 : 0) + (taskDescription !== 'No task' ? 1 : 0);
+  const footerLines = isFocused && subtasks.length > 0 ? 1 : 0;
+  const chromeLines = headerLines + footerLines;
+  const availableLines = maxVisibleLines > 0 ? Math.max(3, maxVisibleLines - chromeLines) : subtasks.length;
+  let startIdx = 0;
+  if (subtasks.length > availableLines) {
+    if (scrollOffset > 0) {
+      startIdx = Math.min(scrollOffset, subtasks.length - availableLines);
+    } else if (selectedIndex >= 0) {
+      startIdx = Math.max(0, selectedIndex - Math.floor(availableLines / 2));
+      startIdx = Math.min(startIdx, subtasks.length - availableLines);
+    }
+  }
+  const visibleSubtasks = subtasks.slice(startIdx, startIdx + availableLines);
+  const canScrollUp = startIdx > 0;
+  const canScrollDown = startIdx + availableLines < subtasks.length;
+
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">{`Subtasks`}</Text>
+        <Text bold color="cyan">{'Subtasks'}</Text>
         <Text dimColor>{` [${titleSuffix}]`}</Text>
         {isFocused && <Text dimColor>{' [focused]'}</Text>}
       </Box>
@@ -258,30 +282,35 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
       )}
       {taskDescription !== 'No task' && (
         <Box marginBottom={1}>
-          <Text dimColor>{`Task: `}</Text>
+          <Text dimColor>{'Task: '}</Text>
           <Text>{truncatedTaskDesc}</Text>
         </Box>
       )}
       {subtasks.length === 0 ? (
         <Text dimColor>No subtasks yet.</Text>
       ) : (
-        <Box flexDirection="column">
-          {subtasks.map((st, idx) => (
-            <React.Fragment key={st.id}>
-              <SubtaskRow
-                subtask={st}
-                maxWidth={maxWidth}
-                symbols={symbols}
-                isSelected={idx === selectedIndex}
-                isFocused={isFocused}
-                dependedBy={dependedByMap.get(idx)}
-              />
-              {detailOpen && idx === selectedIndex && (
-                <SubtaskDetail subtask={st} maxWidth={maxWidth} />
-              )}
-            </React.Fragment>
-          ))}
-        </Box>
+        <>
+          {canScrollUp && <Text dimColor>{'↑ more above'}</Text>}
+          {visibleSubtasks.map((st, vi) => {
+            const idx = startIdx + vi;
+            return (
+              <React.Fragment key={st.id}>
+                <SubtaskRow
+                  subtask={st}
+                  maxWidth={maxWidth}
+                  symbols={symbols}
+                  isSelected={idx === selectedIndex}
+                  isFocused={isFocused}
+                  dependedBy={dependedByMap.get(idx)}
+                />
+                {detailOpen && idx === selectedIndex && (
+                  <SubtaskDetail subtask={st} maxWidth={maxWidth} />
+                )}
+              </React.Fragment>
+            );
+          })}
+          {canScrollDown && <Text dimColor>{'↓ more below'}</Text>}
+        </>
       )}
       {isFocused && subtasks.length > 0 && (
         <Box marginTop={1}>

@@ -152,6 +152,14 @@ export interface TuiState {
 
   /** Currently matching slash commands for autocomplete (null = no suggestion). */
   commandSuggestions: SlashCommand[] | null;
+
+  /** Overlay scroll offset (for subtask/task-list overlays when content exceeds terminal). */
+  overlayScrollOffset: number;
+
+  /** Search mode state. */
+  searchQuery: string;
+  searchActive: boolean;
+  searchMatchIndex: number;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -186,6 +194,10 @@ export const INITIAL_TUI_STATE: TuiState = {
   commandSuggestions: null,
   exitConfirmPending: false,
   taskCancelled: false,
+  overlayScrollOffset: 0,
+  searchQuery: '',
+  searchActive: false,
+  searchMatchIndex: 0,
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -242,7 +254,17 @@ export type TuiAction =
   | {type: 'DISMISS_EXIT_CONFIRM'}
   // ── Task cancel ──
   | {type: 'CANCEL_TASK'}
-  | {type: 'CLEAR_CANCEL'};
+  | {type: 'CLEAR_CANCEL'}
+  // ── Overlay scroll ──
+  | {type: 'OVERLAY_SCROLL'; offset: number}
+  | {type: 'RESET_OVERLAY_SCROLL'}
+  // ── Search ──
+  | {type: 'SET_SEARCH_ACTIVE'; active: boolean}
+  | {type: 'SET_SEARCH_QUERY'; query: string}
+  | {type: 'SEARCH_NEXT'}
+  | {type: 'SEARCH_PREV'}
+  // ── Symbol mode ──
+  | {type: 'SET_SYMBOL_MODE'; mode: SymbolMode};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -449,6 +471,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         subtaskDetailOpen: false,
         selectedSubtaskIndex: opening ? selectedSubtaskIndex : state.selectedSubtaskIndex,
         selectedSubtaskId: opening ? selectedSubtaskId : state.selectedSubtaskId,
+        overlayScrollOffset: 0,
       };
     }
 
@@ -503,6 +526,7 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         ...state,
         taskListOverlayOpen: opening,
         selectedTaskListIndex: opening ? 0 : -1,
+        overlayScrollOffset: 0,
       };
     }
 
@@ -535,6 +559,38 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'CLEAR_CANCEL':
       return {...state, taskCancelled: false};
+
+    // ── Overlay scroll ──────────────────────────────────────────
+
+    case 'OVERLAY_SCROLL':
+      return {...state, overlayScrollOffset: Math.max(0, action.offset)};
+
+    case 'RESET_OVERLAY_SCROLL':
+      return {...state, overlayScrollOffset: 0};
+
+    // ── Search ──────────────────────────────────────────────────
+
+    case 'SET_SEARCH_ACTIVE':
+      return {
+        ...state,
+        searchActive: action.active,
+        searchQuery: action.active ? state.searchQuery : '',
+        searchMatchIndex: 0,
+      };
+
+    case 'SET_SEARCH_QUERY':
+      return {...state, searchQuery: action.query, searchMatchIndex: 0};
+
+    case 'SEARCH_NEXT':
+      return {...state, searchMatchIndex: state.searchMatchIndex + 1};
+
+    case 'SEARCH_PREV':
+      return {...state, searchMatchIndex: Math.max(0, state.searchMatchIndex - 1)};
+
+    // ── Symbol mode ─────────────────────────────────────────────
+
+    case 'SET_SYMBOL_MODE':
+      return {...state, symbolMode: action.mode};
 
     default:
       return state;

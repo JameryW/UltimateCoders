@@ -15,6 +15,8 @@ interface TaskListOverlayProps {
   tasks: TaskProto[];
   selectedIndex: number;
   maxWidth: number;
+  /** Max visible lines for scrolling. 0 = no limit. */
+  maxVisibleLines?: number;
 }
 
 const STATUS_ICON: Record<string, string> = {
@@ -47,16 +49,28 @@ function getColor(status: string): string | undefined {
   return STATUS_COLOR[status] ?? undefined;
 }
 
-export const TaskListOverlay: React.FC<TaskListOverlayProps> = ({tasks, selectedIndex, maxWidth}) => {
+export const TaskListOverlay: React.FC<TaskListOverlayProps> = ({tasks, selectedIndex, maxWidth, maxVisibleLines = 0}) => {
   if (tasks.length === 0) {
     return <Text dimColor>{'No tasks found.'}</Text>;
   }
 
   const descWidth = maxWidth - 26;
 
+  const availableLines = maxVisibleLines > 0 ? Math.max(3, maxVisibleLines) : tasks.length;
+  let startIdx = 0;
+  if (tasks.length > availableLines) {
+    startIdx = Math.max(0, selectedIndex - Math.floor(availableLines / 2));
+    startIdx = Math.min(startIdx, tasks.length - availableLines);
+  }
+  const visibleTasks = tasks.slice(startIdx, startIdx + availableLines);
+  const canScrollUp = startIdx > 0;
+  const canScrollDown = startIdx + availableLines < tasks.length;
+
   return (
     <Box flexDirection="column">
-      {tasks.map((task, i) => {
+      {canScrollUp && <Text dimColor>{'↑ more above'}</Text>}
+      {visibleTasks.map((task, vi) => {
+        const i = startIdx + vi;
         const status = mapTaskStatus(task.status);
         const icon = getIcon(status);
         const color = getColor(status);
@@ -78,6 +92,7 @@ export const TaskListOverlay: React.FC<TaskListOverlayProps> = ({tasks, selected
           </Box>
         );
       })}
+      {canScrollDown && <Text dimColor>{'↓ more below'}</Text>}
     </Box>
   );
 };
