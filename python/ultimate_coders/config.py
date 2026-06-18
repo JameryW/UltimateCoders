@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
