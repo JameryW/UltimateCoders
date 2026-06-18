@@ -64,11 +64,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
 
     // CORS layer — allow dashboard origins for gRPC-Web browser requests
-    // ponytail: Any for dev, restrict to known origins in production
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // UC_CORS_ORIGINS: comma-separated list of allowed origins (default: Any for dev)
+    let cors = match std::env::var("UC_CORS_ORIGINS") {
+        Ok(origins) if !origins.is_empty() => {
+            let allowed: Vec<_> = origins
+                .split(',')
+                .map(|o| o.trim())
+                .filter(|o| !o.is_empty())
+                .collect();
+            if allowed.is_empty() {
+                tracing::warn!("UC_CORS_ORIGINS set but no valid origins parsed; allowing Any");
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            } else {
+                tracing::info!(origins = ?allowed, "CORS origins configured");
+                CorsLayer::new()
+                    .allow_origin(allowed)
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            }
+        }
+        _ => {
+            // ponytail: Any for dev, set UC_CORS_ORIGINS in production
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        }
+    };
 
     tracing::info!(
         "UltimateCoders gRPC server listening on {} (gRPC-Web enabled)",

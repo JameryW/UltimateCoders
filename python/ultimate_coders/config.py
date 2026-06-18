@@ -5,8 +5,11 @@ Reads from TOML/YAML config files or environment variables.
 
 from __future__ import annotations
 
+import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,12 +56,52 @@ class Config:
     llm: LlmConfig = field(default_factory=LlmConfig)
 
 
+def _apply_dict_to_dataclass(obj: object, data: dict) -> None:
+    """Apply a dict to a dataclass instance, matching field names."""
+    for key, value in data.items():
+        if not hasattr(obj, key):
+            continue
+        current = getattr(obj, key)
+        if isinstance(value, dict) and hasattr(type(current), "__dataclass_fields__"):
+            _apply_dict_to_dataclass(current, value)
+        else:
+            setattr(obj, key, value)
+
+
 def load_config(path: str | None = None) -> Config:
     """Load configuration from file or environment.
 
     Priority: file > environment > defaults.
     """
     config = Config()
+
+    # Load from TOML/YAML file if path is provided
+    if path is not None:
+        try:
+            with open(path) as f:
+                raw = f.read()
+
+            if path.endswith(".toml"):
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                data = tomllib.loads(raw)
+            elif path.endswith((".yaml", ".yml")):
+                import yaml  # ponytail: soft dep, ImportError if missing
+                data = yaml.safe_load(raw)
+            else:
+                logger.warning("Unknown config file format: %s (expected .toml/.yaml/.yml)", path)
+                data = {}
+
+            if isinstance(data, dict):
+                _apply_dict_to_dataclass(config, data)
+        except FileNotFoundError:
+            logger.warning("Config file not found: %s", path)
+        except ImportError as e:
+            logger.warning("Config file parser not available: %s", e)
+        except Exception as e:
+            logger.warning("Failed to load config from %s: %s", path, e)
 
     # Override from environment
     config.llm.api_key = os.environ.get("ANTHROPIC_API_KEY", config.llm.api_key)
@@ -73,7 +116,5 @@ def load_config(path: str | None = None) -> Config:
         "UC_QDRANT_URL", config.storage.qdrant_url
     )
     config.nats.url = os.environ.get("UC_NATS_URL", config.nats.url)
-
-    # TODO: Load from TOML/YAML file if path is provided (PR5)
 
     return config
