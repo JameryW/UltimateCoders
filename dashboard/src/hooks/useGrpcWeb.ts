@@ -4,7 +4,7 @@ import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
-import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema } from "@/grpc/engine_pb";
+import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
 /** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
@@ -55,6 +55,15 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   // Ref breaks connect<->scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
 
+  // ponytail: shared transport — created once, reused across all gRPC-Web calls
+  const transportRef = useRef<ReturnType<typeof createGrpcWebTransport> | null>(null);
+  const getTransport = useCallback(() => {
+    if (!transportRef.current) {
+      transportRef.current = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    }
+    return transportRef.current;
+  }, []);
+
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current !== null) {
       clearTimeout(retryTimerRef.current);
@@ -81,6 +90,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     // Tear down any existing stream
     abortRef.current?.abort();
     clearRetryTimer();
+    // ponytail: reset retry count so manual reconnect always works even after auto-retry exhaustion
+    retryCountRef.current = 0;
     const ac = new AbortController();
     abortRef.current = ac;
 
@@ -91,10 +102,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
     setConnectionState("connecting");
 
-    const transport = createGrpcWebTransport({
-      baseUrl: GRPC_WEB_ADDR,
-    });
-
+    const transport = getTransport();
     const client = createClient(TaskService, transport);
     const req = create(WatchTaskRequestSchema, { taskId: "" }); // empty = watch all
 
@@ -137,7 +145,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
   const submitTask = useCallback(
     async (description: string, projectId: string = ""): Promise<GrpcSubmitResult> => {
-      const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+      const transport = getTransport();
       const client = createClient(TaskService, transport);
       const req = create(SubmitTaskRequestSchema, { description, projectId });
       const resp = await client.submitTask(req);
@@ -158,7 +166,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   );
 
   const healthCheck = useCallback(async () => {
-    const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    const transport = getTransport();
     const client = createClient(EngineService, transport);
     const req = create(HealthRequestSchema, {});
     const resp = await client.health(req);
@@ -176,7 +184,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
   /** Fetch task list via gRPC-Web. Returns TasksData-compatible structure. */
   const listTasks = useCallback(async () => {
-    const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    const transport = getTransport();
     const client = createClient(TaskService, transport);
     const resp = await client.listTasks(create(ListTasksRequestSchema, {}));
     return {

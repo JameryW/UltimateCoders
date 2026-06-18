@@ -7,9 +7,17 @@ import { create } from "@bufbuild/protobuf";
 import { SearchRequestSchema } from "@/grpc/engine_pb";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 
 /** gRPC-Web server address — empty = same-origin. */
 const GRPC_WEB_ADDR = import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
+
+// ponytail: shared transport — avoids recreating per search
+let _transport: ReturnType<typeof createGrpcWebTransport> | null = null;
+function getTransport() {
+  if (!_transport) _transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+  return _transport;
+}
 
 interface SearchResult {
   repoId: string;
@@ -23,7 +31,7 @@ interface SearchResult {
   symbolKind?: string;
 }
 
-export function SearchPanel() {
+export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -36,7 +44,7 @@ export function SearchPanel() {
     setSearching(true);
     setError(null);
     try {
-      const transport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+      const transport = getTransport();
       const client = createClient(EngineService, transport);
       const req = create(SearchRequestSchema, { query: q, maxResults: 20 });
       const resp = await client.search(req);
@@ -112,7 +120,10 @@ export function SearchPanel() {
       )}
 
       {!searched && (
-        <p className="text-xs text-gray-500">Search across indexed repositories via gRPC-Web. Requires gRPC server connection.</p>
+        <p className="text-xs text-gray-500">
+          Search across indexed repositories via gRPC-Web.
+          {grpcState !== "connected" && " gRPC server is currently disconnected — search requires an active connection."}
+        </p>
       )}
     </Card>
   );

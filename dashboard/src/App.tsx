@@ -19,28 +19,50 @@ import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import * as api from "@/api/endpoints";
-import type { TaskEvent, HealthData } from "@/types/dashboard";
+import type { TaskEvent, HealthData, DashboardSnapshot } from "@/types/dashboard";
 
 function eventKey(ev: TaskEvent): string {
-  return `${ev.task_id}:${ev.type}:${ev.timestamp}`;
+  // ponytail: exclude timestamp — SSE and gRPC-Web emit the same logical event
+  // with slightly different timestamps, causing double-processing.
+  // task_id + subtask_id + type is sufficient to identify a unique event.
+  return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}`;
 }
 
 function App() {
   void useAuth();
   const dashboard = useDashboard();
 
-  const seenKeys = useRef(new Set<string>());
+  // Dedup: track last-seen key → timestamp to allow re-processing after a
+  // reasonable window (same type for same entity can happen again later).
+  const seenKeys = useRef(new Map<string, number>());
   const dedupedHandleTaskEvent = (ev: TaskEvent) => {
     const key = eventKey(ev);
-    if (seenKeys.current.has(key)) return;
-    seenKeys.current.add(key);
-    if (seenKeys.current.size > 10_000) seenKeys.current.clear();
+    const now = Date.now();
+    const lastSeen = seenKeys.current.get(key);
+    // Skip if we saw this exact event key within the last 2 seconds
+    if (lastSeen !== undefined && now - lastSeen < 2000) return;
+    seenKeys.current.set(key, now);
+    // Prune entries older than 60s to bound memory
+    if (seenKeys.current.size > 5000) {
+      for (const [k, ts] of seenKeys.current) {
+        if (now - ts > 60_000) seenKeys.current.delete(k);
+      }
+    }
     dashboard.handleTaskEvent(ev);
   };
 
+  // Track last update timestamp for Header display
+  const [lastUpdate, setLastUpdate] = useState<string | undefined>();
+
   const { connected, reconnect: sseReconnect } = useSSE({
-    onUpdate: dashboard.handleSnapshot,
-    onTaskEvent: dedupedHandleTaskEvent,
+    onUpdate: (snapshot: DashboardSnapshot) => {
+      dashboard.handleSnapshot(snapshot);
+      setLastUpdate(snapshot.timestamp ?? new Date().toISOString());
+    },
+    onTaskEvent: (ev: TaskEvent) => {
+      dedupedHandleTaskEvent(ev);
+      setLastUpdate(ev.timestamp);
+    },
   });
 
   const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks } = useGrpcWeb({
@@ -75,6 +97,7 @@ function App() {
       try {
         const h = await healthCheck();
         setGrpcHealthComponents(h.components);
+        setLastUpdate(new Date().toISOString());
       } catch { /* ignore — next poll will retry */ }
     };
     poll();
@@ -142,7 +165,7 @@ function App() {
     <div className="text-gray-200 min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={connected} grpcState={grpcState} />
+      <Header connected={connected} grpcState={grpcState} lastUpdate={lastUpdate} />
       <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ErrorBoundary name="Health">
@@ -167,7 +190,7 @@ function App() {
           <div className="md:col-span-2"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
-          <div className="md:col-span-2"><SearchPanel /></div>
+          <div className="md:col-span-2"><SearchPanel grpcState={grpcState} /></div>
         </ErrorBoundary>
       </main>
       <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />

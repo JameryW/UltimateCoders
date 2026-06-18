@@ -63,14 +63,24 @@ export function useDashboard() {
   >({});
   const [connected, setConnected] = useState(false);
 
-  // Handle SSE full snapshot
+  // Handle SSE full snapshot — guard against empty SSE data overwriting gRPC-Web data
   const handleSnapshot = useCallback((data: DashboardSnapshot) => {
-    if (data.health) setHealth(data.health);
-    if (data.workers) setWorkers(data.workers);
-    if (data.tasks) setTasks(data.tasks);
-    if (data.scheduler) setScheduler(data.scheduler);
-    if (data.circuit_breaker) setCircuitBreaker(data.circuit_breaker);
-    if (data.events) setEventLog(data.events);
+    // ponytail: only replace state when SSE source actually has data;
+    // in no-NATS mode SSE sends available:false which would wipe gRPC-populated data
+    if (data.health?.available) setHealth(data.health);
+    if (data.workers?.available) setWorkers(data.workers);
+    if (data.tasks?.available) {
+      setTasks((prev) => {
+        // SSE has tasks → use SSE data (authoritative for REST-submitted tasks)
+        if (data.tasks.tasks.length > 0) return data.tasks;
+        // SSE available but empty → don't wipe gRPC-populated tasks
+        if (prev.available && prev.tasks.length > 0) return prev;
+        return data.tasks;
+      });
+    }
+    if (data.scheduler?.available) setScheduler(data.scheduler);
+    if (data.circuit_breaker?.available) setCircuitBreaker(data.circuit_breaker);
+    if (data.events && data.events.length > 0) setEventLog(data.events);
   }, []);
 
   // Handle SSE/gRPC-Web real-time task event
