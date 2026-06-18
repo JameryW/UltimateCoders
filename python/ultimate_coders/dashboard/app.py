@@ -90,10 +90,11 @@ class DashboardApp:
         self.orchestrator = orchestrator
         self._nats_publisher = nats_publisher
         self._nats_client = nats_client
-        self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        # ponytail: lazy Queue — Python 3.9 asyncio.Queue() needs a running
+        # event loop at init time, which doesn't exist in synchronous tests.
+        self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] | None = None
         self._nats_subscriptions: list[Any] = []
-        self._app = FastAPI(title="UltimateCoders Dashboard")
-        self._server: uvicorn.Server | None = None
+        self._app = FastAPI(title="UltimateCoders Dashboard")        self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._event_log: deque[dict[str, Any]] = deque(maxlen=200)
         # Auth configuration
@@ -262,7 +263,7 @@ class DashboardApp:
                     # Check NATS event queue (non-blocking)
                     if self._nats_client is not None:
                         try:
-                            nats_event = self._nats_event_queue.get_nowait()
+                            nats_event = self._get_nats_event_queue().get_nowait()
                             if nats_event is not None:
                                 self._event_log.appendleft(nats_event)
                                 event_id += 1
@@ -897,6 +898,12 @@ class DashboardApp:
         # Subscribe to NATS uc.task.event if client is available
         self._subscribe_nats_events()
 
+    def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
+        """Lazily create the NATS event asyncio.Queue on first use."""
+        if self._nats_event_queue is None:
+            self._nats_event_queue = asyncio.Queue()
+        return self._nats_event_queue
+
     def _subscribe_nats_events(self) -> None:
         """Register a FastAPI startup event to subscribe to NATS events.
 
@@ -958,7 +965,7 @@ class DashboardApp:
             event_dict["data"] = payload.get("data")
 
         try:
-            self._nats_event_queue.put_nowait(event_dict)
+            self._get_nats_event_queue().put_nowait(event_dict)
         except asyncio.QueueFull:
             logger.warning("NATS event queue full, dropping event: %s", event_dict.get("type"))
 
