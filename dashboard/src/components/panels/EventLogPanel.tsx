@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -50,7 +50,7 @@ function eventSummary(details: Record<string, unknown>): string {
   return `${first}: ${JSON.stringify(val)}`;
 }
 
-export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
+export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -119,7 +119,7 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
         <ul className="space-y-1 max-h-64 overflow-y-auto" aria-label="Event log" aria-live="polite">
           {filteredEvents.map((evt, i) => (
             <li
-              key={`${evt.timestamp}-${i}`}
+              key={`${evt.timestamp}-${evt.type}-${i}`}
               className={cn("flex items-start gap-2 px-2 py-1 rounded text-xs", eventTypeBg(evt.type))}
             >
               <span className="text-[var(--text-muted)] shrink-0 font-mono">
@@ -139,4 +139,4 @@ export function EventLogPanel({ events, stale }: { events: DashboardEvent[]; sta
       )}
     </Card>
   );
-}
+});

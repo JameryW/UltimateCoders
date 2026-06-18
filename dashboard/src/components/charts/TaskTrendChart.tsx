@@ -75,15 +75,16 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   const statusCounts = tasks.available ? tasks.status_counts : {};
   const total = tasks.available ? tasks.total : 0;
 
-  // ponytail: read CSS vars at render time so recharts uses theme-correct colors.
-  // Recharts doesn't support CSS vars natively, so we bridge via getComputedStyle.
-  const gridStroke = cssVar("--border-color") || "#334155";
-  const axisStroke = cssVar("--text-muted") || "#94a3b8";
-  const tooltipBg = cssVar("--bg-surface") || "#1e293b";
-  const tooltipBorder = cssVar("--border-color") || "#334155";
-
-  const completedColor = cssVar("--status-completed") || "#22c55e";
-  const failedColor = cssVar("--status-failed") || "#ef4444";
+  // ponytail: read CSS vars once per render via useMemo so getComputedStyle
+  // is called in a single batch instead of 6 separate calls.
+  const themeColors = useMemo(() => ({
+    gridStroke: cssVar("--border-color") || "#334155",
+    axisStroke: cssVar("--text-muted") || "#94a3b8",
+    tooltipBg: cssVar("--bg-surface") || "#1e293b",
+    tooltipBorder: cssVar("--border-color") || "#334155",
+    completedColor: cssVar("--status-completed") || "#22c55e",
+    failedColor: cssVar("--status-failed") || "#ef4444",
+  }), []);
 
   return (
     <div className={cn("rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4 relative", stale && "opacity-70")}>
@@ -120,21 +121,21 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
       {trendData.length > 0 ? (
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={trendData}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-            <XAxis dataKey="name" stroke={axisStroke} fontSize={10} interval="preserveStartEnd" />
-            <YAxis stroke={axisStroke} fontSize={11} />
+            <CartesianGrid strokeDasharray="3 3" stroke={themeColors.gridStroke} />
+            <XAxis dataKey="name" stroke={themeColors.axisStroke} fontSize={10} interval="preserveStartEnd" />
+            <YAxis stroke={themeColors.axisStroke} fontSize={11} />
             <Tooltip
-              contentStyle={{ backgroundColor: tooltipBg, border: `1px solid ${tooltipBorder}`, borderRadius: 4 }}
-              labelStyle={{ color: axisStroke }}
+              contentStyle={{ backgroundColor: themeColors.tooltipBg, border: `1px solid ${themeColors.tooltipBorder}`, borderRadius: 4 }}
+              labelStyle={{ color: themeColors.axisStroke }}
             />
             <Legend
-              wrapperStyle={{ fontSize: 11, color: axisStroke }}
+              wrapperStyle={{ fontSize: 11, color: themeColors.axisStroke }}
               formatter={(value: string) => (
-                <span style={{ color: value === "completed" ? completedColor : failedColor }}>{value}</span>
+                <span style={{ color: value === "completed" ? themeColors.completedColor : themeColors.failedColor }}>{value}</span>
               )}
             />
-            <Bar dataKey="completed" fill={completedColor} radius={[2, 2, 0, 0]} />
-            <Bar dataKey="failed" fill={failedColor} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="completed" fill={themeColors.completedColor} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="failed" fill={themeColors.failedColor} radius={[2, 2, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       ) : (

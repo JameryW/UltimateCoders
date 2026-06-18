@@ -64,6 +64,7 @@ export function useDashboard() {
   >({});
   const [connected, setConnected] = useState(false);
   const [needsSync, setNeedsSync] = useState(false);
+  const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
 
   // Handle SSE full snapshot — merge with existing state to avoid overwriting
   // fresher gRPC-Web incremental updates with stale SSE snapshot data.
@@ -246,33 +247,36 @@ export function useDashboard() {
   }, []);
 
   // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
-  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }) => {
+  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }): Promise<Record<string, string>> => {
+    const errors: Record<string, string> = {};
     try {
       const h = await api.getHealth();
       setHealth(h);
-    } catch { /* ignore */ }
+    } catch (e) { errors["health"] = String(e); }
     try {
       const w = await api.getWorkers();
       setWorkers(w);
-    } catch { /* ignore */ }
+    } catch (e) { errors["workers"] = String(e); }
     if (!opts?.skipTasks) {
       try {
         const t = await api.getTasks();
         setTasks(t);
-      } catch { /* ignore */ }
+      } catch (e) { errors["tasks"] = String(e); }
     }
     try {
       const s = await api.getScheduler();
       setScheduler(s);
-    } catch { /* ignore */ }
+    } catch (e) { errors["scheduler"] = String(e); }
     try {
       const c = await api.getCircuitBreaker();
       setCircuitBreaker(c);
-    } catch { /* ignore */ }
+    } catch (e) { errors["circuit_breaker"] = String(e); }
     try {
       const e = await api.getEvents();
       setEventLog(e.events);
-    } catch { /* ignore */ }
+    } catch (e) { errors["events"] = String(e); }
+    setFetchErrors(errors);
+    return errors;
   }, []);
 
   /** Merge task list from gRPC-Web into state — field-level merge preserving incremental subtask updates. */
@@ -340,6 +344,7 @@ export function useDashboard() {
     setConnected,
     needsSync,
     setNeedsSync,
+    fetchErrors,
     handleSnapshot,
     handleTaskEvent,
     mergeGrpcTasks,

@@ -3,21 +3,11 @@ import DOMPurify from "dompurify";
 import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
 import { renderMermaid } from "@/lib/mermaid";
-import { cn, shortId, truncate } from "@/lib/utils";
+import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 
 interface TaskDetailProps {
   task: TaskSummary;
   interactionLog: TaskEvent[];
-}
-
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "completed": return "status-completed";
-    case "failed": return "status-failed";
-    case "paused": return "status-paused";
-    case "in_progress": return "status-in_progress";
-    default: return "status-default";
-  }
 }
 
 function OutputFiles({ events }: { events: TaskEvent[] }) {
@@ -38,12 +28,12 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
         Output Files: <span className="text-[var(--text-muted)]">{files.length} changed</span>
       </p>
       <div className="space-y-0.5">
-        {files.map((f, i) => {
+        {files.map((f) => {
           const icon = f.type === "created" ? "+" : f.type === "deleted" ? "−" : "~";
           const color = f.type === "created" ? "text-green-500" : f.type === "deleted" ? "text-red-500" : "text-yellow-500";
           const bg = f.type === "created" ? "file-created" : f.type === "deleted" ? "file-deleted" : "file-modified";
           return (
-            <div key={i} className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs", bg)}>
+            <div key={f.path} className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs", bg)}>
               <span className={cn("font-mono font-bold w-3 text-center", color)}>{icon}</span>
               <span className="font-mono text-[var(--text-primary)] truncate flex-1" title={f.path}>{f.path}</span>
               <span className={cn("text-[10px] px-1 rounded", color)}>{f.type.toUpperCase()}</span>
@@ -154,7 +144,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
       <p className="text-xs text-[var(--text-secondary)] mb-1">Timeline:</p>
       <div className="space-y-0.5 max-h-48 overflow-y-auto">
         {recent.map((ev, i) => (
-          <div key={i} className="flex items-center gap-1.5 text-xs">
+          <div key={`${ev.timestamp}-${ev.type}-${i}`} className="flex items-center gap-1.5 text-xs">
             <span>{typeIcon[ev.type] ?? "•"}</span>
             <span className="text-[var(--text-muted)] w-16 shrink-0">{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ""}</span>
             <span className="text-[var(--text-primary)] truncate">{ev.type}</span>
