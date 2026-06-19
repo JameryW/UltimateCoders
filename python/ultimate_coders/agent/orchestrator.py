@@ -145,6 +145,7 @@ class Orchestrator:
         description: str,
         project_id: str = "",
         _scheduled: bool = False,
+        task_id: str | None = None,
     ) -> Task:
         """Submit a new task for orchestration.
 
@@ -162,6 +163,10 @@ class Orchestrator:
             project_id: Project/repository context (default: empty string).
             _scheduled: Internal flag — True if this task comes from the
                 scheduler and should bypass the night-window queue.
+            task_id: Optional task ID. When provided (e.g., from a NATS
+                submit message), the Task object uses this ID instead of
+                generating a new UUID. This ensures the caller's task_id
+                matches the one stored in the Orchestrator.
 
         Returns:
             The created Task with subtasks.
@@ -169,6 +174,7 @@ class Orchestrator:
         # Night-window exclusive mode: queue non-scheduled tasks
         if self._night_window_active and not _scheduled:
             task = Task(
+                id=task_id or "",
                 description=description,
                 project_id=project_id,
                 status=TaskStatus.PAUSED,
@@ -184,6 +190,7 @@ class Orchestrator:
 
         # Create task
         task = Task(
+            id=task_id or "",
             description=description,
             project_id=project_id,
             status=TaskStatus.PLANNING,
@@ -641,8 +648,8 @@ class Orchestrator:
     def _select_worker(self, subtask: Subtask) -> str | None:
         """Select the best available worker for a subtask.
 
-        Strategy: pick the worker with the lowest current load that
-        has relevant capabilities.
+        Strategy: prefer workers whose capabilities match the subtask
+        description keywords, then pick by lowest load.
 
         Args:
             subtask: The subtask to assign.
@@ -655,8 +662,15 @@ class Orchestrator:
         if not candidates:
             return None
 
-        # Sort by current load (ascending) then by max capacity (descending)
-        candidates.sort(key=lambda w: (w.current_load, -w.max_capacity))
+        # Extract keywords from subtask description for capability matching
+        desc_lower = subtask.description.lower()
+        cap_matches: dict[str, int] = {}
+        for w in candidates:
+            score = sum(1 for c in w.capabilities if c in desc_lower)
+            cap_matches[w.id] = score
+
+        # Sort: capability matches descending, then load ascending
+        candidates.sort(key=lambda w: (-cap_matches[w.id], w.current_load, -w.max_capacity))
         return candidates[0].id
 
     def _select_next_subtask(self, task: Task) -> Subtask | None:
@@ -887,6 +901,9 @@ class Orchestrator:
         pattern. It runs in rounds: each round schedules all ready subtasks,
         waits for them to complete, then checks for newly-ready subtasks.
 
+        Includes stuck detection: if 2 consecutive rounds yield 0 new
+        completions, the scheduler breaks and logs a warning.
+
         Args:
             task: The task whose subtasks to schedule.
             worker_execute: Async callable ``(worker_id, subtask) -> SubtaskResult``
@@ -899,6 +916,8 @@ class Orchestrator:
         import asyncio
 
         all_results: list[SubtaskResult] = []
+        completed_before = sum(1 for st in task.subtasks if st.is_complete)
+        consecutive_zero_progress = 0
 
         while True:
             # Find ready subtasks (PENDING, all deps completed)
@@ -948,14 +967,31 @@ class Orchestrator:
             )
             all_results.extend(results)
 
-            # Emit scheduling event
+            # Stuck detection: check progress since last round
+            completed_now = sum(1 for st in task.subtasks if st.is_complete)
+            new_progress = completed_now - completed_before
+            completed_before = completed_now
+
+            if new_progress == 0:
+                consecutive_zero_progress += 1
+                if consecutive_zero_progress >= 2:
+                    logger.warning(
+                        "Task %s stuck: 2 rounds with 0 progress, breaking scheduler",
+                        task.id,
+                    )
+                    break
+            else:
+                consecutive_zero_progress = 0
+
+            # Emit scheduling round event
             await self.event_emitter.emit(
-                "subtasks_scheduled",
+                "scheduling_round_complete",
                 task_id=task.id,
                 data={
                     "round_count": len(assignments),
-                    "total_completed": sum(1 for r in all_results if r.success),
-                    "total_failed": sum(1 for r in all_results if not r.success),
+                    "new_progress": new_progress,
+                    "total_completed": completed_now,
+                    "total_failed": sum(1 for st in task.subtasks if st.is_failed),
                 },
             )
 
