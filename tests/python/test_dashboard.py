@@ -1230,7 +1230,9 @@ class TestOrchestratorTaskCompleted:
 
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(orch.handle_subtask_result(result))
+            # Exhaust retries (max_retries=3) so subtask permanently fails
+            for _ in range(orch.config.max_retries + 1):
+                loop.run_until_complete(orch.handle_subtask_result(result))
             # Task should be failed
             assert task.status == TaskStatus.FAILED
             # Event should be emitted with failed status
