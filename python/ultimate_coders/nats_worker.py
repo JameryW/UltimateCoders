@@ -439,6 +439,7 @@ class NatsWorker:
             task = await self._orchestrator.submit_task(
                 description,
                 project_id=project_id,
+                task_id=task_id or None,
             )
             logger.info(
                 "Task %s submitted to Orchestrator (status=%s, subtasks=%d)",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -917,6 +918,60 @@ class TestSelfEvaluate:
         score = await worker._self_evaluate(subtask, "I looked at the code", [])
         assert score < 0.7
 
+    @pytest.mark.asyncio
+    async def test_high_confidence_with_tool_log(self):
+        """Files modified + keywords matched + run_command -> high confidence."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(
+            expected_output="implement authentication handler",
+        )
+        modified = [
+            FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED),
+        ]
+        tool_log = [
+            {"tool_call": {"name": "run_command", "input": {}}, "result": ""},
+        ]
+        score = await worker._self_evaluate(
+            subtask, "implemented authentication handler",
+            modified, tool_log,
+        )
+        # 0.5 baseline + 0.2 files + keyword overlap + 0.1 run_command
+        assert score >= 0.8
+
+    @pytest.mark.asyncio
+    async def test_error_in_summary(self):
+        """Error keywords in summary -> lower confidence."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(expected_output="fix the login bug")
+        score = await worker._self_evaluate(
+            subtask, "error: failed to fix the login bug", [],
+        )
+        # 0.5 baseline - 0.15 error keyword = 0.35
+        assert score < 0.5
+
+    @pytest.mark.asyncio
+    async def test_empty_result(self):
+        """No files + short summary -> low confidence."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(expected_output="add tests")
+        score = await worker._self_evaluate(subtask, "done", [])
+        # 0.5 baseline - 0.1 empty = 0.4
+        assert score < 0.5
+
+    @pytest.mark.asyncio
+    async def test_no_tool_log(self):
+        """Without tool_log, should still work (backward compat)."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(expected_output="refactor module")
+        modified = [
+            FileChange(file_path="mod.py", change_type=ChangeType.MODIFIED),
+        ]
+        score = await worker._self_evaluate(
+            subtask, "refactored module", modified,
+        )
+        # 0.5 + 0.2 files = 0.7
+        assert score >= 0.7
+
 
 # ── Tool schema completeness tests ────────────────────────────────────
 
@@ -1155,3 +1210,253 @@ class TestConcurrentScheduling:
 
         results = await orch.schedule_subtasks(task, mock_execute)
         assert len(results) == 0
+
+
+# ── Agent Capability Enhancement Tests ──────────────────────────
+
+
+class TestClassifyError:
+    """Tests for Worker._classify_error."""
+
+    def test_timeout_error(self):
+        assert (
+            Worker._classify_error(asyncio.TimeoutError())
+            == AdaptationStrategy.SHRINK_SCOPE
+        )
+
+    def test_timeout_in_message(self):
+        assert (
+            Worker._classify_error(RuntimeError("request timed out"))
+            == AdaptationStrategy.SHRINK_SCOPE
+        )
+
+    def test_engine_not_found(self):
+        assert (
+            Worker._classify_error(RuntimeError("no engine available"))
+            == AdaptationStrategy.PURE_LLM
+        )
+
+    def test_module_not_found(self):
+        assert (
+            Worker._classify_error(ImportError("no module named foo"))
+            == AdaptationStrategy.PURE_LLM
+        )
+
+    def test_tool_not_found(self):
+        assert (
+            Worker._classify_error(RuntimeError("tool not found"))
+            == AdaptationStrategy.FALLBACK_TOOL
+        )
+
+    def test_conflict(self):
+        assert (
+            Worker._classify_error(RuntimeError("conflict detected"))
+            == AdaptationStrategy.WAIT_RETRY
+        )
+
+    def test_unknown_error(self):
+        assert (
+            Worker._classify_error(RuntimeError("something unexpected"))
+            == AdaptationStrategy.PURE_LLM
+        )
+
+
+class TestRecordExperience:
+    """Tests for Worker._record_experience."""
+
+    @pytest.mark.asyncio
+    async def test_writes_to_memory(self):
+        """_record_experience should write experience to engine memory."""
+        engine = MagicMock()
+        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
+        subtask = Subtask(id="s1", parent_id="t1", description="test task")
+        await worker._record_experience(subtask, "test summary", 0.8, [])
+        engine.write_memory.assert_called_once()
+        call_kwargs = engine.write_memory.call_args
+        assert call_kwargs.kwargs["key_scope"] == "task"
+        assert "experience_s1" in call_kwargs.kwargs["key"]
+
+    @pytest.mark.asyncio
+    async def test_no_engine(self):
+        """_record_experience is a no-op when engine is None."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(id="s1", parent_id="t1", description="test")
+        # Should not raise
+        await worker._record_experience(subtask, "summary", 0.5, [])
+
+
+class TestSelectWorkerCapability:
+    """Tests for Orchestrator._select_worker with capability matching."""
+
+    def test_prefers_capability_match(self):
+        """Worker with matching capability should be preferred over lower load."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(
+            id="w1", capabilities=["search"],
+            current_load=0, max_capacity=3,
+        )
+        orch.workers["w2"] = WorkerInfo(
+            id="w2", capabilities=["code"],
+            current_load=0, max_capacity=3,
+        )
+
+        subtask = Subtask(description="search for authentication code")
+        selected = orch._select_worker(subtask)
+        assert selected == "w1"
+
+    def test_fallback_to_lowest_load(self):
+        """When no capability match, fallback to lowest load."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(
+            id="w1", capabilities=["code"],
+            current_load=2, max_capacity=3,
+        )
+        orch.workers["w2"] = WorkerInfo(
+            id="w2", capabilities=["code"],
+            current_load=0, max_capacity=3,
+        )
+
+        subtask = Subtask(description="do something unrelated")
+        selected = orch._select_worker(subtask)
+        assert selected == "w2"
+
+    def test_no_workers_available(self):
+        """Returns None when no workers are available."""
+        orch = Orchestrator()
+        subtask = Subtask(description="any task")
+        assert orch._select_worker(subtask) is None
+
+
+class TestAdaptiveRetry:
+    """Tests for Worker._adaptive_retry strategies."""
+
+    @pytest.mark.asyncio
+    async def test_shrink_scope_reduces_timeout_and_tokens(self):
+        """SHRINK_SCOPE strategy should halve timeout and use reduced max_tokens."""
+        engine = MagicMock()
+        llm = MagicMock(spec=LLMClient)
+        llm.model = "test"
+
+        async def _fake_complete_with_tools(**kwargs):
+            # Verify max_tokens is reduced
+            assert kwargs.get("max_tokens", 4096) == 2048
+            return LLMResponse(text="done with less", tool_calls=[]), []
+        llm.complete_with_tools = _fake_complete_with_tools
+
+        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
+
+        subtask = Subtask(id="s1", parent_id="t1", description="test", timeout_seconds=600)
+        error = asyncio.TimeoutError()
+        result = await worker._adaptive_retry(subtask, error)
+
+        assert result.adaptation_strategy == AdaptationStrategy.SHRINK_SCOPE
+        # Timeout should have been halved
+        assert subtask.timeout_seconds == 300
+
+    @pytest.mark.asyncio
+    async def test_pure_llm_skips_tools(self):
+        """PURE_LLM strategy should call complete() without tools."""
+        engine = MagicMock()
+        llm = MagicMock(spec=LLMClient)
+        llm.model = "test"
+
+        async def _fake_complete(**kwargs):
+            return LLMResponse(text="pure LLM answer")
+        llm.complete = _fake_complete
+
+        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
+
+        error = RuntimeError("no engine available")
+        result = await worker._adaptive_retry(
+            Subtask(id="s1", parent_id="t1", description="test"),
+            error,
+        )
+
+        assert result.adaptation_strategy == AdaptationStrategy.PURE_LLM
+        assert "[adapted: pure_llm]" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_fallback_tool_reduces_tools(self):
+        """FALLBACK_TOOL strategy should temporarily remove codegraph tools."""
+        engine = MagicMock()
+        llm = MagicMock(spec=LLMClient)
+        llm.model = "test"
+
+        async def _fake_complete_with_tools(**kwargs):
+            return LLMResponse(text="done", tool_calls=[]), []
+        llm.complete_with_tools = _fake_complete_with_tools
+
+        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
+        original_tool_count = len(worker.tools)
+        original_def_count = len(worker._tool_definitions)
+
+        error = RuntimeError("tool not found: symbol_search")
+        result = await worker._adaptive_retry(
+            Subtask(id="s1", parent_id="t1", description="test"),
+            error,
+        )
+        # Tools should be restored after fallback_tool strategy
+        assert len(worker.tools) == original_tool_count
+        assert len(worker._tool_definitions) == original_def_count
+        assert result.adaptation_strategy == AdaptationStrategy.FALLBACK_TOOL
+
+
+class TestScheduleSubtasksConcurrent:
+    """Tests for Orchestrator.schedule_subtasks concurrent execution."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_with_dag(self):
+        """3 subtasks with DAG: s1→s2→s3. s1 runs, then s2, then s3."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
+
+        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
+        s1 = Subtask(id="s1", parent_id="t1", description="first")
+        s2 = Subtask(id="s2", parent_id="t1", description="second", depends_on=[s1.id])
+        s3 = Subtask(id="s3", parent_id="t1", description="third", depends_on=[s2.id])
+        task.subtasks = [s1, s2, s3]
+        orch.tasks["t1"] = task
+
+        execution_order = []
+
+        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
+            execution_order.append(subtask.id)
+            return SubtaskResult(
+                subtask_id=subtask.id, worker_id=worker_id,
+                summary="done", success=True,
+            )
+
+        results = await orch.schedule_subtasks(task, mock_execute)
+        assert len(results) == 3
+        # s1 must execute before s2, s2 before s3
+        assert execution_order.index("s1") < execution_order.index("s2")
+        assert execution_order.index("s2") < execution_order.index("s3")
+
+    @pytest.mark.asyncio
+    async def test_stuck_detection(self):
+        """Scheduler should break when 2 rounds yield 0 progress."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
+
+        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
+        s1 = Subtask(id="s1", parent_id="t1", description="first")
+        task.subtasks = [s1]
+        orch.tasks["t1"] = task
+
+        call_count = 0
+
+        async def mock_execute_always_fail(worker_id: str, subtask: Subtask) -> SubtaskResult:
+            nonlocal call_count
+            call_count += 1
+            # Don't mark as completed — simulates stuck
+            return SubtaskResult(
+                subtask_id=subtask.id, worker_id=worker_id,
+                summary="failed", success=False,
+            )
+
+        _results = await orch.schedule_subtasks(task, mock_execute_always_fail)
+        # Should break after stuck detection (2 rounds of 0 progress)
+        # Round 1: s1 assigned, fails -> 0 new completed.
+        # Round 2: s1 not PENDING (ASSIGNED) -> no ready -> break.
+        # Or if retry resets to PENDING, 2 rounds of 0 progress -> break.
+        assert call_count <= 4

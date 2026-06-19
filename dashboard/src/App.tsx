@@ -80,6 +80,7 @@ function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolea
         >
           {submitting ? "Verifying..." : "Login"}
         </button>
+        <p className="text-xs text-[var(--text-secondary)] mt-2 text-center">Login required to access dashboard</p>
       </form>
     </div>
   );
@@ -94,6 +95,8 @@ function App() {
   // Fallback to content key + 2s window for gRPC-Web events (no server id).
   const seenSseIds = useRef(new Set<string>());
   const seenContentKeys = useRef(new Map<string, number>());
+  // #8: Counter ref for sync_required race condition
+  const needsSyncCountRef = useRef(0);
   const dedupedHandleTaskEvent = (ev: TaskEvent) => {
     // SSE event id dedup — exact, no time window needed
     if (ev._sseId) {
@@ -135,16 +138,21 @@ function App() {
       setLastUpdate(ev.timestamp);
     },
     onReconnect: () => {
-      // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
+      // ponytail: SSE reconnected — clear dedup caches since server may have
+      // reset event id sequence, and fetch fresh data to fill gaps from disconnect period
+      seenSseIds.current.clear();
+      seenContentKeys.current.clear();
       dashboard.fetchInitial().then((errors) => {
         if (Object.keys(errors).length > 0) showToast(`Reconnect fetch partially failed`, "error");
       });
     },
   });
 
-  const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     onSyncRequired: (_reason: string, _skipped: number) => {
+      // #8: Increment counter ref instead of boolean to avoid race condition
+      needsSyncCountRef.current += 1;
       dashboard.setNeedsSync(true);
     },
     enabled: true,
@@ -156,15 +164,31 @@ function App() {
   // Fetch initial data once auth is confirmed (skip while auth is still checking
   // to avoid 401 errors that silently fail and leave the dashboard empty).
   const hasFetchedRef = useRef(false);
+  // #11: Track whether we skipped tasks in fetchInitial (gRPC path expected to provide them)
+  const skippedTasksRef = useRef(false);
   useEffect(() => {
     if (auth.isChecking || !auth.isAuthenticated || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     const skipTasks = grpcState === "connected";
+    skippedTasksRef.current = skipTasks;
     dashboard.fetchInitial({ skipTasks }).then((errors) => {
       setLoading(false);
       if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
     });
   }, [auth.isChecking, auth.isAuthenticated, dashboard.fetchInitial, grpcState]);
+
+  // #11: When tasks were skipped in fetchInitial (gRPC path expected to provide them),
+  // but gRPC listTasks fails, fall back to REST getTasks so tasks panel isn't empty.
+  useEffect(() => {
+    if (!skippedTasksRef.current) return;
+    if (grpcState !== "connected") return;
+    if (dashboard.tasks.available && dashboard.tasks.tasks.length > 0) return;
+    // gRPC connected but no tasks loaded — try REST fallback once
+    skippedTasksRef.current = false; // prevent repeated attempts
+    api.getTasks().then((data) => {
+      if (data.available) dashboard.mergeGrpcTasks(data);
+    }).catch(() => { /* ignore */ });
+  }, [grpcState, dashboard.tasks.available, dashboard.tasks.tasks.length, dashboard.mergeGrpcTasks]);
 
   // When auth transitions to authenticated, reconnect SSE with the stored token.
   // The initial SSE connection (on mount) may have been made without a token,
@@ -189,9 +213,12 @@ function App() {
   }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
   // Handle sync_required from broadcast lag — re-sync via gRPC or REST
+  // #8: Use counter ref to avoid race condition where multiple sync_required
+  // events are swallowed by a single boolean. Increment on sync_required,
+  // decrement after processing. Only process when counter > 0.
   useEffect(() => {
-    if (!dashboard.needsSync) return;
-    dashboard.setNeedsSync(false);
+    if (needsSyncCountRef.current <= 0) return;
+    needsSyncCountRef.current -= 1;
     if (grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
@@ -202,7 +229,7 @@ function App() {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch(() => { /* ignore */ });
     }
-  }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks, dashboard.setNeedsSync]);
+  }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
   // Periodic gRPC health check -- poll every 30s when connected
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
@@ -264,6 +291,8 @@ function App() {
 
   const handlePauseTask = async (taskId: string) => {
     // ponytail: no confirm — pause is reversible
+    // #13: Optimistic update — immediately reflect in UI
+    dashboard.optimisticStatusUpdate(taskId, "paused");
     try {
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
@@ -272,10 +301,16 @@ function App() {
         const r = await api.pauseTask(taskId);
         r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
       }
-    } catch (e) { showToast(`Pause failed: ${String(e)}`, "error"); }
+    } catch (e) {
+      // Revert optimistic update on failure
+      dashboard.optimisticStatusUpdate(taskId, "in_progress");
+      showToast(`Pause failed: ${String(e)}`, "error");
+    }
   };
   const handleResumeTask = async (taskId: string) => {
     // ponytail: no confirm — resume is reversible
+    // #13: Optimistic update — immediately reflect in UI
+    dashboard.optimisticStatusUpdate(taskId, "in_progress");
     try {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);
@@ -284,7 +319,11 @@ function App() {
         const r = await api.resumeTask(taskId);
         r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
       }
-    } catch (e) { showToast(`Resume failed: ${String(e)}`, "error"); }
+    } catch (e) {
+      // Revert optimistic update on failure
+      dashboard.optimisticStatusUpdate(taskId, "paused");
+      showToast(`Resume failed: ${String(e)}`, "error");
+    }
   };
   const handleResetCB = async () => {
     const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
@@ -411,7 +450,7 @@ function App() {
           <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} /></div>
         </ErrorBoundary>
       </main>
-      <ConnectionIndicator connected={connected} grpcState={grpcState} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} />
+      <ConnectionIndicator connected={connected} grpcState={grpcState} grpcExhausted={grpcExhausted} onReconnectSSE={sseReconnect} onReconnectGrpc={grpcConnect} onDisconnectGrpc={grpcDisconnect} />
     </div>
   );
 }

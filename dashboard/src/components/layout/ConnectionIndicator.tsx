@@ -7,9 +7,10 @@ interface ConnectionIndicatorProps {
   grpcExhausted?: boolean;
   onReconnectSSE?: () => void;
   onReconnectGrpc?: () => void;
+  onDisconnectGrpc?: () => void;
 }
 
-export function ConnectionIndicator({ connected, grpcState, grpcError, grpcExhausted, onReconnectSSE, onReconnectGrpc }: ConnectionIndicatorProps) {
+export function ConnectionIndicator({ connected, grpcState, grpcError, grpcExhausted, onReconnectSSE, onReconnectGrpc, onDisconnectGrpc }: ConnectionIndicatorProps) {
   const grpcOk = grpcState === "connected";
   const grpcReconnecting = grpcState === "reconnecting";
 
@@ -26,13 +27,23 @@ export function ConnectionIndicator({ connected, grpcState, grpcError, grpcExhau
       {grpcState && (
         <div
           className={`px-3 py-1.5 rounded-md text-xs cursor-pointer transition-colors duration-500 ${grpcOk ? "bg-blue-500/20 text-blue-400" : grpcState === "connecting" || grpcReconnecting ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}
-          onClick={!grpcOk && onReconnectGrpc ? onReconnectGrpc : undefined}
+          onClick={!grpcOk && !grpcExhausted && onReconnectGrpc ? onReconnectGrpc : undefined}
           title={grpcReconnecting ? "gRPC reconnecting…" : grpcState === "error" ? "gRPC error — click to reconnect" : grpcOk ? "gRPC connected" : "gRPC connecting…"}
         >
           gRPC {grpcOk ? "●" : grpcState === "connecting" || grpcReconnecting ? "◐" : "○"}
-          {!grpcOk && onReconnectGrpc && " ↻"}
+          {!grpcOk && !grpcExhausted && onReconnectGrpc && " ↻"}
           {grpcReconnecting && " ⏳"}
         </div>
+      )}
+      {/* #9: Stop reconnecting button when gRPC retries are exhausted */}
+      {grpcExhausted && grpcReconnecting && onDisconnectGrpc && (
+        <button
+          onClick={onDisconnectGrpc}
+          className="px-3 py-2 rounded-md text-xs bg-red-900/80 text-red-200 border border-red-600 hover:bg-red-800/80 transition-colors cursor-pointer"
+          title="Stop gRPC reconnection attempts"
+        >
+          Stop reconnecting
+        </button>
       )}
       {/* Hint for gRPC error (not yet exhausted) */}
       {grpcError && !grpcExhausted && (
