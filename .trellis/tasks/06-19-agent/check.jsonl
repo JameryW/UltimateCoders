@@ -1,0 +1,4 @@
+{"path": "python/ultimate_coders/agent/types.py", "kind": "spec", "reason": "SubtaskResult.adaptation_strategy 新字段 — 验证序列化兼容"}
+{"path": "python/ultimate_coders/agent/worker.py", "kind": "spec", "reason": "工具 schema 完整性 — 验证每个工具的 required + enum 约束"}
+{"path": "python/ultimate_coders/agent/orchestrator.py", "kind": "spec", "reason": "schedule_subtasks() 并发调度 — 验证 DAG 依赖正确、并发安全"}
+{"path": "tests/python/test_agent.py", "kind": "spec", "reason": "新增测试 — 验证覆盖自适应、并发、自省场景"}

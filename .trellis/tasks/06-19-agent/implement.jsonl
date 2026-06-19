@@ -1,0 +1,10 @@
+{"path": "python/ultimate_coders/agent/worker.py", "kind": "spec", "reason": "Worker 核心文件 — 工具定义 _build_tool_definitions()、_execute_tool()、_self_evaluate()、自适应决策逻辑"}
+{"path": "python/ultimate_coders/agent/orchestrator.py", "kind": "spec", "reason": "Orchestrator 核心文件 — schedule_subtasks() 并发调度、re-decompose、night window"}
+{"path": "python/ultimate_coders/agent/llm.py", "kind": "spec", "reason": "LLMClient — ToolDefinition 格式、complete_with_tools tool-calling loop"}
+{"path": "python/ultimate_coders/agent/types.py", "kind": "spec", "reason": "核心类型 — Subtask/Task/SubtaskResult/WorkerInfo，需扩展 adaptation_strategy"}
+{"path": "python/ultimate_coders/agent/codegraph.py", "kind": "spec", "reason": "CodegraphClient — symbol_search/find_callers/find_callees/impact_analysis/explore_code 工具实现"}
+{"path": "python/ultimate_coders/agent/conflict.py", "kind": "spec", "reason": "ConflictDetector — 自适应决策中 conflict_detected 场景"}
+{"path": "python/ultimate_coders/agent/rate_limiter.py", "kind": "spec", "reason": "RateLimiter/CircuitBreaker — 自适应决策中 engine_error 场景"}
+{"path": "python/ultimate_coders/agent/sandbox.py", "kind": "spec", "reason": "SandboxManager — sandbox mode 工具定义"}
+{"path": "python/ultimate_coders/nats_worker.py", "kind": "spec", "reason": "NatsWorker — 已有 asyncio.gather 并发模式，schedule_subtasks 需参考"}
+{"path": "tests/python/test_agent.py", "kind": "spec", "reason": "现有 77 个测试 — 需扩展覆盖自适应、并发、自省"}

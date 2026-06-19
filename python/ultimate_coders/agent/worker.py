@@ -43,6 +43,7 @@ from ultimate_coders.agent.sandbox import (
     SandboxManager,
 )
 from ultimate_coders.agent.types import (
+    AdaptationStrategy,
     ChangeType,
     FileChange,
     Subtask,
@@ -251,20 +252,40 @@ class Worker:
                 e,
                 exc_info=True,
             )
-            # Emit subtask failed event
-            if self.event_emitter is not None:
-                await self.event_emitter.emit(
-                    "subtask_failed",
-                    task_id=subtask.parent_id,
-                    subtask_id=subtask.id,
-                    data={"error": str(e), "worker_id": self.worker_id},
+            # Adaptive retry: classify error and try once with adapted strategy
+            try:
+                adapted_result = await self._adaptive_retry(subtask, e)
+                if self.event_emitter is not None:
+                    await self.event_emitter.emit(
+                        "subtask_adapted",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data={
+                            "original_error": str(e),
+                            "adaptation": adapted_result.adaptation_strategy.value,
+                            "success": adapted_result.success,
+                        },
+                    )
+                return adapted_result
+            except Exception as adapt_err:
+                logger.error(
+                    "Subtask %s adaptive retry also failed: %s",
+                    subtask.id, adapt_err, exc_info=True,
                 )
-            return SubtaskResult(
-                subtask_id=subtask.id,
-                worker_id=self.worker_id,
-                summary=f"Execution error: {e}",
-                success=False,
-            )
+                # Emit subtask failed event
+                if self.event_emitter is not None:
+                    await self.event_emitter.emit(
+                        "subtask_failed",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data={"error": str(e), "worker_id": self.worker_id},
+                    )
+                return SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary=f"Execution error: {e} (adaptation also failed: {adapt_err})",
+                    success=False,
+                )
 
         finally:
             self.current_task = None
@@ -349,12 +370,33 @@ class Worker:
 
         # Self-reflection: quick quality check
         confidence = await self._self_evaluate(subtask, summary, modified_files)
+
+        # Write execution experience to memory for future reference
+        await self._record_experience(subtask, summary, confidence, modified_files)
+
         if confidence < 0.5 and self.llm_client is not None:
-            # Low confidence — annotate summary but don't block
+            # Low confidence → mark as failed so Orchestrator re-decomposes
             summary = f"[⚠️ low confidence: {confidence:.0%}] {summary}"
             if self.event_emitter is not None:
                 await self.event_emitter.emit(
                     "subtask_low_confidence",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"confidence": confidence},
+                )
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                modified_files=modified_files,
+                summary=summary,
+                success=False,  # trigger re-decompose via Orchestrator retry
+            )
+        elif confidence < 0.7 and self.llm_client is not None:
+            # Medium confidence → add verification step annotation
+            summary = f"[~ confidence: {confidence:.0%}, verify recommended] {summary}"
+            if self.event_emitter is not None:
+                await self.event_emitter.emit(
+                    "subtask_medium_confidence",
                     task_id=subtask.parent_id,
                     subtask_id=subtask.id,
                     data={"confidence": confidence},
@@ -453,6 +495,166 @@ class Worker:
                 score += min(0.2, overlap / len(keywords) * 0.2)
 
         return min(1.0, score)
+
+    async def _record_experience(
+        self,
+        subtask: Subtask,
+        summary: str,
+        confidence: float,
+        modified_files: list[FileChange],
+    ) -> None:
+        """Write execution experience to memory for future subtasks.
+
+        ponytail: best-effort write, failures are non-fatal. Experience
+        helps later subtasks avoid repeating the same mistakes.
+        """
+        if self.engine is None:
+            return
+        try:
+            experience = json.dumps({
+                "subtask_id": subtask.id,
+                "description": subtask.description[:200],
+                "confidence": round(confidence, 2),
+                "files_modified": [f.file_path for f in (modified_files or [])],
+                "summary": summary[:500],
+            })
+            self.engine.write_memory(
+                key_scope="task",
+                key=f"experience_{subtask.id}",
+                content=experience,
+                content_type="structured",
+                source_agent=self.worker_id,
+                importance=0.6 if confidence >= 0.5 else 0.8,
+                task_id=subtask.parent_id,
+            )
+        except Exception:
+            logger.debug("Failed to write experience to memory", exc_info=True)
+
+    # ── Adaptive decision ──────────────────────────────────────
+
+    @staticmethod
+    def _classify_error(error: Exception) -> AdaptationStrategy:
+        """Classify an execution error into an adaptation strategy.
+
+        ponytail: pattern matching on error type/message. Simple,
+        covers the 4 main failure modes. Expand when new patterns emerge.
+        """
+        error_str = str(error).lower()
+        error_type = type(error).__name__.lower()
+
+        # Timeout → shrink scope
+        if (
+            isinstance(error, asyncio.TimeoutError)
+            or "timeout" in error_str
+            or "timed out" in error_str
+        ):
+            return AdaptationStrategy.SHRINK_SCOPE
+
+        # Tool/engine unavailable → fallback or pure LLM
+        if (
+            "no module" in error_str
+            or "not found" in error_str
+            or "not available" in error_str
+            or "no engine" in error_str
+            or "importerror" in error_type
+        ):
+            if "engine" in error_str or "module" in error_str:
+                return AdaptationStrategy.PURE_LLM
+            return AdaptationStrategy.FALLBACK_TOOL
+
+        # Conflict → wait and retry
+        if "conflict" in error_str or "conflicted" in error_str:
+            return AdaptationStrategy.WAIT_RETRY
+
+        # Default: unknown error → pure LLM fallback
+        return AdaptationStrategy.PURE_LLM
+
+    async def _adaptive_retry(
+        self,
+        subtask: Subtask,
+        error: Exception,
+    ) -> SubtaskResult:
+        """Retry a subtask with an adapted strategy based on error classification.
+
+        Args:
+            subtask: The subtask that failed.
+            error: The exception that caused the failure.
+
+        Returns:
+            SubtaskResult with adaptation_strategy set.
+        """
+        strategy = self._classify_error(error)
+        logger.info(
+            "Subtask %s failed with %s, adapting: %s",
+            subtask.id, type(error).__name__, strategy.value,
+        )
+
+        if strategy == AdaptationStrategy.SHRINK_SCOPE:
+            # Reduce timeout and max_tokens, retry with tighter scope
+            reduced_timeout = (subtask.timeout_seconds or 600) // 2
+            subtask.timeout_seconds = max(reduced_timeout, 60)
+            result = await self._execute_with_llm(subtask)
+            result.adaptation_strategy = strategy
+            if not result.success:
+                result.summary = f"[adapted: shrink_scope, still failed] {result.summary}"
+            else:
+                result.summary = f"[adapted: shrink_scope] {result.summary}"
+            return result
+
+        if strategy == AdaptationStrategy.PURE_LLM:
+            # Skip tools, use LLM completion only
+            if self.llm_client is None:
+                return SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary=f"Cannot adapt (no LLM client): {error}",
+                    success=False,
+                    adaptation_strategy=strategy,
+                )
+            prior_context = await self._gather_prior_context(subtask)
+            messages = self._build_messages(subtask, prior_context)
+            # Remove tools — pure text completion
+            response = await self.llm_client.complete(
+                messages=messages,
+                system=_WORKER_SYSTEM_PROMPT,
+                max_tokens=2048,
+                temperature=0.3,
+            )
+            summary = response.text or "Pure LLM fallback completed"
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary=f"[adapted: pure_llm] {summary}",
+                success=True,
+                adaptation_strategy=strategy,
+            )
+
+        if strategy == AdaptationStrategy.WAIT_RETRY:
+            # Wait 2s then retry (conflict may have resolved)
+            await asyncio.sleep(2)
+            result = await self._execute_with_llm(subtask)
+            result.adaptation_strategy = strategy
+            if not result.success:
+                result.summary = f"[adapted: wait_retry, still failed] {result.summary}"
+            else:
+                result.summary = f"[adapted: wait_retry] {result.summary}"
+            return result
+
+        if strategy == AdaptationStrategy.FALLBACK_TOOL:
+            # Retry with reduced tool set (skip codegraph tools if they failed)
+            result = await self._execute_with_llm(subtask)
+            result.adaptation_strategy = strategy
+            result.summary = f"[adapted: fallback_tool] {result.summary}"
+            return result
+
+        # Should not reach here
+        return SubtaskResult(
+            subtask_id=subtask.id,
+            worker_id=self.worker_id,
+            summary=f"Unknown adaptation strategy: {error}",
+            success=False,
+            adaptation_strategy=strategy,
+        )
 
     async def send_heartbeat(self) -> dict[str, Any]:
         """Send heartbeat to indicate the worker is alive.
@@ -1010,78 +1212,139 @@ class Worker:
         }
 
     def _build_tool_definitions(self) -> list[ToolDefinition]:
-        """Build tool definitions for the LLM API."""
+        """Build tool definitions for the LLM API.
+
+        Each tool has a precise description, required markers, and enum
+        constraints so the LLM can choose and call tools accurately.
+        """
         return [
             make_tool_definition(
                 name="search",
                 description=(
-                    "Search code across indexed repositories. Returns matching code snippets."
+                    "Full-text search across indexed repositories. Returns "
+                    "matching code snippets with file path, line number, and "
+                    "relevance score. Use for finding where a concept, API, or "
+                    "pattern appears in the codebase."
                 ),
                 parameters={
                     "query": {
                         "type": "string",
-                        "description": "Search query string",
+                        "description": "Search query — keywords, class/function names, or phrases",
+                        "required": True,
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default 10, max 50)",
+                    },
+                    "repo_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Restrict search to these repository IDs",
+                    },
+                    "languages": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Restrict to these languages (e.g. ['python', 'rust'])",
                     },
                 },
             ),
             make_tool_definition(
                 name="read_memory",
                 description=(
-                    "Read from the shared memory system. Memory stores "
-                    "task context, decisions, and project knowledge."
+                    "Read a value from the shared layered memory system. "
+                    "Memory stores task context, design decisions, and project "
+                    "knowledge. Reads are scoped: 'task' for current task, "
+                    "'project' for project-wide, 'global' for cross-project."
                 ),
                 parameters={
                     "key_scope": {
                         "type": "string",
-                        "description": 'Memory scope: "task", "project", or "global"',
+                        "description": "Memory scope",
+                        "enum": ["task", "project", "global"],
+                        "required": True,
                     },
                     "key": {
                         "type": "string",
-                        "description": "The memory key name",
+                        "description": (
+                            "The memory key name (e.g. 'task_definition', "
+                            "'design_decisions')"
+                        ),
+                        "required": True,
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID (required when key_scope='task')",
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Project ID (required when key_scope='project')",
                     },
                 },
             ),
             make_tool_definition(
                 name="write_memory",
                 description=(
-                    "Write to the shared memory system. Use this to store "
-                    "findings, decisions, and context for other agents."
+                    "Write a value to the shared layered memory system. "
+                    "Use this to persist findings, decisions, and context "
+                    "so other agents can access them. Choose scope carefully: "
+                    "'task' for subtask results, 'project' for design decisions, "
+                    "'global' for cross-project knowledge."
                 ),
                 parameters={
                     "key_scope": {
                         "type": "string",
-                        "description": 'Memory scope: "task", "project", or "global"',
+                        "description": "Memory scope",
+                        "enum": ["task", "project", "global"],
+                        "required": True,
                     },
                     "key": {
                         "type": "string",
                         "description": "The memory key name",
+                        "required": True,
                     },
                     "content": {
                         "type": "string",
                         "description": "Content to store",
+                        "required": True,
+                    },
+                    "content_type": {
+                        "type": "string",
+                        "description": "Content format (default 'text')",
+                        "enum": ["text", "structured", "code"],
+                    },
+                    "importance": {
+                        "type": "number",
+                        "description": (
+                            "Importance score 0.0–1.0 (default 0.5). "
+                            "Higher = retained longer."
+                        ),
                     },
                 },
             ),
             make_tool_definition(
                 name="edit_file",
                 description=(
-                    "Write content to a file. Use create=True for new files, "
-                    "create=False (default) to overwrite existing files."
+                    "Write content to a file atomically (temp-file-then-rename). "
+                    "Use create=True for new files (fails if exists), "
+                    "create=False (default) to overwrite existing files (fails if not found). "
+                    "For targeted line edits, prefer apply_diff instead."
                 ),
                 parameters={
                     "file_path": {
                         "type": "string",
-                        "description": "Path to the file to write",
+                        "description": "Absolute or relative path to the file",
+                        "required": True,
                     },
                     "content": {
                         "type": "string",
-                        "description": "Content to write",
+                        "description": "Full content to write (UTF-8)",
+                        "required": True,
                     },
                     "create": {
                         "type": "boolean",
                         "description": (
-                            "If True, create new file (error if exists). "
-                            "If False, overwrite existing (error if not found)."
+                            "True = create new file (error if exists). "
+                            "False = overwrite existing (error if not found)."
                         ),
                     },
                 },
@@ -1089,17 +1352,20 @@ class Worker:
             make_tool_definition(
                 name="search_memory",
                 description=(
-                    "Search long-term memory semantically. Returns relevant "
-                    "memories matching the query."
+                    "Semantic search over long-term memory. Returns relevant "
+                    "memories ranked by similarity to the query. Use for "
+                    "finding past decisions, context, or project knowledge."
                 ),
                 parameters={
                     "query": {
                         "type": "string",
                         "description": "Search query text",
+                        "required": True,
                     },
                     "scope_type": {
                         "type": "string",
-                        "description": 'Search scope: "project", "global", or "all"',
+                        "description": "Search scope",
+                        "enum": ["project", "global", "all"],
                     },
                     "project_id": {
                         "type": "string",
@@ -1107,28 +1373,31 @@ class Worker:
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum results (default 10)",
+                        "description": "Maximum results (default 10, max 50)",
                     },
                 },
             ),
             make_tool_definition(
                 name="read_file",
                 description=(
-                    "Read a file from the local filesystem. Use this to "
-                    "understand existing code before making changes."
+                    "Read a file from the local filesystem. Returns the full "
+                    "content (truncated at 100KB). Always read files before "
+                    "modifying them to understand existing code."
                 ),
                 parameters={
                     "file_path": {
                         "type": "string",
                         "description": "Absolute or relative path to the file",
+                        "required": True,
                     },
                 },
             ),
             make_tool_definition(
                 name="list_files",
                 description=(
-                    "List files in a directory using a glob pattern. "
-                    "Use this to explore the project structure."
+                    "List files in a directory matching a glob pattern. "
+                    "Automatically skips .git, __pycache__, node_modules, "
+                    ".venv, and target directories."
                 ),
                 parameters={
                     "directory": {
@@ -1145,78 +1414,86 @@ class Worker:
                 name="symbol_search",
                 description=(
                     "Search for code symbols (functions, classes, methods, etc.) "
-                    "in the codebase knowledge graph. Faster and more structured "
-                    "than text search — returns symbol name, kind, file location, "
-                    "and signature."
+                    "in the codebase knowledge graph. Returns symbol name, kind, "
+                    "file location, and signature. Faster and more structured "
+                    "than text search for finding specific definitions."
                 ),
                 parameters={
                     "query": {
                         "type": "string",
                         "description": "Symbol name or pattern to search for",
+                        "required": True,
                     },
                     "kind": {
                         "type": "string",
-                        "description": (
-                            "Filter by symbol kind: function, method, class, "
-                            "struct, enum, trait, variable, import"
-                        ),
+                        "description": "Filter by symbol kind",
+                        "enum": [
+                            "function", "method", "class", "struct",
+                            "enum", "trait", "variable", "import",
+                        ],
                     },
                 },
             ),
             make_tool_definition(
                 name="find_callers",
                 description=(
-                    "Find all call sites of a function or method. "
-                    "Returns every location where the symbol is called, "
-                    "useful for understanding usage before modifying code."
+                    "Find all call sites of a function or method. Returns "
+                    "every location where the symbol is invoked. Essential "
+                    "for understanding usage before modifying code."
                 ),
                 parameters={
                     "symbol": {
                         "type": "string",
-                        "description": "Name of the function/method to find callers for",
+                        "description": "Name of the function or method to find callers for",
+                        "required": True,
                     },
                 },
             ),
             make_tool_definition(
                 name="find_callees",
                 description=(
-                    "Find what a function or method calls. Returns the "
-                    "functions/methods invoked by the given symbol, "
-                    "useful for understanding dependencies."
+                    "Find what a function or method calls (its dependencies). "
+                    "Returns the functions/methods invoked by the given symbol. "
+                    "Useful for understanding a function's dependency footprint."
                 ),
                 parameters={
                     "symbol": {
                         "type": "string",
-                        "description": "Name of the function/method to find callees for",
+                        "description": "Name of the function or method to find callees for",
+                        "required": True,
                     },
                 },
             ),
             make_tool_definition(
                 name="impact_analysis",
                 description=(
-                    "Analyze the blast radius of changing a symbol. "
-                    "Traverses the dependency graph to find all symbols "
-                    "that would be affected by modifying the given symbol."
+                    "Analyze the blast radius of changing a symbol. Traverses "
+                    "the call graph to find all symbols that would be affected "
+                    "by modifying the given symbol. Run this BEFORE making "
+                    "changes to understand the scope of impact."
                 ),
                 parameters={
                     "symbol": {
                         "type": "string",
                         "description": "Name of the symbol to analyze impact for",
+                        "required": True,
                     },
                 },
             ),
             make_tool_definition(
                 name="explore_code",
                 description=(
-                    "Explore code structure for a natural language query. "
-                    "Returns a Markdown summary of relevant symbols, their "
-                    "callers/callees, and impact analysis. Use this for "
-                    "high-level architecture questions."
+                    "Explore code structure via natural language query. Returns "
+                    "a Markdown summary of relevant symbols, their callers, "
+                    "callees, and dependencies. Use for high-level architecture "
+                    "questions like 'how does authentication work' or 'what "
+                    "calls the search engine'."
                 ),
                 parameters={
                     "query": {
                         "type": "string",
-                        "description": "Natural language query about the codebase",
+                        "description": "Natural language question about the codebase",
+                        "required": True,
                     },
                 },
             ),
@@ -1224,13 +1501,15 @@ class Worker:
                 name="run_command",
                 description=(
                     "Execute a shell command and return stdout/stderr. "
-                    "Use for running tests, linters, builds, git, etc. "
-                    "Has a timeout (default 120s) to prevent hangs."
+                    "Use for running tests, linters, builds, git operations. "
+                    "Has a configurable timeout (default 120s) to prevent hangs. "
+                    "Output is truncated at 50KB stdout / 10KB stderr."
                 ),
                 parameters={
                     "command": {
                         "type": "string",
                         "description": "Shell command to execute",
+                        "required": True,
                     },
                     "timeout": {
                         "type": "integer",
@@ -1246,17 +1525,20 @@ class Worker:
                 name="apply_diff",
                 description=(
                     "Apply a unified diff patch to a file. More precise than "
-                    "edit_file (overwrites entire file) — use this for targeted "
-                    "line-range edits. Supports context lines for matching."
+                    "edit_file (which overwrites the entire file) — use this "
+                    "for targeted line-range edits. Supports context lines for "
+                    "fuzzy matching. Fails if a hunk cannot be applied."
                 ),
                 parameters={
                     "file_path": {
                         "type": "string",
                         "description": "Path to the file to patch",
+                        "required": True,
                     },
                     "diff": {
                         "type": "string",
                         "description": "Unified diff content to apply",
+                        "required": True,
                     },
                 },
             ),

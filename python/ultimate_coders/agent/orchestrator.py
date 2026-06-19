@@ -871,6 +871,112 @@ class Orchestrator:
 
         return "\n".join(parts)
 
+    async def schedule_subtasks(
+        self,
+        task: Task,
+        worker_execute: Any,
+        max_concurrent: int = 4,
+    ) -> list[SubtaskResult]:
+        """Concurrently schedule and execute ready subtasks respecting the DAG.
+
+        Analyzes the task's dependency DAG, identifies all currently ready
+        subtasks (PENDING with all deps completed), assigns them to workers
+        based on load and capabilities, and executes them concurrently.
+
+        This is the main scheduling entry point for the Orchestrator-Worker
+        pattern. It runs in rounds: each round schedules all ready subtasks,
+        waits for them to complete, then checks for newly-ready subtasks.
+
+        Args:
+            task: The task whose subtasks to schedule.
+            worker_execute: Async callable ``(worker_id, subtask) -> SubtaskResult``
+                            that executes a subtask on a specific worker.
+            max_concurrent: Maximum concurrent subtask executions (default 4).
+
+        Returns:
+            List of all SubtaskResults from this scheduling round.
+        """
+        import asyncio
+
+        all_results: list[SubtaskResult] = []
+
+        while True:
+            # Find ready subtasks (PENDING, all deps completed)
+            ready = self._get_ready_subtasks(task)
+            if not ready:
+                break
+
+            # Assign to workers
+            assignments: list[tuple[str, Subtask]] = []
+            for subtask in ready[:max_concurrent]:
+                worker_id = self._select_worker(subtask)
+                if worker_id is None:
+                    logger.warning(
+                        "No available worker for subtask %s, will retry next round",
+                        subtask.id,
+                    )
+                    continue
+                assigned = await self.assign_subtask(subtask, worker_id)
+                if assigned is not None:
+                    assignments.append((worker_id, subtask))
+
+            if not assignments:
+                break  # no workers available or no assignable subtasks
+
+            # Execute concurrently
+            async def _run(
+                wid: str, st: Subtask,
+            ) -> SubtaskResult:
+                try:
+                    result = await worker_execute(wid, st)
+                    await self.handle_subtask_result(result)
+                    return result
+                except Exception as e:
+                    logger.error(
+                        "Worker %s execution failed for subtask %s: %s",
+                        wid, st.id, e, exc_info=True,
+                    )
+                    return SubtaskResult(
+                        subtask_id=st.id,
+                        worker_id=wid,
+                        summary=f"Worker execution error: {e}",
+                        success=False,
+                    )
+
+            results = await asyncio.gather(
+                *[_run(wid, st) for wid, st in assignments],
+            )
+            all_results.extend(results)
+
+            # Emit scheduling event
+            await self.event_emitter.emit(
+                "subtasks_scheduled",
+                task_id=task.id,
+                data={
+                    "round_count": len(assignments),
+                    "total_completed": sum(1 for r in all_results if r.success),
+                    "total_failed": sum(1 for r in all_results if not r.success),
+                },
+            )
+
+        return all_results
+
+    def _get_ready_subtasks(self, task: Task) -> list[Subtask]:
+        """Get subtasks that are PENDING and have all dependencies completed.
+
+        Args:
+            task: The task whose subtasks to check.
+
+        Returns:
+            List of ready Subtask objects.
+        """
+        completed_ids = {st.id for st in task.subtasks if st.is_complete}
+        return [
+            st for st in task.subtasks
+            if st.status == SubtaskStatus.PENDING
+            and all(dep in completed_ids for dep in st.depends_on)
+        ]
+
     async def _try_redecompose_failed(
         self, task: Task,
     ) -> dict[str, int] | None:

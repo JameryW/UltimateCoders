@@ -43,6 +43,15 @@ class FileChange:
     diff: str = ""
 
 
+class AdaptationStrategy(Enum):
+    """How a Worker adapted after a failure."""
+    NONE = "none"  # no adaptation needed
+    SHRINK_SCOPE = "shrink_scope"  # timeout → reduce scope/timeout
+    FALLBACK_TOOL = "fallback_tool"  # tool_not_found → use alternative tool
+    PURE_LLM = "pure_llm"  # engine_error → skip tools, LLM-only
+    WAIT_RETRY = "wait_retry"  # conflict_detected → wait then retry
+
+
 @dataclass
 class SubtaskResult:
     """Result from a completed subtask."""
@@ -52,6 +61,7 @@ class SubtaskResult:
     summary: str = ""
     success: bool = True
     completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    adaptation_strategy: AdaptationStrategy = AdaptationStrategy.NONE
 
 
 @dataclass
