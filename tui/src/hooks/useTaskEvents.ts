@@ -256,6 +256,10 @@ export function useTaskEvents(
           if (taskEvent.type === 'sync_required') {
             const reason = String(taskEvent.data?.reason ?? 'unknown');
             const skipped = Number(taskEvent.data?.skipped ?? 0);
+            console.warn(
+              `[useTaskEvents] sync_required: reason=${reason}, skipped=${skipped} — ` +
+              (onSyncRequired ? 'triggering callback' : 'no callback registered, state may be stale')
+            );
             onSyncRequired?.(reason, skipped);
             // Don't update subtask state from a sync event
             return;

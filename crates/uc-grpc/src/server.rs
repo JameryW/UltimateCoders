@@ -1746,31 +1746,30 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             // Phase 1: replay existing events from TaskStore.
             // We subscribed to broadcast above, so any event published during
             // this phase will also appear in Phase 2. To avoid duplicates,
-            // track the last replayed event index and skip matching events
-            // in Phase 2 that were already seen.
-            let last_replayed_idx = {
+            // record the count of replayed events and skip that many from
+            // the broadcast receiver (which was subscribed before Phase 1).
+            let replayed_count = {
                 let s = task_store.lock().await;
                 let events = s.read_events_from(0);
-                let mut last_idx: Option<u64> = None;
-                for (i, event) in events.iter().enumerate() {
+                let mut count: u64 = 0;
+                for event in events.iter() {
                     let proto_event: TaskEvent = event.clone().into();
                     if !task_id.is_empty() && proto_event.task_id != task_id {
                         continue;
                     }
                     yield Ok(proto_event);
-                    last_idx = Some(i as u64);
+                    count += 1;
                 }
-                last_idx
+                count
             };
 
             // Phase 2: listen for new events via broadcast.
             // The receiver was created before Phase 1, so there is no gap.
-            // Skip events that were already replayed in Phase 1 (identified by
-            // "event_idx" in data map, set by the task store on each event).
+            // Skip the first `replayed_count` events — these overlap with Phase 1
+            // because the broadcast receiver was subscribed before we started reading
+            // the TaskStore. After skipping duplicates, all subsequent events are new.
             let mut rx = event_rx;
-            // ponytail: dedup by counting — skip first N events that overlap
-            // with the replay. The broadcast buffer holds events from the
-            // subscribe point, so Phase 2 may re-deliver events we just replayed.
+            let mut skipped: u64 = 0;
             loop {
                 match rx.recv().await {
                     Ok(proto_event) => {
@@ -1778,16 +1777,11 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             continue;
                         }
                         // Dedup: skip events that were already yielded in Phase 1.
-                        // We check the event_idx field if present, otherwise
-                        // skip the first N events matching the replay count.
-                        if let Some(idx_str) = proto_event.data.get("event_idx") {
-                            if let Ok(idx) = idx_str.parse::<u64>() {
-                                if let Some(last) = last_replayed_idx {
-                                    if idx <= last {
-                                        continue; // already replayed
-                                    }
-                                }
-                            }
+                        // The broadcast channel was subscribed before Phase 1 started,
+                        // so the first N events in the receiver overlap with the replay.
+                        if skipped < replayed_count {
+                            skipped += 1;
+                            continue;
                         }
                         yield Ok(proto_event);
                     }

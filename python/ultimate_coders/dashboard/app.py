@@ -176,9 +176,20 @@ class DashboardApp:
         @app.middleware("http")
         async def task_version_middleware(request: Request, call_next):
             response = await call_next(request)
-            # Only tag task mutation endpoints
+            # Tag task mutation endpoints: REST API + gRPC-Web (Connect protocol)
             path = request.url.path
-            if "/tasks/" in path and request.method == "POST":
+            is_task_mutation = (
+                ("/tasks/" in path and request.method == "POST")
+                or (
+                    "TaskService" in path
+                    and request.method == "POST"
+                    and any(
+                        op in path
+                        for op in ("SubmitTask", "PauseTask", "ResumeTask")
+                    )
+                )
+            )
+            if is_task_mutation:
                 # ponytail: simple monotonic counter from event log length
                 version = len(self._event_log)
                 response.headers["X-Task-Version"] = str(version)

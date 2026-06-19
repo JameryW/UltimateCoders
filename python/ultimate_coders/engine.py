@@ -257,6 +257,13 @@ class Engine:
                     logger.debug("on_recovery callback error", exc_info=True)
         except (ConnectionError, TimeoutError, OSError):
             logger.debug("gRPC recovery check failed, staying in fallback")
+        except Exception:
+            # Non-network errors (e.g. InternalError, NotFound from gRPC)
+            # mean the server is reachable but degraded — don't recover yet.
+            logger.debug(
+                "gRPC recovery check raised non-network error, staying in fallback",
+                exc_info=True,
+            )
 
     # ── Public API (with fallback wrapping) ──────────────────────
 
