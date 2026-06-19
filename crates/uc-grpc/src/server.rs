@@ -167,6 +167,10 @@ pub struct TaskStore {
     events: Vec<uc_engine::AgentEventType>,
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
+    /// Optional async backend for task persistence (PostgreSQL, etc.).
+    /// ponytail: stored for future wiring; sync methods still use HashMap
+    #[allow(dead_code)]
+    task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -183,6 +187,7 @@ impl TaskStore {
             tasks: HashMap::new(),
             events: Vec::new(),
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
+            task_backend: None,
             last_heartbeat: None,
         }
     }
@@ -193,6 +198,21 @@ impl TaskStore {
             tasks: HashMap::new(),
             events: Vec::new(),
             event_store,
+            task_backend: None,
+            last_heartbeat: None,
+        }
+    }
+
+    /// Create with both a TaskStoreBackend and an EventStore.
+    pub fn with_backend(
+        task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        Self {
+            tasks: HashMap::new(),
+            events: Vec::new(),
+            event_store,
+            task_backend: Some(task_backend),
             last_heartbeat: None,
         }
     }
