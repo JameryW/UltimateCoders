@@ -14,6 +14,8 @@ from ultimate_coders.agent.llm import (
 )
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -865,7 +867,7 @@ class TestUnifiedDiffParser:
     """Tests for the _apply_unified_diff helper."""
 
     def test_simple_patch(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff
+        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
         original = "line1\nline2\nline3\n"
         diff = "@@ -1,3 +1,3 @@\n line1\n-line2\n+line_two\n line3\n"
         result, applied, errors = _apply_unified_diff(original, diff)
@@ -875,7 +877,7 @@ class TestUnifiedDiffParser:
         assert "line2" not in result
 
     def test_fuzzy_match(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff
+        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
         original = "header\nline1\nline2\nline3\n"
         diff = "@@ -2,2 +2,2 @@\n-line1\n+LINE1\n line2\n"
         result, applied, errors = _apply_unified_diff(original, diff)
@@ -883,7 +885,7 @@ class TestUnifiedDiffParser:
         assert "LINE1" in result
 
     def test_no_match_returns_error(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff
+        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
         original = "completely\ndifferent\ncontent\n"
         diff = "@@ -1,2 +1,2 @@\n-foo\n+FOO\n bar\n"
         result, applied, errors = _apply_unified_diff(original, diff)
@@ -903,7 +905,6 @@ class TestSelfEvaluate:
         subtask = Subtask(
             id="s1", description="test", expected_output="implement auth",
         )
-        from ultimate_coders.agent.types import FileChange, ChangeType
         files = [FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED)]
         score = await worker._self_evaluate(subtask, "implemented auth module", files)
         assert score >= 0.7

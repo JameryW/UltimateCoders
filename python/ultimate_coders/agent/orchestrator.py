@@ -905,7 +905,7 @@ class Orchestrator:
             failed_descriptions.append(f"- {st.description} (error: {error})")
 
         redecompose_prompt = (
-            f"The following subtasks of a larger task failed:\n"
+            "The following subtasks of a larger task failed:\n"
             + "\n".join(failed_descriptions)
             + "\n\nCompleted subtasks so far:\n"
             + "\n".join(completed_summaries[:5] or ["(none)"])
