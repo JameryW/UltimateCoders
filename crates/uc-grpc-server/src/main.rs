@@ -82,7 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         }
         Err(err) => {
-            tracing::warn!("Failed to create LocalEngine with storage: {}. Using fallback.", err);
+            tracing::warn!(
+                "Failed to create LocalEngine with storage: {}. Using fallback.",
+                err
+            );
             LocalEngine::new_fallback()
         }
     };
@@ -110,30 +113,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cors = match std::env::var("UC_CORS_MODE").as_deref() {
         Ok("dev") => {
             tracing::warn!("CORS running in dev mode — allowing any origin");
-            CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
         }
         _ => match std::env::var("UC_CORS_ORIGINS") {
             Ok(origins) if !origins.is_empty() => {
-                let allowed: Vec<_> = origins.split(',').map(|o| o.trim()).filter(|o| !o.is_empty()).collect();
+                let allowed: Vec<_> = origins
+                    .split(',')
+                    .map(|o| o.trim())
+                    .filter(|o| !o.is_empty())
+                    .collect();
                 if allowed.is_empty() {
-                    tracing::warn!("UC_CORS_ORIGINS set but no valid origins parsed; no origins allowed");
+                    tracing::warn!(
+                        "UC_CORS_ORIGINS set but no valid origins parsed; no origins allowed"
+                    );
                     CorsLayer::new().allow_methods(Any).allow_headers(Any)
                 } else {
-                    let parsed: Vec<_> = allowed.iter().filter_map(|o| match o.parse() {
-                        Ok(hv) => Some(hv),
-                        Err(e) => { tracing::warn!("Invalid CORS origin '{}': {}", o, e); None }
-                    }).collect();
-                    CorsLayer::new().allow_origin(AllowOrigin::list(parsed)).allow_methods(Any).allow_headers(Any)
+                    let parsed: Vec<_> = allowed
+                        .iter()
+                        .filter_map(|o| match o.parse() {
+                            Ok(hv) => Some(hv),
+                            Err(e) => {
+                                tracing::warn!("Invalid CORS origin '{}': {}", o, e);
+                                None
+                            }
+                        })
+                        .collect();
+                    CorsLayer::new()
+                        .allow_origin(AllowOrigin::list(parsed))
+                        .allow_methods(Any)
+                        .allow_headers(Any)
                 }
             }
             _ => {
-                tracing::info!("No CORS origins configured; set UC_CORS_ORIGINS or UC_CORS_MODE=dev");
+                tracing::info!(
+                    "No CORS origins configured; set UC_CORS_ORIGINS or UC_CORS_MODE=dev"
+                );
                 CorsLayer::new().allow_methods(Any).allow_headers(Any)
             }
-        }
+        },
     };
 
-    tracing::info!("UltimateCoders gRPC server listening on {} (gRPC-Web enabled)", addr);
+    tracing::info!(
+        "UltimateCoders gRPC server listening on {} (gRPC-Web enabled)",
+        addr
+    );
 
     Server::builder()
         .accept_http1(true)

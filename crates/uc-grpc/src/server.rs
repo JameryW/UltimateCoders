@@ -419,7 +419,10 @@ impl TaskStore {
         subject: &str,
         offset: u64,
     ) -> Vec<uc_engine::RecordedEvent> {
-        self.event_store.read_from(subject, offset).await.unwrap_or_default()
+        self.event_store
+            .read_from(subject, offset)
+            .await
+            .unwrap_or_default()
     }
 
     /// Get current event offset for a subject from EventStore.
@@ -790,7 +793,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     ) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
-        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(task_backend, event_store)));
+        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
+            task_backend,
+            event_store,
+        )));
         let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
         spawn_task_queue_consumer(task_queue_rx, local_worker.clone(), task_store.clone());
         Self {
@@ -838,7 +844,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 None
             }
         };
-        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(task_backend, event_store)));
+        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
+            task_backend,
+            event_store,
+        )));
         let (event_tx, _) = broadcast::channel(256);
         let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
         let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
@@ -853,7 +862,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         });
         if let Some(client) = nats_client {
             spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx);
-            spawn_heartbeat_monitor(client, task_store.clone(), std::time::Duration::from_secs(600));
+            spawn_heartbeat_monitor(
+                client,
+                task_store.clone(),
+                std::time::Duration::from_secs(600),
+            );
         }
         Self { inner }
     }
