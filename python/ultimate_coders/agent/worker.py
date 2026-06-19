@@ -1281,18 +1281,29 @@ class Worker:
         except Exception as e:
             return json.dumps({"error": f"Tool execution error: {e}"})
 
-    async def _gather_prior_context(self, subtask: Subtask) -> str:
-        """Gather context from completed dependency subtasks.
+    async def _gather_prior_context(
+        self,
+        subtask: Subtask,
+        max_tokens: int = 4000,
+    ) -> str:
+        """Gather context from completed dependency subtasks + codegraph.
+
+        Respects a token budget by truncating sections that exceed limits.
+        Approximate: 1 token ≈ 4 chars for English/code.
 
         Args:
             subtask: The subtask whose dependencies to check.
+            max_tokens: Approximate max tokens for the context (default 4000).
 
         Returns:
             Formatted context string from prior subtask results.
         """
-        parts = []
+        parts: list[str] = []
+        char_budget = max_tokens * 4  # rough chars-to-tokens
 
-        # Gather results from completed dependencies
+        # 1. Results from completed dependencies (budget: 40%)
+        dep_budget = int(char_budget * 0.4)
+        dep_chars = 0
         if self.engine is not None and subtask.depends_on:
             for dep_id in subtask.depends_on:
                 try:
@@ -1307,15 +1318,22 @@ class Worker:
                             text = getattr(content, "text", None) or str(content)
                         else:
                             text = str(entry)
-                        parts.append(f"Subtask {dep_id}: {text[:300]}")
+                        snippet = f"Subtask {dep_id}: {text[:300]}"
+                        if dep_chars + len(snippet) > dep_budget:
+                            break
+                        parts.append(snippet)
+                        dep_chars += len(snippet)
                 except Exception:
                     logger.debug("Failed to read context for dep %s", dep_id, exc_info=True)
 
-        # Add codegraph knowledge graph context
+        # 2. Codegraph knowledge graph context (budget: 60%)
+        cg_budget = int(char_budget * 0.6)
         if self._codegraph.is_available():
             try:
                 codegraph_ctx = self._codegraph.explore(subtask.description, max_nodes=10)
                 if codegraph_ctx:
+                    if len(codegraph_ctx) > cg_budget:
+                        codegraph_ctx = codegraph_ctx[:cg_budget] + "\n... (truncated)"
                     parts.append(f"## Code Knowledge Graph\n{codegraph_ctx}")
             except Exception:
                 logger.debug("Codegraph explore failed for subtask", exc_info=True)

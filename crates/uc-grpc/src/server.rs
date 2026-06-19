@@ -172,6 +172,9 @@ pub struct TaskStore {
     backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
+    /// Buffer of events recorded since last `drain_events()` call.
+    /// Used by callers to broadcast new events to WatchTask streams.
+    pending_events: Vec<uc_engine::AgentEventType>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -188,6 +191,7 @@ impl TaskStore {
             tasks: HashMap::new(),
             backend: None,
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
+            pending_events: Vec::new(),
             last_heartbeat: None,
         }
     }
@@ -198,6 +202,7 @@ impl TaskStore {
             tasks: HashMap::new(),
             backend: None,
             event_store,
+            pending_events: Vec::new(),
             last_heartbeat: None,
         }
     }
@@ -211,6 +216,7 @@ impl TaskStore {
             tasks: HashMap::new(),
             backend: Some(backend),
             event_store,
+            pending_events: Vec::new(),
             last_heartbeat: None,
         }
     }
@@ -239,8 +245,10 @@ impl TaskStore {
         }
     }
 
-    /// Record an event to EventStore (fire-and-forget).
+    /// Record an event to EventStore (fire-and-forget) and pending_events buffer.
     fn record_event_with_subject(&mut self, event: uc_engine::AgentEventType, subject: &str) {
+        // Buffer for callers to drain and broadcast
+        self.pending_events.push(event.clone());
         // EventStore (unified, persistent source of truth)
         // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -250,6 +258,17 @@ impl TaskStore {
                 let _ = es.append(&subj, &event).await;
             });
         }
+    }
+
+    /// Drain all pending events since the last call.
+    /// Callers use this to collect new events for broadcasting to WatchTask streams.
+    pub fn drain_events(&mut self) -> Vec<uc_engine::AgentEventType> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    /// Get the current count of pending events (not yet drained).
+    pub fn pending_event_count(&self) -> usize {
+        self.pending_events.len()
     }
 
     /// Submit a new task: create it, decompose into subtasks, store, and return.
@@ -402,10 +421,7 @@ impl TaskStore {
 
     /// Get current event offset for a subject from EventStore.
     pub async fn event_offset(&self, subject: &str) -> u64 {
-        self.event_store
-            .latest_offset(subject)
-            .await
-            .unwrap_or(0)
+        self.event_store.latest_offset(subject).await.unwrap_or(0)
     }
 
     /// Access the EventStore for persistent reads.
@@ -920,10 +936,8 @@ fn spawn_nats_subscriber(
                                 status = %update.status,
                                 "Received NATS task update"
                             );
-                            let event_count_before;
                             {
                                 let mut store = task_store.lock().await;
-                                event_count_before = store.events.len();
                                 store.apply_update(&update);
                             }
 
@@ -990,12 +1004,8 @@ fn spawn_nats_subscriber(
 
                             // Broadcast newly recorded events to all WatchTask streams
                             let new_events: Vec<TaskEvent> = {
-                                let store = task_store.lock().await;
-                                store.events[event_count_before..]
-                                    .iter()
-                                    .cloned()
-                                    .map(|e| e.into())
-                                    .collect()
+                                let mut store = task_store.lock().await;
+                                store.drain_events().into_iter().map(|e| e.into()).collect()
                             };
                             for event in new_events {
                                 let _ = event_tx.send(event);
@@ -1525,7 +1535,6 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 // other TaskStore operations (get_task, list_tasks, etc.).
                 let (task_id_str, submit_payload, new_events) = {
                     let mut store = self.inner.task_store.lock().await;
-                    let event_count_before = store.events.len();
                     let task =
                         store.submit_task_pending(req.description.clone(), req.project_id.clone());
 
@@ -1534,11 +1543,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
                     };
-                    let events: Vec<TaskEvent> = store.events[event_count_before..]
-                        .iter()
-                        .cloned()
-                        .map(|e| e.into())
-                        .collect();
+                    let events: Vec<TaskEvent> =
+                        store.drain_events().into_iter().map(|e| e.into()).collect();
                     (task.id.0.clone(), payload, events)
                 };
                 // Broadcast TaskCreated event to WatchTask streams
@@ -1646,7 +1652,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         }
 
         // ponytail: count tasks in Created/Planning status as "pending"
-        let pending_task_count = tasks.iter()
+        let pending_task_count = tasks
+            .iter()
             .filter(|t| t.status == "Created" || t.status == "Planning")
             .count() as u32;
 

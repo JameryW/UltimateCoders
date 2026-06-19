@@ -664,7 +664,7 @@ class TestWorker:
 
     def test_tool_definitions_built(self):
         worker = Worker()
-        assert len(worker._tool_definitions) == 12
+        assert len(worker._tool_definitions) == 14
         names = [t.name for t in worker._tool_definitions]
         assert "search" in names
         assert "read_memory" in names
@@ -786,7 +786,7 @@ class TestOrchestratorWorkerIntegration:
 
     @pytest.mark.asyncio
     async def test_handle_subtask_failure(self):
-        """Test handling a failed subtask result."""
+        """Test handling a failed subtask result — retries first, then fails."""
         orch = Orchestrator()
         await orch.register_worker(WorkerInfo(id="w1", current_load=1, max_capacity=3))
 
@@ -801,8 +801,17 @@ class TestOrchestratorWorkerIntegration:
             success=False,
         )
 
+        # First failure: retry_count < max_retries → status stays PENDING
         await orch.handle_subtask_result(result)
+        assert st.status == SubtaskStatus.PENDING
+        assert st.retry_count == 1
 
+        # Exhaust retries
+        for attempt in range(orch.config.max_retries - 1):
+            st.assigned_worker = "w1"  # re-assign for retry
+            await orch.handle_subtask_result(result)
+
+        # After all retries exhausted: permanently FAILED
         assert st.status == SubtaskStatus.FAILED
         assert task.has_failed
         assert task.status == TaskStatus.FAILED
