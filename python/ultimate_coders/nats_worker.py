@@ -35,6 +35,8 @@ from nats.aio.subscription import Subscription
 
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
+    Subtask,
+    SubtaskResult,
     SubtaskStatus,
     Task,
     TaskStatus,
@@ -462,51 +464,83 @@ class NatsWorker:
     async def _execute_subtasks(self, task: Task) -> None:
         """Assign and execute ready subtasks for a task.
 
-        This implements the Orchestrator-Worker execution loop:
-        1. Find ready subtasks (pending, dependencies met)
-        2. Assign to worker
-        3. Execute
-        4. Report result back to Orchestrator
-        5. Repeat until all subtasks are done or task is complete
+        Implements the Orchestrator-Worker execution loop with concurrency:
+        - Finds ALL ready subtasks (pending, dependencies met)
+        - Executes them concurrently (bounded by worker max_capacity)
+        - Reports results back, then checks for newly unblocked subtasks
+        - Repeats until all subtasks are done or task is complete/failed
         """
         if self._orchestrator is None or self._worker is None:
             return
 
-        # Simple sequential execution: assign and execute subtasks one at a time
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
-            # Find the next ready subtask
-            next_subtask = self._orchestrator.select_next_subtask(task)
-            if next_subtask is None:
-                # No more ready subtasks — either all done or blocked
-                break
+            # Collect ALL ready subtasks (not just one)
+            ready_subtasks: list[Subtask] = []
+            while True:
+                next_st = self._orchestrator.select_next_subtask(task)
+                if next_st is None:
+                    break
+                ready_subtasks.append(next_st)
+                # Temporarily mark as assigned so select_next_subtask
+                # doesn't return it again
+                next_st.status = SubtaskStatus.ASSIGNED
 
-            # Assign subtask to worker
-            worker_id = await self._orchestrator.assign_subtask(
-                next_subtask, self._worker.worker_id
-            )
-            if worker_id is None:
-                logger.warning(
-                    "Failed to assign subtask %s, skipping",
-                    next_subtask.id,
+            if not ready_subtasks:
+                # No more ready subtasks — either all done or blocked
+                in_progress = any(
+                    st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks
                 )
+                if not in_progress:
+                    break
+                # Wait a bit for in-progress tasks to finish
+                await asyncio.sleep(0.5)
+                updated_task = self._orchestrator.get_task_status(task.id)
+                if updated_task is not None:
+                    task = updated_task
                 continue
 
-            # Publish assignment update
-            if self._publisher is not None:
-                await self._publisher.publish_update(task)
+            # Execute ready subtasks concurrently (bounded by capacity)
+            capacity = self._worker.max_capacity
+            batch = ready_subtasks[:capacity]
 
-            # Execute the subtask
-            result = await self._worker.execute_subtask(next_subtask)
+            async def _run_one(st: Subtask) -> SubtaskResult:
+                """Assign, execute, and report a single subtask."""
+                st.status = SubtaskStatus.PENDING
+                wid = await self._orchestrator.assign_subtask(
+                    st, self._worker.worker_id,
+                )
+                if wid is None:
+                    logger.warning("Failed to assign subtask %s", st.id)
+                    return SubtaskResult(
+                        subtask_id=st.id,
+                        worker_id=self._worker.worker_id,
+                        summary="Assignment failed",
+                        success=False,
+                    )
+                if self._publisher is not None:
+                    await self._publisher.publish_update(task)
+                result = await self._worker.execute_subtask(st)
+                await self._orchestrator.handle_subtask_result(result)
+                if self._publisher is not None:
+                    await self._publisher.publish_update(task)
+                return result
 
-            # Report result back to Orchestrator
-            await self._orchestrator.handle_subtask_result(result)
+            # Run batch concurrently
+            results = await asyncio.gather(
+                *[_run_one(st) for st in batch],
+                return_exceptions=True,
+            )
 
-            # Publish updated task state
-            if self._publisher is not None:
-                await self._publisher.publish_update(task)
+            # Log any exceptions from gather
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    logger.error(
+                        "Subtask %s raised exception: %s",
+                        batch[i].id, r, exc_info=True,
+                    )
 
-            # Refresh task state (Orchestrator may have updated it)
+            # Refresh task state
             updated_task = self._orchestrator.get_task_status(task.id)
             if updated_task is not None:
                 task = updated_task

@@ -455,8 +455,36 @@ class Orchestrator:
             subtask.status = SubtaskStatus.COMPLETED
             logger.info("Subtask %s completed successfully", result.subtask_id)
         else:
-            subtask.status = SubtaskStatus.FAILED
-            logger.warning("Subtask %s failed: %s", result.subtask_id, result.summary)
+            # Auto-retry: if retries remain, reset to PENDING instead of FAILED
+            if subtask.retry_count < self.config.max_retries:
+                subtask.retry_count += 1
+                subtask.status = SubtaskStatus.PENDING
+                subtask.assigned_worker = None
+                logger.warning(
+                    "Subtask %s failed (attempt %d/%d), will retry: %s",
+                    result.subtask_id,
+                    subtask.retry_count,
+                    self.config.max_retries,
+                    result.summary[:200],
+                )
+                # Emit retry event
+                await self.event_emitter.emit(
+                    "subtask_retrying",
+                    task_id=task.id,
+                    subtask_id=subtask.id,
+                    data={
+                        "attempt": subtask.retry_count,
+                        "max_retries": self.config.max_retries,
+                        "error": result.summary[:300],
+                    },
+                )
+            else:
+                subtask.status = SubtaskStatus.FAILED
+                logger.warning(
+                    "Subtask %s failed permanently (retries exhausted): %s",
+                    result.subtask_id,
+                    result.summary[:200],
+                )
 
         # Release worker load
         if subtask.assigned_worker and subtask.assigned_worker in self.workers:
@@ -510,31 +538,50 @@ class Orchestrator:
             # Check if all subtasks are either completed or failed
             all_done = all(st.is_complete or st.is_failed for st in task.subtasks)
             if all_done:
-                task.status = TaskStatus.FAILED
-                task.result = self._aggregate_results(task)
-                logger.warning("Task %s failed", task.id)
-                # Emit task completed (failed) event
-                await self.event_emitter.emit(
-                    "task_completed",
-                    task_id=task.id,
-                    data={
-                        "status": "failed",
-                        "result_summary": (task.result or "")[:300],
-                        "subtask_count": len(task.subtasks),
-                        "failed_count": sum(1 for s in task.subtasks if s.is_failed),
-                    },
-                )
-                # Publish task failure to NATS
-                if self.nats_publisher is not None:
-                    await self.nats_publisher.publish_update(task)
-                    await self.nats_publisher.publish_event(
+                # Try dynamic re-decomposition before giving up
+                redecomposed = await self._try_redecompose_failed(task)
+                if redecomposed:
+                    task.status = TaskStatus.IN_PROGRESS
+                    logger.info(
+                        "Task %s: re-decomposed %d failed subtask(s) into %d new ones",
+                        task.id,
+                        redecomposed["failed_count"],
+                        redecomposed["new_count"],
+                    )
+                    await self.event_emitter.emit(
+                        "task_redecomposed",
+                        task_id=task.id,
+                        data={
+                            "new_subtask_count": redecomposed["new_count"],
+                            "failed_replaced": redecomposed["failed_count"],
+                        },
+                    )
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.result = self._aggregate_results(task)
+                    logger.warning("Task %s failed", task.id)
+                    # Emit task completed (failed) event
+                    await self.event_emitter.emit(
                         "task_completed",
                         task_id=task.id,
                         data={
                             "status": "failed",
                             "result_summary": (task.result or "")[:300],
+                            "subtask_count": len(task.subtasks),
+                            "failed_count": sum(1 for s in task.subtasks if s.is_failed),
                         },
                     )
+                    # Publish task failure to NATS
+                    if self.nats_publisher is not None:
+                        await self.nats_publisher.publish_update(task)
+                        await self.nats_publisher.publish_event(
+                            "task_completed",
+                            task_id=task.id,
+                            data={
+                                "status": "failed",
+                                "result_summary": (task.result or "")[:300],
+                            },
+                        )
         else:
             # Task still in progress — publish subtask status update
             if self.nats_publisher is not None:
@@ -823,6 +870,104 @@ class Orchestrator:
                 parts.append(f"  - {st.description}: {summary}")
 
         return "\n".join(parts)
+
+    async def _try_redecompose_failed(
+        self, task: Task,
+    ) -> dict[str, int] | None:
+        """Try to re-decompose permanently failed subtasks into smaller ones.
+
+        Only attempts if an LLM client is available and there are failed
+        subtasks that haven't been redecomposed before.
+
+        Returns dict with failed_count and new_count on success, None on failure.
+        """
+        failed = [st for st in task.subtasks if st.is_failed]
+        if not failed:
+            return None
+
+        # Only redecompose once per task to avoid infinite loops
+        if any(st.retry_count > self.config.max_retries for st in failed):
+            # Already retried and redecomposed — give up
+            return None
+
+        if self.llm_client is None and self.sandbox_manager is None:
+            return None
+
+        # Build context from completed subtasks
+        completed_summaries = []
+        for st in task.subtasks:
+            if st.is_complete and st.result:
+                completed_summaries.append(f"- {st.description}: {st.result.summary[:200]}")
+
+        failed_descriptions = []
+        for st in failed:
+            error = st.result.summary[:200] if st.result else "unknown error"
+            failed_descriptions.append(f"- {st.description} (error: {error})")
+
+        redecompose_prompt = (
+            f"The following subtasks of a larger task failed:\n"
+            + "\n".join(failed_descriptions)
+            + "\n\nCompleted subtasks so far:\n"
+            + "\n".join(completed_summaries[:5] or ["(none)"])
+            + "\n\nOriginal task: " + task.description
+            + "\n\nDecompose each failed subtask into 1-2 simpler, more specific subtasks."
+            + "\nOutput a JSON array with the same schema as before."
+        )
+
+        try:
+            if self.llm_client is not None:
+                response = await self.llm_client.complete(
+                    messages=[{"role": "user", "content": redecompose_prompt}],
+                    system=_DECOMPOSE_SYSTEM_PROMPT.format(
+                        max_subtasks=self.config.max_subtasks,
+                    ),
+                    temperature=0.3,
+                    max_tokens=2048,
+                )
+                items = json.loads(response.text.strip())
+            elif self.sandbox_manager is not None:
+                from ultimate_coders.agent.sandbox import (
+                    DecomposeAdapter,
+                    parse_decomposition_output,
+                )
+                adapter = DecomposeAdapter()
+                request = adapter.build_request(
+                    redecompose_prompt,
+                    self.sandbox_manager.config.working_dir
+                    or self.sandbox_manager.config.project_path,
+                    self.sandbox_manager.config,
+                )
+                result = await self.sandbox_manager._execute_subprocess(request)
+                output = adapter.parse_output(result)
+                if not output.success:
+                    return None
+                items = parse_decomposition_output(result.stdout)
+            else:
+                return None
+
+            if not isinstance(items, list) or not items:
+                return None
+
+            # Remove failed subtasks and add new ones
+            new_subtasks = self._parse_decomposition_items(items, task.id)
+            # Mark new subtasks as depending on all completed subtasks
+            completed_ids = [st.id for st in task.subtasks if st.is_complete]
+            for ns in new_subtasks:
+                ns.depends_on = completed_ids.copy()
+                ns.retry_count = self.config.max_retries  # prevent further retries
+
+            # Replace failed subtasks with new ones
+            task.subtasks = [
+                st for st in task.subtasks if not st.is_failed
+            ] + new_subtasks
+
+            return {
+                "failed_count": len(failed),
+                "new_count": len(new_subtasks),
+            }
+        except Exception:
+            logger.debug("Re-decomposition failed", exc_info=True)
+            return None
 
     # ── Night-Window Exclusive Mode ─────────────────────────────────
 
