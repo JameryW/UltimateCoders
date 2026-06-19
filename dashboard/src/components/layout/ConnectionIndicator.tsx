@@ -32,6 +32,12 @@ export function ConnectionIndicator({ connected, grpcState, onReconnectSSE, onRe
           {grpcReconnecting && " ⏳"}
         </div>
       )}
+      {/* Hint for gRPC error (not yet exhausted) */}
+      {grpcError && !grpcExhausted && (
+        <div className="px-3 py-2 rounded-md text-xs bg-red-900/80 text-red-200 border border-red-600 max-w-56">
+          <p className="text-red-300">gRPC server unreachable — is the Rust server running?</p>
+        </div>
+      )}
     </div>
   );
 }

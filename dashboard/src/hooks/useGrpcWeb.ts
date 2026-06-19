@@ -50,13 +50,18 @@ export interface GrpcSubmitResult {
 
 /** Convert gRPC TaskEvent to dashboard TaskEvent.
  *  gRPC proto data is map<string,string> — values that look like JSON
- *  arrays/objects are parsed, others kept as-is. */
+ *  arrays/objects are parsed, numeric strings are converted, others kept as-is. */
 function grpcEventToDashboardEvent(ev: GrpcTaskEvent): TaskEvent {
   const data: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(ev.data)) {
     // ponytail: try JSON parse for structured values (subtasks, depends_on, etc.)
     if (value.startsWith("[") || value.startsWith("{")) {
       try { data[key] = JSON.parse(value); } catch { data[key] = value; }
+    } else if (/^-?\d+(\.\d+)?$/.test(value)) {
+      // Numeric string → convert to number for consistency with SSE path
+      data[key] = Number(value);
+    } else if (value === "true" || value === "false") {
+      data[key] = value === "true";
     } else {
       data[key] = value;
     }

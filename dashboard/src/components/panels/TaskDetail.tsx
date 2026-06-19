@@ -102,7 +102,7 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   return (
     <div className="mb-2">
       <p className="text-xs text-[var(--text-secondary)] mb-1">Subtask DAG:</p>
-      <div dangerouslySetInnerHTML={{ __html: svg! }} />
+      <div dangerouslySetInnerHTML={{ __html: svg! }} role="img" aria-label="Subtask dependency graph" />
     </div>
   );
 }
