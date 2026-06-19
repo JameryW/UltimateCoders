@@ -1101,3 +1101,36 @@ Resolved PR#82 merge conflicts (4 files: task_store.rs, server.rs, llm.py, confi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: Fix PR90 CI: TaskStore::with_backend missing
+
+**Date**: 2026-06-19
+**Task**: Fix PR90 CI: TaskStore::with_backend missing
+**Branch**: `feat/pr14-agent-capabilities`
+
+### Summary
+
+PR90 CI报错：TaskStore::with_backend不存在导致cargo check/clippy/maturin全失败。添加with_backend构造函数+task_backend字段，CI已触发。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7bbadde` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

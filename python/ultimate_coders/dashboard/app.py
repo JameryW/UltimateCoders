@@ -170,6 +170,20 @@ class DashboardApp:
             allow_headers=["*"],
         )
 
+        # Add X-Task-Version header to task mutation responses for conflict detection.
+        # Clients (TUI, Dashboard) should compare this with the version they last saw.
+        # If different, another client has mutated the task — refresh before acting.
+        @app.middleware("http")
+        async def task_version_middleware(request: Request, call_next):
+            response = await call_next(request)
+            # Only tag task mutation endpoints
+            path = request.url.path
+            if "/tasks/" in path and request.method == "POST":
+                # ponytail: simple monotonic counter from event log length
+                version = len(self._event_log)
+                response.headers["X-Task-Version"] = str(version)
+            return response
+
         # Mount static files — REMOVED: frontend is now a separate React SPA
         # Static files and Jinja2 templates are no longer served by the backend
 
@@ -356,11 +370,18 @@ class DashboardApp:
                         description=description,
                         project_id=project_id,
                     )
-                    # Wait briefly for nats_worker to process, then verify task state
-                    await asyncio.sleep(0.5)
+                    # Poll orchestrator for the task to appear (up to 3s).
+                    # Replaces the previous sleep(0.5) — avoids both
+                    # missing slow workers and over-waiting for fast ones.
                     orch = self.orchestrator
-                    if orch is not None and task_id in orch.tasks:
-                        task = orch.tasks[task_id]
+                    task = None
+                    if orch is not None:
+                        for _ in range(30):  # 30 × 100ms = 3s max
+                            if task_id in orch.tasks:
+                                task = orch.tasks[task_id]
+                                break
+                            await asyncio.sleep(0.1)
+                    if task is not None:
                         return JSONResponse({
                             "success": True,
                             "task_id": task.id,
@@ -440,16 +461,23 @@ class DashboardApp:
                         event_type="task_pause",
                         task_id=task_id,
                     )
-                    # Wait briefly for nats_worker to process, then verify task state
-                    await asyncio.sleep(0.3)
+                    # Poll for pause to take effect (up to 2s)
                     orch = self.orchestrator
-                    if orch is not None and task_id in orch.tasks:
-                        task = orch.tasks[task_id]
-                        actual_status = _status_str(task)
-                        if actual_status == "paused":
-                            return JSONResponse(
-                                {"success": True, "task_id": task_id, "status": "paused"}
-                            )
+                    actual_status = None
+                    if orch is not None:
+                        for _ in range(20):  # 20 × 100ms = 2s
+                            if task_id in orch.tasks:
+                                task = orch.tasks[task_id]
+                                actual_status = _status_str(task)
+                                if actual_status == "paused":
+                                    break
+                                actual_status = None  # not yet paused
+                            await asyncio.sleep(0.1)
+                    if actual_status == "paused":
+                        return JSONResponse(
+                            {"success": True, "task_id": task_id, "status": "paused"}
+                        )
+                    if actual_status is not None:
                         return JSONResponse(
                             {
                                 "success": False,
@@ -492,16 +520,23 @@ class DashboardApp:
                         event_type="task_resume",
                         task_id=task_id,
                     )
-                    # Wait briefly for nats_worker to process, then verify task state
-                    await asyncio.sleep(0.3)
+                    # Poll for resume to take effect (up to 2s)
                     orch = self.orchestrator
-                    if orch is not None and task_id in orch.tasks:
-                        task = orch.tasks[task_id]
-                        actual_status = _status_str(task)
-                        if actual_status == "in_progress":
-                            return JSONResponse(
-                                {"success": True, "task_id": task_id, "status": "in_progress"}
-                            )
+                    actual_status = None
+                    if orch is not None:
+                        for _ in range(20):  # 20 × 100ms = 2s
+                            if task_id in orch.tasks:
+                                task = orch.tasks[task_id]
+                                actual_status = _status_str(task)
+                                if actual_status == "in_progress":
+                                    break
+                                actual_status = None  # not yet resumed
+                            await asyncio.sleep(0.1)
+                    if actual_status == "in_progress":
+                        return JSONResponse(
+                            {"success": True, "task_id": task_id, "status": "in_progress"}
+                        )
+                    if actual_status is not None:
                         return JSONResponse(
                             {
                                 "success": False,

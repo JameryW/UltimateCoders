@@ -144,6 +144,9 @@ function App() {
 
   const { connectionState: grpcState, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
+    onSyncRequired: (_reason: string, _skipped: number) => {
+      dashboard.setNeedsSync(true);
+    },
     enabled: true,
   });
 

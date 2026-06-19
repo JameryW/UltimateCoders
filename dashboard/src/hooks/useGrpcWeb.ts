@@ -28,6 +28,8 @@ const MAX_RETRY_INTERVAL = 60000;
 
 interface UseGrpcWebOptions {
   onTaskEvent?: (event: TaskEvent) => void;
+  /** Called when the server signals that events were missed and client should re-sync. */
+  onSyncRequired?: (reason: string, skipped: number) => void;
   enabled?: boolean;
 }
 
@@ -129,6 +131,16 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
         for await (const event of stream) {
           if (ac.signal.aborted) break;
+
+          // Handle sync_required: server tells us we missed events
+          if (event.type === "sync_required") {
+            const reason = (event.data as Record<string, string>)?.reason ?? "unknown";
+            const skipped = Number((event.data as Record<string, string>)?.skipped ?? 0);
+            console.warn(`[gRPC-Web] sync_required: ${reason}, ${skipped} events missed — re-syncing`);
+            optsRef.current.onSyncRequired?.(reason, skipped);
+            continue;
+          }
+
           const dashboardEvent = grpcEventToDashboardEvent(event);
           optsRef.current.onTaskEvent?.(dashboardEvent);
         }
@@ -160,10 +172,11 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
 
   const submitTask = useCallback(
     async (description: string, projectId: string = ""): Promise<GrpcSubmitResult> => {
-      // ponytail: fail fast if not connected — prevents unhandled rejections
-      if (connectionState !== "connected") {
-        throw new Error(`gRPC-Web not connected (state: ${connectionState})`);
+      if (connectionState === "disconnected") {
+        throw new Error("gRPC-Web disconnected — enable connection first");
       }
+      // ponytail: if reconnecting, attempt the call anyway — the transport
+      // will queue/retry internally. Only fail hard if truly disconnected.
       const transport = getTransport();
       const client = createClient(TaskService, transport);
       const req = create(SubmitTaskRequestSchema, { description, projectId });

@@ -100,7 +100,7 @@ impl GrpcEngineClient {
     /// Watch a task for real-time events (server-streaming).
     ///
     /// Returns a stream of `AgentEvent` items. If `task_id` is empty,
-    /// watches all tasks. Stream errors are silently skipped.
+    /// watches all tasks. Stream errors are logged and skipped.
     pub async fn watch_task(&self, task_id: &str) -> Result<TaskEventStream, EngineError> {
         let mut client = self.task_client.clone();
         let req = WatchTaskRequest {
@@ -112,7 +112,14 @@ impl GrpcEngineClient {
         let mapped = stream.filter_map(|event_result| async move {
             match event_result {
                 Ok(proto_event) => Some(AgentEvent::from(proto_event)),
-                Err(_) => None, // Skip stream errors
+                Err(status) => {
+                    tracing::warn!(
+                        code = ?status.code(),
+                        message = %status.message(),
+                        "WatchTask stream error — event dropped"
+                    );
+                    None
+                }
             }
         });
         Ok(Box::pin(mapped))

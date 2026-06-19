@@ -162,7 +162,9 @@ export function useGrpcClient(): UseGrpcClientReturn {
       // The gRPC channel connects lazily. Verify server reachability
       // with a listTasks probe + timeout. If it fails or times out,
       // mark as error so the UI shows offline/demo mode immediately.
+      let probeTimedOut = false;
       const probeTimeout = setTimeout(() => {
+        probeTimedOut = true;
         setConnectionState('error');
         setLastError(`Connection timeout to ${SERVER_ADDR}`);
         // Schedule retry with exponential backoff
@@ -173,12 +175,14 @@ export function useGrpcClient(): UseGrpcClientReturn {
       }, CONNECT_TIMEOUT);
 
       newClient.listTasks({}).then(() => {
+        if (probeTimedOut) return; // probe already timed out — ignore late success
         clearTimeout(probeTimeout);
         setConnectionState('connected');
         setLastError(null);
         setRetryCount(0);
         setNextRetryAt(null);
       }).catch((err: any) => {
+        if (probeTimedOut) return; // probe already timed out — ignore late error
         clearTimeout(probeTimeout);
         if (isUnavailableError(err)) {
           setConnectionState('error');
