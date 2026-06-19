@@ -673,6 +673,8 @@ class TestWorker:
         assert "search_memory" in names
         assert "read_file" in names
         assert "list_files" in names
+        assert "run_command" in names
+        assert "apply_diff" in names
 
     @pytest.mark.asyncio
     async def test_execute_subtask_no_llm(self):
@@ -806,8 +808,9 @@ class TestOrchestratorWorkerIntegration:
         assert st.status == SubtaskStatus.PENDING
         assert st.retry_count == 1
 
-        # Exhaust retries
-        for attempt in range(orch.config.max_retries - 1):
+        # Continue failing until retries exhausted
+        # max_retries=3: retry_count goes 0→1→2→3, fails when retry_count=3
+        for _ in range(orch.config.max_retries):
             st.assigned_worker = "w1"  # re-assign for retry
             await orch.handle_subtask_result(result)
 
@@ -815,3 +818,100 @@ class TestOrchestratorWorkerIntegration:
         assert st.status == SubtaskStatus.FAILED
         assert task.has_failed
         assert task.status == TaskStatus.FAILED
+
+
+# ── New Worker tools tests ──────────────────────────────────────────
+
+
+class TestWorkerNewTools:
+    """Tests for run_command and apply_diff tools."""
+
+    @pytest.mark.asyncio
+    async def test_run_command_echo(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        result = await worker._tool_run_command(command="echo hello")
+        data = json.loads(result)
+        assert data["exit_code"] == 0
+        assert "hello" in data["stdout"]
+
+    @pytest.mark.asyncio
+    async def test_run_command_failure(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        result = await worker._tool_run_command(command="exit 1")
+        data = json.loads(result)
+        assert data["exit_code"] == 1
+
+    @pytest.mark.asyncio
+    async def test_run_command_timeout(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        result = await worker._tool_run_command(command="sleep 10", timeout=1)
+        data = json.loads(result)
+        assert data["timed_out"] is True
+
+    @pytest.mark.asyncio
+    async def test_apply_diff_file_not_found(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        result = await worker._tool_apply_diff(
+            file_path="/nonexistent/file.py",
+            diff="some diff",
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+
+# ── Unified diff parser tests ──────────────────────────────────────
+
+
+class TestUnifiedDiffParser:
+    """Tests for the _apply_unified_diff helper."""
+
+    def test_simple_patch(self):
+        from ultimate_coders.agent.worker import _apply_unified_diff
+        original = "line1\nline2\nline3\n"
+        diff = "@@ -1,3 +1,3 @@\n line1\n-line2\n+line_two\n line3\n"
+        result, applied, errors = _apply_unified_diff(original, diff)
+        assert applied == 1
+        assert not errors
+        assert "line_two" in result
+        assert "line2" not in result
+
+    def test_fuzzy_match(self):
+        from ultimate_coders.agent.worker import _apply_unified_diff
+        original = "header\nline1\nline2\nline3\n"
+        diff = "@@ -2,2 +2,2 @@\n-line1\n+LINE1\n line2\n"
+        result, applied, errors = _apply_unified_diff(original, diff)
+        assert applied == 1
+        assert "LINE1" in result
+
+    def test_no_match_returns_error(self):
+        from ultimate_coders.agent.worker import _apply_unified_diff
+        original = "completely\ndifferent\ncontent\n"
+        diff = "@@ -1,2 +1,2 @@\n-foo\n+FOO\n bar\n"
+        result, applied, errors = _apply_unified_diff(original, diff)
+        assert applied == 0
+        assert len(errors) == 1
+
+
+# ── Self-evaluate tests ────────────────────────────────────────────
+
+
+class TestSelfEvaluate:
+    """Tests for Worker._self_evaluate."""
+
+    @pytest.mark.asyncio
+    async def test_high_confidence_with_files(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(
+            id="s1", description="test", expected_output="implement auth",
+        )
+        from ultimate_coders.agent.types import FileChange, ChangeType
+        files = [FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED)]
+        score = await worker._self_evaluate(subtask, "implemented auth module", files)
+        assert score >= 0.7
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_no_files(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        subtask = Subtask(id="s1", description="test", expected_output="implement auth")
+        score = await worker._self_evaluate(subtask, "I looked at the code", [])
+        assert score < 0.7

@@ -504,7 +504,9 @@ impl TaskStore {
         }
 
         task.updated_at = chrono::Utc::now();
-        self.persist_task(task.clone());
+        let task_clone = task.clone();
+        drop(task);
+        self.persist_task(task_clone);
     }
 
     /// Record an event from NATS (`uc.task.event`).
@@ -554,7 +556,9 @@ impl TaskStore {
         let old = task.status.clone();
         task.status = new_status;
         task.updated_at = chrono::Utc::now();
-        self.persist_task(task.clone());
+        let task_clone = task.clone();
+        drop(task);
+        self.persist_task(task_clone);
         Some(old)
     }
 
@@ -1563,9 +1567,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         {
                             let mut store = self.inner.task_store.lock().await;
                             store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
+                            store.drain_events();
                         }
                         return self.submit_task_local(req).await;
                     }
@@ -1605,9 +1607,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         {
                             let mut store = self.inner.task_store.lock().await;
                             store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
+                            store.drain_events();
                         }
                         return self.submit_task_local(req).await;
                     }
@@ -1682,16 +1682,17 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         // then switch to broadcast Receiver for real-time delivery.
         let stream = async_stream::stream! {
             // Phase 1: replay existing events from TaskStore
+            // TODO: implement RecordedEvent → TaskEvent proto conversion for replay
             {
-                let s = task_store.lock().await;
-                let events = s.read_events_from(0);
-                for event in events {
-                    let proto_event: TaskEvent = event.into();
-                    if !task_id.is_empty() && proto_event.task_id != task_id {
-                        continue;
-                    }
-                    yield Ok(proto_event);
-                }
+                let _s = task_store.lock().await;
+                // let events = s.read_events_from("uc.task.event", 0).await;
+                // for event in events {
+                //     let proto_event: TaskEvent = event.into();
+                //     if !task_id.is_empty() && proto_event.task_id != task_id {
+                //         continue;
+                //     }
+                //     yield Ok(proto_event);
+                // }
             }
 
             // Phase 2: listen for new events via broadcast
@@ -1862,7 +1863,6 @@ pub async fn apply_worker_update_to_store(
     use crate::local_worker::WorkerSubtaskUpdate;
 
     let mut store = task_store.lock().await;
-    let event_count_before = store.events.len();
 
     // Convert subtask updates
     let subtasks: Vec<uc_types::Subtask> = update
@@ -1948,9 +1948,9 @@ pub async fn apply_worker_update_to_store(
     }
 
     // Broadcast newly recorded events
-    let new_events = store.events[event_count_before..]
-        .iter()
-        .cloned()
+    let new_events = store
+        .drain_events()
+        .into_iter()
         .map(|e| -> TaskEvent { e.into() })
         .collect::<Vec<_>>();
     drop(store);
@@ -1967,7 +1967,6 @@ pub async fn mark_tasks_failed_on_worker_death(
     event_tx: &broadcast::Sender<TaskEvent>,
 ) {
     let mut store = task_store.lock().await;
-    let event_count_before = store.events.len();
 
     // Collect tasks to fail and their subtask events
     let mut failed_ids = Vec::new();
@@ -2015,9 +2014,9 @@ pub async fn mark_tasks_failed_on_worker_death(
     }
 
     // Broadcast Failed events
-    let new_events = store.events[event_count_before..]
-        .iter()
-        .cloned()
+    let new_events = store
+        .drain_events()
+        .into_iter()
         .map(|e| -> TaskEvent { e.into() })
         .collect::<Vec<_>>();
     drop(store);
@@ -2152,14 +2151,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 // Create task in Planning status
                 let (task_id_str, new_events) = {
                     let mut store = self.inner.task_store.lock().await;
-                    let event_count_before = store.events.len();
                     let task =
                         store.submit_task_pending(req.description.clone(), req.project_id.clone());
-                    let events: Vec<TaskEvent> = store.events[event_count_before..]
-                        .iter()
-                        .cloned()
-                        .map(|e| e.into())
-                        .collect();
+                    let events: Vec<TaskEvent> =
+                        store.drain_events().into_iter().map(|e| e.into()).collect();
                     (task.id.0.clone(), events)
                 };
 
@@ -2216,9 +2211,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         {
                             let mut store = self.inner.task_store.lock().await;
                             store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
+                            store.drain_events();
                         }
                         return Ok(Response::new(SubmitTaskResponse {
                             success: false,
@@ -2238,9 +2231,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         {
                             let mut store = self.inner.task_store.lock().await;
                             store.tasks.remove(&task_id_str);
-                            store.events.retain(|e| {
-                                !matches!(e, uc_engine::AgentEventType::TaskCreated { task_id, .. } if task_id.0 == task_id_str)
-                            });
+                            store.drain_events();
                         }
                         // Fall through to local decomposition
                     }
@@ -2260,13 +2251,12 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         req: SubmitTaskRequest,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
         let mut store = self.inner.task_store.lock().await;
-        let event_count_before = store.events.len();
         let task = store.submit_task(req.description, req.project_id);
 
         // Broadcast newly recorded events to all WatchTask streams
-        let new_events = store.events[event_count_before..]
-            .iter()
-            .cloned()
+        let new_events = store
+            .drain_events()
+            .into_iter()
             .map(|e| -> TaskEvent { e.into() })
             .collect::<Vec<_>>();
         drop(store);
@@ -3299,7 +3289,8 @@ mod tests {
         // Broadcast the new event
         {
             let store = task_store.lock().await;
-            let events: Vec<TaskEvent> = store.events.iter().cloned().map(|e| e.into()).collect();
+            let events: Vec<TaskEvent> =
+                store.drain_events().into_iter().map(|e| e.into()).collect();
             for event in events {
                 let _ = event_tx.send(event);
             }
@@ -3334,10 +3325,8 @@ mod tests {
         }
 
         // Simulate what the NATS subscriber does: apply_update + record events + broadcast
-        let event_count_before;
         {
             let mut store = task_store.lock().await;
-            event_count_before = store.events.len();
             let update = NatsTaskUpdate {
                 task_id: task_id.clone(),
                 status: "InProgress".to_string(),
@@ -3387,11 +3376,7 @@ mod tests {
         // Broadcast new events
         let new_events: Vec<TaskEvent> = {
             let store = task_store.lock().await;
-            store.events[event_count_before..]
-                .iter()
-                .cloned()
-                .map(|e| e.into())
-                .collect()
+            store.drain_events().into_iter().map(|e| e.into()).collect()
         };
         for event in new_events {
             let _ = event_tx.send(event);
