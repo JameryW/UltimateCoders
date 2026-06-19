@@ -669,7 +669,7 @@ class DashboardApp:
                 all_events = [
                     e
                     for e in all_events
-                    if e.get("task_id") == task_id or e.get("details", {}).get("task_id") == task_id
+                    if e.get("task_id") == task_id
                 ]
             # Apply pagination
             limit = min(limit, 500)
@@ -694,15 +694,21 @@ class DashboardApp:
     ) -> None:
         """Append an event to the in-memory event log.
 
+        Produces TaskEvent-compatible format for consistency with
+        TaskEventEmitter events: {timestamp, type, task_id, data}.
+
         Args:
             event_type: Type of event (e.g., task_pause, circuit_breaker_reset).
-            **details: Additional event details.
+            **details: Additional event details. If task_id is present in
+                details, it is promoted to the top-level task_id field.
         """
+        task_id = details.pop("task_id", "")
         self._event_log.appendleft(
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "type": event_type,
-                "details": details,
+                "task_id": task_id,
+                "data": details,
             }
         )
 

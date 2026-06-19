@@ -71,7 +71,7 @@ export function useDashboard() {
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
 
-  // Handle SSE full snapshot — merge with existing state to avoid overwriting
+  // Handle SSE full snapshot -- merge with existing state to avoid overwriting
   // fresher gRPC-Web incremental updates with stale SSE snapshot data.
   const handleSnapshot = useCallback((data: DashboardSnapshot) => {
     // ponytail: only replace state when SSE source actually has data;
@@ -81,7 +81,7 @@ export function useDashboard() {
     const snapshotTasks = data.tasks;
     if (snapshotTasks?.available) {
       setTasks((prev) => {
-        // SSE available but empty → don't wipe gRPC-populated tasks
+        // SSE available but empty -> don't wipe gRPC-populated tasks
         if (snapshotTasks.tasks.length === 0 && prev.available && prev.tasks.length > 0) return prev;
         // Field-level merge: for each task in snapshot, keep the version whose
         // updated_at is more recent (gRPC-Web event updates set updated_at in real-time).
@@ -92,18 +92,23 @@ export function useDashboard() {
           // If our existing version is newer (from gRPC-Web event), keep it.
           const existingTime = new Date(existing.updated_at).getTime();
           const snapshotTime = new Date(st.updated_at).getTime();
-          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime > snapshotTime) {
+          // #3: If either timestamp is NaN, prefer the gRPC-Web (existing) version
+          // since incremental updates are more reliable than SSE snapshots.
+          if (isNaN(existingTime) || isNaN(snapshotTime)) {
+            return existing;
+          }
+          if (existingTime > snapshotTime) {
             return existing;
           }
           // #5: On timestamp tie, prefer the source that has more non-pending subtasks.
           // gRPC incremental updates carry live status transitions (assigned, in_progress,
           // completed) while the SSE snapshot may lag behind on the same second.
-          if (!isNaN(existingTime) && !isNaN(snapshotTime) && existingTime === snapshotTime) {
+          if (existingTime === snapshotTime) {
             const existingNonPending = countNonPendingSubtasks(existing);
             const snapshotNonPending = countNonPendingSubtasks(st);
             if (existingNonPending >= snapshotNonPending) return existing;
           }
-          // Snapshot is newer → merge subtask-level data
+          // Snapshot is newer -> merge subtask-level data
           if (existing.subtasks && st.subtasks) {
             const mergedSubtasks = st.subtasks.map((ss) => {
               const es = existing.subtasks!.find((s) => s.id === ss.id);
@@ -120,7 +125,9 @@ export function useDashboard() {
         for (const t of prev.tasks) {
           if (!mergedIds.has(t.id)) merged.push(t);
         }
-        return { ...prev, tasks: merged, total: merged.length };
+        // #15: Derive total from status_counts for consistency
+        const status_counts = recountStatus(merged);
+        return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts };
       });
     }
     if (data.scheduler?.available) setScheduler(data.scheduler);
@@ -136,7 +143,7 @@ export function useDashboard() {
         ...prev,
         [tid]: [...(prev[tid] ?? []), ev],
       };
-      // #12: LRU eviction — keep max INTERACTION_LOG_MAX_ENTRIES task entries.
+      // #12: LRU eviction -- keep max INTERACTION_LOG_MAX_ENTRIES task entries.
       // Evict oldest (by first event timestamp) when exceeded.
       const keys = Object.keys(updated);
       if (keys.length > INTERACTION_LOG_MAX_ENTRIES) {
@@ -164,7 +171,7 @@ export function useDashboard() {
     switch (ev.type) {
       // -- Sync recovery --
       case "sync_required": {
-        // Broadcast lag detected — caller should do a full listTasks re-sync.
+        // Broadcast lag detected -- caller should do a full listTasks re-sync.
         // We don't have listTasks here, so set a flag for App.tsx to act on.
         setNeedsSync(true);
         break;
@@ -185,7 +192,8 @@ export function useDashboard() {
             {
               id: tid,
               description: String(ev.data.description ?? ""),
-              status: "in_progress",
+              // #6: Use ev.data.status first, fallback to "submitted" (not "in_progress")
+              status: String(ev.data.status ?? "submitted"),
               project_id: String(ev.data.project_id ?? ""),
               subtask_count: subtasks.length || Number(ev.data.subtask_count ?? 0),
               subtasks: subtasks.length > 0 ? subtasks : undefined,
@@ -194,7 +202,8 @@ export function useDashboard() {
             },
             ...prev.tasks,
           ];
-          return { ...prev, tasks, total: tasks.length, status_counts: recountStatus(tasks) };
+          const status_counts = recountStatus(tasks);
+          return { ...prev, tasks, total: totalFromStatusCounts(status_counts), status_counts };
         });
         break;
       }
@@ -296,7 +305,7 @@ export function useDashboard() {
     return errors;
   }, []);
 
-  /** Merge task list from gRPC-Web into state — field-level merge preserving incremental subtask updates. */
+  /** Merge task list from gRPC-Web into state -- field-level merge preserving incremental subtask updates. */
   const mergeGrpcTasks = useCallback((data: TasksData) => {
     setTasks((prev) => {
       if (!data.available) return prev;
@@ -318,7 +327,7 @@ export function useDashboard() {
               if (!subtasks.some((s) => s.id === es.id)) subtasks.push(es);
             }
           } else if (existing.subtasks && !t.subtasks) {
-            // gRPC response has no subtasks — keep existing
+            // gRPC response has no subtasks -- keep existing
             subtasks = existing.subtasks;
           }
           merged[idx] = { ...existing, ...t, subtasks };
@@ -326,7 +335,9 @@ export function useDashboard() {
           merged.push(t);
         }
       }
-      return { ...prev, tasks: merged, total: merged.length, status_counts: recountStatus(merged) };
+      // #15: Derive total from status_counts for consistency
+      const status_counts = recountStatus(merged);
+      return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts };
     });
   }, []);
 
@@ -345,7 +356,19 @@ export function useDashboard() {
         updated_at: new Date().toISOString(),
       };
       const tasks = [newTask, ...prev.tasks];
-      return { ...prev, tasks, total: tasks.length, status_counts: recountStatus(tasks) };
+      const status_counts = recountStatus(tasks);
+      return { ...prev, tasks, total: totalFromStatusCounts(status_counts), status_counts };
+    });
+  }, []);
+
+  /** #13: Optimistic status update -- immediately update task status before
+   *  SSE/gRPC event confirms it. The real event will correct it if wrong. */
+  const optimisticStatusUpdate = useCallback((taskId: string, newStatus: string) => {
+    setTasks((prev) => {
+      const tasks = prev.tasks.map((t) =>
+        t.id === taskId ? { ...t, status: newStatus, updated_at: new Date().toISOString() } : t
+      );
+      return { ...prev, tasks, status_counts: recountStatus(tasks) };
     });
   }, []);
 
@@ -367,10 +390,11 @@ export function useDashboard() {
     mergeGrpcTasks,
     fetchInitial,
     optimisticAddTask,
+    optimisticStatusUpdate,
   };
 }
 
-/** Rank subtask status for comparison — higher = more advanced. */
+/** Rank subtask status for comparison -- higher = more advanced. */
 function subtaskStatusRank(status: string): number {
   switch (status) {
     case "completed": return 4;
@@ -382,11 +406,20 @@ function subtaskStatusRank(status: string): number {
   }
 }
 
-/** Recompute status_counts from a task list. */
+/** Recompute status_counts from a task list.
+ *  #15: Also returns total as the sum of status_counts for consistency. */
 function recountStatus(tasks: TaskSummary[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const t of tasks) counts[t.status] = (counts[t.status] || 0) + 1;
   return counts;
+}
+
+/** #15: Derive total from status_counts to avoid inconsistency
+ *  between merged.length total and status_counts total. */
+function totalFromStatusCounts(counts: Record<string, number>): number {
+  let total = 0;
+  for (const v of Object.values(counts)) total += v;
+  return total;
 }
 
 /** Merge a subtask event into existing subtask list, upserting by subtask_id. */
