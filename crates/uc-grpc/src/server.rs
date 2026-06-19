@@ -167,6 +167,10 @@ pub struct TaskStore {
     events: Vec<uc_engine::AgentEventType>,
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
+    /// Optional async backend for task persistence (PostgreSQL, etc.).
+    /// ponytail: stored for future wiring; sync methods still use HashMap
+    #[allow(dead_code)]
+    task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -183,6 +187,7 @@ impl TaskStore {
             tasks: HashMap::new(),
             events: Vec::new(),
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
+            task_backend: None,
             last_heartbeat: None,
         }
     }
@@ -193,6 +198,21 @@ impl TaskStore {
             tasks: HashMap::new(),
             events: Vec::new(),
             event_store,
+            task_backend: None,
+            last_heartbeat: None,
+        }
+    }
+
+    /// Create with both a TaskStoreBackend and an EventStore.
+    pub fn with_backend(
+        task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        Self {
+            tasks: HashMap::new(),
+            events: Vec::new(),
+            event_store,
+            task_backend: Some(task_backend),
             last_heartbeat: None,
         }
     }
@@ -708,6 +728,37 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         }
     }
 
+    /// Create a new gRPC server with custom task and event backends.
+    ///
+    /// Use this to configure PostgreSQL persistence for tasks and events.
+    pub fn with_backends(
+        engine: E,
+        task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
+        let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
+        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
+            task_backend,
+            event_store,
+        )));
+        let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
+
+        spawn_task_queue_consumer(task_queue_rx, local_worker.clone(), task_store.clone());
+
+        Self {
+            inner: Arc::new(GrpcServerInner {
+                engine,
+                task_store,
+                #[cfg(feature = "messaging")]
+                nats_client: None,
+                local_worker,
+                event_tx,
+                task_queue_tx,
+            }),
+        }
+    }
+
     /// Create a new gRPC server with NATS integration.
     ///
     /// Attempts to connect to NATS at the given URL. If the connection
@@ -720,6 +771,80 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     #[cfg(feature = "messaging")]
     pub async fn with_nats(engine: E, nats_url: &str) -> Self {
         Self::with_nats_and_timeout(engine, nats_url, std::time::Duration::from_secs(600)).await
+    }
+
+    /// Create a new gRPC server with NATS integration and custom backends.
+    #[cfg(feature = "messaging")]
+    pub async fn with_nats_and_backends(
+        engine: E,
+        nats_url: &str,
+        task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        Self::with_nats_timeout_and_backends(
+            engine,
+            nats_url,
+            std::time::Duration::from_secs(600),
+            task_backend,
+            event_store,
+        )
+        .await
+    }
+
+    /// Create a new gRPC server with NATS integration, custom timeout, and backends.
+    #[cfg(feature = "messaging")]
+    pub async fn with_nats_timeout_and_backends(
+        engine: E,
+        nats_url: &str,
+        heartbeat_timeout: std::time::Duration,
+        task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        let nats_client = match async_nats::connect(nats_url).await {
+            Ok(client) => {
+                tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
+                Some(client)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    nats_url = %nats_url,
+                    error = %e,
+                    "NATS unavailable, TaskService will use local decomposition"
+                );
+                None
+            }
+        };
+
+        let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
+            task_backend,
+            event_store,
+        )));
+
+        let (event_tx, _) = broadcast::channel(256);
+
+        let (task_queue_tx, task_queue_rx) = mpsc::channel(TASK_QUEUE_CAPACITY);
+
+        let local_worker = Arc::new(Mutex::new(crate::local_worker::LocalWorkerBridge::new()));
+
+        // Spawn the queue consumer background task
+        spawn_task_queue_consumer(task_queue_rx, local_worker.clone(), task_store.clone());
+
+        let inner = Arc::new(GrpcServerInner {
+            engine,
+            task_store: task_store.clone(),
+            nats_client: nats_client.clone(),
+            local_worker,
+            event_tx: event_tx.clone(),
+            task_queue_tx,
+        });
+
+        // Spawn background subscriber and heartbeat monitor if NATS is connected
+        if let Some(client) = nats_client {
+            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx);
+            spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
+        }
+
+        Self { inner }
     }
 
     /// Create a new gRPC server with NATS integration and custom heartbeat timeout.

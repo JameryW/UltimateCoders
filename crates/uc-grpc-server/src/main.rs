@@ -7,9 +7,14 @@
 //! publish task submissions to NATS for the Python Orchestrator to process.
 //! When NATS is unavailable, falls back to local task decomposition.
 //!
+//! Task persistence can be configured via `UC_TASK_BACKEND`:
+//! - `memory` (default): in-memory HashMap, no persistence across restarts
+//! - `postgres`: PostgreSQL-backed, requires `UC_DATABASE_URL`
+//!
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
+use std::sync::Arc;
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
 
@@ -17,6 +22,52 @@ use tonic::transport::Server;
 use tonic_web::GrpcWebLayer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
+
+/// Create a TaskStoreBackend based on environment configuration.
+///
+/// - `UC_TASK_BACKEND=postgres` + `UC_DATABASE_URL`: PostgreSQL persistence
+/// - Default: in-memory (no persistence across restarts)
+async fn create_task_backend() -> (
+    Arc<dyn uc_engine::TaskStoreBackend>,
+    Arc<dyn uc_engine::EventStore>,
+) {
+    let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+
+    match std::env::var("UC_TASK_BACKEND").as_deref() {
+        #[cfg(feature = "storage")]
+        Ok("postgres") => {
+            let db_url = std::env::var("UC_DATABASE_URL").unwrap_or_else(|_| {
+                tracing::warn!("UC_TASK_BACKEND=postgres but UC_DATABASE_URL not set, falling back to in-memory");
+                String::new()
+            });
+            if db_url.is_empty() {
+                tracing::warn!("Empty UC_DATABASE_URL, using in-memory task backend");
+                return (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store);
+            }
+            match uc_engine::PostgresTaskBackend::new(&db_url).await {
+                Ok(backend) => {
+                    tracing::info!("TaskStore using PostgreSQL backend");
+                    (Arc::new(backend), event_store)
+                }
+                Err(e) => {
+                    tracing::warn!("PostgreSQL task backend failed: {}, using in-memory", e);
+                    (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
+                }
+            }
+        }
+        #[cfg(not(feature = "storage"))]
+        Ok("postgres") => {
+            tracing::warn!(
+                "UC_TASK_BACKEND=postgres but storage feature not enabled, using in-memory"
+            );
+            (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
+        }
+        _ => {
+            tracing::info!("TaskStore using in-memory backend");
+            (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,15 +93,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Create task store backend (in-memory or PostgreSQL)
+    let (task_backend, event_store) = create_task_backend().await;
+
     // Create gRPC server, optionally with NATS integration
     let grpc_server = match std::env::var("UC_NATS_URL") {
         Ok(nats_url) => {
             tracing::info!(nats_url = %nats_url, "Attempting NATS connection for TaskService");
-            GrpcServer::with_nats(engine, &nats_url).await
+            GrpcServer::with_nats_and_backends(engine, &nats_url, task_backend, event_store).await
         }
         Err(_) => {
             tracing::info!("No UC_NATS_URL set, TaskService using local decomposition");
-            GrpcServer::new(engine)
+            GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
     let (engine_service, task_service) = grpc_server.into_services();

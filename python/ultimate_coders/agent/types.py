@@ -67,6 +67,8 @@ class Subtask:
     file_constraints: list[str] = field(default_factory=list)
     expected_output: str = ""
     result: SubtaskResult | None = None
+    retry_count: int = 0
+    timeout_seconds: int = 0  # 0 = use default
 
     @property
     def is_ready(self) -> bool:
@@ -144,3 +146,4 @@ class OrchestratorConfig:
     max_subtasks: int = 10
     max_retries: int = 3
     heartbeat_timeout_seconds: int = 60
+    subtask_timeout_seconds: int = 600  # 10 min default per subtask
