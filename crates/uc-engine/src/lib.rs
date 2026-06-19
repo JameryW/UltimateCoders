@@ -67,4 +67,7 @@ pub use scheduler::publish_window_event;
 #[cfg(feature = "docker")]
 pub use sandbox::docker::DockerSandbox;
 
-pub use task_store::{TaskStore, TaskStoreBackend};
+pub use task_store::{InMemoryTaskBackend, TaskStore, TaskStoreBackend};
+
+#[cfg(feature = "storage")]
+pub use task_store::PostgresTaskBackend;

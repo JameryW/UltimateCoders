@@ -14,6 +14,8 @@ from ultimate_coders.agent.llm import (
 )
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -904,7 +906,6 @@ class TestSelfEvaluate:
         subtask = Subtask(
             id="s1", description="test", expected_output="implement auth",
         )
-        from ultimate_coders.agent.types import FileChange, ChangeType
         files = [FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED)]
         score = await worker._self_evaluate(subtask, "implemented auth module", files)
         assert score >= 0.7
