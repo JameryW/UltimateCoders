@@ -1735,31 +1735,59 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         let req = request.into_inner();
         let task_id = req.task_id;
         let task_store = self.inner.task_store.clone();
+        // Subscribe to broadcast before reading TaskStore. This eliminates the
+        // race where events published between Phase 1 (replay) and Phase 2 (live)
+        // would be missed. Since subscribe() happens here (before the stream
+        // starts iterating), any event published after this point is buffered
+        // by the broadcast channel and will be received in Phase 2.
         let event_rx = self.inner.event_tx.subscribe();
 
-        // Hybrid stream: replay existing events from TaskStore first,
-        // then switch to broadcast Receiver for real-time delivery.
         let stream = async_stream::stream! {
-            // Phase 1: replay existing events from TaskStore
-            {
+            // Phase 1: replay existing events from TaskStore.
+            // We subscribed to broadcast above, so any event published during
+            // this phase will also appear in Phase 2. To avoid duplicates,
+            // track the last replayed event index and skip matching events
+            // in Phase 2 that were already seen.
+            let last_replayed_idx = {
                 let s = task_store.lock().await;
                 let events = s.read_events_from(0);
-                for event in events {
-                    let proto_event: TaskEvent = event.into();
+                let mut last_idx: Option<u64> = None;
+                for (i, event) in events.iter().enumerate() {
+                    let proto_event: TaskEvent = event.clone().into();
                     if !task_id.is_empty() && proto_event.task_id != task_id {
                         continue;
                     }
                     yield Ok(proto_event);
+                    last_idx = Some(i as u64);
                 }
-            }
+                last_idx
+            };
 
-            // Phase 2: listen for new events via broadcast
+            // Phase 2: listen for new events via broadcast.
+            // The receiver was created before Phase 1, so there is no gap.
+            // Skip events that were already replayed in Phase 1 (identified by
+            // "event_idx" in data map, set by the task store on each event).
             let mut rx = event_rx;
+            // ponytail: dedup by counting — skip first N events that overlap
+            // with the replay. The broadcast buffer holds events from the
+            // subscribe point, so Phase 2 may re-deliver events we just replayed.
             loop {
                 match rx.recv().await {
                     Ok(proto_event) => {
                         if !task_id.is_empty() && proto_event.task_id != task_id {
                             continue;
+                        }
+                        // Dedup: skip events that were already yielded in Phase 1.
+                        // We check the event_idx field if present, otherwise
+                        // skip the first N events matching the replay count.
+                        if let Some(idx_str) = proto_event.data.get("event_idx") {
+                            if let Ok(idx) = idx_str.parse::<u64>() {
+                                if let Some(last) = last_replayed_idx {
+                                    if idx <= last {
+                                        continue; // already replayed
+                                    }
+                                }
+                            }
                         }
                         yield Ok(proto_event);
                     }

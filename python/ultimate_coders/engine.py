@@ -230,7 +230,9 @@ class Engine:
         """Try to recover back to gRPC mode.
 
         Periodically (every recovery_check_interval seconds) attempts a
-        gRPC health() call.  If it succeeds, switches back to gRPC mode.
+        gRPC health() call AND a list_tasks() call. Both must succeed
+        to switch back — this avoids false recovery when the health
+        endpoint is reachable but TaskService is degraded (e.g. stuck mutex).
         """
         if not self._fallback_active or self._grpc_engine is None:
             return
@@ -241,7 +243,9 @@ class Engine:
 
         self._last_recovery_check = now
         try:
+            # Verify both EngineService (health) and TaskService (list_tasks) are alive
             self._grpc_engine.health()
+            self._grpc_engine.list_tasks()
             # Recovery successful
             self._fallback_active = False
             self._engine = self._grpc_engine
@@ -492,6 +496,18 @@ class Engine:
             List of AgentEvent objects with event_type, task_id,
             subtask_id, data, and timestamp attributes.
         """
+        # watch_task is gRPC-only — local engine has no streaming.
+        # When in fallback mode, return empty list with a warning
+        # instead of letting RuntimeError propagate.
+        if self._fallback_active:
+            logger.warning(
+                "watch_task unavailable in local fallback mode; "
+                "returning empty list. Reconnect gRPC to resume streaming."
+            )
+            return []
+        if self._mode != "grpc":
+            logger.debug("watch_task requires gRPC mode; returning empty list")
+            return []
         return self._try_grpc_with_fallback(
             "watch_task", task_id, max_events, timeout_secs,
         )

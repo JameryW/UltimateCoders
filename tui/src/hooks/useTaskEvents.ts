@@ -31,6 +31,9 @@ const MAX_STREAM_RETRIES = 3;
 /** Delay before retrying stream subscription (ms). */
 const STREAM_RETRY_DELAY = 5000;
 
+/** Callback type for when a sync_required event is received from the server. */
+export type SyncRequiredCallback = (reason: string, skipped: number) => void;
+
 export interface UseTaskEventsReturn {
   /** Current active task (null if no task submitted). */
   task: TaskProto | null;
@@ -190,6 +193,7 @@ export function useTaskEvents(
   client: TaskServiceClient | null,
   connectionState: string,
   activeTaskId?: string | null,
+  onSyncRequired?: SyncRequiredCallback,
 ): UseTaskEventsReturn {
   const [task, setTask] = useState<TaskProto | null>(null);
   const [subtaskMap, setSubtaskMap] = useState<Map<string, SubtaskItem>>(new Map());
@@ -247,6 +251,16 @@ export function useTaskEvents(
             subtaskId: event.subtaskId ?? undefined,
             data: event.data ?? {},
           };
+
+          // Handle sync_required: server tells us we missed events
+          if (taskEvent.type === 'sync_required') {
+            const reason = String(taskEvent.data?.reason ?? 'unknown');
+            const skipped = Number(taskEvent.data?.skipped ?? 0);
+            onSyncRequired?.(reason, skipped);
+            // Don't update subtask state from a sync event
+            return;
+          }
+
           setEvents((prev) => {
             const next = [...prev, taskEvent];
             return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
