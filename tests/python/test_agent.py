@@ -1148,7 +1148,10 @@ class TestConcurrentScheduling:
         orch.tasks["t1"] = task
 
         async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            return SubtaskResult(subtask_id=subtask.id, worker_id=worker_id, summary="done", success=True)
+            return SubtaskResult(
+                subtask_id=subtask.id, worker_id=worker_id,
+                summary="done", success=True,
+            )
 
         results = await orch.schedule_subtasks(task, mock_execute)
         assert len(results) == 0
