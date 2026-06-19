@@ -356,11 +356,15 @@ class DashboardApp:
                         description=description,
                         project_id=project_id,
                     )
-                    # Wait briefly for nats_worker to process, then verify task state
-                    await asyncio.sleep(0.5)
-                    orch = self.orchestrator
-                    if orch is not None and task_id in orch.tasks:
-                        task = orch.tasks[task_id]
+                    # #3: Wait for nats_worker to process with retry — 0.5s × 2 attempts
+                    task = None
+                    for _ in range(2):
+                        await asyncio.sleep(0.5)
+                        orch = self.orchestrator
+                        if orch is not None and task_id in orch.tasks:
+                            task = orch.tasks[task_id]
+                            break
+                    if task is not None:
                         return JSONResponse({
                             "success": True,
                             "task_id": task.id,

@@ -157,14 +157,19 @@ fn json_bool_or_default(
 /// via `apply_update()`. When NATS is unavailable, tasks are decomposed
 /// locally using a newline-split heuristic.
 ///
-/// Events are recorded via `Arc<dyn EventStore>` (unified with uc-engine's
-/// EventStore trait). WatchTask streams replay from EventStore then switch
-/// to the broadcast channel for real-time delivery.
+/// Task data is kept in an in-memory HashMap for fast synchronous reads.
+/// Write operations also persist to `Arc<dyn TaskStoreBackend>` (fire-and-forget)
+/// when a backend is configured, enabling PostgreSQL persistence.
+///
+/// Events are recorded via `Arc<dyn EventStore>` (the single source of truth).
+/// WatchTask streams replay from EventStore then switch to the broadcast
+/// channel for real-time delivery.
 pub struct TaskStore {
+    /// Primary task storage — always available for synchronous reads.
     tasks: HashMap<String, uc_types::Task>,
-    /// Inline event log — kept for backward compatibility with existing callers.
-    /// New code should use `event_store` for reads.
-    events: Vec<uc_engine::AgentEventType>,
+    /// Optional persistent backend for write-through to PostgreSQL.
+    /// Writes are fire-and-forget (spawned); reads always hit the HashMap.
+    backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
     /// Last heartbeat timestamp from Python NATS consumer.
@@ -181,7 +186,7 @@ impl TaskStore {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
-            events: Vec::new(),
+            backend: None,
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             last_heartbeat: None,
         }
@@ -191,16 +196,51 @@ impl TaskStore {
     pub fn with_event_store(event_store: Arc<dyn uc_engine::EventStore>) -> Self {
         Self {
             tasks: HashMap::new(),
-            events: Vec::new(),
+            backend: None,
             event_store,
             last_heartbeat: None,
         }
     }
 
-    /// Record an event: push to inline log AND append to EventStore.
+    /// Create with a TaskStoreBackend for write-through persistence.
+    pub fn with_backend(
+        backend: Arc<dyn uc_engine::TaskStoreBackend>,
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Self {
+        Self {
+            tasks: HashMap::new(),
+            backend: Some(backend),
+            event_store,
+            last_heartbeat: None,
+        }
+    }
+
+    /// Persist a task to the backend (fire-and-forget).
+    fn persist_task(&self, task: uc_types::Task) {
+        if let Some(backend) = &self.backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let b = backend.clone();
+                handle.spawn(async move {
+                    let _ = b.update_task(task).await;
+                });
+            }
+        }
+    }
+
+    /// Delete a task from the backend (fire-and-forget).
+    fn persist_delete(&self, task_id: String) {
+        if let Some(backend) = &self.backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let b = backend.clone();
+                handle.spawn(async move {
+                    let _ = b.delete_task(&task_id).await;
+                });
+            }
+        }
+    }
+
+    /// Record an event to EventStore (fire-and-forget).
     fn record_event_with_subject(&mut self, event: uc_engine::AgentEventType, subject: &str) {
-        // Inline log (legacy, for tests and immediate reads)
-        self.events.push(event.clone());
         // EventStore (unified, persistent source of truth)
         // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -253,6 +293,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_task(task.clone());
         task
     }
 
@@ -290,6 +331,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_task(task.clone());
         task
     }
 
@@ -313,7 +355,9 @@ impl TaskStore {
             uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
                 task.status = uc_types::TaskStatus::Paused;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(task.clone());
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot pause task in {} status (expected InProgress or Planning)",
@@ -332,7 +376,9 @@ impl TaskStore {
             uc_types::TaskStatus::Paused => {
                 task.status = uc_types::TaskStatus::InProgress;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(task.clone());
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot resume task in {} status (expected Paused)",
@@ -341,19 +387,25 @@ impl TaskStore {
         }
     }
 
-    /// Read events from the given offset (from inline log).
-    /// For persistent reads, use `event_store().read_from()` instead.
-    pub fn read_events_from(&self, offset: usize) -> Vec<uc_engine::AgentEventType> {
-        if offset >= self.events.len() {
-            Vec::new()
-        } else {
-            self.events[offset..].to_vec()
+    /// Read events from EventStore for a given subject.
+    /// Used by WatchTask for replaying historical events.
+    pub async fn read_events_from(
+        &self,
+        subject: &str,
+        offset: u64,
+    ) -> Vec<uc_engine::RecordedEvent> {
+        match self.event_store.read_from(subject, offset).await {
+            Ok(events) => events,
+            Err(_) => Vec::new(),
         }
     }
 
-    /// Get current event count (from inline log).
-    pub fn event_count(&self) -> usize {
-        self.events.len()
+    /// Get current event offset for a subject from EventStore.
+    pub async fn event_offset(&self, subject: &str) -> u64 {
+        self.event_store
+            .latest_offset(subject)
+            .await
+            .unwrap_or(0)
     }
 
     /// Access the EventStore for persistent reads.
@@ -436,11 +488,12 @@ impl TaskStore {
         }
 
         task.updated_at = chrono::Utc::now();
+        self.persist_task(task.clone());
     }
 
     /// Record an event from NATS (`uc.task.event`).
     ///
-    /// Pushes the event into the inline log AND appends to EventStore.
+    /// Appends to EventStore (the single source of truth).
     pub fn record_event(&mut self, event: uc_engine::AgentEventType) {
         // Derive subject from event type
         let subject = match &event {
@@ -459,14 +512,7 @@ impl TaskStore {
             }
             _ => "events".to_string(),
         };
-        self.events.push(event.clone());
-        // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let es = self.event_store.clone();
-            handle.spawn(async move {
-                let _ = es.append(&subject, &event).await;
-            });
-        }
+        self.record_event_with_subject(event, &subject);
     }
 
     /// Update the last heartbeat timestamp from the Python NATS consumer.
@@ -492,6 +538,7 @@ impl TaskStore {
         let old = task.status.clone();
         task.status = new_status;
         task.updated_at = chrono::Utc::now();
+        self.persist_task(task.clone());
         Some(old)
     }
 
@@ -531,6 +578,12 @@ impl TaskStore {
                 tasks_failed = failed_ids.len(),
                 "Marked tasks as Failed due to consumer heartbeat timeout"
             );
+            // Persist all failed tasks
+            for id in &failed_ids {
+                if let Some(task) = self.tasks.get(id) {
+                    self.persist_task(task.clone());
+                }
+            }
         }
 
         failed_ids
@@ -1592,11 +1645,17 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             *status_counts.entry(task.status.clone()).or_insert(0) += 1;
         }
 
+        // ponytail: count tasks in Created/Planning status as "pending"
+        let pending_task_count = tasks.iter()
+            .filter(|t| t.status == "Created" || t.status == "Planning")
+            .count() as u32;
+
         Ok(Response::new(ListTasksResponse {
             available: true,
             tasks,
             total,
             status_counts,
+            pending_task_count,
         }))
     }
 

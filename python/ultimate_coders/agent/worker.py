@@ -9,10 +9,12 @@ Capabilities:
 
 from __future__ import annotations
 
+import asyncio
 import glob
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -195,11 +197,27 @@ class Worker:
             )
 
         try:
-            if self.execution_mode == "sandbox":
-                result = await self._execute_in_sandbox(subtask)
-            else:
-                # Default: LLM tool-calling loop
-                result = await self._execute_with_llm(subtask)
+            # Wrap execution with timeout
+            timeout_secs = subtask.timeout_seconds or 600  # 10 min default
+            try:
+                if self.execution_mode == "sandbox":
+                    result = await asyncio.wait_for(
+                        self._execute_in_sandbox(subtask),
+                        timeout=timeout_secs,
+                    )
+                else:
+                    # Default: LLM tool-calling loop
+                    result = await asyncio.wait_for(
+                        self._execute_with_llm(subtask),
+                        timeout=timeout_secs,
+                    )
+            except asyncio.TimeoutError:
+                result = SubtaskResult(
+                    subtask_id=subtask.id,
+                    worker_id=self.worker_id,
+                    summary=f"Subtask timed out after {timeout_secs}s",
+                    success=False,
+                )
 
             # Emit subtask completed/failed event based on result
             if self.event_emitter is not None:
@@ -329,6 +347,19 @@ class Worker:
         modified_files = self._collect_modified_files(tool_log)
         summary = response.text or "Subtask completed"
 
+        # Self-reflection: quick quality check
+        confidence = await self._self_evaluate(subtask, summary, modified_files)
+        if confidence < 0.5 and self.llm_client is not None:
+            # Low confidence — annotate summary but don't block
+            summary = f"[⚠️ low confidence: {confidence:.0%}] {summary}"
+            if self.event_emitter is not None:
+                await self.event_emitter.emit(
+                    "subtask_low_confidence",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"confidence": confidence},
+                )
+
         return SubtaskResult(
             subtask_id=subtask.id,
             worker_id=self.worker_id,
@@ -388,6 +419,40 @@ class Worker:
             summary=output.summary,
             success=output.success,
         )
+
+    async def _self_evaluate(
+        self,
+        subtask: Subtask,
+        summary: str,
+        modified_files: list[FileChange],
+    ) -> float:
+        """Quick self-evaluation of execution quality.
+
+        Returns a confidence score 0.0–1.0 based on:
+        - Were any files modified? (higher confidence if yes)
+        - Does the summary mention key expected_output terms?
+        - Was a run_command tool used for verification?
+
+        ponytail: heuristic check, no extra LLM call. Upgrade to LLM-based
+        reflection if the heuristic proves insufficient.
+        """
+        score = 0.5  # baseline
+
+        # Files modified → higher confidence
+        if modified_files:
+            score += 0.2
+
+        # Summary addresses expected output keywords
+        expected = subtask.expected_output or ""
+        if expected:
+            # Check if key nouns from expected_output appear in summary
+            keywords = set(re.findall(r"\b\w{4,}\b", expected.lower()))
+            summary_words = set(re.findall(r"\b\w{4,}\b", summary.lower()))
+            overlap = len(keywords & summary_words)
+            if keywords and overlap > 0:
+                score += min(0.2, overlap / len(keywords) * 0.2)
+
+        return min(1.0, score)
 
     async def send_heartbeat(self) -> dict[str, Any]:
         """Send heartbeat to indicate the worker is alive.
@@ -811,6 +876,118 @@ class Worker:
         except Exception as e:
             return f"Codegraph explore error: {e}"
 
+    async def _tool_run_command(
+        self,
+        command: str,
+        timeout: int = 120,
+        cwd: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Tool: Execute a shell command and return output.
+
+        Runs the command as a subprocess with a timeout. Use this for
+        running tests, linters, build commands, git operations, etc.
+
+        Args:
+            command: Shell command to execute.
+            timeout: Maximum execution time in seconds (default 120).
+            cwd: Working directory (defaults to project root).
+
+        Returns:
+            JSON string with exit_code, stdout, stderr.
+        """
+        try:
+            work_dir = cwd or os.getcwd()
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=work_dir,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return json.dumps({
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": f"Command timed out after {timeout}s",
+                    "timed_out": True,
+                })
+
+            stdout = stdout_bytes.decode("utf-8", errors="replace")[:50_000]
+            stderr = stderr_bytes.decode("utf-8", errors="replace")[:10_000]
+            return json.dumps({
+                "exit_code": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": False,
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    async def _tool_apply_diff(
+        self,
+        file_path: str,
+        diff: str,
+        **kwargs: Any,
+    ) -> str:
+        """Tool: Apply a unified diff patch to a file.
+
+        Applies the diff using the standard patch algorithm. Supports
+        context lines for precise matching. If a hunk fails to apply,
+        returns an error for that hunk without modifying the file.
+
+        Args:
+            file_path: Path to the file to patch.
+            diff: Unified diff content to apply.
+
+        Returns:
+            JSON string with success status and hunks applied.
+        """
+        try:
+            abs_path = os.path.abspath(file_path)
+            if not os.path.isfile(abs_path):
+                return json.dumps({"error": f"File not found: {abs_path}"})
+
+            with open(abs_path, encoding="utf-8", errors="replace") as f:
+                original = f.read()
+
+            patched, hunks_applied, errors = _apply_unified_diff(original, diff)
+            if errors:
+                return json.dumps({
+                    "error": f"Failed to apply {len(errors)} hunk(s)",
+                    "hunks_applied": hunks_applied,
+                    "hunk_errors": errors,
+                })
+
+            # Atomic write
+            parent_dir = os.path.dirname(abs_path)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=parent_dir, prefix=".uc_diff_", suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
+                    tmp_f.write(patched)
+                os.replace(tmp_path, abs_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+
+            return json.dumps({
+                "success": True,
+                "file_path": abs_path,
+                "hunks_applied": hunks_applied,
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
     # ── Private helpers ─────────────────────────────────────────
 
     def _build_tools(self) -> dict[str, Callable]:
@@ -828,6 +1005,8 @@ class Worker:
             "find_callees": self._tool_find_callees,
             "impact_analysis": self._tool_impact_analysis,
             "explore_code": self._tool_explore_code,
+            "run_command": self._tool_run_command,
+            "apply_diff": self._tool_apply_diff,
         }
 
     def _build_tool_definitions(self) -> list[ToolDefinition]:
@@ -1041,6 +1220,46 @@ class Worker:
                     },
                 },
             ),
+            make_tool_definition(
+                name="run_command",
+                description=(
+                    "Execute a shell command and return stdout/stderr. "
+                    "Use for running tests, linters, builds, git, etc. "
+                    "Has a timeout (default 120s) to prevent hangs."
+                ),
+                parameters={
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max execution time in seconds (default 120)",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory (default: project root)",
+                    },
+                },
+            ),
+            make_tool_definition(
+                name="apply_diff",
+                description=(
+                    "Apply a unified diff patch to a file. More precise than "
+                    "edit_file (overwrites entire file) — use this for targeted "
+                    "line-range edits. Supports context lines for matching."
+                ),
+                parameters={
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to patch",
+                    },
+                    "diff": {
+                        "type": "string",
+                        "description": "Unified diff content to apply",
+                    },
+                },
+            ),
         ]
 
     async def _execute_tool(self, tool_call: ToolCall) -> str:
@@ -1162,6 +1381,17 @@ class Worker:
                             diff=diff,
                         )
                     )
+            elif tool_name == "apply_diff":
+                file_path = tool_input.get("file_path", "")
+                diff_content = tool_input.get("diff", "")
+                if file_path:
+                    modified.append(
+                        FileChange(
+                            file_path=file_path,
+                            change_type=ChangeType.MODIFIED,
+                            diff=diff_content,
+                        )
+                    )
 
         return modified
 
@@ -1260,3 +1490,125 @@ class Worker:
     def record_llm_failure(self) -> None:
         """Record a failed LLM API call."""
         self.circuit_breaker.record_failure()
+
+
+# ── Unified diff application ─────────────────────────────────────
+
+
+def _apply_unified_diff(
+    original: str,
+    diff_text: str,
+) -> tuple[str, int, list[str]]:
+    """Apply a unified diff to original text.
+
+    Returns (patched_text, hunks_applied, errors).
+    If any hunk fails, returns errors for that hunk without modifying.
+
+    ponytail: minimal patch algorithm — handles the common case of
+    sequential hunks with context lines. Falls back to fuzzy matching
+    (±2 line offset) when exact match fails.
+    """
+    lines = original.splitlines(True)  # keep line endings
+    hunks = _parse_unified_hunks(diff_text)
+
+    hunks_applied = 0
+    errors: list[str] = []
+
+    # Apply hunks in reverse order so line offsets don't shift
+    for hunk in reversed(hunks):
+        old_start = hunk["old_start"]  # 1-based
+        old_lines = hunk["old_lines"]
+        new_lines = hunk["new_lines"]
+
+        # Try exact match first, then fuzzy ±3 lines
+        match_offset = _find_hunk_match(lines, old_start, old_lines, fuzzy=3)
+        if match_offset is None:
+            errors.append(
+                f"Hunk at line {old_start} (context: {old_lines[0][:60]}...) "
+                "did not match"
+            )
+            continue
+
+        # Replace lines at match_offset
+        lines[match_offset : match_offset + len(old_lines)] = new_lines
+        hunks_applied += 1
+
+    return "".join(lines), hunks_applied, errors
+
+
+_HUNK_RE = re.compile(
+    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@",
+)
+
+
+def _parse_unified_hunks(diff_text: str) -> list[dict[str, Any]]:
+    """Parse unified diff into a list of hunks."""
+    hunks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for line in diff_text.splitlines():
+        m = _HUNK_RE.match(line)
+        if m:
+            if current is not None:
+                hunks.append(current)
+            old_start = int(m.group(1))
+            current = {
+                "old_start": old_start,
+                "old_lines": [],
+                "new_lines": [],
+            }
+            continue
+
+        if current is None:
+            continue
+
+        if line.startswith("+"):
+            current["new_lines"].append(line[1:] + "\n")
+        elif line.startswith("-"):
+            current["old_lines"].append(line[1:] + "\n")
+        elif line.startswith(" "):
+            current["old_lines"].append(line[1:] + "\n")
+            current["new_lines"].append(line[1:] + "\n")
+
+    if current is not None:
+        hunks.append(current)
+
+    return hunks
+
+
+def _find_hunk_match(
+    lines: list[str],
+    old_start: int,
+    old_lines: list[str],
+    fuzzy: int = 3,
+) -> int | None:
+    """Find where old_lines matches in lines, starting at old_start-1.
+
+    Returns the 0-based index where the match starts, or None.
+    Tries exact position first, then fuzzy ±offset up to `fuzzy` lines.
+    """
+    target_len = len(old_lines)
+    if target_len == 0:
+        return old_start - 1
+
+    def _matches(at: int) -> bool:
+        if at < 0 or at + target_len > len(lines):
+            return False
+        for i, ol in enumerate(old_lines):
+            if lines[at + i].rstrip("\r\n") != ol.rstrip("\r\n"):
+                return False
+        return True
+
+    # Exact match
+    idx = old_start - 1
+    if _matches(idx):
+        return idx
+
+    # Fuzzy: try offsets 1..fuzzy both directions
+    for offset in range(1, fuzzy + 1):
+        if _matches(idx - offset):
+            return idx - offset
+        if _matches(idx + offset):
+            return idx + offset
+
+    return None

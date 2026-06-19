@@ -51,9 +51,19 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
         // REST path -> Python FastAPI
         const result = await api.submitTask(desc, projectId.trim());
         if (result.success) {
-          showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");
+          const subCount = result.subtask_count ?? 0;
+          showToast(
+            subCount > 0
+              ? `Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")} -- ${subCount} subtask${subCount > 1 ? "s" : ""}`
+              : `Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`,
+            "success",
+          );
           if (result.task_id) {
-            onOptimisticAdd?.(result.task_id, desc, projectId.trim(), 0);
+            // #1: Pass subtask_count from REST response to avoid 0→N jump
+            const subtasks = result.subtasks?.map((s) => ({
+              id: s.id, description: s.description, status: s.status, depends_on: s.depends_on,
+            }));
+            onOptimisticAdd?.(result.task_id, desc, projectId.trim(), subCount, subtasks);
             onTaskCreated?.(result.task_id);
           }
           setDescription("");

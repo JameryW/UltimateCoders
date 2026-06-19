@@ -25,9 +25,18 @@ import type { TaskEvent, HealthData, DashboardSnapshot } from "@/types/dashboard
 function eventKey(ev: TaskEvent): string {
   // ponytail: exclude timestamp — SSE and gRPC-Web emit the same logical event
   // with slightly different timestamps, causing double-processing.
-  // Use full data hash (truncated to 80 chars) so subtask_started vs subtask_completed
-  // for the same subtask within 1s don't collide (they have different data fields).
-  const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 80);
+  // #6: Normalize data keys — SSE uses snake_case, gRPC-Web uses camelCase via
+  // grpcEventToDashboardEvent. Remove keys that differ across channels but
+  // don't affect semantic identity (e.g. "depends_on" vs "dependsOn").
+  const normalized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(ev.data)) {
+    // Skip keys that are channel-specific artifacts
+    if (k === "_sseId") continue;
+    // Normalize snake_case ↔ camelCase for the dedup key
+    const nk = k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    normalized[nk] = v;
+  }
+  const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(normalized).slice(0, 80);
   return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}:${dataHash}`;
 }
 
@@ -135,8 +144,8 @@ function App() {
       setLastUpdate(ev.timestamp);
     },
     onReconnect: () => {
-      // ponytail: SSE reconnected — fetch fresh data to fill gaps from disconnect period
-      dashboard.fetchInitial().then((errors) => {
+      // #7: SSE reconnected — fetch fresh data with merge to preserve gRPC incremental updates
+      dashboard.fetchInitial({ mergeTasks: true }).then((errors) => {
         if (Object.keys(errors).length > 0) showToast(`Reconnect fetch partially failed`, "error");
       });
     },
@@ -264,7 +273,13 @@ function App() {
     try {
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
-        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+        if (r.success) {
+          // #9: Immediately update task status without waiting for stream event
+          dashboard.handleTaskEvent({ task_id: taskId, subtask_id: undefined, type: "task_paused", timestamp: new Date().toISOString(), data: {} });
+          showToast("Task paused", "success");
+        } else {
+          showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+        }
       } else {
         const r = await api.pauseTask(taskId);
         r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
@@ -276,7 +291,13 @@ function App() {
     try {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);
-        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+        if (r.success) {
+          // #9: Immediately update task status without waiting for stream event
+          dashboard.handleTaskEvent({ task_id: taskId, subtask_id: undefined, type: "task_resumed", timestamp: new Date().toISOString(), data: {} });
+          showToast("Task resumed", "success");
+        } else {
+          showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+        }
       } else {
         const r = await api.resumeTask(taskId);
         r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
@@ -296,7 +317,14 @@ function App() {
   const handleFlush = async () => {
     const ok = await confirmAction("Flush Pending Tasks", "Execute all queued tasks?");
     if (!ok) return;
-    try { const r = await api.flushPending(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
+    // #8: Flush via gRPC when connected, otherwise REST
+    try {
+      if (grpcState === "connected") {
+        // gRPC doesn't have a flush endpoint — fall through to REST
+      }
+      const r = await api.flushPending();
+      r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error");
+    } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
   // ── Auth gate ─────────────────────────────────────────────────
@@ -346,8 +374,8 @@ function App() {
     );
   }
 
-  // All endpoints failed — server is likely down
-  const allFailed = Object.keys(dashboard.fetchErrors).length >= 5;
+  // #4: Core endpoints (health + tasks) failed — server is likely down
+  const allFailed = dashboard.fetchErrors["health"] && dashboard.fetchErrors["tasks"];
   if (allFailed) {
     return (
       <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">

@@ -896,6 +896,11 @@ export type ListTasksResponse = Message<"ultimate_coders.ListTasksResponse"> & {
    * @generated from field: map<string, uint32> status_counts = 4;
    */
   statusCounts: { [key: string]: number };
+
+  /**
+   * @generated from field: uint32 pending_task_count = 5;
+   */
+  pendingTaskCount: number;
 };
 
 /**

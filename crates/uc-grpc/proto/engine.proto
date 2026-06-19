@@ -223,6 +223,7 @@ message ListTasksResponse {
     repeated TaskProto tasks = 2;
     uint32 total = 3;
     map<string, uint32> status_counts = 4;
+    uint32 pending_task_count = 5;
 }
 
 message PauseTaskRequest {

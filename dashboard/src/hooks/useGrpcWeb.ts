@@ -226,7 +226,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
       })),
       total: resp.total,
       status_counts: resp.statusCounts as Record<string, number>,
-      pending_task_count: 0,
+      pending_task_count: (resp as { pendingTaskCount?: number }).pendingTaskCount ?? 0,
     };
   }, []);
 

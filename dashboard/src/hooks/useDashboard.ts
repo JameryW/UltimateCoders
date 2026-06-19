@@ -125,7 +125,14 @@ export function useDashboard() {
     }
     if (data.scheduler?.available) setScheduler(data.scheduler);
     if (data.circuit_breaker?.available) setCircuitBreaker(data.circuit_breaker);
-    if (data.events && data.events.length > 0) setEventLog(data.events);
+    if (data.events && data.events.length > 0) {
+      // #2: Merge — keep recent incremental events not already in snapshot, then prepend snapshot
+      setEventLog((prev) => {
+        const snapshotSet = new Set(data.events!.map((e) => `${e.timestamp}:${e.type}`));
+        const incremental = prev.filter((e) => !snapshotSet.has(`${e.timestamp}:${e.type}`));
+        return [...incremental.slice(0, 499), ...data.events!];
+      });
+    }
   }, []);
 
   // Handle SSE/gRPC-Web real-time task event
@@ -158,7 +165,7 @@ export function useDashboard() {
         type: ev.type,
         details: { task_id: ev.task_id, ...ev.data },
       },
-      ...prev.slice(0, 199), // keep max 200
+      ...prev.slice(0, 499), // #10: keep max 500 (matches backend deque maxlen)
     ]);
 
     switch (ev.type) {
@@ -278,14 +285,18 @@ export function useDashboard() {
   // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
   // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
   // All requests run in parallel for faster initial load.
-  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }): Promise<Record<string, string>> => {
+  // #7: Use mergeGrpcTasks for tasks to preserve gRPC incremental updates on reconnect.
+  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean; mergeTasks?: boolean }): Promise<Record<string, string>> => {
     const errors: Record<string, string> = {};
     const results = await Promise.allSettled([
       api.getHealth().then((h) => { setHealth(h); }).catch((e) => { errors["health"] = String(e); }),
       api.getWorkers().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }),
       opts?.skipTasks
         ? Promise.resolve()
-        : api.getTasks().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }),
+        : api.getTasks().then((t) => {
+            // #7: On reconnect, merge instead of replace to preserve gRPC incremental updates
+            if (opts?.mergeTasks) { mergeGrpcTasks(t); } else { setTasks(t); }
+          }).catch((e) => { errors["tasks"] = String(e); }),
       api.getScheduler().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }),
       api.getCircuitBreaker().then((c) => { setCircuitBreaker(c); }).catch((e) => { errors["circuit_breaker"] = String(e); }),
       api.getEvents().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }),
