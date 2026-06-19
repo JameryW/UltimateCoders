@@ -291,11 +291,12 @@ class Worker:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
 
-    async def _execute_with_llm(self, subtask: Subtask) -> SubtaskResult:
+    async def _execute_with_llm(self, subtask: Subtask, *, max_tokens: int = 4096) -> SubtaskResult:
         """Execute a subtask using LLM + tools (existing tool-calling loop).
 
         Args:
             subtask: The subtask to execute.
+            max_tokens: Maximum tokens for LLM response (default 4096).
 
         Returns:
             SubtaskResult with execution outcome.
@@ -312,6 +313,15 @@ class Worker:
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
                 summary="No LLM client available",
+                success=False,
+            )
+
+        # Circuit breaker check before LLM call
+        if not self.circuit_breaker.allow_request():
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary="Circuit breaker open — LLM requests temporarily blocked",
                 success=False,
             )
 
@@ -355,21 +365,26 @@ class Worker:
                     data={"tool": tool_name, "result_summary": result_summary},
                 )
 
-        response, tool_log = await self.llm_client.complete_with_tools(
-            messages=messages,
-            tools=self._tool_definitions,
-            system=_WORKER_SYSTEM_PROMPT,
-            max_tokens=4096,
-            tool_executor=self._execute_tool,
-            on_tool_call=_on_tool_call if self.event_emitter else None,
-        )
+        try:
+            response, tool_log = await self.llm_client.complete_with_tools(
+                messages=messages,
+                tools=self._tool_definitions,
+                system=_WORKER_SYSTEM_PROMPT,
+                max_tokens=max_tokens,
+                tool_executor=self._execute_tool,
+                on_tool_call=_on_tool_call if self.event_emitter else None,
+            )
+        except Exception:
+            self.circuit_breaker.record_failure()
+            raise
+        self.circuit_breaker.record_success()
 
         # Build result
         modified_files = self._collect_modified_files(tool_log)
         summary = response.text or "Subtask completed"
 
         # Self-reflection: quick quality check
-        confidence = await self._self_evaluate(subtask, summary, modified_files)
+        confidence = await self._self_evaluate(subtask, summary, modified_files, tool_log)
 
         # Write execution experience to memory for future reference
         await self._record_experience(subtask, summary, confidence, modified_files)
@@ -467,6 +482,7 @@ class Worker:
         subtask: Subtask,
         summary: str,
         modified_files: list[FileChange],
+        tool_log: list[dict[str, Any]] | None = None,
     ) -> float:
         """Quick self-evaluation of execution quality.
 
@@ -474,6 +490,8 @@ class Worker:
         - Were any files modified? (higher confidence if yes)
         - Does the summary mention key expected_output terms?
         - Was a run_command tool used for verification?
+        - Does the summary contain error keywords? (penalty)
+        - Empty result: no files modified and short summary? (penalty)
 
         ponytail: heuristic check, no extra LLM call. Upgrade to LLM-based
         reflection if the heuristic proves insufficient.
@@ -494,7 +512,25 @@ class Worker:
             if keywords and overlap > 0:
                 score += min(0.2, overlap / len(keywords) * 0.2)
 
-        return min(1.0, score)
+        # Verification step: run_command used → +0.1
+        if tool_log:
+            for entry in tool_log:
+                name = entry.get("tool_call", {}).get("name", "")
+                if name == "run_command":
+                    score += 0.1
+                    break
+
+        # Error keywords in summary → -0.15
+        summary_lower = summary.lower()
+        error_markers = {"error", "failed", "exception", "traceback", "not found"}
+        if any(m in summary_lower for m in error_markers):
+            score -= 0.15
+
+        # Empty result: no files + short summary → -0.1
+        if not modified_files and len(summary) < 50:
+            score -= 0.1
+
+        return max(0.0, min(1.0, score))
 
     async def _record_experience(
         self,
@@ -593,7 +629,7 @@ class Worker:
             # Reduce timeout and max_tokens, retry with tighter scope
             reduced_timeout = (subtask.timeout_seconds or 600) // 2
             subtask.timeout_seconds = max(reduced_timeout, 60)
-            result = await self._execute_with_llm(subtask)
+            result = await self._execute_with_llm(subtask, max_tokens=2048)
             result.adaptation_strategy = strategy
             if not result.success:
                 result.summary = f"[adapted: shrink_scope, still failed] {result.summary}"
@@ -614,12 +650,17 @@ class Worker:
             prior_context = await self._gather_prior_context(subtask)
             messages = self._build_messages(subtask, prior_context)
             # Remove tools — pure text completion
-            response = await self.llm_client.complete(
-                messages=messages,
-                system=_WORKER_SYSTEM_PROMPT,
-                max_tokens=2048,
-                temperature=0.3,
-            )
+            try:
+                response = await self.llm_client.complete(
+                    messages=messages,
+                    system=_WORKER_SYSTEM_PROMPT,
+                    max_tokens=2048,
+                    temperature=0.3,
+                )
+            except Exception:
+                self.circuit_breaker.record_failure()
+                raise
+            self.circuit_breaker.record_success()
             summary = response.text or "Pure LLM fallback completed"
             return SubtaskResult(
                 subtask_id=subtask.id,
@@ -641,8 +682,27 @@ class Worker:
             return result
 
         if strategy == AdaptationStrategy.FALLBACK_TOOL:
-            # Retry with reduced tool set (skip codegraph tools if they failed)
-            result = await self._execute_with_llm(subtask)
+            # Retry with reduced tool set — remove codegraph tools
+            codegraph_tools = {
+                "symbol_search", "find_callers", "find_callees",
+                "impact_analysis", "explore_code",
+            }
+            original_tools = self.tools
+            original_defs = self._tool_definitions
+            self.tools = {
+                k: v for k, v in self.tools.items()
+                if k not in codegraph_tools
+            }
+            self._tool_definitions = [
+                d for d in self._tool_definitions
+                if d.name not in codegraph_tools
+            ]
+            try:
+                result = await self._execute_with_llm(subtask)
+            finally:
+                # Restore original tool set
+                self.tools = original_tools
+                self._tool_definitions = original_defs
             result.adaptation_strategy = strategy
             result.summary = f"[adapted: fallback_tool] {result.summary}"
             return result
@@ -1564,13 +1624,13 @@ class Worker:
             return json.dumps({"error": f"Tool execution error: {e}"})
 
     async def _gather_prior_context(self, subtask: Subtask) -> str:
-        """Gather context from completed dependency subtasks.
+        """Gather context from completed dependency subtasks + past experience.
 
         Args:
             subtask: The subtask whose dependencies to check.
 
         Returns:
-            Formatted context string from prior subtask results.
+            Formatted context string from prior subtask results and experience.
         """
         parts = []
 
@@ -1592,6 +1652,28 @@ class Worker:
                         parts.append(f"Subtask {dep_id}: {text[:300]}")
                 except Exception:
                     logger.debug("Failed to read context for dep %s", dep_id, exc_info=True)
+
+        # Recall relevant past experience from memory
+        if self.engine is not None:
+            try:
+                results = self.engine.search_memory(
+                    query=subtask.description,
+                    scope_type="all",
+                    project_id=None,
+                    max_results=3,
+                )
+                experience_parts = []
+                for r in results:
+                    key = getattr(r, "key", "")
+                    if key.startswith("experience_"):
+                        content = getattr(r, "content", None) or getattr(r, "entry", None)
+                        if content:
+                            text = getattr(content, "text", None) or str(content)
+                            experience_parts.append(text[:200])
+                if experience_parts:
+                    parts.append("## Past Experience\n" + "\n".join(experience_parts))
+            except Exception:
+                logger.debug("Experience recall failed for subtask", exc_info=True)
 
         # Add codegraph knowledge graph context
         if self._codegraph.is_available():
