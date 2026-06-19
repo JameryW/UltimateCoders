@@ -3,11 +3,13 @@ import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 interface ConnectionIndicatorProps {
   connected: boolean;
   grpcState?: GrpcConnectionState;
+  grpcError?: boolean;
+  grpcExhausted?: boolean;
   onReconnectSSE?: () => void;
   onReconnectGrpc?: () => void;
 }
 
-export function ConnectionIndicator({ connected, grpcState, onReconnectSSE, onReconnectGrpc }: ConnectionIndicatorProps) {
+export function ConnectionIndicator({ connected, grpcState, grpcError, grpcExhausted, onReconnectSSE, onReconnectGrpc }: ConnectionIndicatorProps) {
   const grpcOk = grpcState === "connected";
   const grpcReconnecting = grpcState === "reconnecting";
 
