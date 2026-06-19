@@ -759,18 +759,26 @@ def make_tool_definition(
         name: Tool name.
         description: What the tool does.
         parameters: JSON Schema properties dict. Each key is a param name,
-                    value is a dict with 'type' and 'description'.
+                    value is a dict with 'type', 'description', and optional
+                    'required' (bool), 'enum' (list), 'items' (dict for arrays).
 
     Returns:
         ToolDefinition with properly structured input_schema.
     """
     properties = parameters or {}
+    # Separate 'required' flag from schema properties
+    required_keys = [k for k, v in properties.items() if v.get("required", False)]
+    # Build clean properties (strip internal 'required' marker)
+    clean_props: dict[str, Any] = {}
+    for key, val in properties.items():
+        prop = {k: v for k, v in val.items() if k != "required"}
+        clean_props[key] = prop
     return ToolDefinition(
         name=name,
         description=description,
         input_schema={
             "type": "object",
-            "properties": properties,
-            "required": [k for k, v in properties.items() if v.get("required", False)],
+            "properties": clean_props,
+            "required": required_keys,
         },
     )

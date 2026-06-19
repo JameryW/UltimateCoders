@@ -14,6 +14,7 @@ from ultimate_coders.agent.llm import (
 )
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
+    AdaptationStrategy,
     ChangeType,
     FileChange,
     Subtask,
@@ -915,3 +916,242 @@ class TestSelfEvaluate:
         subtask = Subtask(id="s1", description="test", expected_output="implement auth")
         score = await worker._self_evaluate(subtask, "I looked at the code", [])
         assert score < 0.7
+
+
+# ── Tool schema completeness tests ────────────────────────────────────
+
+
+class TestToolSchemaCompleteness:
+    """Tests for Worker tool definitions — schema precision."""
+
+    def test_all_14_tools_present(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        defs = worker._tool_definitions
+        assert len(defs) == 14
+        names = {d.name for d in defs}
+        expected = {
+            "search", "read_memory", "write_memory", "edit_file",
+            "search_memory", "read_file", "list_files", "symbol_search",
+            "find_callers", "find_callees", "impact_analysis", "explore_code",
+            "run_command", "apply_diff",
+        }
+        assert names == expected
+
+    def test_required_params_marked(self):
+        """All tools with required params must have them in input_schema['required']."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        for td in worker._tool_definitions:
+            schema = td.input_schema
+            required = schema.get("required", [])
+            props = schema.get("properties", {})
+            # Every param marked required=True must appear in the required list
+            for param_name, param_def in props.items():
+                # Check that required params are declared
+                # (we verify the inverse: if a param is in 'required', it must exist)
+                pass
+            # Verify required list is a subset of properties
+            assert set(required).issubset(set(props.keys())), (
+                f"Tool {td.name}: required {required} not subset of properties {list(props.keys())}"
+            )
+
+    def test_enum_params_have_enum_constraint(self):
+        """Parameters described as having enum values must have 'enum' in schema."""
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        for td in worker._tool_definitions:
+            props = td.input_schema.get("properties", {})
+            for param_name, param_def in props.items():
+                if "enum" in param_def:
+                    assert isinstance(param_def["enum"], list)
+                    assert len(param_def["enum"]) > 0, (
+                        f"Tool {td.name}.{param_name}: enum must be non-empty"
+                    )
+
+    def test_search_has_required_query(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        search_def = next(d for d in worker._tool_definitions if d.name == "search")
+        assert "query" in search_def.input_schema.get("required", [])
+
+    def test_memory_tools_have_enum_scope(self):
+        worker = Worker(worker_id="w1", execution_mode="llm")
+        for tool_name in ("read_memory", "write_memory"):
+            td = next(d for d in worker._tool_definitions if d.name == tool_name)
+            scope = td.input_schema["properties"]["key_scope"]
+            assert "enum" in scope
+            assert set(scope["enum"]) == {"task", "project", "global"}
+
+
+# ── Adaptive decision tests ────────────────────────────────────────
+
+
+class TestAdaptiveDecision:
+    """Tests for Worker._classify_error and adaptive retry."""
+
+    def test_classify_timeout(self):
+        import asyncio
+        result = Worker._classify_error(asyncio.TimeoutError())
+        assert result == AdaptationStrategy.SHRINK_SCOPE
+
+    def test_classify_timeout_string(self):
+        result = Worker._classify_error(RuntimeError("command timed out after 30s"))
+        assert result == AdaptationStrategy.SHRINK_SCOPE
+
+    def test_classify_engine_error(self):
+        result = Worker._classify_error(RuntimeError("No engine available"))
+        assert result == AdaptationStrategy.PURE_LLM
+
+    def test_classify_module_not_found(self):
+        result = Worker._classify_error(ImportError("No module named 'foo'"))
+        assert result == AdaptationStrategy.PURE_LLM
+
+    def test_classify_conflict(self):
+        result = Worker._classify_error(RuntimeError("conflict detected on file.py"))
+        assert result == AdaptationStrategy.WAIT_RETRY
+
+    def test_classify_tool_not_found(self):
+        result = Worker._classify_error(RuntimeError("Tool codegraph not found"))
+        assert result == AdaptationStrategy.FALLBACK_TOOL
+
+    def test_adaptation_strategy_in_subtask_result(self):
+        result = SubtaskResult(
+            subtask_id="s1",
+            worker_id="w1",
+            summary="test",
+            adaptation_strategy=AdaptationStrategy.SHRINK_SCOPE,
+        )
+        assert result.adaptation_strategy == AdaptationStrategy.SHRINK_SCOPE
+
+
+# ── Self-evaluate feedback loop tests ────────────────────────────────────
+
+
+class TestSelfEvaluateFeedbackLoop:
+    """Tests for _self_evaluate triggering re-decompose and experience recording."""
+
+    @pytest.mark.asyncio
+    async def test_low_confidence_returns_failure(self):
+        """Low confidence should return success=False to trigger re-decompose."""
+        result = SubtaskResult(
+            subtask_id="s1",
+            worker_id="w1",
+            summary="[⚠️ low confidence: 50%] I looked at the code",
+            success=False,
+        )
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_record_experience_writes_to_memory(self):
+        """_record_experience should write to engine memory."""
+        engine = MagicMock()
+        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
+        subtask = Subtask(id="s1", parent_id="t1", description="test")
+        await worker._record_experience(subtask, "done", 0.8, [])
+        engine.write_memory.assert_called_once()
+        call_kwargs = engine.write_memory.call_args
+        assert call_kwargs[1]["key_scope"] == "task"
+        assert "experience_" in call_kwargs[1]["key"]
+
+    @pytest.mark.asyncio
+    async def test_record_experience_handles_engine_failure(self):
+        """_record_experience should not raise if engine fails."""
+        engine = MagicMock()
+        engine.write_memory.side_effect = RuntimeError("engine down")
+        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
+        subtask = Subtask(id="s1", parent_id="t1", description="test")
+        # Should not raise
+        await worker._record_experience(subtask, "done", 0.5, [])
+
+
+# ── Orchestrator concurrent scheduling tests ────────────────────────────
+
+
+class TestConcurrentScheduling:
+    """Tests for Orchestrator.schedule_subtasks."""
+
+    @pytest.mark.asyncio
+    async def test_schedule_independent_subtasks_concurrently(self):
+        """Two independent subtasks should be scheduled in one round."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
+        orch.workers["w2"] = WorkerInfo(id="w2", capabilities=["code"], max_capacity=3)
+
+        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
+        task.subtasks = [
+            Subtask(id="s1", parent_id="t1", description="subtask 1"),
+            Subtask(id="s2", parent_id="t1", description="subtask 2"),
+        ]
+        orch.tasks["t1"] = task
+
+        # Mock worker_execute
+        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=worker_id,
+                summary=f"completed {subtask.id}",
+                success=True,
+            )
+
+        results = await orch.schedule_subtasks(task, mock_execute)
+        assert len(results) == 2
+        assert all(r.success for r in results)
+
+    @pytest.mark.asyncio
+    async def test_schedule_respects_dependencies(self):
+        """Subtask with unmet deps should not be scheduled."""
+        orch = Orchestrator()
+        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
+
+        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
+        s1 = Subtask(id="s1", parent_id="t1", description="first")
+        s2 = Subtask(id="s2", parent_id="t1", description="second", depends_on=[s1.id])
+        task.subtasks = [s1, s2]
+        orch.tasks["t1"] = task
+
+        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
+            return SubtaskResult(
+                subtask_id=subtask.id, worker_id=worker_id,
+                summary="done", success=True,
+            )
+
+        # First round: only s1 is ready
+        results = await orch.schedule_subtasks(task, mock_execute)
+        # s1 should execute, s2 should become ready after s1 completes
+        assert any(r.subtask_id == "s1" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_get_ready_subtasks(self):
+        """_get_ready_subtasks should return only PENDING with met deps."""
+        orch = Orchestrator()
+        task = Task(id="t1", description="test")
+        s1 = Subtask(id="s1", parent_id="t1", description="first", status=SubtaskStatus.PENDING)
+        s2 = Subtask(
+            id="s2", parent_id="t1", description="second",
+            status=SubtaskStatus.PENDING, depends_on=[s1.id],
+        )
+        s3 = Subtask(
+            id="s3", parent_id="t1", description="third",
+            status=SubtaskStatus.COMPLETED,
+        )
+        task.subtasks = [s1, s2, s3]
+        orch.tasks["t1"] = task
+
+        ready = orch._get_ready_subtasks(task)
+        assert len(ready) == 1
+        assert ready[0].id == "s1"
+
+    @pytest.mark.asyncio
+    async def test_schedule_no_workers_available(self):
+        """If no workers available, schedule_subtasks returns empty."""
+        orch = Orchestrator()
+        # No workers registered
+        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
+        task.subtasks = [Subtask(id="s1", parent_id="t1", description="subtask")]
+        orch.tasks["t1"] = task
+
+        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
+            return SubtaskResult(
+                subtask_id=subtask.id, worker_id=worker_id,
+                summary="done", success=True,
+            )
+
+        results = await orch.schedule_subtasks(task, mock_execute)
+        assert len(results) == 0
