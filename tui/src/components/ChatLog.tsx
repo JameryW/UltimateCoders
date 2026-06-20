@@ -14,7 +14,7 @@
  * - Message selection: Up/Down navigates, Enter expands selected message
  * - Markdown rendering: system messages with markdown are rendered via marked-terminal
  */
-import React, {useState, useEffect, useRef, useCallback} from 'react';
+import React, {useState, useEffect, useRef, useCallback, useMemo} from 'react';
 import {Box, Text, useInput} from 'ink';
 import type {EventFilter} from '../reducer.js';
 import {eventFilterLabel} from '../reducer.js';
@@ -233,7 +233,8 @@ const ChatLog: React.FC<ChatLogProps> = ({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const lastScrollTick = useRef(0);
   const prevFilterRef = useRef(eventFilter);
-  const filteredMessages = filterMessages(messages, eventFilter);
+  // ponytail: memoize filtered messages to prevent new array reference each render
+  const filteredMessages = useMemo(() => filterMessages(messages, eventFilter), [messages, eventFilter]);
   const totalMessages = filteredMessages.length;
   const maxOffset = Math.max(0, totalMessages - visibleLines);
 

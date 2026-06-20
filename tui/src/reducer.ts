@@ -302,11 +302,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_SUBTASKS': {
       const completed = action.subtasks.filter((s) => s.status === 'completed').length;
+      const total = action.subtasks.length;
+      // ponytail: reuse progress object if values unchanged — prevents cascading re-renders
+      const progress = state.progress.completed === completed && state.progress.total === total
+        ? state.progress
+        : {completed, total};
       // Reset subtask selection when subtasks change
       return {
         ...state,
         subtasks: action.subtasks,
-        progress: {completed, total: action.subtasks.length},
+        progress,
         selectedSubtaskIndex: -1,
         selectedSubtaskId: null,
       };
@@ -317,10 +322,14 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
         st.id === action.subtaskId ? {...st, status: action.status} : st,
       );
       const completed = subtasks.filter((s) => s.status === 'completed').length;
+      const total = subtasks.length;
+      const progress = state.progress.completed === completed && state.progress.total === total
+        ? state.progress
+        : {completed, total};
       return {
         ...state,
         subtasks,
-        progress: {completed, total: subtasks.length},
+        progress,
       };
     }
 
