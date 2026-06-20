@@ -339,7 +339,11 @@ async fn submit_task_via_bridge_with_events() {
 
     // Send submit_task
     bridge
-        .send_submit_task("1. Write code\n2. Write tests", "test-project")
+        .send_submit_task(
+            "1. Write code\n2. Write tests",
+            "test-project",
+            "test-task-id",
+        )
         .await
         .expect("send_submit_task should succeed");
 
@@ -415,7 +419,7 @@ async fn watch_task_receives_broadcast_events() {
 
     // Send submit_task
     bridge
-        .send_submit_task("Fix the bug", "test-project")
+        .send_submit_task("Fix the bug", "test-project", "test-task-id")
         .await
         .expect("send_submit_task should succeed");
 
@@ -549,7 +553,7 @@ async fn broadcast_multiple_receivers_integration() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     bridge
-        .send_submit_task("Do a thing", "")
+        .send_submit_task("Do a thing", "", "test-task-id")
         .await
         .expect("send_submit_task should succeed");
 
