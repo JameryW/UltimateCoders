@@ -189,7 +189,9 @@ impl LocalWorkerBridge {
         let worker_module = std::env::var("UC_WORKER_MODULE")
             .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
 
-        let mut cmd = Command::new("python3");
+        // ponytail: allow overriding python binary (e.g. .venv/bin/python3)
+        let python_bin = std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let mut cmd = Command::new(&python_bin);
         cmd.arg("-m")
             .arg(&worker_module)
             .stdin(std::process::Stdio::piped())
@@ -337,6 +339,7 @@ impl LocalWorkerBridge {
         &self,
         description: &str,
         project_id: &str,
+        task_id: &str,
     ) -> Result<(), String> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest {
@@ -346,6 +349,7 @@ impl LocalWorkerBridge {
             params: serde_json::json!({
                 "description": description,
                 "project_id": project_id,
+                "task_id": task_id,
             }),
         };
 
@@ -758,9 +762,12 @@ async fn attempt_auto_restart(
         }
 
         // Try to spawn a new worker
-        match Command::new("python3")
+        let python_bin = std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let worker_module = std::env::var("UC_WORKER_MODULE")
+            .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
+        match Command::new(&python_bin)
             .arg("-m")
-            .arg("ultimate_coders.local_worker")
+            .arg(&worker_module)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())

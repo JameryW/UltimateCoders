@@ -25,6 +25,7 @@ import signal
 import sys
 from typing import Any
 
+from ultimate_coders.agent.llm import LLMClient
 from ultimate_coders.agent.orchestrator import Orchestrator, TaskStatus
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.engine import Engine
@@ -123,6 +124,19 @@ class LocalWorker:
         sandbox_mode = os.environ.get("UC_SANDBOX_MODE", "")
         project_path = os.environ.get("UC_PROJECT_PATH", os.getcwd())
 
+        # ponytail: map ANTHROPIC_AUTH_TOKEN → ANTHROPIC_API_KEY so LLMClient
+        # picks it up from env. Some deployments use AUTH_TOKEN instead.
+        if not os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            os.environ["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_AUTH_TOKEN"]
+
+        # LLM client (auto-detect API key from env)
+        llm_client: LLMClient | None = None
+        try:
+            llm_client = LLMClient()
+            logger.info("LLMClient initialized (provider=%s, model=%s)", llm_client.provider, llm_client.model)
+        except Exception:
+            logger.warning("LLMClient unavailable (no API key?), task decomposition will fail", exc_info=True)
+
         # Engine (local mode)
         try:
             engine = Engine(mode="local")
@@ -132,7 +146,7 @@ class LocalWorker:
             engine = None
 
         # Orchestrator (no NATS publisher — we use JSON-RPC notifications instead)
-        self._orchestrator = Orchestrator(engine=engine)
+        self._orchestrator = Orchestrator(engine=engine, llm_client=llm_client)
 
         # Worker
         if sandbox_mode == "subprocess":
@@ -147,12 +161,14 @@ class LocalWorker:
                 execution_mode="sandbox",
                 sandbox_config=sandbox_config,
                 event_emitter=self._orchestrator.event_emitter,
+                llm_client=llm_client,
             )
         else:
             self._worker = Worker(
                 engine=engine,
                 execution_mode="llm",
                 event_emitter=self._orchestrator.event_emitter,
+                llm_client=llm_client,
             )
 
         # Register worker with Orchestrator
@@ -194,13 +210,14 @@ class LocalWorker:
 
         description = params.get("description", "")
         project_id = params.get("project_id", "")
+        task_id = params.get("task_id") or None  # ponytail: pass gRPC server's task_id
 
         if not description:
             self._writer.write_error(id_, -32602, "Empty description")
             return
 
         try:
-            task = await self._orchestrator.submit_task(description, project_id=project_id)
+            task = await self._orchestrator.submit_task(description, project_id=project_id, task_id=task_id)
         except Exception as exc:
             self._writer.write_error(id_, -32001, f"Decomposition failed: {exc}")
             return
@@ -241,7 +258,7 @@ class LocalWorker:
             # Notify: subtask completed/failed
             self._writer.write_notification("task_update", self._task_to_params(task))
 
-            updated_task = self._orchestrator.get_task_status(task.id)
+            updated_task = await self._orchestrator.get_task_status(task.id)
             if updated_task is not None:
                 task = updated_task
 

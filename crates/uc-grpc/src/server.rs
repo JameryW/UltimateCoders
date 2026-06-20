@@ -104,13 +104,13 @@ pub struct NatsHeartbeat {
 ///
 /// Returns None if the string does not match any known status.
 fn task_status_from_str(s: &str) -> Option<uc_types::TaskStatus> {
-    match s {
-        "Created" => Some(uc_types::TaskStatus::Created),
-        "Planning" => Some(uc_types::TaskStatus::Planning),
-        "InProgress" => Some(uc_types::TaskStatus::InProgress),
-        "Completed" => Some(uc_types::TaskStatus::Completed),
-        "Failed" => Some(uc_types::TaskStatus::Failed),
-        "Paused" => Some(uc_types::TaskStatus::Paused),
+    match s.to_lowercase().as_str() {
+        "created" => Some(uc_types::TaskStatus::Created),
+        "planning" => Some(uc_types::TaskStatus::Planning),
+        "in_progress" | "inprogress" => Some(uc_types::TaskStatus::InProgress),
+        "completed" => Some(uc_types::TaskStatus::Completed),
+        "failed" => Some(uc_types::TaskStatus::Failed),
+        "paused" => Some(uc_types::TaskStatus::Paused),
         _ => None,
     }
 }
@@ -119,13 +119,14 @@ fn task_status_from_str(s: &str) -> Option<uc_types::TaskStatus> {
 ///
 /// Returns None if the string does not match any known status.
 fn subtask_status_from_str(s: &str) -> Option<uc_types::SubtaskStatus> {
-    match s {
-        "Pending" => Some(uc_types::SubtaskStatus::Pending),
-        "Assigned" => Some(uc_types::SubtaskStatus::Assigned),
-        "InProgress" => Some(uc_types::SubtaskStatus::InProgress),
-        "Completed" => Some(uc_types::SubtaskStatus::Completed),
-        "Failed" => Some(uc_types::SubtaskStatus::Failed),
-        "Conflicted" => Some(uc_types::SubtaskStatus::Conflicted),
+    // ponytail: Python sends lowercase ("assigned", "in_progress"), Rust uses PascalCase
+    match s.to_lowercase().as_str() {
+        "pending" => Some(uc_types::SubtaskStatus::Pending),
+        "assigned" => Some(uc_types::SubtaskStatus::Assigned),
+        "in_progress" | "inprogress" => Some(uc_types::SubtaskStatus::InProgress),
+        "completed" => Some(uc_types::SubtaskStatus::Completed),
+        "failed" => Some(uc_types::SubtaskStatus::Failed),
+        "conflicted" => Some(uc_types::SubtaskStatus::Conflicted),
         _ => None,
     }
 }
@@ -1902,7 +1903,7 @@ fn spawn_task_queue_consumer(
             }
 
             match bridge
-                .send_submit_task(&queued.description, &queued.project_id)
+                .send_submit_task(&queued.description, &queued.project_id, &queued.task_id)
                 .await
             {
                 Ok(()) => {
@@ -2041,8 +2042,14 @@ pub async fn apply_worker_update_to_store(
         .map(|e| -> TaskEvent { e.into() })
         .collect::<Vec<_>>();
     drop(store);
-    for event in new_events {
-        let _ = event_tx.send(event);
+    for event in new_events.iter() {
+        tracing::info!(
+            event_type = %event.r#type,
+            task_id = %event.task_id,
+            subtask_id = ?event.subtask_id,
+            "Broadcasting event from worker update"
+        );
+        let _ = event_tx.send(event.clone());
     }
 }
 

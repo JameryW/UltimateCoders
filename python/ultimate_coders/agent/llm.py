@@ -25,6 +25,14 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
     "deepseek": "DEEPSEEK_API_KEY",
 }
 
+# ponytail: env vars for default model per provider (proxy deployments often use custom model names)
+_PROVIDER_MODEL_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "openai": "OPENAI_DEFAULT_MODEL",
+    "gemini": "GEMINI_DEFAULT_MODEL",
+    "deepseek": "DEEPSEEK_DEFAULT_MODEL",
+}
+
 
 @dataclass
 class ToolDefinition:
@@ -96,17 +104,18 @@ class LLMClient:
         tpm_limit: int = 100000,
     ):
         self.provider = provider
-        # Resolve API key: explicit > provider-specific env > ANTHROPIC_API_KEY fallback
+        # Resolve API key: explicit > provider-specific env > ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN
         env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
-        self.api_key = api_key or os.environ.get(env_key) or os.environ.get("ANTHROPIC_API_KEY")
-        # ponytail: model defaults per provider, easy to extend
+        self.api_key = api_key or os.environ.get(env_key) or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        # ponytail: model defaults per provider, env override takes precedence
+        env_model_key = _PROVIDER_MODEL_ENV.get(provider)
         default_models: dict[str, str] = {
             "anthropic": "claude-sonnet-4-6",
             "openai": "gpt-4o",
             "gemini": "gemini-2.5-pro",
             "deepseek": "deepseek/deepseek-chat",
         }
-        self.model = model or default_models.get(provider, "claude-sonnet-4-6")
+        self.model = model or (os.environ.get(env_model_key) if env_model_key else None) or default_models.get(provider, "claude-sonnet-4-6")
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
