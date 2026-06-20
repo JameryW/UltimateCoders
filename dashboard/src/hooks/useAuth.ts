@@ -49,53 +49,49 @@ export function useAuth(): AuthState {
 
   // Validate current token on mount
   useEffect(() => {
-    const stored = getStoredToken();
-    if (!stored) {
-      // No token yet — try an unauthenticated request.
-      // If the server has no DASHBOARD_PASSWORD, it will succeed.
-      fetch("/dashboard/api/health")
-        .then((res) => {
-          if (res.ok) {
-            setIsAuthenticated(true);
-          } else if (res.status === 401) {
-            setIsAuthenticated(false);
-          } else if (res.status >= 500 || res.status === 0) {
-            // Server down or unreachable — show connection error
-            setConnectionError(true);
-          } else {
-            setIsAuthenticated(false);
-          }
-        })
-        .catch(() => {
-          setConnectionError(true);
-        })
-        .finally(() => setIsChecking(false));
-    } else {
-      // We have a stored token — validate it
-      fetch("/dashboard/api/health", {
-        headers: { Authorization: `Bearer ${stored}` },
-      })
-        .then((res) => {
-          if (res.ok) {
-            setToken(stored);
-            setIsAuthenticated(true);
-          } else if (res.status === 401) {
-            setStoredToken(null);
-            setToken(null);
-            setIsAuthenticated(false);
-          } else if (res.status >= 500 || res.status === 0) {
-            setConnectionError(true);
-          } else {
-            setStoredToken(null);
-            setToken(null);
-            setIsAuthenticated(false);
-          }
-        })
-        .catch(() => {
-          setConnectionError(true);
-        })
-        .finally(() => setIsChecking(false));
-    }
+    const checkAuth = async () => {
+      const stored = getStoredToken();
+      try {
+        const res = await fetch("/dashboard/api/health", stored
+          ? { headers: { Authorization: `Bearer ${stored}` } }
+          : undefined);
+        if (res.ok) {
+          if (stored) setToken(stored);
+          setIsAuthenticated(true);
+          return;
+        }
+        if (res.status === 401) {
+          if (stored) { setStoredToken(null); setToken(null); }
+          setIsAuthenticated(false);
+          return;
+        }
+        // 5xx or other — FastAPI down, try gRPC-Web proxy
+      } catch {
+        // FastAPI unreachable — check gRPC-Web
+      }
+
+      // Fallback: if gRPC server is reachable (via Vite proxy), skip auth.
+      // When only gRPC is running (no Python FastAPI), there's no auth gate.
+      try {
+        const res = await fetch("/ultimate_coders.EngineService/Health", {
+          method: "POST",
+          headers: { "content-type": "application/grpc-web+proto" },
+        });
+        // Any response (even gRPC error) means the proxy → gRPC server works
+        if (res.status !== 0) {
+          setIsAuthenticated(true);
+          return;
+        }
+      } catch {
+        // gRPC-Web also unreachable
+      }
+
+      // Both unreachable — true connection error
+      setConnectionError(true);
+      setIsAuthenticated(false);
+    };
+
+    checkAuth().finally(() => setIsChecking(false));
   }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {

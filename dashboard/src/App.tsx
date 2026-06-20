@@ -389,7 +389,8 @@ function App() {
   }
 
   // All endpoints failed — server is likely down
-  const allFailed = Object.keys(dashboard.fetchErrors).length >= 5;
+  // ponytail: don't block if gRPC-Web is connected (REST may be down but gRPC works)
+  const allFailed = Object.keys(dashboard.fetchErrors).length >= 5 && grpcState !== "connected";
   if (allFailed) {
     return (
       <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
