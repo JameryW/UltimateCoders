@@ -104,9 +104,14 @@ class LLMClient:
         tpm_limit: int = 100000,
     ):
         self.provider = provider
-        # Resolve API key: explicit > provider-specific env > ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN
+        # Resolve API key: explicit > provider env > ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN
         env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
-        self.api_key = api_key or os.environ.get(env_key) or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        self.api_key = (
+            api_key
+            or os.environ.get(env_key)
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
         # ponytail: model defaults per provider, env override takes precedence
         env_model_key = _PROVIDER_MODEL_ENV.get(provider)
         default_models: dict[str, str] = {
@@ -115,7 +120,8 @@ class LLMClient:
             "gemini": "gemini-2.5-pro",
             "deepseek": "deepseek/deepseek-chat",
         }
-        self.model = model or (os.environ.get(env_model_key) if env_model_key else None) or default_models.get(provider, "claude-sonnet-4-6")
+        env_model = os.environ.get(env_model_key) if env_model_key else None
+        self.model = model or env_model or default_models.get(provider, "claude-sonnet-4-6")
         self.max_retries = max_retries
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit

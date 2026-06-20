@@ -133,9 +133,17 @@ class LocalWorker:
         llm_client: LLMClient | None = None
         try:
             llm_client = LLMClient()
-            logger.info("LLMClient initialized (provider=%s, model=%s)", llm_client.provider, llm_client.model)
+            logger.info(
+                "LLMClient initialized (provider=%s, model=%s)",
+                llm_client.provider,
+                llm_client.model,
+            )
         except Exception:
-            logger.warning("LLMClient unavailable (no API key?), task decomposition will fail", exc_info=True)
+            logger.warning(
+                "LLMClient unavailable (no API key?), "
+                "task decomposition will fail",
+                exc_info=True,
+            )
 
         # Engine (local mode)
         try:
@@ -217,7 +225,9 @@ class LocalWorker:
             return
 
         try:
-            task = await self._orchestrator.submit_task(description, project_id=project_id, task_id=task_id)
+            task = await self._orchestrator.submit_task(
+                description, project_id=project_id, task_id=task_id,
+            )
         except Exception as exc:
             self._writer.write_error(id_, -32001, f"Decomposition failed: {exc}")
             return

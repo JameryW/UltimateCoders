@@ -190,7 +190,8 @@ impl LocalWorkerBridge {
             .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
 
         // ponytail: allow overriding python binary (e.g. .venv/bin/python3)
-        let python_bin = std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let python_bin =
+            std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
         let mut cmd = Command::new(&python_bin);
         cmd.arg("-m")
             .arg(&worker_module)
@@ -762,7 +763,8 @@ async fn attempt_auto_restart(
         }
 
         // Try to spawn a new worker
-        let python_bin = std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let python_bin =
+            std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
         let worker_module = std::env::var("UC_WORKER_MODULE")
             .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
         match Command::new(&python_bin)
@@ -984,7 +986,7 @@ mod tests {
     #[tokio::test]
     async fn send_submit_task_without_worker_fails() {
         let bridge = LocalWorkerBridge::new();
-        let result = bridge.send_submit_task("test", "").await;
+        let result = bridge.send_submit_task("test", "", "test-task-id").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not running"));
     }
@@ -1046,7 +1048,9 @@ mod tests {
         assert!(!bridge.is_available());
 
         // Trying to send a task should fail gracefully
-        let result = bridge.send_submit_task("test task", "").await;
+        let result = bridge
+            .send_submit_task("test task", "", "test-task-id")
+            .await;
         assert!(result.is_err());
     }
 
