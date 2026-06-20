@@ -53,35 +53,35 @@ export function formatTaskEvent(event: TaskEventProto): ChatMessage | null {
 
   switch (event.type) {
     case 'task_submitted':
-      text = `Task submitted: ${event.taskId.slice(0, 8)}...`;
+      text = `Task submitted: ${event.data?.description ?? event.taskId.slice(0, 8) + '...'}`;
       color = 'cyan';
       bold = true;
       break;
 
     case 'subtask_assigned':
-      text = `Subtask assigned: ${(event.subtaskId ?? '').slice(-6)} → ${event.data?.worker_id ?? 'unknown'}`;
+      text = `Subtask assigned: ${event.data?.description ?? (event.subtaskId ?? '').slice(-6)} → ${event.data?.worker_id ?? 'unknown'}`;
       color = 'blue';
       break;
 
     case 'subtask_started':
-      text = `Subtask started: ${(event.subtaskId ?? '').slice(-6)}`;
+      text = `▶ Subtask started: ${event.data?.description ?? (event.subtaskId ?? '').slice(-6)}`;
       color = 'cyan';
       break;
 
     case 'subtask_completed':
-      text = `Subtask completed: ${(event.subtaskId ?? '').slice(-6)}`;
+      text = `✓ Subtask completed: ${event.data?.summary ?? event.data?.description ?? (event.subtaskId ?? '').slice(-6)}`;
       color = 'green';
       break;
 
     case 'subtask_failed':
-      text = `Subtask failed: ${(event.subtaskId ?? '').slice(-6)} — ${event.data?.error ?? 'unknown'}`;
+      text = `✗ Subtask failed: ${(event.subtaskId ?? '').slice(-6)} — ${event.data?.error ?? 'unknown'}`;
       color = 'red';
       bold = true;
       break;
 
     case 'tool_call': {
       const md = formatToolData('tool_call', event.data ?? {});
-      text = md || `Tool call: ${event.data?.tool_name ?? 'unknown'}`;
+      text = md || `Tool call: ${event.data?.tool_name ?? event.data?.tool ?? 'unknown'}`;
       dim = true;
       break;
     }
@@ -100,14 +100,39 @@ export function formatTaskEvent(event: TaskEventProto): ChatMessage | null {
       break;
     }
 
+    case 'llm_request':
+      text = `🤖 LLM request: ${event.data?.model ?? 'unknown model'}`;
+      dim = true;
+      break;
+
+    case 'subtask_retrying':
+      text = `↻ Retrying subtask: ${(event.subtaskId ?? '').slice(-6)}`;
+      color = 'yellow';
+      break;
+
+    case 'subtask_adapted':
+      text = `⚡ Subtask adapted: ${(event.subtaskId ?? '').slice(-6)}`;
+      color = 'yellow';
+      break;
+
+    case 'task_redecomposed':
+      text = `🔄 Task re-decomposed`;
+      color = 'yellow';
+      break;
+
+    case 'scheduling_round_complete':
+      text = `⏱ Scheduling round complete`;
+      dim = true;
+      break;
+
     case 'task_completed':
-      text = `Task completed: ${event.taskId.slice(0, 8)}...`;
+      text = `✓ Task completed: ${event.data?.description ?? event.taskId.slice(0, 8) + '...'}`;
       color = 'green';
       bold = true;
       break;
 
     case 'task_failed':
-      text = `Task failed: ${event.taskId.slice(0, 8)}... — ${event.data?.error ?? 'unknown'}`;
+      text = `✗ Task failed: ${event.taskId.slice(0, 8)}... — ${event.data?.error ?? 'unknown'}`;
       color = 'red';
       bold = true;
       break;

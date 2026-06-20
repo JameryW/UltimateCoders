@@ -31,6 +31,11 @@ const MAX_STREAM_RETRIES = 3;
 /** Delay before retrying stream subscription (ms). */
 const STREAM_RETRY_DELAY = 5000;
 
+/** Batch window for incoming stream events (ms).
+ *  Events arriving within this window are merged into a single state update
+ *  to prevent excessive React re-renders. */
+const EVENT_BATCH_MS = 50;
+
 /** Callback type for when a sync_required event is received from the server. */
 export type SyncRequiredCallback = (reason: string, skipped: number) => void;
 
@@ -44,7 +49,7 @@ export interface UseTaskEventsReturn {
   /** All received events (for ChatLog display). */
   events: TaskEventProto[];
 
-  /** Whether the event stream is active. */
+  /** Whether the event stream is active AND there are active (non-terminal) subtasks. */
   isStreaming: boolean;
 
   /** Update subtask state from a SubmitTaskResponse. */
@@ -55,6 +60,9 @@ export interface UseTaskEventsReturn {
 
   /** Clear all task state. */
   clearTask: () => void;
+
+  /** Explicitly mark streaming as finished (all subtasks reached terminal state). */
+  markStreamingFinished: () => void;
 }
 
 // ── Event Processing ────────────────────────────────────────
@@ -189,6 +197,13 @@ export function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[] {
 
 // ── Hook Implementation ─────────────────────────────────────
 
+const TERMINAL_SUBTASK_STATUSES = new Set<SubtaskStatusType>(['completed', 'failed', 'conflicted']);
+
+function allSubtasksTerminal(map: Map<string, SubtaskItem>): boolean {
+  if (map.size === 0) return false;
+  return Array.from(map.values()).every((st) => TERMINAL_SUBTASK_STATUSES.has(st.status));
+}
+
 export function useTaskEvents(
   client: TaskServiceClient | null,
   connectionState: string,
@@ -199,6 +214,7 @@ export function useTaskEvents(
   const [subtaskMap, setSubtaskMap] = useState<Map<string, SubtaskItem>>(new Map());
   const [events, setEvents] = useState<TaskEventProto[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingFinished, setStreamingFinished] = useState(false);
   const streamRef = useRef<any>(null);
   const streamRetryCount = useRef(0);
   const streamRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -208,11 +224,52 @@ export function useTaskEvents(
   // which triggers the streamSubtasks diff in App → SET_SUBTASKS → re-render → flicker.
   const subtasks = useMemo(() => Array.from(subtaskMap.values()), [subtaskMap]);
 
-  // Cleanup retry timer on unmount
+  // ponytail: auto-detect when all subtasks have reached terminal state.
+  // Once detected, set isStreaming=false so the spinner stops.
+  // streamingFinished is a one-way latch — once true, it stays true until clearTask().
+  const prevAllTerminalRef = useRef(false);
+  useEffect(() => {
+    if (streamingFinished) return;
+    const allTerminal = allSubtasksTerminal(subtaskMap);
+    if (allTerminal && !prevAllTerminalRef.current && subtaskMap.size > 0) {
+      setStreamingFinished(true);
+      setIsStreaming(false);
+    }
+    prevAllTerminalRef.current = allTerminal;
+  }, [subtaskMap, streamingFinished]);
+
+  // ponytail: event batching — buffer incoming stream events and flush
+  // at most once every EVENT_BATCH_MS to prevent excessive re-renders.
+  const eventBufferRef = useRef<TaskEventProto[]>([]);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushEventBuffer = useCallback(() => {
+    if (batchTimerRef.current) {
+      clearTimeout(batchTimerRef.current);
+      batchTimerRef.current = null;
+    }
+    const batch = eventBufferRef.current;
+    if (batch.length === 0) return;
+    eventBufferRef.current = [];
+
+    setEvents((prev) => {
+      const next = [...prev, ...batch];
+      return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+    });
+    setSubtaskMap((prev) => {
+      let updated = prev;
+      for (const event of batch) {
+        updated = processEvent(event, updated);
+      }
+      return updated;
+    });
+  }, []);
+
+  // Cleanup batch timer on unmount
   useEffect(() => {
     return () => {
-      if (streamRetryTimerRef.current) {
-        clearTimeout(streamRetryTimerRef.current);
+      if (batchTimerRef.current) {
+        clearTimeout(batchTimerRef.current);
       }
     };
   }, []);
@@ -259,15 +316,23 @@ export function useTaskEvents(
             const reason = String(taskEvent.data?.reason ?? 'unknown');
             const skipped = Number(taskEvent.data?.skipped ?? 0);
             onSyncRequired?.(reason, skipped);
-            // Don't update subtask state from a sync event
             return;
           }
 
-          setEvents((prev) => {
-            const next = [...prev, taskEvent];
-            return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+          // ponytail: on first real event from stream, set isStreaming=true
+          // (but only if not already finished)
+          setStreamingFinished((prev) => {
+            if (!prev) setIsStreaming(true);
+            return prev;
           });
-          setSubtaskMap((prev) => processEvent(taskEvent, prev));
+
+          // ponytail: batch events instead of updating state on each one
+          eventBufferRef.current.push(taskEvent);
+          if (!batchTimerRef.current) {
+            batchTimerRef.current = setTimeout(() => {
+              flushEventBuffer();
+            }, EVENT_BATCH_MS);
+          }
         });
 
         stream.on('end', () => {
@@ -301,7 +366,8 @@ export function useTaskEvents(
           }
         });
 
-        setIsStreaming(true);
+        // ponytail: isStreaming is set on first 'data' event, not here
+        // — avoids showing streaming before any real data arrives
         streamRetryCount.current = 0;
       } catch (_err) {
         if (!cancelled) setIsStreaming(false);
@@ -320,6 +386,12 @@ export function useTaskEvents(
         clearTimeout(streamRetryTimerRef.current);
         streamRetryTimerRef.current = null;
       }
+      if (batchTimerRef.current) {
+        clearTimeout(batchTimerRef.current);
+        batchTimerRef.current = null;
+      }
+      // Flush any remaining buffered events
+      flushEventBuffer();
     };
   }, [client, connectionState]); // ponytail: removed activeTaskId — always watch all tasks
 
@@ -345,6 +417,8 @@ export function useTaskEvents(
     setTask(null);
     setSubtaskMap(new Map());
     setEvents([]);
+    setStreamingFinished(false);
+    prevAllTerminalRef.current = false;
   }, []);
 
   /** Update a single subtask's status by ID. */
@@ -362,6 +436,12 @@ export function useTaskEvents(
     [],
   );
 
+  /** Explicitly mark streaming as finished (e.g. on task_completed event). */
+  const markStreamingFinished = useCallback(() => {
+    setStreamingFinished(true);
+    setIsStreaming(false);
+  }, []);
+
   return {
     task,
     subtasks,
@@ -370,6 +450,7 @@ export function useTaskEvents(
     setSubtasksFromSubmit,
     updateSubtaskStatus,
     clearTask,
+    markStreamingFinished,
   };
 }
 

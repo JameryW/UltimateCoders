@@ -335,6 +335,8 @@ fn extract_task_id(event: &AgentEventType) -> Option<String> {
         AgentEventType::SubtaskCompleted { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::SubtaskFailed { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::CheckpointCreated { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::TaskCompleted { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::TaskFailed { task_id, .. } => Some(task_id.0.clone()),
     }
 }
 

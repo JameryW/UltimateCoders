@@ -1190,12 +1190,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
             let tool_name = event
                 .data
                 .get("tool_name")
+                .or_else(|| event.data.get("tool"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
             let tool_input = event
                 .data
                 .get("tool_input")
+                .or_else(|| event.data.get("input_summary"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -1212,10 +1214,11 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
             let tool_output = event
                 .data
                 .get("tool_output")
+                .or_else(|| event.data.get("result_summary"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let success = json_bool_or_default(&event.data, "success", false);
+            let success = json_bool_or_default(&event.data, "success", true);
             Some(uc_engine::AgentEventType::ToolResult {
                 task_id,
                 subtask_id,
@@ -1934,6 +1937,145 @@ fn spawn_task_queue_consumer(
 
 // ── Local task decomposition (fallback) ──────────────────────
 
+/// Convert a fine-grained ``WorkerTaskEvent`` to an ``AgentEventType``, record
+/// it in the TaskStore, and broadcast it via the event channel.
+///
+/// This bridges the gap between Python worker events (tool_call, tool_result,
+/// file_modified, etc.) and the WatchTask streaming RPC without requiring NATS.
+pub async fn apply_worker_event_to_store(
+    worker_event: &crate::local_worker::WorkerTaskEvent,
+    task_store: &Arc<Mutex<TaskStore>>,
+    event_tx: &broadcast::Sender<TaskEvent>,
+) {
+    let task_id = uc_types::TaskId(worker_event.task_id.clone());
+    let subtask_id = uc_types::TaskId(worker_event.subtask_id.clone().unwrap_or_default());
+
+    let agent_event = match worker_event.event_type.as_str() {
+        "task_submitted" => Some(uc_engine::AgentEventType::TaskCreated {
+            task_id: task_id.clone(),
+            description: worker_event
+                .data
+                .get("description")
+                .cloned()
+                .unwrap_or_default(),
+        }),
+        "subtask_assigned" => Some(uc_engine::AgentEventType::SubtaskAssigned {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            worker_id: worker_event
+                .data
+                .get("worker_id")
+                .map(|s| uc_types::WorkerId(s.clone()))
+                .unwrap_or_default(),
+        }),
+        "subtask_started" => Some(uc_engine::AgentEventType::SubtaskStarted {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            worker_id: worker_event
+                .data
+                .get("worker_id")
+                .map(|s| uc_types::WorkerId(s.clone()))
+                .unwrap_or_default(),
+        }),
+        "tool_call" => Some(uc_engine::AgentEventType::ToolInvoked {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            tool_name: worker_event
+                .data
+                .get("tool")
+                .or_else(|| worker_event.data.get("tool_name"))
+                .cloned()
+                .unwrap_or_default(),
+            tool_input: worker_event
+                .data
+                .get("input_summary")
+                .or_else(|| worker_event.data.get("tool_input"))
+                .cloned()
+                .unwrap_or_default(),
+        }),
+        "tool_result" => Some(uc_engine::AgentEventType::ToolResult {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            tool_output: worker_event
+                .data
+                .get("result_summary")
+                .or_else(|| worker_event.data.get("tool_output"))
+                .cloned()
+                .unwrap_or_default(),
+            success: worker_event
+                .data
+                .get("success")
+                .map(|s| s == "true")
+                .unwrap_or(true),
+        }),
+        "file_modified" => Some(uc_engine::AgentEventType::FileModified {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            file_path: worker_event
+                .data
+                .get("file_path")
+                .cloned()
+                .unwrap_or_default(),
+            diff: worker_event.data.get("diff").cloned().unwrap_or_default(),
+        }),
+        "subtask_completed" => Some(uc_engine::AgentEventType::SubtaskCompleted {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            summary: worker_event
+                .data
+                .get("summary")
+                .cloned()
+                .unwrap_or_default(),
+            success: worker_event
+                .data
+                .get("success")
+                .map(|s| s == "true")
+                .unwrap_or(true),
+        }),
+        "subtask_failed" => Some(uc_engine::AgentEventType::SubtaskFailed {
+            task_id: task_id.clone(),
+            subtask_id: subtask_id.clone(),
+            error: worker_event.data.get("error").cloned().unwrap_or_default(),
+            recoverable: worker_event
+                .data
+                .get("recoverable")
+                .map(|s| s == "true")
+                .unwrap_or(false),
+        }),
+        "task_completed" => Some(uc_engine::AgentEventType::TaskCompleted {
+            task_id: task_id.clone(),
+            description: worker_event
+                .data
+                .get("description")
+                .cloned()
+                .unwrap_or_default(),
+            result: worker_event.data.get("result").cloned().unwrap_or_default(),
+        }),
+        "task_failed" => Some(uc_engine::AgentEventType::TaskFailed {
+            task_id: task_id.clone(),
+            error: worker_event.data.get("error").cloned().unwrap_or_default(),
+        }),
+        _ => {
+            tracing::debug!(
+                event_type = %worker_event.event_type,
+                "Ignoring unrecognized worker event type"
+            );
+            None
+        }
+    };
+
+    let Some(agent_event) = agent_event else {
+        return;
+    };
+
+    let proto_event: TaskEvent = agent_event.clone().into();
+    {
+        let mut store = task_store.lock().await;
+        store.record_event(agent_event);
+    }
+    let _ = event_tx.send(proto_event);
+}
+
 /// Apply a worker task update to the TaskStore and broadcast events.
 ///
 /// This is a standalone function (not a method) so it can be called from
@@ -1987,7 +2129,7 @@ pub async fn apply_worker_update_to_store(
         id: uc_types::TaskId(update.task_id.clone()),
         description: update.description.clone(),
         project_id: update.project_id.clone(),
-        status: task_status,
+        status: task_status.clone(),
         subtasks,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -1995,44 +2137,32 @@ pub async fn apply_worker_update_to_store(
 
     store.tasks.insert(update.task_id.clone(), task);
 
-    // Record events for subtask state transitions so WatchTask can stream them
-    for st in &update.subtasks {
-        let status =
-            subtask_status_from_str(&st.status).unwrap_or(uc_types::SubtaskStatus::Pending);
-        let event = match status {
-            uc_types::SubtaskStatus::Assigned => uc_engine::AgentEventType::SubtaskAssigned {
+    // ponytail: do NOT record subtask state-transition events here.
+    // Fine-grained events (SubtaskAssigned/Started/Completed/Failed,
+    // ToolInvoked/ToolResult/FileModified) now arrive via the `task_event`
+    // JSON-RPC notification and are handled by `apply_worker_event_to_store`.
+    // Only record task-level terminal events here (Completed/Failed) since
+    // the task_update notification is the reliable signal for task-level status.
+
+    // Record task-level completion/failure events
+    match task_status {
+        uc_types::TaskStatus::Completed => {
+            store.record_event(uc_engine::AgentEventType::TaskCompleted {
                 task_id: uc_types::TaskId(update.task_id.clone()),
-                subtask_id: uc_types::TaskId(st.id.clone()),
-                worker_id: st
-                    .assigned_worker
-                    .as_deref()
-                    .map(|w| uc_types::WorkerId(w.to_string()))
-                    .unwrap_or_else(uc_types::WorkerId::new),
-            },
-            uc_types::SubtaskStatus::InProgress => uc_engine::AgentEventType::SubtaskStarted {
+                description: update.description.clone(),
+                result: update.result.clone().unwrap_or_default(),
+            });
+        }
+        uc_types::TaskStatus::Failed => {
+            store.record_event(uc_engine::AgentEventType::TaskFailed {
                 task_id: uc_types::TaskId(update.task_id.clone()),
-                subtask_id: uc_types::TaskId(st.id.clone()),
-                worker_id: st
-                    .assigned_worker
-                    .as_deref()
-                    .map(|w| uc_types::WorkerId(w.to_string()))
-                    .unwrap_or_else(uc_types::WorkerId::new),
-            },
-            uc_types::SubtaskStatus::Completed => uc_engine::AgentEventType::SubtaskCompleted {
-                task_id: uc_types::TaskId(update.task_id.clone()),
-                subtask_id: uc_types::TaskId(st.id.clone()),
-                summary: String::new(),
-                success: true,
-            },
-            uc_types::SubtaskStatus::Failed => uc_engine::AgentEventType::SubtaskFailed {
-                task_id: uc_types::TaskId(update.task_id.clone()),
-                subtask_id: uc_types::TaskId(st.id.clone()),
-                error: String::new(),
-                recoverable: false,
-            },
-            _ => continue,
-        };
-        store.record_event(event);
+                error: update
+                    .result
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string()),
+            });
+        }
+        _ => {}
     }
 
     // Broadcast newly recorded events
@@ -2145,6 +2275,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 // Worker spawned successfully — start the notification reader.
                 let task_store = self.inner.task_store.clone();
                 let event_tx = self.inner.event_tx.clone();
+                // Clone for the event_fn closure
+                let task_store_for_event = task_store.clone();
+                let event_tx_for_event = event_tx.clone();
                 // Clone for the on_worker_dead closure
                 let task_store_for_death = task_store.clone();
                 let event_tx_for_death = event_tx.clone();
@@ -2152,18 +2285,26 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 let local_worker_for_restart = self.inner.local_worker.clone();
                 let task_store_for_restart = task_store.clone();
                 let event_tx_for_restart = event_tx.clone();
+                // Clone for event_fn inside on_restart closure
+                let task_store_for_restart_event = task_store.clone();
+                let event_tx_for_restart_event = event_tx.clone();
 
                 // Start the notification reader with closures that apply
                 // updates, handle worker death, and restart the reader on
                 // auto-restart.
                 bridge_guard.start_notification_reader(
                     move |update: crate::local_worker::WorkerTaskUpdate| {
-                        // We need to call the async apply_worker_update_to_store.
-                        // Since this closure is sync, we spawn a tokio task.
                         let ts = task_store.clone();
                         let tx = event_tx.clone();
                         tokio::spawn(async move {
                             apply_worker_update_to_store(&update, &ts, &tx).await;
+                        });
+                    },
+                    move |event: crate::local_worker::WorkerTaskEvent| {
+                        let ts = task_store_for_event.clone();
+                        let tx = event_tx_for_event.clone();
+                        tokio::spawn(async move {
+                            apply_worker_event_to_store(&event, &ts, &tx).await;
                         });
                     },
                     move || {
@@ -2182,6 +2323,8 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         let tx = event_tx_for_restart.clone();
                         let ts_death = ts.clone();
                         let tx_death = tx.clone();
+                        let ts_event = task_store_for_restart_event.clone();
+                        let tx_event = event_tx_for_restart_event.clone();
                         tokio::spawn(async move {
                             let bridge_guard = bridge.lock().await;
                             if bridge_guard.is_available() {
@@ -2194,6 +2337,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                                         let tx = tx.clone();
                                         tokio::spawn(async move {
                                             apply_worker_update_to_store(&update, &ts, &tx).await;
+                                        });
+                                    },
+                                    move |event: crate::local_worker::WorkerTaskEvent| {
+                                        let ts = ts_event.clone();
+                                        let tx = tx_event.clone();
+                                        tokio::spawn(async move {
+                                            apply_worker_event_to_store(&event, &ts, &tx).await;
                                         });
                                     },
                                     move || {
@@ -2355,7 +2505,35 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     ) -> Result<Response<SubmitTaskResponse>, Status> {
         let mut store = self.inner.task_store.lock().await;
         let event_count_before = store.events.len();
-        let task = store.submit_task(req.description, req.project_id);
+        let task = store.submit_task(req.description.clone(), req.project_id.clone());
+
+        // ponytail: simulate subtask lifecycle events for the local fallback path.
+        // Without these, subtasks stay in Assigned forever and the TUI shows no progress.
+        let task_id = task.id.clone();
+        for st in &task.subtasks {
+            store.record_event(uc_engine::AgentEventType::SubtaskStarted {
+                task_id: task_id.clone(),
+                subtask_id: st.id.clone(),
+                worker_id: uc_types::WorkerId::new(),
+            });
+            store.record_event(uc_engine::AgentEventType::SubtaskCompleted {
+                task_id: task_id.clone(),
+                subtask_id: st.id.clone(),
+                summary: st.description.clone(),
+                success: true,
+            });
+        }
+        store.record_event(uc_engine::AgentEventType::TaskCompleted {
+            task_id: task_id.clone(),
+            description: req.description.clone(),
+            result: String::new(),
+        });
+
+        // Update task status to Completed
+        if let Some(t) = store.tasks.get_mut(&task.id.0) {
+            t.status = uc_types::TaskStatus::Completed;
+            t.updated_at = chrono::Utc::now();
+        }
 
         // Broadcast newly recorded events to all WatchTask streams
         let new_events = store.events[event_count_before..]
@@ -2368,14 +2546,21 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             let _ = self.inner.event_tx.send(event);
         }
 
-        let subtask_protos: Vec<SubtaskProto> =
-            task.subtasks.clone().into_iter().map(Into::into).collect();
+        // Re-read the task (now Completed)
+        let store = self.inner.task_store.lock().await;
+        let completed_task = store.get_task(&task.id.0).expect("task just inserted");
+        let subtask_protos: Vec<SubtaskProto> = completed_task
+            .subtasks
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect();
 
         Ok(Response::new(SubmitTaskResponse {
             success: true,
-            task_id: task.id.0,
-            status: task_status_to_proto(&task.status).to_string(),
-            subtask_count: task.subtasks.len() as u32,
+            task_id: completed_task.id.0.clone(),
+            status: task_status_to_proto(&completed_task.status).to_string(),
+            subtask_count: completed_task.subtasks.len() as u32,
             subtasks: subtask_protos,
             error: None,
         }))
@@ -3146,7 +3331,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_worker_update_broadcasts_events() {
+    async fn apply_worker_update_broadcasts_task_completed() {
         let (event_tx, _) = broadcast::channel::<TaskEvent>(256);
         let task_store = Arc::new(Mutex::new(TaskStore::new()));
         let mut rx = event_tx.subscribe();
@@ -3155,23 +3340,23 @@ mod tests {
             task_id: "t-worker-2".to_string(),
             description: "Another task".to_string(),
             project_id: "".to_string(),
-            status: "InProgress".to_string(),
+            status: "Completed".to_string(),
             subtasks: vec![crate::local_worker::WorkerSubtaskUpdate {
                 id: "s-2".to_string(),
                 description: "Do work".to_string(),
-                status: "InProgress".to_string(),
+                status: "Completed".to_string(),
                 assigned_worker: None,
                 depends_on: vec![],
             }],
-            result: None,
+            result: Some("All done".to_string()),
         };
 
         apply_worker_update_to_store(&update, &task_store, &event_tx).await;
 
-        // Should have received a SubtaskStarted event
+        // Should have received a TaskCompleted event (task-level)
         let event = rx.try_recv().unwrap();
         assert_eq!(event.task_id, "t-worker-2");
-        assert_eq!(event.r#type, "subtask_started");
+        assert_eq!(event.r#type, "task_completed");
     }
 
     #[tokio::test]

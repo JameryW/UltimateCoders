@@ -287,10 +287,15 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
     }
 
     case 'UPDATE_MESSAGE': {
-      // Update a single message's text by id (used for mutable subtask summary line)
       const messages = state.messages.map((m) =>
         m.id === action.messageId ? {...m, text: action.text} : m,
       );
+      // ponytail: skip state update if text didn't actually change (prevents
+      // cascading re-renders from subtask summary updates that produce same text)
+      const target = state.messages.find((m) => m.id === action.messageId);
+      if (target && target.text === action.text) {
+        return state;
+      }
       return {...state, messages};
     }
 

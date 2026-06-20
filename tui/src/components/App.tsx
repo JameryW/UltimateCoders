@@ -118,6 +118,7 @@ const App: React.FC = () => {
     setSubtasksFromSubmit,
     updateSubtaskStatus,
     clearTask: clearStreamTask,
+    markStreamingFinished,
   } = useTaskEvents(client, connectionState, state.activeTaskId);
 
   // ── Track processed events to avoid re-formatting ───────
@@ -166,7 +167,14 @@ const App: React.FC = () => {
     if (newMessages.length > 0) {
       dispatch({type: 'ADD_MESSAGES', messages: newMessages});
     }
-  }, [events.length]);
+    // ponytail: stop streaming spinner on terminal task events
+    const hasTerminalEvent = newEvents.some(
+      (e) => e.type === 'task_completed' || e.type === 'task_failed',
+    );
+    if (hasTerminalEvent) {
+      markStreamingFinished();
+    }
+  }, [events.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset processed event count when events are cleared ─
   useEffect(() => {

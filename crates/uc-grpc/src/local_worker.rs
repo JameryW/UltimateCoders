@@ -107,6 +107,22 @@ pub struct WorkerSubtaskUpdate {
     pub depends_on: Vec<String>,
 }
 
+/// Fine-grained task event from the worker (maps to ``task_event`` notification params).
+///
+/// Carries the same fields as the proto TaskEvent, enabling tool_call,
+/// tool_result, file_modified, and other fine-grained events to flow
+/// from the Python worker to the Rust gRPC server without NATS.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct WorkerTaskEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub task_id: String,
+    #[serde(default)]
+    pub subtask_id: Option<String>,
+    #[serde(default)]
+    pub data: std::collections::HashMap<String, String>,
+}
+
 // ── Bridge ────────────────────────────────────────────────────
 
 /// Manages the local Python worker subprocess.
@@ -398,11 +414,13 @@ impl LocalWorkerBridge {
     /// TaskStore and broadcasting events.
     pub fn start_notification_reader<
         F: Fn(WorkerTaskUpdate) + Send + Sync + 'static,
+        E: Fn(WorkerTaskEvent) + Send + Sync + 'static,
         G: Fn() + Send + Sync + 'static,
         H: Fn() + Send + Sync + 'static,
     >(
         &self,
         apply_fn: F,
+        event_fn: E,
         on_worker_dead: G,
         on_restart: H,
     ) {
@@ -458,6 +476,25 @@ impl LocalWorkerBridge {
                                             tracing::warn!(
                                                 error = %e,
                                                 "Failed to parse task_update params from worker"
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if notif.method == "task_event" {
+                                if let Some(params) = notif.params {
+                                    match serde_json::from_value::<WorkerTaskEvent>(params) {
+                                        Ok(event) => {
+                                            tracing::debug!(
+                                                event_type = %event.event_type,
+                                                task_id = %event.task_id,
+                                                "Received task_event notification from worker"
+                                            );
+                                            event_fn(event);
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                "Failed to parse task_event params from worker"
                                             );
                                         }
                                     }

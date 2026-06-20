@@ -13,6 +13,7 @@ Supported methods:
 
 Notifications (worker → server):
     - ``task_update``: task/subtask status changes during execution
+    - ``task_event``: fine-grained events (tool_call, tool_result, file_modified, etc.)
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ import logging
 import os
 import signal
 import sys
-from typing import Any
+from typing import Any, Optional
 
+from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.llm import LLMClient
 from ultimate_coders.agent.orchestrator import Orchestrator, TaskStatus
 from ultimate_coders.agent.worker import Worker
@@ -55,6 +57,65 @@ class JsonRpcWriter:
         )
         self._out.write(msg + "\n")
         self._out.flush()
+
+
+class ForwardingEventEmitter(TaskEventEmitter):
+    """Event emitter that forwards events to the Rust gRPC server via JSON-RPC.
+
+    Wraps a standard TaskEventEmitter so events reach both:
+    - Python internal consumers (Dashboard SSE, ring buffer)
+    - Rust gRPC server via JSON-RPC ``task_event`` notifications
+    """
+
+    def __init__(self, inner: TaskEventEmitter, writer: JsonRpcWriter) -> None:
+        super().__init__()
+        self._inner = inner
+        self._writer = writer
+
+    async def emit(
+        self,
+        event_type: str,
+        task_id: str = "",
+        subtask_id: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        # Forward to Rust via JSON-RPC
+        params: dict[str, Any] = {
+            "type": event_type,
+            "task_id": task_id,
+            "data": {},
+        }
+        if subtask_id:
+            params["subtask_id"] = subtask_id
+        # Serialize data values to strings for proto compatibility
+        if data:
+            string_data: dict[str, str] = {}
+            for k, v in data.items():
+                if isinstance(v, str):
+                    string_data[k] = v
+                elif isinstance(v, bool):
+                    string_data[k] = "true" if v else "false"
+                elif isinstance(v, (int, float)):
+                    string_data[k] = str(v)
+                elif isinstance(v, dict) or isinstance(v, list):
+                    string_data[k] = json.dumps(v, ensure_ascii=False)
+                else:
+                    string_data[k] = str(v)
+            params["data"] = string_data
+        self._writer.write_notification("task_event", params)
+        # Also emit to internal consumers
+        await self._inner.emit(event_type, task_id, subtask_id, data)
+
+    def get_recent_events(
+        self,
+        task_id: Optional[str] = None,  # noqa: UP045
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self._inner.get_recent_events(task_id, limit)
+
+    @property
+    def pending_count(self) -> int:
+        return self._inner.pending_count
 
 
 class LocalWorker:
@@ -155,6 +216,12 @@ class LocalWorker:
 
         # Orchestrator (no NATS publisher — we use JSON-RPC notifications instead)
         self._orchestrator = Orchestrator(engine=engine, llm_client=llm_client)
+
+        # Wrap the Orchestrator's event emitter to forward events to Rust
+        forwarding_emitter = ForwardingEventEmitter(
+            self._orchestrator.event_emitter, self._writer,
+        )
+        self._orchestrator.event_emitter = forwarding_emitter
 
         # Worker
         if sandbox_mode == "subprocess":
@@ -350,6 +417,14 @@ class LocalWorker:
         # Per-subtask: InProgress -> Completed with delays
         delay = self._mock_delay_ms / 1000.0
         for st in subtasks:
+            # Send task_event: subtask_assigned
+            self._writer.write_notification("task_event", {
+                "type": "subtask_assigned",
+                "task_id": task_id,
+                "subtask_id": st["id"],
+                "data": {"worker_id": "mock-worker", "description": st["description"]},
+            })
+
             # InProgress
             st["status"] = "InProgress"
             self._writer.write_notification("task_update", {
@@ -359,6 +434,12 @@ class LocalWorker:
                 "status": "InProgress",
                 "subtasks": subtasks,
                 "result": None,
+            })
+            self._writer.write_notification("task_event", {
+                "type": "subtask_started",
+                "task_id": task_id,
+                "subtask_id": st["id"],
+                "data": {"worker_id": "mock-worker", "description": st["description"]},
             })
             await asyncio.sleep(delay)
 
@@ -372,7 +453,20 @@ class LocalWorker:
                 "subtasks": subtasks,
                 "result": None,
             })
+            self._writer.write_notification("task_event", {
+                "type": "subtask_completed",
+                "task_id": task_id,
+                "subtask_id": st["id"],
+                "data": {"summary": st["description"], "success": "true"},
+            })
             await asyncio.sleep(delay)
+
+        # Send task_event: task_completed
+        self._writer.write_notification("task_event", {
+            "type": "task_completed",
+            "task_id": task_id,
+            "data": {"description": description, "result": "All subtasks completed"},
+        })
 
         # Final response: task Completed
         result = {
