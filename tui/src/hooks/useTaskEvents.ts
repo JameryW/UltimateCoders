@@ -9,7 +9,7 @@
  * Re-subscribes automatically on reconnect.
  */
 
-import {useState, useEffect, useCallback, useRef} from 'react';
+import React, {useState, useEffect, useCallback, useRef, useMemo} from 'react';
 import type {
   TaskEventProto,
   SubtaskProto,
@@ -203,8 +203,10 @@ export function useTaskEvents(
   const streamRetryCount = useRef(0);
   const streamRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Convert the subtask map to an array for display
-  const subtasks = Array.from(subtaskMap.values());
+  // ponytail: memoize subtasks array to prevent App re-render loop.
+  // Array.from(subtaskMap.values()) creates a new array every render,
+  // which triggers the streamSubtasks diff in App → SET_SUBTASKS → re-render → flicker.
+  const subtasks = useMemo(() => Array.from(subtaskMap.values()), [subtaskMap]);
 
   // Cleanup retry timer on unmount
   useEffect(() => {

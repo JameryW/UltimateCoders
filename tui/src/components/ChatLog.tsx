@@ -347,7 +347,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
 
   if (totalMessages === 0) {
     return (
-      <Box flexDirection="column" flexGrow={2} paddingX={1}>
+      <Box flexDirection="column" height={visibleLines} paddingX={1}>
         <Text dimColor>{'No messages yet. Type a task below.'}</Text>
       </Box>
     );
@@ -370,7 +370,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   const currentMatchMsgId = currentMatch ? filteredMessages[currentMatch.msgIdx]?.id : null;
 
   return (
-    <Box flexDirection="column" flexGrow={2} paddingX={1}>
+    <Box flexDirection="column" height={visibleLines} paddingX={1}>
       {indicatorBar && <Text color={eventFilter !== 'all' || !followLog ? 'yellow' : 'dim'} dimColor={eventFilter === 'all' && followLog}>{indicatorBar}</Text>}
       {searchActive && (
         <Box>

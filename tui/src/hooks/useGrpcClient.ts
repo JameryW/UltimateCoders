@@ -306,13 +306,13 @@ export function useGrpcClient(): UseGrpcClientReturn {
   }, [client]);
 
   // ── Manual reconnect: interrupts backoff, immediately retries ──
+  // ponytail: read client from ref so reconnect has stable identity (no client dep)
   const reconnect = useCallback(() => {
-    // Close existing client
-    if (client) {
-      client.close();
+    if (clientRef.current) {
+      clientRef.current.close();
+      clientRef.current = null;
     }
     setClient(null);
-    // Reset retry state so we start fresh
     setRetryCount(0);
     setNextRetryAt(null);
     if (retryTimerRef.current) {
@@ -320,7 +320,7 @@ export function useGrpcClient(): UseGrpcClientReturn {
       retryTimerRef.current = null;
     }
     connect();
-  }, [client, connect]);
+  }, [connect]);
 
   return {
     connectionState,
