@@ -7,7 +7,7 @@
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to TUI and Dashboard consumers. An Ink-based TUI provides terminal monitoring with CJK/IME support, and a FastAPI Dashboard offers web-based cluster oversight with SSE streaming.
+Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to TUI and Dashboard consumers. An Ink-based TUI provides terminal monitoring with CJK/IME support, and a Vite/React Dashboard offers web-based cluster monitoring via gRPC-Web streaming.
 
 ## Quick Start
 
@@ -76,23 +76,20 @@ Then connect from Python:
 engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 ```
 
-### 6. Start the TUI
+### 6. Run TUI or Dashboard
 
 ```bash
-cd tui
-npm install
-npm start
+# TUI only (connects to gRPC server)
+./scripts/run_tui.sh
+
+# gRPC server + Dashboard in background, TUI in foreground
+./scripts/run_tui.sh --server
+
+# TUI in build mode
+./scripts/run_tui.sh --build
 ```
 
-The TUI connects to the gRPC server and provides real-time task monitoring with CJK/IME input support. See [tui/README.md](tui/README.md) for keyboard shortcuts and architecture details.
-
-### 7. Start the Dashboard
-
-```bash
-python -m ultimate_coders.dashboard
-```
-
-The Dashboard is a FastAPI web UI with SSE streaming for real-time cluster monitoring. It can optionally publish/subscribe to NATS for cross-component event sync.
+The TUI connects to the gRPC server and provides real-time task monitoring with CJK/IME input support. The Dashboard (Vite + React) provides a web UI at `http://localhost:5173`. See [tui/README.md](tui/README.md) for keyboard shortcuts and architecture details.
 
 ## Architecture
 
@@ -101,7 +98,7 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 ```
 +-------------------+     +-------------------+     +---------------+     +---------------+
 |   Python Agent    |     |   Python Agent    |     |  Ink TUI      |     |  Dashboard    |
-|   Orchestrator    |     |     Worker        |     |  (Node.js)    |     |  (FastAPI)    |
+|   Orchestrator    |     |     Worker        |     |  (Node.js)    |     |  (Vite/React) |
 +--------+----------+     +--------+----------+     +-------+-------+     +-------+-------+
          |                         |                         |                     |
          |  Engine API (PyO3)      |                         | gRPC                | SSE
@@ -166,7 +163,7 @@ ultimate-coders/
 │   └── ultimate_coders/      # Python ergonomic layer
 │       ├── engine.py         # create_engine() factory
 │       ├── agent/            # Orchestrator + Worker + Sandbox + Scheduler
-│       ├── dashboard/        # FastAPI web dashboard + SSE streaming
+│       ├── dashboard/        # Vite/React web dashboard + gRPC-Web streaming
 │       ├── local_worker.py   # JSON-RPC worker subprocess
 │       ├── nats_worker.py    # NATS consumer/producer bridge
 │       ├── search/           # SearchQuery builder
@@ -211,11 +208,12 @@ pytest tests/python/ -v        # Run Python tests
 ### TUI
 
 ```bash
-cd tui
-npm install                    # Install dependencies
-npm start                      # Start TUI
-npm test                       # Run unit tests (vitest)
-npm run typecheck              # TypeScript type checking
+./scripts/run_tui.sh              # Dev mode
+./scripts/run_tui.sh --build     # Build + run
+./scripts/run_tui.sh --server    # With gRPC server + dashboard
+
+# Or manually:
+cd tui && npm install && npm start
 ```
 
 ### Docker Compose

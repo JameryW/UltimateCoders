@@ -1,39 +1,19 @@
 #!/usr/bin/env bash
-# Run the UltimateCoders TUI.
-#
-# Usage:
-#   ./scripts/run_tui.sh          # dev mode (tsx watch)
-#   ./scripts/run_tui.sh --build  # build + run dist/cli.js
-#   ./scripts/run_tui.sh --grpc   # also start gRPC server in background
-#
-# Environment:
-#   GRPC_SERVER_ADDR  gRPC server address (default: localhost:50051)
-#   GRPC_PROTO_PATH   path to engine.proto (default: auto-resolve)
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-TUI_DIR="tui"
-
-# ── Ensure dependencies ──────────────────────────────────────
-if [ ! -d "$TUI_DIR/node_modules" ]; then
-  echo "📦 Installing TUI dependencies..."
-  cd "$TUI_DIR" && npm install && cd ..
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Parse flags ───────────────────────────────────────────────
-MODE="dev"
-START_GRPC=false
-
+START_DASH=false
 for arg in "$@"; do
   case "$arg" in
-    --build) MODE="build" ;;
-    --grpc)  START_GRPC=true ;;
+    --server) START_DASH=true ;;
     --help|-h)
-      echo "Usage: $0 [--build] [--grpc]"
+      echo "Usage: $0 [--server]"
       echo ""
-      echo "  (default)  dev mode with tsx watch"
-      echo "  --build    build with esbuild, then run dist/cli.js"
-      echo "  --grpc     start gRPC server in background first"
+      echo "  (default)  TUI only (auto-starts gRPC server)"
+      echo "  --server   also start web dashboard in background"
       exit 0
       ;;
     *)
@@ -41,50 +21,64 @@ for arg in "$@"; do
   esac
 done
 
-# ── Start gRPC server if requested ────────────────────────────
-GRPC_PID=""
-GRPC_LOG=""
-if [ "$START_GRPC" = true ]; then
-  GRPC_LOG="/tmp/uc-grpc-server-$(date +%s).log"
-  echo "🚀 Starting gRPC server..."
-  echo "   Log: $GRPC_LOG"
-  RUST_LOG=info cargo run -p uc-grpc-server >"$GRPC_LOG" 2>&1 &
-  GRPC_PID=$!
-  echo "   PID: $GRPC_PID (will stop on exit)"
-  # Wait for server to be ready (check log for bind message)
-  for i in $(seq 1 20); do
-    if grep -q "started" "$GRPC_LOG" 2>/dev/null || grep -q "listening" "$GRPC_LOG" 2>/dev/null; then
-      break
+# Auto-detect .venv Python for the gRPC worker
+if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    export UC_WORKER_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
+fi
+
+# Ensure Python package is built (maturin develop)
+if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    "$PROJECT_ROOT/.venv/bin/python3" -c "import ultimate_coders" 2>/dev/null || {
+        echo ">>> Building ultimate_coders Python package..."
+        cd "$PROJECT_ROOT" && maturin develop --manifest-path crates/uc-python/Cargo.toml
+    }
+fi
+
+# Ensure gRPC server is running
+if ! lsof -i :50051 >/dev/null 2>&1; then
+    echo ">>> Starting gRPC server..."
+    cd "$PROJECT_ROOT"
+    PATH="$PROJECT_ROOT/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
+        cargo run -p uc-grpc-server &
+    SERVER_PID=$!
+    echo "    Server PID: $SERVER_PID"
+    # Wait for server to be ready
+    for i in $(seq 1 20); do
+        if lsof -i :50051 >/dev/null 2>&1; then
+            echo "    Server ready on :50051"
+            break
+        fi
+        sleep 0.5
+    done
+fi
+
+# ── Start dashboard if requested ──────────────────────────────
+DASH_PID=""
+if [ "$START_DASH" = true ]; then
+    if [ ! -d "$PROJECT_ROOT/dashboard/node_modules" ]; then
+        echo ">>> Installing Dashboard dependencies..."
+        cd "$PROJECT_ROOT/dashboard" && npm install
     fi
-    sleep 0.5
-  done
+    echo ">>> Starting dashboard..."
+    (cd "$PROJECT_ROOT/dashboard" && npx vite --host) &
+    DASH_PID=$!
+    for i in $(seq 1 20); do
+        if curl -s http://localhost:5173 >/dev/null 2>&1; then break; fi
+        sleep 0.5
+    done
+    echo "    Dashboard: http://localhost:5173"
 fi
 
 cleanup() {
-  if [ -n "$GRPC_PID" ]; then
-    echo ""
-    echo "🛑 Stopping gRPC server (PID $GRPC_PID)..."
-    kill "$GRPC_PID" 2>/dev/null || true
-    wait "$GRPC_PID" 2>/dev/null || true
-  fi
-  if [ -n "$GRPC_LOG" ] && [ -f "$GRPC_LOG" ]; then
-    echo "📋 gRPC server log saved: $GRPC_LOG"
-  fi
+    if [ -n "$DASH_PID" ]; then
+        echo ">>> Stopping dashboard (PID $DASH_PID)..."
+        kill "$DASH_PID" 2>/dev/null || true
+        wait "$DASH_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
-# ── Run TUI ───────────────────────────────────────────────────
-cd "$TUI_DIR"
-
-case "$MODE" in
-  dev)
-    echo "🖥️  Starting TUI in dev mode (tsx watch)..."
-    npx tsx watch src/index.tsx
-    ;;
-  build)
-    echo "🏗️  Building TUI..."
-    node build.mjs
-    echo "🖥️  Starting TUI..."
-    node dist/cli.js
-    ;;
-esac
+# Start TUI
+echo ">>> Starting TUI..."
+cd "$PROJECT_ROOT/tui"
+npx tsx src/index.tsx
