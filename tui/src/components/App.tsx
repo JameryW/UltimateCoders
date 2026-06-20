@@ -414,10 +414,15 @@ const App: React.FC = () => {
 
   // ── Global keyboard handler ────────────────────────────
   useInput((input, key) => {
-    // ── Ctrl+C / Ctrl+Q: quit with confirmation if active task ──
+    // ── Ctrl+C / Ctrl+Q: quit (with confirmation if active task) ──
     if (key.ctrl && (input === 'c' || input === 'q')) {
       if (state.exitConfirmPending) {
         // Second Ctrl+C — confirm exit
+        exit();
+        return;
+      }
+      // No active task/streaming — exit immediately
+      if (!state.activeTaskId && !state.isSubmitting && !isStreaming) {
         exit();
         return;
       }
