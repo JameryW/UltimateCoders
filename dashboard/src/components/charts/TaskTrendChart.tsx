@@ -1,14 +1,4 @@
 import { useMemo } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  Legend,
-} from "recharts";
 import type { TasksData, DashboardEvent } from "@/types/dashboard";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +8,7 @@ interface TaskTrendChartProps {
   stale?: boolean;
 }
 
-/** Truncate a timestamp to the start of its hour, e.g. "2026-06-18T14:00:00". */
+/** Truncate a timestamp to the start of its hour. */
 function toHourBucket(ts: number): string {
   const d = new Date(ts);
   const yyyy = d.getFullYear();
@@ -28,7 +18,7 @@ function toHourBucket(ts: number): string {
   return `${yyyy}-${mm}-${dd}T${hh}:00`;
 }
 
-/** Format an hour-bucket key for display on the X axis, e.g. "Jun 18 14:00". */
+/** Format an hour-bucket key for display, e.g. "Jun 18 14:00". */
 function formatHourLabel(bucketKey: string): string {
   const d = new Date(bucketKey);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
@@ -41,7 +31,6 @@ function bucketByHour(events: DashboardEvent[]): { name: string; completed: numb
   const cutoff = now - 24 * 3600 * 1000;
   const buckets: Record<string, { completed: number; failed: number }> = {};
 
-  // Pre-fill the last 24 hours so empty hours show as zero
   for (let i = 23; i >= 0; i--) {
     const hourTs = now - i * 3600 * 1000;
     const key = toHourBucket(hourTs);
@@ -63,28 +52,34 @@ function bucketByHour(events: DashboardEvent[]): { name: string; completed: numb
     .map(([key, counts]) => ({ name: formatHourLabel(key), ...counts }));
 }
 
-/** Read a CSS variable value at runtime. */
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
+const BAR_WIDTH = 14;
+const BAR_GAP = 4;
+const CHART_H = 160;
+const PADDING = { top: 8, right: 8, bottom: 28, left: 28 };
 
 export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) {
   const trendData = useMemo(() => bucketByHour(eventLog), [eventLog]);
 
-  // Current status summary from tasks
   const statusCounts = tasks.available ? tasks.status_counts : {};
   const total = tasks.available ? tasks.total : 0;
 
-  // ponytail: read CSS vars once per render via useMemo so getComputedStyle
-  // is called in a single batch instead of 6 separate calls.
-  const themeColors = useMemo(() => ({
-    gridStroke: cssVar("--border-color") || "#334155",
-    axisStroke: cssVar("--text-muted") || "#94a3b8",
-    tooltipBg: cssVar("--bg-surface") || "#1e293b",
-    tooltipBorder: cssVar("--border-color") || "#334155",
-    completedColor: cssVar("--status-completed") || "#22c55e",
-    failedColor: cssVar("--status-failed") || "#ef4444",
-  }), []);
+  const maxVal = useMemo(() => {
+    const m = Math.max(1, ...trendData.map((d) => d.completed + d.failed));
+    return m;
+  }, [trendData]);
+
+  const plotW = trendData.length * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
+  const svgW = plotW + PADDING.left + PADDING.right;
+  const svgH = CHART_H + PADDING.top + PADDING.bottom;
+  const plotH = CHART_H;
+
+  // Y-axis ticks
+  const yTicks = useMemo(() => {
+    const step = maxVal <= 4 ? 1 : Math.ceil(maxVal / 4);
+    const ticks: number[] = [];
+    for (let v = 0; v <= maxVal; v += step) ticks.push(v);
+    return ticks;
+  }, [maxVal]);
 
   return (
     <div className={cn("rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4 relative", stale && "opacity-70")}>
@@ -119,25 +114,72 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
       </div>
 
       {trendData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={trendData}>
-            <CartesianGrid strokeDasharray="3 3" stroke={themeColors.gridStroke} />
-            <XAxis dataKey="name" stroke={themeColors.axisStroke} fontSize={10} interval="preserveStartEnd" />
-            <YAxis stroke={themeColors.axisStroke} fontSize={11} />
-            <Tooltip
-              contentStyle={{ backgroundColor: themeColors.tooltipBg, border: `1px solid ${themeColors.tooltipBorder}`, borderRadius: 4 }}
-              labelStyle={{ color: themeColors.axisStroke }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: 11, color: themeColors.axisStroke }}
-              formatter={(value: string) => (
-                <span style={{ color: value === "completed" ? themeColors.completedColor : themeColors.failedColor }}>{value}</span>
-              )}
-            />
-            <Bar dataKey="completed" fill={themeColors.completedColor} radius={[2, 2, 0, 0]} />
-            <Bar dataKey="failed" fill={themeColors.failedColor} radius={[2, 2, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+        <svg
+          width="100%"
+          height={svgH}
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          preserveAspectRatio="xMidYMid meet"
+          className="overflow-visible"
+        >
+          {/* Y-axis */}
+          {yTicks.map((v) => {
+            const y = PADDING.top + plotH - (v / maxVal) * plotH;
+            return (
+              <g key={v}>
+                <line x1={PADDING.left} y1={y} x2={PADDING.left + plotW} y2={y} stroke="var(--border-color)" strokeDasharray="3 3" />
+                <text x={PADDING.left - 4} y={y + 3} textAnchor="end" fontSize={10} fill="var(--text-muted)">{v}</text>
+              </g>
+            );
+          })}
+
+          {/* Bars */}
+          {trendData.map((d, i) => {
+            const x = PADDING.left + i * (BAR_WIDTH + BAR_GAP);
+            const completedH = (d.completed / maxVal) * plotH;
+            const failedH = (d.failed / maxVal) * plotH;
+            const totalH = completedH + failedH;
+            const barY = PADDING.top + plotH - totalH;
+
+            return (
+              <g key={d.name}>
+                {/* Completed portion (bottom) */}
+                {d.completed > 0 && (
+                  <rect
+                    x={x} y={PADDING.top + plotH - completedH}
+                    width={BAR_WIDTH} height={completedH}
+                    fill="var(--status-completed, #22c55e)" rx={1}
+                  />
+                )}
+                {/* Failed portion (stacked on top) */}
+                {d.failed > 0 && (
+                  <rect
+                    x={x} y={barY}
+                    width={BAR_WIDTH} height={failedH}
+                    fill="var(--status-failed, #ef4444)" rx={1}
+                  />
+                )}
+                {/* X-axis label — show every 4th to avoid crowding */}
+                {i % 4 === 0 && (
+                  <text
+                    x={x + BAR_WIDTH / 2}
+                    y={PADDING.top + plotH + 16}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fill="var(--text-muted)"
+                  >
+                    {d.name.split(" ")[1] ?? d.name}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Legend */}
+          <rect x={PADDING.left} y={svgH - 6} width={8} height={8} fill="var(--status-completed, #22c55e)" rx={1} />
+          <text x={PADDING.left + 12} y={svgH - 0} fontSize={10} fill="var(--text-muted)">completed</text>
+          <rect x={PADDING.left + 72} y={svgH - 6} width={8} height={8} fill="var(--status-failed, #ef4444)" rx={1} />
+          <text x={PADDING.left + 84} y={svgH - 0} fontSize={10} fill="var(--text-muted)">failed</text>
+        </svg>
       ) : (
         <div className="h-[200px] flex items-center justify-center">
           <p className="text-xs text-[var(--text-muted)]">

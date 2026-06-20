@@ -849,16 +849,11 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .into_iter()
                 .collect(),
             ),
-            uc_engine::AgentEventType::TaskFailed {
-                task_id,
-                error,
-            } => (
+            uc_engine::AgentEventType::TaskFailed { task_id, error } => (
                 "task_failed".to_string(),
                 task_id.0,
                 String::new(),
-                vec![("error".to_string(), error)]
-                    .into_iter()
-                    .collect(),
+                vec![("error".to_string(), error)].into_iter().collect(),
             ),
         };
 

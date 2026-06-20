@@ -2016,11 +2016,7 @@ pub async fn apply_worker_event_to_store(
                 .get("file_path")
                 .cloned()
                 .unwrap_or_default(),
-            diff: worker_event
-                .data
-                .get("diff")
-                .cloned()
-                .unwrap_or_default(),
+            diff: worker_event.data.get("diff").cloned().unwrap_or_default(),
         }),
         "subtask_completed" => Some(uc_engine::AgentEventType::SubtaskCompleted {
             task_id: task_id.clone(),
@@ -2039,11 +2035,7 @@ pub async fn apply_worker_event_to_store(
         "subtask_failed" => Some(uc_engine::AgentEventType::SubtaskFailed {
             task_id: task_id.clone(),
             subtask_id: subtask_id.clone(),
-            error: worker_event
-                .data
-                .get("error")
-                .cloned()
-                .unwrap_or_default(),
+            error: worker_event.data.get("error").cloned().unwrap_or_default(),
             recoverable: worker_event
                 .data
                 .get("recoverable")
@@ -2057,19 +2049,11 @@ pub async fn apply_worker_event_to_store(
                 .get("description")
                 .cloned()
                 .unwrap_or_default(),
-            result: worker_event
-                .data
-                .get("result")
-                .cloned()
-                .unwrap_or_default(),
+            result: worker_event.data.get("result").cloned().unwrap_or_default(),
         }),
         "task_failed" => Some(uc_engine::AgentEventType::TaskFailed {
             task_id: task_id.clone(),
-            error: worker_event
-                .data
-                .get("error")
-                .cloned()
-                .unwrap_or_default(),
+            error: worker_event.data.get("error").cloned().unwrap_or_default(),
         }),
         _ => {
             tracing::debug!(
@@ -2172,7 +2156,10 @@ pub async fn apply_worker_update_to_store(
         uc_types::TaskStatus::Failed => {
             store.record_event(uc_engine::AgentEventType::TaskFailed {
                 task_id: uc_types::TaskId(update.task_id.clone()),
-                error: update.result.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                error: update
+                    .result
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string()),
             });
         }
         _ => {}
@@ -2562,8 +2549,12 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         // Re-read the task (now Completed)
         let store = self.inner.task_store.lock().await;
         let completed_task = store.get_task(&task.id.0).expect("task just inserted");
-        let subtask_protos: Vec<SubtaskProto> =
-            completed_task.subtasks.clone().into_iter().map(Into::into).collect();
+        let subtask_protos: Vec<SubtaskProto> = completed_task
+            .subtasks
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect();
 
         Ok(Response::new(SubmitTaskResponse {
             success: true,

@@ -11,7 +11,9 @@ use tokio::sync::Mutex;
 use tonic::Request;
 
 use uc_engine::LocalEngine;
-use uc_grpc::local_worker::{LocalWorkerBridge, WorkerSubtaskUpdate, WorkerTaskEvent, WorkerTaskUpdate};
+use uc_grpc::local_worker::{
+    LocalWorkerBridge, WorkerSubtaskUpdate, WorkerTaskEvent, WorkerTaskUpdate,
+};
 use uc_grpc::server::{
     apply_worker_update_to_store, mark_tasks_failed_on_worker_death, GrpcServer, TaskStore,
 };
