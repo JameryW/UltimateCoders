@@ -24,7 +24,7 @@
  * All state transitions go through dispatch — no setState in render.
  * Keyboard: global useInput, shortcuts defined in keymap.ts.
  */
-import React, {useReducer, useCallback, useEffect, useRef} from 'react';
+import React, {useReducer, useCallback, useEffect, useRef, useMemo} from 'react';
 import {Box, Text, useApp, useInput, useStdout, useStdin} from 'ink';
 import ChatLog, {
   type ChatMessage,
@@ -258,6 +258,29 @@ const App: React.FC = () => {
     dispatch({type: 'ADD_MESSAGES', messages: [msg]});
   }, []);
 
+  // ── Stable callbacks for child props (prevent re-renders) ──
+  const addFollowLog = useCallback((follow: boolean) => {
+    dispatch({type: 'SET_FOLLOW_LOG', follow});
+  }, []);
+
+  const addHistoryIndex = useCallback((index: number) => {
+    dispatch({type: 'SET_HISTORY_INDEX', index});
+  }, []);
+
+  // ponytail: use ref for commandSuggestions to avoid dep on state
+  const commandSuggestionsRef = useRef(state.commandSuggestions);
+  commandSuggestionsRef.current = state.commandSuggestions;
+  const handleInputChange = useCallback((val: string) => {
+    const trimmed = val.trimStart();
+    if (trimmed.startsWith('/')) {
+      const prefix = trimmed.slice(1).split(' ')[0];
+      const matched = matchCommands(prefix);
+      dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: matched.length > 0 ? matched : null});
+    } else if (commandSuggestionsRef.current) {
+      dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: null});
+    }
+  }, []);
+
   // ── Helper: apply submit response ──────────────────────
   const applySubmitResponse = useCallback(
     (protoSubtasks: SubtaskProto[], taskProto?: TaskProto) => {
@@ -299,9 +322,10 @@ const App: React.FC = () => {
   );
 
   // ── Build scroll command for ChatLog ────────────────────
-  const scrollCommand: ScrollCommand | undefined = state.scrollDirection
+  // ponytail: useMemo to avoid new object reference each render
+  const scrollCommand: ScrollCommand | undefined = useMemo(() => state.scrollDirection
     ? {direction: state.scrollDirection, lines: state.scrollLines, tick: state.scrollTick}
-    : undefined;
+    : undefined, [state.scrollDirection, state.scrollLines, state.scrollTick]);
 
   // ── Handle task submission ─────────────────────────────
   const handleSubmit = useCallback(
@@ -718,15 +742,18 @@ const App: React.FC = () => {
   // Home: \x1b[H or \x1b[1~  |  End: \x1b[F or \x1b[4~
   // ponytail: remove this workaround when upgrading to Ink v6.6+ (needs React 19)
   const {stdin: rawStdin, internal_eventEmitter: rawEmitter} = useStdin();
+  // ponytail: refs to avoid re-registering listener on every message/focus change
+  const focusedAreaRef = useRef(state.focusedArea);
+  focusedAreaRef.current = state.focusedArea;
+  const messagesLengthRef = useRef(state.messages.length);
+  messagesLengthRef.current = state.messages.length;
   useEffect(() => {
     if (!rawStdin || !rawEmitter) return;
     const onRawInput = (data: string) => {
-      if (state.focusedArea === 'chat') {
-        // Home sequences: ESC[H or ESC[1~
+      if (focusedAreaRef.current === 'chat') {
         if (data === '\x1b[H' || data === '\x1b[1~') {
-          dispatch({type: 'SCROLL_UP', lines: state.messages.length});
+          dispatch({type: 'SCROLL_UP', lines: messagesLengthRef.current});
         }
-        // End sequences: ESC[F or ESC[4~
         else if (data === '\x1b[F' || data === '\x1b[4~') {
           dispatch({type: 'SET_FOLLOW_LOG', follow: true});
         }
@@ -736,7 +763,7 @@ const App: React.FC = () => {
     return () => {
       rawEmitter.off('input', onRawInput);
     };
-  }, [rawStdin, rawEmitter, state.focusedArea, state.messages.length, dispatch]);
+  }, [rawStdin, rawEmitter, dispatch]);
 
   // ── Symbols ─────────────────────────────────────────────
   const S = getSymbols(state.symbolMode);
@@ -846,7 +873,7 @@ const App: React.FC = () => {
         eventFilter={state.eventFilter}
         scrollCommand={scrollCommand}
         unreadCount={state.unreadCount}
-        onSetFollowLog={(follow: boolean) => dispatch({type: 'SET_FOLLOW_LOG', follow})}
+        onSetFollowLog={addFollowLog}
         terminalWidth={terminalWidth}
         messagesTruncated={state.messagesTruncated}
         searchQuery={state.searchQuery}
@@ -894,19 +921,10 @@ const App: React.FC = () => {
         isSubmitting={state.isSubmitting}
         inputHistory={state.inputHistory}
         historyIndex={state.historyIndex}
-        onHistoryIndexChange={(index: number) => dispatch({type: 'SET_HISTORY_INDEX', index})}
+        onHistoryIndexChange={addHistoryIndex}
         isOffline={connectionState !== 'connected'}
         commandSuggestions={state.commandSuggestions}
-        onValueChange={(val: string) => {
-          const trimmed = val.trimStart();
-          if (trimmed.startsWith('/')) {
-            const prefix = trimmed.slice(1).split(' ')[0];
-            const matched = matchCommands(prefix);
-            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: matched.length > 0 ? matched : null});
-          } else if (state.commandSuggestions) {
-            dispatch({type: 'SET_COMMAND_SUGGESTIONS', suggestions: null});
-          }
-        }}
+        onValueChange={handleInputChange}
       />
 
       {/* ── Status bar ──────────────────────────────── */}

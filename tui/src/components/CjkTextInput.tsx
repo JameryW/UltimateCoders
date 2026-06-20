@@ -105,20 +105,23 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
 
   // Track previous value to detect external changes (e.g. clear on submit)
   const prevValueRef = useRef(value);
+  // ponytail: valueRef lets pushUndo read current value without depending on it
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   // ── Undo/Redo stacks ──────────────────────────────────────
   const undoStackRef = useRef<Snapshot[]>([]);
   const redoStackRef = useRef<Snapshot[]>([]);
 
   /** Push current state to undo stack before a mutation. */
+  // ponytail: read value/cursor from refs — stable callback, no dep on value
   const pushUndo = useCallback(() => {
-    undoStackRef.current.push({value, cursorGI: cursorRef.current});
+    undoStackRef.current.push({value: valueRef.current, cursorGI: cursorRef.current});
     if (undoStackRef.current.length > UNDO_LIMIT) {
       undoStackRef.current.shift();
     }
-    // Any new mutation clears redo
     redoStackRef.current = [];
-  }, [value]);
+  }, []);
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -231,7 +234,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       if ((k.meta && input === 'z' && !k.shift) || (k.alt && input === 'z' && !k.shift)) {
         const snapshot = undoStackRef.current.pop();
         if (snapshot) {
-          redoStackRef.current.push({value, cursorGI: cursorRef.current});
+          redoStackRef.current.push({value: valueRef.current, cursorGI: cursorRef.current});
           setCursorGI(snapshot.cursorGI);
           cursorRef.current = snapshot.cursorGI;
           prevValueRef.current = snapshot.value;
@@ -244,7 +247,7 @@ const CjkTextInput: React.FC<CjkTextInputProps> = ({
       if ((k.meta && input === 'z' && k.shift) || (k.alt && input === 'z' && k.shift)) {
         const snapshot = redoStackRef.current.pop();
         if (snapshot) {
-          undoStackRef.current.push({value, cursorGI: cursorRef.current});
+          undoStackRef.current.push({value: valueRef.current, cursorGI: cursorRef.current});
           setCursorGI(snapshot.cursorGI);
           cursorRef.current = snapshot.cursorGI;
           prevValueRef.current = snapshot.value;

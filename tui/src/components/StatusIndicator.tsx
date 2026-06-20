@@ -1,7 +1,7 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {Box, Text} from 'ink';
 
-// spinner chars — standard braille pattern at 80ms
+// spinner chars — standard braille pattern
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export interface StatusIndicatorProps {
@@ -27,6 +27,12 @@ export function formatElapsed(ms: number): string {
   return `(${hr}h ${String(min).padStart(2, '0')}m ${String(sec).padStart(2, '0')}s)`;
 }
 
+// ponytail: single state object avoids two useState per tick.
+// 200ms interval instead of 80ms — Ink redraws the entire terminal on each state
+// change, so 5Hz is a better tradeoff between smoothness and flicker.
+interface TickState { frame: number; elapsed: number }
+const INIT_TICK: TickState = {frame: 0, elapsed: 0};
+
 const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   isSubmitting,
   isStreaming,
@@ -34,24 +40,21 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   progress,
 }) => {
   const active = isSubmitting || isStreaming;
+  const [tick, setTick] = useState<TickState>(INIT_TICK);
 
-  // ponytail: ink 5 lacks useAnimation; use setInterval + useState for frame/time
-  const [frame, setFrame] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (!active) { setFrame(0); setElapsed(0); return; }
+    if (!active) { setTick(INIT_TICK); return; }
     const start = Date.now();
     const id = setInterval(() => {
-      setFrame(f => f + 1);
-      setElapsed(Date.now() - start);
-    }, 80);
+      setTick(prev => ({frame: prev.frame + 1, elapsed: Date.now() - start}));
+    }, 200);
     return () => clearInterval(id);
   }, [active]);
 
   if (!active) return null;
 
-  const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-  const elapsedStr = startedAt ? ` ${formatElapsed(elapsed)}` : '';
+  const spinner = SPINNER_FRAMES[tick.frame % SPINNER_FRAMES.length];
+  const elapsedStr = startedAt ? ` ${formatElapsed(tick.elapsed)}` : '';
   const label = isSubmitting ? 'Working' : 'Streaming';
   const cancelHint = isSubmitting ? '  Esc cancel' : '';
 
