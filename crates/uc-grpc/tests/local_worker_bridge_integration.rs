@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use tonic::Request;
 
 use uc_engine::LocalEngine;
-use uc_grpc::local_worker::{LocalWorkerBridge, WorkerSubtaskUpdate, WorkerTaskUpdate};
+use uc_grpc::local_worker::{LocalWorkerBridge, WorkerSubtaskUpdate, WorkerTaskEvent, WorkerTaskUpdate};
 use uc_grpc::server::{
     apply_worker_update_to_store, mark_tasks_failed_on_worker_death, GrpcServer, TaskStore,
 };
@@ -56,14 +56,13 @@ async fn fallback_without_worker() {
     let inner = response.into_inner();
     assert!(inner.success, "submit_task should succeed via fallback");
     assert!(!inner.task_id.is_empty(), "should have a task_id");
-    assert_eq!(inner.status, "InProgress");
+    assert_eq!(inner.status, "Completed");
     assert_eq!(
         inner.subtask_count, 3,
         "newline-split should produce 3 subtasks"
     );
 }
 
-/// Test: local decomposition creates correct number of subtasks.
 #[tokio::test]
 async fn local_decomposition_single_line() {
     let engine = LocalEngine::new_fallback();
@@ -125,15 +124,15 @@ async fn apply_worker_update_creates_task_and_broadcasts() {
         task_id: "t-broadcast-test".to_string(),
         description: "Test task".to_string(),
         project_id: "proj-1".to_string(),
-        status: "InProgress".to_string(),
+        status: "Completed".to_string(),
         subtasks: vec![WorkerSubtaskUpdate {
             id: "s-1".to_string(),
             description: "Subtask 1".to_string(),
-            status: "Assigned".to_string(),
+            status: "Completed".to_string(),
             assigned_worker: Some("worker-1".to_string()),
             depends_on: vec![],
         }],
-        result: None,
+        result: Some("Done".to_string()),
     };
 
     apply_worker_update_to_store(&update, &task_store, &event_tx).await;
@@ -145,9 +144,10 @@ async fn apply_worker_update_creates_task_and_broadcasts() {
     assert_eq!(task.subtasks.len(), 1);
     drop(store);
 
-    // Verify broadcast event was sent
+    // Verify broadcast event was sent (task_completed)
     let event = rx.try_recv().unwrap();
     assert_eq!(event.task_id, "t-broadcast-test");
+    assert_eq!(event.r#type, "task_completed");
 }
 
 /// Test: multiple broadcast subscribers receive the same event.
@@ -163,25 +163,26 @@ async fn broadcast_multiple_subscribers() {
         task_id: "t-multi-sub".to_string(),
         description: "Multi subscriber task".to_string(),
         project_id: "".to_string(),
-        status: "InProgress".to_string(),
+        status: "Completed".to_string(),
         subtasks: vec![WorkerSubtaskUpdate {
             id: "s-1".to_string(),
             description: "Do work".to_string(),
-            status: "InProgress".to_string(),
+            status: "Completed".to_string(),
             assigned_worker: None,
             depends_on: vec![],
         }],
-        result: None,
+        result: Some("Done".to_string()),
     };
 
     apply_worker_update_to_store(&update, &task_store, &event_tx).await;
 
-    // Both subscribers should receive the event
+    // Both subscribers should receive the event (task_completed)
     let event1 = rx1.try_recv().unwrap();
     let event2 = rx2.try_recv().unwrap();
     assert_eq!(event1.task_id, "t-multi-sub");
     assert_eq!(event2.task_id, "t-multi-sub");
-    assert_eq!(event1.r#type, event2.r#type);
+    assert_eq!(event1.r#type, "task_completed");
+    assert_eq!(event2.r#type, "task_completed");
 }
 
 /// Test: mark_tasks_failed_on_worker_death marks InProgress tasks.
@@ -316,8 +317,10 @@ async fn submit_task_via_bridge_with_events() {
     let task_store = Arc::new(Mutex::new(TaskStore::new()));
     let ts = task_store.clone();
     let tx = event_tx.clone();
+    let _ts_evt = task_store.clone();
+    let _tx_evt = event_tx.clone();
 
-    // Start notification reader with 3 closures: apply_fn, on_worker_dead, on_restart
+    // Start notification reader with 4 closures: apply_fn, event_fn, on_worker_dead, on_restart
     bridge.start_notification_reader(
         move |update: WorkerTaskUpdate| {
             let ts = ts.clone();
@@ -325,6 +328,9 @@ async fn submit_task_via_bridge_with_events() {
             tokio::spawn(async move {
                 apply_worker_update_to_store(&update, &ts, &tx).await;
             });
+        },
+        move |_event: WorkerTaskEvent| {
+            // Fine-grained events ignored in integration test
         },
         || {
             tracing::warn!("Mock worker died unexpectedly");
@@ -407,6 +413,7 @@ async fn watch_task_receives_broadcast_events() {
                 apply_worker_update_to_store(&update, &ts, &tx).await;
             });
         },
+        move |_event: WorkerTaskEvent| {},
         || {
             tracing::warn!("Mock worker died unexpectedly");
         },
@@ -546,6 +553,7 @@ async fn broadcast_multiple_receivers_integration() {
                 apply_worker_update_to_store(&update, &ts, &tx).await;
             });
         },
+        move |_event: WorkerTaskEvent| {},
         || {},
         || {},
     );

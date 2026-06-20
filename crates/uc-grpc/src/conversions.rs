@@ -834,6 +834,32 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 .into_iter()
                 .collect(),
             ),
+            uc_engine::AgentEventType::TaskCompleted {
+                task_id,
+                description,
+                result,
+            } => (
+                "task_completed".to_string(),
+                task_id.0,
+                String::new(),
+                vec![
+                    ("description".to_string(), description),
+                    ("result".to_string(), result),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            uc_engine::AgentEventType::TaskFailed {
+                task_id,
+                error,
+            } => (
+                "task_failed".to_string(),
+                task_id.0,
+                String::new(),
+                vec![("error".to_string(), error)]
+                    .into_iter()
+                    .collect(),
+            ),
         };
 
         Self {

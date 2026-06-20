@@ -19,10 +19,9 @@ describe('createUserMessage', () => {
     expect(msg.id).toMatch(/^user-/);
   });
 
-  it('generates timestamp in HH:MM format', () => {
+  it('generates timestamp in HH:MM:SS format', () => {
     const msg = createUserMessage('test');
-    // HH:MM is exactly 5 characters
-    expect(msg.timestamp).toMatch(/^\d{2}:\d{2}$/);
+    expect(msg.timestamp).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
   it('produces unique ids across calls', () => {
@@ -58,9 +57,9 @@ describe('createSystemMessage', () => {
     expect(msg.id).toMatch(/^sys-/);
   });
 
-  it('generates timestamp in HH:MM format', () => {
+  it('generates timestamp in HH:MM:SS format', () => {
     const msg = createSystemMessage('test');
-    expect(msg.timestamp).toMatch(/^\d{2}:\d{2}$/);
+    expect(msg.timestamp).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
   it('produces unique ids across calls', () => {

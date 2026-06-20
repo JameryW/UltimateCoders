@@ -88,6 +88,15 @@ pub enum AgentEventType {
         snapshot_id: String,
         event_offset: u64,
     },
+    TaskCompleted {
+        task_id: TaskId,
+        description: String,
+        result: String,
+    },
+    TaskFailed {
+        task_id: TaskId,
+        error: String,
+    },
 }
 
 /// A recorded event with metadata.

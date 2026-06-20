@@ -62,7 +62,7 @@ export interface ChatLogProps {
 
 function formatTime(): string {
   const now = new Date();
-  return now.toTimeString().slice(0, 5);
+  return now.toTimeString().slice(0, 8);
 }
 
 /** Parse HH:MM timestamp and return minutes since midnight. Returns -1 on parse failure. */
@@ -164,7 +164,7 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelect
   const visibleLines = (isLong && !isExpanded) ? lines.slice(0, 1) : lines;
 
   // ponytail: render markdown for system messages that contain markdown syntax
-  const shouldRenderMarkdown = !msg.isUser && !isToolEvent && hasMarkdown(msg.text);
+  const shouldRenderMarkdown = !msg.isUser && hasMarkdown(msg.text);
   const isDiff = !msg.isUser && (msg.eventType === 'file_modified' || isDiffText(msg.text));
   const renderedText = isDiff
     ? colorDiff(visibleLines.join('\n'))
