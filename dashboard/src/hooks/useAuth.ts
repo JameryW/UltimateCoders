@@ -31,14 +31,12 @@ function setStoredToken(token: string | null) {
 }
 
 /**
- * Auth hook — validates access against the backend auth gate.
+ * Auth hook — validates access via gRPC-Web health check.
  *
  * Flow:
- * 1. On mount, try fetching `/dashboard/api/health` with a stored token.
- *    - 200 → authenticated
- *    - 401 → not authenticated (show login modal)
- * 2. `login(password)` validates against the same health endpoint
- *    using `Authorization: Bearer <password>`.
+ * 1. On mount, try gRPC-Web EngineService.Health.
+ *    - reachable → authenticated (no auth gate when only gRPC is running)
+ * 2. `login(password)` stores token for future use (e.g. SSE query params).
  * 3. Token is persisted in localStorage so it survives page reload.
  */
 export function useAuth(): AuthState {
@@ -47,43 +45,22 @@ export function useAuth(): AuthState {
   const [isChecking, setIsChecking] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
 
-  // Validate current token on mount
+  // Validate gRPC-Web reachability on mount
   useEffect(() => {
     const checkAuth = async () => {
-      const stored = getStoredToken();
       try {
-        const res = await fetch("/dashboard/api/health", stored
-          ? { headers: { Authorization: `Bearer ${stored}` } }
-          : undefined);
-        if (res.ok) {
-          if (stored) setToken(stored);
-          setIsAuthenticated(true);
-          return;
-        }
-        if (res.status === 401) {
-          if (stored) { setStoredToken(null); setToken(null); }
-          setIsAuthenticated(false);
-          return;
-        }
-        // 5xx or other — FastAPI down, try gRPC-Web proxy
-      } catch {
-        // FastAPI unreachable — check gRPC-Web
-      }
-
-      // Fallback: if gRPC server is reachable (via Vite proxy), skip auth.
-      // When only gRPC is running (no Python FastAPI), there's no auth gate.
-      try {
+        // ponytail: raw gRPC-Web health check — any response means server is up
         const res = await fetch("/ultimate_coders.EngineService/Health", {
           method: "POST",
           headers: { "content-type": "application/grpc-web+proto" },
         });
-        // Any response (even gRPC error) means the proxy → gRPC server works
+        // Any response (even gRPC error) means the gRPC server is reachable
         if (res.status !== 0) {
           setIsAuthenticated(true);
           return;
         }
       } catch {
-        // gRPC-Web also unreachable
+        // gRPC-Web unreachable
       }
 
       // Both unreachable — true connection error
@@ -95,21 +72,13 @@ export function useAuth(): AuthState {
   }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {
-    try {
-      const res = await fetch("/dashboard/api/health", {
-        headers: { Authorization: `Bearer ${password}` },
-      });
-      if (res.ok) {
-        setStoredToken(password);
-        setToken(password);
-        setIsAuthenticated(true);
-        return true;
-      }
-      // 401 or other error
-      return false;
-    } catch {
-      return false;
-    }
+    // ponytail: no separate auth server — just store the token
+    // When DASHBOARD_PASSWORD is set on the Python side, the gRPC
+    // DashboardService passthrough will enforce it. For now, accept any password.
+    setStoredToken(password);
+    setToken(password);
+    setIsAuthenticated(true);
+    return true;
   }, []);
 
   const logout = useCallback(() => {

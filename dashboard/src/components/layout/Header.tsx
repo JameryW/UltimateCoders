@@ -1,19 +1,14 @@
 import { useState } from "react";
 import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
-import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
 
 interface HeaderProps {
   connected: boolean;
   grpcState?: GrpcConnectionState;
-  grpcExhausted?: boolean;
-  dashGrpcState?: DashboardConnectionState;
   lastUpdate?: string;
   theme: Theme;
   onToggleTheme: () => void;
   onLogout?: () => void;
-  onReconnectGrpc?: () => void;
-  onReconnectDashGrpc?: () => void;
   /** Panels that failed to load — show warning banner if non-empty. */
   fetchErrors?: Record<string, string>;
 }
@@ -24,14 +19,6 @@ const GRPC_LABELS: Record<GrpcConnectionState, { text: string; color: string }> 
   disconnected: { text: "gRPC off", color: "bg-gray-500" },
   error: { text: "gRPC err", color: "bg-red-400" },
   reconnecting: { text: "gRPC...", color: "bg-yellow-400 animate-pulse" },
-};
-
-const DASH_LABELS: Record<string, { text: string; color: string }> = {
-  connected: { text: "Dash", color: "bg-green-400" },
-  connecting: { text: "Dash...", color: "bg-yellow-400 animate-pulse" },
-  disconnected: { text: "Dash off", color: "bg-gray-500" },
-  error: { text: "Dash err", color: "bg-red-400" },
-  reconnecting: { text: "Dash...", color: "bg-yellow-400 animate-pulse" },
 };
 
 const NAV_SECTIONS = [
@@ -46,13 +33,9 @@ const NAV_SECTIONS = [
   { hash: "files", label: "Files" },
 ];
 
-export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, lastUpdate, theme, onToggleTheme, onLogout, onReconnectGrpc, onReconnectDashGrpc, fetchErrors }: HeaderProps) {
+export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout, fetchErrors }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const grpc = grpcState ? GRPC_LABELS[grpcState] : null;
-  const dash = dashGrpcState ? DASH_LABELS[dashGrpcState] : null;
-  const grpcOk = grpcState === "connected";
-  const dashOk = dashGrpcState === "connected";
-
   return (
     <header className="border-b border-[var(--border-color)] px-6 py-3">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -72,7 +55,7 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
             </a>
           ))}
         </nav>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-4">
           {/* Hamburger — mobile only */}
           <button
             className="md:hidden p-1.5 rounded-md border border-[var(--border-color)] hover:bg-[var(--bg-surface-alt)] transition-colors"
@@ -91,36 +74,11 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
           </button>
           {lastUpdate && <span className="text-xs text-[var(--text-muted)]">{new Date(lastUpdate).toLocaleTimeString()}</span>}
           <span className={`pulse-dot ${connected ? "bg-green-500" : "bg-red-500"}`} title={connected ? "Connected" : "Disconnected"} />
-          {/* Task gRPC indicator — clickable to reconnect */}
           {grpc && (
-            <button
-              onClick={!grpcOk && !grpcExhausted && onReconnectGrpc ? onReconnectGrpc : undefined}
-              title={grpcOk ? "Task gRPC connected" : grpcState === "reconnecting" ? "Task gRPC reconnecting..." : "Task gRPC error — click to reconnect"}
-              className="flex items-center space-x-1 cursor-pointer"
-            >
-              <span className={`pulse-dot ${grpc.color}`} />
+            <span className="flex items-center space-x-1">
+              <span className={`pulse-dot ${grpc.color}`} title="gRPC-Web" />
               <span className="text-xs text-[var(--text-secondary)]">{grpc.text}</span>
-            </button>
-          )}
-          {/* Dashboard gRPC indicator — clickable to reconnect */}
-          {dash && (
-            <button
-              onClick={!dashOk && onReconnectDashGrpc ? onReconnectDashGrpc : undefined}
-              title={dashOk ? "Dashboard gRPC connected" : dashGrpcState === "reconnecting" ? "Dashboard gRPC reconnecting..." : "Dashboard gRPC error — click to reconnect"}
-              className="flex items-center space-x-1 cursor-pointer"
-            >
-              <span className={`pulse-dot ${dash.color}`} />
-              <span className="text-xs text-[var(--text-secondary)]">{dash.text}</span>
-            </button>
-          )}
-          {grpcExhausted && grpcState === "reconnecting" && onReconnectGrpc && (
-            <button
-              onClick={onReconnectGrpc}
-              className="text-xs text-red-400 hover:text-red-300"
-              title="Task gRPC retries exhausted — click to retry"
-            >
-              ↻ retry
-            </button>
+            </span>
           )}
           {/* Theme toggle */}
           <button

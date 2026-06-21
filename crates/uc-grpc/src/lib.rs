@@ -8,6 +8,7 @@
 
 pub mod client;
 pub mod conversions;
+pub mod dashboard_service;
 pub mod local_worker;
 pub mod server;
 

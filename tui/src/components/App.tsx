@@ -890,8 +890,8 @@ const App: React.FC = () => {
       />
 
       {/* ── Separator ────────────────────────────────── */}
-      <Box>
-        <Text color="gray">{S.divider.repeat(Math.max(1, terminalWidth - 2))}</Text>
+      <Box width="100%">
+        <Text color="gray">{S.divider.repeat(Math.max(1, Math.floor(terminalWidth / S.divider.length) - 2))}</Text>
       </Box>
 
       {/* ── Command suggestion panel (between separator and input) ── */}
