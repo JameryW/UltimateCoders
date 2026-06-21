@@ -5,6 +5,7 @@ import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
 import { Header } from "@/components/layout/Header";
+import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
 import { HealthPanel } from "@/components/panels/HealthPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { TasksPanel } from "@/components/panels/TasksPanel";
@@ -114,7 +115,7 @@ function App() {
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
   // TaskService: WatchTask stream + task operations
-  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     onSyncRequired: (_reason: string, _skipped: number) => {
       needsSyncCountRef.current += 1;
@@ -127,6 +128,7 @@ function App() {
   const {
     connectionState: dashGrpcState,
     connect: dashGrpcConnect,
+    disconnect: dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
     getCircuitBreakerStatus,
@@ -437,6 +439,7 @@ function App() {
           <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
       </main>
+      <ConnectionIndicator grpcState={grpcState} dashGrpcState={dashGrpcState} grpcExhausted={grpcExhausted} onReconnectGrpc={grpcConnect} onDisconnectGrpc={grpcDisconnect} onReconnectDashGrpc={dashGrpcConnect} onDisconnectDashGrpc={dashGrpcDisconnect} />
     </div>
   );
 }
