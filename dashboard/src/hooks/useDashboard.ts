@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import type {
-  DashboardSnapshot,
   TaskEvent,
   HealthData,
   WorkersData,
@@ -11,7 +10,6 @@ import type {
   CircuitBreakerData,
   DashboardEvent,
 } from "@/types/dashboard";
-import * as api from "@/api/endpoints";
 
 /** #12: Maximum number of task entries to keep in interactionLog.
  *  Oldest entries are evicted when this limit is exceeded. */
@@ -71,65 +69,17 @@ export function useDashboard() {
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
 
-  // Handle SSE full snapshot -- merge with existing state to avoid overwriting
-  // fresher gRPC-Web incremental updates with stale SSE snapshot data.
-  const handleSnapshot = useCallback((data: DashboardSnapshot) => {
-    // ponytail: only replace state when SSE source actually has data;
-    // in no-NATS mode SSE sends available:false which would wipe gRPC-populated data
+  // Handle WatchDashboard snapshot -- merge with existing state to avoid overwriting
+  // fresher gRPC-Web incremental updates with stale snapshot data.
+  const handleSnapshot = useCallback((data: {
+    health?: HealthData;
+    workers?: WorkersData;
+    scheduler?: SchedulerData;
+    circuitBreaker?: CircuitBreakerData;
+    events?: DashboardEvent[];
+  }) => {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
-    const snapshotTasks = data.tasks;
-    if (snapshotTasks?.available) {
-      setTasks((prev) => {
-        // SSE available but empty -> don't wipe gRPC-populated tasks
-        if (snapshotTasks.tasks.length === 0 && prev.available && prev.tasks.length > 0) return prev;
-        // Field-level merge: for each task in snapshot, keep the version whose
-        // updated_at is more recent (gRPC-Web event updates set updated_at in real-time).
-        const prevMap = new Map(prev.tasks.map((t) => [t.id, t]));
-        const merged = snapshotTasks.tasks.map((st) => {
-          const existing = prevMap.get(st.id);
-          if (!existing) return st;
-          // If our existing version is newer (from gRPC-Web event), keep it.
-          const existingTime = new Date(existing.updated_at).getTime();
-          const snapshotTime = new Date(st.updated_at).getTime();
-          // #3: If either timestamp is NaN, prefer the gRPC-Web (existing) version
-          // since incremental updates are more reliable than SSE snapshots.
-          if (isNaN(existingTime) || isNaN(snapshotTime)) {
-            return existing;
-          }
-          if (existingTime > snapshotTime) {
-            return existing;
-          }
-          // #5: On timestamp tie, prefer the source that has more non-pending subtasks.
-          // gRPC incremental updates carry live status transitions (assigned, in_progress,
-          // completed) while the SSE snapshot may lag behind on the same second.
-          if (existingTime === snapshotTime) {
-            const existingNonPending = countNonPendingSubtasks(existing);
-            const snapshotNonPending = countNonPendingSubtasks(st);
-            if (existingNonPending >= snapshotNonPending) return existing;
-          }
-          // Snapshot is newer -> merge subtask-level data
-          if (existing.subtasks && st.subtasks) {
-            const mergedSubtasks = st.subtasks.map((ss) => {
-              const es = existing.subtasks!.find((s) => s.id === ss.id);
-              // Keep existing subtask if it has a more advanced status
-              if (es) return subtaskStatusRank(es.status) >= subtaskStatusRank(ss.status) ? es : ss;
-              return ss;
-            });
-            return { ...st, subtasks: mergedSubtasks };
-          }
-          return st;
-        });
-        // Add tasks from prev that aren't in snapshot (recently submitted via gRPC)
-        const mergedIds = new Set(merged.map((m) => m.id));
-        for (const t of prev.tasks) {
-          if (!mergedIds.has(t.id)) merged.push(t);
-        }
-        // #15: Derive total from status_counts for consistency
-        const status_counts = recountStatus(merged);
-        return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts };
-      });
-    }
     if (data.scheduler?.available) setScheduler(data.scheduler);
     if (data.circuit_breaker?.available) setCircuitBreaker(data.circuit_breaker);
     if (data.events && data.events.length > 0) setEventLog(data.events);
@@ -284,22 +234,28 @@ export function useDashboard() {
     }
   }, []);
 
-  // Fetch initial data; optionally skip tasks (gRPC-Web will provide them)
+  // Fetch initial data via gRPC-Web; optionally skip tasks (WatchTask stream will provide them)
   // #6: Track errors instead of silently swallowing them; expose via fetchErrors state.
   // All requests run in parallel for faster initial load.
-  const fetchInitial = useCallback(async (opts?: { skipTasks?: boolean }): Promise<Record<string, string>> => {
+  const fetchInitial = useCallback(async (opts?: {
+    skipTasks?: boolean;
+    fetchWorkers?: () => Promise<WorkersData>;
+    fetchScheduler?: () => Promise<SchedulerData>;
+    fetchCircuitBreaker?: () => Promise<CircuitBreakerData>;
+    fetchEvents?: (taskId?: string, limit?: number) => Promise<{ available: boolean; events: DashboardEvent[]; total: number }>;
+    fetchTasks?: () => Promise<TasksData>;
+  }): Promise<Record<string, string>> => {
     const errors: Record<string, string> = {};
     const results = await Promise.allSettled([
-      api.getHealth().then((h) => { setHealth(h); }).catch((e) => { errors["health"] = String(e); }),
-      api.getWorkers().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }),
+      opts?.fetchWorkers?.().then((w) => { setWorkers(w); }).catch((e) => { errors["workers"] = String(e); }) ?? Promise.resolve(),
       opts?.skipTasks
         ? Promise.resolve()
-        : api.getTasks().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }),
-      api.getScheduler().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }),
-      api.getCircuitBreaker().then((c) => { setCircuitBreaker(c); }).catch((e) => { errors["circuit_breaker"] = String(e); }),
-      api.getEvents().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }),
+        : opts?.fetchTasks?.().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }) ?? Promise.resolve(),
+      opts?.fetchScheduler?.().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }) ?? Promise.resolve(),
+      opts?.fetchCircuitBreaker?.().then((c) => { setCircuitBreaker(c); }).catch((e) => { errors["circuit_breaker"] = String(e); }) ?? Promise.resolve(),
+      opts?.fetchEvents?.().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }) ?? Promise.resolve(),
     ]);
-    // ponytail: results are handled via .then/.catch above; Promise.allSettled just waits for all
+    // results are handled via .then/.catch above; Promise.allSettled just waits for all
     void results;
     setFetchErrors(errors);
     return errors;
@@ -453,9 +409,3 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   ];
 }
 
-/** #5: Count subtasks with non-pending status, used to break timestamp ties
- *  in SSE vs gRPC-Web snapshot merge. */
-function countNonPendingSubtasks(task: TaskSummary): number {
-  if (!task.subtasks) return 0;
-  return task.subtasks.filter((s) => s.status !== "pending").length;
-}

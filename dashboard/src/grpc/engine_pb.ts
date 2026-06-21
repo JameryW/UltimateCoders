@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file engine.proto.
  */
 export const file_engine: GenFile = /*@__PURE__*/
-  fileDesc("CgxlbmdpbmUucHJvdG8SD3VsdGltYXRlX2NvZGVycyJ+Cg1TZWFyY2hSZXF1ZXN0Eg0KBXF1ZXJ5GAEgASgJEg0KBW1vZGVzGAIgAygJEhAKCHJlcG9faWRzGAMgAygJEhEKCWxhbmd1YWdlcxgEIAMoCRIVCg1wYXRoX3BhdHRlcm5zGAUgAygJEhMKC21heF9yZXN1bHRzGAYgASgNIkIKDlNlYXJjaFJlc3BvbnNlEjAKBWl0ZW1zGAEgAygLMiEudWx0aW1hdGVfY29kZXJzLlNlYXJjaFJlc3VsdEl0ZW0imgIKEFNlYXJjaFJlc3VsdEl0ZW0SDwoHcmVwb19pZBgBIAEoCRIRCglmaWxlX3BhdGgYAiABKAkSEgoKc3RhcnRfbGluZRgDIAEoDRIQCghlbmRfbGluZRgEIAEoDRIXCg9jb250ZW50X3NuaXBwZXQYBSABKAkSEgoKbWF0Y2hfdHlwZRgGIAEoCRINCgVzY29yZRgHIAEoAhIYCgtzeW1ib2xfbmFtZRgIIAEoCUgAiAEBEhgKC3N5bWJvbF9raW5kGAkgASgJSAGIAQESGgoNcGFyZW50X3N5bWJvbBgKIAEoCUgCiAEBQg4KDF9zeW1ib2xfbmFtZUIOCgxfc3ltYm9sX2tpbmRCEAoOX3BhcmVudF9zeW1ib2wiiwEKEEluZGV4UmVwb1JlcXVlc3QSDwoHcmVwb19pZBgBIAEoCRISCgpyZW1vdGVfdXJsGAIgASgJEhYKDmRlZmF1bHRfYnJhbmNoGAMgASgJEhcKCmxvY2FsX3BhdGgYBCABKAlIAIgBARISCgpmb3JjZV9mdWxsGAUgASgIQg0KC19sb2NhbF9wYXRoIoQBChFJbmRleFJlcG9SZXNwb25zZRIPCgdyZXBvX2lkGAEgASgJEhUKDWZpbGVzX2luZGV4ZWQYAiABKA0SGQoRc3ltYm9sc19leHRyYWN0ZWQYAyABKA0SFwoPY2h1bmtzX2VtYmVkZGVkGAQgASgNEhMKC2R1cmF0aW9uX21zGAUgASgEIicKFEdldEluZGV4U3RhdGVSZXF1ZXN0Eg8KB3JlcG9faWQYASABKAkirwEKFUdldEluZGV4U3RhdGVSZXNwb25zZRIPCgdyZXBvX2lkGAEgASgJEg8KB2luZGV4ZWQYAiABKAgSHQoQbGFzdF9pbmRleGVkX3NoYRgDIAEoCUgAiAEBEhMKC2ZpbGVzX2NvdW50GAQgASgNEhUKDXN5bWJvbHNfY291bnQYBSABKA0SFAoMY2h1bmtzX2NvdW50GAYgASgNQhMKEV9sYXN0X2luZGV4ZWRfc2hhIiUKElJlbW92ZUluZGV4UmVxdWVzdBIPCgdyZXBvX2lkGAEgASgJIhUKE1JlbW92ZUluZGV4UmVzcG9uc2UicgoRUmVhZE1lbW9yeVJlcXVlc3QSEQoJa2V5X3Njb3BlGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRILCgNrZXkYBCABKAkSGAoQaW5jbHVkZV9zZW1hbnRpYxgFIAEoCCJVChJSZWFkTWVtb3J5UmVzcG9uc2USNQoFZW50cnkYASABKAsyIS51bHRpbWF0ZV9jb2RlcnMuTWVtb3J5RW50cnlQcm90b0gAiAEBQggKBl9lbnRyeSLGAgoSV3JpdGVNZW1vcnlSZXF1ZXN0EhEKCWtleV9zY29wZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEhIKCnByb2plY3RfaWQYAyABKAkSCwoDa2V5GAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRIPCgdjb250ZW50GAYgASgJEhQKDHNvdXJjZV9hZ2VudBgHIAEoCRISCgppbXBvcnRhbmNlGAggASgCEgwKBHRhZ3MYCSADKAkSFQoIbGFuZ3VhZ2UYCiABKAlIAIgBARIWCglmaWxlX3BhdGgYCyABKAlIAYgBARIQCgN1cmkYDCABKAlIAogBARIYCgtkZXNjcmlwdGlvbhgNIAEoCUgDiAEBQgsKCV9sYW5ndWFnZUIMCgpfZmlsZV9wYXRoQgYKBF91cmlCDgoMX2Rlc2NyaXB0aW9uIkcKE1dyaXRlTWVtb3J5UmVzcG9uc2USMAoFZW50cnkYASABKAsyIS51bHRpbWF0ZV9jb2RlcnMuTWVtb3J5RW50cnlQcm90byJaChNEZWxldGVNZW1vcnlSZXF1ZXN0EhEKCWtleV9zY29wZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEhIKCnByb2plY3RfaWQYAyABKAkSCwoDa2V5GAQgASgJIhYKFERlbGV0ZU1lbW9yeVJlc3BvbnNlInQKE1NlYXJjaE1lbW9yeVJlcXVlc3QSDQoFcXVlcnkYASABKAkSEgoKc2NvcGVfdHlwZRgCIAEoCRISCgpwcm9qZWN0X2lkGAMgASgJEhMKC21heF9yZXN1bHRzGAQgASgNEhEKCW1pbl9zY29yZRgFIAEoAiJRChRTZWFyY2hNZW1vcnlSZXNwb25zZRI5CgdyZXN1bHRzGAEgAygLMigudWx0aW1hdGVfY29kZXJzLk1lbW9yeVNlYXJjaFJlc3VsdFByb3RvIoADChBNZW1vcnlFbnRyeVByb3RvEgoKAmlkGAEgASgJEhQKDGNvbnRlbnRfdHlwZRgCIAEoCRIPCgdjb250ZW50GAMgASgJEhQKDHNvdXJjZV9hZ2VudBgEIAEoCRISCgppbXBvcnRhbmNlGAUgASgCEgwKBHRhZ3MYBiADKAkSEgoKY3JlYXRlZF9hdBgHIAEoAxISCgp1cGRhdGVkX2F0GAggASgDEhEKCWtleV9zY29wZRgJIAEoCRITCgtrZXlfdGFza19pZBgKIAEoCRIWCg5rZXlfcHJvamVjdF9pZBgLIAEoCRILCgNrZXkYDCABKAkSFQoIbGFuZ3VhZ2UYDSABKAlIAIgBARIWCglmaWxlX3BhdGgYDiABKAlIAYgBARIQCgN1cmkYDyABKAlIAogBARIYCgtkZXNjcmlwdGlvbhgQIAEoCUgDiAEBQgsKCV9sYW5ndWFnZUIMCgpfZmlsZV9wYXRoQgYKBF91cmlCDgoMX2Rlc2NyaXB0aW9uIloKF01lbW9yeVNlYXJjaFJlc3VsdFByb3RvEjAKBWVudHJ5GAEgASgLMiEudWx0aW1hdGVfY29kZXJzLk1lbW9yeUVudHJ5UHJvdG8SDQoFc2NvcmUYAiABKAIiDwoNSGVhbHRoUmVxdWVzdCKEAQoOSGVhbHRoUmVzcG9uc2USDgoGc3RhdHVzGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSFgoOdXB0aW1lX3NlY29uZHMYAyABKAQSOQoKY29tcG9uZW50cxgEIAMoCzIlLnVsdGltYXRlX2NvZGVycy5Db21wb25lbnRIZWFsdGhQcm90byJWChRDb21wb25lbnRIZWFsdGhQcm90bxIMCgRuYW1lGAEgASgJEg4KBnN0YXR1cxgCIAEoCRIUCgdkZXRhaWxzGAMgASgJSACIAQFCCgoIX2RldGFpbHMiPAoRU3VibWl0VGFza1JlcXVlc3QSEwoLZGVzY3JpcHRpb24YASABKAkSEgoKcHJvamVjdF9pZBgCIAEoCSKsAQoSU3VibWl0VGFza1Jlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSDwoHdGFza19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSFQoNc3VidGFza19jb3VudBgEIAEoDRIvCghzdWJ0YXNrcxgFIAMoCzIdLnVsdGltYXRlX2NvZGVycy5TdWJ0YXNrUHJvdG8SEgoFZXJyb3IYBiABKAlIAIgBAUIICgZfZXJyb3IiIQoOR2V0VGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCSJcCg9HZXRUYXNrUmVzcG9uc2USEQoJYXZhaWxhYmxlGAEgASgIEi0KBHRhc2sYAiABKAsyGi51bHRpbWF0ZV9jb2RlcnMuVGFza1Byb3RvSACIAQFCBwoFX3Rhc2siEgoQTGlzdFRhc2tzUmVxdWVzdCLiAQoRTGlzdFRhc2tzUmVzcG9uc2USEQoJYXZhaWxhYmxlGAEgASgIEikKBXRhc2tzGAIgAygLMhoudWx0aW1hdGVfY29kZXJzLlRhc2tQcm90bxINCgV0b3RhbBgDIAEoDRJLCg1zdGF0dXNfY291bnRzGAQgAygLMjQudWx0aW1hdGVfY29kZXJzLkxpc3RUYXNrc1Jlc3BvbnNlLlN0YXR1c0NvdW50c0VudHJ5GjMKEVN0YXR1c0NvdW50c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAEiIwoQUGF1c2VUYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJImMKEVBhdXNlVGFza1Jlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSDwoHdGFza19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoFZXJyb3IYBCABKAlIAIgBAUIICgZfZXJyb3IiJAoRUmVzdW1lVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCSJkChJSZXN1bWVUYXNrUmVzcG9uc2USDwoHc3VjY2VzcxgBIAEoCBIPCgd0YXNrX2lkGAIgASgJEg4KBnN0YXR1cxgDIAEoCRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciIjChBXYXRjaFRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkixgEKCVRhc2tFdmVudBIRCgl0aW1lc3RhbXAYASABKAkSDAoEdHlwZRgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEhcKCnN1YnRhc2tfaWQYBCABKAlIAIgBARIyCgRkYXRhGAUgAygLMiQudWx0aW1hdGVfY29kZXJzLlRhc2tFdmVudC5EYXRhRW50cnkaKwoJRGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDQoLX3N1YnRhc2tfaWQiwAEKCVRhc2tQcm90bxIKCgJpZBgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoKcHJvamVjdF9pZBgEIAEoCRIVCg1zdWJ0YXNrX2NvdW50GAUgASgNEhIKCmNyZWF0ZWRfYXQYBiABKAMSEgoKdXBkYXRlZF9hdBgHIAEoAxIvCghzdWJ0YXNrcxgIIAMoCzIdLnVsdGltYXRlX2NvZGVycy5TdWJ0YXNrUHJvdG8ihQEKDFN1YnRhc2tQcm90bxIKCgJpZBgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoKZGVwZW5kc19vbhgEIAMoCRIcCg9hc3NpZ25lZF93b3JrZXIYBSABKAlIAIgBAUISChBfYXNzaWduZWRfd29ya2VyMp4GCg1FbmdpbmVTZXJ2aWNlEkkKBlNlYXJjaBIeLnVsdGltYXRlX2NvZGVycy5TZWFyY2hSZXF1ZXN0Gh8udWx0aW1hdGVfY29kZXJzLlNlYXJjaFJlc3BvbnNlElIKCUluZGV4UmVwbxIhLnVsdGltYXRlX2NvZGVycy5JbmRleFJlcG9SZXF1ZXN0GiIudWx0aW1hdGVfY29kZXJzLkluZGV4UmVwb1Jlc3BvbnNlEl4KDUdldEluZGV4U3RhdGUSJS51bHRpbWF0ZV9jb2RlcnMuR2V0SW5kZXhTdGF0ZVJlcXVlc3QaJi51bHRpbWF0ZV9jb2RlcnMuR2V0SW5kZXhTdGF0ZVJlc3BvbnNlElgKC1JlbW92ZUluZGV4EiMudWx0aW1hdGVfY29kZXJzLlJlbW92ZUluZGV4UmVxdWVzdBokLnVsdGltYXRlX2NvZGVycy5SZW1vdmVJbmRleFJlc3BvbnNlElUKClJlYWRNZW1vcnkSIi51bHRpbWF0ZV9jb2RlcnMuUmVhZE1lbW9yeVJlcXVlc3QaIy51bHRpbWF0ZV9jb2RlcnMuUmVhZE1lbW9yeVJlc3BvbnNlElgKC1dyaXRlTWVtb3J5EiMudWx0aW1hdGVfY29kZXJzLldyaXRlTWVtb3J5UmVxdWVzdBokLnVsdGltYXRlX2NvZGVycy5Xcml0ZU1lbW9yeVJlc3BvbnNlElsKDERlbGV0ZU1lbW9yeRIkLnVsdGltYXRlX2NvZGVycy5EZWxldGVNZW1vcnlSZXF1ZXN0GiUudWx0aW1hdGVfY29kZXJzLkRlbGV0ZU1lbW9yeVJlc3BvbnNlElsKDFNlYXJjaE1lbW9yeRIkLnVsdGltYXRlX2NvZGVycy5TZWFyY2hNZW1vcnlSZXF1ZXN0GiUudWx0aW1hdGVfY29kZXJzLlNlYXJjaE1lbW9yeVJlc3BvbnNlEkkKBkhlYWx0aBIeLnVsdGltYXRlX2NvZGVycy5IZWFsdGhSZXF1ZXN0Gh8udWx0aW1hdGVfY29kZXJzLkhlYWx0aFJlc3BvbnNlMv8DCgtUYXNrU2VydmljZRJVCgpTdWJtaXRUYXNrEiIudWx0aW1hdGVfY29kZXJzLlN1Ym1pdFRhc2tSZXF1ZXN0GiMudWx0aW1hdGVfY29kZXJzLlN1Ym1pdFRhc2tSZXNwb25zZRJMCgdHZXRUYXNrEh8udWx0aW1hdGVfY29kZXJzLkdldFRhc2tSZXF1ZXN0GiAudWx0aW1hdGVfY29kZXJzLkdldFRhc2tSZXNwb25zZRJSCglMaXN0VGFza3MSIS51bHRpbWF0ZV9jb2RlcnMuTGlzdFRhc2tzUmVxdWVzdBoiLnVsdGltYXRlX2NvZGVycy5MaXN0VGFza3NSZXNwb25zZRJMCglXYXRjaFRhc2sSIS51bHRpbWF0ZV9jb2RlcnMuV2F0Y2hUYXNrUmVxdWVzdBoaLnVsdGltYXRlX2NvZGVycy5UYXNrRXZlbnQwARJSCglQYXVzZVRhc2sSIS51bHRpbWF0ZV9jb2RlcnMuUGF1c2VUYXNrUmVxdWVzdBoiLnVsdGltYXRlX2NvZGVycy5QYXVzZVRhc2tSZXNwb25zZRJVCgpSZXN1bWVUYXNrEiIudWx0aW1hdGVfY29kZXJzLlJlc3VtZVRhc2tSZXF1ZXN0GiMudWx0aW1hdGVfY29kZXJzLlJlc3VtZVRhc2tSZXNwb25zZWIGcHJvdG8z");
+  fileDesc("CgxlbmdpbmUucHJvdG8SD3VsdGltYXRlX2NvZGVycyJ+Cg1TZWFyY2hSZXF1ZXN0Eg0KBXF1ZXJ5GAEgASgJEg0KBW1vZGVzGAIgAygJEhAKCHJlcG9faWRzGAMgAygJEhEKCWxhbmd1YWdlcxgEIAMoCRIVCg1wYXRoX3BhdHRlcm5zGAUgAygJEhMKC21heF9yZXN1bHRzGAYgASgNIkIKDlNlYXJjaFJlc3BvbnNlEjAKBWl0ZW1zGAEgAygLMiEudWx0aW1hdGVfY29kZXJzLlNlYXJjaFJlc3VsdEl0ZW0imgIKEFNlYXJjaFJlc3VsdEl0ZW0SDwoHcmVwb19pZBgBIAEoCRIRCglmaWxlX3BhdGgYAiABKAkSEgoKc3RhcnRfbGluZRgDIAEoDRIQCghlbmRfbGluZRgEIAEoDRIXCg9jb250ZW50X3NuaXBwZXQYBSABKAkSEgoKbWF0Y2hfdHlwZRgGIAEoCRINCgVzY29yZRgHIAEoAhIYCgtzeW1ib2xfbmFtZRgIIAEoCUgAiAEBEhgKC3N5bWJvbF9raW5kGAkgASgJSAGIAQESGgoNcGFyZW50X3N5bWJvbBgKIAEoCUgCiAEBQg4KDF9zeW1ib2xfbmFtZUIOCgxfc3ltYm9sX2tpbmRCEAoOX3BhcmVudF9zeW1ib2wiiwEKEEluZGV4UmVwb1JlcXVlc3QSDwoHcmVwb19pZBgBIAEoCRISCgpyZW1vdGVfdXJsGAIgASgJEhYKDmRlZmF1bHRfYnJhbmNoGAMgASgJEhcKCmxvY2FsX3BhdGgYBCABKAlIAIgBARISCgpmb3JjZV9mdWxsGAUgASgIQg0KC19sb2NhbF9wYXRoIoQBChFJbmRleFJlcG9SZXNwb25zZRIPCgdyZXBvX2lkGAEgASgJEhUKDWZpbGVzX2luZGV4ZWQYAiABKA0SGQoRc3ltYm9sc19leHRyYWN0ZWQYAyABKA0SFwoPY2h1bmtzX2VtYmVkZGVkGAQgASgNEhMKC2R1cmF0aW9uX21zGAUgASgEIicKFEdldEluZGV4U3RhdGVSZXF1ZXN0Eg8KB3JlcG9faWQYASABKAkirwEKFUdldEluZGV4U3RhdGVSZXNwb25zZRIPCgdyZXBvX2lkGAEgASgJEg8KB2luZGV4ZWQYAiABKAgSHQoQbGFzdF9pbmRleGVkX3NoYRgDIAEoCUgAiAEBEhMKC2ZpbGVzX2NvdW50GAQgASgNEhUKDXN5bWJvbHNfY291bnQYBSABKA0SFAoMY2h1bmtzX2NvdW50GAYgASgNQhMKEV9sYXN0X2luZGV4ZWRfc2hhIiUKElJlbW92ZUluZGV4UmVxdWVzdBIPCgdyZXBvX2lkGAEgASgJIhUKE1JlbW92ZUluZGV4UmVzcG9uc2UicgoRUmVhZE1lbW9yeVJlcXVlc3QSEQoJa2V5X3Njb3BlGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRILCgNrZXkYBCABKAkSGAoQaW5jbHVkZV9zZW1hbnRpYxgFIAEoCCJVChJSZWFkTWVtb3J5UmVzcG9uc2USNQoFZW50cnkYASABKAsyIS51bHRpbWF0ZV9jb2RlcnMuTWVtb3J5RW50cnlQcm90b0gAiAEBQggKBl9lbnRyeSLGAgoSV3JpdGVNZW1vcnlSZXF1ZXN0EhEKCWtleV9zY29wZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEhIKCnByb2plY3RfaWQYAyABKAkSCwoDa2V5GAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRIPCgdjb250ZW50GAYgASgJEhQKDHNvdXJjZV9hZ2VudBgHIAEoCRISCgppbXBvcnRhbmNlGAggASgCEgwKBHRhZ3MYCSADKAkSFQoIbGFuZ3VhZ2UYCiABKAlIAIgBARIWCglmaWxlX3BhdGgYCyABKAlIAYgBARIQCgN1cmkYDCABKAlIAogBARIYCgtkZXNjcmlwdGlvbhgNIAEoCUgDiAEBQgsKCV9sYW5ndWFnZUIMCgpfZmlsZV9wYXRoQgYKBF91cmlCDgoMX2Rlc2NyaXB0aW9uIkcKE1dyaXRlTWVtb3J5UmVzcG9uc2USMAoFZW50cnkYASABKAsyIS51bHRpbWF0ZV9jb2RlcnMuTWVtb3J5RW50cnlQcm90byJaChNEZWxldGVNZW1vcnlSZXF1ZXN0EhEKCWtleV9zY29wZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEhIKCnByb2plY3RfaWQYAyABKAkSCwoDa2V5GAQgASgJIhYKFERlbGV0ZU1lbW9yeVJlc3BvbnNlInQKE1NlYXJjaE1lbW9yeVJlcXVlc3QSDQoFcXVlcnkYASABKAkSEgoKc2NvcGVfdHlwZRgCIAEoCRISCgpwcm9qZWN0X2lkGAMgASgJEhMKC21heF9yZXN1bHRzGAQgASgNEhEKCW1pbl9zY29yZRgFIAEoAiJRChRTZWFyY2hNZW1vcnlSZXNwb25zZRI5CgdyZXN1bHRzGAEgAygLMigudWx0aW1hdGVfY29kZXJzLk1lbW9yeVNlYXJjaFJlc3VsdFByb3RvIoADChBNZW1vcnlFbnRyeVByb3RvEgoKAmlkGAEgASgJEhQKDGNvbnRlbnRfdHlwZRgCIAEoCRIPCgdjb250ZW50GAMgASgJEhQKDHNvdXJjZV9hZ2VudBgEIAEoCRISCgppbXBvcnRhbmNlGAUgASgCEgwKBHRhZ3MYBiADKAkSEgoKY3JlYXRlZF9hdBgHIAEoAxISCgp1cGRhdGVkX2F0GAggASgDEhEKCWtleV9zY29wZRgJIAEoCRITCgtrZXlfdGFza19pZBgKIAEoCRIWCg5rZXlfcHJvamVjdF9pZBgLIAEoCRILCgNrZXkYDCABKAkSFQoIbGFuZ3VhZ2UYDSABKAlIAIgBARIWCglmaWxlX3BhdGgYDiABKAlIAYgBARIQCgN1cmkYDyABKAlIAogBARIYCgtkZXNjcmlwdGlvbhgQIAEoCUgDiAEBQgsKCV9sYW5ndWFnZUIMCgpfZmlsZV9wYXRoQgYKBF91cmlCDgoMX2Rlc2NyaXB0aW9uIloKF01lbW9yeVNlYXJjaFJlc3VsdFByb3RvEjAKBWVudHJ5GAEgASgLMiEudWx0aW1hdGVfY29kZXJzLk1lbW9yeUVudHJ5UHJvdG8SDQoFc2NvcmUYAiABKAIiDwoNSGVhbHRoUmVxdWVzdCKEAQoOSGVhbHRoUmVzcG9uc2USDgoGc3RhdHVzGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSFgoOdXB0aW1lX3NlY29uZHMYAyABKAQSOQoKY29tcG9uZW50cxgEIAMoCzIlLnVsdGltYXRlX2NvZGVycy5Db21wb25lbnRIZWFsdGhQcm90byJWChRDb21wb25lbnRIZWFsdGhQcm90bxIMCgRuYW1lGAEgASgJEg4KBnN0YXR1cxgCIAEoCRIUCgdkZXRhaWxzGAMgASgJSACIAQFCCgoIX2RldGFpbHMiPAoRU3VibWl0VGFza1JlcXVlc3QSEwoLZGVzY3JpcHRpb24YASABKAkSEgoKcHJvamVjdF9pZBgCIAEoCSKsAQoSU3VibWl0VGFza1Jlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSDwoHdGFza19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSFQoNc3VidGFza19jb3VudBgEIAEoDRIvCghzdWJ0YXNrcxgFIAMoCzIdLnVsdGltYXRlX2NvZGVycy5TdWJ0YXNrUHJvdG8SEgoFZXJyb3IYBiABKAlIAIgBAUIICgZfZXJyb3IiIQoOR2V0VGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCSJcCg9HZXRUYXNrUmVzcG9uc2USEQoJYXZhaWxhYmxlGAEgASgIEi0KBHRhc2sYAiABKAsyGi51bHRpbWF0ZV9jb2RlcnMuVGFza1Byb3RvSACIAQFCBwoFX3Rhc2siEgoQTGlzdFRhc2tzUmVxdWVzdCLiAQoRTGlzdFRhc2tzUmVzcG9uc2USEQoJYXZhaWxhYmxlGAEgASgIEikKBXRhc2tzGAIgAygLMhoudWx0aW1hdGVfY29kZXJzLlRhc2tQcm90bxINCgV0b3RhbBgDIAEoDRJLCg1zdGF0dXNfY291bnRzGAQgAygLMjQudWx0aW1hdGVfY29kZXJzLkxpc3RUYXNrc1Jlc3BvbnNlLlN0YXR1c0NvdW50c0VudHJ5GjMKEVN0YXR1c0NvdW50c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAEiIwoQUGF1c2VUYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJImMKEVBhdXNlVGFza1Jlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSDwoHdGFza19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoFZXJyb3IYBCABKAlIAIgBAUIICgZfZXJyb3IiJAoRUmVzdW1lVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoCSJkChJSZXN1bWVUYXNrUmVzcG9uc2USDwoHc3VjY2VzcxgBIAEoCBIPCgd0YXNrX2lkGAIgASgJEg4KBnN0YXR1cxgDIAEoCRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciIjChBXYXRjaFRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkixgEKCVRhc2tFdmVudBIRCgl0aW1lc3RhbXAYASABKAkSDAoEdHlwZRgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEhcKCnN1YnRhc2tfaWQYBCABKAlIAIgBARIyCgRkYXRhGAUgAygLMiQudWx0aW1hdGVfY29kZXJzLlRhc2tFdmVudC5EYXRhRW50cnkaKwoJRGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDQoLX3N1YnRhc2tfaWQiwAEKCVRhc2tQcm90bxIKCgJpZBgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoKcHJvamVjdF9pZBgEIAEoCRIVCg1zdWJ0YXNrX2NvdW50GAUgASgNEhIKCmNyZWF0ZWRfYXQYBiABKAMSEgoKdXBkYXRlZF9hdBgHIAEoAxIvCghzdWJ0YXNrcxgIIAMoCzIdLnVsdGltYXRlX2NvZGVycy5TdWJ0YXNrUHJvdG8iywEKDFN1YnRhc2tQcm90bxIKCgJpZBgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIOCgZzdGF0dXMYAyABKAkSEgoKZGVwZW5kc19vbhgEIAMoCRIcCg9hc3NpZ25lZF93b3JrZXIYBSABKAlIAIgBARIRCglwYXJlbnRfaWQYBiABKAkSGAoQZmlsZV9jb25zdHJhaW50cxgHIAMoCRIXCg9leHBlY3RlZF9vdXRwdXQYCCABKAlCEgoQX2Fzc2lnbmVkX3dvcmtlciJQChdCYXRjaFdyaXRlTWVtb3J5UmVxdWVzdBI1CghyZXF1ZXN0cxgBIAMoCzIjLnVsdGltYXRlX2NvZGVycy5Xcml0ZU1lbW9yeVJlcXVlc3QiTgoYQmF0Y2hXcml0ZU1lbW9yeVJlc3BvbnNlEjIKB2VudHJpZXMYASADKAsyIS51bHRpbWF0ZV9jb2RlcnMuTWVtb3J5RW50cnlQcm90byISChBMaXN0UmVwb3NSZXF1ZXN0IkgKEUxpc3RSZXBvc1Jlc3BvbnNlEjMKBXJlcG9zGAEgAygLMiQudWx0aW1hdGVfY29kZXJzLlJlcG9JbmRleFN0YXRlUHJvdG8irQEKE1JlcG9JbmRleFN0YXRlUHJvdG8SDwoHcmVwb19pZBgBIAEoCRIPCgdpbmRleGVkGAIgASgIEh0KEGxhc3RfaW5kZXhlZF9zaGEYAyABKAlIAIgBARITCgtmaWxlc19jb3VudBgEIAEoDRIVCg1zeW1ib2xzX2NvdW50GAUgASgNEhQKDGNodW5rc19jb3VudBgGIAEoDUITChFfbGFzdF9pbmRleGVkX3NoYSKEAQoTU2VhcmNoU3RyZWFtUmVxdWVzdBINCgVxdWVyeRgBIAEoCRINCgVtb2RlcxgCIAMoCRIQCghyZXBvX2lkcxgDIAMoCRIRCglsYW5ndWFnZXMYBCADKAkSFQoNcGF0aF9wYXR0ZXJucxgFIAMoCRITCgttYXhfcmVzdWx0cxgGIAEoDSIUChJMaXN0V29ya2Vyc1JlcXVlc3QifwoTTGlzdFdvcmtlcnNSZXNwb25zZRIRCglhdmFpbGFibGUYASABKAgSLQoHd29ya2VycxgCIAMoCzIcLnVsdGltYXRlX2NvZGVycy5Xb3JrZXJQcm90bxINCgV0b3RhbBgDIAEoDRIXCg9hdmFpbGFibGVfY291bnQYBCABKA0i1wEKC1dvcmtlclByb3RvEgoKAmlkGAEgASgJEhQKDGNhcGFiaWxpdGllcxgCIAMoCRIUCgxjdXJyZW50X2xvYWQYAyABKA0SFAoMbWF4X2NhcGFjaXR5GAQgASgNEhQKDGxvYWRfcGVyY2VudBgFIAEoDRIWCg5sYXN0X2hlYXJ0YmVhdBgGIAEoCRIdChVoZWFydGJlYXRfYWdlX3NlY29uZHMYByABKAESFwoPaGVhcnRiZWF0X3N0YWxlGAggASgIEhQKDGlzX2F2YWlsYWJsZRgJIAEoCCIbChlHZXRTY2hlZHVsZXJTdGF0dXNSZXF1ZXN0IocCChpHZXRTY2hlZHVsZXJTdGF0dXNSZXNwb25zZRIRCglhdmFpbGFibGUYASABKAgSEgoKaXNfcnVubmluZxgCIAEoCBI8CgxuaWdodF93aW5kb3cYAyABKAsyIS51bHRpbWF0ZV9jb2RlcnMuTmlnaHRXaW5kb3dQcm90b0gAiAEBEjAKBGpvYnMYBCADKAsyIi51bHRpbWF0ZV9jb2RlcnMuU2NoZWR1bGVkSm9iUHJvdG8SQQoRZXhlY3V0aW9uX2hpc3RvcnkYBSADKAsyJi51bHRpbWF0ZV9jb2RlcnMuRXhlY3V0aW9uSGlzdG9yeVByb3RvQg8KDV9uaWdodF93aW5kb3ciPwoQTmlnaHRXaW5kb3dQcm90bxINCgVzdGFydBgBIAEoCRILCgNlbmQYAiABKAkSDwoHZW5hYmxlZBgDIAEoCCKUAQoRU2NoZWR1bGVkSm9iUHJvdG8SCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRIMCgRjcm9uGAMgASgJEg8KB2VuYWJsZWQYBCABKAgSFQoIbGFzdF9ydW4YBSABKAlIAIgBARIVCghuZXh0X3J1bhgGIAEoCUgBiAEBQgsKCV9sYXN0X3J1bkILCglfbmV4dF9ydW4ifQoVRXhlY3V0aW9uSGlzdG9yeVByb3RvEg4KBmpvYl9pZBgBIAEoCRIQCghqb2JfbmFtZRgCIAEoCRITCgtleGVjdXRlZF9hdBgDIAEoCRIPCgdzdWNjZXNzGAQgASgIEhIKBWVycm9yGAUgASgJSACIAQFCCAoGX2Vycm9yIiAKHkdldENpcmN1aXRCcmVha2VyU3RhdHVzUmVxdWVzdCKpAQocQ2lyY3VpdEJyZWFrZXJTdGF0dXNSZXNwb25zZRIRCglhdmFpbGFibGUYASABKAgSPQoPY2lyY3VpdF9icmVha2VyGAIgASgLMiQudWx0aW1hdGVfY29kZXJzLkNpcmN1aXRCcmVha2VyUHJvdG8SNwoMcmF0ZV9saW1pdGVyGAMgASgLMiEudWx0aW1hdGVfY29kZXJzLlJhdGVMaW1pdGVyUHJvdG8ipAEKE0NpcmN1aXRCcmVha2VyUHJvdG8SDQoFc3RhdGUYASABKAkSFQoNZmFpbHVyZV9jb3VudBgCIAEoDRIZChFmYWlsdXJlX3RocmVzaG9sZBgDIAEoDRIgChhyZWNvdmVyeV90aW1lb3V0X3NlY29uZHMYBCABKAESGQoMbGFzdF9mYWlsdXJlGAUgASgJSACIAQFCDwoNX2xhc3RfZmFpbHVyZSJzChBSYXRlTGltaXRlclByb3RvEhQKDG1heF9yZXF1ZXN0cxgBIAEoDRIWCg53aW5kb3dfc2Vjb25kcxgCIAEoARIYChBjdXJyZW50X3JlcXVlc3RzGAMgASgNEhcKD3JlbWFpbmluZ19yYXRpbxgEIAEoASIcChpSZXNldENpcmN1aXRCcmVha2VyUmVxdWVzdCJbChtSZXNldENpcmN1aXRCcmVha2VyUmVzcG9uc2USDwoHc3VjY2VzcxgBIAEoCBINCgVzdGF0ZRgCIAEoCRISCgVlcnJvchgDIAEoCUgAiAEBQggKBl9lcnJvciIsChpUcmlnZ2VyU2NoZWR1bGVySm9iUmVxdWVzdBIOCgZqb2JfaWQYASABKAkiXAobVHJpZ2dlclNjaGVkdWxlckpvYlJlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSDgoGam9iX2lkGAIgASgJEhIKBWVycm9yGAMgASgJSACIAQFCCAoGX2Vycm9yIhoKGEZsdXNoUGVuZGluZ1Rhc2tzUmVxdWVzdCJ5ChlGbHVzaFBlbmRpbmdUYXNrc1Jlc3BvbnNlEg8KB3N1Y2Nlc3MYASABKAgSFQoNcGVuZGluZ19jb3VudBgCIAEoDRIWCg5leGVjdXRlZF9jb3VudBgDIAEoDRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciJUChFMaXN0RXZlbnRzUmVxdWVzdBIUCgd0YXNrX2lkGAEgASgJSACIAQESDQoFbGltaXQYAiABKA0SDgoGb2Zmc2V0GAMgASgNQgoKCF90YXNrX2lkIosBChJMaXN0RXZlbnRzUmVzcG9uc2USEQoJYXZhaWxhYmxlGAEgASgIEjQKBmV2ZW50cxgCIAMoCzIkLnVsdGltYXRlX2NvZGVycy5EYXNoYm9hcmRFdmVudFByb3RvEg0KBXRvdGFsGAMgASgNEg4KBm9mZnNldBgEIAEoDRINCgVsaW1pdBgFIAEoDSKyAQoTRGFzaGJvYXJkRXZlbnRQcm90bxIRCgl0aW1lc3RhbXAYASABKAkSDAoEdHlwZRgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEjwKBGRhdGEYBCADKAsyLi51bHRpbWF0ZV9jb2RlcnMuRGFzaGJvYXJkRXZlbnRQcm90by5EYXRhRW50cnkaKwoJRGF0YUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiFwoVV2F0Y2hEYXNoYm9hcmRSZXF1ZXN0IuIDChFEYXNoYm9hcmRTbmFwc2hvdBIRCgl0aW1lc3RhbXAYASABKAkSNAoGaGVhbHRoGAIgASgLMh8udWx0aW1hdGVfY29kZXJzLkhlYWx0aFNuYXBzaG90SACIAQESOgoHd29ya2VycxgDIAEoCzIkLnVsdGltYXRlX2NvZGVycy5MaXN0V29ya2Vyc1Jlc3BvbnNlSAGIAQESNgoFdGFza3MYBCABKAsyIi51bHRpbWF0ZV9jb2RlcnMuTGlzdFRhc2tzUmVzcG9uc2VIAogBARJDCglzY2hlZHVsZXIYBSABKAsyKy51bHRpbWF0ZV9jb2RlcnMuR2V0U2NoZWR1bGVyU3RhdHVzUmVzcG9uc2VIA4gBARJLCg9jaXJjdWl0X2JyZWFrZXIYBiABKAsyLS51bHRpbWF0ZV9jb2RlcnMuQ2lyY3VpdEJyZWFrZXJTdGF0dXNSZXNwb25zZUgEiAEBEjsKDXJlY2VudF9ldmVudHMYByADKAsyJC51bHRpbWF0ZV9jb2RlcnMuRGFzaGJvYXJkRXZlbnRQcm90b0IJCgdfaGVhbHRoQgoKCF93b3JrZXJzQggKBl90YXNrc0IMCgpfc2NoZWR1bGVyQhIKEF9jaXJjdWl0X2JyZWFrZXIihQEKDkhlYWx0aFNuYXBzaG90EhEKCWF2YWlsYWJsZRgBIAEoCBIOCgZzdGF0dXMYAiABKAkSFAoHdmVyc2lvbhgDIAEoCUgAiAEBEhsKDnVwdGltZV9zZWNvbmRzGAQgASgESAGIAQFCCgoIX3ZlcnNpb25CEQoPX3VwdGltZV9zZWNvbmRzMrYICg1FbmdpbmVTZXJ2aWNlEkkKBlNlYXJjaBIeLnVsdGltYXRlX2NvZGVycy5TZWFyY2hSZXF1ZXN0Gh8udWx0aW1hdGVfY29kZXJzLlNlYXJjaFJlc3BvbnNlElIKCUluZGV4UmVwbxIhLnVsdGltYXRlX2NvZGVycy5JbmRleFJlcG9SZXF1ZXN0GiIudWx0aW1hdGVfY29kZXJzLkluZGV4UmVwb1Jlc3BvbnNlEl4KDUdldEluZGV4U3RhdGUSJS51bHRpbWF0ZV9jb2RlcnMuR2V0SW5kZXhTdGF0ZVJlcXVlc3QaJi51bHRpbWF0ZV9jb2RlcnMuR2V0SW5kZXhTdGF0ZVJlc3BvbnNlElgKC1JlbW92ZUluZGV4EiMudWx0aW1hdGVfY29kZXJzLlJlbW92ZUluZGV4UmVxdWVzdBokLnVsdGltYXRlX2NvZGVycy5SZW1vdmVJbmRleFJlc3BvbnNlElUKClJlYWRNZW1vcnkSIi51bHRpbWF0ZV9jb2RlcnMuUmVhZE1lbW9yeVJlcXVlc3QaIy51bHRpbWF0ZV9jb2RlcnMuUmVhZE1lbW9yeVJlc3BvbnNlElgKC1dyaXRlTWVtb3J5EiMudWx0aW1hdGVfY29kZXJzLldyaXRlTWVtb3J5UmVxdWVzdBokLnVsdGltYXRlX2NvZGVycy5Xcml0ZU1lbW9yeVJlc3BvbnNlElsKDERlbGV0ZU1lbW9yeRIkLnVsdGltYXRlX2NvZGVycy5EZWxldGVNZW1vcnlSZXF1ZXN0GiUudWx0aW1hdGVfY29kZXJzLkRlbGV0ZU1lbW9yeVJlc3BvbnNlElsKDFNlYXJjaE1lbW9yeRIkLnVsdGltYXRlX2NvZGVycy5TZWFyY2hNZW1vcnlSZXF1ZXN0GiUudWx0aW1hdGVfY29kZXJzLlNlYXJjaE1lbW9yeVJlc3BvbnNlEkkKBkhlYWx0aBIeLnVsdGltYXRlX2NvZGVycy5IZWFsdGhSZXF1ZXN0Gh8udWx0aW1hdGVfY29kZXJzLkhlYWx0aFJlc3BvbnNlEmcKEEJhdGNoV3JpdGVNZW1vcnkSKC51bHRpbWF0ZV9jb2RlcnMuQmF0Y2hXcml0ZU1lbW9yeVJlcXVlc3QaKS51bHRpbWF0ZV9jb2RlcnMuQmF0Y2hXcml0ZU1lbW9yeVJlc3BvbnNlElIKCUxpc3RSZXBvcxIhLnVsdGltYXRlX2NvZGVycy5MaXN0UmVwb3NSZXF1ZXN0GiIudWx0aW1hdGVfY29kZXJzLkxpc3RSZXBvc1Jlc3BvbnNlElkKDFNlYXJjaFN0cmVhbRIkLnVsdGltYXRlX2NvZGVycy5TZWFyY2hTdHJlYW1SZXF1ZXN0GiEudWx0aW1hdGVfY29kZXJzLlNlYXJjaFJlc3VsdEl0ZW0wATL/AwoLVGFza1NlcnZpY2USVQoKU3VibWl0VGFzaxIiLnVsdGltYXRlX2NvZGVycy5TdWJtaXRUYXNrUmVxdWVzdBojLnVsdGltYXRlX2NvZGVycy5TdWJtaXRUYXNrUmVzcG9uc2USTAoHR2V0VGFzaxIfLnVsdGltYXRlX2NvZGVycy5HZXRUYXNrUmVxdWVzdBogLnVsdGltYXRlX2NvZGVycy5HZXRUYXNrUmVzcG9uc2USUgoJTGlzdFRhc2tzEiEudWx0aW1hdGVfY29kZXJzLkxpc3RUYXNrc1JlcXVlc3QaIi51bHRpbWF0ZV9jb2RlcnMuTGlzdFRhc2tzUmVzcG9uc2USTAoJV2F0Y2hUYXNrEiEudWx0aW1hdGVfY29kZXJzLldhdGNoVGFza1JlcXVlc3QaGi51bHRpbWF0ZV9jb2RlcnMuVGFza0V2ZW50MAESUgoJUGF1c2VUYXNrEiEudWx0aW1hdGVfY29kZXJzLlBhdXNlVGFza1JlcXVlc3QaIi51bHRpbWF0ZV9jb2RlcnMuUGF1c2VUYXNrUmVzcG9uc2USVQoKUmVzdW1lVGFzaxIiLnVsdGltYXRlX2NvZGVycy5SZXN1bWVUYXNrUmVxdWVzdBojLnVsdGltYXRlX2NvZGVycy5SZXN1bWVUYXNrUmVzcG9uc2Uy3QYKEERhc2hib2FyZFNlcnZpY2USWAoLTGlzdFdvcmtlcnMSIy51bHRpbWF0ZV9jb2RlcnMuTGlzdFdvcmtlcnNSZXF1ZXN0GiQudWx0aW1hdGVfY29kZXJzLkxpc3RXb3JrZXJzUmVzcG9uc2USbQoSR2V0U2NoZWR1bGVyU3RhdHVzEioudWx0aW1hdGVfY29kZXJzLkdldFNjaGVkdWxlclN0YXR1c1JlcXVlc3QaKy51bHRpbWF0ZV9jb2RlcnMuR2V0U2NoZWR1bGVyU3RhdHVzUmVzcG9uc2USeQoXR2V0Q2lyY3VpdEJyZWFrZXJTdGF0dXMSLy51bHRpbWF0ZV9jb2RlcnMuR2V0Q2lyY3VpdEJyZWFrZXJTdGF0dXNSZXF1ZXN0Gi0udWx0aW1hdGVfY29kZXJzLkNpcmN1aXRCcmVha2VyU3RhdHVzUmVzcG9uc2UScAoTUmVzZXRDaXJjdWl0QnJlYWtlchIrLnVsdGltYXRlX2NvZGVycy5SZXNldENpcmN1aXRCcmVha2VyUmVxdWVzdBosLnVsdGltYXRlX2NvZGVycy5SZXNldENpcmN1aXRCcmVha2VyUmVzcG9uc2UScAoTVHJpZ2dlclNjaGVkdWxlckpvYhIrLnVsdGltYXRlX2NvZGVycy5UcmlnZ2VyU2NoZWR1bGVySm9iUmVxdWVzdBosLnVsdGltYXRlX2NvZGVycy5UcmlnZ2VyU2NoZWR1bGVySm9iUmVzcG9uc2USagoRRmx1c2hQZW5kaW5nVGFza3MSKS51bHRpbWF0ZV9jb2RlcnMuRmx1c2hQZW5kaW5nVGFza3NSZXF1ZXN0GioudWx0aW1hdGVfY29kZXJzLkZsdXNoUGVuZGluZ1Rhc2tzUmVzcG9uc2USVQoKTGlzdEV2ZW50cxIiLnVsdGltYXRlX2NvZGVycy5MaXN0RXZlbnRzUmVxdWVzdBojLnVsdGltYXRlX2NvZGVycy5MaXN0RXZlbnRzUmVzcG9uc2USXgoOV2F0Y2hEYXNoYm9hcmQSJi51bHRpbWF0ZV9jb2RlcnMuV2F0Y2hEYXNoYm9hcmRSZXF1ZXN0GiIudWx0aW1hdGVfY29kZXJzLkRhc2hib2FyZFNuYXBzaG90MAFiBnByb3RvMw");
 
 /**
  * @generated from message ultimate_coders.SearchRequest
@@ -1143,6 +1143,21 @@ export type SubtaskProto = Message<"ultimate_coders.SubtaskProto"> & {
    * @generated from field: optional string assigned_worker = 5;
    */
   assignedWorker?: string | undefined;
+
+  /**
+   * @generated from field: string parent_id = 6;
+   */
+  parentId: string;
+
+  /**
+   * @generated from field: repeated string file_constraints = 7;
+   */
+  fileConstraints: string[];
+
+  /**
+   * @generated from field: string expected_output = 8;
+   */
+  expectedOutput: string;
 };
 
 /**
@@ -1151,6 +1166,844 @@ export type SubtaskProto = Message<"ultimate_coders.SubtaskProto"> & {
  */
 export const SubtaskProtoSchema: GenMessage<SubtaskProto> = /*@__PURE__*/
   messageDesc(file_engine, 35);
+
+/**
+ * @generated from message ultimate_coders.BatchWriteMemoryRequest
+ */
+export type BatchWriteMemoryRequest = Message<"ultimate_coders.BatchWriteMemoryRequest"> & {
+  /**
+   * @generated from field: repeated ultimate_coders.WriteMemoryRequest requests = 1;
+   */
+  requests: WriteMemoryRequest[];
+};
+
+/**
+ * Describes the message ultimate_coders.BatchWriteMemoryRequest.
+ * Use `create(BatchWriteMemoryRequestSchema)` to create a new message.
+ */
+export const BatchWriteMemoryRequestSchema: GenMessage<BatchWriteMemoryRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 36);
+
+/**
+ * @generated from message ultimate_coders.BatchWriteMemoryResponse
+ */
+export type BatchWriteMemoryResponse = Message<"ultimate_coders.BatchWriteMemoryResponse"> & {
+  /**
+   * @generated from field: repeated ultimate_coders.MemoryEntryProto entries = 1;
+   */
+  entries: MemoryEntryProto[];
+};
+
+/**
+ * Describes the message ultimate_coders.BatchWriteMemoryResponse.
+ * Use `create(BatchWriteMemoryResponseSchema)` to create a new message.
+ */
+export const BatchWriteMemoryResponseSchema: GenMessage<BatchWriteMemoryResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 37);
+
+/**
+ * @generated from message ultimate_coders.ListReposRequest
+ */
+export type ListReposRequest = Message<"ultimate_coders.ListReposRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.ListReposRequest.
+ * Use `create(ListReposRequestSchema)` to create a new message.
+ */
+export const ListReposRequestSchema: GenMessage<ListReposRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 38);
+
+/**
+ * @generated from message ultimate_coders.ListReposResponse
+ */
+export type ListReposResponse = Message<"ultimate_coders.ListReposResponse"> & {
+  /**
+   * @generated from field: repeated ultimate_coders.RepoIndexStateProto repos = 1;
+   */
+  repos: RepoIndexStateProto[];
+};
+
+/**
+ * Describes the message ultimate_coders.ListReposResponse.
+ * Use `create(ListReposResponseSchema)` to create a new message.
+ */
+export const ListReposResponseSchema: GenMessage<ListReposResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 39);
+
+/**
+ * @generated from message ultimate_coders.RepoIndexStateProto
+ */
+export type RepoIndexStateProto = Message<"ultimate_coders.RepoIndexStateProto"> & {
+  /**
+   * @generated from field: string repo_id = 1;
+   */
+  repoId: string;
+
+  /**
+   * @generated from field: bool indexed = 2;
+   */
+  indexed: boolean;
+
+  /**
+   * @generated from field: optional string last_indexed_sha = 3;
+   */
+  lastIndexedSha?: string | undefined;
+
+  /**
+   * @generated from field: uint32 files_count = 4;
+   */
+  filesCount: number;
+
+  /**
+   * @generated from field: uint32 symbols_count = 5;
+   */
+  symbolsCount: number;
+
+  /**
+   * @generated from field: uint32 chunks_count = 6;
+   */
+  chunksCount: number;
+};
+
+/**
+ * Describes the message ultimate_coders.RepoIndexStateProto.
+ * Use `create(RepoIndexStateProtoSchema)` to create a new message.
+ */
+export const RepoIndexStateProtoSchema: GenMessage<RepoIndexStateProto> = /*@__PURE__*/
+  messageDesc(file_engine, 40);
+
+/**
+ * @generated from message ultimate_coders.SearchStreamRequest
+ */
+export type SearchStreamRequest = Message<"ultimate_coders.SearchStreamRequest"> & {
+  /**
+   * @generated from field: string query = 1;
+   */
+  query: string;
+
+  /**
+   * @generated from field: repeated string modes = 2;
+   */
+  modes: string[];
+
+  /**
+   * @generated from field: repeated string repo_ids = 3;
+   */
+  repoIds: string[];
+
+  /**
+   * @generated from field: repeated string languages = 4;
+   */
+  languages: string[];
+
+  /**
+   * @generated from field: repeated string path_patterns = 5;
+   */
+  pathPatterns: string[];
+
+  /**
+   * @generated from field: uint32 max_results = 6;
+   */
+  maxResults: number;
+};
+
+/**
+ * Describes the message ultimate_coders.SearchStreamRequest.
+ * Use `create(SearchStreamRequestSchema)` to create a new message.
+ */
+export const SearchStreamRequestSchema: GenMessage<SearchStreamRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 41);
+
+/**
+ * @generated from message ultimate_coders.ListWorkersRequest
+ */
+export type ListWorkersRequest = Message<"ultimate_coders.ListWorkersRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.ListWorkersRequest.
+ * Use `create(ListWorkersRequestSchema)` to create a new message.
+ */
+export const ListWorkersRequestSchema: GenMessage<ListWorkersRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 42);
+
+/**
+ * @generated from message ultimate_coders.ListWorkersResponse
+ */
+export type ListWorkersResponse = Message<"ultimate_coders.ListWorkersResponse"> & {
+  /**
+   * @generated from field: bool available = 1;
+   */
+  available: boolean;
+
+  /**
+   * @generated from field: repeated ultimate_coders.WorkerProto workers = 2;
+   */
+  workers: WorkerProto[];
+
+  /**
+   * @generated from field: uint32 total = 3;
+   */
+  total: number;
+
+  /**
+   * @generated from field: uint32 available_count = 4;
+   */
+  availableCount: number;
+};
+
+/**
+ * Describes the message ultimate_coders.ListWorkersResponse.
+ * Use `create(ListWorkersResponseSchema)` to create a new message.
+ */
+export const ListWorkersResponseSchema: GenMessage<ListWorkersResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 43);
+
+/**
+ * @generated from message ultimate_coders.WorkerProto
+ */
+export type WorkerProto = Message<"ultimate_coders.WorkerProto"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: repeated string capabilities = 2;
+   */
+  capabilities: string[];
+
+  /**
+   * @generated from field: uint32 current_load = 3;
+   */
+  currentLoad: number;
+
+  /**
+   * @generated from field: uint32 max_capacity = 4;
+   */
+  maxCapacity: number;
+
+  /**
+   * @generated from field: uint32 load_percent = 5;
+   */
+  loadPercent: number;
+
+  /**
+   * @generated from field: string last_heartbeat = 6;
+   */
+  lastHeartbeat: string;
+
+  /**
+   * @generated from field: double heartbeat_age_seconds = 7;
+   */
+  heartbeatAgeSeconds: number;
+
+  /**
+   * @generated from field: bool heartbeat_stale = 8;
+   */
+  heartbeatStale: boolean;
+
+  /**
+   * @generated from field: bool is_available = 9;
+   */
+  isAvailable: boolean;
+};
+
+/**
+ * Describes the message ultimate_coders.WorkerProto.
+ * Use `create(WorkerProtoSchema)` to create a new message.
+ */
+export const WorkerProtoSchema: GenMessage<WorkerProto> = /*@__PURE__*/
+  messageDesc(file_engine, 44);
+
+/**
+ * @generated from message ultimate_coders.GetSchedulerStatusRequest
+ */
+export type GetSchedulerStatusRequest = Message<"ultimate_coders.GetSchedulerStatusRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.GetSchedulerStatusRequest.
+ * Use `create(GetSchedulerStatusRequestSchema)` to create a new message.
+ */
+export const GetSchedulerStatusRequestSchema: GenMessage<GetSchedulerStatusRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 45);
+
+/**
+ * @generated from message ultimate_coders.GetSchedulerStatusResponse
+ */
+export type GetSchedulerStatusResponse = Message<"ultimate_coders.GetSchedulerStatusResponse"> & {
+  /**
+   * @generated from field: bool available = 1;
+   */
+  available: boolean;
+
+  /**
+   * @generated from field: bool is_running = 2;
+   */
+  isRunning: boolean;
+
+  /**
+   * @generated from field: optional ultimate_coders.NightWindowProto night_window = 3;
+   */
+  nightWindow?: NightWindowProto | undefined;
+
+  /**
+   * @generated from field: repeated ultimate_coders.ScheduledJobProto jobs = 4;
+   */
+  jobs: ScheduledJobProto[];
+
+  /**
+   * @generated from field: repeated ultimate_coders.ExecutionHistoryProto execution_history = 5;
+   */
+  executionHistory: ExecutionHistoryProto[];
+};
+
+/**
+ * Describes the message ultimate_coders.GetSchedulerStatusResponse.
+ * Use `create(GetSchedulerStatusResponseSchema)` to create a new message.
+ */
+export const GetSchedulerStatusResponseSchema: GenMessage<GetSchedulerStatusResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 46);
+
+/**
+ * @generated from message ultimate_coders.NightWindowProto
+ */
+export type NightWindowProto = Message<"ultimate_coders.NightWindowProto"> & {
+  /**
+   * HH:MM
+   *
+   * @generated from field: string start = 1;
+   */
+  start: string;
+
+  /**
+   * HH:MM
+   *
+   * @generated from field: string end = 2;
+   */
+  end: string;
+
+  /**
+   * @generated from field: bool enabled = 3;
+   */
+  enabled: boolean;
+};
+
+/**
+ * Describes the message ultimate_coders.NightWindowProto.
+ * Use `create(NightWindowProtoSchema)` to create a new message.
+ */
+export const NightWindowProtoSchema: GenMessage<NightWindowProto> = /*@__PURE__*/
+  messageDesc(file_engine, 47);
+
+/**
+ * @generated from message ultimate_coders.ScheduledJobProto
+ */
+export type ScheduledJobProto = Message<"ultimate_coders.ScheduledJobProto"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string cron = 3;
+   */
+  cron: string;
+
+  /**
+   * @generated from field: bool enabled = 4;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: optional string last_run = 5;
+   */
+  lastRun?: string | undefined;
+
+  /**
+   * @generated from field: optional string next_run = 6;
+   */
+  nextRun?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.ScheduledJobProto.
+ * Use `create(ScheduledJobProtoSchema)` to create a new message.
+ */
+export const ScheduledJobProtoSchema: GenMessage<ScheduledJobProto> = /*@__PURE__*/
+  messageDesc(file_engine, 48);
+
+/**
+ * @generated from message ultimate_coders.ExecutionHistoryProto
+ */
+export type ExecutionHistoryProto = Message<"ultimate_coders.ExecutionHistoryProto"> & {
+  /**
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+
+  /**
+   * @generated from field: string job_name = 2;
+   */
+  jobName: string;
+
+  /**
+   * @generated from field: string executed_at = 3;
+   */
+  executedAt: string;
+
+  /**
+   * @generated from field: bool success = 4;
+   */
+  success: boolean;
+
+  /**
+   * @generated from field: optional string error = 5;
+   */
+  error?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.ExecutionHistoryProto.
+ * Use `create(ExecutionHistoryProtoSchema)` to create a new message.
+ */
+export const ExecutionHistoryProtoSchema: GenMessage<ExecutionHistoryProto> = /*@__PURE__*/
+  messageDesc(file_engine, 49);
+
+/**
+ * @generated from message ultimate_coders.GetCircuitBreakerStatusRequest
+ */
+export type GetCircuitBreakerStatusRequest = Message<"ultimate_coders.GetCircuitBreakerStatusRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.GetCircuitBreakerStatusRequest.
+ * Use `create(GetCircuitBreakerStatusRequestSchema)` to create a new message.
+ */
+export const GetCircuitBreakerStatusRequestSchema: GenMessage<GetCircuitBreakerStatusRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 50);
+
+/**
+ * @generated from message ultimate_coders.CircuitBreakerStatusResponse
+ */
+export type CircuitBreakerStatusResponse = Message<"ultimate_coders.CircuitBreakerStatusResponse"> & {
+  /**
+   * @generated from field: bool available = 1;
+   */
+  available: boolean;
+
+  /**
+   * @generated from field: ultimate_coders.CircuitBreakerProto circuit_breaker = 2;
+   */
+  circuitBreaker?: CircuitBreakerProto | undefined;
+
+  /**
+   * @generated from field: ultimate_coders.RateLimiterProto rate_limiter = 3;
+   */
+  rateLimiter?: RateLimiterProto | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.CircuitBreakerStatusResponse.
+ * Use `create(CircuitBreakerStatusResponseSchema)` to create a new message.
+ */
+export const CircuitBreakerStatusResponseSchema: GenMessage<CircuitBreakerStatusResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 51);
+
+/**
+ * @generated from message ultimate_coders.CircuitBreakerProto
+ */
+export type CircuitBreakerProto = Message<"ultimate_coders.CircuitBreakerProto"> & {
+  /**
+   * "closed", "open", "half_open"
+   *
+   * @generated from field: string state = 1;
+   */
+  state: string;
+
+  /**
+   * @generated from field: uint32 failure_count = 2;
+   */
+  failureCount: number;
+
+  /**
+   * @generated from field: uint32 failure_threshold = 3;
+   */
+  failureThreshold: number;
+
+  /**
+   * @generated from field: double recovery_timeout_seconds = 4;
+   */
+  recoveryTimeoutSeconds: number;
+
+  /**
+   * @generated from field: optional string last_failure = 5;
+   */
+  lastFailure?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.CircuitBreakerProto.
+ * Use `create(CircuitBreakerProtoSchema)` to create a new message.
+ */
+export const CircuitBreakerProtoSchema: GenMessage<CircuitBreakerProto> = /*@__PURE__*/
+  messageDesc(file_engine, 52);
+
+/**
+ * @generated from message ultimate_coders.RateLimiterProto
+ */
+export type RateLimiterProto = Message<"ultimate_coders.RateLimiterProto"> & {
+  /**
+   * @generated from field: uint32 max_requests = 1;
+   */
+  maxRequests: number;
+
+  /**
+   * @generated from field: double window_seconds = 2;
+   */
+  windowSeconds: number;
+
+  /**
+   * @generated from field: uint32 current_requests = 3;
+   */
+  currentRequests: number;
+
+  /**
+   * @generated from field: double remaining_ratio = 4;
+   */
+  remainingRatio: number;
+};
+
+/**
+ * Describes the message ultimate_coders.RateLimiterProto.
+ * Use `create(RateLimiterProtoSchema)` to create a new message.
+ */
+export const RateLimiterProtoSchema: GenMessage<RateLimiterProto> = /*@__PURE__*/
+  messageDesc(file_engine, 53);
+
+/**
+ * @generated from message ultimate_coders.ResetCircuitBreakerRequest
+ */
+export type ResetCircuitBreakerRequest = Message<"ultimate_coders.ResetCircuitBreakerRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.ResetCircuitBreakerRequest.
+ * Use `create(ResetCircuitBreakerRequestSchema)` to create a new message.
+ */
+export const ResetCircuitBreakerRequestSchema: GenMessage<ResetCircuitBreakerRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 54);
+
+/**
+ * @generated from message ultimate_coders.ResetCircuitBreakerResponse
+ */
+export type ResetCircuitBreakerResponse = Message<"ultimate_coders.ResetCircuitBreakerResponse"> & {
+  /**
+   * @generated from field: bool success = 1;
+   */
+  success: boolean;
+
+  /**
+   * @generated from field: string state = 2;
+   */
+  state: string;
+
+  /**
+   * @generated from field: optional string error = 3;
+   */
+  error?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.ResetCircuitBreakerResponse.
+ * Use `create(ResetCircuitBreakerResponseSchema)` to create a new message.
+ */
+export const ResetCircuitBreakerResponseSchema: GenMessage<ResetCircuitBreakerResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 55);
+
+/**
+ * @generated from message ultimate_coders.TriggerSchedulerJobRequest
+ */
+export type TriggerSchedulerJobRequest = Message<"ultimate_coders.TriggerSchedulerJobRequest"> & {
+  /**
+   * @generated from field: string job_id = 1;
+   */
+  jobId: string;
+};
+
+/**
+ * Describes the message ultimate_coders.TriggerSchedulerJobRequest.
+ * Use `create(TriggerSchedulerJobRequestSchema)` to create a new message.
+ */
+export const TriggerSchedulerJobRequestSchema: GenMessage<TriggerSchedulerJobRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 56);
+
+/**
+ * @generated from message ultimate_coders.TriggerSchedulerJobResponse
+ */
+export type TriggerSchedulerJobResponse = Message<"ultimate_coders.TriggerSchedulerJobResponse"> & {
+  /**
+   * @generated from field: bool success = 1;
+   */
+  success: boolean;
+
+  /**
+   * @generated from field: string job_id = 2;
+   */
+  jobId: string;
+
+  /**
+   * @generated from field: optional string error = 3;
+   */
+  error?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.TriggerSchedulerJobResponse.
+ * Use `create(TriggerSchedulerJobResponseSchema)` to create a new message.
+ */
+export const TriggerSchedulerJobResponseSchema: GenMessage<TriggerSchedulerJobResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 57);
+
+/**
+ * @generated from message ultimate_coders.FlushPendingTasksRequest
+ */
+export type FlushPendingTasksRequest = Message<"ultimate_coders.FlushPendingTasksRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.FlushPendingTasksRequest.
+ * Use `create(FlushPendingTasksRequestSchema)` to create a new message.
+ */
+export const FlushPendingTasksRequestSchema: GenMessage<FlushPendingTasksRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 58);
+
+/**
+ * @generated from message ultimate_coders.FlushPendingTasksResponse
+ */
+export type FlushPendingTasksResponse = Message<"ultimate_coders.FlushPendingTasksResponse"> & {
+  /**
+   * @generated from field: bool success = 1;
+   */
+  success: boolean;
+
+  /**
+   * @generated from field: uint32 pending_count = 2;
+   */
+  pendingCount: number;
+
+  /**
+   * @generated from field: uint32 executed_count = 3;
+   */
+  executedCount: number;
+
+  /**
+   * @generated from field: optional string error = 4;
+   */
+  error?: string | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.FlushPendingTasksResponse.
+ * Use `create(FlushPendingTasksResponseSchema)` to create a new message.
+ */
+export const FlushPendingTasksResponseSchema: GenMessage<FlushPendingTasksResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 59);
+
+/**
+ * @generated from message ultimate_coders.ListEventsRequest
+ */
+export type ListEventsRequest = Message<"ultimate_coders.ListEventsRequest"> & {
+  /**
+   * @generated from field: optional string task_id = 1;
+   */
+  taskId?: string | undefined;
+
+  /**
+   * @generated from field: uint32 limit = 2;
+   */
+  limit: number;
+
+  /**
+   * @generated from field: uint32 offset = 3;
+   */
+  offset: number;
+};
+
+/**
+ * Describes the message ultimate_coders.ListEventsRequest.
+ * Use `create(ListEventsRequestSchema)` to create a new message.
+ */
+export const ListEventsRequestSchema: GenMessage<ListEventsRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 60);
+
+/**
+ * @generated from message ultimate_coders.ListEventsResponse
+ */
+export type ListEventsResponse = Message<"ultimate_coders.ListEventsResponse"> & {
+  /**
+   * @generated from field: bool available = 1;
+   */
+  available: boolean;
+
+  /**
+   * @generated from field: repeated ultimate_coders.DashboardEventProto events = 2;
+   */
+  events: DashboardEventProto[];
+
+  /**
+   * @generated from field: uint32 total = 3;
+   */
+  total: number;
+
+  /**
+   * @generated from field: uint32 offset = 4;
+   */
+  offset: number;
+
+  /**
+   * @generated from field: uint32 limit = 5;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message ultimate_coders.ListEventsResponse.
+ * Use `create(ListEventsResponseSchema)` to create a new message.
+ */
+export const ListEventsResponseSchema: GenMessage<ListEventsResponse> = /*@__PURE__*/
+  messageDesc(file_engine, 61);
+
+/**
+ * @generated from message ultimate_coders.DashboardEventProto
+ */
+export type DashboardEventProto = Message<"ultimate_coders.DashboardEventProto"> & {
+  /**
+   * @generated from field: string timestamp = 1;
+   */
+  timestamp: string;
+
+  /**
+   * @generated from field: string type = 2;
+   */
+  type: string;
+
+  /**
+   * @generated from field: string task_id = 3;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: map<string, string> data = 4;
+   */
+  data: { [key: string]: string };
+};
+
+/**
+ * Describes the message ultimate_coders.DashboardEventProto.
+ * Use `create(DashboardEventProtoSchema)` to create a new message.
+ */
+export const DashboardEventProtoSchema: GenMessage<DashboardEventProto> = /*@__PURE__*/
+  messageDesc(file_engine, 62);
+
+/**
+ * @generated from message ultimate_coders.WatchDashboardRequest
+ */
+export type WatchDashboardRequest = Message<"ultimate_coders.WatchDashboardRequest"> & {
+};
+
+/**
+ * Describes the message ultimate_coders.WatchDashboardRequest.
+ * Use `create(WatchDashboardRequestSchema)` to create a new message.
+ */
+export const WatchDashboardRequestSchema: GenMessage<WatchDashboardRequest> = /*@__PURE__*/
+  messageDesc(file_engine, 63);
+
+/**
+ * @generated from message ultimate_coders.DashboardSnapshot
+ */
+export type DashboardSnapshot = Message<"ultimate_coders.DashboardSnapshot"> & {
+  /**
+   * @generated from field: string timestamp = 1;
+   */
+  timestamp: string;
+
+  /**
+   * @generated from field: optional ultimate_coders.HealthSnapshot health = 2;
+   */
+  health?: HealthSnapshot | undefined;
+
+  /**
+   * @generated from field: optional ultimate_coders.ListWorkersResponse workers = 3;
+   */
+  workers?: ListWorkersResponse | undefined;
+
+  /**
+   * @generated from field: optional ultimate_coders.ListTasksResponse tasks = 4;
+   */
+  tasks?: ListTasksResponse | undefined;
+
+  /**
+   * @generated from field: optional ultimate_coders.GetSchedulerStatusResponse scheduler = 5;
+   */
+  scheduler?: GetSchedulerStatusResponse | undefined;
+
+  /**
+   * @generated from field: optional ultimate_coders.CircuitBreakerStatusResponse circuit_breaker = 6;
+   */
+  circuitBreaker?: CircuitBreakerStatusResponse | undefined;
+
+  /**
+   * @generated from field: repeated ultimate_coders.DashboardEventProto recent_events = 7;
+   */
+  recentEvents: DashboardEventProto[];
+};
+
+/**
+ * Describes the message ultimate_coders.DashboardSnapshot.
+ * Use `create(DashboardSnapshotSchema)` to create a new message.
+ */
+export const DashboardSnapshotSchema: GenMessage<DashboardSnapshot> = /*@__PURE__*/
+  messageDesc(file_engine, 64);
+
+/**
+ * @generated from message ultimate_coders.HealthSnapshot
+ */
+export type HealthSnapshot = Message<"ultimate_coders.HealthSnapshot"> & {
+  /**
+   * @generated from field: bool available = 1;
+   */
+  available: boolean;
+
+  /**
+   * @generated from field: string status = 2;
+   */
+  status: string;
+
+  /**
+   * @generated from field: optional string version = 3;
+   */
+  version?: string | undefined;
+
+  /**
+   * @generated from field: optional uint64 uptime_seconds = 4;
+   */
+  uptimeSeconds?: bigint | undefined;
+};
+
+/**
+ * Describes the message ultimate_coders.HealthSnapshot.
+ * Use `create(HealthSnapshotSchema)` to create a new message.
+ */
+export const HealthSnapshotSchema: GenMessage<HealthSnapshot> = /*@__PURE__*/
+  messageDesc(file_engine, 65);
 
 /**
  * @generated from service ultimate_coders.EngineService
@@ -1228,6 +2081,30 @@ export const EngineService: GenService<{
     input: typeof HealthRequestSchema;
     output: typeof HealthResponseSchema;
   },
+  /**
+   * @generated from rpc ultimate_coders.EngineService.BatchWriteMemory
+   */
+  batchWriteMemory: {
+    methodKind: "unary";
+    input: typeof BatchWriteMemoryRequestSchema;
+    output: typeof BatchWriteMemoryResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.EngineService.ListRepos
+   */
+  listRepos: {
+    methodKind: "unary";
+    input: typeof ListReposRequestSchema;
+    output: typeof ListReposResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.EngineService.SearchStream
+   */
+  searchStream: {
+    methodKind: "server_streaming";
+    input: typeof SearchStreamRequestSchema;
+    output: typeof SearchResultItemSchema;
+  },
 }> = /*@__PURE__*/
   serviceDesc(file_engine, 0);
 
@@ -1285,4 +2162,75 @@ export const TaskService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_engine, 1);
+
+/**
+ * @generated from service ultimate_coders.DashboardService
+ */
+export const DashboardService: GenService<{
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.ListWorkers
+   */
+  listWorkers: {
+    methodKind: "unary";
+    input: typeof ListWorkersRequestSchema;
+    output: typeof ListWorkersResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.GetSchedulerStatus
+   */
+  getSchedulerStatus: {
+    methodKind: "unary";
+    input: typeof GetSchedulerStatusRequestSchema;
+    output: typeof GetSchedulerStatusResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.GetCircuitBreakerStatus
+   */
+  getCircuitBreakerStatus: {
+    methodKind: "unary";
+    input: typeof GetCircuitBreakerStatusRequestSchema;
+    output: typeof CircuitBreakerStatusResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.ResetCircuitBreaker
+   */
+  resetCircuitBreaker: {
+    methodKind: "unary";
+    input: typeof ResetCircuitBreakerRequestSchema;
+    output: typeof ResetCircuitBreakerResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.TriggerSchedulerJob
+   */
+  triggerSchedulerJob: {
+    methodKind: "unary";
+    input: typeof TriggerSchedulerJobRequestSchema;
+    output: typeof TriggerSchedulerJobResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.FlushPendingTasks
+   */
+  flushPendingTasks: {
+    methodKind: "unary";
+    input: typeof FlushPendingTasksRequestSchema;
+    output: typeof FlushPendingTasksResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.ListEvents
+   */
+  listEvents: {
+    methodKind: "unary";
+    input: typeof ListEventsRequestSchema;
+    output: typeof ListEventsResponseSchema;
+  },
+  /**
+   * @generated from rpc ultimate_coders.DashboardService.WatchDashboard
+   */
+  watchDashboard: {
+    methodKind: "server_streaming";
+    input: typeof WatchDashboardRequestSchema;
+    output: typeof DashboardSnapshotSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_engine, 2);
 
