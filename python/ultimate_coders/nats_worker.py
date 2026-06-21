@@ -496,18 +496,19 @@ class NatsWorker:
 
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
-            # Collect ALL ready subtasks (not just one)
-            ready_subtasks: list[Subtask] = []
+            # Collect ready subtask IDs (not objects — avoid stale refs).
+            # Use a seen set so select_next_subtask doesn't return
+            # the same subtask twice within this iteration.
+            ready_ids: list[str] = []
+            seen: set[str] = set()
             while True:
                 next_st = self._orchestrator.select_next_subtask(task)
-                if next_st is None:
+                if next_st is None or next_st.id in seen:
                     break
-                ready_subtasks.append(next_st)
-                # Temporarily mark as assigned so select_next_subtask
-                # doesn't return it again
-                next_st.status = SubtaskStatus.ASSIGNED
+                seen.add(next_st.id)
+                ready_ids.append(next_st.id)
 
-            if not ready_subtasks:
+            if not ready_ids:
                 # No more ready subtasks — either all done or blocked
                 in_progress = any(
                     st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks
@@ -523,11 +524,23 @@ class NatsWorker:
 
             # Execute ready subtasks concurrently (bounded by capacity)
             capacity = self._worker.max_capacity
-            batch = ready_subtasks[:capacity]
+            batch_ids = ready_ids[:capacity]
 
-            async def _run_one(st: Subtask) -> SubtaskResult:
+            async def _run_one(subtask_id: str) -> SubtaskResult:
                 """Assign, execute, and report a single subtask."""
-                st.status = SubtaskStatus.PENDING
+                # Look up fresh subtask from current task state
+                st = None
+                for s in task.subtasks:
+                    if s.id == subtask_id:
+                        st = s
+                        break
+                if st is None:
+                    return SubtaskResult(
+                        subtask_id=subtask_id,
+                        worker_id=self._worker.worker_id,
+                        summary="Subtask not found",
+                        success=False,
+                    )
                 wid = await self._orchestrator.assign_subtask(
                     st, self._worker.worker_id,
                 )
@@ -549,7 +562,7 @@ class NatsWorker:
 
             # Run batch concurrently
             results = await asyncio.gather(
-                *[_run_one(st) for st in batch],
+                *[_run_one(sid) for sid in batch_ids],
                 return_exceptions=True,
             )
 
@@ -558,7 +571,7 @@ class NatsWorker:
                 if isinstance(r, Exception):
                     logger.error(
                         "Subtask %s raised exception: %s",
-                        batch[i].id, r, exc_info=True,
+                        batch_ids[i], r, exc_info=True,
                     )
 
             # Refresh task state

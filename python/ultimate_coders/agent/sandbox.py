@@ -290,6 +290,26 @@ class SandboxManager:
                 logger.warning("Failed to warm up sandbox: %s", e)
                 break
 
+    async def execute_decompose(
+        self,
+        request: dict[str, Any],
+    ) -> ExecResult:
+        """Execute a decomposition request as a subprocess.
+
+        Unlike ``execute()``, this does NOT acquire/release a sandbox
+        handle or track file changes — decomposition is read-only and
+        doesn't need baseline tracking.  Use this for task decomposition
+        prompts; use ``execute()`` for coding tasks that modify files.
+
+        Args:
+            request: Execution request dict with command, args, etc.
+                Typically built by ``DecomposeAdapter.build_request()``.
+
+        Returns:
+            ExecResult with the process output.
+        """
+        return await self._execute_subprocess(request)
+
     async def _execute_subprocess(self, request: dict[str, Any]) -> ExecResult:
         """Execute a command as a subprocess (pure Python fallback).
 

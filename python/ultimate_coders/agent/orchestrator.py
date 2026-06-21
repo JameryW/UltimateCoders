@@ -108,6 +108,8 @@ class Orchestrator:
         self.config = config or OrchestratorConfig()
         self.workers: dict[str, WorkerInfo] = {}
         self.tasks: dict[str, Task] = {}
+        # Reverse index: subtask_id -> (task_id, index_in_subtasks)
+        self._subtask_index: dict[str, tuple[str, int]] = {}
         self.conflict_detector = conflict_detector or ConflictDetector()
         # Night-window exclusive mode
         self.scheduler = scheduler
@@ -177,12 +179,14 @@ class Orchestrator:
         )
         self.tasks[task.id] = task
 
-        # Sync to Engine task store so gRPC consumers can query it
-        if self.engine is not None:
-            try:
-                self.engine.submit_task(description, project_id=project_id)
-            except Exception:
-                logger.debug("Engine submit_task sync failed", exc_info=True)
+        # Note: we intentionally do NOT call engine.submit_task() here.
+        # When NATS is available, the gRPC server already created the Task
+        # via submit_task_pending() and the Orchestrator's publish_update()
+        # will sync state back. When NATS is unavailable (local path),
+        # engine.submit_task() generates a new TaskId that mismatches the
+        # one we just created above — causing a split-brain between the
+        # Python and Rust task stores.  The NATS update path is the sole
+        # mechanism for keeping TaskStore in sync.
 
         # Store in memory
         if self.engine is not None:
@@ -203,6 +207,7 @@ class Orchestrator:
         try:
             subtasks = await self.decompose_task(task)
             task.subtasks = subtasks
+            self._rebuild_subtask_index(task)
             task.status = TaskStatus.IN_PROGRESS
         except Exception:
             logger.error("Failed to decompose task %s", task.id, exc_info=True)
@@ -278,7 +283,7 @@ class Orchestrator:
             or self.sandbox_manager.config.project_path,
             self.sandbox_manager.config,
         )
-        result = await self.sandbox_manager._execute_subprocess(request)
+        result = await self.sandbox_manager.execute_decompose(request)
         output = adapter.parse_output(result)
         if not output.success:
             logger.error(
@@ -382,29 +387,35 @@ class Orchestrator:
         Args:
             result: The subtask result from a worker.
         """
-        # Find the parent task
-        task = None
-        for t in self.tasks.values():
-            for st in t.subtasks:
-                if st.id == result.subtask_id:
-                    task = t
-                    break
-            if task is not None:
-                break
+        # Find the parent task and subtask via reverse index (O(1))
+        entry = self._subtask_index.get(result.subtask_id)
+        if entry is not None:
+            task_id, subtask_idx = entry
+            task = self.tasks.get(task_id)
+            if task is not None and subtask_idx < len(task.subtasks):
+                subtask = task.subtasks[subtask_idx]
+                if subtask.id != result.subtask_id:
+                    # Index out of sync (e.g. after re-decompose) — fall back
+                    subtask = None
+            else:
+                subtask = None
+        else:
+            task = None
+            subtask = None
 
-        if task is None:
-            logger.warning("No task found for subtask result %s", result.subtask_id)
-            return
-
-        # Find the subtask
-        subtask = None
-        for st in task.subtasks:
-            if st.id == result.subtask_id:
-                subtask = st
-                break
-
+        # Fallback: linear scan when index is empty or stale
         if subtask is None:
-            logger.warning("Subtask %s not found", result.subtask_id)
+            for t in self.tasks.values():
+                for st in t.subtasks:
+                    if st.id == result.subtask_id:
+                        task = t
+                        subtask = st
+                        break
+                if subtask is not None:
+                    break
+
+        if task is None or subtask is None:
+            logger.warning("No task found for subtask result %s", result.subtask_id)
             return
 
         # Update subtask state
@@ -579,6 +590,25 @@ class Orchestrator:
         return [w for w in self.workers.values() if w.is_available]
 
     # ── Private helpers ─────────────────────────────────────────
+
+    def _rebuild_subtask_index(self, task: Task) -> None:
+        """Rebuild the subtask reverse index for a task.
+
+        Called after subtasks are assigned (decompose / re-decompose).
+        Removes stale entries for this task before rebuilding so that
+        removed subtasks (e.g. failed ones replaced by re-decompose)
+        don't linger in the index.
+        """
+        # Remove stale entries belonging to this task
+        stale_ids = [
+            sid for sid, (tid, _idx) in self._subtask_index.items()
+            if tid == task.id
+        ]
+        for sid in stale_ids:
+            del self._subtask_index[sid]
+        # Rebuild from current subtask list
+        for i, st in enumerate(task.subtasks):
+            self._subtask_index[st.id] = (task.id, i)
 
     async def _publish_event(
         self,
@@ -954,7 +984,7 @@ class Orchestrator:
                 or self.sandbox_manager.config.project_path,
                 self.sandbox_manager.config,
             )
-            result = await self.sandbox_manager._execute_subprocess(request)
+            result = await self.sandbox_manager.execute_decompose(request)
             output = adapter.parse_output(result)
             if not output.success:
                 return None
@@ -975,6 +1005,8 @@ class Orchestrator:
             task.subtasks = [
                 st for st in task.subtasks if not st.is_failed
             ] + new_subtasks
+            # Rebuild reverse index after subtask list changes
+            self._rebuild_subtask_index(task)
 
             return {
                 "failed_count": len(failed),
