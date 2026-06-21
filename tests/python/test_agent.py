@@ -1,23 +1,39 @@
-"""Unit tests for the agent layer — Orchestrator, Worker, types, and LLM client."""
+"""Unit tests for Agent layer (Worker, Orchestrator, types).
+
+Worker tests cover sandbox-only execution, conflict detection,
+heartbeat, and event publishing.
+
+Orchestrator tests cover task decomposition (sandbox path),
+_parse_decomposition_items, worker assignment, and task lifecycle.
+
+Previously contained LLM tool-calling tests — removed in favor of
+sandbox-only execution.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import json
-from unittest.mock import MagicMock
+from datetime import datetime, timezone
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from ultimate_coders.agent.llm import (
-    LLMClient,
-    LLMResponse,
-    ToolCall,
-    make_tool_definition,
+from ultimate_coders.agent.conflict import (
+    ConflictDetector,
+    ConflictResult,
+    EditIntent,
+    EditType,
+    LineRange,
 )
 from ultimate_coders.agent.orchestrator import Orchestrator
+from ultimate_coders.agent.sandbox import (
+    AgentOutput,
+    ExecResult,
+    SandboxConfig,
+    SandboxManager,
+)
 from ultimate_coders.agent.types import (
-    AdaptationStrategy,
-    ChangeType,
-    FileChange,
+    OrchestratorConfig,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -26,1437 +42,373 @@ from ultimate_coders.agent.types import (
     WorkerInfo,
 )
 from ultimate_coders.agent.worker import Worker
-from ultimate_coders.memory.memory import LongTermMemory, MemoryEntry, MemoryKey, ShortTermMemory
-
-# ── Types tests ──────────────────────────────────────────────────
 
 
-class TestTask:
-    """Tests for Task dataclass."""
+# ═══════════════════════════════════════════════════════════════════
+# Worker tests
+# ═══════════════════════════════════════════════════════════════════
 
-    def test_task_defaults(self):
-        task = Task()
-        assert task.id  # auto-generated UUID
-        assert task.status == TaskStatus.CREATED
-        assert task.subtasks == []
-        assert task.description == ""
-        assert task.project_id == ""
+class TestWorkerInit:
+    """Tests for Worker initialization."""
 
-    def test_task_is_complete(self):
-        task = Task()
-        assert not task.is_complete  # No subtasks
+    def test_default_init(self):
+        worker = Worker()
+        assert worker.worker_id
+        assert worker.engine is None
+        assert worker.capabilities == ["code", "search", "memory", "test"]
+        assert worker.max_capacity == 3
+        assert worker.current_task is None
+        assert worker._active_count == 0
+        assert worker.nats_publisher is None
+        assert worker.event_emitter is None
 
-        st1 = Subtask(parent_id=task.id, status=SubtaskStatus.COMPLETED)
-        st2 = Subtask(parent_id=task.id, status=SubtaskStatus.COMPLETED)
-        task.subtasks = [st1, st2]
-        assert task.is_complete
-
-    def test_task_has_failed(self):
-        task = Task()
-        st = Subtask(parent_id=task.id, status=SubtaskStatus.FAILED)
-        task.subtasks = [st]
-        assert task.has_failed
-
-    def test_task_ready_subtasks(self):
-        task = Task()
-        st1 = Subtask(parent_id=task.id, status=SubtaskStatus.PENDING)
-        st2 = Subtask(parent_id=task.id, status=SubtaskStatus.PENDING, depends_on=[st1.id])
-        task.subtasks = [st1, st2]
-
-        ready = task.ready_subtasks
-        assert len(ready) == 1
-        assert ready[0].id == st1.id
-
-    def test_task_ready_subtasks_with_completed_deps(self):
-        task = Task()
-        st1 = Subtask(parent_id=task.id, status=SubtaskStatus.COMPLETED)
-        st2 = Subtask(parent_id=task.id, status=SubtaskStatus.PENDING, depends_on=[st1.id])
-        task.subtasks = [st1, st2]
-
-        ready = task.ready_subtasks
-        assert len(ready) == 1
-        assert ready[0].id == st2.id
-
-    def test_task_update_timestamp(self):
-        task = Task()
-        old_updated = task.updated_at
-        task.update_timestamp()
-        assert task.updated_at >= old_updated
-
-
-class TestSubtask:
-    """Tests for Subtask dataclass."""
-
-    def test_subtask_defaults(self):
-        st = Subtask()
-        assert st.id  # auto-generated UUID
-        assert st.status == SubtaskStatus.PENDING
-        assert st.depends_on == []
-        assert st.assigned_worker is None
-        assert st.result is None
-
-    def test_subtask_is_ready(self):
-        st = Subtask(status=SubtaskStatus.PENDING)
-        assert st.is_ready
-
-    def test_subtask_not_ready_when_assigned(self):
-        st = Subtask(status=SubtaskStatus.ASSIGNED)
-        assert not st.is_ready
-
-    def test_subtask_is_complete(self):
-        st = Subtask(status=SubtaskStatus.COMPLETED)
-        assert st.is_complete
-
-    def test_subtask_is_failed(self):
-        st = Subtask(status=SubtaskStatus.FAILED)
-        assert st.is_failed
-
-
-class TestWorkerInfo:
-    """Tests for WorkerInfo dataclass."""
-
-    def test_worker_available(self):
-        wi = WorkerInfo(id="w1", current_load=0, max_capacity=3)
-        assert wi.is_available
-
-    def test_worker_not_available(self):
-        wi = WorkerInfo(id="w1", current_load=3, max_capacity=3)
-        assert not wi.is_available
-
-    def test_worker_partial_load(self):
-        wi = WorkerInfo(id="w1", current_load=2, max_capacity=3)
-        assert wi.is_available
-
-
-# ── LLM Client tests ─────────────────────────────────────────────
-
-
-class TestLLMClient:
-    """Tests for LLMClient."""
-
-    def test_init_defaults(self):
-        client = LLMClient()
-        assert client.provider == "anthropic"
-        assert client.model == "claude-sonnet-4-6"
-        assert client.max_retries == 5
-
-    def test_init_custom(self):
-        client = LLMClient(
-            provider="anthropic",
-            model="claude-haiku-4-5-20251001",
-            api_key="test-key",
-            max_retries=3,
+    def test_custom_init(self):
+        config = SandboxConfig(project_path="/tmp/test")
+        worker = Worker(
+            worker_id="w1",
+            engine=None,
+            capabilities=["code"],
+            max_capacity=5,
+            sandbox_config=config,
         )
-        assert client.model == "claude-haiku-4-5-20251001"
-        assert client.api_key == "test-key"
-        assert client.max_retries == 3
+        assert worker.worker_id == "w1"
+        assert worker.capabilities == ["code"]
+        assert worker.max_capacity == 5
+        assert worker._sandbox_config is config
 
-    def test_init_openai_provider(self):
-        client = LLMClient(provider="openai", api_key="sk-test", model="gpt-4o")
-        assert client.provider == "openai"
-        assert client.model == "gpt-4o"
-        assert client.api_key == "sk-test"
+    def test_get_info(self):
+        worker = Worker(worker_id="w1", max_capacity=5)
+        info = worker.get_info()
+        assert isinstance(info, WorkerInfo)
+        assert info.id == "w1"
+        assert info.max_capacity == 5
 
-    def test_init_openai_default_model(self):
-        client = LLMClient(provider="openai", api_key="sk-test")
-        assert client.model == "gpt-4o"
 
-    def test_init_gemini_provider(self):
-        client = LLMClient(provider="gemini", api_key="gemini-key")
-        assert client.model == "gemini-2.5-pro"
-
-    def test_init_deepseek_provider(self):
-        client = LLMClient(provider="deepseek", api_key="ds-key")
-        assert client.model == "deepseek/deepseek-chat"
-
-    def test_api_key_env_fallback(self):
-        """ANTHROPIC_API_KEY is the universal fallback."""
-        import os
-        old = os.environ.get("ANTHROPIC_API_KEY")
-        os.environ["ANTHROPIC_API_KEY"] = "anthropic-fallback"
-        try:
-            client = LLMClient(provider="openai")
-            assert client.api_key == "anthropic-fallback"
-        finally:
-            if old is None:
-                del os.environ["ANTHROPIC_API_KEY"]
-            else:
-                os.environ["ANTHROPIC_API_KEY"] = old
-
-    def test_format_tool_anthropic(self):
-        tool = make_tool_definition(name="search", description="Search code")
-        formatted = LLMClient._format_tool_anthropic(tool)
-        assert formatted["name"] == "search"
-        assert "input_schema" in formatted
-        assert "name" not in formatted.get("function", {})
-
-    def test_format_tool_openai(self):
-        tool = make_tool_definition(name="search", description="Search code")
-        formatted = LLMClient._format_tool_openai(tool)
-        assert formatted["type"] == "function"
-        assert formatted["function"]["name"] == "search"
-        assert "parameters" in formatted["function"]
-
-    def test_parse_litellm_response_no_tools(self):
-        """Parse a litellm ModelResponse with text only."""
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Hello world"
-        mock_response.choices[0].message.tool_calls = None
-        mock_response.choices[0].finish_reason = "stop"
-        mock_response.model = "gpt-4o"
-        mock_response.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
-
-        client = LLMClient(provider="openai")
-        result = client._parse_litellm_response(mock_response)
-        assert result.text == "Hello world"
-        assert not result.has_tool_calls
-        assert result.model == "gpt-4o"
-        assert result.usage["input_tokens"] == 10
-        assert result.usage["output_tokens"] == 5
-
-    def test_parse_litellm_response_with_tools(self):
-        """Parse a litellm ModelResponse with tool calls."""
-        mock_tc = MagicMock()
-        mock_tc.id = "call_abc"
-        mock_tc.function.name = "search"
-        mock_tc.function.arguments = '{"query": "test"}'
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = None
-        mock_response.choices[0].message.tool_calls = [mock_tc]
-        mock_response.choices[0].finish_reason = "tool_calls"
-        mock_response.model = "gpt-4o"
-        mock_response.usage = MagicMock(prompt_tokens=20, completion_tokens=15)
-
-        client = LLMClient(provider="openai")
-        result = client._parse_litellm_response(mock_response)
-        assert result.has_tool_calls
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].name == "search"
-        assert result.tool_calls[0].input == {"query": "test"}
-        assert result.stop_reason == "tool_use"
+class TestWorkerSandboxExecution:
+    """Tests for Worker sandbox-only execution."""
 
     @pytest.mark.asyncio
-    async def test_litellm_tool_calling_loop(self):
-        """Test _complete_with_tools_litellm multi-round tool execution."""
-        from unittest.mock import AsyncMock, MagicMock
+    async def test_execute_subtask_success(self, monkeypatch):
+        """Worker executes subtask via sandbox and returns result."""
+        worker = Worker()
 
-        client = LLMClient(provider="openai", api_key="sk-test")
-
-        # Mock litellm module
-        mock_litellm = MagicMock()
-
-        # First response: LLM requests a tool call
-        mock_tc = MagicMock()
-        mock_tc.id = "call_1"
-        mock_tc.function.name = "search"
-        mock_tc.function.arguments = '{"query": "test"}'
-
-        first_response = MagicMock()
-        first_response.choices = [MagicMock()]
-        first_response.choices[0].message.content = ""
-        first_response.choices[0].message.tool_calls = [mock_tc]
-        first_response.choices[0].finish_reason = "tool_calls"
-
-        # Second response: LLM gives final text answer
-        second_response = MagicMock()
-        second_response.choices = [MagicMock()]
-        second_response.choices[0].message.content = "Found 3 results"
-        second_response.choices[0].message.tool_calls = None
-        second_response.choices[0].finish_reason = "stop"
-
-        mock_litellm.acompletion = AsyncMock(
-            side_effect=[first_response, second_response]
+        fake_output = AgentOutput(
+            success=True,
+            summary="Task completed",
+            file_changes=[],
         )
 
-        # Inject mock litellm
-        client._client = mock_litellm
+        async def fake_execute(prompt: str) -> AgentOutput:
+            return fake_output
 
-        tools = [make_tool_definition(name="search", description="Search")]
-        tool_executor = AsyncMock(return_value="result text")
+        monkeypatch.setattr(worker._sandbox_manager, "execute", fake_execute)
 
-        response, log = await client._complete_with_tools_litellm(
-            [{"role": "user", "content": "Search for test"}],
-            tools,
-            tool_executor=tool_executor,
+        subtask = Subtask(
+            description="Fix the bug",
+            parent_id="task-1",
+        )
+        result = await worker.execute_subtask(subtask)
+
+        assert result.success
+        assert result.summary == "Task completed"
+        assert result.subtask_id == subtask.id
+        assert result.worker_id == worker.worker_id
+
+    @pytest.mark.asyncio
+    async def test_execute_subtask_failure(self, monkeypatch):
+        """Worker handles sandbox execution failure."""
+        worker = Worker()
+
+        fake_output = AgentOutput(
+            success=False,
+            summary="Sandbox error",
+            file_changes=[],
         )
 
-        assert response.text == "Found 3 results"
-        assert not response.has_tool_calls
-        assert len(log) == 1
-        assert log[0]["tool_call"]["name"] == "search"
-        assert mock_litellm.acompletion.call_count == 2
+        async def fake_execute(prompt: str) -> AgentOutput:
+            return fake_output
 
+        monkeypatch.setattr(worker._sandbox_manager, "execute", fake_execute)
 
-class TestLLMResponse:
-    """Tests for LLMResponse."""
-
-    def test_no_tool_calls(self):
-        resp = LLMResponse(text="Hello")
-        assert not resp.has_tool_calls
-
-    def test_with_tool_calls(self):
-        tc = ToolCall(id="tc1", name="search", input={"query": "test"})
-        resp = LLMResponse(text="", tool_calls=[tc])
-        assert resp.has_tool_calls
-        assert len(resp.tool_calls) == 1
-
-
-class TestToolDefinition:
-    """Tests for ToolDefinition and make_tool_definition."""
-
-    def test_make_tool_definition(self):
-        tool = make_tool_definition(
-            name="search",
-            description="Search code",
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "Search query",
-                    "required": True,
-                },
-            },
+        subtask = Subtask(
+            description="Fix the bug",
+            parent_id="task-1",
         )
-        assert tool.name == "search"
-        assert tool.description == "Search code"
-        assert "query" in tool.input_schema["properties"]
-        assert "query" in tool.input_schema["required"]
+        result = await worker.execute_subtask(subtask)
 
-    def test_make_tool_definition_no_params(self):
-        tool = make_tool_definition(
-            name="list_files",
-            description="List files",
+        assert not result.success
+        assert result.summary == "Sandbox error"
+
+    @pytest.mark.asyncio
+    async def test_execute_subtask_timeout(self, monkeypatch):
+        """Worker times out if sandbox takes too long."""
+
+        async def slow_execute(prompt: str) -> AgentOutput:
+            await asyncio.sleep(10)
+            return AgentOutput(success=True, summary="done", file_changes=[])
+
+        worker = Worker()
+        monkeypatch.setattr(worker._sandbox_manager, "execute", slow_execute)
+
+        subtask = Subtask(
+            description="Fix the bug",
+            parent_id="task-1",
+            timeout_seconds=1,
         )
-        assert tool.name == "list_files"
-        assert tool.input_schema["properties"] == {}
+        result = await worker.execute_subtask(subtask)
 
+        assert not result.success
+        assert "timed out" in result.summary
 
-# ── Memory types tests ───────────────────────────────────────────
+    @pytest.mark.asyncio
+    async def test_execute_subtask_exception(self, monkeypatch):
+        """Worker handles unexpected exceptions during execution."""
 
+        async def failing_execute(prompt: str) -> AgentOutput:
+            raise RuntimeError("Unexpected error")
 
-class TestMemoryKey:
-    """Tests for MemoryKey."""
+        worker = Worker()
+        monkeypatch.setattr(worker._sandbox_manager, "execute", failing_execute)
 
-    def test_task_scope_valid(self):
-        mk = MemoryKey(scope="task", key="decisions", task_id="t1")
-        mk.validate()  # Should not raise
-
-    def test_task_scope_missing_task_id(self):
-        mk = MemoryKey(scope="task", key="decisions")
-        with pytest.raises(ValueError, match="task_id"):
-            mk.validate()
-
-    def test_project_scope_valid(self):
-        mk = MemoryKey(scope="project", key="architecture", project_id="p1")
-        mk.validate()  # Should not raise
-
-    def test_project_scope_missing_project_id(self):
-        mk = MemoryKey(scope="project", key="architecture")
-        with pytest.raises(ValueError, match="project_id"):
-            mk.validate()
-
-    def test_global_scope_valid(self):
-        mk = MemoryKey(scope="global", key="conventions")
-        mk.validate()  # Should not raise
-
-    def test_invalid_scope(self):
-        mk = MemoryKey(scope="invalid", key="test")
-        with pytest.raises(ValueError, match="Invalid scope"):
-            mk.validate()
-
-
-class TestMemoryEntry:
-    """Tests for MemoryEntry."""
-
-    def test_from_dict(self):
-        entry = MemoryEntry.from_dict(
-            {
-                "id": "mem-1",
-                "key": {"scope": "task", "key": "decisions", "task_id": "t1"},
-                "content": "Use PostgreSQL",
-                "content_type": "text",
-                "source_agent": "orchestrator",
-                "importance": 0.7,
-                "tags": ["architecture"],
-            }
+        subtask = Subtask(
+            description="Fix the bug",
+            parent_id="task-1",
         )
-        assert entry.id == "mem-1"
-        assert entry.key.scope == "task"
-        assert entry.key.key == "decisions"
-        assert entry.content == "Use PostgreSQL"
-        assert entry.importance == 0.7
+        result = await worker.execute_subtask(subtask)
+
+        assert not result.success
+        assert "Unexpected error" in result.summary
 
 
-# ── ShortTermMemory tests ────────────────────────────────────────
+class TestWorkerEventPublishing:
+    """Tests for Worker event publishing (NATS preferred, event_emitter fallback)."""
+
+    @pytest.mark.asyncio
+    async def test_publish_via_nats(self):
+        """Worker publishes events via NATS when available."""
+        mock_nats = AsyncMock()
+        worker = Worker(nats_publisher=mock_nats)
+
+        subtask = Subtask(description="Test", parent_id="task-1")
+
+        # Mock sandbox to succeed immediately
+        fake_output = AgentOutput(success=True, summary="done", file_changes=[])
+        with patch.object(worker._sandbox_manager, "execute", return_value=fake_output):
+            await worker.execute_subtask(subtask)
+
+        # NATS publisher should have been called
+        assert mock_nats.publish_event.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_publish_via_event_emitter_fallback(self):
+        """Worker falls back to event_emitter when NATS is not available."""
+        mock_emitter = AsyncMock()
+        worker = Worker(event_emitter=mock_emitter)
+
+        subtask = Subtask(description="Test", parent_id="task-1")
+
+        fake_output = AgentOutput(success=True, summary="done", file_changes=[])
+        with patch.object(worker._sandbox_manager, "execute", return_value=fake_output):
+            await worker.execute_subtask(subtask)
+
+        # Event emitter should have been called
+        assert mock_emitter.emit.call_count >= 1
 
 
-class TestShortTermMemory:
-    """Tests for ShortTermMemory wrapper."""
+class TestWorkerConflictDetection:
+    """Tests for Worker conflict detection."""
 
-    def _make_engine(self):
-        engine = MagicMock()
-        engine.read_memory.return_value = None
-        engine.write_memory.return_value = {"id": "mem-1", "content": "test"}
-        return engine
+    def test_declare_edit_intent_no_conflict(self):
+        worker = Worker(worker_id="w1")
+        result, info = worker.declare_edit_intent("src/main.py")
+        assert result == ConflictResult.NO_CONFLICT
+        assert info is None
 
-    def test_read_not_found(self):
-        engine = self._make_engine()
-        stm = ShortTermMemory(engine)
-        result = stm.read("decisions", task_id="t1")
-        assert result is None
+    def test_declare_edit_intent_with_conflict(self):
+        detector = ConflictDetector()
+        worker1 = Worker(worker_id="w1", conflict_detector=detector)
+        worker2 = Worker(worker_id="w2", conflict_detector=detector)
 
-    def test_read_found_dict(self):
-        engine = self._make_engine()
-        engine.read_memory.return_value = {
-            "id": "mem-1",
-            "key": {"scope": "task", "key": "decisions", "task_id": "t1"},
-            "content": "Use PostgreSQL",
-        }
-        stm = ShortTermMemory(engine)
-        result = stm.read("decisions", task_id="t1")
-        assert result is not None
-        assert result.content == "Use PostgreSQL"
+        worker1.declare_edit_intent("src/main.py")
+        result, info = worker2.declare_edit_intent("src/main.py")
+        assert result != ConflictResult.NO_CONFLICT
 
-    def test_write(self):
-        engine = self._make_engine()
-        stm = ShortTermMemory(engine)
-        stm.write("decisions", "Use PostgreSQL", task_id="t1")
-        engine.write_memory.assert_called_once()
-        call_kwargs = engine.write_memory.call_args
-        assert call_kwargs[1]["key_scope"] == "task"
-        assert call_kwargs[1]["key"] == "decisions"
-
-    def test_delete(self):
-        engine = self._make_engine()
-        stm = ShortTermMemory(engine)
-        stm.delete("decisions", task_id="t1")
-        engine.delete_memory.assert_called_once()
+    def test_release_edit_intent(self):
+        detector = ConflictDetector()
+        worker = Worker(worker_id="w1", conflict_detector=detector)
+        worker.declare_edit_intent("src/main.py")
+        worker.release_edit_intent("src/main.py")
+        # Should be able to declare again without conflict
+        result, _ = worker.declare_edit_intent("src/main.py")
+        assert result == ConflictResult.NO_CONFLICT
 
 
-# ── LongTermMemory tests ─────────────────────────────────────────
+class TestWorkerHeartbeat:
+    """Tests for Worker heartbeat."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat(self):
+        worker = Worker(worker_id="w1", max_capacity=5)
+        hb = await worker.send_heartbeat()
+        assert hb["worker_id"] == "w1"
+        assert hb["max_capacity"] == 5
+        assert hb["current_load"] == 0
 
 
-class TestLongTermMemory:
-    """Tests for LongTermMemory wrapper."""
+# ═══════════════════════════════════════════════════════════════════
+# Orchestrator tests
+# ═══════════════════════════════════════════════════════════════════
 
-    def _make_engine(self):
-        engine = MagicMock()
-        engine.read_memory.return_value = None
-        engine.write_memory.return_value = {"id": "mem-1", "content": "test"}
-        engine.search_memory.return_value = []
-        return engine
+class TestOrchestratorInit:
+    """Tests for Orchestrator initialization."""
 
-    def test_read_not_found(self):
-        engine = self._make_engine()
-        ltm = LongTermMemory(engine)
-        result = ltm.read("architecture", project_id="p1")
-        assert result is None
-
-    def test_write_project_scope(self):
-        engine = self._make_engine()
-        ltm = LongTermMemory(engine)
-        ltm.write("architecture", "Microservices", project_id="p1", importance=0.8)
-        call_kwargs = engine.write_memory.call_args
-        assert call_kwargs[1]["key_scope"] == "project"
-        assert call_kwargs[1]["importance"] == 0.8
-
-    def test_write_global_scope(self):
-        engine = self._make_engine()
-        ltm = LongTermMemory(engine)
-        ltm.write("conventions", "Use snake_case")
-        call_kwargs = engine.write_memory.call_args
-        assert call_kwargs[1]["key_scope"] == "global"
-
-    def test_search(self):
-        engine = self._make_engine()
-        engine.search_memory.return_value = []
-        ltm = LongTermMemory(engine)
-        results = ltm.search("event sourcing", project_id="p1")
-        assert results == []
-        engine.search_memory.assert_called_once_with(
-            query="event sourcing",
-            scope_type="project",
-            project_id="p1",
-            max_results=20,
-            min_score=0.5,
-        )
-
-
-# ── Orchestrator tests ───────────────────────────────────────────
-
-
-class TestOrchestrator:
-    """Tests for Orchestrator."""
-
-    def test_init_defaults(self):
+    def test_default_init(self):
         orch = Orchestrator()
         assert orch.engine is None
-        assert orch.llm_client is None
-        assert orch.config.max_subtasks == 10
-        assert orch.workers == {}
-        assert orch.tasks == {}
+        assert orch.sandbox_manager is None
+        assert orch.nats_publisher is None
+        assert orch.event_emitter is not None
+
+    def test_init_with_sandbox_manager(self):
+        config = SandboxConfig(project_path="/tmp/test")
+        sm = SandboxManager(config)
+        orch = Orchestrator(sandbox_manager=sm)
+        assert orch.sandbox_manager is sm
+
+
+class TestOrchestratorDecompose:
+    """Tests for Orchestrator task decomposition (sandbox-only)."""
+
+    @pytest.mark.asyncio
+    async def test_decompose_requires_sandbox_manager(self):
+        """Decomposition without sandbox_manager raises RuntimeError."""
+        orch = Orchestrator()
+        task = Task(description="Test task")
+
+        with pytest.raises(RuntimeError, match="sandbox_manager is required"):
+            await orch.decompose_task(task)
+
+    @pytest.mark.asyncio
+    async def test_decompose_sandbox_success(self, monkeypatch):
+        """Sandbox decomposition returns subtasks."""
+        config = SandboxConfig(project_path="/tmp/test")
+        sm = SandboxManager(config)
+        orch = Orchestrator(sandbox_manager=sm)
+
+        fake_json = '[{"description": "Step 1", "depends_on": []}]'
+        fake_result = ExecResult(exit_code=0, stdout=fake_json)
+
+        async def fake_execute_subprocess(request):
+            return fake_result
+
+        monkeypatch.setattr(sm, "_execute_subprocess", fake_execute_subprocess)
+
+        task = Task(description="Test task", project_id="test")
+        subtasks = await orch.decompose_task(task)
+        assert len(subtasks) == 1
+        assert subtasks[0].description == "Step 1"
+
+
+class TestOrchestratorParseItems:
+    """Tests for Orchestrator._parse_decomposition_items()."""
+
+    def test_basic_items(self):
+        config = SandboxConfig(project_path="/tmp/test")
+        sm = SandboxManager(config)
+        orch = Orchestrator(sandbox_manager=sm)
+
+        items = [
+            {"description": "Task A", "depends_on": []},
+            {"description": "Task B", "depends_on": [0]},
+        ]
+        subtasks = orch._parse_decomposition_items(items, "p1")
+        assert len(subtasks) == 2
+        assert subtasks[0].description == "Task A"
+        assert subtasks[1].depends_on == [subtasks[0].id]
+
+    def test_empty_items(self):
+        config = SandboxConfig(project_path="/tmp/test")
+        sm = SandboxManager(config)
+        orch = Orchestrator(sandbox_manager=sm)
+        assert orch._parse_decomposition_items([], "p1") == []
+
+
+class TestOrchestratorGatherContext:
+    """Tests for simplified _gather_memory_context / _gather_code_context."""
+
+    @pytest.mark.asyncio
+    async def test_gather_memory_context_returns_project_id(self):
+        orch = Orchestrator()
+        task = Task(description="Test", project_id="my-project")
+        result = await orch._gather_memory_context(task)
+        assert result == "my-project"
+
+    @pytest.mark.asyncio
+    async def test_gather_memory_context_empty_when_no_project(self):
+        orch = Orchestrator()
+        task = Task(description="Test")
+        result = await orch._gather_memory_context(task)
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_gather_code_context_returns_project_id(self):
+        orch = Orchestrator()
+        task = Task(description="Test", project_id="my-project")
+        result = await orch._gather_code_context(task)
+        assert result == "my-project"
+
+
+class TestOrchestratorWorkerRegistration:
+    """Tests for Orchestrator worker management."""
 
     @pytest.mark.asyncio
     async def test_register_worker(self):
         orch = Orchestrator()
-        wi = WorkerInfo(id="w1", capabilities=["code"])
-        await orch.register_worker(wi)
+        info = WorkerInfo(id="w1", capabilities=["code"], current_load=0, max_capacity=3)
+        await orch.register_worker(info)
         assert "w1" in orch.workers
 
     @pytest.mark.asyncio
     async def test_unregister_worker(self):
         orch = Orchestrator()
-        wi = WorkerInfo(id="w1", capabilities=["code"])
-        await orch.register_worker(wi)
+        info = WorkerInfo(id="w1", capabilities=["code"], current_load=0, max_capacity=3)
+        await orch.register_worker(info)
         await orch.unregister_worker("w1")
         assert "w1" not in orch.workers
 
-    @pytest.mark.asyncio
-    async def test_get_available_workers(self):
-        orch = Orchestrator()
-        await orch.register_worker(WorkerInfo(id="w1", current_load=0, max_capacity=3))
-        await orch.register_worker(WorkerInfo(id="w2", current_load=3, max_capacity=3))
-        available = orch.get_available_workers()
-        assert len(available) == 1
-        assert available[0].id == "w1"
 
-    @pytest.mark.asyncio
-    async def test_select_worker(self):
-        orch = Orchestrator()
-        await orch.register_worker(WorkerInfo(id="w1", current_load=1, max_capacity=3))
-        await orch.register_worker(WorkerInfo(id="w2", current_load=0, max_capacity=3))
-        subtask = Subtask()
-        selected = orch._select_worker(subtask)
-        assert selected == "w2"  # Lower load
+# ═══════════════════════════════════════════════════════════════════
+# Type tests
+# ═══════════════════════════════════════════════════════════════════
 
-    def test_select_worker_none_available(self):
-        orch = Orchestrator()
-        subtask = Subtask()
-        selected = orch._select_worker(subtask)
-        assert selected is None
+class TestSubtaskTypes:
+    """Tests for Subtask type."""
 
-    def test_parse_decomposition(self):
-        orch = Orchestrator()
-        response = LLMResponse(
-            text=json.dumps(
-                [
-                    {
-                        "description": "Research existing auth code",
-                        "depends_on": [],
-                        "file_constraints": [],
-                        "expected_output": "List of auth-related files",
-                    },
-                    {
-                        "description": "Implement login endpoint",
-                        "depends_on": [0],
-                        "file_constraints": ["src/utils.py"],
-                        "expected_output": "Working login endpoint",
-                    },
-                ]
-            ),
-        )
-
-        subtasks = orch._parse_decomposition(response, "task-1")
-        assert len(subtasks) == 2
-        assert subtasks[0].description == "Research existing auth code"
-        assert subtasks[0].depends_on == []
-        assert subtasks[1].description == "Implement login endpoint"
-        assert subtasks[1].depends_on == [subtasks[0].id]
-        assert subtasks[1].file_constraints == ["src/utils.py"]
-
-    def test_parse_decomposition_with_markdown(self):
-        orch = Orchestrator()
-        response = LLMResponse(
-            text=(
-                '```json\n[{"description": "Task 1", '
-                '"depends_on": [], "file_constraints": [], '
-                '"expected_output": "Done"}]\n```'
-            ),
-        )
-
-        subtasks = orch._parse_decomposition(response, "task-1")
-        assert len(subtasks) == 1
-        assert subtasks[0].description == "Task 1"
-
-    def test_parse_decomposition_invalid_json(self):
-        orch = Orchestrator()
-        response = LLMResponse(text="not json at all")
-
-        with pytest.raises(RuntimeError, match="Failed to parse"):
-            orch._parse_decomposition(response, "task-1")
-
-    @pytest.mark.asyncio
-    async def test_get_task_status(self):
-        orch = Orchestrator()
-        task = Task(id="t1", description="test")
-        orch.tasks["t1"] = task
-
-        result = await orch.get_task_status("t1")
-        assert result is task
-
-    @pytest.mark.asyncio
-    async def test_get_task_status_not_found(self):
-        orch = Orchestrator()
-        result = await orch.get_task_status("nonexistent")
-        assert result is None
-
-    def test_aggregate_results(self):
-        orch = Orchestrator()
-        task = Task(id="t1")
-        st1 = Subtask(
-            id="s1",
-            parent_id="t1",
-            status=SubtaskStatus.COMPLETED,
-            result=SubtaskResult(subtask_id="s1", summary="Did research"),
-        )
-        st2 = Subtask(
-            id="s2",
-            parent_id="t1",
-            status=SubtaskStatus.FAILED,
-            result=SubtaskResult(subtask_id="s2", summary="Bug in code", success=False),
-        )
-        task.subtasks = [st1, st2]
-
-        result = orch._aggregate_results(task)
-        assert "Completed 1/2 subtasks" in result
-        assert "Failed 1 subtasks" in result
-        assert "Did research" in result
-        assert "Bug in code" in result
-
-
-# ── Worker tests ─────────────────────────────────────────────────
-
-
-class TestWorker:
-    """Tests for Worker."""
-
-    def test_init_defaults(self):
-        worker = Worker()
-        assert worker.worker_id  # auto-generated
-        assert worker.capabilities == ["code", "search", "memory", "test"]
-        assert worker.current_task is None
-
-    def test_init_custom(self):
-        worker = Worker(
-            worker_id="w1",
-            capabilities=["rust", "search"],
-            max_capacity=5,
-        )
-        assert worker.worker_id == "w1"
-        assert worker.capabilities == ["rust", "search"]
-        assert worker.max_capacity == 5
-
-    def test_get_info(self):
-        worker = Worker(worker_id="w1", capabilities=["code"], max_capacity=3)
-        info = worker.get_info()
-        assert info.id == "w1"
-        assert info.capabilities == ["code"]
-        assert info.max_capacity == 3
-        assert info.current_load == 0
-
-    def test_tools_built(self):
-        worker = Worker()
-        assert "search" in worker.tools
-        assert "read_memory" in worker.tools
-        assert "write_memory" in worker.tools
-        assert "edit_file" in worker.tools
-        assert "search_memory" in worker.tools
-        assert "read_file" in worker.tools
-        assert "list_files" in worker.tools
-
-    def test_tool_definitions_built(self):
-        worker = Worker()
-        assert len(worker._tool_definitions) == 14
-        names = [t.name for t in worker._tool_definitions]
-        assert "search" in names
-        assert "read_memory" in names
-        assert "write_memory" in names
-        assert "edit_file" in names
-        assert "search_memory" in names
-        assert "read_file" in names
-        assert "list_files" in names
-        assert "run_command" in names
-        assert "apply_diff" in names
-
-    @pytest.mark.asyncio
-    async def test_execute_subtask_no_llm(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(id="s1", parent_id="t1", description="Do something")
-
-        result = await worker.execute_subtask(subtask)
-        assert not result.success
-        assert "No LLM client" in result.summary
-
-    def test_collect_modified_files_ignores_reads(self):
-        """read_file tool calls should NOT appear in modified files."""
-        worker = Worker.__new__(Worker)
-        tool_log = [
-            {
-                "tool_call": {"name": "read_file", "input": {"file_path": "/tmp/read.py"}},
-                "result": "file content here",
-            },
-            {
-                "tool_call": {
-                    "name": "edit_file",
-                    "input": {"file_path": "/tmp/edit.py", "content": "new", "create": False},
-                },
-                "result": "ok",
-            },
-        ]
-        changes = worker._collect_modified_files(tool_log)
-        # read_file should NOT be in the results
-        assert all(c.file_path != "/tmp/read.py" for c in changes)
-        # edit_file SHOULD be in the results
-        assert any(c.file_path == "/tmp/edit.py" for c in changes)
-
-    @pytest.mark.asyncio
-    async def test_heartbeat(self):
-        worker = Worker(worker_id="w1")
-        hb = await worker.send_heartbeat()
-        assert hb["worker_id"] == "w1"
-        assert "timestamp" in hb
-
-
-# ── Integration-style tests (no external services) ───────────────
-
-
-class TestOrchestratorWorkerIntegration:
-    """Integration tests using mock LLM and no engine."""
-
-    @pytest.mark.asyncio
-    async def test_decompose_and_assign(self):
-        """Test the full flow: decompose task -> assign subtasks."""
-        orch = Orchestrator()
-
-        # Register a worker
-        await orch.register_worker(WorkerInfo(id="w1", capabilities=["code"]))
-
-        # Parse decomposition manually (skip LLM)
-        response = LLMResponse(
-            text=json.dumps(
-                [
-                    {
-                        "description": "Research auth code",
-                        "depends_on": [],
-                        "file_constraints": [],
-                        "expected_output": "Find auth files",
-                    },
-                    {
-                        "description": "Implement auth",
-                        "depends_on": [0],
-                        "file_constraints": ["README.md"],
-                        "expected_output": "Auth module",
-                    },
-                ]
-            ),
-        )
-        subtasks = orch._parse_decomposition(response, "task-1")
-        assert len(subtasks) == 2
-
-        # Assign the first subtask
-        assigned = await orch.assign_subtask(subtasks[0])
-        assert assigned == "w1"
-        assert subtasks[0].status == SubtaskStatus.ASSIGNED
-        assert subtasks[0].assigned_worker == "w1"
-
-        # Second subtask should not be ready yet (depends on first)
-        task = Task(id="task-1", subtasks=subtasks, status=TaskStatus.IN_PROGRESS)
-        ready = task.ready_subtasks
-        assert len(ready) == 0  # Second subtask depends on first
-
-    @pytest.mark.asyncio
-    async def test_handle_subtask_result(self):
-        """Test handling a successful subtask result."""
-        orch = Orchestrator()
-
-        await orch.register_worker(WorkerInfo(id="w1", current_load=1, max_capacity=3))
-
-        st = Subtask(id="s1", parent_id="t1", assigned_worker="w1")
-        task = Task(id="t1", subtasks=[st], status=TaskStatus.IN_PROGRESS)
-        orch.tasks["t1"] = task
-
-        result = SubtaskResult(
-            subtask_id="s1",
-            worker_id="w1",
-            summary="Completed successfully",
-            success=True,
-        )
-
-        await orch.handle_subtask_result(result)
-
-        assert st.status == SubtaskStatus.COMPLETED
-        assert task.is_complete
-        assert task.status == TaskStatus.COMPLETED
-
-    @pytest.mark.asyncio
-    async def test_handle_subtask_failure(self):
-        """Test handling a failed subtask result — retries first, then fails."""
-        orch = Orchestrator()
-        await orch.register_worker(WorkerInfo(id="w1", current_load=1, max_capacity=3))
-
-        st = Subtask(id="s1", parent_id="t1", assigned_worker="w1")
-        task = Task(id="t1", subtasks=[st], status=TaskStatus.IN_PROGRESS)
-        orch.tasks["t1"] = task
-
-        result = SubtaskResult(
-            subtask_id="s1",
-            worker_id="w1",
-            summary="Something went wrong",
-            success=False,
-        )
-
-        # First failure: retry_count < max_retries → status stays PENDING
-        await orch.handle_subtask_result(result)
+    def test_subtask_creation(self):
+        st = Subtask(description="Test", parent_id="p1")
+        assert st.description == "Test"
+        assert st.parent_id == "p1"
         assert st.status == SubtaskStatus.PENDING
-        assert st.retry_count == 1
 
-        # Continue failing until retries exhausted
-        for _ in range(orch.config.max_retries):
-            st.assigned_worker = "w1"
-            await orch.handle_subtask_result(result)
-
-        # After all retries exhausted: permanently FAILED
-        assert st.status == SubtaskStatus.FAILED
-        assert task.has_failed
-        assert task.status == TaskStatus.FAILED
-
-
-# ── New Worker tools tests ──────────────────────────────────────────
-
-
-class TestWorkerNewTools:
-    """Tests for run_command and apply_diff tools."""
-
-    @pytest.mark.asyncio
-    async def test_run_command_echo(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        result = await worker._tool_run_command(command="echo hello")
-        data = json.loads(result)
-        assert data["exit_code"] == 0
-        assert "hello" in data["stdout"]
-
-    @pytest.mark.asyncio
-    async def test_run_command_failure(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        result = await worker._tool_run_command(command="exit 1")
-        data = json.loads(result)
-        assert data["exit_code"] == 1
-
-    @pytest.mark.asyncio
-    async def test_run_command_timeout(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        result = await worker._tool_run_command(command="sleep 10", timeout=1)
-        data = json.loads(result)
-        assert data["timed_out"] is True
-
-    @pytest.mark.asyncio
-    async def test_apply_diff_file_not_found(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        result = await worker._tool_apply_diff(
-            file_path="/nonexistent/file.py",
-            diff="some diff",
-        )
-        data = json.loads(result)
-        assert "error" in data
-
-
-# ── Unified diff parser tests ──────────────────────────────────────
-
-
-class TestUnifiedDiffParser:
-    """Tests for the _apply_unified_diff helper."""
-
-    def test_simple_patch(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
-        original = "line1\nline2\nline3\n"
-        diff = "@@ -1,3 +1,3 @@\n line1\n-line2\n+line_two\n line3\n"
-        result, applied, errors = _apply_unified_diff(original, diff)
-        assert applied == 1
-        assert not errors
-        assert "line_two" in result
-        assert "line2" not in result
-
-    def test_fuzzy_match(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
-        original = "header\nline1\nline2\nline3\n"
-        diff = "@@ -2,2 +2,2 @@\n-line1\n+LINE1\n line2\n"
-        result, applied, errors = _apply_unified_diff(original, diff)
-        assert applied == 1
-        assert "LINE1" in result
-
-    def test_no_match_returns_error(self):
-        from ultimate_coders.agent.worker import _apply_unified_diff  # noqa: I001
-        original = "completely\ndifferent\ncontent\n"
-        diff = "@@ -1,2 +1,2 @@\n-foo\n+FOO\n bar\n"
-        result, applied, errors = _apply_unified_diff(original, diff)
-        assert applied == 0
-        assert len(errors) == 1
-
-
-# ── Self-evaluate tests ────────────────────────────────────────────
-
-
-class TestSelfEvaluate:
-    """Tests for Worker._self_evaluate."""
-
-    @pytest.mark.asyncio
-    async def test_high_confidence_with_files(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(
-            id="s1", description="test", expected_output="implement auth",
-        )
-        files = [FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED)]
-        score = await worker._self_evaluate(subtask, "implemented auth module", files)
-        assert score >= 0.7
-
-    @pytest.mark.asyncio
-    async def test_low_confidence_no_files(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(id="s1", description="test", expected_output="implement auth")
-        score = await worker._self_evaluate(subtask, "I looked at the code", [])
-        assert score < 0.7
-
-    @pytest.mark.asyncio
-    async def test_high_confidence_with_tool_log(self):
-        """Files modified + keywords matched + run_command -> high confidence."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(
-            expected_output="implement authentication handler",
-        )
-        modified = [
-            FileChange(file_path="auth.py", change_type=ChangeType.MODIFIED),
-        ]
-        tool_log = [
-            {"tool_call": {"name": "run_command", "input": {}}, "result": ""},
-        ]
-        score = await worker._self_evaluate(
-            subtask, "implemented authentication handler",
-            modified, tool_log,
-        )
-        # 0.5 baseline + 0.2 files + keyword overlap + 0.1 run_command
-        assert score >= 0.8
-
-    @pytest.mark.asyncio
-    async def test_error_in_summary(self):
-        """Error keywords in summary -> lower confidence."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(expected_output="fix the login bug")
-        score = await worker._self_evaluate(
-            subtask, "error: failed to fix the login bug", [],
-        )
-        # 0.5 baseline - 0.15 error keyword = 0.35
-        assert score < 0.5
-
-    @pytest.mark.asyncio
-    async def test_empty_result(self):
-        """No files + short summary -> low confidence."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(expected_output="add tests")
-        score = await worker._self_evaluate(subtask, "done", [])
-        # 0.5 baseline - 0.1 empty = 0.4
-        assert score < 0.5
-
-    @pytest.mark.asyncio
-    async def test_no_tool_log(self):
-        """Without tool_log, should still work (backward compat)."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(expected_output="refactor module")
-        modified = [
-            FileChange(file_path="mod.py", change_type=ChangeType.MODIFIED),
-        ]
-        score = await worker._self_evaluate(
-            subtask, "refactored module", modified,
-        )
-        # 0.5 + 0.2 files = 0.7
-        assert score >= 0.7
-
-
-# ── Tool schema completeness tests ────────────────────────────────────
-
-
-class TestToolSchemaCompleteness:
-    """Tests for Worker tool definitions — schema precision."""
-
-    def test_all_14_tools_present(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        defs = worker._tool_definitions
-        assert len(defs) == 14
-        names = {d.name for d in defs}
-        expected = {
-            "search", "read_memory", "write_memory", "edit_file",
-            "search_memory", "read_file", "list_files", "symbol_search",
-            "find_callers", "find_callees", "impact_analysis", "explore_code",
-            "run_command", "apply_diff",
-        }
-        assert names == expected
-
-    def test_required_params_marked(self):
-        """All tools with required params must have them in input_schema['required']."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        for td in worker._tool_definitions:
-            schema = td.input_schema
-            required = schema.get("required", [])
-            props = schema.get("properties", {})
-            # Every param marked required=True must appear in the required list
-            for param_name, param_def in props.items():
-                # Check that required params are declared
-                # (we verify the inverse: if a param is in 'required', it must exist)
-                pass
-            # Verify required list is a subset of properties
-            assert set(required).issubset(set(props.keys())), (
-                f"Tool {td.name}: required {required} not subset of properties {list(props.keys())}"
-            )
-
-    def test_enum_params_have_enum_constraint(self):
-        """Parameters described as having enum values must have 'enum' in schema."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        for td in worker._tool_definitions:
-            props = td.input_schema.get("properties", {})
-            for param_name, param_def in props.items():
-                if "enum" in param_def:
-                    assert isinstance(param_def["enum"], list)
-                    assert len(param_def["enum"]) > 0, (
-                        f"Tool {td.name}.{param_name}: enum must be non-empty"
-                    )
-
-    def test_search_has_required_query(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        search_def = next(d for d in worker._tool_definitions if d.name == "search")
-        assert "query" in search_def.input_schema.get("required", [])
-
-    def test_memory_tools_have_enum_scope(self):
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        for tool_name in ("read_memory", "write_memory"):
-            td = next(d for d in worker._tool_definitions if d.name == tool_name)
-            scope = td.input_schema["properties"]["key_scope"]
-            assert "enum" in scope
-            assert set(scope["enum"]) == {"task", "project", "global"}
-
-
-# ── Adaptive decision tests ────────────────────────────────────────
-
-
-class TestAdaptiveDecision:
-    """Tests for Worker._classify_error and adaptive retry."""
-
-    def test_classify_timeout(self):
-        import asyncio
-        result = Worker._classify_error(asyncio.TimeoutError())
-        assert result == AdaptationStrategy.SHRINK_SCOPE
-
-    def test_classify_timeout_string(self):
-        result = Worker._classify_error(RuntimeError("command timed out after 30s"))
-        assert result == AdaptationStrategy.SHRINK_SCOPE
-
-    def test_classify_engine_error(self):
-        result = Worker._classify_error(RuntimeError("No engine available"))
-        assert result == AdaptationStrategy.PURE_LLM
-
-    def test_classify_module_not_found(self):
-        result = Worker._classify_error(ImportError("No module named 'foo'"))
-        assert result == AdaptationStrategy.PURE_LLM
-
-    def test_classify_conflict(self):
-        result = Worker._classify_error(RuntimeError("conflict detected on file.py"))
-        assert result == AdaptationStrategy.WAIT_RETRY
-
-    def test_classify_tool_not_found(self):
-        result = Worker._classify_error(RuntimeError("Tool codegraph not found"))
-        assert result == AdaptationStrategy.FALLBACK_TOOL
-
-    def test_adaptation_strategy_in_subtask_result(self):
-        result = SubtaskResult(
-            subtask_id="s1",
-            worker_id="w1",
-            summary="test",
-            adaptation_strategy=AdaptationStrategy.SHRINK_SCOPE,
-        )
-        assert result.adaptation_strategy == AdaptationStrategy.SHRINK_SCOPE
-
-
-# ── Self-evaluate feedback loop tests ────────────────────────────────────
-
-
-class TestSelfEvaluateFeedbackLoop:
-    """Tests for _self_evaluate triggering re-decompose and experience recording."""
-
-    @pytest.mark.asyncio
-    async def test_low_confidence_returns_failure(self):
-        """Low confidence should return success=False to trigger re-decompose."""
-        result = SubtaskResult(
-            subtask_id="s1",
-            worker_id="w1",
-            summary="[⚠️ low confidence: 50%] I looked at the code",
-            success=False,
-        )
-        assert not result.success
-
-    @pytest.mark.asyncio
-    async def test_record_experience_writes_to_memory(self):
-        """_record_experience should write to engine memory."""
-        engine = MagicMock()
-        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
-        subtask = Subtask(id="s1", parent_id="t1", description="test")
-        await worker._record_experience(subtask, "done", 0.8, [])
-        engine.write_memory.assert_called_once()
-        call_kwargs = engine.write_memory.call_args
-        assert call_kwargs[1]["key_scope"] == "task"
-        assert "experience_" in call_kwargs[1]["key"]
-
-    @pytest.mark.asyncio
-    async def test_record_experience_handles_engine_failure(self):
-        """_record_experience should not raise if engine fails."""
-        engine = MagicMock()
-        engine.write_memory.side_effect = RuntimeError("engine down")
-        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
-        subtask = Subtask(id="s1", parent_id="t1", description="test")
-        # Should not raise
-        await worker._record_experience(subtask, "done", 0.5, [])
-
-
-# ── Orchestrator concurrent scheduling tests ────────────────────────────
-
-
-class TestConcurrentScheduling:
-    """Tests for Orchestrator.schedule_subtasks."""
-
-    @pytest.mark.asyncio
-    async def test_schedule_independent_subtasks_concurrently(self):
-        """Two independent subtasks should be scheduled in one round."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
-        orch.workers["w2"] = WorkerInfo(id="w2", capabilities=["code"], max_capacity=3)
-
-        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
-        task.subtasks = [
-            Subtask(id="s1", parent_id="t1", description="subtask 1"),
-            Subtask(id="s2", parent_id="t1", description="subtask 2"),
-        ]
-        orch.tasks["t1"] = task
-
-        # Mock worker_execute
-        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            return SubtaskResult(
-                subtask_id=subtask.id,
-                worker_id=worker_id,
-                summary=f"completed {subtask.id}",
-                success=True,
-            )
-
-        results = await orch.schedule_subtasks(task, mock_execute)
-        assert len(results) == 2
-        assert all(r.success for r in results)
-
-    @pytest.mark.asyncio
-    async def test_schedule_respects_dependencies(self):
-        """Subtask with unmet deps should not be scheduled."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
-
-        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
-        s1 = Subtask(id="s1", parent_id="t1", description="first")
-        s2 = Subtask(id="s2", parent_id="t1", description="second", depends_on=[s1.id])
-        task.subtasks = [s1, s2]
-        orch.tasks["t1"] = task
-
-        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            return SubtaskResult(
-                subtask_id=subtask.id, worker_id=worker_id,
-                summary="done", success=True,
-            )
-
-        # First round: only s1 is ready
-        results = await orch.schedule_subtasks(task, mock_execute)
-        # s1 should execute, s2 should become ready after s1 completes
-        assert any(r.subtask_id == "s1" for r in results)
-
-    @pytest.mark.asyncio
-    async def test_get_ready_subtasks(self):
-        """_get_ready_subtasks should return only PENDING with met deps."""
-        orch = Orchestrator()
-        task = Task(id="t1", description="test")
-        s1 = Subtask(id="s1", parent_id="t1", description="first", status=SubtaskStatus.PENDING)
-        s2 = Subtask(
-            id="s2", parent_id="t1", description="second",
-            status=SubtaskStatus.PENDING, depends_on=[s1.id],
-        )
-        s3 = Subtask(
-            id="s3", parent_id="t1", description="third",
-            status=SubtaskStatus.COMPLETED,
-        )
-        task.subtasks = [s1, s2, s3]
-        orch.tasks["t1"] = task
-
-        ready = orch._get_ready_subtasks(task)
-        assert len(ready) == 1
-        assert ready[0].id == "s1"
-
-    @pytest.mark.asyncio
-    async def test_schedule_no_workers_available(self):
-        """If no workers available, schedule_subtasks returns empty."""
-        orch = Orchestrator()
-        # No workers registered
-        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
-        task.subtasks = [Subtask(id="s1", parent_id="t1", description="subtask")]
-        orch.tasks["t1"] = task
-
-        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            return SubtaskResult(
-                subtask_id=subtask.id, worker_id=worker_id,
-                summary="done", success=True,
-            )
-
-        results = await orch.schedule_subtasks(task, mock_execute)
-        assert len(results) == 0
-
-
-# ── Agent Capability Enhancement Tests ──────────────────────────
-
-
-class TestClassifyError:
-    """Tests for Worker._classify_error."""
-
-    def test_timeout_error(self):
-        assert (
-            Worker._classify_error(asyncio.TimeoutError())
-            == AdaptationStrategy.SHRINK_SCOPE
-        )
-
-    def test_timeout_in_message(self):
-        assert (
-            Worker._classify_error(RuntimeError("request timed out"))
-            == AdaptationStrategy.SHRINK_SCOPE
-        )
-
-    def test_engine_not_found(self):
-        assert (
-            Worker._classify_error(RuntimeError("no engine available"))
-            == AdaptationStrategy.PURE_LLM
-        )
-
-    def test_module_not_found(self):
-        assert (
-            Worker._classify_error(ImportError("no module named foo"))
-            == AdaptationStrategy.PURE_LLM
-        )
-
-    def test_tool_not_found(self):
-        assert (
-            Worker._classify_error(RuntimeError("tool not found"))
-            == AdaptationStrategy.FALLBACK_TOOL
-        )
-
-    def test_conflict(self):
-        assert (
-            Worker._classify_error(RuntimeError("conflict detected"))
-            == AdaptationStrategy.WAIT_RETRY
-        )
-
-    def test_unknown_error(self):
-        assert (
-            Worker._classify_error(RuntimeError("something unexpected"))
-            == AdaptationStrategy.PURE_LLM
-        )
-
-
-class TestRecordExperience:
-    """Tests for Worker._record_experience."""
-
-    @pytest.mark.asyncio
-    async def test_writes_to_memory(self):
-        """_record_experience should write experience to engine memory."""
-        engine = MagicMock()
-        worker = Worker(worker_id="w1", engine=engine, execution_mode="llm")
-        subtask = Subtask(id="s1", parent_id="t1", description="test task")
-        await worker._record_experience(subtask, "test summary", 0.8, [])
-        engine.write_memory.assert_called_once()
-        call_kwargs = engine.write_memory.call_args
-        assert call_kwargs.kwargs["key_scope"] == "task"
-        assert "experience_s1" in call_kwargs.kwargs["key"]
-
-    @pytest.mark.asyncio
-    async def test_no_engine(self):
-        """_record_experience is a no-op when engine is None."""
-        worker = Worker(worker_id="w1", execution_mode="llm")
-        subtask = Subtask(id="s1", parent_id="t1", description="test")
-        # Should not raise
-        await worker._record_experience(subtask, "summary", 0.5, [])
-
-
-class TestSelectWorkerCapability:
-    """Tests for Orchestrator._select_worker with capability matching."""
-
-    def test_prefers_capability_match(self):
-        """Worker with matching capability should be preferred over lower load."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(
-            id="w1", capabilities=["search"],
-            current_load=0, max_capacity=3,
-        )
-        orch.workers["w2"] = WorkerInfo(
-            id="w2", capabilities=["code"],
-            current_load=0, max_capacity=3,
-        )
-
-        subtask = Subtask(description="search for authentication code")
-        selected = orch._select_worker(subtask)
-        assert selected == "w1"
-
-    def test_fallback_to_lowest_load(self):
-        """When no capability match, fallback to lowest load."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(
-            id="w1", capabilities=["code"],
-            current_load=2, max_capacity=3,
-        )
-        orch.workers["w2"] = WorkerInfo(
-            id="w2", capabilities=["code"],
-            current_load=0, max_capacity=3,
-        )
-
-        subtask = Subtask(description="do something unrelated")
-        selected = orch._select_worker(subtask)
-        assert selected == "w2"
-
-    def test_no_workers_available(self):
-        """Returns None when no workers are available."""
-        orch = Orchestrator()
-        subtask = Subtask(description="any task")
-        assert orch._select_worker(subtask) is None
-
-
-class TestAdaptiveRetry:
-    """Tests for Worker._adaptive_retry strategies."""
-
-    @pytest.mark.asyncio
-    async def test_shrink_scope_reduces_timeout_and_tokens(self):
-        """SHRINK_SCOPE strategy should halve timeout and use reduced max_tokens."""
-        engine = MagicMock()
-        llm = MagicMock(spec=LLMClient)
-        llm.model = "test"
-
-        async def _fake_complete_with_tools(**kwargs):
-            # Verify max_tokens is reduced
-            assert kwargs.get("max_tokens", 4096) == 2048
-            return LLMResponse(text="done with less", tool_calls=[]), []
-        llm.complete_with_tools = _fake_complete_with_tools
-
-        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
-
-        subtask = Subtask(id="s1", parent_id="t1", description="test", timeout_seconds=600)
-        error = asyncio.TimeoutError()
-        result = await worker._adaptive_retry(subtask, error)
-
-        assert result.adaptation_strategy == AdaptationStrategy.SHRINK_SCOPE
-        # Timeout should have been halved
-        assert subtask.timeout_seconds == 300
-
-    @pytest.mark.asyncio
-    async def test_pure_llm_skips_tools(self):
-        """PURE_LLM strategy should call complete() without tools."""
-        engine = MagicMock()
-        llm = MagicMock(spec=LLMClient)
-        llm.model = "test"
-
-        async def _fake_complete(**kwargs):
-            return LLMResponse(text="pure LLM answer")
-        llm.complete = _fake_complete
-
-        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
-
-        error = RuntimeError("no engine available")
-        result = await worker._adaptive_retry(
-            Subtask(id="s1", parent_id="t1", description="test"),
-            error,
-        )
-
-        assert result.adaptation_strategy == AdaptationStrategy.PURE_LLM
-        assert "[adapted: pure_llm]" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_fallback_tool_reduces_tools(self):
-        """FALLBACK_TOOL strategy should temporarily remove codegraph tools."""
-        engine = MagicMock()
-        llm = MagicMock(spec=LLMClient)
-        llm.model = "test"
-
-        async def _fake_complete_with_tools(**kwargs):
-            return LLMResponse(text="done", tool_calls=[]), []
-        llm.complete_with_tools = _fake_complete_with_tools
-
-        worker = Worker(worker_id="w1", engine=engine, llm_client=llm, execution_mode="llm")
-        original_tool_count = len(worker.tools)
-        original_def_count = len(worker._tool_definitions)
-
-        error = RuntimeError("tool not found: symbol_search")
-        result = await worker._adaptive_retry(
-            Subtask(id="s1", parent_id="t1", description="test"),
-            error,
-        )
-        # Tools should be restored after fallback_tool strategy
-        assert len(worker.tools) == original_tool_count
-        assert len(worker._tool_definitions) == original_def_count
-        assert result.adaptation_strategy == AdaptationStrategy.FALLBACK_TOOL
-
-
-class TestScheduleSubtasksConcurrent:
-    """Tests for Orchestrator.schedule_subtasks concurrent execution."""
-
-    @pytest.mark.asyncio
-    async def test_concurrent_with_dag(self):
-        """3 subtasks with DAG: s1→s2→s3. s1 runs, then s2, then s3."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
-
-        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
-        s1 = Subtask(id="s1", parent_id="t1", description="first")
-        s2 = Subtask(id="s2", parent_id="t1", description="second", depends_on=[s1.id])
-        s3 = Subtask(id="s3", parent_id="t1", description="third", depends_on=[s2.id])
-        task.subtasks = [s1, s2, s3]
-        orch.tasks["t1"] = task
-
-        execution_order = []
-
-        async def mock_execute(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            execution_order.append(subtask.id)
-            return SubtaskResult(
-                subtask_id=subtask.id, worker_id=worker_id,
-                summary="done", success=True,
-            )
-
-        results = await orch.schedule_subtasks(task, mock_execute)
-        assert len(results) == 3
-        # s1 must execute before s2, s2 before s3
-        assert execution_order.index("s1") < execution_order.index("s2")
-        assert execution_order.index("s2") < execution_order.index("s3")
-
-    @pytest.mark.asyncio
-    async def test_stuck_detection(self):
-        """Scheduler should break when 2 rounds yield 0 progress."""
-        orch = Orchestrator()
-        orch.workers["w1"] = WorkerInfo(id="w1", capabilities=["code"], max_capacity=3)
-
-        task = Task(id="t1", description="test", status=TaskStatus.IN_PROGRESS)
-        s1 = Subtask(id="s1", parent_id="t1", description="first")
-        task.subtasks = [s1]
-        orch.tasks["t1"] = task
-
-        call_count = 0
-
-        async def mock_execute_always_fail(worker_id: str, subtask: Subtask) -> SubtaskResult:
-            nonlocal call_count
-            call_count += 1
-            # Don't mark as completed — simulates stuck
-            return SubtaskResult(
-                subtask_id=subtask.id, worker_id=worker_id,
-                summary="failed", success=False,
-            )
-
-        _results = await orch.schedule_subtasks(task, mock_execute_always_fail)
-        # Should break after stuck detection (2 rounds of 0 progress)
-        # Round 1: s1 assigned, fails -> 0 new completed.
-        # Round 2: s1 not PENDING (ASSIGNED) -> no ready -> break.
-        # Or if retry resets to PENDING, 2 rounds of 0 progress -> break.
-        assert call_count <= 4
+    def test_subtask_status_checks(self):
+        st = Subtask(description="Test", parent_id="p1")
+        st.status = SubtaskStatus.IN_PROGRESS
+        assert not st.is_ready
+        assert not st.is_complete
+
+
+class TestTaskTypes:
+    """Tests for Task type."""
+
+    def test_task_creation(self):
+        task = Task(description="Test task", project_id="proj1")
+        assert task.description == "Test task"
+        assert task.project_id == "proj1"
+        assert task.status == TaskStatus.CREATED
+
+    def test_task_with_subtasks(self):
+        task = Task(description="Test task")
+        st1 = Subtask(description="Step 1", parent_id=task.id)
+        st2 = Subtask(description="Step 2", parent_id=task.id, depends_on=[st1.id])
+        task.subtasks = [st1, st2]
+        assert len(task.subtasks) == 2

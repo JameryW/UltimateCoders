@@ -246,14 +246,14 @@ class TestSandboxTUI:
         assert app._worker.worker_id == "local-sandbox-worker"
         assert "local-sandbox-worker" in app._orch.workers
 
-    def test_setup_orchestrator_worker_mode(self):
-        """Worker created by _setup_orchestrator uses sandbox execution mode."""
+    def test_setup_orchestrator_worker_sandbox(self):
+        """Worker created by _setup_orchestrator uses sandbox execution."""
         from ultimate_coders.tui.app import SandboxTUI
 
         config = SandboxConfig(agent="claude-code")
         app = SandboxTUI(config=config)
         app._setup_orchestrator()
-        assert app._worker.execution_mode == "sandbox"
+        assert app._worker._sandbox_manager is not None
 
     def test_setup_orchestrator_no_llm_client(self):
         """Orchestrator created by _setup_orchestrator has no LLM client."""
@@ -262,7 +262,7 @@ class TestSandboxTUI:
         config = SandboxConfig(agent="claude-code")
         app = SandboxTUI(config=config)
         app._setup_orchestrator()
-        assert app._orch.llm_client is None
+        assert not hasattr(app._orch, 'llm_client')
 
     def test_setup_orchestrator_has_event_emitter(self):
         """Orchestrator and Worker share the same event emitter."""

@@ -22,28 +22,14 @@ class TestOrchestratorSandboxInit:
         sm = SandboxManager(config)
         orch = Orchestrator(
             engine=None,
-            llm_client=None,
             sandbox_manager=sm,
         )
         assert orch.sandbox_manager is sm
-        assert orch.llm_client is None
 
-    def test_llm_client_takes_precedence(self):
-        """When both are provided, llm_client is used (sandbox is fallback)."""
-        config = SandboxConfig(project_path="/tmp/test")
-        sm = SandboxManager(config)
-
-        class FakeLLMClient:
-            pass
-
-        fake = FakeLLMClient()
-        orch = Orchestrator(
-            engine=None,
-            llm_client=fake,
-            sandbox_manager=sm,
-        )
-        assert orch.llm_client is fake
-        assert orch.sandbox_manager is sm
+    def test_no_sandbox_manager(self):
+        """Orchestrator can be created without sandbox_manager."""
+        orch = Orchestrator(engine=None, sandbox_manager=None)
+        assert orch.sandbox_manager is None
 
 
 # ── _parse_decomposition_items tests ────────────────────────────
@@ -54,7 +40,7 @@ class TestParseDecompositionItems:
     def test_single_subtask(self):
         config = SandboxConfig(project_path="/tmp/test")
         sm = SandboxManager(config)
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
+        orch = Orchestrator(engine=None, sandbox_manager=sm)
 
         items = [
             {
@@ -74,7 +60,7 @@ class TestParseDecompositionItems:
     def test_multiple_subtasks_with_deps(self):
         config = SandboxConfig(project_path="/tmp/test")
         sm = SandboxManager(config)
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
+        orch = Orchestrator(engine=None, sandbox_manager=sm)
 
         items = [
             {"description": "Research", "depends_on": []},
@@ -91,7 +77,7 @@ class TestParseDecompositionItems:
     def test_empty_items(self):
         config = SandboxConfig(project_path="/tmp/test")
         sm = SandboxManager(config)
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
+        orch = Orchestrator(engine=None, sandbox_manager=sm)
 
         subtasks = orch._parse_decomposition_items([], "task-3")
         assert subtasks == []
@@ -99,7 +85,7 @@ class TestParseDecompositionItems:
     def test_non_dict_items_skipped(self):
         config = SandboxConfig(project_path="/tmp/test")
         sm = SandboxManager(config)
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
+        orch = Orchestrator(engine=None, sandbox_manager=sm)
 
         items = ["bad", {"description": "Good task", "depends_on": []}, None]
         subtasks = orch._parse_decomposition_items(items, "task-4")
@@ -114,10 +100,10 @@ class TestDecomposeSandboxPath:
 
     @pytest.mark.asyncio
     async def test_sandbox_path_called(self, monkeypatch):
-        """Verify sandbox path is used when llm_client is None."""
+        """Verify sandbox path is used for decomposition."""
         config = SandboxConfig(project_path="/tmp/test")
         sm = SandboxManager(config)
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=sm)
+        orch = Orchestrator(engine=None, sandbox_manager=sm)
 
         # Mock the subprocess execution to return valid JSON
         fake_json = json.dumps([
@@ -140,13 +126,12 @@ class TestDecomposeSandboxPath:
         assert subtasks[1].depends_on == [subtasks[0].id]
 
     @pytest.mark.asyncio
-    async def test_llm_path_still_works(self):
-        """Ensure traditional LLM path is not broken."""
-        # Without sandbox_manager, should raise about needing llm_client
-        orch = Orchestrator(engine=None, llm_client=None, sandbox_manager=None)
+    async def test_no_sandbox_manager_raises(self):
+        """Without sandbox_manager, decompose_task raises RuntimeError."""
+        orch = Orchestrator(engine=None, sandbox_manager=None)
 
         from ultimate_coders.agent.types import Task
         task = Task(description="Test task")
 
-        with pytest.raises(RuntimeError, match="Either llm_client or sandbox_manager"):
+        with pytest.raises(RuntimeError, match="sandbox_manager is required"):
             await orch.decompose_task(task)

@@ -42,8 +42,8 @@ export function ToastContainer() {
           key={t.id}
           className={
             t.type === "success"
-              ? "bg-green-900 border border-green-500 text-green-200"
-              : "bg-red-900 border border-red-500 text-red-200"
+              ? "toast-success border border-green-500"
+              : "toast-error border border-red-500"
           }
           style={{
             padding: "10px 16px",

@@ -36,6 +36,17 @@ const STREAM_RETRY_DELAY = 5000;
  *  to prevent excessive React re-renders. */
 const EVENT_BATCH_MS = 50;
 
+/** Maximum number of dedup keys to retain in seenEvents. */
+const MAX_SEEN_EVENTS = 500;
+
+/** Event types that represent subtask status transitions and should be deduped. */
+const DEDUP_STATUS_EVENTS = new Set([
+  'subtask_assigned',
+  'subtask_started',
+  'subtask_completed',
+  'subtask_failed',
+]);
+
 /** Callback type for when a sync_required event is received from the server. */
 export type SyncRequiredCallback = (reason: string, skipped: number) => void;
 
@@ -218,6 +229,9 @@ export function useTaskEvents(
   const streamRef = useRef<any>(null);
   const streamRetryCount = useRef(0);
   const streamRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedup: track seen event keys to skip duplicate status-transition events
+  const seenEventsRef = useRef<Set<string>>(new Set());
+  const seenEventsOrderRef = useRef<string[]>([]);
 
   // ponytail: memoize subtasks array to prevent App re-render loop.
   // Array.from(subtaskMap.values()) creates a new array every render,
@@ -252,13 +266,33 @@ export function useTaskEvents(
     if (batch.length === 0) return;
     eventBufferRef.current = [];
 
+    // Dedup: filter out duplicate status-transition events
+    const seen = seenEventsRef.current;
+    const order = seenEventsOrderRef.current;
+    const filtered = batch.filter((event) => {
+      if (!DEDUP_STATUS_EVENTS.has(event.type)) return true;
+      const key = `${event.type}:${event.subtaskId ?? ''}:${event.taskId}`;
+      if (seen.has(key)) return false; // duplicate
+      seen.add(key);
+      order.push(key);
+      // Evict oldest entries if set exceeds MAX_SEEN_EVENTS
+      if (order.length > MAX_SEEN_EVENTS) {
+        const excess = order.length - MAX_SEEN_EVENTS;
+        for (let i = 0; i < excess; i++) {
+          seen.delete(order[i]);
+        }
+        order.splice(0, excess);
+      }
+      return true;
+    });
+
     setEvents((prev) => {
-      const next = [...prev, ...batch];
+      const next = [...prev, ...filtered];
       return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
     });
     setSubtaskMap((prev) => {
       let updated = prev;
-      for (const event of batch) {
+      for (const event of filtered) {
         updated = processEvent(event, updated);
       }
       return updated;
@@ -427,6 +461,8 @@ export function useTaskEvents(
     setEvents([]);
     setStreamingFinished(false);
     prevAllTerminalRef.current = false;
+    seenEventsRef.current.clear();
+    seenEventsOrderRef.current.length = 0;
   }, []);
 
   /** Update a single subtask's status by ID. */

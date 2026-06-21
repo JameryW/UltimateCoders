@@ -1,6 +1,6 @@
 """Orchestrator — decomposes tasks into subtasks and coordinates Workers.
 
-Uses LLM to:
+Uses sandbox (Claude Code) to:
 1. Analyze the user's task
 2. Decompose into subtasks with dependencies (DAG)
 3. Assign subtasks to available workers
@@ -21,11 +21,6 @@ from ultimate_coders.agent.conflict import (
     ConflictResult,
     LineRange,
     ResolutionTier,
-)
-from ultimate_coders.agent.llm import LLMClient, LLMResponse
-from ultimate_coders.agent.rate_limiter import (
-    CircuitBreaker,
-    RateLimiter,
 )
 from ultimate_coders.agent.types import (
     OrchestratorConfig,
@@ -66,12 +61,6 @@ Respond with ONLY the JSON array, no other text.
 _DECOMPOSE_USER_TEMPLATE = """\
 Project: {project_id}
 Task: {description}
-
-Context from memory:
-{memory_context}
-
-Relevant code context:
-{code_context}
 """
 
 
@@ -79,12 +68,12 @@ class Orchestrator:
     """Decomposes tasks into subtasks and coordinates Workers.
 
     The Orchestrator is the central coordinator in the Orchestrator-Worker
-    pattern. It receives user tasks, uses LLM to decompose them into
-    subtasks with a dependency DAG, assigns subtasks to workers, and
-    monitors progress.
+    pattern. It receives user tasks, uses sandbox (Claude Code) to decompose
+    them into subtasks with a dependency DAG, assigns subtasks to workers,
+    and monitors progress.
 
     Usage:
-        orchestrator = Orchestrator(engine=engine, llm_client=llm)
+        orchestrator = Orchestrator(engine=engine, sandbox_manager=sandbox)
         task = await orchestrator.submit_task("Implement user auth", project_id="my-app")
         # Workers execute subtasks...
         status = await orchestrator.get_task_status(task.id)
@@ -93,11 +82,8 @@ class Orchestrator:
     def __init__(
         self,
         engine: Any = None,
-        llm_client: LLMClient | None = None,
         config: OrchestratorConfig | None = None,
         conflict_detector: ConflictDetector | None = None,
-        rate_limiter: RateLimiter | None = None,
-        circuit_breaker: CircuitBreaker | None = None,
         scheduler: Any = None,
         sandbox_manager: Any = None,
         nats_publisher: Any | None = None,
@@ -106,29 +92,23 @@ class Orchestrator:
 
         Args:
             engine: Engine instance for memory/search operations.
-            llm_client: LLM client for task decomposition.
             config: Orchestrator configuration.
             conflict_detector: Conflict detector for edit intent tracking.
-            rate_limiter: Rate limiter for LLM API calls.
-            circuit_breaker: Circuit breaker for LLM API fault tolerance.
             scheduler: Optional Scheduler instance for scheduling tasks
                 via the night-window orchestration system.
-            sandbox_manager: Optional SandboxManager for Claude Code-based
-                decomposition (used when llm_client is None).
+            sandbox_manager: SandboxManager for Claude Code-based
+                decomposition (required for task decomposition).
             nats_publisher: Optional NatsPublisher for publishing task
                 state changes to NATS. When set, the Orchestrator
                 publishes ``uc.task.update`` and ``uc.task.event``
                 messages after each state transition.
         """
         self.engine = engine
-        self.llm_client = llm_client
         self.sandbox_manager = sandbox_manager
         self.config = config or OrchestratorConfig()
         self.workers: dict[str, WorkerInfo] = {}
         self.tasks: dict[str, Task] = {}
         self.conflict_detector = conflict_detector or ConflictDetector()
-        self.rate_limiter = rate_limiter or RateLimiter()
-        self.circuit_breaker = circuit_breaker or CircuitBreaker()
         # Night-window exclusive mode
         self.scheduler = scheduler
         self._night_window_active: bool = False
@@ -229,8 +209,8 @@ class Orchestrator:
             task.status = TaskStatus.FAILED
             task.result = "Failed to decompose task"
 
-        # Emit task lifecycle event
-        await self.event_emitter.emit(
+        # Emit task lifecycle event (NATS when available, local emitter otherwise)
+        await self._publish_event(
             "task_submitted",
             task_id=task.id,
             data={
@@ -241,30 +221,20 @@ class Orchestrator:
             },
         )
 
-        # Publish task state to NATS (if nats_publisher is configured)
+        # Publish task state update to NATS (if nats_publisher is configured)
         if self.nats_publisher is not None:
             await self.nats_publisher.publish_update(task)
-            await self.nats_publisher.publish_event(
-                "task_submitted",
-                task_id=task.id,
-                data={
-                    "description": description,
-                    "project_id": project_id,
-                    "status": task.status.value,
-                    "subtask_count": len(task.subtasks),
-                },
-            )
 
         task.update_timestamp()
         return task
 
     async def decompose_task(self, task: Task) -> list[Subtask]:
-        """Decompose a task into subtasks via LLM or sandbox (Claude Code).
+        """Decompose a task into subtasks via sandbox (Claude Code).
 
-        When ``self.llm_client`` is set, uses the traditional Python
-        ``LLMClient.complete()`` path.  When ``self.sandbox_manager`` is
-        set instead, invokes ``claude -p "decompose..."`` via the
-        ``DecomposeAdapter`` and parses the JSON output.
+        Invokes ``claude -p "decompose..."`` via the ``DecomposeAdapter``
+        and parses the JSON output. The sandbox agent (Claude Code) can
+        read files and understand the codebase on its own, so no
+        pre-gathered context is injected into the prompt.
 
         Args:
             task: The task to decompose.
@@ -273,74 +243,55 @@ class Orchestrator:
             List of Subtask objects with dependencies.
 
         Raises:
-            RuntimeError: If neither LLM client nor sandbox manager is
-                configured, or if decomposition fails.
+            RuntimeError: If sandbox_manager is not configured or
+                decomposition fails.
         """
-        # Gather context from memory and search
-        memory_context = await self._gather_memory_context(task)
-        code_context = await self._gather_code_context(task)
+        if self.sandbox_manager is None:
+            raise RuntimeError(
+                "sandbox_manager is required for task decomposition"
+            )
 
-        # Build the decomposition prompt (shared by both paths)
+        from ultimate_coders.agent.sandbox import (
+            DecomposeAdapter,
+            parse_decomposition_output,
+        )
+
+        # Build the decomposition prompt (simplified — no pre-gathered context)
         system = _DECOMPOSE_SYSTEM_PROMPT.format(
             max_subtasks=self.config.max_subtasks,
         )
         user_msg = _DECOMPOSE_USER_TEMPLATE.format(
             project_id=task.project_id or "unknown",
             description=task.description,
-            memory_context=memory_context,
-            code_context=code_context,
         )
 
-        # ── Sandbox (Claude Code) path ──
-        if self.sandbox_manager is not None and self.llm_client is None:
-            from ultimate_coders.agent.sandbox import (
-                DecomposeAdapter,
-                parse_decomposition_output,
-            )
-
-            # Combine system + user into a single prompt for `claude -p`
-            combined_prompt = f"{system}\n\n{user_msg}"
-            logger.info(
-                "Decomposing task %s via sandbox (prompt_len=%d)",
-                task.id, len(combined_prompt),
-            )
-            adapter = DecomposeAdapter()
-            request = adapter.build_request(
-                combined_prompt,
-                self.sandbox_manager.config.working_dir
-                or self.sandbox_manager.config.project_path,
-                self.sandbox_manager.config,
-            )
-            result = await self.sandbox_manager._execute_subprocess(request)
-            output = adapter.parse_output(result)
-            if not output.success:
-                logger.error(
-                    "Sandbox decomposition failed for task %s: %s",
-                    task.id, output.summary,
-                )
-                raise RuntimeError(f"Sandbox decomposition failed: {output.summary}")
-            items = parse_decomposition_output(result.stdout)
-            logger.info(
-                "Sandbox decomposition succeeded for task %s: %d subtasks",
-                task.id, len(items),
-            )
-            return self._parse_decomposition_items(items, task.id)
-
-        # ── Traditional LLM path ──
-        if self.llm_client is None:
-            raise RuntimeError(
-                "Either llm_client or sandbox_manager is required for task decomposition"
-            )
-
-        response = await self.llm_client.complete(
-            messages=[{"role": "user", "content": user_msg}],
-            system=system,
-            temperature=0.3,
-            max_tokens=2048,
+        # Combine system + user into a single prompt for `claude -p`
+        combined_prompt = f"{system}\n\n{user_msg}"
+        logger.info(
+            "Decomposing task %s via sandbox (prompt_len=%d)",
+            task.id, len(combined_prompt),
         )
-
-        # Parse response into Subtask objects
-        return self._parse_decomposition(response, task.id)
+        adapter = DecomposeAdapter()
+        request = adapter.build_request(
+            combined_prompt,
+            self.sandbox_manager.config.working_dir
+            or self.sandbox_manager.config.project_path,
+            self.sandbox_manager.config,
+        )
+        result = await self.sandbox_manager._execute_subprocess(request)
+        output = adapter.parse_output(result)
+        if not output.success:
+            logger.error(
+                "Sandbox decomposition failed for task %s: %s",
+                task.id, output.summary,
+            )
+            raise RuntimeError(f"Sandbox decomposition failed: {output.summary}")
+        items = parse_decomposition_output(result.stdout)
+        logger.info(
+            "Sandbox decomposition succeeded for task %s: %d subtasks",
+            task.id, len(items),
+        )
+        return self._parse_decomposition_items(items, task.id)
 
     async def assign_subtask(
         self,
@@ -475,7 +426,7 @@ class Orchestrator:
                     result.summary[:200],
                 )
                 # Emit retry event
-                await self.event_emitter.emit(
+                await self._publish_event(
                     "subtask_retrying",
                     task_id=task.id,
                     subtask_id=subtask.id,
@@ -519,8 +470,8 @@ class Orchestrator:
             task.status = TaskStatus.COMPLETED
             task.result = self._aggregate_results(task)
             logger.info("Task %s completed", task.id)
-            # Emit task completed event
-            await self.event_emitter.emit(
+            # Publish task completed event
+            await self._publish_event(
                 "task_completed",
                 task_id=task.id,
                 data={
@@ -530,17 +481,9 @@ class Orchestrator:
                     "completed_count": sum(1 for s in task.subtasks if s.is_complete),
                 },
             )
-            # Publish task completion to NATS
+            # Publish task state update to NATS
             if self.nats_publisher is not None:
                 await self.nats_publisher.publish_update(task)
-                await self.nats_publisher.publish_event(
-                    "task_completed",
-                    task_id=task.id,
-                    data={
-                        "status": "completed",
-                        "result_summary": (task.result or "")[:300],
-                    },
-                )
         elif task.has_failed:
             # Check if all subtasks are either completed or failed
             all_done = all(st.is_complete or st.is_failed for st in task.subtasks)
@@ -555,7 +498,7 @@ class Orchestrator:
                         redecomposed["failed_count"],
                         redecomposed["new_count"],
                     )
-                    await self.event_emitter.emit(
+                    await self._publish_event(
                         "task_redecomposed",
                         task_id=task.id,
                         data={
@@ -567,8 +510,8 @@ class Orchestrator:
                     task.status = TaskStatus.FAILED
                     task.result = self._aggregate_results(task)
                     logger.warning("Task %s failed", task.id)
-                    # Emit task completed (failed) event
-                    await self.event_emitter.emit(
+                    # Publish task failed event
+                    await self._publish_event(
                         "task_completed",
                         task_id=task.id,
                         data={
@@ -578,32 +521,24 @@ class Orchestrator:
                             "failed_count": sum(1 for s in task.subtasks if s.is_failed),
                         },
                     )
-                    # Publish task failure to NATS
+                    # Publish task state update to NATS
                     if self.nats_publisher is not None:
                         await self.nats_publisher.publish_update(task)
-                        await self.nats_publisher.publish_event(
-                            "task_completed",
-                            task_id=task.id,
-                            data={
-                                "status": "failed",
-                                "result_summary": (task.result or "")[:300],
-                            },
-                        )
         else:
             # Task still in progress — publish subtask status update
             if self.nats_publisher is not None:
                 await self.nats_publisher.publish_update(task)
-                event_type = "subtask_completed" if result.success else "subtask_failed"
-                await self.nats_publisher.publish_event(
-                    event_type,
-                    task_id=task.id,
-                    subtask_id=result.subtask_id,
-                    data={
-                        "success": result.success,
-                        "summary": result.summary[:300] if result.success else "",
-                        "error": "" if result.success else result.summary[:300],
-                    },
-                )
+            event_type = "subtask_completed" if result.success else "subtask_failed"
+            await self._publish_event(
+                event_type,
+                task_id=task.id,
+                subtask_id=result.subtask_id,
+                data={
+                    "success": result.success,
+                    "summary": result.summary[:300] if result.success else "",
+                    "error": "" if result.success else result.summary[:300],
+                },
+            )
 
     async def register_worker(self, worker_info: WorkerInfo) -> None:
         """Register a new worker.
@@ -644,6 +579,30 @@ class Orchestrator:
         return [w for w in self.workers.values() if w.is_available]
 
     # ── Private helpers ─────────────────────────────────────────
+
+    async def _publish_event(
+        self,
+        event_type: str,
+        task_id: str = "",
+        subtask_id: str = "",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish an event through the unified pipeline.
+
+        When a NATS publisher is configured, events go exclusively to
+        NATS (the Dashboard SSE and TUI consume from there). When NATS
+        is unavailable (e.g. LocalWorker / JSON-RPC path), events fall
+        back to the local event_emitter so they still reach the Rust
+        gRPC server via ForwardingEventEmitter.
+        """
+        if self.nats_publisher is not None:
+            await self.nats_publisher.publish_event(
+                event_type, task_id=task_id, subtask_id=subtask_id, data=data,
+            )
+        else:
+            await self.event_emitter.emit(
+                event_type, task_id=task_id, subtask_id=subtask_id, data=data,
+            )
 
     def _select_worker(self, subtask: Subtask) -> str | None:
         """Select the best available worker for a subtask.
@@ -730,48 +689,6 @@ class Orchestrator:
                 return False
         return True
 
-    def _parse_decomposition(
-        self,
-        response: LLMResponse,
-        parent_task_id: str,
-    ) -> list[Subtask]:
-        """Parse LLM decomposition response into Subtask objects.
-
-        Args:
-            response: The LLM response.
-            parent_task_id: The parent task ID.
-
-        Returns:
-            List of Subtask objects.
-        """
-        text = response.text.strip()
-
-        # Try to extract JSON from the response
-        # The LLM may wrap JSON in markdown code blocks
-        if "```" in text:
-            lines = text.split("\n")
-            json_lines = []
-            in_block = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_block = not in_block
-                    continue
-                if in_block:
-                    json_lines.append(line)
-            text = "\n".join(json_lines)
-
-        try:
-            items = json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse decomposition JSON: %s", e)
-            logger.debug("Raw LLM response: %s", response.text)
-            raise RuntimeError(f"Failed to parse LLM decomposition output: {e}") from e
-
-        if not isinstance(items, list):
-            raise RuntimeError(f"Expected JSON array from decomposition, got {type(items)}")
-
-        return self._parse_decomposition_items(items, parent_task_id)
-
     def _parse_decomposition_items(
         self,
         items: list,
@@ -817,53 +734,22 @@ class Orchestrator:
         return list(subtask_map.values())
 
     async def _gather_memory_context(self, task: Task) -> str:
-        """Gather relevant context from memory for task decomposition."""
-        if self.engine is None:
-            return "(no engine available)"
+        """Return project identifier for decomposition context.
 
-        try:
-            # Search for relevant project knowledge
-            results = self.engine.search_memory(
-                query=task.description,
-                scope_type="project" if task.project_id else "all",
-                project_id=task.project_id,
-                max_results=5,
-                min_score=0.3,
-            )
-            if results:
-                lines = []
-                for r in results:
-                    content = getattr(r, "content", None) or getattr(r, "entry", None)
-                    if content:
-                        text = getattr(content, "text", None) or str(content)
-                        lines.append(f"- {text[:200]}")
-                return "\n".join(lines)
-        except Exception:
-            logger.debug("Memory search failed", exc_info=True)
-
-        return "(no relevant memory found)"
+        Simplified: the sandbox agent (Claude Code) reads files and
+        understands the codebase on its own, so no pre-gathered memory
+        search results are injected.
+        """
+        return task.project_id or ""
 
     async def _gather_code_context(self, task: Task) -> str:
-        """Gather relevant code context via search for task decomposition."""
-        if self.engine is None:
-            return "(no engine available)"
+        """Return project identifier for decomposition context.
 
-        try:
-            from ultimate_coders.search import SearchQuery
-
-            query = SearchQuery(task.description).limit(5)
-            result = self.engine.search(query)
-            if result and hasattr(result, "items") and result.items:
-                lines = []
-                for item in result.items[:5]:
-                    snippet = getattr(item, "content_snippet", "")
-                    path = getattr(item, "file_path", "unknown")
-                    lines.append(f"- {path}: {snippet[:150]}")
-                return "\n".join(lines)
-        except Exception:
-            logger.debug("Code search failed", exc_info=True)
-
-        return "(no relevant code found)"
+        Simplified: the sandbox agent (Claude Code) reads files and
+        understands the codebase on its own, so no pre-gathered code
+        search results are injected.
+        """
+        return task.project_id or ""
 
     def _aggregate_results(self, task: Task) -> str:
         """Aggregate subtask results into a task result summary."""
@@ -983,8 +869,8 @@ class Orchestrator:
             else:
                 consecutive_zero_progress = 0
 
-            # Emit scheduling round event
-            await self.event_emitter.emit(
+            # Publish scheduling round event
+            await self._publish_event(
                 "scheduling_round_complete",
                 task_id=task.id,
                 data={
@@ -1018,7 +904,7 @@ class Orchestrator:
     ) -> dict[str, int] | None:
         """Try to re-decompose permanently failed subtasks into smaller ones.
 
-        Only attempts if an LLM client is available and there are failed
+        Only attempts if a sandbox_manager is available and there are failed
         subtasks that haven't been redecomposed before.
 
         Returns dict with failed_count and new_count on success, None on failure.
@@ -1032,7 +918,7 @@ class Orchestrator:
             # Already retried and redecomposed — give up
             return None
 
-        if self.llm_client is None and self.sandbox_manager is None:
+        if self.sandbox_manager is None:
             return None
 
         # Build context from completed subtasks
@@ -1057,35 +943,22 @@ class Orchestrator:
         )
 
         try:
-            if self.llm_client is not None:
-                response = await self.llm_client.complete(
-                    messages=[{"role": "user", "content": redecompose_prompt}],
-                    system=_DECOMPOSE_SYSTEM_PROMPT.format(
-                        max_subtasks=self.config.max_subtasks,
-                    ),
-                    temperature=0.3,
-                    max_tokens=2048,
-                )
-                items = json.loads(response.text.strip())
-            elif self.sandbox_manager is not None:
-                from ultimate_coders.agent.sandbox import (
-                    DecomposeAdapter,
-                    parse_decomposition_output,
-                )
-                adapter = DecomposeAdapter()
-                request = adapter.build_request(
-                    redecompose_prompt,
-                    self.sandbox_manager.config.working_dir
-                    or self.sandbox_manager.config.project_path,
-                    self.sandbox_manager.config,
-                )
-                result = await self.sandbox_manager._execute_subprocess(request)
-                output = adapter.parse_output(result)
-                if not output.success:
-                    return None
-                items = parse_decomposition_output(result.stdout)
-            else:
+            from ultimate_coders.agent.sandbox import (
+                DecomposeAdapter,
+                parse_decomposition_output,
+            )
+            adapter = DecomposeAdapter()
+            request = adapter.build_request(
+                redecompose_prompt,
+                self.sandbox_manager.config.working_dir
+                or self.sandbox_manager.config.project_path,
+                self.sandbox_manager.config,
+            )
+            result = await self.sandbox_manager._execute_subprocess(request)
+            output = adapter.parse_output(result)
+            if not output.success:
                 return None
+            items = parse_decomposition_output(result.stdout)
 
             if not isinstance(items, list) or not items:
                 return None
@@ -1351,7 +1224,7 @@ class Orchestrator:
         Returns:
             A dict with 'success', 'merged', and 'conflicts' keys.
         """
-        resolver = ConflictResolver(llm_client=self.llm_client)
+        resolver = ConflictResolver()
         result = resolver.resolve(base, ours, theirs, tier)
         return {
             "success": result.success,
@@ -1368,48 +1241,6 @@ class Orchestrator:
             ],
             "tier": result.tier.value,
         }
-
-    def acquire_rate_limit(self, estimated_tokens: float = 1000.0) -> bool:
-        """Try to acquire LLM rate limit capacity.
-
-        Args:
-            estimated_tokens: Estimated token consumption.
-
-        Returns:
-            True if capacity is available.
-        """
-        return self.rate_limiter.try_acquire(estimated_tokens)
-
-    def release_rate_limit(self) -> None:
-        """Release rate limit capacity after an LLM request completes."""
-        self.rate_limiter.release()
-
-    def check_circuit_breaker(self) -> bool:
-        """Check if the circuit breaker allows a request.
-
-        Returns:
-            True if the request can proceed.
-        """
-        return self.circuit_breaker.allow_request()
-
-    def record_llm_success(self) -> None:
-        """Record a successful LLM API call."""
-        self.circuit_breaker.record_success()
-
-    def record_llm_failure(self) -> None:
-        """Record a failed LLM API call."""
-        self.circuit_breaker.record_failure()
-
-    def reset_circuit_breaker(self) -> bool:
-        """Reset the circuit breaker to closed state.
-
-        Returns:
-            True if the circuit breaker was reset, False if not available.
-        """
-        if self.circuit_breaker is not None:
-            self.circuit_breaker.reset()
-            return True
-        return False
 
     def pause_task(self, task_id: str) -> bool:
         """Pause a running task.

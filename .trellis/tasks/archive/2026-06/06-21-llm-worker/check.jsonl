@@ -1,0 +1,8 @@
+{"check": "no _execute_with_llm in python/", "command": "grep -r '_execute_with_llm' python/", "expect": "no output"}
+{"check": "no execution_mode in python/", "command": "grep -r 'execution_mode' python/", "expect": "no output"}
+{"check": "no llm_client param in Orchestrator.__init__", "command": "grep 'llm_client' python/ultimate_coders/agent/orchestrator.py | head -5", "expect": "no output or only comments"}
+{"check": "NATS messages include message_id", "command": "grep 'message_id' python/ultimate_coders/nats_worker.py", "expect": "at least 1 match"}
+{"check": "Rust TaskStore dedup logic", "command": "grep 'message_id\\|dedup\\|seen_messages' crates/uc-grpc/src/server.rs", "expect": "at least 1 match"}
+{"check": "TUI event idempotency", "command": "grep 'dedup\\|seen\\|idempotent' tui/src/hooks/useTaskEvents.ts", "expect": "at least 1 match"}
+{"check": "Dashboard SSE no longer calls event_emitter.wait_for_event", "command": "grep 'wait_for_event' python/ultimate_coders/dashboard/app.py", "expect": "no output"}
+{"check": "asyncio.to_thread wraps sandbox call", "command": "grep 'to_thread' python/ultimate_coders/agent/worker.py", "expect": "at least 1 match"}

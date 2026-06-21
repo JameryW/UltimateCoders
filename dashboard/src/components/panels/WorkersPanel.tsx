@@ -80,7 +80,7 @@ export const WorkersPanel = memo(function WorkersPanel({ data, stale }: { data: 
       </CardHeader>
 
       {!data.available ? (
-        <p className="text-sm text-[var(--text-muted)]">Workers not available</p>
+        <p className="text-sm text-[var(--text-muted)]"><Badge variant="unavailable">Unavailable</Badge></p>
       ) : data.workers.length === 0 ? (
         <p className="text-sm text-[var(--text-muted)]">No workers connected</p>
       ) : (

@@ -2,7 +2,7 @@
 
 Long-running process that:
 1. Subscribes to ``uc.task.submit`` (published by the Rust gRPC server)
-2. Calls ``Orchestrator.submit_task()`` for each submission (LLM/Sandbox decomposition)
+2. Calls ``Orchestrator.submit_task()`` for each submission (sandbox decomposition)
 3. Publishes status updates to ``uc.task.update`` (consumed by the gRPC server)
 4. Publishes real-time events to ``uc.task.event`` (consumed by the gRPC server)
 5. Publishes heartbeats to ``uc.heartbeat`` every 30 seconds
@@ -14,7 +14,6 @@ Entry point::
 Environment variables::
 
     UC_NATS_URL          NATS server URL (default: nats://localhost:4222)
-    UC_SANDBOX_MODE      Sandbox mode: "subprocess" or "" (default: "")
     UC_PROJECT_PATH      Project path for sandbox (default: current directory)
 """
 
@@ -61,7 +60,11 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
 
     The format matches the Rust ``NatsTaskUpdate`` struct so the
     gRPC server can parse it with ``serde_json::from_slice``.
+    Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
+    import time
+
+    ts_ms = int(time.time() * 1000)
     subtasks = []
     for st in task.subtasks:
         entry: dict[str, Any] = {
@@ -75,6 +78,7 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
+        "message_id": f"{task.id}:update:{ts_ms}",
         "task_id": task.id,
         "status": _task_status_to_nats(task.status),
         "subtasks": subtasks,
@@ -93,8 +97,14 @@ def _make_task_event_payload(
     """Build a ``uc.task.event`` payload.
 
     The format matches the Rust ``NatsTaskEvent`` struct.
+    Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
+    import time
+
+    ts_ms = int(time.time() * 1000)
+    message_id = f"{task_id}:{event_type}:{subtask_id}:{ts_ms}"
     payload: dict[str, Any] = {
+        "message_id": message_id,
         "type": event_type,
         "task_id": task_id,
     }
@@ -226,11 +236,9 @@ class NatsWorker:
     def __init__(
         self,
         nats_url: str = "nats://localhost:4222",
-        sandbox_mode: str = "",
         project_path: str = "",
     ) -> None:
         self._nats_url = nats_url
-        self._sandbox_mode = sandbox_mode
         self._project_path = project_path
         self._consumer_id = str(uuid.uuid4())
 
@@ -350,28 +358,19 @@ class NatsWorker:
             nats_publisher=self._publisher,
         )
 
-        # Worker with NATS event forwarding
-        if self._sandbox_mode == "subprocess":
-            from ultimate_coders.agent.sandbox import SandboxConfig
+        # Worker — sandbox-only, always
+        from ultimate_coders.agent.sandbox import SandboxConfig
 
-            sandbox_config = SandboxConfig(
-                backend="subprocess",
-                project_path=self._project_path or os.getcwd(),
-            )
-            self._worker = Worker(
-                engine=self._engine,
-                execution_mode="sandbox",
-                sandbox_config=sandbox_config,
-                event_emitter=self._orchestrator.event_emitter,
-            )
-        else:
-            # Default: no LLM client configured — Orchestrator will use
-            # sandbox decomposition if available, or fail gracefully
-            self._worker = Worker(
-                engine=self._engine,
-                execution_mode="llm",
-                event_emitter=self._orchestrator.event_emitter,
-            )
+        sandbox_config = SandboxConfig(
+            backend="subprocess",
+            project_path=self._project_path or os.getcwd(),
+        )
+        self._worker = Worker(
+            engine=self._engine,
+            sandbox_config=sandbox_config,
+            event_emitter=self._orchestrator.event_emitter,
+            nats_publisher=self._publisher,
+        )
 
         # Register the worker with the Orchestrator (await to ensure
         # registration completes before any tasks arrive)
@@ -689,36 +688,12 @@ class NatsWorker:
         }
 
     async def _dash_getcircuitbreakerstatus(self, _payload: dict) -> dict:
-        """Return circuit breaker + rate limiter status."""
-        orch = self._orchestrator
-        if orch is None:
-            return {"available": False, "circuit_breaker": {}, "rate_limiter": {}}
-        cb = orch.circuit_breaker
-        rl = orch.rate_limiter
-        cb_data = {}
-        if cb is not None:
-            cb_data = {
-                "state": cb.state, "failure_count": cb.failure_count,
-                "failure_threshold": cb.failure_threshold,
-                "recovery_timeout_seconds": cb.recovery_timeout_seconds,
-                "last_failure": cb.last_failure.isoformat() if cb.last_failure else None,
-            }
-        rl_data = {}
-        if rl is not None:
-            rl_data = {
-                "max_requests": rl.max_requests, "window_seconds": rl.window_seconds,
-                "current_requests": rl.current_requests,
-                "remaining_ratio": rl.remaining_ratio,
-            }
-        return {"available": True, "circuit_breaker": cb_data, "rate_limiter": rl_data}
+        """Return circuit breaker + rate limiter status (deprecated — always unavailable)."""
+        return {"available": False, "circuit_breaker": {}, "rate_limiter": {}}
 
     async def _dash_resetcircuitbreaker(self, _payload: dict) -> dict:
-        """Reset circuit breaker."""
-        orch = self._orchestrator
-        if orch is None:
-            return {"success": False, "error": "Orchestrator not available"}
-        ok = orch.reset_circuit_breaker()
-        return {"success": ok, "state": "closed" if ok else "unknown"}
+        """Reset circuit breaker (deprecated — always returns unavailable)."""
+        return {"success": False, "error": "Circuit breaker removed (sandbox-only mode)"}
 
     async def _dash_triggerschedulerjob(self, payload: dict) -> dict:
         """Trigger a scheduled job."""
@@ -860,12 +835,10 @@ async def main() -> None:
     )
 
     nats_url = os.environ.get("UC_NATS_URL", "nats://localhost:4222")
-    sandbox_mode = os.environ.get("UC_SANDBOX_MODE", "")
     project_path = os.environ.get("UC_PROJECT_PATH", os.getcwd())
 
     worker = NatsWorker(
         nats_url=nats_url,
-        sandbox_mode=sandbox_mode,
         project_path=project_path,
     )
 

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tonic::{Request, Response, Status};
@@ -55,6 +56,10 @@ pub struct NatsTaskSubmit {
 /// The gRPC server subscribes to this subject and updates the in-memory TaskStore.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskUpdate {
+    /// Deduplication key for at-least-once NATS delivery.
+    /// Format: `{task_id}:{event_type}:{subtask_id}:{timestamp_ms}`
+    #[serde(default)]
+    pub message_id: Option<String>,
     pub task_id: String,
     pub status: String,
     pub subtasks: Vec<NatsSubtaskUpdate>,
@@ -80,6 +85,10 @@ pub struct NatsSubtaskUpdate {
 /// log for WatchTask streaming.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskEvent {
+    /// Deduplication key for at-least-once NATS delivery.
+    /// Format: `{task_id}:{event_type}:{subtask_id}:{timestamp_ms}`
+    #[serde(default)]
+    pub message_id: Option<String>,
     pub r#type: String,
     pub task_id: String,
     #[serde(default)]
@@ -175,6 +184,10 @@ pub struct TaskStore {
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
+    /// Deduplication map for NATS at-least-once delivery.
+    /// Keys are message_id strings; values are insertion timestamps.
+    /// Entries older than 5 minutes are purged on each check.
+    seen_messages: HashMap<String, Instant>,
 }
 
 impl Default for TaskStore {
@@ -191,6 +204,7 @@ impl TaskStore {
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             task_backend: None,
             last_heartbeat: None,
+            seen_messages: HashMap::new(),
         }
     }
 
@@ -202,6 +216,7 @@ impl TaskStore {
             event_store,
             task_backend: None,
             last_heartbeat: None,
+            seen_messages: HashMap::new(),
         }
     }
 
@@ -216,7 +231,46 @@ impl TaskStore {
             event_store,
             task_backend: Some(task_backend),
             last_heartbeat: None,
+            seen_messages: HashMap::new(),
         }
+    }
+
+    /// Dedup TTL: messages older than this are considered expired.
+    const DEDUP_TTL: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+
+    /// Maximum seen_messages entries before triggering a purge.
+    const DEDUP_MAX_ENTRIES: usize = 10_000;
+
+    /// Check if a message_id has already been processed.
+    /// Returns `true` if the message is a duplicate (already seen).
+    /// If not a duplicate, records the message_id and returns `false`.
+    pub fn check_and_record_message_id(&mut self, message_id: &Option<String>) -> bool {
+        // No message_id means no dedup — always process
+        let mid = match message_id {
+            Some(id) if !id.is_empty() => id,
+            _ => return false,
+        };
+
+        if self.seen_messages.contains_key(mid) {
+            tracing::debug!(message_id = %mid, "Skipping duplicate NATS message");
+            return true;
+        }
+
+        self.seen_messages.insert(mid.clone(), Instant::now());
+
+        // Purge expired entries if the map is getting large
+        if self.seen_messages.len() > Self::DEDUP_MAX_ENTRIES {
+            self.purge_expired_dedup_entries();
+        }
+
+        false
+    }
+
+    /// Remove entries older than DEDUP_TTL from the seen_messages map.
+    fn purge_expired_dedup_entries(&mut self) {
+        let now = Instant::now();
+        self.seen_messages
+            .retain(|_, instant| now.duration_since(*instant) < Self::DEDUP_TTL);
     }
 
     /// Record an event: push to inline log AND append to EventStore.
@@ -1012,6 +1066,13 @@ fn spawn_nats_subscriber(
                                 status = %update.status,
                                 "Received NATS task update"
                             );
+                            // Dedup: skip if this message_id was already processed
+                            {
+                                let mut store = task_store.lock().await;
+                                if store.check_and_record_message_id(&update.message_id) {
+                                    continue;
+                                }
+                            }
                             let event_count_before;
                             {
                                 let mut store = task_store.lock().await;
@@ -1109,6 +1170,13 @@ fn spawn_nats_subscriber(
                                 task_id = %nats_event.task_id,
                                 "Received NATS task event"
                             );
+                            // Dedup: skip if this message_id was already processed
+                            {
+                                let mut store = task_store.lock().await;
+                                if store.check_and_record_message_id(&nats_event.message_id) {
+                                    continue;
+                                }
+                            }
                             // Convert NATS event to AgentEventType and record it
                             if let Some(agent_event) = nats_event_to_agent_event(&nats_event) {
                                 let proto_event: TaskEvent = agent_event.clone().into();
@@ -2829,6 +2897,7 @@ mod tests {
     #[test]
     fn nats_task_update_serialization() {
         let msg = NatsTaskUpdate {
+            message_id: Some("abc-123:update::1700000000".to_string()),
             task_id: "abc-123".to_string(),
             status: "InProgress".to_string(),
             subtasks: vec![NatsSubtaskUpdate {
@@ -2841,6 +2910,7 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.message_id, Some("abc-123:update::1700000000".to_string()));
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.status, "InProgress");
         assert_eq!(parsed.subtasks.len(), 1);
@@ -2864,6 +2934,7 @@ mod tests {
         );
 
         let msg = NatsTaskEvent {
+            message_id: Some("abc-123:tool_call:st-1:1700000000".to_string()),
             r#type: "tool_call".to_string(),
             task_id: "abc-123".to_string(),
             subtask_id: Some("st-1".to_string()),
@@ -2871,6 +2942,7 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.message_id, Some("abc-123:tool_call:st-1:1700000000".to_string()));
         assert_eq!(parsed.r#type, "tool_call");
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.subtask_id, Some("st-1".to_string()));
@@ -2940,6 +3012,7 @@ mod tests {
 
         // Apply an update that changes task status and adds a new subtask
         let update = NatsTaskUpdate {
+            message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
             subtasks: vec![NatsSubtaskUpdate {
@@ -2968,6 +3041,7 @@ mod tests {
         let mut store = TaskStore::new();
 
         let update = NatsTaskUpdate {
+            message_id: None,
             task_id: "nonexistent".to_string(),
             status: "InProgress".to_string(),
             subtasks: vec![],
@@ -2986,6 +3060,7 @@ mod tests {
         let task_id = task.id.0.clone();
 
         let update = NatsTaskUpdate {
+            message_id: None,
             task_id: task_id.clone(),
             status: "BogusStatus".to_string(),
             subtasks: vec![],
@@ -3007,6 +3082,7 @@ mod tests {
         let subtask_id = task.subtasks[0].id.0.clone();
 
         let update = NatsTaskUpdate {
+            message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
             subtasks: vec![NatsSubtaskUpdate {
@@ -3127,6 +3203,7 @@ mod tests {
         );
 
         let event = NatsTaskEvent {
+            message_id: None,
             r#type: "subtask_assigned".to_string(),
             task_id: "t-1".to_string(),
             subtask_id: Some("st-1".to_string()),
@@ -3153,6 +3230,7 @@ mod tests {
     #[test]
     fn nats_event_to_agent_event_unknown_type() {
         let event = NatsTaskEvent {
+            message_id: None,
             r#type: "unknown_type".to_string(),
             task_id: "t-1".to_string(),
             subtask_id: None,
@@ -3177,6 +3255,7 @@ mod tests {
         );
 
         let event = NatsTaskEvent {
+            message_id: None,
             r#type: "tool_call".to_string(),
             task_id: "t-1".to_string(),
             subtask_id: Some("st-1".to_string()),
@@ -3559,6 +3638,7 @@ mod tests {
         {
             let mut store = task_store.lock().await;
             let update = NatsTaskUpdate {
+                message_id: None,
                 task_id: task_id.clone(),
                 status: "InProgress".to_string(),
                 subtasks: vec![NatsSubtaskUpdate {
@@ -3644,6 +3724,7 @@ mod tests {
             let mut store = task_store.lock().await;
             event_count_before = store.events.len();
             let update = NatsTaskUpdate {
+                message_id: None,
                 task_id: task_id.clone(),
                 status: "InProgress".to_string(),
                 subtasks: vec![NatsSubtaskUpdate {
@@ -3860,5 +3941,74 @@ mod tests {
         let result = server.inner.task_queue_tx.try_send(queued);
         // Should succeed — queue is empty and has capacity
         assert!(result.is_ok());
+    }
+
+    // ── Dedup tests ─────────────────────────────────────────────
+
+    #[test]
+    fn dedup_none_message_id_always_processed() {
+        let mut store = TaskStore::new();
+        // No message_id — should never be considered a duplicate
+        assert!(!store.check_and_record_message_id(&None));
+        assert!(!store.check_and_record_message_id(&None));
+        assert!(!store.check_and_record_message_id(&None));
+    }
+
+    #[test]
+    fn dedup_empty_message_id_always_processed() {
+        let mut store = TaskStore::new();
+        // Empty string message_id — should never be considered a duplicate
+        assert!(!store.check_and_record_message_id(&Some(String::new())));
+        assert!(!store.check_and_record_message_id(&Some(String::new())));
+    }
+
+    #[test]
+    fn dedup_detects_duplicate_message_id() {
+        let mut store = TaskStore::new();
+        let mid = Some("t-1:subtask_assigned:st-1:1700000000".to_string());
+        // First occurrence — not a duplicate
+        assert!(!store.check_and_record_message_id(&mid));
+        // Second occurrence — is a duplicate
+        assert!(store.check_and_record_message_id(&mid));
+    }
+
+    #[test]
+    fn dedup_different_message_ids_not_duplicate() {
+        let mut store = TaskStore::new();
+        let mid1 = Some("t-1:subtask_assigned:st-1:1700000000".to_string());
+        let mid2 = Some("t-1:subtask_started:st-1:1700000001".to_string());
+        assert!(!store.check_and_record_message_id(&mid1));
+        assert!(!store.check_and_record_message_id(&mid2));
+    }
+
+    #[test]
+    fn dedup_purges_expired_entries() {
+        let mut store = TaskStore::new();
+        // Fill the map beyond DEDUP_MAX_ENTRIES with distinct keys
+        for i in 0..=TaskStore::DEDUP_MAX_ENTRIES {
+            let mid = Some(format!("t-1:event:st-{i}:1700000000"));
+            assert!(!store.check_and_record_message_id(&mid));
+        }
+        // The map should have been purged — early entries may have been removed
+        // but the map size should not exceed DEDUP_MAX_ENTRIES by much
+        assert!(store.seen_messages.len() <= TaskStore::DEDUP_MAX_ENTRIES + 100);
+    }
+
+    #[test]
+    fn nats_task_update_backward_compat_no_message_id() {
+        // Verify that NatsTaskUpdate JSON without message_id deserializes correctly
+        let json = r#"{"task_id":"t-1","status":"InProgress","subtasks":[],"result":null}"#;
+        let parsed: NatsTaskUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.task_id, "t-1");
+        assert_eq!(parsed.message_id, None);
+    }
+
+    #[test]
+    fn nats_task_event_backward_compat_no_message_id() {
+        // Verify that NatsTaskEvent JSON without message_id deserializes correctly
+        let json = r#"{"type":"tool_call","task_id":"t-1","subtask_id":"st-1","data":{}}"#;
+        let parsed: NatsTaskEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.r#type, "tool_call");
+        assert_eq!(parsed.message_id, None);
     }
 }

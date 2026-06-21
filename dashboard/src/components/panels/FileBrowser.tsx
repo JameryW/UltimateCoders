@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import hljs from "highlight.js";
 import * as api from "@/api/endpoints";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RepoInfo, DirEntry, FileContent } from "@/types/dashboard";
 
 /** Format bytes to human-readable. */
@@ -20,9 +21,10 @@ interface FileBrowserProps {
   /** Initial navigation (from SearchPanel/OutputFiles click). */
   initialNav?: FileBrowserNavigateEvent | null;
   onNavConsumed?: () => void;
+  stale?: boolean;
 }
 
-export function FileBrowser({ initialNav, onNavConsumed }: FileBrowserProps) {
+export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBrowserProps) {
   const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [currentPath, setCurrentPath] = useState("");
@@ -160,7 +162,7 @@ export function FileBrowser({ initialNav, onNavConsumed }: FileBrowserProps) {
       <select
         value={selectedRepo}
         onChange={(e) => { setSelectedRepo(e.target.value); setFileContent(null); }}
-        className="text-xs bg-[var(--bg-surface-alt)] text-[var(--text-primary)] border border-[var(--border-color)] rounded px-2 py-1"
+        className="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
       >
         {repos.map((r) => (
           <option key={r.repo_id} value={r.repo_id}>{r.repo_id}</option>
@@ -189,23 +191,26 @@ export function FileBrowser({ initialNav, onNavConsumed }: FileBrowserProps) {
   // File content view
   if (fileContent) {
     return (
-      <div>
+      <Card stale={stale}>
+        <CardHeader>
+          <CardTitle>File Browser</CardTitle>
+        </CardHeader>
         {repoSelector}
         <div className="flex items-center gap-2 mb-2">
           <button
             onClick={backToDirectory}
             className="text-xs text-blue-400 hover:text-blue-300"
           >
-            ← Back
+            &larr; Back
           </button>
           <span className="text-xs font-mono text-[var(--text-secondary)] truncate" title={fileContent.path}>
             {fileContent.path}
           </span>
           <span className="text-xs text-[var(--text-muted)]">
-            {fmtSize(fileContent.size)} · {fileContent.lines} lines
+            {fmtSize(fileContent.size)} &middot; {fileContent.lines} lines
           </span>
           {fileContent.truncated && (
-            <span className="text-xs text-yellow-400">⚠ truncated</span>
+            <span className="text-xs text-yellow-400">&#9888; truncated</span>
           )}
         </div>
         {fileContent.binary ? (
@@ -243,13 +248,16 @@ export function FileBrowser({ initialNav, onNavConsumed }: FileBrowserProps) {
             </table>
           </div>
         )}
-      </div>
+      </Card>
     );
   }
 
   // Directory listing view
   return (
-    <div>
+    <Card stale={stale}>
+      <CardHeader>
+        <CardTitle>File Browser</CardTitle>
+      </CardHeader>
       {repoSelector}
       {breadcrumbNav}
       {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
@@ -280,6 +288,6 @@ export function FileBrowser({ initialNav, onNavConsumed }: FileBrowserProps) {
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

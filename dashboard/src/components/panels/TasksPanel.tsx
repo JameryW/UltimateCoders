@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
+import { showToast } from "@/components/ui/toast";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
+import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 import type { TasksData, TaskEvent } from "@/types/dashboard";
 
 function statusBorderColor(status: string): string {
@@ -26,11 +28,17 @@ interface TasksPanelProps {
   highlightTaskId?: string | null;
   onHighlightShown?: () => void;
   onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
+  grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
+  onTaskCreated?: (taskId: string) => void;
+  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: Array<{ id: string; description: string; status: string; dependsOn: string[] }>) => void;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [submitDesc, setSubmitDesc] = useState("");
+  const [submitProj, setSubmitProj] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const highlightRef = useRef<HTMLLIElement>(null);
 
   // ponytail: auto-expand and scroll to highlighted task after submit
@@ -52,6 +60,29 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
     setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
   };
 
+  const handleInlineSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const desc = submitDesc.trim();
+    if (!desc || !grpcSubmitTask) return;
+    setSubmitting(true);
+    try {
+      const resp = await grpcSubmitTask(desc, submitProj.trim());
+      if (resp.success) {
+        showToast(resp.subtaskCount > 0 ? `Task ${shortId(resp.taskId)} — ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}` : `Task ${shortId(resp.taskId)} submitted`, "success");
+        onOptimisticAdd?.(resp.taskId, desc, submitProj.trim(), resp.subtaskCount, resp.subtasks);
+        setSubmitDesc("");
+        setSubmitProj("");
+        onTaskCreated?.(resp.taskId);
+      } else {
+        showToast(`Submit failed: ${resp.status}`, "error");
+      }
+    } catch (err) {
+      showToast(`Submit failed: ${String(err)}`, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <Card className="md:col-span-2" stale={stale}>
       <CardHeader>
@@ -70,8 +101,35 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
         </div>
       </CardHeader>
 
+      {/* Inline task submit form — always visible when gRPC connected */}
+      {grpcSubmitTask && (
+        <form onSubmit={handleInlineSubmit} className="flex gap-2 mb-3">
+          <input
+            value={submitDesc}
+            onChange={(e) => setSubmitDesc(e.target.value)}
+            placeholder="New task..."
+            aria-label="Task description"
+            className="flex-1 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            value={submitProj}
+            onChange={(e) => setSubmitProj(e.target.value)}
+            placeholder="Project"
+            aria-label="Project ID"
+            className="w-24 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={submitting || !submitDesc.trim()}
+            className="btn-action-info px-3 py-2 rounded-md text-xs font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {submitting ? "..." : "Submit"}
+          </button>
+        </form>
+      )}
+
       {!data.available ? (
-        <p className="text-sm text-[var(--text-muted)]">Tasks not available</p>
+        <p className="text-sm text-[var(--text-muted)]"><Badge variant="unavailable">Unavailable</Badge></p>
       ) : (
         <>
           {Object.keys(data.status_counts).length > 0 && (

@@ -32,6 +32,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [NATS Bridge Spec](./nats-bridge-spec.md) | NATS message protocol, gRPC↔Python bridging, graceful degradation | Filled |
 | [Local Worker Bridge Spec](./local-worker-bridge-spec.md) | JSON-RPC 2.0 over stdin/stdout, Rust↔Python local execution, three-level degradation | Filled |
 | [Agent Capability Spec](./agent-capability-spec.md) | Worker self-reflection, adaptive retry, capability matching, scheduling, experience recall | Filled |
+| [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
 
 ---
 

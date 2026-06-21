@@ -27,7 +27,6 @@ import sys
 from typing import Any, Optional
 
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
-from ultimate_coders.agent.llm import LLMClient
 from ultimate_coders.agent.orchestrator import Orchestrator, TaskStatus
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.engine import Engine
@@ -62,9 +61,9 @@ class JsonRpcWriter:
 class ForwardingEventEmitter(TaskEventEmitter):
     """Event emitter that forwards events to the Rust gRPC server via JSON-RPC.
 
-    Wraps a standard TaskEventEmitter so events reach both:
-    - Python internal consumers (Dashboard SSE, ring buffer)
+    Used in the LocalWorker path (no NATS). Events go to:
     - Rust gRPC server via JSON-RPC ``task_event`` notifications
+    - The inner TaskEventEmitter's ring buffer (for REST API queries)
     """
 
     def __init__(self, inner: TaskEventEmitter, writer: JsonRpcWriter) -> None:
@@ -103,7 +102,7 @@ class ForwardingEventEmitter(TaskEventEmitter):
                     string_data[k] = str(v)
             params["data"] = string_data
         self._writer.write_notification("task_event", params)
-        # Also emit to internal consumers
+        # Also store in inner ring buffer for REST API queries
         await self._inner.emit(event_type, task_id, subtask_id, data)
 
     def get_recent_events(
@@ -112,10 +111,6 @@ class ForwardingEventEmitter(TaskEventEmitter):
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         return self._inner.get_recent_events(task_id, limit)
-
-    @property
-    def pending_count(self) -> int:
-        return self._inner.pending_count
 
 
 class LocalWorker:
@@ -182,29 +177,7 @@ class LocalWorker:
 
     async def _init_components(self) -> None:
         """Initialize Engine, Orchestrator, Worker."""
-        sandbox_mode = os.environ.get("UC_SANDBOX_MODE", "")
         project_path = os.environ.get("UC_PROJECT_PATH", os.getcwd())
-
-        # ponytail: map ANTHROPIC_AUTH_TOKEN → ANTHROPIC_API_KEY so LLMClient
-        # picks it up from env. Some deployments use AUTH_TOKEN instead.
-        if not os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-            os.environ["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_AUTH_TOKEN"]
-
-        # LLM client (auto-detect API key from env)
-        llm_client: LLMClient | None = None
-        try:
-            llm_client = LLMClient()
-            logger.info(
-                "LLMClient initialized (provider=%s, model=%s)",
-                llm_client.provider,
-                llm_client.model,
-            )
-        except Exception:
-            logger.warning(
-                "LLMClient unavailable (no API key?), "
-                "task decomposition will fail",
-                exc_info=True,
-            )
 
         # Engine (local mode)
         try:
@@ -215,7 +188,7 @@ class LocalWorker:
             engine = None
 
         # Orchestrator (no NATS publisher — we use JSON-RPC notifications instead)
-        self._orchestrator = Orchestrator(engine=engine, llm_client=llm_client)
+        self._orchestrator = Orchestrator(engine=engine)
 
         # Wrap the Orchestrator's event emitter to forward events to Rust
         forwarding_emitter = ForwardingEventEmitter(
@@ -223,28 +196,18 @@ class LocalWorker:
         )
         self._orchestrator.event_emitter = forwarding_emitter
 
-        # Worker
-        if sandbox_mode == "subprocess":
-            from ultimate_coders.agent.sandbox import SandboxConfig
+        # Worker — sandbox-only, always
+        from ultimate_coders.agent.sandbox import SandboxConfig
 
-            sandbox_config = SandboxConfig(
-                backend="subprocess",
-                project_path=project_path,
-            )
-            self._worker = Worker(
-                engine=engine,
-                execution_mode="sandbox",
-                sandbox_config=sandbox_config,
-                event_emitter=self._orchestrator.event_emitter,
-                llm_client=llm_client,
-            )
-        else:
-            self._worker = Worker(
-                engine=engine,
-                execution_mode="llm",
-                event_emitter=self._orchestrator.event_emitter,
-                llm_client=llm_client,
-            )
+        sandbox_config = SandboxConfig(
+            backend="subprocess",
+            project_path=project_path,
+        )
+        self._worker = Worker(
+            engine=engine,
+            sandbox_config=sandbox_config,
+            event_emitter=self._orchestrator.event_emitter,
+        )
 
         # Register worker with Orchestrator
         worker_info = self._worker.get_info()
