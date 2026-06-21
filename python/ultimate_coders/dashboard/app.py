@@ -229,13 +229,12 @@ class DashboardApp:
         async def stream(request: Request):
             """SSE endpoint: push real-time events + periodic full snapshots.
 
-            Uses a hybrid approach:
-            - Immediate task events from both the local TaskEventEmitter
-              AND NATS ``uc.task.event`` (if connected) via 'task_event' SSE type
-            - Full state snapshot every 5 seconds via 'update' SSE type
+            Events are sourced exclusively from NATS ``uc.task.event``
+            (the unified event pipeline). The local TaskEventEmitter ring
+            buffer is only used for REST API queries, not for SSE.
 
             When NATS is available, events from the independent NATS consumer
-            (e.g., tasks submitted via gRPC/TUI) are merged into the stream.
+            (e.g., tasks submitted via gRPC/TUI) are streamed to the browser.
 
             Auth: respects the same DASHBOARD_PASSWORD gate as other endpoints.
             Token can be passed as ``?token=<pwd>`` query parameter.
@@ -275,9 +274,8 @@ class DashboardApp:
                         last_heartbeat = now
                         yield {"comment": "heartbeat"}
 
-                    # Check both event sources fairly: first drain NATS queue
-                    # (non-blocking), then wait on local emitter. This prevents
-                    # a busy local emitter from starving NATS events.
+                    # Drain NATS event queue (non-blocking) — the sole
+                    # source of real-time events for SSE.
                     had_event = False
                     if self._nats_client is not None:
                         try:
@@ -285,30 +283,25 @@ class DashboardApp:
                                 nats_event = self._get_nats_event_queue().get_nowait()
                                 if nats_event is not None:
                                     self._event_log.appendleft(nats_event)
+                                    # Also populate the ring buffer so REST API
+                                    # queries (GET /dashboard/api/events) can
+                                    # serve events received via NATS.
+                                    if self.event_emitter is not None:
+                                        self.event_emitter._recent.append(nats_event)
                                     event_id += 1
                                     yield {
                                         "id": str(event_id),
                                         "event": "task_event",
                                         "data": json.dumps(nats_event),
                                     }
-                                    had_event = True  # noqa: F841 — used for side-effect tracking
+                                    had_event = True
                                 else:
                                     break
                         except asyncio.QueueEmpty:
                             pass
 
-                    # Then try local emitter (with short timeout)
-                    if self.event_emitter is not None:
-                        event = await self.event_emitter.wait_for_event(timeout=1.0)
-                        if event is not None:
-                            self._event_log.appendleft(event.to_dict())
-                            event_id += 1
-                            yield {
-                                "id": str(event_id),
-                                "event": "task_event",
-                                "data": json.dumps(event.to_dict()),
-                            }
-                            continue  # Check for more events immediately
+                    # No NATS events — wait a short time before next iteration.
+                    await cancellable_sleep(0.5)
 
                     # Periodic full snapshot — interval adapts to activity.
                     # Active (events this cycle): 3s. Idle: 10s.
@@ -323,8 +316,6 @@ class DashboardApp:
                             "event": "update",
                             "data": json.dumps(snapshot),
                         }
-                    # ponytail: short sleep — detects disconnect within 0.5s
-                    await cancellable_sleep(1)
 
             return EventSourceResponse(event_generator())
 
@@ -575,21 +566,11 @@ class DashboardApp:
 
         @app.post("/dashboard/api/circuit-breaker/reset")
         async def circuit_breaker_reset_api(request: Request):
-            """Reset the circuit breaker to closed state."""
+            """Reset the circuit breaker to closed state (deprecated — sandbox-only mode)."""
             if (resp := self._check_auth(request)) is not None:
                 return resp
-            orch = self.orchestrator
-            if orch is None:
-                return JSONResponse(
-                    {"success": False, "error": "Orchestrator not available"},
-                    status_code=503,
-                )
-            success = orch.reset_circuit_breaker()
-            if success:
-                self._record_event("circuit_breaker_reset")
-                return JSONResponse({"success": True, "state": "closed"})
             return JSONResponse(
-                {"success": False, "error": "No circuit breaker configured"},
+                {"success": False, "error": "Circuit breaker removed (sandbox-only mode)"},
                 status_code=400,
             )
 

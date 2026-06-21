@@ -448,9 +448,9 @@ class TestAdapterFactory:
 # ── Worker sandbox mode integration test ─────────────────────────
 
 class TestWorkerSandboxMode:
-    """Tests for Worker sandbox execution mode."""
+    """Tests for Worker sandbox execution (always sandbox)."""
 
-    def test_worker_init_sandbox_mode(self):
+    def test_worker_init_with_sandbox_config(self):
         from ultimate_coders.agent.worker import Worker
         config = SandboxConfig(
             agent="claude-code",
@@ -458,31 +458,14 @@ class TestWorkerSandboxMode:
         )
         worker = Worker(
             worker_id="w-sandbox",
-            execution_mode="sandbox",
             sandbox_config=config,
         )
-        assert worker.execution_mode == "sandbox"
         assert worker._sandbox_manager is not None
 
-    def test_worker_init_llm_mode_default(self):
+    def test_worker_init_default_sandbox(self):
         from ultimate_coders.agent.worker import Worker
-        worker = Worker(worker_id="w-sandbox")
-        assert worker.execution_mode == "sandbox"
+        worker = Worker(worker_id="w-default")
         assert worker._sandbox_manager is not None
-
-    @pytest.mark.asyncio
-    async def test_worker_sandbox_execute_no_manager(self):
-        """Test that sandbox execution fails gracefully without sandbox manager."""
-        from ultimate_coders.agent.types import Subtask
-        from ultimate_coders.agent.worker import Worker
-
-        worker = Worker(worker_id="w-llm", execution_mode="llm")
-        subtask = Subtask(id="s1", description="Fix bug")
-
-        # LLM mode worker should not have sandbox manager
-        result = await worker._execute_in_sandbox(subtask)
-        assert not result.success
-        assert "not configured" in result.summary
 
 
 # ── NetworkMode tests ────────────────────────────────────────────

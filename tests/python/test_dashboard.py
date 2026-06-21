@@ -645,27 +645,18 @@ class TestDashboardPOSTEndpoints:
         assert response.status_code == 400
 
     def test_circuit_breaker_reset(self, client):
-        """POST /dashboard/api/circuit-breaker/reset resets CB."""
-        # First open the CB
-        for _ in range(3):
-            client._orch_circuit_breaker = None  # hack: use dashboard's orch
-        self.dashboard.orchestrator.circuit_breaker.record_failure()
-        self.dashboard.orchestrator.circuit_breaker.record_failure()
-        self.dashboard.orchestrator.circuit_breaker.record_failure()
-
+        """POST /dashboard/api/circuit-breaker/reset returns 400 (removed in sandbox-only mode)."""
         response = client.post("/dashboard/api/circuit-breaker/reset")
-        assert response.status_code == 200
+        assert response.status_code == 400
         data = response.json()
-        assert data["success"] is True
-        assert data["state"] == "closed"
+        assert data["success"] is False
 
     def test_circuit_breaker_reset_no_cb(self):
-        """POST reset returns 400 when no CB configured."""
+        """POST reset returns 400 when no CB configured (always 400 now)."""
         from fastapi.testclient import TestClient
         from ultimate_coders.dashboard.app import DashboardApp
 
         orch = _make_orchestrator()
-        orch.circuit_breaker = None
         dashboard = DashboardApp(orch)
         client = TestClient(dashboard._app)
 
@@ -817,26 +808,14 @@ class TestOrchestratorInteractiveMethods:
         assert result is False
 
     def test_reset_circuit_breaker(self):
-        """Orchestrator.reset_circuit_breaker resets the CB to closed."""
-        from ultimate_coders.agent.rate_limiter import CircuitBreaker, CircuitState
-
+        """Orchestrator no longer has reset_circuit_breaker (removed in sandbox-only mode)."""
         orch = _make_orchestrator()
-        cb = CircuitBreaker(failure_threshold=3)
-        for _ in range(3):
-            cb.record_failure()
-        assert cb.state == CircuitState.OPEN
-
-        orch.circuit_breaker = cb
-        result = orch.reset_circuit_breaker()
-        assert result is True
-        assert cb.state == CircuitState.CLOSED
+        assert not hasattr(orch, 'reset_circuit_breaker')
 
     def test_reset_circuit_breaker_none(self):
-        """Orchestrator.reset_circuit_breaker returns False when CB is None."""
+        """Orchestrator no longer has circuit_breaker attribute (removed in sandbox-only mode)."""
         orch = _make_orchestrator()
-        orch.circuit_breaker = None
-        result = orch.reset_circuit_breaker()
-        assert result is False
+        assert not hasattr(orch, 'circuit_breaker')
 
 
 # ── CircuitBreaker reset() Tests ─────────────────────────────

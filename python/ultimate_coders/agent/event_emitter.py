@@ -1,27 +1,27 @@
-"""TaskEventEmitter — real-time event bus for dashboard task tracking.
+"""TaskEventEmitter — ring buffer for task event history.
 
-Provides an in-process event bus that Worker and Orchestrator use to
-emit task execution events (subtask start/complete, LLM interactions,
-tool calls) which the Dashboard SSE endpoint consumes for real-time
-browser updates.
+Provides an in-process ring buffer that Worker and Orchestrator use to
+store task execution events (subtask start/complete, tool calls, etc.)
+for REST API queries and initial page loads.
 
-Events flow:
-    Worker → TaskEventEmitter.emit() → asyncio.Queue → Dashboard SSE
+Real-time SSE streaming is handled entirely by NATS — the Dashboard
+subscribes to ``uc.task.event`` and pushes events to the browser.
+The ring buffer here is only for REST API queries (e.g., GET
+/dashboard/api/events).
 
 Usage:
     emitter = TaskEventEmitter()
 
-    # Emit from Worker
+    # Emit from Worker / Orchestrator
     await emitter.emit("tool_call", task_id="t1", subtask_id="s1",
                        data={"tool": "read_file", "input": {...}})
 
-    # Consume in Dashboard SSE
-    event = await emitter.wait_for_event(timeout=5.0)
+    # Query recent events (REST API)
+    events = emitter.get_recent_events(task_id="t1")
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -56,14 +56,11 @@ class TaskEvent:
 
 
 class TaskEventEmitter:
-    """Real-time event bus for dashboard task tracking.
+    """Ring buffer for task event history.
 
-    Thread-safe event emitter using asyncio.Queue. Producers (Worker,
-    Orchestrator) call emit(), consumers (Dashboard SSE) call
-    wait_for_event().
-
-    Also maintains a ring buffer of recent events for REST API queries
-    and initial page loads.
+    Stores recent events in a bounded deque for REST API queries.
+    Real-time SSE streaming is handled by NATS (Dashboard subscribes
+    to ``uc.task.event`` directly).
     """
 
     def __init__(self, buffer_size: int = 500) -> None:
@@ -73,17 +70,7 @@ class TaskEventEmitter:
             buffer_size: Maximum number of recent events to keep
                 in the ring buffer (default: 500).
         """
-        # ponytail: lazy Queue — Python 3.9 asyncio.Queue() needs a running
-        # event loop at init time, which doesn't exist in synchronous tests.
-        self._queue: asyncio.Queue[TaskEvent | None] | None = None
         self._recent: deque[dict[str, Any]] = deque(maxlen=buffer_size)
-        self._listeners: int = 0
-
-    def _get_queue(self) -> asyncio.Queue[TaskEvent | None]:
-        """Lazily create the asyncio.Queue on first use."""
-        if self._queue is None:
-            self._queue = asyncio.Queue()
-        return self._queue
 
     async def emit(
         self,
@@ -92,7 +79,7 @@ class TaskEventEmitter:
         subtask_id: str = "",
         data: dict[str, Any] | None = None,
     ) -> None:
-        """Emit a task event to all consumers.
+        """Record a task event in the ring buffer.
 
         Args:
             event_type: Event type (e.g., subtask_started, tool_call).
@@ -106,34 +93,7 @@ class TaskEventEmitter:
             subtask_id=subtask_id,
             data=data or {},
         )
-        event_dict = event.to_dict()
-
-        # Store in ring buffer for REST queries
-        self._recent.append(event_dict)
-
-        # Push to queue for SSE consumers
-        try:
-            self._get_queue().put_nowait(event)
-        except asyncio.QueueFull:
-            logger.warning("Event queue full, dropping event: %s", event_type)
-
-    async def wait_for_event(self, timeout: float = 5.0) -> TaskEvent | None:
-        """Wait for the next event, with timeout.
-
-        Used by the Dashboard SSE endpoint to get events as they arrive.
-        Returns None on timeout, which the SSE loop can use to send
-        a periodic full snapshot.
-
-        Args:
-            timeout: Maximum seconds to wait (default: 5.0).
-
-        Returns:
-            The next TaskEvent, or None on timeout.
-        """
-        try:
-            return await asyncio.wait_for(self._get_queue().get(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return None
+        self._recent.append(event.to_dict())
 
     def get_recent_events(
         self,
@@ -153,8 +113,3 @@ class TaskEventEmitter:
         if task_id:
             events = [e for e in events if e.get("task_id") == task_id]
         return events[:limit]
-
-    @property
-    def pending_count(self) -> int:
-        """Number of events waiting in the queue."""
-        return self._get_queue().qsize()

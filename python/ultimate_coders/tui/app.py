@@ -138,14 +138,12 @@ class SandboxTUI(App):
 
         self._orch = Orchestrator(
             engine=None,
-            llm_client=None,
             sandbox_manager=sandbox_manager,
         )
 
         self._worker = Worker(
             worker_id="local-sandbox-worker",
             engine=None,
-            execution_mode="sandbox",
             sandbox_config=self._config,
             event_emitter=self._orch.event_emitter,
         )
