@@ -97,6 +97,12 @@ pub enum AgentEventType {
         task_id: TaskId,
         error: String,
     },
+    TaskPaused {
+        task_id: TaskId,
+    },
+    TaskResumed {
+        task_id: TaskId,
+    },
 }
 
 /// A recorded event with metadata.

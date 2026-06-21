@@ -337,6 +337,8 @@ fn extract_task_id(event: &AgentEventType) -> Option<String> {
         AgentEventType::CheckpointCreated { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::TaskCompleted { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::TaskFailed { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::TaskPaused { task_id } => Some(task_id.0.clone()),
+        AgentEventType::TaskResumed { task_id } => Some(task_id.0.clone()),
     }
 }
 
@@ -410,7 +412,19 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
                 st.result_summary = Some(error.clone());
             }
         }
-        _ => {}
+        AgentEventType::TaskPaused { .. } => {
+            snapshot.status = "paused".to_string();
+        }
+        AgentEventType::TaskResumed { .. } => {
+            snapshot.status = "in_progress".to_string();
+        }
+        AgentEventType::ToolInvoked { .. }
+        | AgentEventType::ToolResult { .. }
+        | AgentEventType::FileModified { .. }
+        | AgentEventType::EditIntent { .. }
+        | AgentEventType::CheckpointCreated { .. }
+        | AgentEventType::TaskCompleted { .. }
+        | AgentEventType::TaskFailed { .. } => {}
     }
 }
 

@@ -1341,6 +1341,64 @@ class Orchestrator:
         logger.info("Task %s resumed", task_id)
         return True
 
+    def pause_task_local(self, task_id: str) -> bool:
+        """Pause a running task (local state only, no engine sync).
+
+        Called when a ``task_paused`` event arrives from NATS (originated
+        by the Rust gRPC server).  We only update local state here to
+        avoid a feedback loop: Python→Rust→NATS→Python.
+
+        Args:
+            task_id: The task ID to pause.
+
+        Returns:
+            True if the task was paused, False if not found or not pausable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for local pause", task_id)
+            return False
+        if task.status not in (TaskStatus.IN_PROGRESS, TaskStatus.PLANNING):
+            logger.debug(
+                "Task %s already not pausable (status: %s), ignoring",
+                task_id,
+                task.status.value,
+            )
+            return False
+        task.status = TaskStatus.PAUSED
+        task.update_timestamp()
+        logger.info("Task %s paused (local, from NATS event)", task_id)
+        return True
+
+    def resume_task_local(self, task_id: str) -> bool:
+        """Resume a paused task (local state only, no engine sync).
+
+        Called when a ``task_resumed`` event arrives from NATS (originated
+        by the Rust gRPC server).  We only update local state here to
+        avoid a feedback loop.
+
+        Args:
+            task_id: The task ID to resume.
+
+        Returns:
+            True if the task was resumed, False if not found or not resumable.
+        """
+        task = self.tasks.get(task_id)
+        if task is None:
+            logger.warning("Task %s not found for local resume", task_id)
+            return False
+        if task.status != TaskStatus.PAUSED:
+            logger.debug(
+                "Task %s not paused (status: %s), ignoring resume",
+                task_id,
+                task.status.value,
+            )
+            return False
+        task.status = TaskStatus.IN_PROGRESS
+        task.update_timestamp()
+        logger.info("Task %s resumed (local, from NATS event)", task_id)
+        return True
+
     # ── Dashboard ──────────────────────────────────────────────────
 
     def start_dashboard(self, host: str = "0.0.0.0", port: int = 8080) -> None:

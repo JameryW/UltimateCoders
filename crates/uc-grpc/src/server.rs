@@ -587,6 +587,12 @@ impl TaskStore {
             uc_engine::AgentEventType::SubtaskFailed { task_id, .. } => {
                 format!("task.{}", task_id.0)
             }
+            uc_engine::AgentEventType::TaskPaused { task_id } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::TaskResumed { task_id } => {
+                format!("task.{}", task_id.0)
+            }
             _ => "events".to_string(),
         };
         self.events.push(event.clone());
@@ -1034,6 +1040,58 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     pub fn nats_client(&self) -> Option<()> {
         None
     }
+
+    /// Publish a task status change event (pause/resume) to NATS
+    /// so the Python Orchestrator can react.
+    ///
+    /// Also registers the message_id in the TaskStore's dedup map so
+    /// the NATS subscriber skips the echo of our own message.
+    #[cfg(feature = "messaging")]
+    async fn publish_task_status_event(&self, task_id: &str, event_type: &str) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        if let Some(nats_client) = &self.inner.nats_client {
+            let ts_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let message_id = format!("{}:{}::{}", task_id, event_type, ts_ms);
+            let event = NatsTaskEvent {
+                message_id: Some(message_id.clone()),
+                r#type: event_type.to_string(),
+                task_id: task_id.to_string(),
+                subtask_id: None,
+                data: serde_json::Map::new(),
+            };
+            match serde_json::to_vec(&event) {
+                Ok(bytes) => {
+                    if let Err(e) = nats_client
+                        .publish(NATS_SUBJECT_TASK_EVENT.to_string(), bytes.into())
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            event_type = %event_type,
+                            "Failed to publish NATS task status event"
+                        );
+                    } else {
+                        // Register message_id in dedup map so the NATS
+                        // subscriber skips the echo of our own message.
+                        let mut store = self.inner.task_store.lock().await;
+                        store.check_and_record_message_id(&Some(message_id));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to serialize NATS task status event"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn publish_task_status_event(&self, _task_id: &str, _event_type: &str) {}
 }
 
 impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
@@ -1422,6 +1480,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 error,
                 recoverable,
             })
+        }
+        "task_paused" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskPaused { task_id })
+        }
+        "task_resumed" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskResumed { task_id })
         }
         _ => {
             tracing::debug!(
@@ -1977,14 +2043,35 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         request: Request<PauseTaskRequest>,
     ) -> Result<Response<PauseTaskResponse>, Status> {
         let req = request.into_inner();
-        let mut store = self.inner.task_store.lock().await;
-        match store.pause_task(&req.task_id) {
-            Ok(task) => Ok(Response::new(PauseTaskResponse {
-                success: true,
-                task_id: task.id.0,
-                status: task_status_to_proto(&task.status).to_string(),
-                error: None,
-            })),
+        let task_id = req.task_id.clone();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.pause_task(&task_id) {
+                Ok(task) => {
+                    // Record event + broadcast to WatchTask streams
+                    let event = uc_engine::AgentEventType::TaskPaused {
+                        task_id: task.id.clone(),
+                    };
+                    store.record_event(event.clone());
+                    let proto_event: TaskEvent = event.into();
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(task) => {
+                // Publish NATS event for Python side
+                self.publish_task_status_event(&task_id, "task_paused").await;
+                Ok(Response::new(PauseTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
             Err(e) => Ok(Response::new(PauseTaskResponse {
                 success: false,
                 task_id: req.task_id,
@@ -1999,14 +2086,35 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         request: Request<ResumeTaskRequest>,
     ) -> Result<Response<ResumeTaskResponse>, Status> {
         let req = request.into_inner();
-        let mut store = self.inner.task_store.lock().await;
-        match store.resume_task(&req.task_id) {
-            Ok(task) => Ok(Response::new(ResumeTaskResponse {
-                success: true,
-                task_id: task.id.0,
-                status: task_status_to_proto(&task.status).to_string(),
-                error: None,
-            })),
+        let task_id = req.task_id.clone();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.resume_task(&task_id) {
+                Ok(task) => {
+                    // Record event + broadcast to WatchTask streams
+                    let event = uc_engine::AgentEventType::TaskResumed {
+                        task_id: task.id.clone(),
+                    };
+                    store.record_event(event.clone());
+                    let proto_event: TaskEvent = event.into();
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(task) => {
+                // Publish NATS event for Python side
+                self.publish_task_status_event(&task_id, "task_resumed").await;
+                Ok(Response::new(ResumeTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
             Err(e) => Ok(Response::new(ResumeTaskResponse {
                 success: false,
                 task_id: req.task_id,

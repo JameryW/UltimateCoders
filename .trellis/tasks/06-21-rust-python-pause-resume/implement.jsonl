@@ -1,0 +1,2 @@
+{"role":"system","content":"You are implementing Rust→Python pause/resume reverse sync. Key files: crates/uc-grpc/src/server.rs (gRPC handlers + NATS subscriber + NatsTaskEvent), python/ultimate_coders/nats_worker.py (NatsWorker + NatsPublisher), python/ultimate_coders/agent/orchestrator.py (Orchestrator.pause_task/resume_task). Decision: use _local methods to avoid loops."}
+{"role":"user","content":"Read the PRD at .trellis/tasks/06-21-rust-python-pause-resume/prd.md for full requirements and acceptance criteria."}

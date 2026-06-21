@@ -289,6 +289,14 @@ class NatsWorker:
         self._subscriptions.append(dash_sub)
         logger.info("Subscribed to uc.dashboard.>")
 
+        # Subscribe to uc.task.event (pause/resume from Rust gRPC server)
+        event_sub = await self._nc.subscribe(
+            NATS_SUBJECT_TASK_EVENT,
+            cb=self._handle_task_event,
+        )
+        self._subscriptions.append(event_sub)
+        logger.info("Subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+
         # Start heartbeat loop
         self._running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
@@ -498,6 +506,14 @@ class NatsWorker:
 
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
+            # Refresh task state — a pause/resume NATS event may have
+            # changed the status between iterations.
+            updated = self._orchestrator.get_task_status(task.id)
+            if updated is not None:
+                task = updated
+            if task.status in (TaskStatus.PAUSED, TaskStatus.COMPLETED, TaskStatus.FAILED):
+                break
+
             # Collect ready subtask IDs (not objects — avoid stale refs).
             # Use a seen set so select_next_subtask doesn't return
             # the same subtask twice within this iteration.
@@ -581,8 +597,8 @@ class NatsWorker:
             if updated_task is not None:
                 task = updated_task
 
-            # If task is complete or failed, stop
-            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            # If task is complete, failed, or paused, stop
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED):
                 break
 
     # ── Heartbeat loop ───────────────────────────────────────────
@@ -600,6 +616,38 @@ class NatsWorker:
                 logger.warning("Heartbeat publish failed", exc_info=True)
 
             await asyncio.sleep(30.0)
+
+    async def _handle_task_event(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.task.event`` messages from NATS.
+
+        Currently processes ``task_paused`` and ``task_resumed`` events
+        originated by the Rust gRPC server.  Uses Orchestrator._local
+        methods to avoid a feedback loop (Python→Rust→NATS→Python).
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.warning("Failed to parse uc.task.event message", exc_info=True)
+            return
+
+        event_type = data.get("type", "")
+        task_id = data.get("task_id", "")
+
+        if not task_id:
+            logger.warning("uc.task.event missing task_id, ignoring")
+            return
+
+        if self._orchestrator is None:
+            logger.debug("No orchestrator, ignoring uc.task.event %s", event_type)
+            return
+
+        if event_type == "task_paused":
+            self._orchestrator.pause_task_local(task_id)
+        elif event_type == "task_resumed":
+            self._orchestrator.resume_task_local(task_id)
+        else:
+            # Other event types are handled by the Rust NATS subscriber
+            logger.debug("Ignoring uc.task.event type=%s", event_type)
 
     # ── Dashboard NATS request-reply handlers ──────────────────────
 

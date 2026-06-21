@@ -1,0 +1,2 @@
+{"role":"system","content":"You are checking Rust→Python pause/resume reverse sync implementation. Verify: (1) Rust PauseTask/ResumeTask handlers publish uc.task.event, (2) Python NatsWorker subscribes to uc.task.event, (3) Python handles task_paused/task_resumed via _local methods, (4) no loop risk, (5) paused tasks don't assign new subtasks."}
+{"role":"user","content":"Read the PRD at .trellis/tasks/06-21-rust-python-pause-resume/prd.md for acceptance criteria."}

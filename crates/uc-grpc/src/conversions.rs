@@ -855,6 +855,18 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 String::new(),
                 vec![("error".to_string(), error)].into_iter().collect(),
             ),
+            uc_engine::AgentEventType::TaskPaused { task_id } => (
+                "task_paused".to_string(),
+                task_id.0,
+                String::new(),
+                std::collections::HashMap::new(),
+            ),
+            uc_engine::AgentEventType::TaskResumed { task_id } => (
+                "task_resumed".to_string(),
+                task_id.0,
+                String::new(),
+                std::collections::HashMap::new(),
+            ),
         };
 
         Self {
