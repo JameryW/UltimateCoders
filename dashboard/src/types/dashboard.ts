@@ -176,3 +176,42 @@ export interface TaskSubmitResponse extends ActionResponse {
   subtask_count?: number;
   subtasks?: SubtaskSummary[];
 }
+
+// ── File Browser ────────────────────────────────────────
+
+export interface RepoInfo {
+  repo_id: string;
+  local_path: string;
+  exists: boolean;
+}
+
+export interface ReposData {
+  available: boolean;
+  repos: RepoInfo[];
+  total: number;
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  type: "directory" | "file";
+  size: number;
+}
+
+export interface DirectoryListing {
+  repo_id: string;
+  path: string;
+  entries: DirEntry[];
+  total: number;
+}
+
+export interface FileContent {
+  repo_id: string;
+  path: string;
+  binary: boolean;
+  size: number;
+  content?: string;
+  language?: string;
+  truncated?: boolean;
+  lines?: number;
+}

@@ -1,12 +1,21 @@
+/**
+ * DEPRECATED: These FastAPI endpoint functions are no longer used.
+ * All dashboard data is now fetched via gRPC-Web (DashboardService).
+ *
+ * The only remaining REST endpoints are for the File Browser,
+ * which is served by the gRPC server's EngineService (ListRepos, etc.)
+ * and accessed via gRPC-Web, not REST.
+ *
+ * This file is kept for reference only and should be removed in a future cleanup.
+ */
+
+// ── File Browser endpoints (still using REST temporarily) ────────
+// These will be migrated to gRPC-Web EngineService in a follow-up.
+
 import type {
-  HealthData,
-  WorkersData,
-  TasksData,
-  SchedulerData,
-  CircuitBreakerData,
-  EventsData,
-  ActionResponse,
-  TaskSubmitResponse,
+  ReposData,
+  DirectoryListing,
+  FileContent,
 } from "@/types/dashboard";
 
 const BASE = "/dashboard/api";
@@ -34,11 +43,9 @@ async function throwApiError(res: Response): Promise<never> {
   let detail = "";
   try {
     const text = await res.text();
-    // Try to extract a JSON error message
     const json = JSON.parse(text);
     detail = json.error ?? json.message ?? json.detail ?? text;
   } catch {
-    // Response was not JSON (e.g. HTML from 502/503)
     detail = res.statusText || `HTTP ${res.status}`;
   }
   throw new Error(`API error ${res.status}: ${detail}`);
@@ -50,73 +57,20 @@ async function fetchJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function postJson<T>(url: string, body?: unknown): Promise<T> {
-  const headers = authHeaders(
-    body ? { "Content-Type": "application/json" } : undefined,
-  );
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) await throwApiError(res);
-  return res.json() as Promise<T>;
+// ── File Browser endpoints (still REST, served by gRPC server) ──
+
+export function getRepos() {
+  return fetchJson<ReposData>(`${BASE}/repos`);
 }
 
-// ── GET endpoints ───────────────────────────────────────
-
-export function getHealth() {
-  return fetchJson<HealthData>(`${BASE}/health`);
-}
-
-export function getWorkers() {
-  return fetchJson<WorkersData>(`${BASE}/workers`);
-}
-
-export function getTasks() {
-  return fetchJson<TasksData>(`${BASE}/tasks`);
-}
-
-export function getScheduler() {
-  return fetchJson<SchedulerData>(`${BASE}/scheduler`);
-}
-
-export function getCircuitBreaker() {
-  return fetchJson<CircuitBreakerData>(`${BASE}/circuit-breaker`);
-}
-
-export function getEvents(taskId?: string, limit = 100) {
+export function getRepoTree(repoId: string, path = "") {
   const params = new URLSearchParams();
-  if (taskId) params.set("task_id", taskId);
-  params.set("limit", String(limit));
-  return fetchJson<EventsData>(`${BASE}/events?${params}`);
+  if (path) params.set("path", path);
+  return fetchJson<DirectoryListing>(`${BASE}/repos/${repoId}/tree?${params}`);
 }
 
-// ── POST endpoints ──────────────────────────────────────
-
-export function submitTask(description: string, projectId?: string) {
-  return postJson<TaskSubmitResponse>(`${BASE}/tasks/submit`, {
-    description,
-    project_id: projectId || "",
-  });
-}
-
-export function pauseTask(taskId: string) {
-  return postJson<ActionResponse>(`${BASE}/tasks/${taskId}/pause`);
-}
-
-export function resumeTask(taskId: string) {
-  return postJson<ActionResponse>(`${BASE}/tasks/${taskId}/resume`);
-}
-
-export function resetCircuitBreaker() {
-  return postJson<ActionResponse>(`${BASE}/circuit-breaker/reset`);
-}
-
-export function triggerJob(jobId: string) {
-  return postJson<ActionResponse>(`${BASE}/scheduler/jobs/${jobId}/trigger`);
-}
-
-export function flushPending() {
-  return postJson<ActionResponse>(`${BASE}/tasks/flush-pending`);
+export function getRepoFile(repoId: string, path: string) {
+  const params = new URLSearchParams();
+  params.set("path", path);
+  return fetchJson<FileContent>(`${BASE}/repos/${repoId}/file?${params}`);
 }

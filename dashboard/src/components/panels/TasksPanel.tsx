@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
 import { TaskDetail } from "@/components/panels/TaskDetail";
+import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import type { TasksData, TaskEvent } from "@/types/dashboard";
 
 function statusBorderColor(status: string): string {
@@ -22,13 +23,12 @@ interface TasksPanelProps {
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
   stale?: boolean;
-  /** Task ID to highlight and auto-scroll to (set after submit). */
   highlightTaskId?: string | null;
-  /** Callback to clear highlight after it's been shown. */
   onHighlightShown?: () => void;
+  onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const highlightRef = useRef<HTMLLIElement>(null);
@@ -157,6 +157,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   <TaskDetail
                     task={task}
                     interactionLog={interactionLog[task.id] ?? []}
+                    onNavigateFile={onNavigateFile}
                   />
                 )}
               </li>

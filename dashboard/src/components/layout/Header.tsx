@@ -30,6 +30,7 @@ const NAV_SECTIONS = [
   { hash: "scheduler", label: "Scheduler" },
   { hash: "chart", label: "Chart" },
   { hash: "search", label: "Search" },
+  { hash: "files", label: "Files" },
 ];
 
 export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme, onLogout, fetchErrors }: HeaderProps) {
@@ -72,7 +73,7 @@ export function Header({ connected, grpcState, lastUpdate, theme, onToggleTheme,
             )}
           </button>
           {lastUpdate && <span className="text-xs text-[var(--text-muted)]">{new Date(lastUpdate).toLocaleTimeString()}</span>}
-          <span className={`pulse-dot ${connected ? "bg-green-500" : "bg-red-500"}`} title="SSE" />
+          <span className={`pulse-dot ${connected ? "bg-green-500" : "bg-red-500"}`} title={connected ? "Connected" : "Disconnected"} />
           {grpc && (
             <span className="flex items-center space-x-1">
               <span className={`pulse-dot ${grpc.color}`} title="gRPC-Web" />
