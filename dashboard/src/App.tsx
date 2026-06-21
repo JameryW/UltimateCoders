@@ -5,7 +5,6 @@ import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
 import { Header } from "@/components/layout/Header";
-import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
 import { HealthPanel } from "@/components/panels/HealthPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { TasksPanel } from "@/components/panels/TasksPanel";
@@ -16,7 +15,6 @@ import { SearchPanel } from "@/components/panels/SearchPanel";
 import { FileBrowser } from "@/components/panels/FileBrowser";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
-import { TaskSubmitForm } from "@/components/forms/TaskSubmitForm";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
@@ -116,7 +114,7 @@ function App() {
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
   // TaskService: WatchTask stream + task operations
-  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     onSyncRequired: (_reason: string, _skipped: number) => {
       needsSyncCountRef.current += 1;
@@ -129,7 +127,6 @@ function App() {
   const {
     connectionState: dashGrpcState,
     connect: dashGrpcConnect,
-    disconnect: dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
     getCircuitBreakerStatus,
@@ -165,7 +162,7 @@ function App() {
       fetchWorkers: listWorkers,
       fetchScheduler: getSchedulerStatus,
       fetchCircuitBreaker: getCircuitBreakerStatus,
-      fetchEvents,
+      fetchEvents: listEvents,
       fetchTasks: grpcState === "connected" ? listTasks : undefined,
     }).then((errors) => {
       setLoading(false);
@@ -353,7 +350,7 @@ function App() {
                 fetchWorkers: listWorkers,
                 fetchScheduler: getSchedulerStatus,
                 fetchCircuitBreaker: getCircuitBreakerStatus,
-                fetchEvents,
+                fetchEvents: listEvents,
                 fetchTasks: grpcState === "connected" ? listTasks : undefined,
               }).then((errors) => {
                 setLoading(false);
@@ -376,38 +373,70 @@ function App() {
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={dashGrpcState === "connected" || grpcState === "connected"} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} onLogout={auth.logout} fetchErrors={dashboard.fetchErrors} />
-      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} onOptimisticAdd={dashboard.optimisticAddTask} />
+      <Header
+        connected={dashGrpcState === "connected" || grpcState === "connected"}
+        grpcState={grpcState}
+        grpcExhausted={grpcExhausted}
+        dashGrpcState={dashGrpcState}
+        lastUpdate={lastUpdate}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onLogout={auth.logout}
+        onReconnectGrpc={grpcConnect}
+        onReconnectDashGrpc={dashGrpcConnect}
+        fetchErrors={dashboard.fetchErrors}
+      />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <ErrorBoundary name="Health">
-          <div id="health" className="md:col-span-2 scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={grpcStale} /></div>
-        </ErrorBoundary>
-        <ErrorBoundary name="Circuit Breaker">
-          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={grpcStale} /></div>
+        {/* Row 1: Tasks (2-col, submit form inline) + Workers(1) + CB(1) */}
+        <ErrorBoundary name="Tasks">
+          <div id="tasks" className="md:col-span-2 scroll-mt-20">
+            <TasksPanel
+              data={dashboard.tasks}
+              interactionLog={dashboard.interactionLog}
+              onFlush={handleFlush}
+              onPauseTask={handlePauseTask}
+              onResumeTask={handleResumeTask}
+              stale={grpcStale}
+              highlightTaskId={highlightTaskId}
+              onHighlightShown={() => setHighlightTaskId(null)}
+              onNavigateFile={(nav) => setFileBrowserNav(nav)}
+              grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined}
+              onTaskCreated={setHighlightTaskId}
+              onOptimisticAdd={dashboard.optimisticAddTask}
+            />
+          </div>
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
           <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={grpcStale} /></div>
         </ErrorBoundary>
-        <ErrorBoundary name="Tasks">
-          <div id="tasks" className="scroll-mt-20"><TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={grpcStale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} onNavigateFile={(nav) => setFileBrowserNav(nav)} /></div>
+        <ErrorBoundary name="Circuit Breaker">
+          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={grpcStale} /></div>
         </ErrorBoundary>
+
+        {/* Row 2: EventLog(2) + Search(2) */}
         <ErrorBoundary name="Event Log">
-          <div id="events" className="scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
-        </ErrorBoundary>
-        <ErrorBoundary name="Scheduler">
-          <div id="scheduler" className="md:col-span-2 scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={grpcStale} /></div>
-        </ErrorBoundary>
-        <ErrorBoundary name="Task Activity">
-          <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
+          <div id="events" className="md:col-span-2 scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
           <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileBrowserNav(nav)} stale={grpcStale} /></div>
         </ErrorBoundary>
+
+        {/* Row 3: FileBrowser(2) + Health(1) + Scheduler(1) */}
         <ErrorBoundary name="Files">
           <div id="files" className="md:col-span-2 scroll-mt-20"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>
         </ErrorBoundary>
+        <ErrorBoundary name="Health">
+          <div id="health" className="scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={grpcStale} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Scheduler">
+          <div id="scheduler" className="scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={grpcStale} /></div>
+        </ErrorBoundary>
+
+        {/* Row 4: Chart(2) */}
+        <ErrorBoundary name="Task Activity">
+          <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
+        </ErrorBoundary>
       </main>
-      <ConnectionIndicator grpcState={grpcState} dashGrpcState={dashGrpcState} grpcExhausted={grpcExhausted} onReconnectGrpc={grpcConnect} onDisconnectGrpc={grpcDisconnect} onReconnectDashGrpc={dashGrpcConnect} onDisconnectDashGrpc={dashGrpcDisconnect} />
     </div>
   );
 }
