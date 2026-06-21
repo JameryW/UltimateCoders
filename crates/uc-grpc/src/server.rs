@@ -19,6 +19,7 @@ use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
 use crate::conversions::{memory_key_from_proto, task_status_to_proto};
+use crate::ultimate_coders::dashboard_service_server::{DashboardService, DashboardServiceServer};
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
 use crate::ultimate_coders::*;
@@ -900,12 +901,30 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     }
 
     /// Convert into tonic services ready to be served.
-    pub fn into_services(self) -> (EngineServiceServer<Self>, TaskServiceServer<Self>) {
+    pub fn into_services(
+        self,
+    ) -> (
+        EngineServiceServer<Self>,
+        TaskServiceServer<Self>,
+        DashboardServiceServer<Self>,
+    ) {
         let engine_service = EngineServiceServer::new(Self {
             inner: self.inner.clone(),
         });
-        let task_service = TaskServiceServer::new(self);
-        (engine_service, task_service)
+        let task_service = TaskServiceServer::new(self.clone());
+        let dashboard_service = DashboardServiceServer::new(self);
+        (engine_service, task_service, dashboard_service)
+    }
+
+    /// Expose the NATS client for DashboardService passthrough.
+    #[cfg(feature = "messaging")]
+    pub fn nats_client(&self) -> Option<async_nats::Client> {
+        self.inner.nats_client.clone()
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    pub fn nats_client(&self) -> Option<()> {
+        None
     }
 }
 

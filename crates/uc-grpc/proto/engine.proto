@@ -27,6 +27,19 @@ service TaskService {
     rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
 }
 
+// ── Dashboard Service (NATS passthrough to Python Orchestrator) ──
+
+service DashboardService {
+    rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+    rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse);
+    rpc GetCircuitBreakerStatus(GetCircuitBreakerStatusRequest) returns (CircuitBreakerStatusResponse);
+    rpc ResetCircuitBreaker(ResetCircuitBreakerRequest) returns (ResetCircuitBreakerResponse);
+    rpc TriggerSchedulerJob(TriggerSchedulerJobRequest) returns (TriggerSchedulerJobResponse);
+    rpc FlushPendingTasks(FlushPendingTasksRequest) returns (FlushPendingTasksResponse);
+    rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+    rpc WatchDashboard(WatchDashboardRequest) returns (stream DashboardSnapshot);
+}
+
 // ── Search ──────────────────────────────────────────────
 
 message SearchRequest {
@@ -281,7 +294,7 @@ message SubtaskProto {
     string expected_output = 8;
 }
 
-// ── Batch / List / Stream ─────────────────────────────────
+// ── Batch Memory ────────────────────────────────────────
 
 message BatchWriteMemoryRequest {
     repeated WriteMemoryRequest requests = 1;
@@ -290,6 +303,8 @@ message BatchWriteMemoryRequest {
 message BatchWriteMemoryResponse {
     repeated MemoryEntryProto entries = 1;
 }
+
+// ── Repos ───────────────────────────────────────────────
 
 message ListReposRequest {}
 
@@ -306,6 +321,8 @@ message RepoIndexStateProto {
     uint32 chunks_count = 6;
 }
 
+// ── Search Stream ───────────────────────────────────────
+
 message SearchStreamRequest {
     string query = 1;
     repeated string modes = 2;
@@ -313,4 +330,150 @@ message SearchStreamRequest {
     repeated string languages = 4;
     repeated string path_patterns = 5;
     uint32 max_results = 6;
+}
+
+// ── Dashboard Service Messages ───────────────────────────
+
+message ListWorkersRequest {}
+
+message ListWorkersResponse {
+    bool available = 1;
+    repeated WorkerProto workers = 2;
+    uint32 total = 3;
+    uint32 available_count = 4;
+}
+
+message WorkerProto {
+    string id = 1;
+    repeated string capabilities = 2;
+    uint32 current_load = 3;
+    uint32 max_capacity = 4;
+    uint32 load_percent = 5;
+    string last_heartbeat = 6;
+    double heartbeat_age_seconds = 7;
+    bool heartbeat_stale = 8;
+    bool is_available = 9;
+}
+
+message GetSchedulerStatusRequest {}
+
+message GetSchedulerStatusResponse {
+    bool available = 1;
+    bool is_running = 2;
+    optional NightWindowProto night_window = 3;
+    repeated ScheduledJobProto jobs = 4;
+    repeated ExecutionHistoryProto execution_history = 5;
+}
+
+message NightWindowProto {
+    string start = 1;  // HH:MM
+    string end = 2;    // HH:MM
+    bool enabled = 3;
+}
+
+message ScheduledJobProto {
+    string id = 1;
+    string name = 2;
+    string cron = 3;
+    bool enabled = 4;
+    optional string last_run = 5;
+    optional string next_run = 6;
+}
+
+message ExecutionHistoryProto {
+    string job_id = 1;
+    string job_name = 2;
+    string executed_at = 3;
+    bool success = 4;
+    optional string error = 5;
+}
+
+message GetCircuitBreakerStatusRequest {}
+
+message CircuitBreakerStatusResponse {
+    bool available = 1;
+    CircuitBreakerProto circuit_breaker = 2;
+    RateLimiterProto rate_limiter = 3;
+}
+
+message CircuitBreakerProto {
+    string state = 1;          // "closed", "open", "half_open"
+    uint32 failure_count = 2;
+    uint32 failure_threshold = 3;
+    double recovery_timeout_seconds = 4;
+    optional string last_failure = 5;
+}
+
+message RateLimiterProto {
+    uint32 max_requests = 1;
+    double window_seconds = 2;
+    uint32 current_requests = 3;
+    double remaining_ratio = 4;
+}
+
+message ResetCircuitBreakerRequest {}
+
+message ResetCircuitBreakerResponse {
+    bool success = 1;
+    string state = 2;
+    optional string error = 3;
+}
+
+message TriggerSchedulerJobRequest {
+    string job_id = 1;
+}
+
+message TriggerSchedulerJobResponse {
+    bool success = 1;
+    string job_id = 2;
+    optional string error = 3;
+}
+
+message FlushPendingTasksRequest {}
+
+message FlushPendingTasksResponse {
+    bool success = 1;
+    uint32 pending_count = 2;
+    uint32 executed_count = 3;
+    optional string error = 4;
+}
+
+message ListEventsRequest {
+    optional string task_id = 1;
+    uint32 limit = 2;
+    uint32 offset = 3;
+}
+
+message ListEventsResponse {
+    bool available = 1;
+    repeated DashboardEventProto events = 2;
+    uint32 total = 3;
+    uint32 offset = 4;
+    uint32 limit = 5;
+}
+
+message DashboardEventProto {
+    string timestamp = 1;
+    string type = 2;
+    string task_id = 3;
+    map<string, string> data = 4;
+}
+
+message WatchDashboardRequest {}
+
+message DashboardSnapshot {
+    string timestamp = 1;
+    optional HealthSnapshot health = 2;
+    optional ListWorkersResponse workers = 3;
+    optional ListTasksResponse tasks = 4;
+    optional GetSchedulerStatusResponse scheduler = 5;
+    optional CircuitBreakerStatusResponse circuit_breaker = 6;
+    repeated DashboardEventProto recent_events = 7;
+}
+
+message HealthSnapshot {
+    bool available = 1;
+    string status = 2;
+    optional string version = 3;
+    optional uint64 uptime_seconds = 4;
 }

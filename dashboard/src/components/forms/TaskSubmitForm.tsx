@@ -1,25 +1,21 @@
 import { useState } from "react";
-import * as api from "@/api/endpoints";
 import { showToast } from "@/components/ui/toast";
 import { shortId } from "@/lib/utils";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
 
 interface TaskSubmitFormProps {
-  /** If provided, submit via gRPC-Web (Rust server). Falls back to REST (Python) if undefined. */
+  /** Submit via gRPC-Web (Rust server). */
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   /** Called after successful submission with the new task ID. */
   onTaskCreated?: (taskId: string) => void;
   /** Optimistic insert: add task to list before event arrives. */
-  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number) => void;
+  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: Array<{ id: string; description: string; status: string; dependsOn: string[] }>) => void;
 }
 
 export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd }: TaskSubmitFormProps) {
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  const mode = grpcSubmitTask ? "gRPC" : "REST";
-  const modeLabel = grpcSubmitTask ? "via gRPC-Web" : "via REST";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,45 +24,31 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
       showToast("Task description is required", "error");
       return;
     }
+    if (!grpcSubmitTask) {
+      showToast("Cannot submit -- gRPC-Web disconnected. Try reconnecting.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
-      if (grpcSubmitTask) {
-        // gRPC-Web path -> Rust server -> local_worker
-        const resp = await grpcSubmitTask(desc, projectId.trim());
-        if (resp.success) {
-          showToast(
-            resp.subtaskCount > 0
-              ? `Task submitted ${modeLabel}: ${shortId(resp.taskId)} -- ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}`
-              : `Task submitted ${modeLabel}: ${shortId(resp.taskId)}`,
-            "success",
-          );
-          onOptimisticAdd?.(resp.taskId, desc, projectId.trim(), resp.subtaskCount);
-          setDescription("");
-          setProjectId("");
-          onTaskCreated?.(resp.taskId);
-        } else {
-          showToast(`Submit failed ${modeLabel}: ${resp.status}`, "error");
-        }
+      const resp = await grpcSubmitTask(desc, projectId.trim());
+      if (resp.success) {
+        showToast(
+          resp.subtaskCount > 0
+            ? `Task submitted via gRPC-Web: ${shortId(resp.taskId)} -- ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}`
+            : `Task submitted via gRPC-Web: ${shortId(resp.taskId)}`,
+          "success",
+        );
+        onOptimisticAdd?.(resp.taskId, desc, projectId.trim(), resp.subtaskCount, resp.subtasks);
+        setDescription("");
+        setProjectId("");
+        onTaskCreated?.(resp.taskId);
       } else {
-        // REST path -> Python FastAPI
-        const result = await api.submitTask(desc, projectId.trim());
-        if (result.success) {
-          showToast(`Task submitted ${modeLabel}: ${shortId(result.task_id ?? "")}`, "success");
-          if (result.task_id) {
-            onOptimisticAdd?.(result.task_id, desc, projectId.trim(), 0);
-            onTaskCreated?.(result.task_id);
-          }
-          setDescription("");
-          setProjectId("");
-        } else {
-          showToast(`Submit failed ${modeLabel}: ${result.error ?? "unknown"}`, "error");
-        }
+        showToast(`Submit failed via gRPC-Web: ${resp.status}`, "error");
       }
     } catch (err) {
-      // #7: Distinguish connection errors from other failures
       const msg = err instanceof Error && err.message.includes("not connected")
-        ? `Cannot submit — gRPC-Web disconnected. Try reconnecting.`
-        : `Submit failed ${modeLabel}: ${String(err)}`;
+        ? `Cannot submit -- gRPC-Web disconnected. Try reconnecting.`
+        : `Submit failed via gRPC-Web: ${String(err)}`;
       showToast(msg, "error");
     } finally {
       setSubmitting(false);
@@ -80,8 +62,8 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
           <h2 className="text-sm font-semibold text-[var(--text-secondary)] uppercase tracking-wide">
             Submit Task
           </h2>
-          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "status-in_progress" : "status-completed"}`}>
-            {mode}
+          <span className={`text-xs px-1.5 py-0.5 rounded ${grpcSubmitTask ? "status-in_progress" : "status-submitted"}`}>
+            gRPC
           </span>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-3">
@@ -103,7 +85,7 @@ export function TaskSubmitForm({ grpcSubmitTask, onTaskCreated, onOptimisticAdd 
           />
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !grpcSubmitTask}
             className="btn-action-info border border-blue-500 rounded-md px-5 py-2 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {submitting ? "Submitting..." : "Submit Task"}

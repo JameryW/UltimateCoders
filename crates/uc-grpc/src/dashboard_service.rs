@@ -1,0 +1,491 @@
+//! DashboardService implementation — NATS passthrough to Python Orchestrator.
+//!
+//! All DashboardService RPCs forward via NATS request-reply to the Python
+//! Orchestrator, which holds workers/scheduler/circuit-breaker state in memory.
+//! When NATS is unavailable, RPCs return UNAVAILABLE status.
+
+use futures::StreamExt;
+use tonic::{Request, Response, Status};
+use uc_types::EngineApi;
+
+use crate::server::GrpcServer;
+use crate::ultimate_coders::dashboard_service_server::DashboardService;
+use crate::ultimate_coders::*;
+
+/// NATS request timeout for Dashboard passthrough calls.
+const DASHBOARD_NATS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// NATS subject prefix for Dashboard passthrough RPCs.
+pub const NATS_SUBJECT_DASHBOARD_PREFIX: &str = "uc.dashboard";
+
+/// NATS subject for Dashboard snapshot streaming.
+pub const NATS_SUBJECT_DASHBOARD_SNAPSHOT: &str = "uc.dashboard.snapshot";
+
+#[tonic::async_trait]
+impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
+    type WatchDashboardStream = std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<DashboardSnapshot, Status>> + Send>,
+    >;
+
+    async fn list_workers(
+        &self,
+        _request: Request<ListWorkersRequest>,
+    ) -> Result<Response<ListWorkersResponse>, Status> {
+        let json = self.nats_dashboard_request("ListWorkers", serde_json::json!({})).await?;
+        Ok(Response::new(json_to_list_workers_response(&json)))
+    }
+
+    async fn get_scheduler_status(
+        &self,
+        _request: Request<GetSchedulerStatusRequest>,
+    ) -> Result<Response<GetSchedulerStatusResponse>, Status> {
+        let json = self
+            .nats_dashboard_request("GetSchedulerStatus", serde_json::json!({}))
+            .await?;
+        Ok(Response::new(json_to_scheduler_status_response(&json)))
+    }
+
+    async fn get_circuit_breaker_status(
+        &self,
+        _request: Request<GetCircuitBreakerStatusRequest>,
+    ) -> Result<Response<CircuitBreakerStatusResponse>, Status> {
+        let json = self
+            .nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({}))
+            .await?;
+        Ok(Response::new(json_to_circuit_breaker_status_response(&json)))
+    }
+
+    async fn reset_circuit_breaker(
+        &self,
+        _request: Request<ResetCircuitBreakerRequest>,
+    ) -> Result<Response<ResetCircuitBreakerResponse>, Status> {
+        let json = self
+            .nats_dashboard_request("ResetCircuitBreaker", serde_json::json!({}))
+            .await?;
+        Ok(Response::new(json_to_reset_circuit_breaker_response(&json)))
+    }
+
+    async fn trigger_scheduler_job(
+        &self,
+        request: Request<TriggerSchedulerJobRequest>,
+    ) -> Result<Response<TriggerSchedulerJobResponse>, Status> {
+        let req = request.into_inner();
+        let json = self
+            .nats_dashboard_request(
+                "TriggerSchedulerJob",
+                serde_json::json!({ "job_id": req.job_id }),
+            )
+            .await?;
+        Ok(Response::new(json_to_trigger_scheduler_job_response(&json)))
+    }
+
+    async fn flush_pending_tasks(
+        &self,
+        _request: Request<FlushPendingTasksRequest>,
+    ) -> Result<Response<FlushPendingTasksResponse>, Status> {
+        let json = self
+            .nats_dashboard_request("FlushPendingTasks", serde_json::json!({}))
+            .await?;
+        Ok(Response::new(json_to_flush_pending_tasks_response(&json)))
+    }
+
+    async fn list_events(
+        &self,
+        request: Request<ListEventsRequest>,
+    ) -> Result<Response<ListEventsResponse>, Status> {
+        let req = request.into_inner();
+        let json = self
+            .nats_dashboard_request(
+                "ListEvents",
+                serde_json::json!({
+                    "task_id": req.task_id,
+                    "limit": req.limit,
+                    "offset": req.offset,
+                }),
+            )
+            .await?;
+        Ok(Response::new(json_to_list_events_response(&json)))
+    }
+
+    async fn watch_dashboard(
+        &self,
+        _request: Request<WatchDashboardRequest>,
+    ) -> Result<Response<Self::WatchDashboardStream>, Status> {
+        #[cfg(feature = "messaging")]
+        {
+            let nats_client = self
+                .nats_client()
+                .ok_or_else(|| {
+                    Status::unavailable("NATS not connected — Dashboard streaming unavailable")
+                })?;
+
+            let stream = async_stream::stream! {
+                let mut subscriber = match nats_client
+                    .subscribe(NATS_SUBJECT_DASHBOARD_SNAPSHOT)
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("Dashboard snapshot subscribe failed: {e}");
+                        yield Err(Status::unavailable("NATS subscription failed"));
+                        return;
+                    }
+                };
+
+                loop {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        subscriber.next(),
+                    )
+                    .await
+                    {
+                        Ok(Some(message)) => {
+                            match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                                Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                Err(e) => {
+                                    tracing::warn!("Dashboard snapshot parse error: {e}");
+                                    continue;
+                                }
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            // Timeout — send heartbeat
+                            yield Ok(DashboardSnapshot {
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+            };
+
+            Ok(Response::new(Box::pin(stream)))
+        }
+
+        #[cfg(not(feature = "messaging"))]
+        {
+            Err(Status::unavailable(
+                "Dashboard streaming requires NATS (messaging feature not enabled)",
+            ))
+        }
+    }
+}
+
+impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
+    /// Send a NATS request-reply to Python Orchestrator for Dashboard data.
+    async fn nats_dashboard_request(
+        &self,
+        rpc_name: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, Status> {
+        #[cfg(feature = "messaging")]
+        {
+            let nats_client = self
+                .nats_client()
+                .ok_or_else(|| Status::unavailable("NATS not connected"))?;
+
+            let subject = format!("{NATS_SUBJECT_DASHBOARD_PREFIX}.{rpc_name}");
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|e| Status::internal(format!("serialize error: {e}")))?;
+
+            let request = async_nats::Request::new()
+                .payload(bytes.into())
+                .timeout(Some(DASHBOARD_NATS_TIMEOUT));
+
+            match nats_client.send_request(subject, request).await {
+                Ok(response) => {
+                    let json_str = String::from_utf8_lossy(&response.payload);
+                    serde_json::from_str(&json_str).map_err(|e| {
+                        tracing::warn!("Dashboard passthrough JSON parse error for {rpc_name}: {e}");
+                        Status::internal(format!("JSON parse error: {e}"))
+                    })
+                }
+                Err(e) => {
+                    tracing::warn!("Dashboard NATS request-reply timeout for {rpc_name}: {e}");
+                    Err(Status::unavailable(format!(
+                        "Python Orchestrator unavailable for {rpc_name}"
+                    )))
+                }
+            }
+        }
+
+        #[cfg(not(feature = "messaging"))]
+        {
+            let _ = (rpc_name, payload);
+            Err(Status::unavailable(
+                "Dashboard requires NATS (messaging feature not enabled)",
+            ))
+        }
+    }
+}
+
+// ── JSON → Proto conversion helpers ────────────────────────────
+// ponytail: manual field mapping — no extra deps, each function is small and explicit
+
+fn json_bool(v: &serde_json::Value, key: &str) -> bool {
+    v.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+fn json_str<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
+    v.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+fn json_u32(v: &serde_json::Value, key: &str) -> u32 {
+    v.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as u32
+}
+
+fn json_f64(v: &serde_json::Value, key: &str) -> f64 {
+    v.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0)
+}
+
+fn json_opt_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+fn json_opt_u64(v: &serde_json::Value, key: &str) -> Option<u64> {
+    v.get(key).and_then(|v| v.as_u64())
+}
+
+fn json_to_worker_proto(v: &serde_json::Value) -> WorkerProto {
+    WorkerProto {
+        id: json_str(v, "id").to_string(),
+        capabilities: v
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        current_load: json_u32(v, "current_load"),
+        max_capacity: json_u32(v, "max_capacity"),
+        load_percent: json_u32(v, "load_percent"),
+        last_heartbeat: json_str(v, "last_heartbeat").to_string(),
+        heartbeat_age_seconds: json_f64(v, "heartbeat_age_seconds"),
+        heartbeat_stale: json_bool(v, "heartbeat_stale"),
+        is_available: json_bool(v, "is_available"),
+    }
+}
+
+fn json_to_list_workers_response(v: &serde_json::Value) -> ListWorkersResponse {
+    ListWorkersResponse {
+        available: json_bool(v, "available"),
+        workers: v
+            .get("workers")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_worker_proto).collect())
+            .unwrap_or_default(),
+        total: json_u32(v, "total"),
+        available_count: json_u32(v, "available_count"),
+    }
+}
+
+fn json_to_night_window(v: &serde_json::Value) -> NightWindowProto {
+    NightWindowProto {
+        start: json_str(v, "start").to_string(),
+        end: json_str(v, "end").to_string(),
+        enabled: json_bool(v, "enabled"),
+    }
+}
+
+fn json_to_scheduled_job(v: &serde_json::Value) -> ScheduledJobProto {
+    ScheduledJobProto {
+        id: json_str(v, "id").to_string(),
+        name: json_str(v, "name").to_string(),
+        cron: json_str(v, "cron").to_string(),
+        enabled: json_bool(v, "enabled"),
+        last_run: json_opt_str(v, "last_run"),
+        next_run: json_opt_str(v, "next_run"),
+    }
+}
+
+fn json_to_execution_history(v: &serde_json::Value) -> ExecutionHistoryProto {
+    ExecutionHistoryProto {
+        job_id: json_str(v, "job_id").to_string(),
+        job_name: json_str(v, "job_name").to_string(),
+        executed_at: json_str(v, "executed_at").to_string(),
+        success: json_bool(v, "success"),
+        error: json_opt_str(v, "error"),
+    }
+}
+
+fn json_to_scheduler_status_response(v: &serde_json::Value) -> GetSchedulerStatusResponse {
+    GetSchedulerStatusResponse {
+        available: json_bool(v, "available"),
+        is_running: json_bool(v, "is_running"),
+        night_window: v.get("night_window").map(json_to_night_window),
+        jobs: v
+            .get("jobs")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_scheduled_job).collect())
+            .unwrap_or_default(),
+        execution_history: v
+            .get("execution_history")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_execution_history).collect())
+            .unwrap_or_default(),
+    }
+}
+
+fn json_to_cb_proto(v: &serde_json::Value) -> CircuitBreakerProto {
+    CircuitBreakerProto {
+        state: json_str(v, "state").to_string(),
+        failure_count: json_u32(v, "failure_count"),
+        failure_threshold: json_u32(v, "failure_threshold"),
+        recovery_timeout_seconds: json_f64(v, "recovery_timeout_seconds"),
+        last_failure: json_opt_str(v, "last_failure"),
+    }
+}
+
+fn json_to_rl_proto(v: &serde_json::Value) -> RateLimiterProto {
+    RateLimiterProto {
+        max_requests: json_u32(v, "max_requests"),
+        window_seconds: json_f64(v, "window_seconds"),
+        current_requests: json_u32(v, "current_requests"),
+        remaining_ratio: json_f64(v, "remaining_ratio"),
+    }
+}
+
+fn json_to_circuit_breaker_status_response(v: &serde_json::Value) -> CircuitBreakerStatusResponse {
+    CircuitBreakerStatusResponse {
+        available: json_bool(v, "available"),
+        circuit_breaker: v.get("circuit_breaker").map(json_to_cb_proto),
+        rate_limiter: v.get("rate_limiter").map(json_to_rl_proto),
+    }
+}
+
+fn json_to_reset_circuit_breaker_response(v: &serde_json::Value) -> ResetCircuitBreakerResponse {
+    ResetCircuitBreakerResponse {
+        success: json_bool(v, "success"),
+        state: json_str(v, "state").to_string(),
+        error: json_opt_str(v, "error"),
+    }
+}
+
+fn json_to_trigger_scheduler_job_response(v: &serde_json::Value) -> TriggerSchedulerJobResponse {
+    TriggerSchedulerJobResponse {
+        success: json_bool(v, "success"),
+        job_id: json_str(v, "job_id").to_string(),
+        error: json_opt_str(v, "error"),
+    }
+}
+
+fn json_to_flush_pending_tasks_response(v: &serde_json::Value) -> FlushPendingTasksResponse {
+    FlushPendingTasksResponse {
+        success: json_bool(v, "success"),
+        pending_count: json_u32(v, "pending_count"),
+        executed_count: json_u32(v, "executed_count"),
+        error: json_opt_str(v, "error"),
+    }
+}
+
+fn json_to_dashboard_event(v: &serde_json::Value) -> DashboardEventProto {
+    DashboardEventProto {
+        timestamp: json_str(v, "timestamp").to_string(),
+        r#type: json_str(v, "type").to_string(),
+        task_id: json_str(v, "task_id").to_string(),
+        data: v
+            .get("data")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn json_to_list_events_response(v: &serde_json::Value) -> ListEventsResponse {
+    ListEventsResponse {
+        available: json_bool(v, "available"),
+        events: v
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_dashboard_event).collect())
+            .unwrap_or_default(),
+        total: json_u32(v, "total"),
+        offset: json_u32(v, "offset"),
+        limit: json_u32(v, "limit"),
+    }
+}
+
+fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
+    SubtaskProto {
+        id: json_str(v, "id").to_string(),
+        description: json_str(v, "description").to_string(),
+        status: json_str(v, "status").to_string(),
+        depends_on: v
+            .get("depends_on")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        assigned_worker: json_opt_str(v, "assigned_worker"),
+        parent_id: json_str(v, "parent_id").to_string(),
+        file_constraints: v
+            .get("file_constraints")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        expected_output: json_str(v, "expected_output").to_string(),
+    }
+}
+
+fn json_to_task_proto(v: &serde_json::Value) -> TaskProto {
+    TaskProto {
+        id: json_str(v, "id").to_string(),
+        description: json_str(v, "description").to_string(),
+        status: json_str(v, "status").to_string(),
+        project_id: json_str(v, "project_id").to_string(),
+        subtask_count: json_u32(v, "subtask_count"),
+        created_at: v.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        updated_at: v.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        subtasks: v
+            .get("subtasks")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_subtask_proto).collect())
+            .unwrap_or_default(),
+    }
+}
+
+fn json_to_list_tasks_response(v: &serde_json::Value) -> ListTasksResponse {
+    ListTasksResponse {
+        available: json_bool(v, "available"),
+        tasks: v
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_task_proto).collect())
+            .unwrap_or_default(),
+        total: json_u32(v, "total"),
+        status_counts: v
+            .get("status_counts")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as u32)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
+    DashboardSnapshot {
+        timestamp: json_str(v, "timestamp").to_string(),
+        health: v.get("health").map(|h| HealthSnapshot {
+            available: json_bool(h, "available"),
+            status: json_str(h, "status").to_string(),
+            version: json_opt_str(h, "version"),
+            uptime_seconds: json_opt_u64(h, "uptime_seconds"),
+        }),
+        workers: v.get("workers").map(json_to_list_workers_response),
+        tasks: v.get("tasks").map(json_to_list_tasks_response),
+        scheduler: v.get("scheduler").map(json_to_scheduler_status_response),
+        circuit_breaker: v
+            .get("circuit_breaker")
+            .map(json_to_circuit_breaker_status_response),
+        recent_events: v
+            .get("recent_events")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_dashboard_event).collect())
+            .unwrap_or_default(),
+    }
+}

@@ -242,6 +242,7 @@ class NatsWorker:
         self._worker: Worker | None = None
         self._subscriptions: list[Subscription] = []
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._running = False
 
     async def start(self) -> None:
@@ -270,9 +271,20 @@ class NatsWorker:
         self._subscriptions.append(sub)
         logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SUBMIT)
 
+        # Subscribe to Dashboard passthrough RPCs (uc.dashboard.>)
+        dash_sub = await self._nc.subscribe(
+            "uc.dashboard.>",
+            cb=self._handle_dashboard_request,
+        )
+        self._subscriptions.append(dash_sub)
+        logger.info("Subscribed to uc.dashboard.>")
+
         # Start heartbeat loop
         self._running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+        # Start dashboard snapshot publisher
+        self._snapshot_task = asyncio.create_task(self._snapshot_loop())
 
         logger.info("NatsWorker started and ready")
 
@@ -289,6 +301,15 @@ class NatsWorker:
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
+
+        # Cancel snapshot publisher
+        if self._snapshot_task is not None:
+            self._snapshot_task.cancel()
+            try:
+                await self._snapshot_task
+            except asyncio.CancelledError:
+                pass
+            self._snapshot_task = None
 
         # Unsubscribe
         for sub in self._subscriptions:
@@ -565,6 +586,250 @@ class NatsWorker:
                 logger.warning("Heartbeat publish failed", exc_info=True)
 
             await asyncio.sleep(30.0)
+
+    # ── Dashboard NATS request-reply handlers ──────────────────────
+
+    NATS_SUBJECT_DASHBOARD_SNAPSHOT: str = "uc.dashboard.snapshot"
+
+    async def _handle_dashboard_request(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle NATS request-reply for DashboardService passthrough RPCs.
+
+        Subject format: uc.dashboard.{RpcName} (e.g. uc.dashboard.ListWorkers)
+        Responds with JSON matching the proto response field names.
+        """
+        if self._orchestrator is None:
+            await msg.respond(json.dumps({"available": False}).encode())
+            return
+
+        subject = msg.subject
+        # Extract RPC name from subject: "uc.dashboard.ListWorkers" -> "ListWorkers"
+        rpc_name = subject.split(".")[-1] if "." in subject else ""
+        try:
+            payload = json.loads(msg.data.decode()) if msg.data else {}
+        except Exception:
+            payload = {}
+
+        handler = getattr(self, f"_dash_{rpc_name.lower()}", None)
+        if handler is None:
+            await msg.respond(json.dumps({"available": False, "error": f"unknown RPC: {rpc_name}"}).encode())
+            return
+
+        try:
+            result = await handler(payload)
+            await msg.respond(json.dumps(result).encode())
+        except Exception as e:
+            logger.warning("Dashboard handler %s failed: %s", rpc_name, e, exc_info=True)
+            await msg.respond(json.dumps({"available": False, "error": str(e)}).encode())
+
+    async def _dash_listworkers(self, _payload: dict) -> dict:
+        """Return workers list from Orchestrator."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"available": False, "workers": []}
+        heartbeat_timeout = orch.config.heartbeat_timeout_seconds if orch.config else 60
+        workers = []
+        for wid, w in orch.workers.items():
+            now = datetime.now(timezone.utc)
+            age = (now - w.last_heartbeat).total_seconds()
+            workers.append({
+                "id": w.id,
+                "capabilities": list(w.capabilities),
+                "current_load": w.current_load,
+                "max_capacity": w.max_capacity,
+                "load_percent": round(w.current_load / w.max_capacity * 100) if w.max_capacity > 0 else 0,
+                "last_heartbeat": w.last_heartbeat.isoformat(),
+                "heartbeat_age_seconds": round(age, 1),
+                "heartbeat_stale": age > heartbeat_timeout,
+                "is_available": w.is_available,
+            })
+        return {
+            "available": True,
+            "workers": workers,
+            "total": len(workers),
+            "available_count": sum(1 for w in workers if w["is_available"]),
+        }
+
+    async def _dash_getschedulerstatus(self, _payload: dict) -> dict:
+        """Return scheduler status from Orchestrator."""
+        orch = self._orchestrator
+        if orch is None or orch.scheduler is None:
+            return {"available": False, "is_running": False, "jobs": [], "execution_history": []}
+        sched = orch.scheduler
+        night_window = None
+        if sched.night_window:
+            nw = sched.night_window
+            night_window = {"start": nw.start, "end": nw.end, "enabled": nw.enabled}
+        jobs = []
+        for j in sched.jobs.values():
+            jobs.append({
+                "id": j.id, "name": j.name, "cron": j.cron,
+                "enabled": j.enabled,
+                "last_run": j.last_run.isoformat() if j.last_run else None,
+                "next_run": j.next_run.isoformat() if j.next_run else None,
+            })
+        history = []
+        for h in sched.execution_history[-50:]:
+            history.append({
+                "job_id": h.job_id, "job_name": h.job_name,
+                "executed_at": h.executed_at.isoformat() if h.executed_at else "",
+                "success": h.success, "error": h.error,
+            })
+        return {
+            "available": True, "is_running": sched.is_running,
+            "night_window": night_window, "jobs": jobs,
+            "execution_history": history,
+        }
+
+    async def _dash_getcircuitbreakerstatus(self, _payload: dict) -> dict:
+        """Return circuit breaker + rate limiter status."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"available": False, "circuit_breaker": {}, "rate_limiter": {}}
+        cb = orch.circuit_breaker
+        rl = orch.rate_limiter
+        cb_data = {}
+        if cb is not None:
+            cb_data = {
+                "state": cb.state, "failure_count": cb.failure_count,
+                "failure_threshold": cb.failure_threshold,
+                "recovery_timeout_seconds": cb.recovery_timeout_seconds,
+                "last_failure": cb.last_failure.isoformat() if cb.last_failure else None,
+            }
+        rl_data = {}
+        if rl is not None:
+            rl_data = {
+                "max_requests": rl.max_requests, "window_seconds": rl.window_seconds,
+                "current_requests": rl.current_requests,
+                "remaining_ratio": rl.remaining_ratio,
+            }
+        return {"available": True, "circuit_breaker": cb_data, "rate_limiter": rl_data}
+
+    async def _dash_resetcircuitbreaker(self, _payload: dict) -> dict:
+        """Reset circuit breaker."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"success": False, "error": "Orchestrator not available"}
+        ok = orch.reset_circuit_breaker()
+        return {"success": ok, "state": "closed" if ok else "unknown"}
+
+    async def _dash_triggerschedulerjob(self, payload: dict) -> dict:
+        """Trigger a scheduled job."""
+        orch = self._orchestrator
+        if orch is None or orch.scheduler is None:
+            return {"success": False, "job_id": payload.get("job_id", ""), "error": "Scheduler not available"}
+        ok = orch.scheduler.trigger_job(payload.get("job_id", ""))
+        return {"success": ok, "job_id": payload.get("job_id", "")}
+
+    async def _dash_flushpendingtasks(self, _payload: dict) -> dict:
+        """Flush pending tasks."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"success": False, "pending_count": 0, "executed_count": 0, "error": "Orchestrator not available"}
+        count = orch.pending_task_count
+        executed = await orch.flush_pending_tasks()
+        return {"success": True, "pending_count": count, "executed_count": len(executed)}
+
+    async def _dash_listevents(self, payload: dict) -> dict:
+        """Return event log with pagination."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"available": False, "events": [], "total": 0, "offset": 0, "limit": 0}
+        # ponytail: use dashboard app's event log if available, else empty
+        dash_app = getattr(orch, "_dashboard_app", None)
+        if dash_app is not None and hasattr(dash_app, "_event_log"):
+            events = list(dash_app._event_log)
+        else:
+            events = []
+        task_id = payload.get("task_id")
+        if task_id:
+            events = [e for e in events if e.get("task_id") == task_id]
+        offset = payload.get("offset", 0)
+        limit = min(payload.get("limit", 100), 500)
+        paginated = events[offset:offset + limit]
+        return {
+            "available": True, "events": paginated,
+            "total": len(events), "offset": offset, "limit": limit,
+        }
+
+    # ── Dashboard snapshot publisher ───────────────────────────────
+
+    async def _snapshot_loop(self) -> None:
+        """Publish DashboardSnapshot to uc.dashboard.snapshot every 5 seconds.
+
+        This replaces the SSE full-snapshot mechanism for gRPC-Web clients.
+        """
+        while self._running:
+            try:
+                if self._nc is not None and self._orchestrator is not None:
+                    snapshot = await self._build_snapshot()
+                    payload = json.dumps(snapshot).encode()
+                    await self._nc.publish(
+                        self.NATS_SUBJECT_DASHBOARD_SNAPSHOT, payload
+                    )
+            except Exception:
+                logger.debug("Dashboard snapshot publish failed", exc_info=True)
+            await asyncio.sleep(5.0)
+
+    async def _build_snapshot(self) -> dict:
+        """Build a full DashboardSnapshot dict from Orchestrator state."""
+        orch = self._orchestrator
+        if orch is None:
+            return {"timestamp": datetime.now(timezone.utc).isoformat()}
+
+        # Health
+        health = {"available": False, "status": "unavailable"}
+        if orch.engine is not None:
+            try:
+                h = orch.engine.health()
+                health = {
+                    "available": True, "status": h.status,
+                    "version": h.version, "uptime_seconds": h.uptime_seconds,
+                }
+            except Exception:
+                pass
+
+        # Workers
+        workers = await self._dash_listworkers({})
+
+        # Tasks
+        tasks = {"available": False, "tasks": [], "total": 0, "status_counts": {}}
+        if orch.tasks:
+            status_counts: dict[str, int] = {}
+            task_list = []
+            for tid, t in orch.tasks.items():
+                sv = t.status.value if hasattr(t.status, "value") else str(t.status)
+                status_counts[sv] = status_counts.get(sv, 0) + 1
+                task_list.append({
+                    "id": t.id, "description": t.description, "status": sv,
+                    "project_id": t.project_id, "subtask_count": len(t.subtasks),
+                    "created_at": 0, "updated_at": 0, "subtasks": [],
+                })
+            tasks = {
+                "available": True, "tasks": task_list,
+                "total": len(task_list), "status_counts": status_counts,
+            }
+
+        # Scheduler
+        scheduler = await self._dash_getschedulerstatus({})
+
+        # Circuit breaker
+        circuit_breaker = await self._dash_getcircuitbreakerstatus({})
+
+        # Recent events
+        dash_app = getattr(orch, "_dashboard_app", None)
+        recent = []
+        if dash_app is not None and hasattr(dash_app, "_event_log"):
+            recent = list(dash_app._event_log)[:20]
+
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "health": health,
+            "workers": workers,
+            "tasks": tasks,
+            "scheduler": scheduler,
+            "circuit_breaker": circuit_breaker,
+            "recent_events": recent,
+        }
 
 
 # ── Main entry point ────────────────────────────────────────────
