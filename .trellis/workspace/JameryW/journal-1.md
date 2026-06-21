@@ -1235,3 +1235,36 @@ Fix 4 issues in the Orchestrator-Worker interaction chain: (1) Task ID split-bra
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: TUI reconnect state restoration
+
+**Date**: 2026-06-21
+**Task**: TUI reconnect state restoration
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Added TUI reconnect state restoration: sync_required events and reconnection trigger listTasks RPC to reconcile task/subtask state. Added SYNC_TASKS reducer action, reconnection effect, and 6 reducer tests. Pattern mirrors Dashboard's existing sync_required handling.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `39669b9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
