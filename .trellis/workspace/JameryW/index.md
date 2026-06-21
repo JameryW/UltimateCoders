@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
-- **Last Active**: 2026-06-19
+- **Total Sessions**: 33
+- **Last Active**: 2026-06-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1136 | Active |
+| `journal-1.md` | ~1171 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-06-21 | Archive 3 completed tasks: fix-10, rust-python-agent-grpc, merge-2-main | `db444ba`, `845369a`, `4c27bf9` | `feat/dashboard-file-browser` |
 | 32 | 2026-06-19 | Fix PR90 CI: TaskStore::with_backend missing | `7bbadde` | `feat/pr14-agent-capabilities` |
 | 31 | 2026-06-18 | PR82 conflict resolution + ruff lint fixes | `3e57111` | `feat/tui-interaction-polish` |
 | 30 | 2026-06-18 | Dashboard Theme + UX + Mobile Nav Polish | `faf2e8c`, `176c001`, `d3009cb` | `main` |
