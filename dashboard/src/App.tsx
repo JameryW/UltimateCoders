@@ -5,7 +5,6 @@ import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
 import { Header } from "@/components/layout/Header";
-import { ConnectionIndicator } from "@/components/layout/ConnectionIndicator";
 import { HealthPanel } from "@/components/panels/HealthPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { TasksPanel } from "@/components/panels/TasksPanel";
@@ -13,17 +12,20 @@ import { SchedulerPanel } from "@/components/panels/SchedulerPanel";
 import { CircuitBreakerPanel } from "@/components/panels/CircuitBreakerPanel";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
 import { SearchPanel } from "@/components/panels/SearchPanel";
-import { FileBrowser } from "@/components/panels/FileBrowser";
-import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
-import { TaskSubmitForm } from "@/components/forms/TaskSubmitForm";
+import { FileBrowser } from "@/components/panels/FileBrowser";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import * as api from "@/api/endpoints";
 import type { TaskEvent, HealthData } from "@/types/dashboard";
 
 function eventKey(ev: TaskEvent): string {
+  // ponytail: exclude timestamp — SSE and gRPC-Web emit the same logical event
+  // with slightly different timestamps, causing double-processing.
+  // Use full data hash (truncated to 80 chars) so subtask_started vs subtask_completed
+  // for the same subtask within 1s don't collide (they have different data fields).
   const dataHash = ev.type === "sync_required" ? "" : JSON.stringify(ev.data).slice(0, 80);
   return `${ev.task_id}:${ev.subtask_id ?? ""}:${ev.type}:${dataHash}`;
 }
@@ -90,9 +92,10 @@ function App() {
 
   // Dedup: content key + 2s window for gRPC-Web events
   const seenContentKeys = useRef(new Map<string, number>());
+  // #8: Counter ref for sync_required race condition
   const needsSyncCountRef = useRef(0);
   const dedupedHandleTaskEvent = (ev: TaskEvent) => {
-    // gRPC-Web: content key + 1s window dedup
+    // gRPC-Web: content key + 1s window fallback
     const key = eventKey(ev);
     const now = Date.now();
     const lastSeen = seenContentKeys.current.get(key);
@@ -110,39 +113,14 @@ function App() {
   const [lastUpdate, setLastUpdate] = useState<string | undefined>();
   // Track newly submitted task for highlight + auto-scroll
   const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
-  // Track file browser navigation from SearchPanel/OutputFiles
-  const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
 
-  // ── gRPC-Web hooks ─────────────────────────────────────────
-
-  // TaskService: WatchTask stream + task operations
-  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
-    onTaskEvent: dedupedHandleTaskEvent,
-    onSyncRequired: (_reason: string, _skipped: number) => {
-      needsSyncCountRef.current += 1;
-      dashboard.setNeedsSync(true);
-    },
-    enabled: true,
-  });
-
-  // DashboardService: WatchDashboard stream + dashboard operations
   const {
-    connectionState: dashGrpcState,
-    connect: dashGrpcConnect,
-    disconnect: dashGrpcDisconnect,
-    listWorkers,
-    getSchedulerStatus,
-    getCircuitBreakerStatus,
-    resetCircuitBreaker: grpcResetCircuitBreaker,
-    triggerSchedulerJob: grpcTriggerSchedulerJob,
-    flushPendingTasks: grpcFlushPendingTasks,
-    listEvents,
+    connectionState: dashState,
+    connect: dashConnect,
   } = useDashboardGrpc({
     onSnapshot: (snapshot) => {
       dashboard.handleSnapshot(snapshot);
-      if (snapshot.health || snapshot.workers || snapshot.scheduler || snapshot.circuitBreaker) {
-        setLastUpdate(new Date().toISOString());
-      }
+      setLastUpdate(new Date().toISOString());
     },
     onTaskEvent: (ev) => {
       dedupedHandleTaskEvent(ev);
@@ -151,43 +129,85 @@ function App() {
     enabled: true,
   });
 
+  // Dashboard connected = gRPC WatchDashboard stream is live
+  const connected = dashState === "connected";
+
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+    onTaskEvent: dedupedHandleTaskEvent,
+    onSyncRequired: (_reason: string, _skipped: number) => {
+      // #8: Increment counter ref instead of boolean to avoid race condition
+      needsSyncCountRef.current += 1;
+      dashboard.setNeedsSync(true);
+    },
+    enabled: true,
+  });
+
   // Loading state -- show spinner until initial data arrives
   const [loading, setLoading] = useState(true);
 
-  // Fetch initial data once auth is confirmed via gRPC-Web
+  // Fetch initial data once auth is confirmed (skip while auth is still checking
+  // to avoid 401 errors that silently fail and leave the dashboard empty).
   const hasFetchedRef = useRef(false);
+  // #11: Track whether we skipped tasks in fetchInitial (gRPC path expected to provide them)
+  const skippedTasksRef = useRef(false);
   useEffect(() => {
     if (auth.isChecking || !auth.isAuthenticated || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     const skipTasks = grpcState === "connected";
-    dashboard.fetchInitial({
-      skipTasks,
-      fetchWorkers: listWorkers,
-      fetchScheduler: getSchedulerStatus,
-      fetchCircuitBreaker: getCircuitBreakerStatus,
-      fetchEvents,
-      fetchTasks: grpcState === "connected" ? listTasks : undefined,
-    }).then((errors) => {
+    skippedTasksRef.current = skipTasks;
+    dashboard.fetchInitial({ skipTasks }).then((errors) => {
       setLoading(false);
       if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
     });
-  }, [auth.isChecking, auth.isAuthenticated, grpcState]);
+  }, [auth.isChecking, auth.isAuthenticated, dashboard.fetchInitial, grpcState]);
 
-  // gRPC-Web fallback: when WatchDashboard unavailable but TaskService connected, fetch tasks via gRPC
+  // #11: When tasks were skipped in fetchInitial (gRPC path expected to provide them),
+  // but gRPC listTasks fails, fall back to REST getTasks so tasks panel isn't empty.
   useEffect(() => {
-    if (dashGrpcState !== "connected" && grpcState === "connected") {
+    if (!skippedTasksRef.current) return;
+    if (grpcState !== "connected") return;
+    if (dashboard.tasks.available && dashboard.tasks.tasks.length > 0) return;
+    // gRPC connected but no tasks loaded — try REST fallback once
+    skippedTasksRef.current = false; // prevent repeated attempts
+    api.getTasks().then((data) => {
+      if (data.available) dashboard.mergeGrpcTasks(data);
+    }).catch(() => { /* ignore */ });
+  }, [grpcState, dashboard.tasks.available, dashboard.tasks.tasks.length, dashboard.mergeGrpcTasks]);
+
+  // When auth transitions to authenticated, reconnect dashboard stream.
+  const prevAuthRef = useRef(false);
+  useEffect(() => {
+    if (auth.isAuthenticated && !prevAuthRef.current) {
+      dashConnect();
+    }
+    prevAuthRef.current = auth.isAuthenticated;
+  }, [auth.isAuthenticated, dashConnect]);
+
+  useEffect(() => { dashboard.setConnected(dashState === "connected"); }, [dashState, dashboard.setConnected]);
+
+  // gRPC-Web fallback: when Dashboard stream unavailable but Task gRPC connected, fetch tasks via gRPC
+  useEffect(() => {
+    if (dashState !== "connected" && grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch(() => { /* ignore */ });
     }
-  }, [dashGrpcState, grpcState, listTasks, dashboard.mergeGrpcTasks]);
+  }, [connected, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
-  // Handle sync_required from broadcast lag -- re-sync via gRPC
+  // Handle sync_required from broadcast lag — re-sync via gRPC or REST
+  // #8: Use counter ref to avoid race condition where multiple sync_required
+  // events are swallowed by a single boolean. Increment on sync_required,
+  // decrement after processing. Only process when counter > 0.
   useEffect(() => {
     if (needsSyncCountRef.current <= 0) return;
     needsSyncCountRef.current -= 1;
     if (grpcState === "connected") {
       listTasks().then((data) => {
+        if (data.available) dashboard.mergeGrpcTasks(data);
+      }).catch(() => { /* ignore */ });
+    } else {
+      // REST fallback: re-fetch tasks to fill gap
+      api.getTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch(() => { /* ignore */ });
     }
@@ -205,7 +225,7 @@ function App() {
         const h = await healthCheck();
         setGrpcHealthComponents(h.components);
         setLastUpdate(new Date().toISOString());
-      } catch { /* ignore -- next poll will retry */ }
+      } catch { /* ignore — next poll will retry */ }
     };
     poll();
     const timer = setInterval(poll, 30000);
@@ -252,25 +272,37 @@ function App() {
   }, []);
 
   const handlePauseTask = async (taskId: string) => {
+    // ponytail: no confirm — pause is reversible
+    // #13: Optimistic update — immediately reflect in UI
     dashboard.optimisticStatusUpdate(taskId, "paused");
     try {
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
         r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+      } else {
+        const r = await api.pauseTask(taskId);
+        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
       }
     } catch (e) {
+      // Revert optimistic update on failure
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
       showToast(`Pause failed: ${String(e)}`, "error");
     }
   };
   const handleResumeTask = async (taskId: string) => {
+    // ponytail: no confirm — resume is reversible
+    // #13: Optimistic update — immediately reflect in UI
     dashboard.optimisticStatusUpdate(taskId, "in_progress");
     try {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);
         r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+      } else {
+        const r = await api.resumeTask(taskId);
+        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
       }
     } catch (e) {
+      // Revert optimistic update on failure
       dashboard.optimisticStatusUpdate(taskId, "paused");
       showToast(`Resume failed: ${String(e)}`, "error");
     }
@@ -278,17 +310,17 @@ function App() {
   const handleResetCB = async () => {
     const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
     if (!ok) return;
-    try { const r = await grpcResetCircuitBreaker(); r.success ? showToast("Circuit breaker reset", "success") : showToast(`Reset failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Reset failed: ${String(e)}`, "error"); }
+    try { const r = await api.resetCircuitBreaker(); r.success ? showToast("Circuit breaker reset", "success") : showToast(`Reset failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Reset failed: ${String(e)}`, "error"); }
   };
   const handleTriggerJob = async (jobId: string) => {
     const ok = await confirmAction("Trigger Job", `Trigger scheduled job?`);
     if (!ok) return;
-    try { const r = await grpcTriggerSchedulerJob(jobId); r.success ? showToast("Job triggered", "success") : showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
+    try { const r = await api.triggerJob(jobId); r.success ? showToast("Job triggered", "success") : showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
   };
   const handleFlush = async () => {
     const ok = await confirmAction("Flush Pending Tasks", "Execute all queued tasks?");
     if (!ok) return;
-    try { const r = await grpcFlushPendingTasks(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
+    try { const r = await api.flushPending(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
   // ── Auth gate ─────────────────────────────────────────────────
@@ -338,24 +370,19 @@ function App() {
     );
   }
 
-  // All endpoints failed -- server is likely down
-  const allFailed = Object.keys(dashboard.fetchErrors).length >= 3 && grpcState !== "connected" && dashGrpcState !== "connected";
+  // All endpoints failed — server is likely down
+  // ponytail: don't block if gRPC-Web is connected (REST may be down but gRPC works)
+  const allFailed = Object.keys(dashboard.fetchErrors).length >= 5 && grpcState !== "connected";
   if (allFailed) {
     return (
       <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
         <div className="text-center max-w-md">
           <p className="text-lg font-semibold text-red-400 mb-2">Unable to connect to server</p>
-          <p className="text-sm mb-4">All gRPC endpoints failed. The backend may be down or unreachable.</p>
+          <p className="text-sm mb-4">All dashboard endpoints failed. The backend may be down or unreachable.</p>
           <button
             onClick={() => {
               setLoading(true);
-              dashboard.fetchInitial({
-                fetchWorkers: listWorkers,
-                fetchScheduler: getSchedulerStatus,
-                fetchCircuitBreaker: getCircuitBreakerStatus,
-                fetchEvents,
-                fetchTasks: grpcState === "connected" ? listTasks : undefined,
-              }).then((errors) => {
+              dashboard.fetchInitial().then((errors) => {
                 setLoading(false);
                 if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
               });
@@ -369,45 +396,87 @@ function App() {
     );
   }
 
-  // Stale state: when gRPC connections are down
-  const grpcStale = grpcState !== "connected" && dashGrpcState !== "connected";
+  // Data-source-aware stale: Dashboard gRPC panels (health, workers, scheduler, CB) are stale
+  // when WatchDashboard stream disconnects; Task gRPC panels (tasks, events) only stale when both disconnect.
+  const dashStale = dashState !== "connected";
+  const grpcStale = dashState !== "connected" && grpcState !== "connected";
+
+  // FileBrowser navigation from SearchPanel/OutputFiles
+  const [fileNav, setFileNav] = useState<{ repoId: string; path: string; line?: number } | null>(null);
 
   return (
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
-      <Header connected={dashGrpcState === "connected" || grpcState === "connected"} grpcState={grpcState} lastUpdate={lastUpdate} theme={theme} onToggleTheme={toggleTheme} onLogout={auth.logout} fetchErrors={dashboard.fetchErrors} />
-      <TaskSubmitForm grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined} onTaskCreated={setHighlightTaskId} onOptimisticAdd={dashboard.optimisticAddTask} />
+      <Header
+        connected={connected}
+        grpcState={grpcState}
+        grpcExhausted={grpcExhausted}
+        dashGrpcState={dashState}
+        lastUpdate={lastUpdate}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onLogout={auth.logout}
+        onReconnectGrpc={grpcConnect}
+        onReconnectDashGrpc={dashConnect}
+        fetchErrors={dashboard.fetchErrors}
+      />
       <main className="max-w-7xl mx-auto px-4 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <ErrorBoundary name="Health">
-          <div id="health" className="md:col-span-2 scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={grpcStale} /></div>
-        </ErrorBoundary>
-        <ErrorBoundary name="Circuit Breaker">
-          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={grpcStale} /></div>
+        {/* Row 1: Tasks (2-col, submit form inline) + Workers(1) + CB(1) */}
+        <ErrorBoundary name="Tasks">
+          <div id="tasks" className="md:col-span-2 scroll-mt-20">
+            <TasksPanel
+              data={dashboard.tasks}
+              interactionLog={dashboard.interactionLog}
+              onFlush={handleFlush}
+              onPauseTask={handlePauseTask}
+              onResumeTask={handleResumeTask}
+              stale={grpcStale}
+              highlightTaskId={highlightTaskId}
+              onHighlightShown={() => setHighlightTaskId(null)}
+              grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined}
+              onTaskCreated={setHighlightTaskId}
+              onOptimisticAdd={dashboard.optimisticAddTask}
+              onNavigateFile={(nav) => setFileNav(nav)}
+            />
+          </div>
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
-          <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={grpcStale} /></div>
+          <div id="workers" className="scroll-mt-20"><WorkersPanel data={dashboard.workers} stale={dashStale} /></div>
         </ErrorBoundary>
-        <ErrorBoundary name="Tasks">
-          <div id="tasks" className="scroll-mt-20"><TasksPanel data={dashboard.tasks} interactionLog={dashboard.interactionLog} onFlush={handleFlush} onPauseTask={handlePauseTask} onResumeTask={handleResumeTask} stale={grpcStale} highlightTaskId={highlightTaskId} onHighlightShown={() => setHighlightTaskId(null)} onNavigateFile={(nav) => setFileBrowserNav(nav)} /></div>
+        <ErrorBoundary name="Circuit Breaker">
+          <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={dashStale} /></div>
         </ErrorBoundary>
+
+        {/* Row 2: EventLog(2) + Search(2) */}
         <ErrorBoundary name="Event Log">
-          <div id="events" className="scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
+          <div id="events" className="md:col-span-2 scroll-mt-20"><EventLogPanel events={dashboard.eventLog} stale={grpcStale} /></div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Code Search">
+          <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileNav(nav)} /></div>
+        </ErrorBoundary>
+
+        {/* Row 3: FileBrowser(2) + Health(1) + Scheduler(1) */}
+        <ErrorBoundary name="Files">
+          <div id="files" className="md:col-span-2 scroll-mt-20">
+            <FileBrowser
+              initialNav={fileNav}
+              onNavConsumed={() => setFileNav(null)}
+            />
+          </div>
+        </ErrorBoundary>
+        <ErrorBoundary name="Health">
+          <div id="health" className="scroll-mt-20"><HealthPanel data={healthWithGrpc} stale={dashStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Scheduler">
-          <div id="scheduler" className="md:col-span-2 scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={grpcStale} /></div>
+          <div id="scheduler" className="scroll-mt-20"><SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={dashStale} /></div>
         </ErrorBoundary>
+
+        {/* Row 4: Chart(2) */}
         <ErrorBoundary name="Task Activity">
           <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
-        <ErrorBoundary name="Code Search">
-          <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileBrowserNav(nav)} /></div>
-        </ErrorBoundary>
-        <ErrorBoundary name="Files">
-          <div id="files" className="md:col-span-2 scroll-mt-20"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} /></div>
-        </ErrorBoundary>
       </main>
-      <ConnectionIndicator grpcState={grpcState} dashGrpcState={dashGrpcState} grpcExhausted={grpcExhausted} onReconnectGrpc={grpcConnect} onDisconnectGrpc={grpcDisconnect} onReconnectDashGrpc={dashGrpcConnect} onDisconnectDashGrpc={dashGrpcDisconnect} />
     </div>
   );
 }
