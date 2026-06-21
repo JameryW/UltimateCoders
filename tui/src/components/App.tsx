@@ -109,6 +109,21 @@ const App: React.FC = () => {
     serverAddr,
   } = useGrpcClient();
 
+  // ── Track sync-required count (incremented by sync_required events and reconnect) ──
+  const needsSyncCountRef = useRef(0);
+  // Mirror as state so useEffect dependency tracking works
+  const [needsSyncTick, setNeedsSyncTick] = React.useState(0);
+
+  // ── Ref for activeTaskId to avoid stale closure in sync effects ──
+  const activeTaskIdRef = useRef(state.activeTaskId);
+  activeTaskIdRef.current = state.activeTaskId;
+
+  // ── onSyncRequired callback for useTaskEvents ────────────
+  const onSyncRequired = useCallback((_reason: string, _skipped: number) => {
+    needsSyncCountRef.current += 1;
+    setNeedsSyncTick((t) => t + 1);
+  }, []);
+
   // ── Task events hook (receives stream updates) ──────────
   const {
     task,
@@ -119,7 +134,7 @@ const App: React.FC = () => {
     updateSubtaskStatus,
     clearTask: clearStreamTask,
     markStreamingFinished,
-  } = useTaskEvents(client, connectionState, state.activeTaskId);
+  } = useTaskEvents(client, connectionState, state.activeTaskId, onSyncRequired);
 
   // ── Track processed events to avoid re-formatting ───────
   const processedEventCount = useRef(0);
@@ -155,6 +170,35 @@ const App: React.FC = () => {
       hasShownOfflineMsg.current = false;
     } else if (prev === 'connected') {
       hasShownOfflineMsg.current = false;
+    }
+  }, [connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle sync_required from broadcast lag — re-sync via gRPC ──
+  // Same pattern as Dashboard: decrement counter, call listTasks, dispatch SYNC_TASKS.
+  useEffect(() => {
+    if (needsSyncCountRef.current <= 0) return;
+    needsSyncCountRef.current -= 1;
+    if (connectionState === 'connected') {
+      grpcListTasks({}).then((data) => {
+        if (data && data.available) {
+          dispatch({type: 'SYNC_TASKS', response: data, activeTaskId: activeTaskIdRef.current});
+        }
+      }).catch(() => { /* ignore */ });
+    }
+  }, [needsSyncTick, connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Reconnect sync: when connectionState transitions to connected, sync state ──
+  const reconnectPrevRef = useRef(connectionState);
+  useEffect(() => {
+    const prev = reconnectPrevRef.current;
+    reconnectPrevRef.current = connectionState;
+    // Only trigger on transition from non-connected to connected
+    if (connectionState === 'connected' && prev && prev !== 'connected') {
+      grpcListTasks({}).then((data) => {
+        if (data && data.available) {
+          dispatch({type: 'SYNC_TASKS', response: data, activeTaskId: activeTaskIdRef.current});
+        }
+      }).catch(() => { /* ignore */ });
     }
   }, [connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
 
