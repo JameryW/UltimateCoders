@@ -357,7 +357,7 @@ class TestNatsWorkerHandleSubmit:
             ],
         )
         worker._orchestrator.submit_task = AsyncMock(return_value=task)
-        worker._orchestrator._select_next_subtask = MagicMock(return_value=None)
+        worker._orchestrator.select_next_subtask = MagicMock(return_value=None)
         worker._orchestrator.get_task_status = MagicMock(return_value=task)
 
         msg = MagicMock()
@@ -404,7 +404,7 @@ class TestNatsWorkerHandleSubmit:
             status=TaskStatus.IN_PROGRESS,
         )
         worker._orchestrator.submit_task = AsyncMock(return_value=task)
-        worker._orchestrator._select_next_subtask = MagicMock(return_value=None)
+        worker._orchestrator.select_next_subtask = MagicMock(return_value=None)
         worker._orchestrator.get_task_status = MagicMock(return_value=task)
 
         msg = MagicMock()
