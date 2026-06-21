@@ -294,6 +294,9 @@ export function useTaskEvents(
     }
 
     let cancelled = false;
+    // ponytail: discard stale events from before this stream session started.
+    // Server replays historical task events on connect; TUI is stateless per launch.
+    const sessionStartMs = Date.now();
 
     const subscribe = () => {
       if (cancelled) return;
@@ -318,6 +321,11 @@ export function useTaskEvents(
             onSyncRequired?.(reason, skipped);
             return;
           }
+
+          // ponytail: discard stale events from previous sessions.
+          // Compare event timestamp to stream connection time.
+          const eventMs = new Date(taskEvent.timestamp).getTime();
+          if (!isNaN(eventMs) && eventMs < sessionStartMs) return;
 
           // ponytail: on first real event from stream, set isStreaming=true
           // (but only if not already finished)
