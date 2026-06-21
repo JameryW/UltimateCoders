@@ -811,13 +811,14 @@ class DashboardApp:
         if safe is None:
             return {"error": "Path traversal denied"}
         if not safe.is_dir():
-            return {"error": f"Not a directory: {sub_path}"}
+            return {"error": f"Not a directory: {sub_path!r}"}
 
         entries = []
         try:
             for item in sorted(safe.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
                 name = item.name
-                if name.startswith(".") or name in ("__pycache__", "node_modules", "target", ".git"):
+                _SKIP = ("__pycache__", "node_modules", "target", ".git")
+                if name.startswith(".") or name in _SKIP:
                     continue
                 try:
                     stat = item.stat()
@@ -854,7 +855,7 @@ class DashboardApp:
         if safe is None:
             return {"error": "Path traversal denied"}
         if not safe.is_file():
-            return {"error": f"File not found: {file_path}"}
+            return {"error": f"File not found: {file_path!r}"}
 
         MAX_CONTENT = 102400  # 100KB
         try:
