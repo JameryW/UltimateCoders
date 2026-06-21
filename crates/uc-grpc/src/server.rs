@@ -1748,23 +1748,30 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
 
         let stream = async_stream::stream! {
             // Phase 1: replay existing events from TaskStore.
-            // We subscribed to broadcast above, so any event published during
-            // this phase will also appear in Phase 2. To avoid duplicates,
-            // track the last replayed event index and skip matching events
-            // in Phase 2 that were already seen.
+            // When taskId is empty (TUI "watch all"), skip replay entirely.
+            // TUI is stateless per launch — it only needs live events. Replayed
+            // events lack original timestamps (AgentEventType→TaskEvent uses
+            // Utc::now()), so they'd appear as "new" and pollute a fresh TUI
+            // session with stale messages. For targeted watches, replay is kept
+            // so clients can catch up on a specific task's history.
             let last_replayed_idx = {
                 let s = task_store.lock().await;
-                let events = s.read_events_from(0);
-                let mut last_idx: Option<u64> = None;
-                for (i, event) in events.iter().enumerate() {
-                    let proto_event: TaskEvent = event.clone().into();
-                    if !task_id.is_empty() && proto_event.task_id != task_id {
-                        continue;
+                if task_id.is_empty() {
+                    // Skip replay for "watch all" — TUI doesn't need history
+                    None
+                } else {
+                    let events = s.read_events_from(0);
+                    let mut last_idx: Option<u64> = None;
+                    for (i, event) in events.iter().enumerate() {
+                        let proto_event: TaskEvent = event.clone().into();
+                        if proto_event.task_id != task_id {
+                            continue;
+                        }
+                        yield Ok(proto_event);
+                        last_idx = Some(i as u64);
                     }
-                    yield Ok(proto_event);
-                    last_idx = Some(i as u64);
+                    last_idx
                 }
-                last_idx
             };
 
             // Phase 2: listen for new events via broadcast.
