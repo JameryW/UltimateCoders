@@ -31,7 +31,9 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<ListWorkersRequest>,
     ) -> Result<Response<ListWorkersResponse>, Status> {
-        let json = self.nats_dashboard_request("ListWorkers", serde_json::json!({})).await?;
+        let json = self
+            .nats_dashboard_request("ListWorkers", serde_json::json!({}))
+            .await?;
         Ok(Response::new(json_to_list_workers_response(&json)))
     }
 
@@ -52,7 +54,9 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         let json = self
             .nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({}))
             .await?;
-        Ok(Response::new(json_to_circuit_breaker_status_response(&json)))
+        Ok(Response::new(json_to_circuit_breaker_status_response(
+            &json,
+        )))
     }
 
     async fn reset_circuit_breaker(
@@ -113,11 +117,9 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
     ) -> Result<Response<Self::WatchDashboardStream>, Status> {
         #[cfg(feature = "messaging")]
         {
-            let nats_client = self
-                .nats_client()
-                .ok_or_else(|| {
-                    Status::unavailable("NATS not connected — Dashboard streaming unavailable")
-                })?;
+            let nats_client = self.nats_client().ok_or_else(|| {
+                Status::unavailable("NATS not connected — Dashboard streaming unavailable")
+            })?;
 
             let stream = async_stream::stream! {
                 let mut subscriber = match nats_client
@@ -197,7 +199,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 Ok(response) => {
                     let json_str = String::from_utf8_lossy(&response.payload);
                     serde_json::from_str(&json_str).map_err(|e| {
-                        tracing::warn!("Dashboard passthrough JSON parse error for {rpc_name}: {e}");
+                        tracing::warn!(
+                            "Dashboard passthrough JSON parse error for {rpc_name}: {e}"
+                        );
                         Status::internal(format!("JSON parse error: {e}"))
                     })
                 }
@@ -253,7 +257,11 @@ fn json_to_worker_proto(v: &serde_json::Value) -> WorkerProto {
         capabilities: v
             .get("capabilities")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         current_load: json_u32(v, "current_load"),
         max_capacity: json_u32(v, "max_capacity"),
@@ -416,14 +424,22 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
         depends_on: v
             .get("depends_on")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         assigned_worker: json_opt_str(v, "assigned_worker"),
         parent_id: json_str(v, "parent_id").to_string(),
         file_constraints: v
             .get("file_constraints")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         expected_output: json_str(v, "expected_output").to_string(),
     }

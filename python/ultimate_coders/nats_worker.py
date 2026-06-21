@@ -611,7 +611,11 @@ class NatsWorker:
 
         handler = getattr(self, f"_dash_{rpc_name.lower()}", None)
         if handler is None:
-            await msg.respond(json.dumps({"available": False, "error": f"unknown RPC: {rpc_name}"}).encode())
+            await msg.respond(
+                json.dumps(
+                    {"available": False, "error": f"unknown RPC: {rpc_name}"}
+                ).encode()
+            )
             return
 
         try:
@@ -636,7 +640,11 @@ class NatsWorker:
                 "capabilities": list(w.capabilities),
                 "current_load": w.current_load,
                 "max_capacity": w.max_capacity,
-                "load_percent": round(w.current_load / w.max_capacity * 100) if w.max_capacity > 0 else 0,
+                "load_percent": (
+                    round(w.current_load / w.max_capacity * 100)
+                    if w.max_capacity > 0
+                    else 0
+                ),
                 "last_heartbeat": w.last_heartbeat.isoformat(),
                 "heartbeat_age_seconds": round(age, 1),
                 "heartbeat_stale": age > heartbeat_timeout,
@@ -716,7 +724,11 @@ class NatsWorker:
         """Trigger a scheduled job."""
         orch = self._orchestrator
         if orch is None or orch.scheduler is None:
-            return {"success": False, "job_id": payload.get("job_id", ""), "error": "Scheduler not available"}
+            return {
+                "success": False,
+                "job_id": payload.get("job_id", ""),
+                "error": "Scheduler not available",
+            }
         ok = orch.scheduler.trigger_job(payload.get("job_id", ""))
         return {"success": ok, "job_id": payload.get("job_id", "")}
 
@@ -724,7 +736,12 @@ class NatsWorker:
         """Flush pending tasks."""
         orch = self._orchestrator
         if orch is None:
-            return {"success": False, "pending_count": 0, "executed_count": 0, "error": "Orchestrator not available"}
+            return {
+                "success": False,
+                "pending_count": 0,
+                "executed_count": 0,
+                "error": "Orchestrator not available",
+            }
         count = orch.pending_task_count
         executed = await orch.flush_pending_tasks()
         return {"success": True, "pending_count": count, "executed_count": len(executed)}

@@ -19,7 +19,7 @@ use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
 use crate::conversions::{memory_key_from_proto, task_status_to_proto};
-use crate::ultimate_coders::dashboard_service_server::{DashboardService, DashboardServiceServer};
+use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
 use crate::ultimate_coders::*;

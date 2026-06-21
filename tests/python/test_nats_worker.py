@@ -372,6 +372,7 @@ class TestNatsWorkerHandleSubmit:
         worker._orchestrator.submit_task.assert_called_once_with(
             "Fix the bug",
             project_id="proj-1",
+            task_id="task-1",
         )
 
     async def test_handle_empty_description(self, worker):
@@ -416,6 +417,7 @@ class TestNatsWorkerHandleSubmit:
         worker._orchestrator.submit_task.assert_called_once_with(
             "Some description",
             project_id="",
+            task_id=None,
         )
 
 
