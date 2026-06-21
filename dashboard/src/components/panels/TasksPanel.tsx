@@ -71,7 +71,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
       </CardHeader>
 
       {!data.available ? (
-        <p className="text-sm text-[var(--text-muted)]">Tasks not available</p>
+        <p className="text-sm text-[var(--text-muted)]"><Badge variant="unavailable">Unavailable</Badge></p>
       ) : (
         <>
           {Object.keys(data.status_counts).length > 0 && (

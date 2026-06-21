@@ -158,3 +158,11 @@ body {
 [data-theme="light"] .file-created { background-color: #dcfce7; }
 [data-theme="light"] .file-deleted { background-color: #fee2e2; }
 [data-theme="light"] .file-modified { background-color: #fef9c3; }
+
+/* ── Toast tints (theme-aware) ──────────────────────── */
+
+.toast-success { background-color: #16653480; color: #86efac; }
+.toast-error { background-color: #7f1d1d80; color: #fca5a5; }
+
+[data-theme="light"] .toast-success { background-color: #dcfce7; color: #166534; }
+[data-theme="light"] .toast-error { background-color: #fee2e2; color: #991b1b; }

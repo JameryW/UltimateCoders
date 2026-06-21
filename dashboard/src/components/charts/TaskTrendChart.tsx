@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { TasksData, DashboardEvent } from "@/types/dashboard";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 interface TaskTrendChartProps {
@@ -82,16 +83,9 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   }, [maxVal]);
 
   return (
-    <div className={cn("rounded-lg border border-[var(--border-color)] bg-[var(--bg-surface)] p-4 relative", stale && "opacity-70")}>
-      {stale && (
-        <div className="stale-badge absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded font-medium z-10">
-          STALE
-        </div>
-      )}
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">
-          Task Activity
-        </h2>
+    <Card className="md:col-span-2" stale={stale}>
+      <CardHeader>
+        <CardTitle>Task Activity</CardTitle>
         {tasks.available && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-[var(--text-muted)]">{total} total</span>
@@ -111,7 +105,7 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
             ))}
           </div>
         )}
-      </div>
+      </CardHeader>
 
       {trendData.length > 0 ? (
         <svg
@@ -187,6 +181,6 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
           </p>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

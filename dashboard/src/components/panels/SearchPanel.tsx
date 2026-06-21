@@ -23,7 +23,7 @@ interface SearchResult {
   symbolKind?: string;
 }
 
-export function SearchPanel({ grpcState, onNavigateFile }: { grpcState?: GrpcConnectionState; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void }) {
+export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: GrpcConnectionState; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void; stale?: boolean }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -51,7 +51,7 @@ export function SearchPanel({ grpcState, onNavigateFile }: { grpcState?: GrpcCon
   }, [query]);
 
   return (
-    <Card className="md:col-span-2">
+    <Card className="md:col-span-2" stale={stale}>
       <CardHeader>
         <CardTitle>Code Search</CardTitle>
       </CardHeader>

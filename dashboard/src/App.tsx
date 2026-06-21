@@ -401,10 +401,10 @@ function App() {
           <div id="chart" className="md:col-span-2 scroll-mt-20"><TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Code Search">
-          <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileBrowserNav(nav)} /></div>
+          <div id="search" className="md:col-span-2 scroll-mt-20"><SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileBrowserNav(nav)} stale={grpcStale} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Files">
-          <div id="files" className="md:col-span-2 scroll-mt-20"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} /></div>
+          <div id="files" className="md:col-span-2 scroll-mt-20"><FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} /></div>
         </ErrorBoundary>
       </main>
       <ConnectionIndicator grpcState={grpcState} dashGrpcState={dashGrpcState} grpcExhausted={grpcExhausted} onReconnectGrpc={grpcConnect} onDisconnectGrpc={grpcDisconnect} onReconnectDashGrpc={dashGrpcConnect} onDisconnectDashGrpc={dashGrpcDisconnect} />
