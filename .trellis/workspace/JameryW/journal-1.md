@@ -1268,3 +1268,36 @@ Added TUI reconnect state restoration: sync_required events and reconnection tri
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: apply_update full upsert for dual-state sync
+
+**Date**: 2026-06-21
+**Task**: apply_update full upsert for dual-state sync
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Extended NatsSubtaskUpdate with description/depends_on fields, made apply_update do full upsert (existing subtasks get updated description/depends_on/result, new subtasks use provided values instead of empty defaults), extended Python payload to include new fields. 4 new Rust tests for backward compat and upsert scenarios.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8dbb329` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
