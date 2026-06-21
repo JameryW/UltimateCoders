@@ -75,6 +75,10 @@ pub struct NatsSubtaskUpdate {
     #[serde(default)]
     pub assigned_worker: Option<String>,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(default)]
     pub result: Option<String>,
 }
 
@@ -440,6 +444,9 @@ impl TaskStore {
     /// Apply a status update from NATS (`uc.task.update`).
     ///
     /// Updates the task's status, subtask statuses, and result.
+    /// Performs full upsert on subtasks: updates description, depends_on, and
+    /// result in addition to status and assigned_worker. New subtasks are
+    /// created with all provided fields.
     /// If the task does not exist, logs a warning and does nothing (graceful
     /// handling of stale or out-of-order messages).
     pub fn apply_update(&mut self, update: &NatsTaskUpdate) {
@@ -471,13 +478,14 @@ impl TaskStore {
             // but we update the timestamp to reflect the change.
         }
 
-        // Update subtask statuses
+        // Update subtasks — full upsert
         for subtask_update in &update.subtasks {
             if let Some(subtask) = task
                 .subtasks
                 .iter_mut()
                 .find(|st| st.id.0 == subtask_update.subtask_id)
             {
+                // Existing subtask — update all provided fields
                 if let Some(status) = subtask_status_from_str(&subtask_update.status) {
                     subtask.status = status;
                 } else {
@@ -490,22 +498,68 @@ impl TaskStore {
                 if let Some(worker) = &subtask_update.assigned_worker {
                     subtask.assigned_worker = Some(uc_types::WorkerId(worker.clone()));
                 }
+                if let Some(desc) = &subtask_update.description {
+                    subtask.description = desc.clone();
+                }
+                if let Some(deps) = &subtask_update.depends_on {
+                    subtask.depends_on = deps
+                        .iter()
+                        .map(|d| uc_types::TaskId(d.clone()))
+                        .collect();
+                }
+                if let Some(result_str) = &subtask_update.result {
+                    subtask.result = Some(uc_types::SubtaskResult {
+                        subtask_id: subtask.id.clone(),
+                        worker_id: subtask
+                            .assigned_worker
+                            .clone()
+                            .unwrap_or_default(),
+                        modified_files: Vec::new(),
+                        summary: result_str.clone(),
+                        success: true,
+                        completed_at: chrono::Utc::now(),
+                    });
+                }
             } else {
-                // New subtask from Python Orchestrator — add it
+                // New subtask from Python Orchestrator — create with all provided fields
                 let new_subtask = uc_types::Subtask {
                     id: uc_types::TaskId(subtask_update.subtask_id.clone()),
                     parent_id: task.id.clone(),
-                    description: String::new(), // Not provided in update
+                    description: subtask_update
+                        .description
+                        .clone()
+                        .unwrap_or_default(),
                     status: subtask_status_from_str(&subtask_update.status)
                         .unwrap_or(uc_types::SubtaskStatus::Pending),
                     assigned_worker: subtask_update
                         .assigned_worker
                         .as_ref()
                         .map(|w| uc_types::WorkerId(w.clone())),
-                    depends_on: Vec::new(),
+                    depends_on: subtask_update
+                        .depends_on
+                        .as_ref()
+                        .map(|deps| {
+                            deps.iter()
+                                .map(|d| uc_types::TaskId(d.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     file_constraints: Vec::new(),
                     expected_output: String::new(),
-                    result: None,
+                    result: subtask_update.result.as_ref().map(|r| {
+                        uc_types::SubtaskResult {
+                            subtask_id: uc_types::TaskId(subtask_update.subtask_id.clone()),
+                            worker_id: subtask_update
+                                .assigned_worker
+                                .as_ref()
+                                .map(|w| uc_types::WorkerId(w.clone()))
+                                .unwrap_or_default(),
+                            modified_files: Vec::new(),
+                            summary: r.clone(),
+                            success: true,
+                            completed_at: chrono::Utc::now(),
+                        }
+                    }),
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -2904,6 +2958,8 @@ mod tests {
                 subtask_id: "st-1".to_string(),
                 status: "Assigned".to_string(),
                 assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
                 result: None,
             }],
             result: None,
@@ -3019,6 +3075,8 @@ mod tests {
                 subtask_id: "st-new-1".to_string(),
                 status: "Assigned".to_string(),
                 assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
                 result: None,
             }],
             result: None,
@@ -3089,6 +3147,8 @@ mod tests {
                 subtask_id: subtask_id.clone(),
                 status: "Completed".to_string(),
                 assigned_worker: None,
+                description: None,
+                depends_on: None,
                 result: Some("Done".to_string()),
             }],
             result: None,
@@ -3645,6 +3705,8 @@ mod tests {
                     subtask_id: subtask_id.clone(),
                     status: "Completed".to_string(),
                     assigned_worker: None,
+                    description: None,
+                    depends_on: None,
                     result: None,
                 }],
                 result: None,
@@ -3731,6 +3793,8 @@ mod tests {
                     subtask_id: subtask_id.clone(),
                     status: "Assigned".to_string(),
                     assigned_worker: Some("worker-1".to_string()),
+                    description: None,
+                    depends_on: None,
                     result: None,
                 }],
                 result: None,
@@ -4001,6 +4065,124 @@ mod tests {
         let parsed: NatsTaskUpdate = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.task_id, "t-1");
         assert_eq!(parsed.message_id, None);
+    }
+
+    #[test]
+    fn nats_subtask_update_backward_compat_no_new_fields() {
+        // Verify that old-format subtask JSON (without description/depends_on)
+        // deserializes with defaults, ensuring backward compatibility.
+        let json = r#"{"subtask_id":"st-1","status":"Assigned","assigned_worker":"w-1"}"#;
+        let parsed: NatsSubtaskUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.subtask_id, "st-1");
+        assert_eq!(parsed.status, "Assigned");
+        assert_eq!(parsed.assigned_worker, Some("w-1".to_string()));
+        assert_eq!(parsed.description, None);
+        assert_eq!(parsed.depends_on, None);
+        assert_eq!(parsed.result, None);
+    }
+
+    #[test]
+    fn apply_update_full_upsert_existing_subtask() {
+        // Verify that apply_update updates description, depends_on, and result
+        // on an existing subtask when provided in the update.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+        let subtask_id = task.subtasks[0].id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: subtask_id.clone(),
+                status: "InProgress".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: Some("Updated description".to_string()),
+                depends_on: Some(vec!["other-st".to_string()]),
+                result: Some("Work done".to_string()),
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        let st = &updated.subtasks[0];
+        assert_eq!(st.description, "Updated description");
+        assert_eq!(st.depends_on.len(), 1);
+        assert_eq!(st.depends_on[0].0, "other-st");
+        assert!(st.result.is_some());
+        assert_eq!(st.result.as_ref().unwrap().summary, "Work done");
+    }
+
+    #[test]
+    fn apply_update_full_upsert_new_subtask() {
+        // Verify that apply_update creates a new subtask with description,
+        // depends_on, and result from the update payload.
+        let mut store = TaskStore::new();
+        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-new".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-2".to_string()),
+                description: Some("New subtask from Python".to_string()),
+                depends_on: Some(vec!["dep-1".to_string(), "dep-2".to_string()]),
+                result: None,
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.subtasks.len(), 1);
+        let st = &updated.subtasks[0];
+        assert_eq!(st.id.0, "st-new");
+        assert_eq!(st.description, "New subtask from Python");
+        assert_eq!(st.depends_on.len(), 2);
+        assert_eq!(st.depends_on[0].0, "dep-1");
+        assert_eq!(st.depends_on[1].0, "dep-2");
+        assert!(st.result.is_none());
+    }
+
+    #[test]
+    fn apply_update_backward_compat_old_format() {
+        // Verify that old-format updates (without description/depends_on)
+        // still work — description defaults to empty, depends_on defaults to empty vec.
+        let mut store = TaskStore::new();
+        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-old".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: None,
+                description: None,
+                depends_on: None,
+                result: None,
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.subtasks.len(), 1);
+        let st = &updated.subtasks[0];
+        assert_eq!(st.description, "");
+        assert!(st.depends_on.is_empty());
+        assert!(st.result.is_none());
     }
 
     #[test]

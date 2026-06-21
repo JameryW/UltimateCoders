@@ -70,6 +70,8 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         entry: dict[str, Any] = {
             "subtask_id": st.id,
             "status": _subtask_status_to_nats(st.status),
+            "description": st.description,
+            "depends_on": st.depends_on,
         }
         if st.assigned_worker is not None:
             entry["assigned_worker"] = st.assigned_worker
