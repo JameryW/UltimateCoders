@@ -1202,3 +1202,36 @@ Archived 3 tasks whose work is merged to main: fix-10 (前后端交互深度问�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: Fix Orchestrator-Worker interaction bugs
+
+**Date**: 2026-06-21
+**Task**: Fix Orchestrator-Worker interaction bugs
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Fix 4 issues in the Orchestrator-Worker interaction chain: (1) Task ID split-brain between Python and Rust task stores — removed redundant engine.submit_task() call; (2) Race condition in _execute_subtasks — replaced ASSIGNED→PENDING flip with seen-set dedup; (3) Private method call — added SandboxManager.execute_decompose() public API; (4) O(n×m) subtask lookup — added _subtask_index reverse index with linear-scan fallback. Broadcast backpressure (#5) already implemented in Rust. All tests pass.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b6d3c46` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
