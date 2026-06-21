@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -685,7 +686,241 @@ class DashboardApp:
                 }
             )
 
+        # ── File Browser Endpoints ────────────────────────────────
+
+        @app.get("/dashboard/api/repos")
+        async def list_repos_api(request: Request):
+            """List repositories available for file browsing."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            return JSONResponse(self._get_repos_data())
+
+        @app.get("/dashboard/api/repos/{repo_id}/tree")
+        async def repo_tree_api(repo_id: str, request: Request, path: str = ""):
+            """List directory contents within a repository."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            result = self._list_directory(repo_id, path)
+            if result is None:
+                return JSONResponse(
+                    {"error": "Repository not found", "repo_id": repo_id},
+                    status_code=404,
+                )
+            if "error" in result:
+                return JSONResponse(result, status_code=400)
+            return JSONResponse(result)
+
+        @app.get("/dashboard/api/repos/{repo_id}/file")
+        async def repo_file_api(repo_id: str, request: Request, path: str = ""):
+            """Read file content from a repository."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            if not path:
+                return JSONResponse(
+                    {"error": "path query parameter is required"},
+                    status_code=400,
+                )
+            result = self._read_file(repo_id, path)
+            if result is None:
+                return JSONResponse(
+                    {"error": "Repository not found", "repo_id": repo_id},
+                    status_code=404,
+                )
+            if "error" in result:
+                status_code = 404 if "not found" in result["error"].lower() else 400
+                return JSONResponse(result, status_code=status_code)
+            return JSONResponse(result)
+
     # ── Data Collection Methods ──────────────────────────────────
+
+    # ── File Browser Helpers ─────────────────────────────────────
+
+    _repos_cache: dict[str, str] | None = None
+
+    def _get_repos_data(self) -> dict:
+        """Return list of repositories available for file browsing."""
+        repos = self._resolve_repos()
+        result = []
+        for repo_id, local_path in repos.items():
+            p = pathlib.Path(local_path)
+            result.append({
+                "repo_id": repo_id,
+                "local_path": local_path,
+                "exists": p.is_dir(),
+            })
+        return {"available": True, "repos": result, "total": len(result)}
+
+    def _resolve_repos(self) -> dict[str, str]:
+        """Resolve repo_id -> local_path mapping.
+
+        Sources (in priority order):
+        1. UC_REPOS env var — comma-separated repo_id=path pairs.
+        2. Orchestrator config project_path as "default" repo.
+        """
+        if self._repos_cache is not None:
+            return self._repos_cache
+
+        repos: dict[str, str] = {}
+
+        # UC_REPOS env var (repo_id=path,repo_id=path)
+        env_repos = os.environ.get("UC_REPOS", "")
+        if env_repos:
+            for pair in env_repos.split(","):
+                pair = pair.strip()
+                if "=" in pair:
+                    rid, rpath = pair.split("=", 1)
+                    repos[rid.strip()] = rpath.strip()
+
+        # Fallback: use project_path from orchestrator config
+        if not repos:
+            orch = self.orchestrator
+            if orch is not None:
+                project_path = getattr(getattr(orch, "config", None), "project_path", None)
+                if project_path:
+                    repos["default"] = project_path
+
+        self._repos_cache = repos
+        return repos
+
+    @staticmethod
+    def _safe_path(base_dir: str, sub_path: str) -> pathlib.Path | None:
+        """Resolve sub_path under base_dir with path traversal protection.
+
+        Returns None if the resolved path escapes base_dir.
+        """
+        base = pathlib.Path(base_dir).resolve()
+        if not sub_path:
+            return base
+        target = (base / sub_path).resolve()
+        # ponytail: string prefix check — sufficient for POSIX, no symlink chase
+        if not str(target).startswith(str(base) + os.sep) and target != base:
+            return None
+        return target
+
+    def _list_directory(self, repo_id: str, sub_path: str) -> dict | None:
+        """List directory contents for a repository.
+
+        Returns None if repo not found, dict with 'error' on failure.
+        """
+        repos = self._resolve_repos()
+        if repo_id not in repos:
+            return None
+
+        local_path = repos[repo_id]
+        safe = self._safe_path(local_path, sub_path)
+        if safe is None:
+            return {"error": "Path traversal denied"}
+        if not safe.is_dir():
+            return {"error": f"Not a directory: {sub_path}"}
+
+        entries = []
+        try:
+            for item in sorted(safe.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+                name = item.name
+                if name.startswith(".") or name in ("__pycache__", "node_modules", "target", ".git"):
+                    continue
+                try:
+                    stat = item.stat()
+                except OSError:
+                    continue
+                rel = str(item.relative_to(pathlib.Path(local_path).resolve()))
+                entries.append({
+                    "name": name,
+                    "path": rel,
+                    "type": "directory" if item.is_dir() else "file",
+                    "size": stat.st_size if item.is_file() else 0,
+                })
+        except PermissionError:
+            return {"error": "Permission denied"}
+
+        return {
+            "repo_id": repo_id,
+            "path": sub_path,
+            "entries": entries,
+            "total": len(entries),
+        }
+
+    def _read_file(self, repo_id: str, file_path: str) -> dict | None:
+        """Read file content from a repository.
+
+        Returns None if repo not found, dict with 'error' on failure.
+        """
+        repos = self._resolve_repos()
+        if repo_id not in repos:
+            return None
+
+        local_path = repos[repo_id]
+        safe = self._safe_path(local_path, file_path)
+        if safe is None:
+            return {"error": "Path traversal denied"}
+        if not safe.is_file():
+            return {"error": f"File not found: {file_path}"}
+
+        MAX_CONTENT = 102400  # 100KB
+        try:
+            raw = safe.read_bytes()
+        except PermissionError:
+            return {"error": "Permission denied"}
+        except OSError as e:
+            return {"error": f"Read error: {e}"}
+
+        # Binary check: null bytes in first 8KB
+        if b"\x00" in raw[:8192]:
+            return {
+                "repo_id": repo_id,
+                "path": file_path,
+                "binary": True,
+                "size": len(raw),
+            }
+
+        # Decode text
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = raw.decode("latin-1")
+            except UnicodeDecodeError:
+                return {
+                    "repo_id": repo_id,
+                    "path": file_path,
+                    "binary": True,
+                    "size": len(raw),
+                }
+
+        truncated = len(raw) > MAX_CONTENT
+        if truncated:
+            text = text[:MAX_CONTENT]
+
+        # Guess language from extension
+        suffix = safe.suffix.lstrip(".")
+        lang_map = {
+            "py": "python", "rs": "rust", "ts": "typescript", "tsx": "typescript",
+            "js": "javascript", "jsx": "javascript", "go": "go", "java": "java",
+            "rb": "ruby", "cpp": "cpp", "c": "c", "h": "c", "hpp": "cpp",
+            "cs": "csharp", "swift": "swift", "kt": "kotlin", "scala": "scala",
+            "sh": "bash", "bash": "bash", "zsh": "bash", "sql": "sql",
+            "html": "html", "css": "css", "scss": "scss", "json": "json",
+            "yaml": "yaml", "yml": "yaml", "toml": "toml", "xml": "xml",
+            "md": "markdown", "proto": "protobuf", "dockerfile": "dockerfile",
+            "tf": "hcl", "hcl": "hcl",
+        }
+        language = lang_map.get(suffix, "")
+        basename = safe.name.lower()
+        if basename in ("makefile", "gnumakefile"):
+            language = "makefile"
+        elif basename == "dockerfile":
+            language = "dockerfile"
+
+        return {
+            "repo_id": repo_id,
+            "path": file_path,
+            "binary": False,
+            "size": len(raw),
+            "content": text,
+            "language": language,
+            "truncated": truncated,
+            "lines": text.count("\n") + 1,
+        }
 
     def _record_event(
         self,

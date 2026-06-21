@@ -7,6 +7,7 @@ import { SearchRequestSchema } from "@/grpc/engine_pb";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getSharedTransport, type GrpcConnectionState } from "@/hooks/useGrpcWeb";
+import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 
 // ponytail: uses shared transport from useGrpcWeb — single HTTP/2 connection
 
@@ -22,7 +23,7 @@ interface SearchResult {
   symbolKind?: string;
 }
 
-export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) {
+export function SearchPanel({ grpcState, onNavigateFile }: { grpcState?: GrpcConnectionState; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -88,10 +89,13 @@ export function SearchPanel({ grpcState }: { grpcState?: GrpcConnectionState }) 
           {results.map((r, i) => (
             <li key={`${r.filePath}-${r.startLine}-${i}`} className="border-l-2 border-l-blue-500 pl-2 py-1">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-[var(--text-primary)] font-mono truncate">
+                <button
+                  onClick={() => onNavigateFile?.({ repoId: r.repoId, path: r.filePath, line: r.startLine })}
+                  className="text-[var(--text-primary)] font-mono truncate hover:text-blue-400 hover:underline text-left"
+                >
                   {r.filePath}
                   {r.symbolName && <span className="text-blue-400 ml-1 font-sans not-italic">{r.symbolName}</span>}
-                </span>
+                </button>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs text-[var(--text-muted)]">{r.repoId}</span>
                   <span className="text-xs text-[var(--text-muted)]">L{r.startLine}{r.endLine > r.startLine ? `-${r.endLine}` : ""}</span>

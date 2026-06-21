@@ -2,15 +2,17 @@ import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
+import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { renderMermaid } from "@/lib/mermaid";
 import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 
 interface TaskDetailProps {
   task: TaskSummary;
   interactionLog: TaskEvent[];
+  onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
 }
 
-function OutputFiles({ events }: { events: TaskEvent[] }) {
+function OutputFiles({ events, onNavigateFile }: { events: TaskEvent[]; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void }) {
   const files: { path: string; type: string; subtask: string }[] = [];
   for (const ev of events) {
     if (ev.type === "subtask_completed" && ev.data.modified_files) {
@@ -33,11 +35,15 @@ function OutputFiles({ events }: { events: TaskEvent[] }) {
           const color = f.type === "created" ? "text-green-500" : f.type === "deleted" ? "text-red-500" : "text-yellow-500";
           const bg = f.type === "created" ? "file-created" : f.type === "deleted" ? "file-deleted" : "file-modified";
           return (
-            <div key={f.path} className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs", bg)}>
+            <button
+              key={f.path}
+              onClick={() => onNavigateFile?.({ repoId: "default", path: f.path })}
+              className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs w-full text-left hover:opacity-80", bg)}
+            >
               <span className={cn("font-mono font-bold w-3 text-center", color)}>{icon}</span>
               <span className="font-mono text-[var(--text-primary)] truncate flex-1" title={f.path}>{f.path}</span>
               <span className={cn("text-[10px] px-1 rounded", color)}>{f.type.toUpperCase()}</span>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -161,7 +167,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
   );
 }
 
-export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
+export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailProps) {
   const subtasks = task.subtasks ?? [];
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
 
@@ -221,7 +227,7 @@ export function TaskDetail({ task, interactionLog }: TaskDetailProps) {
       </div>
 
       {/* Output files */}
-      <OutputFiles events={interactionLog} />
+      <OutputFiles events={interactionLog} onNavigateFile={onNavigateFile} />
 
       {/* Mermaid DAG */}
       <SubtaskDAG subtasks={subtasks} />
