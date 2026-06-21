@@ -817,8 +817,8 @@ class DashboardApp:
         try:
             for item in sorted(safe.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
                 name = item.name
-                _SKIP = ("__pycache__", "node_modules", "target", ".git")
-                if name.startswith(".") or name in _SKIP:
+                skip = ("__pycache__", "node_modules", "target", ".git")
+                if name.startswith(".") or name in skip:
                     continue
                 try:
                     stat = item.stat()
@@ -857,7 +857,7 @@ class DashboardApp:
         if not safe.is_file():
             return {"error": f"File not found: {file_path!r}"}
 
-        MAX_CONTENT = 102400  # 100KB
+        max_content = 102400  # 100KB
         try:
             raw = safe.read_bytes()
         except PermissionError:
@@ -888,9 +888,9 @@ class DashboardApp:
                     "size": len(raw),
                 }
 
-        truncated = len(raw) > MAX_CONTENT
+        truncated = len(raw) > max_content
         if truncated:
-            text = text[:MAX_CONTENT]
+            text = text[:max_content]
 
         # Guess language from extension
         suffix = safe.suffix.lstrip(".")
