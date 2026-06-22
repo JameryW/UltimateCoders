@@ -14,6 +14,7 @@
     "@bufbuild/protobuf": "^2.12.0",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-web": "^2.1.2",
+    "@tanstack/react-virtual": "^3.14.3",
     "dompurify": "^3.4.10",
     "highlight.js": "^11.11.1",
     "react": "^19.2.6",

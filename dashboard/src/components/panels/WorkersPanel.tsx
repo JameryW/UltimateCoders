@@ -31,7 +31,13 @@ const statusBadgeClass = (status: string) => {
 };
 const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n) + "…" : s;
 
-function WorkerDetail({ worker, activeSubtasks }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[] }) {
+function WorkerDetail({ worker, activeSubtasks, onJumpTask }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[]; onJumpTask?: (taskId: string) => void }) {
+  // ponytail: derive task id from subtask id prefix — subtask ids are "taskId-subtaskN"
+  const taskIdFromSubtask = (subtaskId: string) => {
+    const lastDash = subtaskId.lastIndexOf("-");
+    return lastDash > 0 ? subtaskId.substring(0, lastDash) : subtaskId;
+  };
+
   return (
     <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-[var(--border-color)] pt-2">
       <div className="flex items-start gap-2">
@@ -74,10 +80,20 @@ function WorkerDetail({ worker, activeSubtasks }: { worker: WorkerInfo; activeSu
       )}
       {activeSubtasks.length > 0 && (
         <div className="flex items-start gap-2">
-          <span className="text-[var(--text-muted)] shrink-0 w-20">Active</span>
+          <span className="text-[var(--text-muted)] shrink-0 w-20">Subtasks</span>
           <div className="space-y-0.5">
             {activeSubtasks.map((st) => (
-              <div key={st.id} className="flex items-center gap-1">
+              <div
+                key={st.id}
+                className={cn(
+                  "flex items-center gap-1",
+                  onJumpTask && "cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded px-1 -mx-1"
+                )}
+                role={onJumpTask ? "button" : undefined}
+                tabIndex={onJumpTask ? 0 : undefined}
+                onClick={onJumpTask ? () => onJumpTask(taskIdFromSubtask(st.id)) : undefined}
+                onKeyDown={onJumpTask ? (e) => { if (e.key === "Enter") onJumpTask(taskIdFromSubtask(st.id)); } : undefined}
+              >
                 <span className={cn("px-1 rounded text-[10px]", statusBadgeClass(st.status))}>{st.status}</span>
                 <span className="text-[var(--text-primary)]">{shortId(st.id)} {truncate(st.description, 30)}</span>
               </div>
@@ -93,10 +109,13 @@ export const WorkersPanel = memo(function WorkersPanel({
   workers,
   tasks,
   stale,
+  onJumpTask,
 }: {
   workers: WorkersData;
   tasks: TasksData;
   stale?: boolean;
+  /** Scroll to task in TasksPanel. ponytail: simple scrollIntoView, no global state. */
+  onJumpTask?: (taskId: string) => void;
 }) {
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
 
@@ -139,6 +158,10 @@ export const WorkersPanel = memo(function WorkersPanel({
             const activeCount = activeSubtasks.filter(
               (s) => s.status === "in_progress" || s.status === "assigned"
             ).length;
+            // ponytail: subtask progress bar — completed/total from all assigned subtasks
+            const subtaskCompleted = activeSubtasks.filter((s) => s.status === "completed").length;
+            const subtaskTotal = activeSubtasks.length;
+            const subtaskPercent = subtaskTotal > 0 ? Math.round((subtaskCompleted / subtaskTotal) * 100) : 0;
             return (
               <li
                 key={w.id}
@@ -163,6 +186,18 @@ export const WorkersPanel = memo(function WorkersPanel({
                         <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded" title={`${activeCount} active subtask(s)`}>
                           {activeCount} active
                         </span>
+                      )}
+                      {/* ponytail: subtask progress micro-bar */}
+                      {subtaskTotal > 0 && (
+                        <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]" title={`${subtaskCompleted}/${subtaskTotal} subtasks completed`}>
+                          <div className="w-16 h-1.5 bg-[var(--bg-surface-alt)] rounded overflow-hidden">
+                            <div
+                              className={cn("h-full rounded", subtaskPercent >= 100 ? "bg-green-500" : subtaskPercent >= 50 ? "bg-cyan-500" : "bg-blue-500")}
+                              style={{ width: `${subtaskPercent}%` }}
+                            />
+                          </div>
+                          <span>{subtaskCompleted}/{subtaskTotal}</span>
+                        </div>
                       )}
                       {w.heartbeat_stale && (
                         <span className="text-yellow-500 text-xs" title="Heartbeat stale">
@@ -203,7 +238,7 @@ export const WorkersPanel = memo(function WorkersPanel({
 
                 {/* Detail expansion */}
                 {expandedWorkerId === w.id && (
-                  <WorkerDetail worker={w} activeSubtasks={activeSubtasks} />
+                  <WorkerDetail worker={w} activeSubtasks={activeSubtasks} onJumpTask={onJumpTask} />
                 )}
               </li>
             );

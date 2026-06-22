@@ -1,4 +1,5 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useMemo, memo, useRef, useCallback, useEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,11 @@ function eventSummary(details: Record<string, unknown>): string {
   return `${first}: ${JSON.stringify(val)}`;
 }
 
+/** ponytail: stable key — timestamp+type is unique per event in practice */
+function eventKey(evt: DashboardEvent): string {
+  return `${evt.timestamp}-${evt.type}`;
+}
+
 export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -73,6 +79,36 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
     }
     return result;
   }, [events, typeFilter, searchQuery]);
+
+  // ── Virtual scrolling + tail mode ──────────────────────
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  const virtualizer = useVirtualizer({
+    count: filteredEvents.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 28, // ponytail: ~28px per row (py-1 + text-xs)
+    overscan: 5,
+  });
+
+  // Detect user scroll: pause auto-scroll when scrolling up
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    setAutoScroll(atBottom);
+  }, []);
+
+  // Auto-scroll to bottom when new events arrive and autoScroll is on
+  useEffect(() => {
+    if (!autoScroll || filteredEvents.length === 0) return;
+    virtualizer.scrollToIndex(filteredEvents.length - 1, { align: "end" });
+  }, [filteredEvents.length, autoScroll, virtualizer]);
+
+  const scrollToLatest = useCallback(() => {
+    setAutoScroll(true);
+    virtualizer.scrollToIndex(filteredEvents.length - 1, { align: "end" });
+  }, [filteredEvents.length, virtualizer]);
 
   return (
     <Card stale={stale}>
@@ -116,26 +152,63 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
           {events.length === 0 ? "No events" : "No matching events"}
         </p>
       ) : (
-        <ul className="space-y-1 max-h-64 overflow-y-auto" aria-label="Event log" aria-live="polite">
-          {filteredEvents.map((evt, i) => (
-            <li
-              key={`${evt.timestamp}-${evt.type}-${i}`}
-              className={cn("flex items-start gap-2 px-2 py-1 rounded text-xs", eventTypeBg(evt.type))}
+        <div className="relative">
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className="max-h-64 overflow-y-auto"
+            aria-label="Event log"
+            aria-live="polite"
+          >
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: "100%",
+                position: "relative",
+              }}
             >
-              <span className="text-[var(--text-muted)] shrink-0 font-mono">
-                {formatTimestamp(evt.timestamp)}
-              </span>
-              <span className={cn("shrink-0 font-medium", eventTypeColor(evt.type))}>
-                {evt.type}
-              </span>
-              {Object.keys(evt.details).length > 0 && (
-                <span className="text-[var(--text-muted)] truncate">
-                  {eventSummary(evt.details)}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+              {virtualizer.getVirtualItems().map((item) => {
+                const evt = filteredEvents[item.index]!;
+                return (
+                  <div
+                    key={eventKey(evt)}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${item.size}px`,
+                      transform: `translateY(${item.start}px)`,
+                    }}
+                    className={cn("flex items-start gap-2 px-2 py-1 text-xs", eventTypeBg(evt.type))}
+                  >
+                    <span className="text-[var(--text-muted)] shrink-0 font-mono">
+                      {formatTimestamp(evt.timestamp)}
+                    </span>
+                    <span className={cn("shrink-0 font-medium", eventTypeColor(evt.type))}>
+                      {evt.type}
+                    </span>
+                    {Object.keys(evt.details).length > 0 && (
+                      <span className="text-[var(--text-muted)] truncate">
+                        {eventSummary(evt.details)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* "Return to latest" button when user scrolled up */}
+          {!autoScroll && (
+            <button
+              onClick={scrollToLatest}
+              className="absolute bottom-1 right-2 text-xs bg-blue-500/80 text-white px-2 py-0.5 rounded hover:bg-blue-500 transition-colors"
+            >
+              ↓ Latest
+            </button>
+          )}
+        </div>
       )}
     </Card>
   );
