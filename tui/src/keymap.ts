@@ -84,6 +84,9 @@ const COMMANDS: KeyCommand[] = [
   {id: 'searchNext', label: 'Next search match', shortLabel: 'N', key: 'N', areas: ['chat'], global: false},
   {id: 'searchPrev', label: 'Previous search match', shortLabel: 'S-N', key: 'Shift+N', areas: ['chat'], global: false},
 
+  // ── Input history search ──
+  {id: 'historySearch', label: 'Search input history', shortLabel: 'C-G', key: 'Ctrl+G', areas: ['input'], global: false},
+
   // ── Overlay (subtask Ctrl+T) ──
   {id: 'overlayUp', label: 'Navigate subtask up', shortLabel: '↑', key: 'Up', areas: [], global: false},
   {id: 'overlayDown', label: 'Navigate subtask down', shortLabel: '↓', key: 'Down', areas: [], global: false},

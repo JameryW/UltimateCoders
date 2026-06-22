@@ -50,6 +50,7 @@ export interface SymbolSet {
 
   // Progress bar
   barFilled: string;
+  barHalf: string;
   barEmpty: string;
 }
 
@@ -74,6 +75,7 @@ const UNICODE: SymbolSet = {
   cross: '✗',
   bullet: '•',
   barFilled: '▓',
+  barHalf: '▒',
   barEmpty: '░',
 };
 
@@ -98,6 +100,7 @@ const ASCII: SymbolSet = {
   cross: 'X',
   bullet: '*',
   barFilled: '#',
+  barHalf: '~',
   barEmpty: '-',
 };
 

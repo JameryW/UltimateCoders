@@ -164,6 +164,13 @@ export interface TuiState {
   searchQuery: string;
   searchActive: boolean;
   searchMatchIndex: number;
+
+  /** StatusBar notification flash (auto-dismisses after 3s). */
+  notification: {text: string; color: string; timestamp: number} | null;
+
+  /** Input history search mode. */
+  historySearchActive: boolean;
+  historySearchQuery: string;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -203,6 +210,9 @@ export const INITIAL_TUI_STATE: TuiState = {
   searchQuery: '',
   searchActive: false,
   searchMatchIndex: 0,
+  notification: null,
+  historySearchActive: false,
+  historySearchQuery: '',
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -272,7 +282,13 @@ export type TuiAction =
   | {type: 'SEARCH_NEXT'}
   | {type: 'SEARCH_PREV'}
   // ── Symbol mode ──
-  | {type: 'SET_SYMBOL_MODE'; mode: SymbolMode};
+  | {type: 'SET_SYMBOL_MODE'; mode: SymbolMode}
+  // ── Notification flash ──
+  | {type: 'SET_NOTIFICATION'; text: string; color: string}
+  | {type: 'CLEAR_NOTIFICATION'}
+  // ── History search ──
+  | {type: 'SET_HISTORY_SEARCH'; active: boolean}
+  | {type: 'SET_HISTORY_SEARCH_QUERY'; query: string};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -659,6 +675,22 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_SYMBOL_MODE':
       return {...state, symbolMode: action.mode};
+
+    // ── Notification flash ──────────────────────────────────────
+
+    case 'SET_NOTIFICATION':
+      return {...state, notification: {text: action.text, color: action.color, timestamp: Date.now()}};
+
+    case 'CLEAR_NOTIFICATION':
+      return {...state, notification: null};
+
+    // ── History search ──────────────────────────────────────────
+
+    case 'SET_HISTORY_SEARCH':
+      return {...state, historySearchActive: action.active, historySearchQuery: action.active ? '' : state.historySearchQuery};
+
+    case 'SET_HISTORY_SEARCH_QUERY':
+      return {...state, historySearchQuery: action.query};
 
     default:
       return state;

@@ -52,6 +52,7 @@ import {
 import {formatTaskEvents} from '../formatters.js';
 import {getSymbols} from '../symbols.js';
 import {getCommandsForArea} from '../keymap.js';
+import {getLayoutMode} from '../statusbar-utils.js';
 import type {SubtaskProto, TaskProto} from '../grpc/types.js';
 import {mapSubtaskStatus, mapTaskStatus} from '../grpc/types.js';
 import {parseCommand, isCommandInput, formatHelpText, matchCommands, COMMANDS} from '../commands.js';
@@ -210,6 +211,16 @@ const App: React.FC = () => {
     const newMessages = formatTaskEvents(newEvents);
     if (newMessages.length > 0) {
       dispatch({type: 'ADD_MESSAGES', messages: newMessages});
+    }
+    // ponytail: dispatch StatusBar notification for key events
+    const notifyTypes = new Set(['subtask_failed', 'task_completed', 'task_failed']);
+    const notifyEvent = [...newEvents].reverse().find(e => notifyTypes.has(e.type));
+    if (notifyEvent) {
+      const color = notifyEvent.type === 'task_completed' ? 'green' : 'red';
+      const text = notifyEvent.type === 'task_completed' ? 'Task completed!'
+        : notifyEvent.type === 'task_failed' ? 'Task failed!'
+        : 'Subtask failed!';
+      dispatch({type: 'SET_NOTIFICATION', text, color});
     }
     // ponytail: stop streaming spinner on terminal task events
     const hasTerminalEvent = newEvents.some(
@@ -505,6 +516,13 @@ const App: React.FC = () => {
     [connectionState, client, addMessage, grpcSubmitTask, clearStreamTask, applySubmitResponse, updateSubtask, state.offlineTimerIds, state.isSubmitting],
   );
 
+  // ── Auto-clear notification after 3s ──
+  useEffect(() => {
+    if (!state.notification) return;
+    const timer = setTimeout(() => dispatch({type: 'CLEAR_NOTIFICATION'}), 3000);
+    return () => clearTimeout(timer);
+  }, [state.notification?.timestamp]);
+
   // ── Global keyboard handler ────────────────────────────
   useInput((input, key) => {
     // ── Ctrl+C / Ctrl+Q: quit (with confirmation if active task) ──
@@ -608,6 +626,12 @@ const App: React.FC = () => {
     // Ctrl+S: toggle search mode (chat focus only)
     if (key.ctrl && input === 's' && state.focusedArea === 'chat') {
       dispatch({type: 'SET_SEARCH_ACTIVE', active: !state.searchActive});
+      return;
+    }
+
+    // Ctrl+G: toggle input history search (input focus only)
+    if (key.ctrl && input === 'g' && state.focusedArea === 'input') {
+      dispatch({type: 'SET_HISTORY_SEARCH', active: !state.historySearchActive});
       return;
     }
 
@@ -802,11 +826,50 @@ const App: React.FC = () => {
             return;
           }
         }
+        // Search query input: when search active, printable chars and backspace update query
+        if (state.searchActive) {
+          if (key.backspace || key.delete) {
+            dispatch({type: 'SET_SEARCH_QUERY', query: state.searchQuery.slice(0, -1)});
+            return;
+          }
+          if (!key.ctrl && !key.meta && input.length === 1) {
+            dispatch({type: 'SET_SEARCH_QUERY', query: state.searchQuery + input});
+            return;
+          }
+        }
         // Enter handled by ChatLog internally (per-message expand)
         break;
       }
 
       case 'input': {
+        // ponytail: intercept keyboard when history search is active
+        if (state.historySearchActive) {
+          if (key.escape) {
+            dispatch({type: 'SET_HISTORY_SEARCH', active: false});
+            return;
+          }
+          if (key.backspace || key.delete) {
+            dispatch({type: 'SET_HISTORY_SEARCH_QUERY', query: state.historySearchQuery.slice(0, -1)});
+            return;
+          }
+          if (key.return) {
+            // Select first matching history entry and apply to input
+            const filtered = state.inputHistory.filter(h =>
+              h.toLowerCase().includes(state.historySearchQuery.toLowerCase()),
+            );
+            if (filtered.length > 0) {
+              dispatch({type: 'SET_HISTORY_SEARCH', active: false});
+              // ponytail: find the index of the first match in inputHistory to set historyIndex
+              const matchIdx = state.inputHistory.indexOf(filtered[0]);
+              if (matchIdx >= 0) dispatch({type: 'SET_HISTORY_INDEX', index: matchIdx});
+            }
+            return;
+          }
+          if (!key.ctrl && !key.meta && input.length === 1) {
+            dispatch({type: 'SET_HISTORY_SEARCH_QUERY', query: state.historySearchQuery + input});
+            return;
+          }
+        }
         break;
       }
     }
@@ -929,32 +992,71 @@ const App: React.FC = () => {
     );
   }
 
-  // ── Render: Main layout (single-column vertical) ──────
+  // ── Render: Main layout ──────────────────────────────
+  const layoutMode = getLayoutMode(terminalWidth);
+  const isWideMode = layoutMode === 'wide' && state.subtasks.length > 0;
+  const chatWidth = isWideMode ? Math.floor(terminalWidth * 0.62) - 3 : terminalWidth - 3;
+  const subtaskWidth = isWideMode ? terminalWidth - chatWidth - 5 : 0;
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" padding={0}>
-      {/* ── Logo banner (full pixel-game UC logo) ── */}
+      {/* ── Logo banner ── */}
       <LogoBanner
         terminalWidth={terminalWidth}
         brandChar={S.brand}
         version={VERSION}
       />
 
-      {/* ── ChatLog (full-width, single column) ──────── */}
-      <ChatLog
-        messages={state.messages}
-        followLog={state.followLog}
-        visibleLines={visibleLines}
-        isFocused={state.focusedArea === 'chat'}
-        eventFilter={state.eventFilter}
-        scrollCommand={scrollCommand}
-        unreadCount={state.unreadCount}
-        onSetFollowLog={addFollowLog}
-        terminalWidth={terminalWidth}
-        messagesTruncated={state.messagesTruncated}
-        searchQuery={state.searchQuery}
-        searchActive={state.searchActive}
-        searchMatchIndex={state.searchMatchIndex}
-      />
+      {/* ── Content: ChatLog + optional SubtaskTree side-by-side ── */}
+      {isWideMode ? (
+        <Box flexDirection="row">
+          <Box flexDirection="column" width={chatWidth}>
+            <ChatLog
+              messages={state.messages}
+              followLog={state.followLog}
+              visibleLines={visibleLines}
+              isFocused={state.focusedArea === 'chat'}
+              eventFilter={state.eventFilter}
+              scrollCommand={scrollCommand}
+              unreadCount={state.unreadCount}
+              onSetFollowLog={addFollowLog}
+              terminalWidth={chatWidth}
+              messagesTruncated={state.messagesTruncated}
+              searchQuery={state.searchQuery}
+              searchActive={state.searchActive}
+              searchMatchIndex={state.searchMatchIndex}
+            />
+          </Box>
+          <Box flexDirection="column" width={1}>
+            <Text color="gray">{S.verticalSep}</Text>
+          </Box>
+          <Box flexDirection="column" width={subtaskWidth}>
+            <SubtaskTree
+              subtasks={state.subtasks}
+              taskDescription={task?.description ?? 'No task'}
+              progress={state.progress}
+              isFocused={false}
+              maxWidth={subtaskWidth}
+            />
+          </Box>
+        </Box>
+      ) : (
+        <ChatLog
+          messages={state.messages}
+          followLog={state.followLog}
+          visibleLines={visibleLines}
+          isFocused={state.focusedArea === 'chat'}
+          eventFilter={state.eventFilter}
+          scrollCommand={scrollCommand}
+          unreadCount={state.unreadCount}
+          onSetFollowLog={addFollowLog}
+          terminalWidth={terminalWidth}
+          messagesTruncated={state.messagesTruncated}
+          searchQuery={state.searchQuery}
+          searchActive={state.searchActive}
+          searchMatchIndex={state.searchMatchIndex}
+        />
+      )}
 
       {/* ── Separator ────────────────────────────────── */}
       <Box width="100%">
@@ -1000,6 +1102,8 @@ const App: React.FC = () => {
         isOffline={connectionState !== 'connected'}
         commandSuggestions={state.commandSuggestions}
         onValueChange={handleInputChange}
+        historySearchActive={state.historySearchActive}
+        historySearchQuery={state.historySearchQuery}
       />
 
       {/* ── Status bar ──────────────────────────────── */}
@@ -1015,6 +1119,7 @@ const App: React.FC = () => {
         terminalWidth={terminalWidth}
         retryCount={retryCount}
         nextRetryAt={nextRetryAt}
+        notification={state.notification}
       />
     </Box>
   );

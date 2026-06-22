@@ -37,6 +37,10 @@ export interface TaskInputProps {
   commandSuggestions?: SlashCommand[] | null;
   /** Called when the input value changes (for slash command detection). */
   onValueChange?: (value: string) => void;
+  /** Whether input history search mode is active. */
+  historySearchActive?: boolean;
+  /** Current history search query. */
+  historySearchQuery?: string;
 }
 
 const TaskInput: React.FC<TaskInputProps> = ({
@@ -49,6 +53,8 @@ const TaskInput: React.FC<TaskInputProps> = ({
   isOffline = false,
   commandSuggestions,
   onValueChange,
+  historySearchActive = false,
+  historySearchQuery = '',
 }) => {
   const [value, setValue] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
@@ -154,21 +160,41 @@ const TaskInput: React.FC<TaskInputProps> = ({
 
   const {line, col} = getLineCol();
 
+  // Compute filtered history for display
+  const filteredHistory = historySearchActive && historySearchQuery
+    ? inputHistory.filter(h => h.toLowerCase().includes(historySearchQuery.toLowerCase()))
+    : historySearchActive
+      ? inputHistory
+      : [];
+
   return (
-    <Box paddingX={1}>
-      <Text color="cyan" bold>
-        {'> '}
-      </Text>
-      <CjkTextInput
-        value={value}
-        onChange={handleChange}
-        onSubmit={handleSubmit}
-        onCursorMove={handleCursorMove}
-        onHistoryNav={handleHistoryNav}
-        tabCompleteCommand={commandSuggestions && commandSuggestions.length > 0 ? commandSuggestions[0].name : null}
-        placeholder={isSubmitting ? 'submitting...' : isOffline ? 'offline demo: type task description...' : 'type task description and press Enter...'}
-        focus={isFocused}
-      />
+    <Box flexDirection="column" paddingX={1}>
+      {historySearchActive && (
+        <Box>
+          <Text color="yellow" bold>{'History: '}</Text>
+          <Text color="yellow">{historySearchQuery || '(type to search)'}</Text>
+          {filteredHistory.length > 0 && (
+            <Text dimColor>{` [${filteredHistory.length} match${filteredHistory.length > 1 ? 'es' : ''}] Enter select · Esc exit`}</Text>
+          )}
+          {filteredHistory.length === 0 && historySearchQuery && (
+            <Text dimColor>{' — no matches'}</Text>
+          )}
+        </Box>
+      )}
+      <Box>
+        <Text color="cyan" bold>
+          {'> '}
+        </Text>
+        <CjkTextInput
+          value={value}
+          onChange={handleChange}
+          onSubmit={handleSubmit}
+          onCursorMove={handleCursorMove}
+          onHistoryNav={handleHistoryNav}
+          tabCompleteCommand={commandSuggestions && commandSuggestions.length > 0 ? commandSuggestions[0].name : null}
+          placeholder={isSubmitting ? 'submitting...' : isOffline ? 'offline demo: type task description...' : 'type task description and press Enter...'}
+          focus={isFocused && !historySearchActive}
+        />
       {isSubmitting && <Text color="yellow">{' [submitting...]'}</Text>}
       {showEmptyHint && !isSubmitting && (
         <Text dimColor>{' ↵ Enter a task description'}</Text>
@@ -182,6 +208,7 @@ const TaskInput: React.FC<TaskInputProps> = ({
       {commandSuggestions && commandSuggestions.length > 0 && !isSubmitting && (
         <Text dimColor>{` ${commandSuggestions.map((c) => `/${c.name}`).join(' ')}`}</Text>
       )}
+      </Box>
     </Box>
   );
 };

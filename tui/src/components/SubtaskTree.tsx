@@ -139,13 +139,31 @@ interface SubtaskRowProps {
   dependedBy?: number[];
 }
 
+// Map status to mini status bar (2 chars)
+const STATUS_BAR: Record<SubtaskStatusType, {filled: number; color: string}> = {
+  pending:    {filled: 0, color: 'gray'},
+  assigned:   {filled: 1, color: 'yellow'},
+  in_progress:{filled: 2, color: 'cyan'},
+  completed:  {filled: 2, color: 'green'},
+  failed:     {filled: 0, color: 'red'},
+  conflicted: {filled: 1, color: 'yellow'},
+};
+
 const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSelected, isFocused, dependedBy}) => {
   const statusConfig = STATUS_CONFIG[subtask.status] ?? STATUS_CONFIG.pending;
   const icon = symbols[statusConfig.symbolKey];
+  const barCfg = STATUS_BAR[subtask.status] ?? STATUS_BAR.pending;
 
-  // Calculate available width for description: subtract icon + index + padding
-  // "◉ 1. " = icon(2) + space(1) + number(~2) + dot(1) + space(1) ≈ 7 display cols
-  const descWidth = Math.max(10, maxWidth - 7);
+  // Build 2-char status bar
+  const barStr = barCfg.filled === 0
+    ? `${symbols.barEmpty}${symbols.barEmpty}`
+    : barCfg.filled === 1
+      ? `${symbols.barHalf}${symbols.barEmpty}`
+      : `${symbols.barFilled}${symbols.barFilled}`;
+
+  // Calculate available width for description: subtract icon + bar + index + padding
+  // "▸ ◉ ▓▓ 1. " = selectPrefix(2) + icon(2) + space(1) + bar(2) + space(1) + number(~2) + dot(1) + space(1) ≈ 12
+  const descWidth = Math.max(10, maxWidth - 12);
   const truncatedDesc = truncateToWidth(subtask.description, descWidth);
 
   // Selection indicator: "▸" for selected row when subtask tree is focused
@@ -160,6 +178,7 @@ const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSe
       >
         {`${selectPrefix}${icon} `}
       </Text>
+      <Text color={barCfg.color}>{`${barStr} `}</Text>
       <Text
         bold={isSelected && isFocused}
         dimColor={subtask.status === 'pending' && !(isSelected && isFocused)}

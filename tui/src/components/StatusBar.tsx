@@ -53,6 +53,8 @@ export interface StatusBarProps {
   retryCount?: number;
   /** Timestamp of next scheduled retry. */
   nextRetryAt?: number | null;
+  /** Notification flash (auto-dismisses after 3s). */
+  notification?: {text: string; color: string; timestamp: number} | null;
 }
 
 const FOCUS_LABELS: Record<FocusedArea, string> = {
@@ -293,6 +295,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
   terminalWidth = 80,
   retryCount = 0,
   nextRetryAt = null,
+  notification,
 }) => {
   const isRetrying = connectionState === 'error' && retryCount > 0;
   // Drive 1-second re-renders when retrying, so countdown updates visually
@@ -337,24 +340,35 @@ const StatusBar: React.FC<StatusBarProps> = ({
 
   return (
     <Box flexDirection="column">
+      {notification && (
+        <Box paddingX={1}>
+          <Text color={notification.color} bold>{`⚠ ${notification.text}`}</Text>
+        </Box>
+      )}
       <Box paddingX={1}>
         {visibleSegments.map((seg) => (
           <React.Fragment key={seg.id}>{seg.render()}</React.Fragment>
         ))}
       </Box>
-      {/* ponytail: expanded worker detail — shown below status line when toggled */}
+      {/* ponytail: expanded worker detail — bar chart showing load per worker */}
       {workersExpanded && workerSummary && workerSummary.entries.length > 0 && workerSegVisible && (
         <Box paddingX={1} marginTop={0}>
-          <Text dimColor>{'  Workers: '}</Text>
-          {workerSummary.entries.map((w, i) => (
-            <React.Fragment key={w.workerId}>
-              {i > 0 && <Text dimColor>{', '}</Text>}
-              <Text color={w.activeSubtaskCount > 0 ? 'cyan' : 'gray'}>
-                {w.workerId.length > 8 ? w.workerId.slice(0, 8) + '…' : w.workerId}
-              </Text>
-              <Text dimColor>{`(${w.activeSubtaskCount})`}</Text>
-            </React.Fragment>
-          ))}
+          <Text dimColor>{'  '}</Text>
+          {workerSummary.entries.map((w, i) => {
+            const maxCount = Math.max(...workerSummary!.entries.map(e => e.activeSubtaskCount), 1);
+            const barWidth = 4;
+            const filled = Math.round((w.activeSubtaskCount / maxCount) * barWidth);
+            const empty = barWidth - filled;
+            const bar = S.barFilled.repeat(filled) + S.barEmpty.repeat(empty);
+            return (
+              <React.Fragment key={w.workerId}>
+                {i > 0 && <Text dimColor>{'  '}</Text>}
+                <Text dimColor>{w.workerId.length > 5 ? w.workerId.slice(0, 5) : w.workerId}</Text>
+                <Text color={w.activeSubtaskCount > 0 ? 'cyan' : 'gray'}>{` ${bar}`}</Text>
+                <Text dimColor>{` ${w.activeSubtaskCount}`}</Text>
+              </React.Fragment>
+            );
+          })}
         </Box>
       )}
     </Box>
