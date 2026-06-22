@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 37
 - **Last Active**: 2026-06-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1171 | Active |
+| `journal-1.md` | ~1303 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 37 | 2026-06-21 | apply_update full upsert for dual-state sync | `8dbb329` | `feat/dashboard-file-browser` |
+| 36 | 2026-06-21 | TUI reconnect state restoration | `39669b9` | `feat/dashboard-file-browser` |
+| 35 | 2026-06-21 | Fix Orchestrator-Worker interaction bugs | `b6d3c46` | `feat/dashboard-file-browser` |
+| 34 | 2026-06-21 | Merge dashboard branch conflicts + finish fix-dashboard task | `b865d44` | `feat/dashboard-file-browser` |
 | 33 | 2026-06-21 | Archive 3 completed tasks: fix-10, rust-python-agent-grpc, merge-2-main | `db444ba`, `845369a`, `4c27bf9` | `feat/dashboard-file-browser` |
 | 32 | 2026-06-19 | Fix PR90 CI: TaskStore::with_backend missing | `7bbadde` | `feat/pr14-agent-capabilities` |
 | 31 | 2026-06-18 | PR82 conflict resolution + ruff lint fixes | `3e57111` | `feat/tui-interaction-polish` |

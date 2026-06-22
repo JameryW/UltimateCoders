@@ -273,6 +273,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
             description: s.description,
             status: s.status,
             dependsOn: [...s.dependsOn],
+            assignedWorker: s.assignedWorker ?? undefined,
           })),
         };
       } catch (err: unknown) {
@@ -322,6 +323,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
           description: s.description,
           status: s.status,
           depends_on: [...s.dependsOn],
+          assigned_worker: s.assignedWorker ?? undefined,
         })),
         // #12: Safe bigint conversion using bigintToISO helper
         created_at: bigintToISO(t.createdAt),

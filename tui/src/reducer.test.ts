@@ -609,3 +609,74 @@ describe('task list and command suggestions', () => {
     expect(INITIAL_TUI_STATE.commandSuggestions).toBeNull();
   });
 });
+
+// ── SYNC_TASKS ──────────────────────────────────────────────
+
+describe('tuiReducer: SYNC_TASKS', () => {
+  const makeResponse = (tasks: any[]) => ({
+    available: true,
+    tasks,
+    total: tasks.length,
+    statusCounts: {},
+  });
+
+  it('updates taskList from server response', () => {
+    const tasks = [{id: 't1', description: 'test', status: 'InProgress', projectId: 'default', subtaskCount: 2, createdAt: 0, updatedAt: 0, subtasks: []}];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SYNC_TASKS', response: makeResponse(tasks), activeTaskId: null});
+    expect(state.taskList).toHaveLength(1);
+    expect(state.taskListLoading).toBe(false);
+  });
+
+  it('reconciles subtasks for active task from server', () => {
+    const subtasks = [
+      {id: 'st1', description: 'sub1', status: 'Completed', dependsOn: [], assignedWorker: 'w1'},
+      {id: 'st2', description: 'sub2', status: 'InProgress', dependsOn: ['st1'], assignedWorker: 'w2'},
+    ];
+    const tasks = [{id: 't1', description: 'test', status: 'InProgress', projectId: 'default', subtaskCount: 2, createdAt: 0, updatedAt: 0, subtasks}];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SYNC_TASKS', response: makeResponse(tasks), activeTaskId: 't1'});
+    expect(state.subtasks).toHaveLength(2);
+    expect(state.subtasks[0].status).toBe('completed');
+    expect(state.subtasks[1].status).toBe('in_progress');
+    expect(state.subtasks[1].dependsOn).toEqual(['st1']);
+    expect(state.progress).toEqual({completed: 1, total: 2});
+  });
+
+  it('clears activeTaskId if task no longer exists on server', () => {
+    const stateWithActive = {...INITIAL_TUI_STATE, activeTaskId: 't-gone', subtasks: [{id: 'st1', index: 1, description: 'old', status: 'pending' as const}], progress: {completed: 0, total: 1}};
+    const tasks = [{id: 't-other', description: 'other', status: 'InProgress', projectId: 'default', subtaskCount: 0, createdAt: 0, updatedAt: 0, subtasks: []}];
+    const state = tuiReducer(stateWithActive, {type: 'SYNC_TASKS', response: makeResponse(tasks), activeTaskId: 't-gone'});
+    expect(state.activeTaskId).toBeNull();
+    expect(state.subtasks).toEqual([]);
+    expect(state.progress).toEqual({completed: 0, total: 0});
+  });
+
+  it('preserves progress object when values are unchanged', () => {
+    const progress = {completed: 1, total: 2};
+    const subtasks = [
+      {id: 'st1', description: 'sub1', status: 'Completed', dependsOn: [], assignedWorker: 'w1'},
+      {id: 'st2', description: 'sub2', status: 'InProgress', dependsOn: [], assignedWorker: undefined},
+    ];
+    const tasks = [{id: 't1', description: 'test', status: 'InProgress', projectId: 'default', subtaskCount: 2, createdAt: 0, updatedAt: 0, subtasks}];
+    const stateWithActive = {...INITIAL_TUI_STATE, activeTaskId: 't1', progress};
+    const state = tuiReducer(stateWithActive, {type: 'SYNC_TASKS', response: makeResponse(tasks), activeTaskId: 't1'});
+    // Same completed/total — should reuse the same object reference
+    expect(state.progress).toBe(progress);
+  });
+
+  it('is no-op when response.available is false', () => {
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SYNC_TASKS', response: {available: false, tasks: [], total: 0, statusCounts: {}}, activeTaskId: null});
+    expect(state.taskList).toEqual([]);
+  });
+
+  it('does not modify subtasks when no activeTaskId', () => {
+    const subtasks = [
+      {id: 'st1', description: 'sub1', status: 'Completed', dependsOn: [], assignedWorker: 'w1'},
+    ];
+    const tasks = [{id: 't1', description: 'test', status: 'InProgress', projectId: 'default', subtaskCount: 1, createdAt: 0, updatedAt: 0, subtasks}];
+    const state = tuiReducer(INITIAL_TUI_STATE, {type: 'SYNC_TASKS', response: makeResponse(tasks), activeTaskId: null});
+    // No active task — subtasks should remain empty
+    expect(state.subtasks).toEqual([]);
+    // But taskList should still be updated
+    expect(state.taskList).toHaveLength(1);
+  });
+});

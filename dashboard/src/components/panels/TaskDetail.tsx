@@ -185,7 +185,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailP
           <p className="text-[var(--text-primary)] font-medium mb-1">Subtasks:</p>
           <div className="space-y-0.5">
             {subtasks.map((st) => (
-              <div key={st.id} className="flex items-center justify-between">
+              <div key={st.id} className="flex items-center justify-between gap-1">
                 <span className="truncate max-w-[200px]">
                   {truncate(st.description, 50)}
                   {st.depends_on.length > 0 && (
@@ -194,9 +194,16 @@ export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailP
                     </span>
                   )}
                 </span>
-                <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
-                  {st.status}
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  {st.assigned_worker && (
+                    <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono" title={`Worker: ${st.assigned_worker}`}>
+                      {shortId(st.assigned_worker)}
+                    </span>
+                  )}
+                  <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
+                    {st.status}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

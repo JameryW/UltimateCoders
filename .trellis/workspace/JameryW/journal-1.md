@@ -1169,3 +1169,135 @@ Archived 3 tasks whose work is merged to main: fix-10 (前后端交互深度问�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Merge dashboard branch conflicts + finish fix-dashboard task
+
+**Date**: 2026-06-21
+**Task**: Merge dashboard branch conflicts + finish fix-dashboard task
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+解决 feat/dashboard-file-browser 与 main 的合并冲突（App.tsx: 保留HEAD布局+内联提交+Header完整props，合入main的disconnect+ConnectionIndicator；trellis workspace文件取main版本），推送PR #111，归档 06-21-fix-dashboard 任务
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b865d44` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 35: Fix Orchestrator-Worker interaction bugs
+
+**Date**: 2026-06-21
+**Task**: Fix Orchestrator-Worker interaction bugs
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Fix 4 issues in the Orchestrator-Worker interaction chain: (1) Task ID split-brain between Python and Rust task stores — removed redundant engine.submit_task() call; (2) Race condition in _execute_subtasks — replaced ASSIGNED→PENDING flip with seen-set dedup; (3) Private method call — added SandboxManager.execute_decompose() public API; (4) O(n×m) subtask lookup — added _subtask_index reverse index with linear-scan fallback. Broadcast backpressure (#5) already implemented in Rust. All tests pass.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b6d3c46` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 36: TUI reconnect state restoration
+
+**Date**: 2026-06-21
+**Task**: TUI reconnect state restoration
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Added TUI reconnect state restoration: sync_required events and reconnection trigger listTasks RPC to reconcile task/subtask state. Added SYNC_TASKS reducer action, reconnection effect, and 6 reducer tests. Pattern mirrors Dashboard's existing sync_required handling.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `39669b9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 37: apply_update full upsert for dual-state sync
+
+**Date**: 2026-06-21
+**Task**: apply_update full upsert for dual-state sync
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Extended NatsSubtaskUpdate with description/depends_on fields, made apply_update do full upsert (existing subtasks get updated description/depends_on/result, new subtasks use provided values instead of empty defaults), extended Python payload to include new fields. 4 new Rust tests for backward compat and upsert scenarios.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8dbb329` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,4 +1,4 @@
-"""NATS Worker — bridges gRPC TaskService with Python Orchestrator.
+"""NATS Worker -- bridges gRPC TaskService with Python Orchestrator.
 
 Long-running process that:
 1. Subscribes to ``uc.task.submit`` (published by the Rust gRPC server)
@@ -51,6 +51,7 @@ NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
 NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
 NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
+NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
 
 # ── Payload types ───────────────────────────────────────────────
 
@@ -70,6 +71,8 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         entry: dict[str, Any] = {
             "subtask_id": st.id,
             "status": _subtask_status_to_nats(st.status),
+            "description": st.description,
+            "depends_on": st.depends_on,
         }
         if st.assigned_worker is not None:
             entry["assigned_worker"] = st.assigned_worker
@@ -237,10 +240,12 @@ class NatsWorker:
         self,
         nats_url: str = "nats://localhost:4222",
         project_path: str = "",
+        mode: str = "default",
     ) -> None:
         self._nats_url = nats_url
         self._project_path = project_path
         self._consumer_id = str(uuid.uuid4())
+        self._mode = mode  # "default" or "worker"
 
         # Will be initialized in start()
         self._nc: NatsClient | None = None
@@ -254,12 +259,16 @@ class NatsWorker:
         self._running = False
 
     async def start(self) -> None:
-        """Connect to NATS, initialize Engine/Orchestrator/Worker,
-        subscribe to ``uc.task.submit``, and start the heartbeat loop."""
+        """Connect to NATS, initialize components, and subscribe.
+
+        Mode "default": subscribe to uc.task.submit + uc.task.event + uc.dashboard.>
+        Mode "worker": subscribe to uc.subtask.execute (queue group) only
+        """
         logger.info(
-            "Starting NatsWorker (consumer_id=%s, nats_url=%s)",
+            "Starting NatsWorker (consumer_id=%s, nats_url=%s, mode=%s)",
             self._consumer_id,
             self._nats_url,
+            self._mode,
         )
 
         # Connect to NATS with retry
@@ -271,30 +280,52 @@ class NatsWorker:
         # Initialize Engine, Orchestrator, Worker
         await self._init_components()
 
-        # Subscribe to uc.task.submit
-        sub = await self._nc.subscribe(
-            NATS_SUBJECT_TASK_SUBMIT,
-            cb=self._handle_submit,
-        )
-        self._subscriptions.append(sub)
-        logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SUBMIT)
+        if self._mode == "worker":
+            # Worker mode: subscribe to subtask execution via queue group
+            sub = await self._nc.subscribe(
+                NATS_SUBJECT_SUBTASK_EXECUTE,
+                queue="workers",
+                cb=self._handle_subtask_execute,
+            )
+            self._subscriptions.append(sub)
+            logger.info(
+                "Subscribed to %s (queue group: workers)",
+                NATS_SUBJECT_SUBTASK_EXECUTE,
+            )
+        else:
+            # Default mode: full Orchestrator consumer
+            # Subscribe to uc.task.submit
+            sub = await self._nc.subscribe(
+                NATS_SUBJECT_TASK_SUBMIT,
+                cb=self._handle_submit,
+            )
+            self._subscriptions.append(sub)
+            logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SUBMIT)
 
-        # Subscribe to Dashboard passthrough RPCs (uc.dashboard.>)
-        dash_sub = await self._nc.subscribe(
-            "uc.dashboard.>",
-            cb=self._handle_dashboard_request,
-        )
-        self._subscriptions.append(dash_sub)
-        logger.info("Subscribed to uc.dashboard.>")
+            # Subscribe to Dashboard passthrough RPCs (uc.dashboard.>)
+            dash_sub = await self._nc.subscribe(
+                "uc.dashboard.>",
+                cb=self._handle_dashboard_request,
+            )
+            self._subscriptions.append(dash_sub)
+            logger.info("Subscribed to uc.dashboard.>")
 
-        # Start heartbeat loop
+            # Subscribe to uc.task.event (pause/resume from Rust gRPC server)
+            event_sub = await self._nc.subscribe(
+                NATS_SUBJECT_TASK_EVENT,
+                cb=self._handle_task_event,
+            )
+            self._subscriptions.append(event_sub)
+            logger.info("Subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+
+            # Start dashboard snapshot publisher
+            self._snapshot_task = asyncio.create_task(self._snapshot_loop())
+
+        # Start heartbeat loop (both modes)
         self._running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
-        # Start dashboard snapshot publisher
-        self._snapshot_task = asyncio.create_task(self._snapshot_loop())
-
-        logger.info("NatsWorker started and ready")
+        logger.info("NatsWorker started and ready (mode=%s)", self._mode)
 
     async def stop(self) -> None:
         """Gracefully shut down the worker."""
@@ -341,7 +372,7 @@ class NatsWorker:
 
     async def _init_components(self) -> None:
         """Initialize Engine, Orchestrator, and Worker."""
-        # Engine (local mode — shared with Orchestrator/Worker)
+        # Engine (local mode -- shared with Orchestrator/Worker)
         try:
             self._engine = Engine(mode="local")
             logger.info("Engine initialized (local mode)")
@@ -496,19 +527,28 @@ class NatsWorker:
 
         max_iterations = len(task.subtasks) * 2 + 1  # safety limit
         for _ in range(max_iterations):
-            # Collect ALL ready subtasks (not just one)
-            ready_subtasks: list[Subtask] = []
+            # Refresh task state -- a pause/resume NATS event may have
+            # changed the status between iterations.
+            updated = self._orchestrator.get_task_status(task.id)
+            if updated is not None:
+                task = updated
+            if task.status in (TaskStatus.PAUSED, TaskStatus.COMPLETED, TaskStatus.FAILED):
+                break
+
+            # Collect ready subtask IDs (not objects -- avoid stale refs).
+            # Use a seen set so select_next_subtask doesn't return
+            # the same subtask twice within this iteration.
+            ready_ids: list[str] = []
+            seen: set[str] = set()
             while True:
                 next_st = self._orchestrator.select_next_subtask(task)
-                if next_st is None:
+                if next_st is None or next_st.id in seen:
                     break
-                ready_subtasks.append(next_st)
-                # Temporarily mark as assigned so select_next_subtask
-                # doesn't return it again
-                next_st.status = SubtaskStatus.ASSIGNED
+                seen.add(next_st.id)
+                ready_ids.append(next_st.id)
 
-            if not ready_subtasks:
-                # No more ready subtasks — either all done or blocked
+            if not ready_ids:
+                # No more ready subtasks -- either all done or blocked
                 in_progress = any(
                     st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks
                 )
@@ -523,11 +563,23 @@ class NatsWorker:
 
             # Execute ready subtasks concurrently (bounded by capacity)
             capacity = self._worker.max_capacity
-            batch = ready_subtasks[:capacity]
+            batch_ids = ready_ids[:capacity]
 
-            async def _run_one(st: Subtask) -> SubtaskResult:
+            async def _run_one(subtask_id: str) -> SubtaskResult:
                 """Assign, execute, and report a single subtask."""
-                st.status = SubtaskStatus.PENDING
+                # Look up fresh subtask from current task state
+                st = None
+                for s in task.subtasks:
+                    if s.id == subtask_id:
+                        st = s
+                        break
+                if st is None:
+                    return SubtaskResult(
+                        subtask_id=subtask_id,
+                        worker_id=self._worker.worker_id,
+                        summary="Subtask not found",
+                        success=False,
+                    )
                 wid = await self._orchestrator.assign_subtask(
                     st, self._worker.worker_id,
                 )
@@ -549,7 +601,7 @@ class NatsWorker:
 
             # Run batch concurrently
             results = await asyncio.gather(
-                *[_run_one(st) for st in batch],
+                *[_run_one(sid) for sid in batch_ids],
                 return_exceptions=True,
             )
 
@@ -558,7 +610,7 @@ class NatsWorker:
                 if isinstance(r, Exception):
                     logger.error(
                         "Subtask %s raised exception: %s",
-                        batch[i].id, r, exc_info=True,
+                        batch_ids[i], r, exc_info=True,
                     )
 
             # Refresh task state
@@ -566,8 +618,8 @@ class NatsWorker:
             if updated_task is not None:
                 task = updated_task
 
-            # If task is complete or failed, stop
-            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            # If task is complete, failed, or paused, stop
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED):
                 break
 
     # ── Heartbeat loop ───────────────────────────────────────────
@@ -585,6 +637,155 @@ class NatsWorker:
                 logger.warning("Heartbeat publish failed", exc_info=True)
 
             await asyncio.sleep(30.0)
+
+    # ── Worker mode: subtask execution handler ────────────────────
+
+    async def _handle_subtask_execute(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.subtask.execute`` messages (Worker mode only).
+
+        Consumed via NATS queue group ``workers`` so each subtask is
+        processed by exactly one worker.  Executes the subtask in a
+        sandbox and publishes the result via ``uc.task.update``.
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.warning("Failed to parse uc.subtask.execute message", exc_info=True)
+            return
+
+        task_id = data.get("task_id", "")
+        subtask_id = data.get("subtask_id", "")
+        description = data.get("description", "")
+        timeout_seconds = data.get("timeout_seconds", 600)
+
+        if not task_id or not subtask_id:
+            logger.warning("uc.subtask.execute missing task_id or subtask_id")
+            return
+
+        logger.info(
+            "Executing subtask %s (task %s): %s",
+            subtask_id[:8],
+            task_id[:8],
+            description[:60],
+        )
+
+        if self._worker is None:
+            logger.error("No worker initialized, cannot execute subtask")
+            return
+
+        # Build a Subtask object for Worker.execute_subtask
+        from ultimate_coders.agent.types import SubtaskStatus
+
+        subtask = Subtask(
+            id=subtask_id,
+            parent_id=task_id,
+            description=description,
+            status=SubtaskStatus.PENDING,
+            assigned_worker=self._worker.worker_id,
+            depends_on=[],
+            file_constraints=data.get("file_constraints", []),
+            expected_output=data.get("expected_output", ""),
+            timeout_seconds=timeout_seconds,
+        )
+
+        try:
+            result = await self._worker.execute_subtask(subtask)
+        except Exception as e:
+            logger.error(
+                "Subtask %s execution failed: %s", subtask_id, e, exc_info=True,
+            )
+            # Report failure via uc.task.update
+            if self._publisher is not None:
+                await self._publisher.publish_update(
+                    self._make_subtask_result_task(
+                        task_id, subtask_id, "Failed", str(e)[:200],
+                    ),
+                )
+            return
+
+        # Publish result via uc.task.update
+        if self._publisher is not None:
+            status = "Completed" if result.success else "Failed"
+            summary = result.summary[:200] if result.summary else ""
+            await self._publisher.publish_update(
+                self._make_subtask_result_task(
+                    task_id, subtask_id, status, summary,
+                ),
+            )
+
+        logger.info(
+            "Subtask %s %s",
+            subtask_id[:8],
+            "completed" if result.success else "failed",
+        )
+
+    def _make_subtask_result_task(
+        self, task_id: str, subtask_id: str, status: str, summary: str,
+    ) -> Task:
+        """Build a minimal Task object for publishing subtask result via NatsPublisher.
+
+        NatsPublisher.publish_update() needs a Task with subtasks, so we
+        construct a lightweight one with just the result subtask.
+        """
+        from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
+
+        st_status = SubtaskStatus.COMPLETED if status == "Completed" else SubtaskStatus.FAILED
+        st = Subtask(
+            id=subtask_id,
+            parent_id=task_id,
+            description="",
+            status=st_status,
+            assigned_worker=self._worker.worker_id if self._worker else "",
+            depends_on=[],
+            file_constraints=[],
+            expected_output="",
+            result=SubtaskResult(
+                subtask_id=subtask_id,
+                worker_id=self._worker.worker_id if self._worker else "",
+                modified_files=[],
+                summary=summary,
+                success=status == "Completed",
+            ) if summary else None,
+        )
+        return Task(
+            id=task_id,
+            description="",
+            project_id="",
+            status=TaskStatus.IN_PROGRESS,
+            subtasks=[st],
+        )
+
+    async def _handle_task_event(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.task.event`` messages from NATS.
+
+        Currently processes ``task_paused`` and ``task_resumed`` events
+        originated by the Rust gRPC server.  Uses Orchestrator._local
+        methods to avoid a feedback loop (Python->Rust->NATS->Python).
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.warning("Failed to parse uc.task.event message", exc_info=True)
+            return
+
+        event_type = data.get("type", "")
+        task_id = data.get("task_id", "")
+
+        if not task_id:
+            logger.warning("uc.task.event missing task_id, ignoring")
+            return
+
+        if self._orchestrator is None:
+            logger.debug("No orchestrator, ignoring uc.task.event %s", event_type)
+            return
+
+        if event_type == "task_paused":
+            self._orchestrator.pause_task_local(task_id)
+        elif event_type == "task_resumed":
+            self._orchestrator.resume_task_local(task_id)
+        else:
+            # Other event types are handled by the Rust NATS subscriber
+            logger.debug("Ignoring uc.task.event type=%s", event_type)
 
     # ── Dashboard NATS request-reply handlers ──────────────────────
 
@@ -828,11 +1029,27 @@ class NatsWorker:
 
 
 async def main() -> None:
-    """Entry point for ``python -m ultimate_coders.nats_worker``."""
+    """Entry point for ``python -m ultimate_coders.nats_worker``.
+
+    Supports ``--mode worker`` to start in distributed Worker mode
+    (subscribes to ``uc.subtask.execute`` via NATS queue group).
+    Default mode is the full Orchestrator consumer.
+    """
+    import argparse
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    parser = argparse.ArgumentParser(description="UltimateCoders NATS Worker")
+    parser.add_argument(
+        "--mode",
+        choices=["default", "worker"],
+        default="default",
+        help="Run mode: 'default' (Orchestrator consumer) or 'worker' (subtask executor)",
+    )
+    args = parser.parse_args()
 
     nats_url = os.environ.get("UC_NATS_URL", "nats://localhost:4222")
     project_path = os.environ.get("UC_PROJECT_PATH", os.getcwd())
@@ -840,6 +1057,7 @@ async def main() -> None:
     worker = NatsWorker(
         nats_url=nats_url,
         project_path=project_path,
+        mode=args.mode,
     )
 
     # Graceful shutdown on SIGINT/SIGTERM

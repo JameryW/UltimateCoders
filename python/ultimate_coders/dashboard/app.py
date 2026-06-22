@@ -52,6 +52,7 @@ NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
 NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
 NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
+NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
 
 
 class DashboardApp:

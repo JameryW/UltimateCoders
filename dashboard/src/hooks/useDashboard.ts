@@ -137,6 +137,7 @@ export function useDashboard() {
             description: String(s.description ?? ""),
             status: String(s.status ?? "pending"),
             depends_on: (s.depends_on as string[]) ?? [],
+            assigned_worker: s.assigned_worker ? String(s.assigned_worker) : undefined,
           })) ?? [];
           const tasks = [
             {
@@ -393,9 +394,11 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   if (!newStatus) return subtasks;
 
   const existing = subtasks.find((s) => s.id === sid);
+  // ponytail: carry assigned_worker from event data (set by subtask_assigned/subtask_started)
+  const evWorker = ev.data.assigned_worker ? String(ev.data.assigned_worker) : undefined;
   if (existing) {
     return subtasks.map((s) =>
-      s.id === sid ? { ...s, status: newStatus } : s,
+      s.id === sid ? { ...s, status: newStatus, assigned_worker: evWorker ?? s.assigned_worker } : s,
     );
   }
   return [
@@ -405,6 +408,7 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
       description: String(ev.data.description ?? ""),
       status: newStatus,
       depends_on: (ev.data.depends_on as string[]) ?? [],
+      assigned_worker: evWorker,
     },
   ];
 }

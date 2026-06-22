@@ -21,7 +21,8 @@ import type {ChatMessage} from './components/ChatLog.js';
 import type {SubtaskItem, SubtaskStatusType} from './components/SubtaskTree.js';
 import type {SymbolMode} from './symbols.js';
 import type {SlashCommand} from './commands.js';
-import type {TaskProto} from './grpc/types.js';
+import type {ListTasksResponse, TaskProto} from './grpc/types.js';
+import {mapSubtaskStatus} from './grpc/types.js';
 
 // ── Focus & Layout Types ────────────────────────────────────
 
@@ -247,6 +248,8 @@ export type TuiAction =
   | {type: 'SET_TASK_LIST_LOADING'; loading: boolean}
   | {type: 'TOGGLE_TASK_LIST_OVERLAY'}
   | {type: 'SELECT_TASK_LIST'; index: number}
+  // ── Sync (reconnect / sync_required) ──
+  | {type: 'SYNC_TASKS'; response: ListTasksResponse; activeTaskId: string | null}
   // ── Command suggestions ──
   | {type: 'SET_COMMAND_SUGGESTIONS'; suggestions: SlashCommand[] | null}
   // ── Exit confirm ──
@@ -546,6 +549,49 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SELECT_TASK_LIST':
       return {...state, selectedTaskListIndex: action.index};
+
+    // ── Sync (reconnect / sync_required) ───────────────────────
+
+    case 'SYNC_TASKS': {
+      const {response, activeTaskId} = action;
+      if (!response.available) return state;
+
+      // Always update the task list overlay data
+      let next = {...state, taskList: response.tasks, taskListLoading: false};
+
+      // If there is an active task, reconcile its subtasks from server data.
+      // This replaces local subtask state with the server's view, which is the
+      // authoritative source after a disconnect or sync_required event.
+      if (activeTaskId) {
+        const serverTask = response.tasks.find((t) => t.id === activeTaskId);
+        if (serverTask && serverTask.subtasks && serverTask.subtasks.length > 0) {
+          const items: SubtaskItem[] = serverTask.subtasks.map((st, idx) => ({
+            id: st.id,
+            index: idx + 1,
+            description: st.description,
+            status: mapSubtaskStatus(st.status),
+            assignedWorker: st.assignedWorker,
+            dependsOn: st.dependsOn,
+          }));
+          const completed = items.filter((s) => s.status === 'completed').length;
+          const total = items.length;
+          const progress = state.progress.completed === completed && state.progress.total === total
+            ? state.progress
+            : {completed, total};
+          next = {...next, subtasks: items, progress};
+        } else if (!serverTask) {
+          // Active task no longer exists on server — clear it
+          next = {
+            ...next,
+            activeTaskId: null,
+            subtasks: [],
+            progress: {completed: 0, total: 0},
+          };
+        }
+      }
+
+      return next;
+    }
 
     // ── Command suggestions ───────────────────────────────────
 

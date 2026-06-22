@@ -20,7 +20,7 @@
 |---------|-----------|---------|
 | `uc.task.submit` | gRPC/Dashboard → Python | New task submission |
 | `uc.task.update` | Python → gRPC | Task/subtask status update |
-| `uc.task.event` | Python → gRPC | Real-time execution event |
+| `uc.task.event` | Python → gRPC, gRPC → Python | Real-time execution event + pause/resume status change |
 | `uc.heartbeat` | Python → gRPC | Consumer heartbeat |
 
 ### Rust NATS Protocol Types (`crates/uc-grpc/src/server.rs`)
@@ -118,15 +118,25 @@ class NatsPublisher:
 
 ### Event Type Mapping
 
-| Python event_type | Rust `AgentEventType` variant |
-|-------------------|-------------------------------|
-| `task_submitted` | `TaskCreated` |
-| `subtask_assigned` | `SubtaskAssigned` |
-| `subtask_completed` | — (via `uc.task.update`) |
-| `subtask_failed` | — (via `uc.task.update`) |
-| `task_completed` | — (via `uc.task.update`) |
-| `tool_call` | — (stored in event log) |
-| `llm_request` | — (stored in event log) |
+| Python event_type | Rust `AgentEventType` variant | Direction |
+|-------------------|-------------------------------|-----------|
+| `task_submitted` | `TaskCreated` | Python → gRPC |
+| `task_paused` | `TaskPaused` | gRPC → Python |
+| `task_resumed` | `TaskResumed` | gRPC → Python |
+| `subtask_assigned` | `SubtaskAssigned` | Python → gRPC |
+| `subtask_completed` | — (via `uc.task.update`) | — |
+| `subtask_failed` | — (via `uc.task.update`) | — |
+| `task_completed` | — (via `uc.task.update`) | — |
+| `tool_call` | — (stored in event log) | Python → gRPC |
+| `llm_request` | — (stored in event log) | Python → gRPC |
+
+### Pause/Resume Loop Prevention
+
+When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
+
+1. **Rust dedup**: `publish_task_status_event` pre-registers `message_id` in TaskStore's dedup map before NATS publish, so the NATS subscriber's `check_and_record_message_id()` skips the echo
+2. **Python `_local` methods**: `Orchestrator.pause_task_local()`/`resume_task_local()` update local state only — no `engine.pause_task()` call, no NATS publish
+3. **Idempotent guard**: If task is already in target state (e.g. already Paused when `task_paused` arrives), `_local` method returns False and does nothing
 
 ---
 
@@ -280,13 +290,14 @@ self._app.add_event_handler("startup", self._subscribe_nats_events)
 
 ```
 TUI (Ink/React)
-    ↓ gRPC
+    ↓ gRPC (PauseTask/ResumeTask)
 Rust gRPC Server ←→ NATS JetStream ←→ Python nats_worker
-    ↑ TaskStore            ↑                 ↓
-    │ (subscribe)     (publish)        Orchestrator + Worker
+    ↑ TaskStore            ↑  ↓              ↓
+    │ (subscribe)     (publish) (subscribe)  Orchestrator + Worker
     │                                     ↓
     └─── uc.task.update ◄──────── NATS ◄──┘
-    └─── uc.task.event  ◄──────── NATS ◄──┘
+    └─── uc.task.event  ◄──────── NATS ◄──┘  (Python → gRPC)
+    └─── uc.task.event  ────────► NATS ──►  (gRPC → Python: task_paused/task_resumed)
     └─── uc.heartbeat   ◄──────── NATS ◄──┘
 
 Dashboard (FastAPI)

@@ -4,6 +4,7 @@
 //! Orchestrator, which holds workers/scheduler/circuit-breaker state in memory.
 //! When NATS is unavailable, RPCs return UNAVAILABLE status.
 
+#[cfg(feature = "messaging")]
 use futures::StreamExt;
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
@@ -13,6 +14,7 @@ use crate::ultimate_coders::dashboard_service_server::DashboardService;
 use crate::ultimate_coders::*;
 
 /// NATS request timeout for Dashboard passthrough calls.
+#[cfg(feature = "messaging")]
 const DASHBOARD_NATS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// NATS subject prefix for Dashboard passthrough RPCs.
@@ -247,6 +249,9 @@ fn json_opt_str(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
+/// Used by `json_to_dashboard_snapshot` which is only called from the
+/// `messaging` feature-gated `watch_dashboard` stream.
+#[allow(dead_code)]
 fn json_opt_u64(v: &serde_json::Value, key: &str) -> Option<u64> {
     v.get(key).and_then(|v| v.as_u64())
 }
@@ -416,6 +421,8 @@ fn json_to_list_events_response(v: &serde_json::Value) -> ListEventsResponse {
     }
 }
 
+/// Used by `json_to_task_proto` → `json_to_dashboard_snapshot` (messaging feature only).
+#[allow(dead_code)]
 fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
     SubtaskProto {
         id: json_str(v, "id").to_string(),
@@ -445,6 +452,8 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
     }
 }
 
+/// Used by `json_to_list_tasks_response` → `json_to_dashboard_snapshot` (messaging feature only).
+#[allow(dead_code)]
 fn json_to_task_proto(v: &serde_json::Value) -> TaskProto {
     TaskProto {
         id: json_str(v, "id").to_string(),
@@ -462,6 +471,8 @@ fn json_to_task_proto(v: &serde_json::Value) -> TaskProto {
     }
 }
 
+/// Used by `json_to_dashboard_snapshot` (messaging feature only).
+#[allow(dead_code)]
 fn json_to_list_tasks_response(v: &serde_json::Value) -> ListTasksResponse {
     ListTasksResponse {
         available: json_bool(v, "available"),
@@ -483,6 +494,8 @@ fn json_to_list_tasks_response(v: &serde_json::Value) -> ListTasksResponse {
     }
 }
 
+/// Used by `watch_dashboard` stream (messaging feature only).
+#[allow(dead_code)]
 fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
     DashboardSnapshot {
         timestamp: json_str(v, "timestamp").to_string(),

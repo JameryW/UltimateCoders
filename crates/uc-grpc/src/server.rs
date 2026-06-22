@@ -39,6 +39,9 @@ pub const NATS_SUBJECT_TASK_EVENT: &str = "uc.task.event";
 /// NATS subject for consumer heartbeats (Python -> gRPC).
 pub const NATS_SUBJECT_HEARTBEAT: &str = "uc.heartbeat";
 
+/// NATS subject for subtask execution dispatch (Rust -> Worker queue group).
+pub const NATS_SUBJECT_SUBTASK_EXECUTE: &str = "uc.subtask.execute";
+
 /// Payload for `uc.task.submit` messages.
 ///
 /// Published by gRPC server when a task is submitted. The Python NATS
@@ -75,6 +78,10 @@ pub struct NatsSubtaskUpdate {
     #[serde(default)]
     pub assigned_worker: Option<String>,
     #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub depends_on: Option<Vec<String>>,
+    #[serde(default)]
     pub result: Option<String>,
 }
 
@@ -95,6 +102,34 @@ pub struct NatsTaskEvent {
     pub subtask_id: Option<String>,
     #[serde(default)]
     pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Payload for `uc.subtask.execute` messages.
+///
+/// Published by the Rust scheduler when a subtask becomes ready (all
+/// dependencies completed).  Workers subscribe to this subject via a
+/// NATS queue group so that each subtask is consumed by exactly one worker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsSubtaskExecute {
+    /// Deduplication key for at-least-once NATS delivery.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    pub task_id: String,
+    pub subtask_id: String,
+    pub description: String,
+    #[serde(default)]
+    pub expected_output: String,
+    #[serde(default)]
+    pub file_constraints: Vec<String>,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+    /// Retry count — incremented on each re-dispatch after worker failure.
+    #[serde(default)]
+    pub retry_count: u32,
+}
+
+fn default_timeout() -> u64 {
+    600
 }
 
 /// Payload for `uc.heartbeat` messages.
@@ -440,6 +475,9 @@ impl TaskStore {
     /// Apply a status update from NATS (`uc.task.update`).
     ///
     /// Updates the task's status, subtask statuses, and result.
+    /// Performs full upsert on subtasks: updates description, depends_on, and
+    /// result in addition to status and assigned_worker. New subtasks are
+    /// created with all provided fields.
     /// If the task does not exist, logs a warning and does nothing (graceful
     /// handling of stale or out-of-order messages).
     pub fn apply_update(&mut self, update: &NatsTaskUpdate) {
@@ -471,13 +509,14 @@ impl TaskStore {
             // but we update the timestamp to reflect the change.
         }
 
-        // Update subtask statuses
+        // Update subtasks — full upsert
         for subtask_update in &update.subtasks {
             if let Some(subtask) = task
                 .subtasks
                 .iter_mut()
                 .find(|st| st.id.0 == subtask_update.subtask_id)
             {
+                // Existing subtask — update all provided fields
                 if let Some(status) = subtask_status_from_str(&subtask_update.status) {
                     subtask.status = status;
                 } else {
@@ -490,22 +529,56 @@ impl TaskStore {
                 if let Some(worker) = &subtask_update.assigned_worker {
                     subtask.assigned_worker = Some(uc_types::WorkerId(worker.clone()));
                 }
+                if let Some(desc) = &subtask_update.description {
+                    subtask.description = desc.clone();
+                }
+                if let Some(deps) = &subtask_update.depends_on {
+                    subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
+                }
+                if let Some(result_str) = &subtask_update.result {
+                    subtask.result = Some(uc_types::SubtaskResult {
+                        subtask_id: subtask.id.clone(),
+                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
+                        modified_files: Vec::new(),
+                        summary: result_str.clone(),
+                        success: true,
+                        completed_at: chrono::Utc::now(),
+                    });
+                }
             } else {
-                // New subtask from Python Orchestrator — add it
+                // New subtask from Python Orchestrator — create with all provided fields
                 let new_subtask = uc_types::Subtask {
                     id: uc_types::TaskId(subtask_update.subtask_id.clone()),
                     parent_id: task.id.clone(),
-                    description: String::new(), // Not provided in update
+                    description: subtask_update.description.clone().unwrap_or_default(),
                     status: subtask_status_from_str(&subtask_update.status)
                         .unwrap_or(uc_types::SubtaskStatus::Pending),
                     assigned_worker: subtask_update
                         .assigned_worker
                         .as_ref()
                         .map(|w| uc_types::WorkerId(w.clone())),
-                    depends_on: Vec::new(),
+                    depends_on: subtask_update
+                        .depends_on
+                        .as_ref()
+                        .map(|deps| deps.iter().map(|d| uc_types::TaskId(d.clone())).collect())
+                        .unwrap_or_default(),
                     file_constraints: Vec::new(),
                     expected_output: String::new(),
-                    result: None,
+                    result: subtask_update
+                        .result
+                        .as_ref()
+                        .map(|r| uc_types::SubtaskResult {
+                            subtask_id: uc_types::TaskId(subtask_update.subtask_id.clone()),
+                            worker_id: subtask_update
+                                .assigned_worker
+                                .as_ref()
+                                .map(|w| uc_types::WorkerId(w.clone()))
+                                .unwrap_or_default(),
+                            modified_files: Vec::new(),
+                            summary: r.clone(),
+                            success: true,
+                            completed_at: chrono::Utc::now(),
+                        }),
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -533,6 +606,12 @@ impl TaskStore {
             uc_engine::AgentEventType::SubtaskFailed { task_id, .. } => {
                 format!("task.{}", task_id.0)
             }
+            uc_engine::AgentEventType::TaskPaused { task_id } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::TaskResumed { task_id } => {
+                format!("task.{}", task_id.0)
+            }
             _ => "events".to_string(),
         };
         self.events.push(event.clone());
@@ -553,6 +632,56 @@ impl TaskStore {
     /// Get the last heartbeat timestamp.
     pub fn last_heartbeat(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.last_heartbeat
+    }
+
+    /// Get subtasks that are ready to be dispatched for a given task.
+    ///
+    /// A subtask is "ready" when:
+    /// - Its status is `Pending`
+    /// - All subtasks it depends on have status `Completed`
+    pub fn get_ready_subtasks(&self, task_id: &str) -> Vec<uc_types::Subtask> {
+        let task = match self.tasks.get(task_id) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        // Only dispatch if task is actively running
+        if task.status != uc_types::TaskStatus::InProgress {
+            return Vec::new();
+        }
+
+        let completed_ids: std::collections::HashSet<&str> = task
+            .subtasks
+            .iter()
+            .filter(|st| st.status == uc_types::SubtaskStatus::Completed)
+            .map(|st| st.id.0.as_str())
+            .collect();
+
+        task.subtasks
+            .iter()
+            .filter(|st| st.status == uc_types::SubtaskStatus::Pending)
+            .filter(|st| {
+                st.depends_on
+                    .iter()
+                    .all(|dep| completed_ids.contains(dep.0.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Update a subtask's status within a task. No-op if task/subtask not found.
+    pub fn update_subtask_status(
+        &mut self,
+        task_id: &str,
+        subtask_id: &str,
+        new_status: uc_types::SubtaskStatus,
+    ) {
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                st.status = new_status;
+                task.updated_at = chrono::Utc::now();
+            }
+        }
     }
 
     /// Update the status of a task by ID.
@@ -980,6 +1109,135 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     pub fn nats_client(&self) -> Option<()> {
         None
     }
+
+    /// Publish a task status change event (pause/resume) to NATS
+    /// so the Python Orchestrator can react.
+    ///
+    /// Also registers the message_id in the TaskStore's dedup map so
+    /// the NATS subscriber skips the echo of our own message.
+    #[cfg(feature = "messaging")]
+    async fn publish_task_status_event(&self, task_id: &str, event_type: &str) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        if let Some(nats_client) = &self.inner.nats_client {
+            let ts_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let message_id = format!("{}:{}::{}", task_id, event_type, ts_ms);
+            let event = NatsTaskEvent {
+                message_id: Some(message_id.clone()),
+                r#type: event_type.to_string(),
+                task_id: task_id.to_string(),
+                subtask_id: None,
+                data: serde_json::Map::new(),
+            };
+            match serde_json::to_vec(&event) {
+                Ok(bytes) => {
+                    if let Err(e) = nats_client
+                        .publish(NATS_SUBJECT_TASK_EVENT.to_string(), bytes.into())
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            event_type = %event_type,
+                            "Failed to publish NATS task status event"
+                        );
+                    } else {
+                        // Register message_id in dedup map so the NATS
+                        // subscriber skips the echo of our own message.
+                        let mut store = self.inner.task_store.lock().await;
+                        store.check_and_record_message_id(&Some(message_id));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to serialize NATS task status event"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn publish_task_status_event(&self, _task_id: &str, _event_type: &str) {}
+
+    /// Dispatch ready subtasks for a task to the NATS `uc.subtask.execute` subject.
+    ///
+    /// Called after a task is decomposed (subtasks populated) and after each
+    /// `uc.task.update` that may have completed dependencies.
+    ///
+    /// Marks dispatched subtasks as `Assigned` in TaskStore so they are not
+    /// re-dispatched on the next call.
+    #[cfg(feature = "messaging")]
+    pub async fn publish_ready_subtasks(&self, task_id: &str) {
+        let ready = {
+            let mut store = self.inner.task_store.lock().await;
+            let subtasks = store.get_ready_subtasks(task_id);
+            // Mark as Assigned to prevent re-dispatch
+            for st in &subtasks {
+                store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+            }
+            subtasks
+        };
+
+        if ready.is_empty() {
+            return;
+        }
+
+        if let Some(nats_client) = &self.inner.nats_client {
+            for st in ready {
+                let execute = NatsSubtaskExecute {
+                    message_id: Some(format!(
+                        "{}:execute:{}:{}",
+                        task_id,
+                        st.id.0,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis()
+                    )),
+                    task_id: task_id.to_string(),
+                    subtask_id: st.id.0.clone(),
+                    description: st.description.clone(),
+                    expected_output: String::new(),
+                    file_constraints: Vec::new(),
+                    timeout_seconds: 600,
+                    retry_count: 0,
+                };
+                match serde_json::to_vec(&execute) {
+                    Ok(bytes) => {
+                        if let Err(e) = nats_client
+                            .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                            .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                subtask_id = %st.id.0,
+                                "Failed to publish subtask execute"
+                            );
+                            // Revert to Pending on publish failure
+                            let mut store = self.inner.task_store.lock().await;
+                            store.update_subtask_status(
+                                task_id,
+                                &st.id.0,
+                                uc_types::SubtaskStatus::Pending,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to serialize NatsSubtaskExecute"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    pub async fn publish_ready_subtasks(&self, _task_id: &str) {}
 }
 
 impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
@@ -1153,6 +1411,13 @@ fn spawn_nats_subscriber(
                             for event in new_events {
                                 let _ = event_tx.send(event);
                             }
+
+                            // Dispatch ready subtasks for this task
+                            dispatch_ready_subtasks(
+                                &task_store,
+                                &nats_client,
+                                &update.task_id,
+                            ).await;
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -1233,6 +1498,70 @@ fn spawn_heartbeat_monitor(
             }
         }
     });
+}
+
+/// Dispatch ready subtasks for a task by publishing them to `uc.subtask.execute`.
+///
+/// Called by the NATS subscriber after processing a `uc.task.update` —
+/// completing a subtask may unblock dependents.
+#[cfg(feature = "messaging")]
+async fn dispatch_ready_subtasks(
+    task_store: &Arc<Mutex<TaskStore>>,
+    nats_client: &async_nats::Client,
+    task_id: &str,
+) {
+    let ready = {
+        let mut store = task_store.lock().await;
+        let subtasks = store.get_ready_subtasks(task_id);
+        for st in &subtasks {
+            store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+        }
+        subtasks
+    };
+
+    for st in ready {
+        let execute = NatsSubtaskExecute {
+            message_id: Some(format!(
+                "{}:execute:{}:{}",
+                task_id,
+                st.id.0,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            )),
+            task_id: task_id.to_string(),
+            subtask_id: st.id.0.clone(),
+            description: st.description.clone(),
+            expected_output: String::new(),
+            file_constraints: Vec::new(),
+            timeout_seconds: 600,
+            retry_count: 0,
+        };
+        match serde_json::to_vec(&execute) {
+            Ok(bytes) => {
+                if let Err(e) = nats_client
+                    .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        subtask_id = %st.id.0,
+                        "Failed to publish subtask execute, reverting to Pending"
+                    );
+                    let mut store = task_store.lock().await;
+                    store.update_subtask_status(
+                        task_id,
+                        &st.id.0,
+                        uc_types::SubtaskStatus::Pending,
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to serialize NatsSubtaskExecute");
+            }
+        }
+    }
 }
 
 /// Convert a `NatsTaskEvent` to an `AgentEventType`.
@@ -1368,6 +1697,14 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 error,
                 recoverable,
             })
+        }
+        "task_paused" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskPaused { task_id })
+        }
+        "task_resumed" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskResumed { task_id })
         }
         _ => {
             tracing::debug!(
@@ -1923,14 +2260,36 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         request: Request<PauseTaskRequest>,
     ) -> Result<Response<PauseTaskResponse>, Status> {
         let req = request.into_inner();
-        let mut store = self.inner.task_store.lock().await;
-        match store.pause_task(&req.task_id) {
-            Ok(task) => Ok(Response::new(PauseTaskResponse {
-                success: true,
-                task_id: task.id.0,
-                status: task_status_to_proto(&task.status).to_string(),
-                error: None,
-            })),
+        let task_id = req.task_id.clone();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.pause_task(&task_id) {
+                Ok(task) => {
+                    // Record event + broadcast to WatchTask streams
+                    let event = uc_engine::AgentEventType::TaskPaused {
+                        task_id: task.id.clone(),
+                    };
+                    store.record_event(event.clone());
+                    let proto_event: TaskEvent = event.into();
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(task) => {
+                // Publish NATS event for Python side
+                self.publish_task_status_event(&task_id, "task_paused")
+                    .await;
+                Ok(Response::new(PauseTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
             Err(e) => Ok(Response::new(PauseTaskResponse {
                 success: false,
                 task_id: req.task_id,
@@ -1945,14 +2304,36 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         request: Request<ResumeTaskRequest>,
     ) -> Result<Response<ResumeTaskResponse>, Status> {
         let req = request.into_inner();
-        let mut store = self.inner.task_store.lock().await;
-        match store.resume_task(&req.task_id) {
-            Ok(task) => Ok(Response::new(ResumeTaskResponse {
-                success: true,
-                task_id: task.id.0,
-                status: task_status_to_proto(&task.status).to_string(),
-                error: None,
-            })),
+        let task_id = req.task_id.clone();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.resume_task(&task_id) {
+                Ok(task) => {
+                    // Record event + broadcast to WatchTask streams
+                    let event = uc_engine::AgentEventType::TaskResumed {
+                        task_id: task.id.clone(),
+                    };
+                    store.record_event(event.clone());
+                    let proto_event: TaskEvent = event.into();
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(task) => {
+                // Publish NATS event for Python side
+                self.publish_task_status_event(&task_id, "task_resumed")
+                    .await;
+                Ok(Response::new(ResumeTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
             Err(e) => Ok(Response::new(ResumeTaskResponse {
                 success: false,
                 task_id: req.task_id,
@@ -2904,13 +3285,18 @@ mod tests {
                 subtask_id: "st-1".to_string(),
                 status: "Assigned".to_string(),
                 assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
                 result: None,
             }],
             result: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskUpdate = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.message_id, Some("abc-123:update::1700000000".to_string()));
+        assert_eq!(
+            parsed.message_id,
+            Some("abc-123:update::1700000000".to_string())
+        );
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.status, "InProgress");
         assert_eq!(parsed.subtasks.len(), 1);
@@ -2942,7 +3328,10 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.message_id, Some("abc-123:tool_call:st-1:1700000000".to_string()));
+        assert_eq!(
+            parsed.message_id,
+            Some("abc-123:tool_call:st-1:1700000000".to_string())
+        );
         assert_eq!(parsed.r#type, "tool_call");
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.subtask_id, Some("st-1".to_string()));
@@ -3019,6 +3408,8 @@ mod tests {
                 subtask_id: "st-new-1".to_string(),
                 status: "Assigned".to_string(),
                 assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
                 result: None,
             }],
             result: None,
@@ -3089,6 +3480,8 @@ mod tests {
                 subtask_id: subtask_id.clone(),
                 status: "Completed".to_string(),
                 assigned_worker: None,
+                description: None,
+                depends_on: None,
                 result: Some("Done".to_string()),
             }],
             result: None,
@@ -3645,6 +4038,8 @@ mod tests {
                     subtask_id: subtask_id.clone(),
                     status: "Completed".to_string(),
                     assigned_worker: None,
+                    description: None,
+                    depends_on: None,
                     result: None,
                 }],
                 result: None,
@@ -3731,6 +4126,8 @@ mod tests {
                     subtask_id: subtask_id.clone(),
                     status: "Assigned".to_string(),
                     assigned_worker: Some("worker-1".to_string()),
+                    description: None,
+                    depends_on: None,
                     result: None,
                 }],
                 result: None,
@@ -4001,6 +4398,124 @@ mod tests {
         let parsed: NatsTaskUpdate = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.task_id, "t-1");
         assert_eq!(parsed.message_id, None);
+    }
+
+    #[test]
+    fn nats_subtask_update_backward_compat_no_new_fields() {
+        // Verify that old-format subtask JSON (without description/depends_on)
+        // deserializes with defaults, ensuring backward compatibility.
+        let json = r#"{"subtask_id":"st-1","status":"Assigned","assigned_worker":"w-1"}"#;
+        let parsed: NatsSubtaskUpdate = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.subtask_id, "st-1");
+        assert_eq!(parsed.status, "Assigned");
+        assert_eq!(parsed.assigned_worker, Some("w-1".to_string()));
+        assert_eq!(parsed.description, None);
+        assert_eq!(parsed.depends_on, None);
+        assert_eq!(parsed.result, None);
+    }
+
+    #[test]
+    fn apply_update_full_upsert_existing_subtask() {
+        // Verify that apply_update updates description, depends_on, and result
+        // on an existing subtask when provided in the update.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+        let subtask_id = task.subtasks[0].id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: subtask_id.clone(),
+                status: "InProgress".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: Some("Updated description".to_string()),
+                depends_on: Some(vec!["other-st".to_string()]),
+                result: Some("Work done".to_string()),
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        let st = &updated.subtasks[0];
+        assert_eq!(st.description, "Updated description");
+        assert_eq!(st.depends_on.len(), 1);
+        assert_eq!(st.depends_on[0].0, "other-st");
+        assert!(st.result.is_some());
+        assert_eq!(st.result.as_ref().unwrap().summary, "Work done");
+    }
+
+    #[test]
+    fn apply_update_full_upsert_new_subtask() {
+        // Verify that apply_update creates a new subtask with description,
+        // depends_on, and result from the update payload.
+        let mut store = TaskStore::new();
+        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-new".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-2".to_string()),
+                description: Some("New subtask from Python".to_string()),
+                depends_on: Some(vec!["dep-1".to_string(), "dep-2".to_string()]),
+                result: None,
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.subtasks.len(), 1);
+        let st = &updated.subtasks[0];
+        assert_eq!(st.id.0, "st-new");
+        assert_eq!(st.description, "New subtask from Python");
+        assert_eq!(st.depends_on.len(), 2);
+        assert_eq!(st.depends_on[0].0, "dep-1");
+        assert_eq!(st.depends_on[1].0, "dep-2");
+        assert!(st.result.is_none());
+    }
+
+    #[test]
+    fn apply_update_backward_compat_old_format() {
+        // Verify that old-format updates (without description/depends_on)
+        // still work — description defaults to empty, depends_on defaults to empty vec.
+        let mut store = TaskStore::new();
+        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-old".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: None,
+                description: None,
+                depends_on: None,
+                result: None,
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        assert_eq!(updated.subtasks.len(), 1);
+        let st = &updated.subtasks[0];
+        assert_eq!(st.description, "");
+        assert!(st.depends_on.is_empty());
+        assert!(st.result.is_none());
     }
 
     #[test]

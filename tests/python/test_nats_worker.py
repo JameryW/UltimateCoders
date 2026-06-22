@@ -11,17 +11,16 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from ultimate_coders.agent.types import Subtask, SubtaskStatus, Task, TaskStatus
+from ultimate_coders.agent.types import Subtask, SubtaskStatus, Task
 from ultimate_coders.nats_worker import (
     NatsPublisher,
     NatsWorker,
     _make_task_event_payload,
     _make_task_update_payload,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════
 # _make_task_event_payload tests
