@@ -1336,3 +1336,36 @@ Implemented per-worker heartbeat failover (update_worker_heartbeat, mark_stale_w
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: TUI界面优化: EventLog虚拟滚动+WorkersPanel增强+StatusBar多Worker摘要
+
+**Date**: 2026-06-22
+**Task**: TUI界面优化: EventLog虚拟滚动+WorkersPanel增强+StatusBar多Worker摘要
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+三项高ROI TUI优化: 1) Dashboard EventLog加@tanstack/react-virtual虚拟滚动+tail模式(自动滚到底/手动上滚暂停/返回最新按钮); 2) WorkersPanel新增subtask进度微条+展开态点击跳转TasksPanel; 3) Ink TUI StatusBar多Worker摘要(3/5 active替代硬编码grpc-worker)+Ctrl+Shift+W展开worker详情. PR #115 CI全绿.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e46111a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
