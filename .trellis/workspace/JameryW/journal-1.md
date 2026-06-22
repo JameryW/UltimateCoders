@@ -1369,3 +1369,37 @@ Implemented per-worker heartbeat failover (update_worker_heartbeat, mark_stale_w
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 事件管道全链路优化: Path C真执行+结果回传+Dashboard细粒度事件
+
+**Date**: 2026-06-22
+**Task**: 事件管道全链路优化: Path C真执行+结果回传+Dashboard细粒度事件
+**Branch**: `feat/path-c-real-execution`
+
+### Summary
+
+R1: submit_task_local 逐个 spawn claude -p 真实执行 (simulated fallback + UC_SKIP_CLAUDE); R2: SubtaskProto +result, DashboardSnapshot +recent_task_events, 全链路 50KB 结果回传; R3: WatchDashboard no-NATS event-driven via event_tx broadcast; PR #117
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bac03e2` | (see git log) |
+| `f455f3c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
