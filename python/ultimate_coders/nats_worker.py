@@ -674,7 +674,7 @@ class NatsWorker:
             return
 
         # Build a Subtask object for Worker.execute_subtask
-        from ultimate_coders.agent.types import Subtask, SubtaskStatus
+        from ultimate_coders.agent.types import SubtaskStatus
 
         subtask = Subtask(
             id=subtask_id,
@@ -719,13 +719,15 @@ class NatsWorker:
             "completed" if result.success else "failed",
         )
 
-    def _make_subtask_result_task(self, task_id: str, subtask_id: str, status: str, summary: str) -> Task:
+    def _make_subtask_result_task(
+        self, task_id: str, subtask_id: str, status: str, summary: str,
+    ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
         NatsPublisher.publish_update() needs a Task with subtasks, so we
         construct a lightweight one with just the result subtask.
         """
-        from ultimate_coders.agent.types import Subtask, SubtaskResult, SubtaskStatus
+        from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
 
         st_status = SubtaskStatus.COMPLETED if status == "Completed" else SubtaskStatus.FAILED
         st = Subtask(

@@ -533,18 +533,12 @@ impl TaskStore {
                     subtask.description = desc.clone();
                 }
                 if let Some(deps) = &subtask_update.depends_on {
-                    subtask.depends_on = deps
-                        .iter()
-                        .map(|d| uc_types::TaskId(d.clone()))
-                        .collect();
+                    subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
                 }
                 if let Some(result_str) = &subtask_update.result {
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
-                        worker_id: subtask
-                            .assigned_worker
-                            .clone()
-                            .unwrap_or_default(),
+                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
                         modified_files: Vec::new(),
                         summary: result_str.clone(),
                         success: true,
@@ -556,10 +550,7 @@ impl TaskStore {
                 let new_subtask = uc_types::Subtask {
                     id: uc_types::TaskId(subtask_update.subtask_id.clone()),
                     parent_id: task.id.clone(),
-                    description: subtask_update
-                        .description
-                        .clone()
-                        .unwrap_or_default(),
+                    description: subtask_update.description.clone().unwrap_or_default(),
                     status: subtask_status_from_str(&subtask_update.status)
                         .unwrap_or(uc_types::SubtaskStatus::Pending),
                     assigned_worker: subtask_update
@@ -569,16 +560,14 @@ impl TaskStore {
                     depends_on: subtask_update
                         .depends_on
                         .as_ref()
-                        .map(|deps| {
-                            deps.iter()
-                                .map(|d| uc_types::TaskId(d.clone()))
-                                .collect()
-                        })
+                        .map(|deps| deps.iter().map(|d| uc_types::TaskId(d.clone())).collect())
                         .unwrap_or_default(),
                     file_constraints: Vec::new(),
                     expected_output: String::new(),
-                    result: subtask_update.result.as_ref().map(|r| {
-                        uc_types::SubtaskResult {
+                    result: subtask_update
+                        .result
+                        .as_ref()
+                        .map(|r| uc_types::SubtaskResult {
                             subtask_id: uc_types::TaskId(subtask_update.subtask_id.clone()),
                             worker_id: subtask_update
                                 .assigned_worker
@@ -589,8 +578,7 @@ impl TaskStore {
                             summary: r.clone(),
                             success: true,
                             completed_at: chrono::Utc::now(),
-                        }
-                    }),
+                        }),
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -1188,7 +1176,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             let subtasks = store.get_ready_subtasks(task_id);
             // Mark as Assigned to prevent re-dispatch
             for st in &subtasks {
-                store.update_subtask_status(&task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+                store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
             }
             subtasks
         };
@@ -1562,7 +1550,11 @@ async fn dispatch_ready_subtasks(
                         "Failed to publish subtask execute, reverting to Pending"
                     );
                     let mut store = task_store.lock().await;
-                    store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Pending);
+                    store.update_subtask_status(
+                        task_id,
+                        &st.id.0,
+                        uc_types::SubtaskStatus::Pending,
+                    );
                 }
             }
             Err(e) => {
@@ -2289,7 +2281,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         match result {
             Ok(task) => {
                 // Publish NATS event for Python side
-                self.publish_task_status_event(&task_id, "task_paused").await;
+                self.publish_task_status_event(&task_id, "task_paused")
+                    .await;
                 Ok(Response::new(PauseTaskResponse {
                     success: true,
                     task_id: task.id.0,
@@ -2332,7 +2325,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         match result {
             Ok(task) => {
                 // Publish NATS event for Python side
-                self.publish_task_status_event(&task_id, "task_resumed").await;
+                self.publish_task_status_event(&task_id, "task_resumed")
+                    .await;
                 Ok(Response::new(ResumeTaskResponse {
                     success: true,
                     task_id: task.id.0,
@@ -3299,7 +3293,10 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskUpdate = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.message_id, Some("abc-123:update::1700000000".to_string()));
+        assert_eq!(
+            parsed.message_id,
+            Some("abc-123:update::1700000000".to_string())
+        );
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.status, "InProgress");
         assert_eq!(parsed.subtasks.len(), 1);
@@ -3331,7 +3328,10 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.message_id, Some("abc-123:tool_call:st-1:1700000000".to_string()));
+        assert_eq!(
+            parsed.message_id,
+            Some("abc-123:tool_call:st-1:1700000000".to_string())
+        );
         assert_eq!(parsed.r#type, "tool_call");
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.subtask_id, Some("st-1".to_string()));
