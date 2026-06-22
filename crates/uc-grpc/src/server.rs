@@ -1181,6 +1181,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         &self.inner.task_store
     }
 
+    /// Access the broadcast sender for TaskEvent stream.
+    pub fn event_sender(&self) -> &broadcast::Sender<TaskEvent> {
+        &self.inner.event_tx
+    }
+
     /// Access the Engine.
     pub fn engine(&self) -> &E {
         &self.inner.engine
@@ -2620,11 +2625,7 @@ pub async fn apply_worker_event_to_store(
                 .get("success")
                 .map(|s| s == "true")
                 .unwrap_or(true),
-            result: worker_event
-                .data
-                .get("result")
-                .cloned()
-                .unwrap_or_default(),
+            result: worker_event.data.get("result").cloned().unwrap_or_default(),
         }),
         "subtask_failed" => Some(uc_engine::AgentEventType::SubtaskFailed {
             task_id: task_id.clone(),
@@ -3093,69 +3094,200 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Submit a task using local (newline-split) decomposition.
     ///
     /// This is the fallback path when NATS and the local worker are unavailable.
+    /// Attempts real execution via `claude -p` per subtask; falls back to
+    /// simulated completion if `claude` CLI is not found.
     async fn submit_task_local(
         &self,
         req: SubmitTaskRequest,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
         let mut store = self.inner.task_store.lock().await;
-        let event_count_before = store.events.len();
         let task = store.submit_task(req.description.clone(), req.project_id.clone());
-
-        // ponytail: simulate subtask lifecycle events for the local fallback path.
-        // Without these, subtasks stay in Assigned forever and the TUI shows no progress.
         let task_id = task.id.clone();
-        for st in &task.subtasks {
+        let subtask_ids: Vec<(uc_types::TaskId, String)> = task
+            .subtasks
+            .iter()
+            .map(|st| (st.id.clone(), st.description.clone()))
+            .collect();
+
+        // Update task status to InProgress
+        if let Some(t) = store.tasks.get_mut(&task.id.0) {
+            t.status = uc_types::TaskStatus::InProgress;
+            t.updated_at = chrono::Utc::now();
+        }
+        // Broadcast TaskCreated
+        let event_count_before = store.events.len();
+        drop(store);
+
+        // Check if claude CLI is available (skip in test env)
+        let claude_available = if std::env::var("UC_SKIP_CLAUDE").as_deref() == Ok("1") {
+            false
+        } else {
+            tokio::process::Command::new("which")
+                .arg("claude")
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        // Execute subtasks serially
+        for (subtask_id, description) in &subtask_ids {
+            let mut store = self.inner.task_store.lock().await;
             store.record_event(uc_engine::AgentEventType::SubtaskStarted {
                 task_id: task_id.clone(),
-                subtask_id: st.id.clone(),
+                subtask_id: subtask_id.clone(),
                 worker_id: uc_types::WorkerId::new(),
             });
+            drop(store);
+
+            let (success, result_text) = if claude_available {
+                // Real execution: spawn `claude -p "<description>"`
+                let output = tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    tokio::process::Command::new("claude")
+                        .arg("-p")
+                        .arg(description.as_str())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .output(),
+                )
+                .await;
+
+                match output {
+                    Ok(Ok(out)) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                        let combined = if stdout.is_empty() {
+                            stderr
+                        } else if stderr.is_empty() {
+                            stdout
+                        } else {
+                            format!("{stdout}\n{stderr}")
+                        };
+                        // ponytail: 50KB limit
+                        let truncated = if combined.len() > 50000 {
+                            format!(
+                                "{}...\n[truncated, {} bytes total]",
+                                &combined[..50000],
+                                combined.len()
+                            )
+                        } else {
+                            combined
+                        };
+                        (out.status.success(), truncated)
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(subtask_id = %subtask_id.0, error = %e, "claude spawn failed");
+                        (false, format!("claude spawn error: {e}"))
+                    }
+                    Err(_) => {
+                        tracing::warn!(subtask_id = %subtask_id.0, "claude timed out (120s)");
+                        (false, "claude execution timed out (120s)".to_string())
+                    }
+                }
+            } else {
+                // No claude CLI — simulated completion with marker
+                tracing::info!(subtask_id = %subtask_id.0, "claude CLI not found, simulated completion");
+                (true, String::new())
+            };
+
+            let mut store = self.inner.task_store.lock().await;
             store.record_event(uc_engine::AgentEventType::SubtaskCompleted {
                 task_id: task_id.clone(),
-                subtask_id: st.id.clone(),
-                summary: st.description.clone(),
-                success: true,
-                result: String::new(),
+                subtask_id: subtask_id.clone(),
+                summary: description.clone(),
+                success,
+                result: result_text.clone(),
             });
+            // Update subtask status in TaskStore
+            if let Some(t) = store.tasks.get_mut(&task_id.0) {
+                for st in &mut t.subtasks {
+                    if st.id == *subtask_id {
+                        st.status = if success {
+                            uc_types::SubtaskStatus::Completed
+                        } else {
+                            uc_types::SubtaskStatus::Failed
+                        };
+                        break;
+                    }
+                }
+            }
+            drop(store);
         }
-        store.record_event(uc_engine::AgentEventType::TaskCompleted {
-            task_id: task_id.clone(),
-            description: req.description.clone(),
-            result: String::new(),
-        });
 
-        // Update task status to Completed
-        if let Some(t) = store.tasks.get_mut(&task.id.0) {
-            t.status = uc_types::TaskStatus::Completed;
+        // Determine overall task status
+        let mut store = self.inner.task_store.lock().await;
+        let all_completed = store
+            .get_task(&task_id.0)
+            .map(|t| {
+                t.subtasks
+                    .iter()
+                    .all(|st| st.status == uc_types::SubtaskStatus::Completed)
+            })
+            .unwrap_or(false);
+        let any_failed = store
+            .get_task(&task_id.0)
+            .map(|t| {
+                t.subtasks
+                    .iter()
+                    .any(|st| st.status == uc_types::SubtaskStatus::Failed)
+            })
+            .unwrap_or(false);
+
+        let final_status = if all_completed {
+            uc_types::TaskStatus::Completed
+        } else if any_failed {
+            uc_types::TaskStatus::Failed
+        } else {
+            uc_types::TaskStatus::InProgress
+        };
+
+        // Record final task event
+        let event_type = if all_completed {
+            uc_engine::AgentEventType::TaskCompleted {
+                task_id: task_id.clone(),
+                description: req.description.clone(),
+                result: String::new(),
+            }
+        } else {
+            uc_engine::AgentEventType::TaskFailed {
+                task_id: task_id.clone(),
+                error: "One or more subtasks failed".to_string(),
+            }
+        };
+        store.record_event(event_type);
+
+        if let Some(t) = store.tasks.get_mut(&task_id.0) {
+            t.status = final_status;
             t.updated_at = chrono::Utc::now();
         }
 
-        // Broadcast newly recorded events to all WatchTask streams
-        let new_events = store.events[event_count_before..]
+        // Broadcast all new events
+        let new_events: Vec<TaskEvent> = store.events[event_count_before..]
             .iter()
             .cloned()
-            .map(|e| -> TaskEvent { e.into() })
-            .collect::<Vec<_>>();
+            .map(|e| e.into())
+            .collect();
+        let completed_task = store.get_task(&task_id.0).cloned().unwrap_or(task);
         drop(store);
         for event in new_events {
             let _ = self.inner.event_tx.send(event);
         }
 
-        // Re-read the task (now Completed)
-        let store = self.inner.task_store.lock().await;
-        let completed_task = store.get_task(&task.id.0).expect("task just inserted");
+        let subtask_count = completed_task.subtasks.len() as u32;
+        let task_id_str = completed_task.id.0.clone();
+        let status_str = task_status_to_proto(&completed_task.status).to_string();
         let subtask_protos: Vec<SubtaskProto> = completed_task
             .subtasks
-            .clone()
             .into_iter()
             .map(Into::into)
             .collect();
 
         Ok(Response::new(SubmitTaskResponse {
             success: true,
-            task_id: completed_task.id.0.clone(),
-            status: task_status_to_proto(&completed_task.status).to_string(),
-            subtask_count: completed_task.subtasks.len() as u32,
+            task_id: task_id_str,
+            status: status_str,
+            subtask_count,
             subtasks: subtask_protos,
             error: None,
         }))
@@ -4095,6 +4227,7 @@ mod tests {
                 status: "Assigned".to_string(),
                 assigned_worker: Some("w-1".to_string()),
                 depends_on: vec![],
+                result: None,
             }],
             result: None,
         };
@@ -4127,6 +4260,7 @@ mod tests {
                 status: "Completed".to_string(),
                 assigned_worker: None,
                 depends_on: vec![],
+                result: None,
             }],
             result: Some("All done".to_string()),
         };
@@ -4156,6 +4290,7 @@ mod tests {
                 status: "InProgress".to_string(),
                 assigned_worker: Some("w-1".to_string()),
                 depends_on: vec![],
+                result: None,
             }],
             result: None,
         };
@@ -4173,6 +4308,7 @@ mod tests {
                 status: "Completed".to_string(),
                 assigned_worker: Some("w-1".to_string()),
                 depends_on: vec![],
+                result: None,
             }],
             result: Some("Done".to_string()),
         };

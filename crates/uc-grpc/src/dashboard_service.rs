@@ -169,15 +169,38 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
 
         #[cfg(not(feature = "messaging"))]
         {
-            // No NATS — construct snapshots directly from TaskStore + Engine
+            // No NATS — event-driven snapshots from TaskStore + event_rx
             let task_store = self.task_store().clone();
+            let event_rx = self.event_sender().subscribe();
 
             let stream = async_stream::stream! {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                let mut event_rx = event_rx;
+                let mut snapshot_interval = tokio::time::interval(std::time::Duration::from_secs(5));
+
                 loop {
-                    interval.tick().await;
-                    let snapshot = build_local_snapshot(&task_store).await;
-                    yield Ok(snapshot);
+                    tokio::select! {
+                        event_result = event_rx.recv() => {
+                            match event_result {
+                                Ok(task_event) => {
+                                    // Push fine-grained event as a lightweight snapshot
+                                    yield Ok(DashboardSnapshot {
+                                        timestamp: task_event.timestamp.clone(),
+                                        recent_task_events: vec![task_event],
+                                        ..Default::default()
+                                    });
+                                }
+                                Err(broadcast::error::RecvError::Lagged(n)) => {
+                                    tracing::warn!(skipped = n, "Dashboard event_rx lagged");
+                                }
+                                Err(broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                        _ = snapshot_interval.tick() => {
+                            // Periodic full snapshot
+                            let snapshot = build_local_snapshot(&task_store).await;
+                            yield Ok(snapshot);
+                        }
+                    }
                 }
             };
             Ok(Response::new(Box::pin(stream)))
@@ -600,7 +623,11 @@ async fn build_local_snapshot(
     // Recent task events from TaskStore (last 20 events)
     let store = task_store.lock().await;
     let total_events = store.event_count();
-    let start = if total_events > 20 { total_events - 20 } else { 0 };
+    let start = if total_events > 20 {
+        total_events - 20
+    } else {
+        0
+    };
     let recent_task_events: Vec<TaskEvent> = store
         .read_events_from(start)
         .into_iter()

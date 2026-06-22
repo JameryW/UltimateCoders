@@ -680,10 +680,17 @@ impl From<Subtask> for SubtaskProto {
             parent_id: st.parent_id.0,
             file_constraints: st.file_constraints,
             expected_output: st.expected_output,
-            result: st.result.and_then(|r| r.result.or_else(|| {
-                // Fallback: use summary as result if result text is empty
-                if r.summary.is_empty() { None } else { Some(r.summary) }
-            })),
+            result: st.result.and_then(|r| {
+                #[allow(clippy::unnecessary_lazy_evaluations)]
+                r.result.or_else(|| {
+                    // Fallback: use summary as result if result text is empty
+                    if r.summary.is_empty() {
+                        None
+                    } else {
+                        Some(r.summary)
+                    }
+                })
+            }),
         }
     }
 }
@@ -1137,7 +1144,11 @@ impl From<TaskEventProto> for AgentEvent {
                         success,
                         completed_at: timestamp,
                         // Carry full result text (truncated to 50KB at source)
-                        result: if result_text.is_empty() { None } else { Some(result_text) },
+                        result: if result_text.is_empty() {
+                            None
+                        } else {
+                            Some(result_text)
+                        },
                     },
                 }
             }
@@ -1291,6 +1302,7 @@ mod tests {
                 parent_id: "task-1".to_string(),
                 file_constraints: vec![],
                 expected_output: String::new(),
+                result: None,
             }],
         };
         let task: Task = proto.into();

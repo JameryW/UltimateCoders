@@ -133,6 +133,7 @@ async fn apply_worker_update_creates_task_and_broadcasts() {
             status: "Completed".to_string(),
             assigned_worker: Some("worker-1".to_string()),
             depends_on: vec![],
+            result: None,
         }],
         result: Some("Done".to_string()),
     };
@@ -172,6 +173,7 @@ async fn broadcast_multiple_subscribers() {
             status: "Completed".to_string(),
             assigned_worker: None,
             depends_on: vec![],
+            result: None,
         }],
         result: Some("Done".to_string()),
     };
@@ -255,6 +257,7 @@ async fn worker_task_update_roundtrip() {
             status: "assigned".to_string(),
             assigned_worker: Some("w-1".to_string()),
             depends_on: vec![],
+            result: None,
         }],
         result: None,
     };
