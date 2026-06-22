@@ -44,6 +44,7 @@ export interface KeyCommand {
 const COMMANDS: KeyCommand[] = [
   // ── Global ──
   {id: 'cycleFocus', label: 'Cycle focus', shortLabel: 'S-Tab', key: 'Shift+Tab / Ctrl+W', areas: [], global: true},
+  {id: 'workersExpand', label: 'Toggle worker detail', shortLabel: 'C-S-W', key: 'Ctrl+Shift+W', areas: [], global: true},
   {id: 'escToMain', label: 'Escape / close overlay', shortLabel: 'Esc', key: 'Esc', areas: [], global: true},
   {id: 'subtaskOverlay', label: 'Toggle subtask overlay', shortLabel: 'C-T', key: 'Ctrl+T', areas: [], global: true},
   {id: 'filter', label: 'Cycle event filter', shortLabel: 'C-F', key: 'Ctrl+F', areas: [], global: true},
