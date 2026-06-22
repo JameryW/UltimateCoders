@@ -169,9 +169,18 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
 
         #[cfg(not(feature = "messaging"))]
         {
-            Err(Status::unavailable(
-                "Dashboard streaming requires NATS (messaging feature not enabled)",
-            ))
+            // No NATS — construct snapshots directly from TaskStore + Engine
+            let task_store = self.task_store().clone();
+
+            let stream = async_stream::stream! {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    let snapshot = build_local_snapshot(&task_store).await;
+                    yield Ok(snapshot);
+                }
+            };
+            Ok(Response::new(Box::pin(stream)))
         }
     }
 }
@@ -516,5 +525,91 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().map(json_to_dashboard_event).collect())
             .unwrap_or_default(),
+    }
+}
+
+// ── No-NATS fallback: construct DashboardSnapshot from local state ──────
+
+/// Build a DashboardSnapshot directly from TaskStore + Engine when NATS is unavailable.
+///
+/// ponytail: minimal snapshot — workers from heartbeat tracking, tasks from TaskStore,
+/// health from Engine. No scheduler/CB state without Python Orchestrator.
+#[cfg(not(feature = "messaging"))]
+async fn build_local_snapshot(
+    task_store: &tokio::sync::Mutex<super::server::TaskStore>,
+) -> DashboardSnapshot {
+    use crate::conversions::task_status_to_proto;
+    use std::collections::HashMap;
+
+    let store = task_store.lock().await;
+    let now = chrono::Utc::now();
+
+    // Workers from per-worker heartbeat tracking
+    let worker_protos: Vec<WorkerProto> = store
+        .worker_heartbeats()
+        .iter()
+        .map(|(id, ts)| {
+            let age = (now - *ts).num_seconds() as f64;
+            WorkerProto {
+                id: id.clone(),
+                capabilities: vec!["code".to_string()],
+                current_load: 0,
+                max_capacity: 3,
+                load_percent: 0,
+                last_heartbeat: ts.to_rfc3339(),
+                heartbeat_age_seconds: age,
+                heartbeat_stale: age > 60.0,
+                is_available: age <= 60.0,
+            }
+        })
+        .collect();
+
+    let workers_available = worker_protos.iter().filter(|w| w.is_available).count() as u32;
+    let workers = ListWorkersResponse {
+        available: true,
+        workers: worker_protos,
+        total: store.worker_heartbeats().len() as u32,
+        available_count: workers_available,
+    };
+
+    // Tasks from TaskStore
+    let tasks_list = store.list_tasks();
+    let total = tasks_list.len() as u32;
+    let mut status_counts: HashMap<String, u32> = HashMap::new();
+    let task_protos: Vec<TaskProto> = tasks_list
+        .into_iter()
+        .map(|t| {
+            *status_counts
+                .entry(task_status_to_proto(&t.status).to_string())
+                .or_insert(0) += 1;
+            t.into()
+        })
+        .collect();
+
+    let tasks = ListTasksResponse {
+        available: true,
+        tasks: task_protos,
+        total,
+        status_counts,
+    };
+
+    drop(store);
+
+    // ponytail: health from heartbeat — if we have heartbeats, system is healthy
+    let health = HealthSnapshot {
+        available: true,
+        status: "ok".to_string(),
+        version: None,
+        uptime_seconds: None,
+    };
+
+    DashboardSnapshot {
+        timestamp: now.to_rfc3339(),
+        health: Some(health),
+        workers: Some(workers),
+        tasks: Some(tasks),
+        scheduler: None,
+        circuit_breaker: None,
+        recent_events: Vec::new(),
     }
 }

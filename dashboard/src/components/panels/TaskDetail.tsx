@@ -185,25 +185,32 @@ export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailP
           <p className="text-[var(--text-primary)] font-medium mb-1">Subtasks:</p>
           <div className="space-y-0.5">
             {subtasks.map((st) => (
-              <div key={st.id} className="flex items-center justify-between gap-1">
-                <span className="truncate max-w-[200px]">
-                  {truncate(st.description, 50)}
-                  {st.depends_on.length > 0 && (
-                    <span className="text-[var(--text-muted)] ml-2">
-                      deps: {st.depends_on.map((d) => shortId(d)).join(", ")}
-                    </span>
-                  )}
-                </span>
-                <div className="flex items-center gap-1 shrink-0">
-                  {st.assigned_worker && (
-                    <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono" title={`Worker: ${st.assigned_worker}`}>
-                      {shortId(st.assigned_worker)}
-                    </span>
-                  )}
-                  <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
-                    {st.status}
+              <div key={st.id}>
+                <div className="flex items-center justify-between gap-1">
+                  <span className="truncate max-w-[200px]">
+                    {truncate(st.description, 50)}
+                    {st.depends_on.length > 0 && (
+                      <span className="text-[var(--text-muted)] ml-2">
+                        deps: {st.depends_on.map((d) => shortId(d)).join(", ")}
+                      </span>
+                    )}
                   </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {st.assigned_worker && (
+                      <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono" title={`Worker: ${st.assigned_worker}`}>
+                        {shortId(st.assigned_worker)}
+                      </span>
+                    )}
+                    <span className={cn("text-xs px-1.5 py-0.5 rounded", statusBadgeClass(st.status))}>
+                      {st.status}
+                    </span>
+                  </div>
                 </div>
+                {st.result && (
+                  <p className="text-[10px] text-[var(--text-muted)] mt-0.5 ml-2 truncate" title={st.result}>
+                    ↳ {truncate(st.result, 80)}
+                  </p>
+                )}
               </div>
             ))}
           </div>

@@ -641,6 +641,11 @@ impl TaskStore {
             .insert(worker_id.to_string(), chrono::Utc::now());
     }
 
+    /// Access per-worker heartbeat timestamps.
+    pub fn worker_heartbeats(&self) -> &HashMap<String, chrono::DateTime<chrono::Utc>> {
+        &self.worker_heartbeats
+    }
+
     /// Find workers whose heartbeats are older than `timeout`.
     /// Returns their IDs.
     pub fn mark_stale_workers(&mut self, timeout: std::time::Duration) -> Vec<String> {
@@ -1169,6 +1174,24 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         None
     }
 
+    /// Access the shared TaskStore.
+    pub fn task_store(&self) -> &Arc<Mutex<TaskStore>> {
+        &self.inner.task_store
+    }
+
+    /// Access the Engine.
+    pub fn engine(&self) -> &E {
+        &self.inner.engine
+    }
+
+    /// Access a clone of the Engine (for spawning async tasks that need owned Engine).
+    pub fn engine_clone(&self) -> E
+    where
+        E: Clone,
+    {
+        self.inner.engine.clone()
+    }
+
     /// Publish a task status change event (pause/resume) to NATS
     /// so the Python Orchestrator can react.
     ///
@@ -1540,7 +1563,7 @@ fn spawn_nats_subscriber(
 /// and marks stale tasks as Failed.
 #[cfg(feature = "messaging")]
 fn spawn_heartbeat_monitor(
-    _nats_client: async_nats::Client,
+    nats_client: async_nats::Client,
     task_store: Arc<Mutex<TaskStore>>,
     heartbeat_timeout: std::time::Duration,
 ) {
@@ -1570,6 +1593,12 @@ fn spawn_heartbeat_monitor(
                     subtasks_reassigned = reassigned.len(),
                     "Reassigned subtasks from stale workers back to Pending"
                 );
+                // Drop the lock before dispatching (dispatch acquires it again)
+                drop(store);
+                // Re-dispatch reassigned subtasks so live workers pick them up
+                for task_id in &affected_tasks {
+                    dispatch_ready_subtasks(&task_store, &nats_client, task_id).await;
+                }
             }
         }
     });

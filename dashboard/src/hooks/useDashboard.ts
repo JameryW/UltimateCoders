@@ -138,6 +138,7 @@ export function useDashboard() {
             status: String(s.status ?? "pending"),
             depends_on: (s.depends_on as string[]) ?? [],
             assigned_worker: s.assigned_worker ? String(s.assigned_worker) : undefined,
+            result: s.result ? String(s.result) : undefined,
           })) ?? [];
           const tasks = [
             {
@@ -396,9 +397,11 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   const existing = subtasks.find((s) => s.id === sid);
   // ponytail: carry assigned_worker from event data (set by subtask_assigned/subtask_started)
   const evWorker = ev.data.assigned_worker ? String(ev.data.assigned_worker) : undefined;
+  // Carry result/summary from completed events
+  const evResult = ev.data.summary ? String(ev.data.summary) : ev.data.result ? String(ev.data.result) : undefined;
   if (existing) {
     return subtasks.map((s) =>
-      s.id === sid ? { ...s, status: newStatus, assigned_worker: evWorker ?? s.assigned_worker } : s,
+      s.id === sid ? { ...s, status: newStatus, assigned_worker: evWorker ?? s.assigned_worker, result: evResult ?? s.result } : s,
     );
   }
   return [
@@ -409,6 +412,7 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
       status: newStatus,
       depends_on: (ev.data.depends_on as string[]) ?? [],
       assigned_worker: evWorker,
+      result: evResult,
     },
   ];
 }
