@@ -389,7 +389,7 @@ class NatsWorker:
             nats_publisher=self._publisher,
         )
 
-        # Worker -- sandbox-only, always
+        # Worker — sandbox-only, always
         from ultimate_coders.agent.sandbox import SandboxConfig
 
         sandbox_config = SandboxConfig(
@@ -887,11 +887,11 @@ class NatsWorker:
         }
 
     async def _dash_getcircuitbreakerstatus(self, _payload: dict) -> dict:
-        """Return circuit breaker + rate limiter status (deprecated -- always unavailable)."""
+        """Return circuit breaker + rate limiter status (deprecated — always unavailable)."""
         return {"available": False, "circuit_breaker": {}, "rate_limiter": {}}
 
     async def _dash_resetcircuitbreaker(self, _payload: dict) -> dict:
-        """Reset circuit breaker (deprecated -- always returns unavailable)."""
+        """Reset circuit breaker (deprecated — always returns unavailable)."""
         return {"success": False, "error": "Circuit breaker removed (sandbox-only mode)"}
 
     async def _dash_triggerschedulerjob(self, payload: dict) -> dict:

@@ -610,6 +610,7 @@ class Orchestrator:
         for i, st in enumerate(task.subtasks):
             self._subtask_index[st.id] = (task.id, i)
 
+
     async def _publish_event(
         self,
         event_type: str,
