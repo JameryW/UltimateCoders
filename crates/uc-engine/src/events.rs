@@ -76,6 +76,8 @@ pub enum AgentEventType {
         subtask_id: TaskId,
         summary: String,
         success: bool,
+        /// Full result output (truncated to 50KB), empty for simulated completions.
+        result: String,
     },
     SubtaskFailed {
         task_id: TaskId,

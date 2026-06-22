@@ -101,6 +101,8 @@ pub struct SubtaskResult {
     /// Whether the subtask succeeded.
     pub success: bool,
     pub completed_at: chrono::DateTime<chrono::Utc>,
+    /// Full result output (truncated to 50KB at source).
+    pub result: Option<String>,
 }
 
 /// A file change produced by a worker.

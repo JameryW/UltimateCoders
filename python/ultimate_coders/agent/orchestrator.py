@@ -548,6 +548,7 @@ class Orchestrator:
                     "success": result.success,
                     "summary": result.summary[:300] if result.success else "",
                     "error": "" if result.success else result.summary[:300],
+                    "result": result.summary[:50000],
                 },
             )
 

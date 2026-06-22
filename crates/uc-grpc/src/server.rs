@@ -549,6 +549,7 @@ impl TaskStore {
                         summary: result_str.clone(),
                         success: true,
                         completed_at: chrono::Utc::now(),
+                        result: Some(result_str.clone()),
                     });
                 }
             } else {
@@ -584,6 +585,7 @@ impl TaskStore {
                             summary: r.clone(),
                             success: true,
                             completed_at: chrono::Utc::now(),
+                            result: Some(r.clone()),
                         }),
                 };
                 task.subtasks.push(new_subtask);
@@ -1452,6 +1454,7 @@ fn spawn_nats_subscriber(
                                                         subtask_id: subtask.id.clone(),
                                                         summary: String::new(),
                                                         success: true,
+                                                        result: String::new(),
                                                     })
                                                 }
                                                 uc_types::SubtaskStatus::Failed => {
@@ -1778,11 +1781,18 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .unwrap_or("")
                 .to_string();
             let success = json_bool_or_default(&event.data, "success", true);
+            let result = event
+                .data
+                .get("result")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             Some(uc_engine::AgentEventType::SubtaskCompleted {
                 task_id,
                 subtask_id,
                 summary,
                 success,
+                result,
             })
         }
         "subtask_failed" => {
@@ -2610,6 +2620,11 @@ pub async fn apply_worker_event_to_store(
                 .get("success")
                 .map(|s| s == "true")
                 .unwrap_or(true),
+            result: worker_event
+                .data
+                .get("result")
+                .cloned()
+                .unwrap_or_default(),
         }),
         "subtask_failed" => Some(uc_engine::AgentEventType::SubtaskFailed {
             task_id: task_id.clone(),
@@ -3100,6 +3115,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 subtask_id: st.id.clone(),
                 summary: st.description.clone(),
                 success: true,
+                result: String::new(),
             });
         }
         store.record_event(uc_engine::AgentEventType::TaskCompleted {
@@ -4338,6 +4354,7 @@ mod tests {
                     subtask_id: sid,
                     summary: String::new(),
                     success: true,
+                    result: String::new(),
                 });
             }
         }

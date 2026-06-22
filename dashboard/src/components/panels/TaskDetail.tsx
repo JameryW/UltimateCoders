@@ -170,6 +170,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
 export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailProps) {
   const subtasks = task.subtasks ?? [];
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
+  const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
 
   return (
     <div className="pl-5 py-2 text-xs text-[var(--text-secondary)] space-y-3" role="region" aria-label={`Task detail: ${task.description}`}>
@@ -207,9 +208,32 @@ export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailP
                   </div>
                 </div>
                 {st.result && (
-                  <p className="text-[10px] text-[var(--text-muted)] mt-0.5 ml-2 truncate" title={st.result}>
-                    ↳ {truncate(st.result, 80)}
-                  </p>
+                  <div className="mt-0.5 ml-2">
+                    {st.result.length > 120 && !expandedResults[st.id] ? (
+                      <p
+                        className="text-[10px] text-[var(--text-muted)] truncate cursor-pointer hover:text-[var(--text-secondary)]"
+                        title="Click to expand"
+                        onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: true }))}
+                      >
+                        ↳ {truncate(st.result, 120)} <span className="text-cyan-500">[+]</span>
+                      </p>
+                    ) : st.result.length > 120 && expandedResults[st.id] ? (
+                      <div>
+                        <pre
+                          className="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap break-words max-h-48 overflow-y-auto cursor-pointer hover:text-[var(--text-secondary)] bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-1.5 mt-0.5"
+                          onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}
+                          title="Click to collapse"
+                        >
+                          {st.result}
+                        </pre>
+                        <span className="text-[10px] text-cyan-500 cursor-pointer" onClick={() => setExpandedResults((prev) => ({ ...prev, [st.id]: false }))}>[-] collapse</span>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-[var(--text-muted)] truncate" title={st.result}>
+                        ↳ {truncate(st.result, 120)}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
