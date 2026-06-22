@@ -6,6 +6,8 @@
 
 #[cfg(feature = "messaging")]
 use futures::StreamExt;
+#[cfg(not(feature = "messaging"))]
+use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
