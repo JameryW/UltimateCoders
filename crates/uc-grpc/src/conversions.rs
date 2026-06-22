@@ -788,7 +788,8 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 subtask_id,
                 summary,
                 success,
-                result,
+                modified_files,
+                output,
                 simulated,
             } => (
                 "subtask_completed".to_string(),
@@ -797,7 +798,8 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 vec![
                     ("summary".to_string(), summary),
                     ("success".to_string(), success.to_string()),
-                    ("result".to_string(), result),
+                    ("modified_files".to_string(), serde_json::to_string(&modified_files).unwrap_or_default()),
+                    ("output".to_string(), output),
                     ("simulated".to_string(), simulated.to_string()),
                 ]
                 .into_iter()
@@ -1136,20 +1138,24 @@ impl From<TaskEventProto> for AgentEvent {
                     .get("success")
                     .map(|s| s == "true")
                     .unwrap_or(true);
-                let result_text = proto.data.get("result").cloned().unwrap_or_default();
+                let modified_files: Vec<uc_types::FileChange> = proto
+                    .data
+                    .get("modified_files")
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default();
+                let output = proto.data.get("output").cloned().unwrap_or_default();
                 AgentEventPayload::SubtaskCompleted {
                     result: uc_types::SubtaskResult {
                         subtask_id,
                         worker_id: WorkerId::new(),
-                        modified_files: Vec::new(),
+                        modified_files,
                         summary,
                         success,
                         completed_at: timestamp,
-                        // Carry full result text (truncated to 50KB at source)
-                        result: if result_text.is_empty() {
+                        result: if output.is_empty() {
                             None
                         } else {
-                            Some(result_text)
+                            Some(output)
                         },
                     },
                 }

@@ -248,7 +248,8 @@ impl CheckpointManager {
                     subtask_id,
                     summary,
                     success,
-                    result: _,
+                    modified_files: _,
+                    output: _,
                     simulated: _,
                 } => {
                     if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
@@ -384,7 +385,8 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             subtask_id,
             summary,
             success,
-            result: _,
+            modified_files: _,
+            output: _,
             simulated: _,
         } => {
             if let Some(st) = snapshot
@@ -520,7 +522,8 @@ mod tests {
                     subtask_id: subtask_id.clone(),
                     summary: "Done".to_string(),
                     success: true,
-                    result: String::new(),
+                    modified_files: Vec::new(),
+                    output: String::new(),
                     simulated: false,
                 },
             )

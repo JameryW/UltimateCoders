@@ -145,11 +145,21 @@ export function processEvent(
     }
     case 'subtask_completed': {
       if (event.subtaskId) {
+        // Parse modified_files from JSON string if present
+        const modifiedFiles = (() => {
+          try {
+            const raw = event.data?.modified_files;
+            if (typeof raw === 'string' && raw.length > 0) return JSON.parse(raw);
+          } catch { /* ignore parse errors */ }
+          return undefined;
+        })();
         const existing = updated.get(event.subtaskId);
         if (existing) {
           updated.set(event.subtaskId, {
             ...existing,
             status: 'completed',
+            output: event.data?.output ?? existing.output,
+            modifiedFiles: modifiedFiles ?? existing.modifiedFiles,
           });
         } else {
           updated.set(event.subtaskId, {
@@ -158,6 +168,8 @@ export function processEvent(
             description: String(event.data?.description ?? ''),
             status: 'completed',
             dependsOn: parseDependsOn(event.data?.depends_on),
+            output: event.data?.output,
+            modifiedFiles,
           });
         }
       }
