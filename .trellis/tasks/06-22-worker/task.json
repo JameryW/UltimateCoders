@@ -1,0 +1,32 @@
+{
+  "id": "worker",
+  "name": "worker",
+  "title": "多 Worker 分布式架构",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "JameryW",
+  "assignee": "JameryW",
+  "createdAt": "2026-06-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/dashboard-file-browser",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-22-rust-scheduler",
+    "06-22-nats-worker-mode",
+    "06-22-conflict-detection",
+    "06-22-worker-failover",
+    "06-22-dashboard-workers"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

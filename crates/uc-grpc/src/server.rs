@@ -39,6 +39,9 @@ pub const NATS_SUBJECT_TASK_EVENT: &str = "uc.task.event";
 /// NATS subject for consumer heartbeats (Python -> gRPC).
 pub const NATS_SUBJECT_HEARTBEAT: &str = "uc.heartbeat";
 
+/// NATS subject for subtask execution dispatch (Rust -> Worker queue group).
+pub const NATS_SUBJECT_SUBTASK_EXECUTE: &str = "uc.subtask.execute";
+
 /// Payload for `uc.task.submit` messages.
 ///
 /// Published by gRPC server when a task is submitted. The Python NATS
@@ -99,6 +102,34 @@ pub struct NatsTaskEvent {
     pub subtask_id: Option<String>,
     #[serde(default)]
     pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Payload for `uc.subtask.execute` messages.
+///
+/// Published by the Rust scheduler when a subtask becomes ready (all
+/// dependencies completed).  Workers subscribe to this subject via a
+/// NATS queue group so that each subtask is consumed by exactly one worker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NatsSubtaskExecute {
+    /// Deduplication key for at-least-once NATS delivery.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    pub task_id: String,
+    pub subtask_id: String,
+    pub description: String,
+    #[serde(default)]
+    pub expected_output: String,
+    #[serde(default)]
+    pub file_constraints: Vec<String>,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+    /// Retry count — incremented on each re-dispatch after worker failure.
+    #[serde(default)]
+    pub retry_count: u32,
+}
+
+fn default_timeout() -> u64 {
+    600
 }
 
 /// Payload for `uc.heartbeat` messages.
@@ -615,6 +646,56 @@ impl TaskStore {
         self.last_heartbeat
     }
 
+    /// Get subtasks that are ready to be dispatched for a given task.
+    ///
+    /// A subtask is "ready" when:
+    /// - Its status is `Pending`
+    /// - All subtasks it depends on have status `Completed`
+    pub fn get_ready_subtasks(&self, task_id: &str) -> Vec<uc_types::Subtask> {
+        let task = match self.tasks.get(task_id) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        // Only dispatch if task is actively running
+        if task.status != uc_types::TaskStatus::InProgress {
+            return Vec::new();
+        }
+
+        let completed_ids: std::collections::HashSet<&str> = task
+            .subtasks
+            .iter()
+            .filter(|st| st.status == uc_types::SubtaskStatus::Completed)
+            .map(|st| st.id.0.as_str())
+            .collect();
+
+        task.subtasks
+            .iter()
+            .filter(|st| st.status == uc_types::SubtaskStatus::Pending)
+            .filter(|st| {
+                st.depends_on
+                    .iter()
+                    .all(|dep| completed_ids.contains(dep.0.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Update a subtask's status within a task. No-op if task/subtask not found.
+    pub fn update_subtask_status(
+        &mut self,
+        task_id: &str,
+        subtask_id: &str,
+        new_status: uc_types::SubtaskStatus,
+    ) {
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                st.status = new_status;
+                task.updated_at = chrono::Utc::now();
+            }
+        }
+    }
+
     /// Update the status of a task by ID.
     ///
     /// Used by tests and by worker-death handlers to change task status.
@@ -1092,6 +1173,83 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
     #[cfg(not(feature = "messaging"))]
     async fn publish_task_status_event(&self, _task_id: &str, _event_type: &str) {}
+
+    /// Dispatch ready subtasks for a task to the NATS `uc.subtask.execute` subject.
+    ///
+    /// Called after a task is decomposed (subtasks populated) and after each
+    /// `uc.task.update` that may have completed dependencies.
+    ///
+    /// Marks dispatched subtasks as `Assigned` in TaskStore so they are not
+    /// re-dispatched on the next call.
+    #[cfg(feature = "messaging")]
+    pub async fn publish_ready_subtasks(&self, task_id: &str) {
+        let ready = {
+            let mut store = self.inner.task_store.lock().await;
+            let subtasks = store.get_ready_subtasks(task_id);
+            // Mark as Assigned to prevent re-dispatch
+            for st in &subtasks {
+                store.update_subtask_status(&task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+            }
+            subtasks
+        };
+
+        if ready.is_empty() {
+            return;
+        }
+
+        if let Some(nats_client) = &self.inner.nats_client {
+            for st in ready {
+                let execute = NatsSubtaskExecute {
+                    message_id: Some(format!(
+                        "{}:execute:{}:{}",
+                        task_id,
+                        st.id.0,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis()
+                    )),
+                    task_id: task_id.to_string(),
+                    subtask_id: st.id.0.clone(),
+                    description: st.description.clone(),
+                    expected_output: String::new(),
+                    file_constraints: Vec::new(),
+                    timeout_seconds: 600,
+                    retry_count: 0,
+                };
+                match serde_json::to_vec(&execute) {
+                    Ok(bytes) => {
+                        if let Err(e) = nats_client
+                            .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                            .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                subtask_id = %st.id.0,
+                                "Failed to publish subtask execute"
+                            );
+                            // Revert to Pending on publish failure
+                            let mut store = self.inner.task_store.lock().await;
+                            store.update_subtask_status(
+                                task_id,
+                                &st.id.0,
+                                uc_types::SubtaskStatus::Pending,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to serialize NatsSubtaskExecute"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    pub async fn publish_ready_subtasks(&self, _task_id: &str) {}
 }
 
 impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
@@ -1265,6 +1423,13 @@ fn spawn_nats_subscriber(
                             for event in new_events {
                                 let _ = event_tx.send(event);
                             }
+
+                            // Dispatch ready subtasks for this task
+                            dispatch_ready_subtasks(
+                                &task_store,
+                                &nats_client,
+                                &update.task_id,
+                            ).await;
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -1345,6 +1510,66 @@ fn spawn_heartbeat_monitor(
             }
         }
     });
+}
+
+/// Dispatch ready subtasks for a task by publishing them to `uc.subtask.execute`.
+///
+/// Called by the NATS subscriber after processing a `uc.task.update` —
+/// completing a subtask may unblock dependents.
+#[cfg(feature = "messaging")]
+async fn dispatch_ready_subtasks(
+    task_store: &Arc<Mutex<TaskStore>>,
+    nats_client: &async_nats::Client,
+    task_id: &str,
+) {
+    let ready = {
+        let mut store = task_store.lock().await;
+        let subtasks = store.get_ready_subtasks(task_id);
+        for st in &subtasks {
+            store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+        }
+        subtasks
+    };
+
+    for st in ready {
+        let execute = NatsSubtaskExecute {
+            message_id: Some(format!(
+                "{}:execute:{}:{}",
+                task_id,
+                st.id.0,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            )),
+            task_id: task_id.to_string(),
+            subtask_id: st.id.0.clone(),
+            description: st.description.clone(),
+            expected_output: String::new(),
+            file_constraints: Vec::new(),
+            timeout_seconds: 600,
+            retry_count: 0,
+        };
+        match serde_json::to_vec(&execute) {
+            Ok(bytes) => {
+                if let Err(e) = nats_client
+                    .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        subtask_id = %st.id.0,
+                        "Failed to publish subtask execute, reverting to Pending"
+                    );
+                    let mut store = task_store.lock().await;
+                    store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Pending);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to serialize NatsSubtaskExecute");
+            }
+        }
+    }
 }
 
 /// Convert a `NatsTaskEvent` to an `AgentEventType`.
