@@ -219,6 +219,9 @@ pub struct TaskStore {
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
+    /// Per-Worker heartbeat timestamps (worker_id -> last seen).
+    /// Used for distributed Worker failure detection.
+    worker_heartbeats: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Deduplication map for NATS at-least-once delivery.
     /// Keys are message_id strings; values are insertion timestamps.
     /// Entries older than 5 minutes are purged on each check.
@@ -239,6 +242,7 @@ impl TaskStore {
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             task_backend: None,
             last_heartbeat: None,
+            worker_heartbeats: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -251,6 +255,7 @@ impl TaskStore {
             event_store,
             task_backend: None,
             last_heartbeat: None,
+            worker_heartbeats: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -266,6 +271,7 @@ impl TaskStore {
             event_store,
             task_backend: Some(task_backend),
             last_heartbeat: None,
+            worker_heartbeats: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -627,6 +633,59 @@ impl TaskStore {
     /// Update the last heartbeat timestamp from the Python NATS consumer.
     pub fn update_last_heartbeat(&mut self) {
         self.last_heartbeat = Some(chrono::Utc::now());
+    }
+
+    /// Update per-worker heartbeat timestamp.
+    pub fn update_worker_heartbeat(&mut self, worker_id: &str) {
+        self.worker_heartbeats
+            .insert(worker_id.to_string(), chrono::Utc::now());
+    }
+
+    /// Find workers whose heartbeats are older than `timeout`.
+    /// Returns their IDs.
+    pub fn mark_stale_workers(&mut self, timeout: std::time::Duration) -> Vec<String> {
+        let now = chrono::Utc::now();
+        let stale: Vec<String> = self
+            .worker_heartbeats
+            .iter()
+            .filter(|(_, ts)| (now - *ts).to_std().unwrap_or_default() > timeout)
+            .map(|(id, _)| id.clone())
+            .collect();
+        // Remove stale workers from heartbeat map
+        for id in &stale {
+            self.worker_heartbeats.remove(id);
+        }
+        stale
+    }
+
+    /// Reassign subtasks assigned to stale workers back to Pending.
+    /// Returns (task_ids_affected, subtask_ids_reassigned).
+    pub fn reassign_stale_subtasks(
+        &mut self,
+        stale_worker_ids: &[String],
+    ) -> (Vec<String>, Vec<String>) {
+        let mut affected_tasks = Vec::new();
+        let mut reassigned = Vec::new();
+        for task in self.tasks.values_mut() {
+            for st in &mut task.subtasks {
+                if matches!(
+                    st.status,
+                    uc_types::SubtaskStatus::InProgress | uc_types::SubtaskStatus::Assigned
+                ) {
+                    if let Some(ref w) = st.assigned_worker {
+                        if stale_worker_ids.contains(&w.0) {
+                            st.status = uc_types::SubtaskStatus::Pending;
+                            st.assigned_worker = None;
+                            reassigned.push(st.id.0.clone());
+                            if !affected_tasks.contains(&task.id.0) {
+                                affected_tasks.push(task.id.0.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (affected_tasks, reassigned)
     }
 
     /// Get the last heartbeat timestamp.
@@ -1460,9 +1519,13 @@ fn spawn_nats_subscriber(
                         }
                     }
                 }
-                Some(_message) = heartbeat_sub.next() => {
+                Some(message) = heartbeat_sub.next() => {
                     let mut store = task_store.lock().await;
                     store.update_last_heartbeat();
+                    // Also track per-worker heartbeat for failover detection.
+                    if let Ok(hb) = serde_json::from_slice::<NatsHeartbeat>(&message.payload) {
+                        store.update_worker_heartbeat(&hb.consumer_id);
+                    }
                 }
                 else => {
                     tracing::warn!("NATS subscription ended, subscriber exiting");
@@ -1494,6 +1557,18 @@ fn spawn_heartbeat_monitor(
                 tracing::warn!(
                     task_ids = ?failed,
                     "Marked tasks as Failed due to heartbeat timeout"
+                );
+            }
+
+            // Worker-level failover: detect stale workers and reassign their subtasks.
+            let stale_workers = store.mark_stale_workers(heartbeat_timeout);
+            if !stale_workers.is_empty() {
+                let (affected_tasks, reassigned) = store.reassign_stale_subtasks(&stale_workers);
+                tracing::warn!(
+                    worker_ids = ?stale_workers,
+                    tasks_affected = affected_tasks.len(),
+                    subtasks_reassigned = reassigned.len(),
+                    "Reassigned subtasks from stale workers back to Pending"
                 );
             }
         }
@@ -3658,6 +3733,83 @@ mod tests {
         let ready = store.get_ready_subtasks(&task_id);
         assert_eq!(ready.len(), 1);
         assert_ne!(ready[0].id.0, first_id); // The dependent one, not the completed one
+    }
+
+    // ── Worker heartbeat failover tests ──────────────────────
+
+    #[test]
+    fn worker_heartbeat_update_and_stale_detection() {
+        let mut store = TaskStore::new();
+        assert!(store.mark_stale_workers(std::time::Duration::from_secs(1)).is_empty());
+
+        store.update_worker_heartbeat("worker-1");
+        store.update_worker_heartbeat("worker-2");
+
+        // With long timeout, none stale
+        let stale = store.mark_stale_workers(std::time::Duration::from_secs(9999));
+        assert!(stale.is_empty());
+
+        // Workers were NOT removed (they weren't stale), so we can still detect them.
+        // Manually backdate heartbeat to simulate aging.
+        {
+            let old_ts = chrono::Utc::now() - chrono::Duration::seconds(60);
+            store.worker_heartbeats.insert("worker-1".to_string(), old_ts);
+            store.worker_heartbeats.insert("worker-2".to_string(), old_ts);
+        }
+
+        // Now with 30s timeout, both are stale
+        let stale = store.mark_stale_workers(std::time::Duration::from_secs(30));
+        assert_eq!(stale.len(), 2);
+        assert!(stale.contains(&"worker-1".to_string()));
+        assert!(stale.contains(&"worker-2".to_string()));
+    }
+
+    #[test]
+    fn reassign_stale_subtasks_resets_to_pending() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let subtask_id = task.subtasks[0].id.0.clone();
+
+        // Assign subtask to worker-1
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-1".to_string()));
+        }
+
+        let (affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
+        assert_eq!(affected, vec![task_id]);
+        assert_eq!(reassigned, vec![subtask_id]);
+
+        // Verify subtask is back to Pending with no assigned worker
+        let task = store.get_task(&affected[0]).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Pending);
+        assert!(task.subtasks[0].assigned_worker.is_none());
+    }
+
+    #[test]
+    fn reassign_skips_non_stale_workers() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Assign to worker-2 (not stale)
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-2".to_string()));
+        }
+
+        // Only worker-1 is stale
+        let (affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
+        assert!(affected.is_empty());
+        assert!(reassigned.is_empty());
+
+        // Subtask still assigned to worker-2
+        let task = store.get_task(&task_id).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::InProgress);
+        assert_eq!(task.subtasks[0].assigned_worker, Some(uc_types::WorkerId("worker-2".to_string())));
     }
 
     // ── NATS event conversion tests ──────────────────────────
