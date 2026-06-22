@@ -65,3 +65,4 @@ opencode.jsonc
 node_modules/
 package.json
 pnpm-lock.yaml
+.playwright-mcp/
