@@ -45,6 +45,7 @@ export interface SubtaskSummary {
   description: string;
   status: string;
   depends_on: string[];
+  assigned_worker?: string;
 }
 
 export interface TaskSummary {
