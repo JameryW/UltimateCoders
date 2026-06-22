@@ -78,6 +78,8 @@ pub enum AgentEventType {
         success: bool,
         /// Full result output (truncated to 50KB), empty for simulated completions.
         result: String,
+        /// Whether this completion was simulated (no real execution, e.g. claude CLI unavailable).
+        simulated: bool,
     },
     SubtaskFailed {
         task_id: TaskId,

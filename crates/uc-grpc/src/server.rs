@@ -1460,6 +1460,7 @@ fn spawn_nats_subscriber(
                                                         summary: String::new(),
                                                         success: true,
                                                         result: String::new(),
+                                                        simulated: false,
                                                     })
                                                 }
                                                 uc_types::SubtaskStatus::Failed => {
@@ -1798,6 +1799,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 summary,
                 success,
                 result,
+                simulated: false,
             })
         }
         "subtask_failed" => {
@@ -2626,6 +2628,11 @@ pub async fn apply_worker_event_to_store(
                 .map(|s| s == "true")
                 .unwrap_or(true),
             result: worker_event.data.get("result").cloned().unwrap_or_default(),
+            simulated: worker_event
+                .data
+                .get("simulated")
+                .map(|s| s == "true")
+                .unwrap_or(false),
         }),
         "subtask_failed" => Some(uc_engine::AgentEventType::SubtaskFailed {
             task_id: task_id.clone(),
@@ -3140,7 +3147,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             });
             drop(store);
 
-            let (success, result_text) = if claude_available {
+            let (success, result_text, simulated) = if claude_available {
                 // Real execution: spawn `claude -p "<description>"`
                 let output = tokio::time::timeout(
                     std::time::Duration::from_secs(120),
@@ -3174,21 +3181,25 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         } else {
                             combined
                         };
-                        (out.status.success(), truncated)
+                        (out.status.success(), truncated, false)
                     }
                     Ok(Err(e)) => {
                         tracing::warn!(subtask_id = %subtask_id.0, error = %e, "claude spawn failed");
-                        (false, format!("claude spawn error: {e}"))
+                        (false, format!("claude spawn error: {e}"), false)
                     }
                     Err(_) => {
                         tracing::warn!(subtask_id = %subtask_id.0, "claude timed out (120s)");
-                        (false, "claude execution timed out (120s)".to_string())
+                        (
+                            false,
+                            "claude execution timed out (120s)".to_string(),
+                            false,
+                        )
                     }
                 }
             } else {
                 // No claude CLI — simulated completion with marker
                 tracing::info!(subtask_id = %subtask_id.0, "claude CLI not found, simulated completion");
-                (true, String::new())
+                (true, String::new(), true)
             };
 
             let mut store = self.inner.task_store.lock().await;
@@ -3198,6 +3209,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 summary: description.clone(),
                 success,
                 result: result_text.clone(),
+                simulated,
             });
             // Update subtask status in TaskStore
             if let Some(t) = store.tasks.get_mut(&task_id.0) {
@@ -4491,6 +4503,7 @@ mod tests {
                     summary: String::new(),
                     success: true,
                     result: String::new(),
+                    simulated: false,
                 });
             }
         }

@@ -789,6 +789,7 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 summary,
                 success,
                 result,
+                simulated,
             } => (
                 "subtask_completed".to_string(),
                 task_id.0,
@@ -797,6 +798,7 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                     ("summary".to_string(), summary),
                     ("success".to_string(), success.to_string()),
                     ("result".to_string(), result),
+                    ("simulated".to_string(), simulated.to_string()),
                 ]
                 .into_iter()
                 .collect(),
