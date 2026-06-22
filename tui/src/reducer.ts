@@ -130,6 +130,9 @@ export interface TuiState {
   /** Whether the selected subtask's detail panel is open (in overlay). */
   subtaskDetailOpen: boolean;
 
+  /** Whether worker detail is expanded in StatusBar. ponytail: toggle with Ctrl+Shift+W */
+  workersExpanded: boolean;
+
   /** Timestamp (ms) when the current task submission started. Null when idle. */
   startedAt: number | null;
 
@@ -187,6 +190,7 @@ export const INITIAL_TUI_STATE: TuiState = {
   subtaskOverlayOpen: false,
   helpOverlayOpen: false,
   subtaskDetailOpen: false,
+  workersExpanded: false,
   startedAt: null,
   taskList: [],
   taskListLoading: false,
@@ -241,6 +245,7 @@ export type TuiAction =
   | {type: 'TOGGLE_SUBTASK_DETAIL'}
   | {type: 'JUMP_TO_FAILED_SUBTASK'}
   | {type: 'TOGGLE_HELP_OVERLAY'}
+  | {type: 'TOGGLE_WORKERS_EXPANDED'}
   // ── Subtask retry ──
   | {type: 'RETRY_SUBTASK'; subtaskId: string}
   // ── Task list ──
@@ -512,6 +517,9 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'TOGGLE_HELP_OVERLAY':
       return {...state, helpOverlayOpen: !state.helpOverlayOpen};
+
+    case 'TOGGLE_WORKERS_EXPANDED':
+      return {...state, workersExpanded: !state.workersExpanded};
 
     // ── Subtask retry ─────────────────────────────────────────
 

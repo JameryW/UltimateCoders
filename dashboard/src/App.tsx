@@ -408,7 +408,7 @@ function App() {
           </div>
         </ErrorBoundary>
         <ErrorBoundary name="Workers">
-          <div id="workers" className="scroll-mt-20"><WorkersPanel workers={dashboard.workers} tasks={dashboard.tasks} stale={grpcStale} /></div>
+          <div id="workers" className="scroll-mt-20"><WorkersPanel workers={dashboard.workers} tasks={dashboard.tasks} stale={grpcStale} onJumpTask={(taskId) => { const el = document.getElementById("tasks"); if (el) el.scrollIntoView({ behavior: "smooth" }); }} /></div>
         </ErrorBoundary>
         <ErrorBoundary name="Circuit Breaker">
           <div id="circuit-breaker" className="scroll-mt-20"><CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={grpcStale} /></div>

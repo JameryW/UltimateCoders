@@ -6,12 +6,10 @@
  *   Each segment has a display width. Segments are appended in priority order
  *   until the terminal width budget is exhausted.
  *
- * Connection states:
- *   ● grpc     — connected (green when streaming, yellow idle)
- *   ○ offline  — disconnected (yellow)
- *   ◌ offline  — connecting (yellow)
- *   ✗ offline  — error / unavailable (yellow, not red — offline is expected)
- *   ✗ offline | retry 3/5 — retrying after error
+ * Worker segment now shows multi-worker summary derived from subtasks:
+ *   Connected: "3/5 active" (N workers with active subtasks / M unique workers)
+ *   Offline: "offline"
+ *   Click/Enter on worker segment toggles expanded worker detail list.
  */
 import React, {useState, useEffect} from 'react';
 import {Box, Text} from 'ink';
@@ -21,8 +19,29 @@ import {getStatusBarHelp} from '../keymap.js';
 import {getSymbols} from '../symbols.js';
 import {MAX_RETRY_DISPLAY} from '../statusbar-utils.js';
 
+/** Per-worker summary derived from subtasks. */
+export interface WorkerSummaryEntry {
+  workerId: string;
+  activeSubtaskCount: number;
+}
+
+/** Summary of all workers, derived from SubtaskItem[].assignedWorker. */
+export interface WorkerSummary {
+  /** Workers with at least one in_progress/assigned subtask. */
+  activeCount: number;
+  /** Total unique workers seen across all subtasks. */
+  totalCount: number;
+  /** Per-worker detail for expanded view. */
+  entries: WorkerSummaryEntry[];
+}
+
 export interface StatusBarProps {
+  /** Legacy: single worker id. Ignored if workerSummary is provided. */
   workerId?: string;
+  /** Multi-worker summary derived from subtasks. */
+  workerSummary?: WorkerSummary;
+  /** Whether worker detail is expanded (controlled by parent reducer). */
+  workersExpanded?: boolean;
   backend?: string;
   progress?: {completed: number; total: number};
   connectionState?: ConnectionState;
@@ -122,14 +141,13 @@ export function buildSegments(props: {
   });
 
   // ── 2. Worker ───────────────────────────────────────────
-  const workerText = workerId || 'offline';
   segments.push({
     id: 'worker',
-    width: 3 + workerText.length,
+    width: 3 + workerId.length,
     render: () => (
       <>
         <Text dimColor>{' │ '}</Text>
-        <Text>{workerText}</Text>
+        <Text>{workerId}</Text>
       </>
     ),
   });
@@ -265,6 +283,8 @@ export function selectSegments(segments: Segment[], budget: number): Segment[] {
 
 const StatusBar: React.FC<StatusBarProps> = ({
   workerId = '',
+  workerSummary,
+  workersExpanded = false,
   backend = 'subprocess',
   progress = {completed: 0, total: 0},
   connectionState = 'disconnected',
@@ -287,10 +307,22 @@ const StatusBar: React.FC<StatusBarProps> = ({
   const helpText = getStatusBarHelp(focusedArea, terminalWidth);
   const S = getSymbols();
 
+  // ── Derive worker display text ──────────────────────────
+  // ponytail: if workerSummary provided, use multi-worker format; else fall back to legacy workerId
+  let effectiveWorkerText: string;
+  if (workerSummary && connectionState === 'connected') {
+    const {activeCount, totalCount} = workerSummary;
+    effectiveWorkerText = totalCount > 0
+      ? `${activeCount}/${totalCount} active`
+      : '0 workers';
+  } else {
+    effectiveWorkerText = workerId || 'offline';
+  }
+
   const allSegments = buildSegments({
     connectionState,
     isStreaming,
-    workerId,
+    workerId: effectiveWorkerText,
     backend,
     progress,
     focusedArea,
@@ -301,12 +333,30 @@ const StatusBar: React.FC<StatusBarProps> = ({
   });
 
   const visibleSegments = selectSegments(allSegments, terminalWidth);
+  const workerSegVisible = visibleSegments.some(s => s.id === 'worker');
 
   return (
-    <Box paddingX={1}>
-      {visibleSegments.map((seg) => (
-        <React.Fragment key={seg.id}>{seg.render()}</React.Fragment>
-      ))}
+    <Box flexDirection="column">
+      <Box paddingX={1}>
+        {visibleSegments.map((seg) => (
+          <React.Fragment key={seg.id}>{seg.render()}</React.Fragment>
+        ))}
+      </Box>
+      {/* ponytail: expanded worker detail — shown below status line when toggled */}
+      {workersExpanded && workerSummary && workerSummary.entries.length > 0 && workerSegVisible && (
+        <Box paddingX={1} marginTop={0}>
+          <Text dimColor>{'  Workers: '}</Text>
+          {workerSummary.entries.map((w, i) => (
+            <React.Fragment key={w.workerId}>
+              {i > 0 && <Text dimColor>{', '}</Text>}
+              <Text color={w.activeSubtaskCount > 0 ? 'cyan' : 'gray'}>
+                {w.workerId.length > 8 ? w.workerId.slice(0, 8) + '…' : w.workerId}
+              </Text>
+              <Text dimColor>{`(${w.activeSubtaskCount})`}</Text>
+            </React.Fragment>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 };

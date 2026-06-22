@@ -364,6 +364,23 @@ const App: React.FC = () => {
   const backend = connectionState === 'connected' ? 'grpc' : 'disconnected';
   const terminalWidth = stdout?.columns ?? 80;
 
+  // ponytail: derive multi-worker summary from subtasks — no new gRPC call needed
+  const workerSummary = useMemo(() => {
+    if (connectionState !== 'connected') return undefined;
+    const workerMap = new Map<string, number>();
+    for (const st of state.subtasks) {
+      if (st.assignedWorker) {
+        const count = workerMap.get(st.assignedWorker) ?? 0;
+        workerMap.set(st.assignedWorker, count + 1);
+      }
+    }
+    const entries = [...workerMap.entries()]
+      .map(([workerId, activeSubtaskCount]) => ({workerId, activeSubtaskCount}))
+      .sort((a, b) => b.activeSubtaskCount - a.activeSubtaskCount);
+    const activeCount = entries.filter(e => e.activeSubtaskCount > 0).length;
+    return {activeCount, totalCount: entries.length, entries};
+  }, [state.subtasks, connectionState]);
+
   // ── Calculate ChatLog visible lines ────────────────────
   // logo height adapts to terminal width (6 / 1 / 0) + separator(1) + statusIndicator(1) + input(1) + status(1) + borders(2)
   const logoHeight = getLogoHeight(terminalWidth);
@@ -577,8 +594,14 @@ const App: React.FC = () => {
     }
 
     // Shift+Tab / Ctrl+W: cycle focus (input→chat→input)
-    if ((key.shift && key.tab) || (key.ctrl && input === 'w')) {
+    if ((key.shift && key.tab) || (key.ctrl && input === 'w' && !key.shift)) {
       dispatch({type: 'CYCLE_FOCUS'});
+      return;
+    }
+
+    // Ctrl+Shift+W: toggle worker detail expansion in StatusBar
+    if (key.ctrl && key.shift && input === 'W') {
+      dispatch({type: 'TOGGLE_WORKERS_EXPANDED'});
       return;
     }
 
@@ -982,6 +1005,8 @@ const App: React.FC = () => {
       {/* ── Status bar ──────────────────────────────── */}
       <StatusBar
         workerId={workerId}
+        workerSummary={workerSummary}
+        workersExpanded={state.workersExpanded}
         backend={backend}
         progress={state.progress}
         connectionState={connectionState}
