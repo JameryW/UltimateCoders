@@ -1301,3 +1301,38 @@ Extended NatsSubtaskUpdate with description/depends_on fields, made apply_update
 ### Next Steps
 
 - None - task complete
+
+
+## Session 38: Worker failover + dashboard layout cleanup + PR #113
+
+**Date**: 2026-06-22
+**Task**: Worker failover + dashboard layout cleanup + PR #113
+**Branch**: `feat/dashboard-file-browser`
+
+### Summary
+
+Implemented per-worker heartbeat failover (update_worker_heartbeat, mark_stale_workers, reassign_stale_subtasks) with 3 tests. Removed floating ConnectionIndicator from dashboard (Header already shows status). Resolved merge conflict with main, fixed cargo fmt, created PR #113 with all CI green. Archived all 06-22 worker tasks and 06-21-fix-dashboard.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `982669d` | (see git log) |
+| `1e6087a` | (see git log) |
+| `5d0ac76` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

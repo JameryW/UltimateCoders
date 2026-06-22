@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
-- **Last Active**: 2026-06-21
+- **Total Sessions**: 38
+- **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1303 | Active |
+| `journal-1.md` | ~1338 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-06-22 | Worker failover + dashboard layout cleanup + PR #113 | `982669d`, `1e6087a`, `5d0ac76` | `feat/dashboard-file-browser` |
 | 37 | 2026-06-21 | apply_update full upsert for dual-state sync | `8dbb329` | `feat/dashboard-file-browser` |
 | 36 | 2026-06-21 | TUI reconnect state restoration | `39669b9` | `feat/dashboard-file-browser` |
 | 35 | 2026-06-21 | Fix Orchestrator-Worker interaction bugs | `b6d3c46` | `feat/dashboard-file-browser` |
