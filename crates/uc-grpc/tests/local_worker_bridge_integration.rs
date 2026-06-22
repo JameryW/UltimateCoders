@@ -38,9 +38,11 @@ async fn spawn_mock_worker() -> LocalWorkerBridge {
 // ── Fallback tests (no Python needed) ─────────────────────────────
 
 /// Test: when Python worker is unavailable, submit_task falls back
-/// to newline-split decomposition.
+/// to newline-split decomposition. Uses UC_SKIP_CLAUDE to avoid
+/// real claude CLI calls (this tests decomposition, not execution).
 #[tokio::test]
 async fn fallback_without_worker() {
+    std::env::set_var("UC_SKIP_CLAUDE", "1");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 
@@ -67,6 +69,7 @@ async fn fallback_without_worker() {
 
 #[tokio::test]
 async fn local_decomposition_single_line() {
+    std::env::set_var("UC_SKIP_CLAUDE", "1");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 

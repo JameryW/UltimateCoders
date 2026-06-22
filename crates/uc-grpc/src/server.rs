@@ -808,6 +808,135 @@ impl TaskStore {
     }
 }
 
+/// Smart task decomposition: attempt LLM-based decomposition via `claude -p`,
+/// fall back to newline splitting if unavailable or timed out.
+///
+/// LLM-decomposed subtasks have no sequential dependencies (they can run in
+/// parallel), while newline-split subtasks retain sequential dependencies
+/// (conservative fallback).
+async fn decompose_task_smart(
+    parent_id: &uc_types::TaskId,
+    description: &str,
+) -> Vec<uc_types::Subtask> {
+    // Skip LLM decomposition in test environments
+    if std::env::var("UC_SKIP_CLAUDE").as_deref() == Ok("1") {
+        return decompose_task(parent_id, description);
+    }
+
+    // Check if claude CLI is available
+    let claude_available = tokio::process::Command::new("which")
+        .arg("claude")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !claude_available {
+        tracing::info!("claude CLI not found, falling back to newline decomposition");
+        return decompose_task(parent_id, description);
+    }
+
+    // Try LLM decomposition with a short timeout
+    let prompt = format!(
+        "Decompose this task into numbered subtasks (one per line, no extra explanation):\n{}",
+        description
+    );
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new("claude")
+            .arg("-p")
+            .arg(&prompt)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output(),
+    )
+    .await;
+
+    match output {
+        Ok(Ok(out)) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let subtasks = parse_llm_subtasks(parent_id, &stdout);
+            if subtasks.len() >= 2 {
+                tracing::info!(
+                    subtask_count = subtasks.len(),
+                    "LLM decomposition succeeded"
+                );
+                return subtasks;
+            }
+            // LLM returned <2 subtasks — likely bad output, fallback
+            tracing::warn!(
+                subtask_count = subtasks.len(),
+                "LLM decomposition returned too few subtasks, falling back"
+            );
+        }
+        Ok(Ok(out)) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::warn!(
+                exit_code = out.status.code().unwrap_or(-1),
+                stderr = %stderr,
+                "LLM decomposition command failed, falling back"
+            );
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "LLM decomposition spawn failed, falling back");
+        }
+        Err(_) => {
+            tracing::warn!("LLM decomposition timed out (30s), falling back");
+        }
+    }
+
+    decompose_task(parent_id, description)
+}
+
+/// Parse LLM output into subtasks. Expects numbered items like "1. Do X"
+/// or bullet points. Subtasks have no dependencies (independent/parallel).
+fn parse_llm_subtasks(
+    parent_id: &uc_types::TaskId,
+    llm_output: &str,
+) -> Vec<uc_types::Subtask> {
+    let lines: Vec<&str> = llm_output
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let mut subtasks = Vec::new();
+
+    for line in &lines {
+        // Strip leading numbers/bullets: "1. ", "1) ", "- ", "* "
+        let cleaned = line
+            .trim_start_matches(|c: char| c.is_numeric())
+            .trim_start_matches(['.', ')', ' '])
+            .trim_start_matches(['-', '*'])
+            .trim_start()
+            .to_string();
+
+        if cleaned.is_empty() {
+            continue;
+        }
+
+        subtasks.push(uc_types::Subtask {
+            id: uc_types::TaskId::new(),
+            parent_id: parent_id.clone(),
+            description: cleaned,
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            // ponytail: no depends_on — LLM-decomposed tasks are independent
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+        });
+    }
+
+    subtasks
+}
+
 /// Simple task decomposition heuristic: split description by newlines
 /// or numbered items, creating one subtask per line/item.
 fn decompose_task(parent_id: &uc_types::TaskId, description: &str) -> Vec<uc_types::Subtask> {
@@ -1459,7 +1588,8 @@ fn spawn_nats_subscriber(
                                                         subtask_id: subtask.id.clone(),
                                                         summary: String::new(),
                                                         success: true,
-                                                        result: String::new(),
+                                                        modified_files: Vec::new(),
+                                                        output: String::new(),
                                                         simulated: false,
                                                     })
                                                 }
@@ -1787,9 +1917,9 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .unwrap_or("")
                 .to_string();
             let success = json_bool_or_default(&event.data, "success", true);
-            let result = event
+            let output = event
                 .data
-                .get("result")
+                .get("output")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -1798,7 +1928,8 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 subtask_id,
                 summary,
                 success,
-                result,
+                modified_files: Vec::new(),
+                output,
                 simulated: false,
             })
         }
@@ -2627,7 +2758,8 @@ pub async fn apply_worker_event_to_store(
                 .get("success")
                 .map(|s| s == "true")
                 .unwrap_or(true),
-            result: worker_event.data.get("result").cloned().unwrap_or_default(),
+            modified_files: Vec::new(),
+            output: worker_event.data.get("output").cloned().unwrap_or_default(),
             simulated: worker_event
                 .data
                 .get("simulated")
@@ -3107,23 +3239,47 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         &self,
         req: SubmitTaskRequest,
     ) -> Result<Response<SubmitTaskResponse>, Status> {
-        let mut store = self.inner.task_store.lock().await;
-        let task = store.submit_task(req.description.clone(), req.project_id.clone());
-        let task_id = task.id.clone();
+        // Smart decomposition: try LLM first, fallback to newline split
+        let task_id = uc_types::TaskId::new();
+        let now = chrono::Utc::now();
+        let subtasks = decompose_task_smart(&task_id, &req.description).await;
+
+        let task = uc_types::Task {
+            id: task_id.clone(),
+            description: req.description.clone(),
+            project_id: req.project_id.clone(),
+            status: uc_types::TaskStatus::InProgress,
+            subtasks,
+            created_at: now,
+            updated_at: now,
+        };
+
         let subtask_ids: Vec<(uc_types::TaskId, String)> = task
             .subtasks
             .iter()
             .map(|st| (st.id.clone(), st.description.clone()))
             .collect();
 
-        // Update task status to InProgress
-        if let Some(t) = store.tasks.get_mut(&task.id.0) {
-            t.status = uc_types::TaskStatus::InProgress;
-            t.updated_at = chrono::Utc::now();
+        // Store task and record events
+        let event_count_before;
+        {
+            let mut store = self.inner.task_store.lock().await;
+            // Record TaskCreated event
+            store.record_event(uc_engine::AgentEventType::TaskCreated {
+                task_id: task_id.clone(),
+                description: req.description.clone(),
+            });
+            // Record subtask assignment events
+            for st in &task.subtasks {
+                store.record_event(uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: task_id.clone(),
+                    subtask_id: st.id.clone(),
+                    worker_id: uc_types::WorkerId::new(),
+                });
+            }
+            event_count_before = store.events.len();
+            store.tasks.insert(task_id.0.clone(), task.clone());
         }
-        // Broadcast TaskCreated
-        let event_count_before = store.events.len();
-        drop(store);
 
         // Check if claude CLI is available (skip in test env)
         let claude_available = if std::env::var("UC_SKIP_CLAUDE").as_deref() == Ok("1") {
@@ -3137,95 +3293,131 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 .unwrap_or(false)
         };
 
-        // Execute subtasks serially
-        for (subtask_id, description) in &subtask_ids {
-            let mut store = self.inner.task_store.lock().await;
-            store.record_event(uc_engine::AgentEventType::SubtaskStarted {
-                task_id: task_id.clone(),
-                subtask_id: subtask_id.clone(),
-                worker_id: uc_types::WorkerId::new(),
-            });
-            drop(store);
+        // Execute subtasks in parallel with configurable concurrency
+        let max_concurrent: usize = std::env::var("UC_MAX_CONCURRENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+        let task_store = self.inner.task_store.clone();
+        let event_tx = self.inner.event_tx.clone();
 
-            let (success, result_text, simulated) = if claude_available {
-                // Real execution: spawn `claude -p "<description>"`
-                let output = tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
-                    tokio::process::Command::new("claude")
-                        .arg("-p")
-                        .arg(description.as_str())
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .output(),
-                )
-                .await;
+        let mut join_set = tokio::task::JoinSet::new();
 
-                match output {
-                    Ok(Ok(out)) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                        let combined = if stdout.is_empty() {
-                            stderr
-                        } else if stderr.is_empty() {
-                            stdout
-                        } else {
-                            format!("{stdout}\n{stderr}")
-                        };
-                        // ponytail: 50KB limit
-                        let truncated = if combined.len() > 50000 {
-                            format!(
-                                "{}...\n[truncated, {} bytes total]",
-                                &combined[..50000],
-                                combined.len()
+        for (subtask_id, description) in subtask_ids {
+            let sem = semaphore.clone();
+            let store = task_store.clone();
+            let tx = event_tx.clone();
+            let tid = task_id.clone();
+
+            join_set.spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+
+                // Record SubtaskStarted
+                {
+                    let mut s = store.lock().await;
+                    s.record_event(uc_engine::AgentEventType::SubtaskStarted {
+                        task_id: tid.clone(),
+                        subtask_id: subtask_id.clone(),
+                        worker_id: uc_types::WorkerId::new(),
+                    });
+                }
+
+                let (success, output, simulated) = if claude_available {
+                    let output = tokio::time::timeout(
+                        std::time::Duration::from_secs(120),
+                        tokio::process::Command::new("claude")
+                            .arg("-p")
+                            .arg(description.as_str())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .output(),
+                    )
+                    .await;
+
+                    match output {
+                        Ok(Ok(out)) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                            let combined = if stdout.is_empty() {
+                                stderr
+                            } else if stderr.is_empty() {
+                                stdout
+                            } else {
+                                format!("{stdout}\n{stderr}")
+                            };
+                            // ponytail: 50KB limit
+                            let truncated = if combined.len() > 50000 {
+                                format!(
+                                    "{}...\n[truncated, {} bytes total]",
+                                    &combined[..50000],
+                                    combined.len()
+                                )
+                            } else {
+                                combined
+                            };
+                            (out.status.success(), truncated, false)
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(subtask_id = %subtask_id.0, error = %e, "claude spawn failed");
+                            (false, format!("claude spawn error: {e}"), false)
+                        }
+                        Err(_) => {
+                            tracing::warn!(subtask_id = %subtask_id.0, "claude timed out (120s)");
+                            (
+                                false,
+                                "claude execution timed out (120s)".to_string(),
+                                false,
                             )
-                        } else {
-                            combined
-                        };
-                        (out.status.success(), truncated, false)
+                        }
                     }
-                    Ok(Err(e)) => {
-                        tracing::warn!(subtask_id = %subtask_id.0, error = %e, "claude spawn failed");
-                        (false, format!("claude spawn error: {e}"), false)
-                    }
-                    Err(_) => {
-                        tracing::warn!(subtask_id = %subtask_id.0, "claude timed out (120s)");
-                        (
-                            false,
-                            "claude execution timed out (120s)".to_string(),
-                            false,
-                        )
-                    }
-                }
-            } else {
-                // No claude CLI — simulated completion with marker
-                tracing::info!(subtask_id = %subtask_id.0, "claude CLI not found, simulated completion");
-                (true, String::new(), true)
-            };
+                } else {
+                    tracing::info!(subtask_id = %subtask_id.0, "claude CLI not found, simulated completion");
+                    (true, String::new(), true)
+                };
 
-            let mut store = self.inner.task_store.lock().await;
-            store.record_event(uc_engine::AgentEventType::SubtaskCompleted {
-                task_id: task_id.clone(),
-                subtask_id: subtask_id.clone(),
-                summary: description.clone(),
-                success,
-                result: result_text.clone(),
-                simulated,
-            });
-            // Update subtask status in TaskStore
-            if let Some(t) = store.tasks.get_mut(&task_id.0) {
-                for st in &mut t.subtasks {
-                    if st.id == *subtask_id {
-                        st.status = if success {
-                            uc_types::SubtaskStatus::Completed
-                        } else {
-                            uc_types::SubtaskStatus::Failed
-                        };
-                        break;
+                // Record SubtaskCompleted and update store
+                {
+                    let mut s = store.lock().await;
+                    s.record_event(uc_engine::AgentEventType::SubtaskCompleted {
+                        task_id: tid.clone(),
+                        subtask_id: subtask_id.clone(),
+                        summary: description.clone(),
+                        success,
+                        modified_files: Vec::new(),
+                        output: output.clone(),
+                        simulated,
+                    });
+                    if let Some(t) = s.tasks.get_mut(&tid.0) {
+                        for st in &mut t.subtasks {
+                            if st.id == subtask_id {
+                                st.status = if success {
+                                    uc_types::SubtaskStatus::Completed
+                                } else {
+                                    uc_types::SubtaskStatus::Failed
+                                };
+                                break;
+                            }
+                        }
                     }
                 }
-            }
-            drop(store);
+
+                // Broadcast events
+                {
+                    let s = store.lock().await;
+                    let new_events: Vec<TaskEvent> = s.events.iter().cloned().map(|e| e.into()).collect();
+                    drop(s);
+                    for event in new_events {
+                        let _ = tx.send(event);
+                    }
+                }
+
+                (subtask_id, success)
+            });
         }
+
+        // Wait for all subtasks to complete
+        while join_set.join_next().await.is_some() {}
 
         // Determine overall task status
         let mut store = self.inner.task_store.lock().await;
@@ -4502,7 +4694,8 @@ mod tests {
                     subtask_id: sid,
                     summary: String::new(),
                     success: true,
-                    result: String::new(),
+                    modified_files: Vec::new(),
+                    output: String::new(),
                     simulated: false,
                 });
             }

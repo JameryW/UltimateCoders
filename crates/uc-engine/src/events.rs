@@ -76,8 +76,10 @@ pub enum AgentEventType {
         subtask_id: TaskId,
         summary: String,
         success: bool,
+        /// Files modified by the worker.
+        modified_files: Vec<uc_types::FileChange>,
         /// Full result output (truncated to 50KB), empty for simulated completions.
-        result: String,
+        output: String,
         /// Whether this completion was simulated (no real execution, e.g. claude CLI unavailable).
         simulated: bool,
     },

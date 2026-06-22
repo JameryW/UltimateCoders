@@ -38,6 +38,10 @@ export interface SubtaskItem {
   dependsOn?: string[];
   /** Error summary for failed subtasks. */
   errorSummary?: string;
+  /** Output from subtask execution (truncated). */
+  output?: string;
+  /** Files modified by this subtask. */
+  modifiedFiles?: Array<{file_path: string; change_type: string; diff: string}>;
 }
 
 export interface SubtaskTreeProps {
