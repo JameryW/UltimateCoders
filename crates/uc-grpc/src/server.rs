@@ -3582,6 +3582,82 @@ mod tests {
         assert_eq!(NATS_SUBJECT_TASK_UPDATE, "uc.task.update");
         assert_eq!(NATS_SUBJECT_TASK_EVENT, "uc.task.event");
         assert_eq!(NATS_SUBJECT_HEARTBEAT, "uc.heartbeat");
+        assert_eq!(NATS_SUBJECT_SUBTASK_EXECUTE, "uc.subtask.execute");
+    }
+
+    #[test]
+    fn task_store_get_ready_subtasks_no_deps() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        // Set task to InProgress so get_ready_subtasks considers it
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.status = uc_types::TaskStatus::InProgress;
+        }
+        let ready = store.get_ready_subtasks(&task_id);
+        // Default submit creates 1 subtask with no deps — should be ready
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].status, uc_types::SubtaskStatus::Pending);
+    }
+
+    #[test]
+    fn task_store_get_ready_subtasks_with_unmet_deps() {
+        let mut store = TaskStore::new();
+        // Create a task and add a subtask with a dependency
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        // Add a second subtask that depends on the first
+        let first_id = task.subtasks[0].id.0.clone();
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.status = uc_types::TaskStatus::InProgress;
+            t.subtasks.push(uc_types::Subtask {
+                id: uc_types::TaskId::new(),
+                parent_id: task.id.clone(),
+                description: "Dependent subtask".to_string(),
+                status: uc_types::SubtaskStatus::Pending,
+                assigned_worker: None,
+                depends_on: vec![uc_types::TaskId(first_id.clone())],
+                file_constraints: Vec::new(),
+                expected_output: String::new(),
+                result: None,
+            });
+        }
+        // Only the first subtask (no deps) should be ready
+        let ready = store.get_ready_subtasks(&task_id);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id.0, first_id);
+    }
+
+    #[test]
+    fn task_store_get_ready_subtasks_deps_met() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let first_id = task.subtasks[0].id.0.clone();
+        // Add dependent subtask
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.status = uc_types::TaskStatus::InProgress;
+            t.subtasks.push(uc_types::Subtask {
+                id: uc_types::TaskId::new(),
+                parent_id: task.id.clone(),
+                description: "Dependent".to_string(),
+                status: uc_types::SubtaskStatus::Pending,
+                assigned_worker: None,
+                depends_on: vec![uc_types::TaskId(first_id.clone())],
+                file_constraints: Vec::new(),
+                expected_output: String::new(),
+                result: None,
+            });
+        }
+        // Complete the first subtask
+        store.update_subtask_status(&task_id, &first_id, uc_types::SubtaskStatus::Completed);
+        // Now both should NOT be ready — first is Completed, second's deps are met
+        let ready = store.get_ready_subtasks(&task_id);
+        assert_eq!(ready.len(), 1);
+        assert_ne!(ready[0].id.0, first_id); // The dependent one, not the completed one
     }
 
     // ── NATS event conversion tests ──────────────────────────
