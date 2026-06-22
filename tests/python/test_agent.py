@@ -13,17 +13,12 @@ sandbox-only execution.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictResult,
-    EditIntent,
-    EditType,
-    LineRange,
 )
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.sandbox import (
@@ -33,16 +28,13 @@ from ultimate_coders.agent.sandbox import (
     SandboxManager,
 )
 from ultimate_coders.agent.types import (
-    OrchestratorConfig,
     Subtask,
-    SubtaskResult,
     SubtaskStatus,
     Task,
     TaskStatus,
     WorkerInfo,
 )
 from ultimate_coders.agent.worker import Worker
-
 
 # ═══════════════════════════════════════════════════════════════════
 # Worker tests

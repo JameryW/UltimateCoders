@@ -1,0 +1,399 @@
+[     362ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:14337
+[     750ms] ReferenceError: fetchEvents is not defined
+    at http://localhost:5173/src/App.tsx?t=1782019141639:191:4
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:12904:13)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:851:66)
+    at commitHookEffectListMount (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:6617:153)
+    at commitHookPassiveMountEffects (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:6652:55)
+    at commitPassiveMountOnFiber (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:7618:22)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:7606:5)
+    at commitPassiveMountOnFiber (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:7672:14)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:7606:5)
+    at commitPassiveMountOnFiber (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:7627:6)
+[     575ms] [WARNING] %s
+
+%s
+ An error occurred in the <App> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0da6b843:5257
+[  184739ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  184740ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  184863ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5173/dashboard/api/repos:0
+[  184863ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5173/dashboard/api/repos:0
+[  185762ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  185762ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  186777ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  186777ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  187790ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  187790ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  188803ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  188804ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  189816ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  189816ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  190828ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  190828ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  191841ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  191841ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  192853ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  192853ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  193866ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  193866ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  194879ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  194880ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  195892ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  195892ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  196905ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  196905ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  197917ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  197918ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  198931ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  198931ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  199941ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  199942ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  200956ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  200956ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  201969ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  201969ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  202983ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  202983ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  203994ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  203994ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  205007ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  205007ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  206021ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  206022ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  207036ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  207036ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  208051ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  208051ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  209064ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  209064ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  210075ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  210076ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  211088ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  211088ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  212100ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  212100ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  213114ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  213114ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  214125ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  214125ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  215139ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  215139ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  216153ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  216154ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  217165ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  217165ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  218178ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  218178ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  219192ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  219192ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  220205ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  220205ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  221219ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  221219ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  222233ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  222233ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  223245ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  223245ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  224257ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  224257ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  225268ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  225268ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  225503ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  225504ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  226515ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  226515ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  227526ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  227526ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  228538ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  228538ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  229551ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  229551ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  230563ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  230563ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  231576ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  231576ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  232589ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  232589ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  233600ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  233600ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  234613ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  234613ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  235628ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  235629ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  236640ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  236640ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  237652ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  237652ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  238666ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  238666ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  239679ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  239679ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  240693ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  240693ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  241706ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  241706ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  242719ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  242719ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  243733ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  243734ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  244747ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  244747ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  245758ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  245758ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  246771ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  246771ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  247783ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  247783ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  248796ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  248796ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  249809ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  249810ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  250822ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  250822ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  251835ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  251835ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  252849ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  252849ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  253864ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  253864ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  254877ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  254877ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  255888ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  255889ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  256902ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  256902ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  257916ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  257916ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  258929ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  258929ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186
+[  259943ms] [ERROR] [Dashboard gRPC] WatchDashboard stream error: ConnectError: [unimplemented]
+    at findTrailerError (http://localhost:5173/node_modules/.vite/deps/esm-BTiBAXXI.js?v=0da6b843:1735:28)
+    at validateResponse (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:273:16)
+    at next (http://localhost:5173/node_modules/.vite/deps/@connectrpc_connect-web.js?v=0da6b843:465:43) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:246
+[  259943ms] [LOG] [Dashboard gRPC] Reconnecting in 1000ms (attempt 1) @ http://localhost:5173/src/hooks/useDashboardGrpc.ts:186

@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import tempfile
-from unittest.mock import MagicMock
 
-import pytest
 from ultimate_coders.agent.codegraph import CodegraphClient, _sanitize_fts5
-from ultimate_coders.agent.worker import Worker
 
 # ── Helpers ──────────────────────────────────────────────────────
 
