@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
-- **Last Active**: 2026-06-21
+- **Total Sessions**: 39
+- **Last Active**: 2026-06-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1303 | Active |
+| `journal-1.md` | ~1371 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-06-22 | TUI界面优化: EventLog虚拟滚动+WorkersPanel增强+StatusBar多Worker摘要 | `e46111a` | `feat/dashboard-file-browser` |
+| 38 | 2026-06-22 | Worker failover + dashboard layout cleanup + PR #113 | `982669d`, `1e6087a`, `5d0ac76` | `feat/dashboard-file-browser` |
 | 37 | 2026-06-21 | apply_update full upsert for dual-state sync | `8dbb329` | `feat/dashboard-file-browser` |
 | 36 | 2026-06-21 | TUI reconnect state restoration | `39669b9` | `feat/dashboard-file-browser` |
 | 35 | 2026-06-21 | Fix Orchestrator-Worker interaction bugs | `b6d3c46` | `feat/dashboard-file-browser` |
