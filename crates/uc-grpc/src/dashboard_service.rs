@@ -625,11 +625,7 @@ async fn build_local_snapshot(
     // Recent task events from TaskStore (last 20 events)
     let store = task_store.lock().await;
     let total_events = store.event_count();
-    let start = if total_events > 20 {
-        total_events - 20
-    } else {
-        0
-    };
+    let start = total_events.saturating_sub(20);
     let recent_task_events: Vec<TaskEvent> = store
         .read_events_from(start)
         .into_iter()
