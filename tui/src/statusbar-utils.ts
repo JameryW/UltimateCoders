@@ -75,6 +75,6 @@ export type LayoutMode = 'narrow' | 'medium' | 'wide';
  */
 export function getLayoutMode(terminalWidth: number): LayoutMode {
   if (terminalWidth < 80) return 'narrow';
-  if (terminalWidth < 100) return 'medium';
+  if (terminalWidth < 120) return 'medium';
   return 'wide';
 }

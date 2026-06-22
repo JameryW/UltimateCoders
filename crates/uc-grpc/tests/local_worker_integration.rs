@@ -36,6 +36,7 @@ async fn apply_worker_update_to_task_store() {
             status: "assigned".to_string(),
             assigned_worker: Some("worker-1".to_string()),
             depends_on: vec![],
+            result: None,
         }],
         result: None,
     };

@@ -15,6 +15,7 @@ import {
 import type {
   DashboardSnapshot as GrpcDashboardSnapshot,
   DashboardEventProto,
+  TaskEvent as GrpcTaskEvent,
   ListWorkersResponse,
   GetSchedulerStatusResponse,
   CircuitBreakerStatusResponse,
@@ -188,6 +189,29 @@ function grpcEventProtoToTaskEvent(ev: DashboardEventProto): TaskEvent {
   };
 }
 
+/** Convert a gRPC TaskEvent proto (from DashboardSnapshot.recent_task_events) to a dashboard TaskEvent. */
+function grpcTaskEventToTaskEvent(ev: GrpcTaskEvent): TaskEvent {
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(ev.data)) {
+    if (value.startsWith("[") || value.startsWith("{")) {
+      try { data[key] = JSON.parse(value); } catch { data[key] = value; }
+    } else if (/^-?\d+(\.\d+)?$/.test(value)) {
+      data[key] = Number(value);
+    } else if (value === "true" || value === "false") {
+      data[key] = value === "true";
+    } else {
+      data[key] = value;
+    }
+  }
+  return {
+    timestamp: ev.timestamp,
+    type: ev.type,
+    task_id: ev.taskId,
+    subtask_id: ev.subtaskId ?? undefined,
+    data,
+  };
+}
+
 // ── Hook interface ────────────────────────────────────────────
 
 export type DashboardConnectionState =
@@ -305,6 +329,12 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           // Also emit task events from recent_events for real-time updates
           for (const ev of snapshot.recentEvents) {
             const taskEvent = grpcEventProtoToTaskEvent(ev);
+            optsRef.current.onTaskEvent?.(taskEvent);
+          }
+
+          // Emit fine-grained task events from recent_task_events (gRPC TaskEvent protos)
+          for (const ev of snapshot.recentTaskEvents) {
+            const taskEvent = grpcTaskEventToTaskEvent(ev);
             optsRef.current.onTaskEvent?.(taskEvent);
           }
         }

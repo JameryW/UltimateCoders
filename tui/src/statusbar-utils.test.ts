@@ -87,13 +87,14 @@ describe('getLayoutMode', () => {
     expect(getLayoutMode(40)).toBe('narrow');
   });
 
-  it('returns "medium" for width 80-99', () => {
+  it('returns "medium" for width 80-119', () => {
     expect(getLayoutMode(80)).toBe('medium');
     expect(getLayoutMode(99)).toBe('medium');
+    expect(getLayoutMode(119)).toBe('medium');
   });
 
-  it('returns "wide" for width >= 100', () => {
-    expect(getLayoutMode(100)).toBe('wide');
+  it('returns "wide" for width >= 120', () => {
+    expect(getLayoutMode(120)).toBe('wide');
     expect(getLayoutMode(200)).toBe('wide');
   });
 

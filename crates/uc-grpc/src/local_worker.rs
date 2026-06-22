@@ -105,6 +105,9 @@ pub struct WorkerSubtaskUpdate {
     pub assigned_worker: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Result output from completed subtask (truncated to 50KB).
+    #[serde(default)]
+    pub result: Option<String>,
 }
 
 /// Fine-grained task event from the worker (maps to ``task_event`` notification params).

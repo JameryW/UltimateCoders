@@ -397,8 +397,8 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   const existing = subtasks.find((s) => s.id === sid);
   // ponytail: carry assigned_worker from event data (set by subtask_assigned/subtask_started)
   const evWorker = ev.data.assigned_worker ? String(ev.data.assigned_worker) : undefined;
-  // Carry result/summary from completed events
-  const evResult = ev.data.summary ? String(ev.data.summary) : ev.data.result ? String(ev.data.result) : undefined;
+  // Carry result from completed events: prefer full result text, fallback to summary
+  const evResult = ev.data.result ? String(ev.data.result) : ev.data.summary ? String(ev.data.summary) : undefined;
   if (existing) {
     return subtasks.map((s) =>
       s.id === sid ? { ...s, status: newStatus, assigned_worker: evWorker ?? s.assigned_worker, result: evResult ?? s.result } : s,

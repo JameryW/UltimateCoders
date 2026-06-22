@@ -68,7 +68,7 @@ function formatTime(): string {
 /** Parse HH:MM timestamp and return minutes since midnight. Returns -1 on parse failure. */
 function parseHHMM(ts: string): number {
   const parts = ts.split(':');
-  if (parts.length !== 2) return -1;
+  if (parts.length < 2) return -1;
   const h = parseInt(parts[0], 10);
   const m = parseInt(parts[1], 10);
   if (isNaN(h) || isNaN(m)) return -1;
@@ -145,7 +145,39 @@ export function getEventIcon(eventType?: string): string {
   return EVENT_ICONS[eventType] ? `${EVENT_ICONS[eventType]} ` : '';
 }
 
-const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number; isSearchMatch?: boolean; isCurrentMatch?: boolean}> = ({msg, isExpanded, isSelected, terminalWidth, isSearchMatch, isCurrentMatch}) => {
+const MAX_RENDERED_LINES = 50;
+
+/** Split text into segments, highlighting matches with inverse bold. */
+function highlightSearchMatches(
+  text: string,
+  matches: Array<{pos: number}>,
+  queryLen: number,
+  isCurrent: boolean,
+): React.ReactNode[] {
+  if (!matches.length || queryLen <= 0) return [<Text key="t">{text}</Text>];
+  // Deduplicate and sort match positions
+  const positions = [...new Set(matches.map(m => m.pos))].sort((a, b) => a - b);
+  const nodes: React.ReactNode[] = [];
+  let last = 0;
+  for (const pos of positions) {
+    if (pos < last) continue; // overlapping, skip
+    if (pos > last) nodes.push(<Text key={`t${last}`}>{text.slice(last, pos)}</Text>);
+    nodes.push(
+      <Text key={`h${pos}`} inverse bold color={isCurrent ? 'yellow' : 'cyan'}>
+        {text.slice(pos, pos + queryLen)}
+      </Text>,
+    );
+    last = pos + queryLen;
+  }
+  if (last < text.length) nodes.push(<Text key="tail">{text.slice(last)}</Text>);
+  return nodes;
+}
+
+const ChatMessageItem: React.FC<{
+  msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number;
+  isSearchMatch?: boolean; isCurrentMatch?: boolean;
+  searchHighlights?: Array<{pos: number}>; searchQueryLen?: number;
+}> = ({msg, isExpanded, isSelected, terminalWidth, isSearchMatch, isCurrentMatch, searchHighlights, searchQueryLen}) => {
   const lines = msg.text.split('\n');
 
   const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
@@ -162,30 +194,59 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelect
   );
 
   const visibleLines = (isLong && !isExpanded) ? lines.slice(0, 1) : lines;
+  // ponytail: line cap for expanded messages — prevents single message consuming entire viewport
+  const cappedLines = isExpanded && visibleLines.length > MAX_RENDERED_LINES
+    ? visibleLines.slice(0, MAX_RENDERED_LINES) : visibleLines;
+  const extraLines = isExpanded ? Math.max(0, visibleLines.length - MAX_RENDERED_LINES) : 0;
 
   // ponytail: render markdown for system messages that contain markdown syntax
   const shouldRenderMarkdown = !msg.isUser && hasMarkdown(msg.text);
   const isDiff = !msg.isUser && (msg.eventType === 'file_modified' || isDiffText(msg.text));
+  const joinedCapped = cappedLines.join('\n');
   const renderedText = isDiff
-    ? colorDiff(visibleLines.join('\n'))
+    ? colorDiff(joinedCapped)
     : shouldRenderMarkdown
       ? renderMarkdown(msg.text, terminalWidth)
-      : visibleLines.join('\n');
+      : joinedCapped;
+
+  // Whether we can safely apply in-text search highlighting (only for plain text, not markdown/diff)
+  const canHighlight = searchHighlights && searchHighlights.length > 0 && searchQueryLen && searchQueryLen > 0
+    && !shouldRenderMarkdown && !isDiff;
 
   const renderText = () => {
     if (msg.isUser) {
+      if (canHighlight) {
+        return (
+          <>
+            <Text bold color="cyan">{'> '}</Text>
+            {highlightSearchMatches(cappedLines[0], searchHighlights!, searchQueryLen!, !!isCurrentMatch)}
+            {cappedLines.slice(1).map((line, i) => (
+              <Text key={i}>{'\n  '}{highlightSearchMatches(line, searchHighlights!, searchQueryLen!, !!isCurrentMatch)}</Text>
+            ))}
+          </>
+        );
+      }
       return (
         <>
           <Text bold color="cyan">{'> '}</Text>
-          <Text bold>{visibleLines[0]}</Text>
-          {visibleLines.slice(1).map((line, i) => (
+          <Text bold>{cappedLines[0]}</Text>
+          {cappedLines.slice(1).map((line, i) => (
             <Text key={i}>{'\n  ' + line}</Text>
           ))}
         </>
       );
     }
+    // For plain text system messages with search matches, highlight in-text
+    if (canHighlight) {
+      return (
+        <Text color={statusColor} bold={msg.bold} dimColor={msg.dim ? true : isToolEvent && !isExpanded}>
+          {msg.eventType ? getEventIcon(msg.eventType) : ''}
+          {highlightSearchMatches(joinedCapped, searchHighlights!, searchQueryLen!, !!isCurrentMatch)}
+        </Text>
+      );
+    }
     return (
-      <Text color={statusColor} bold={msg.bold} dimColor={msg.dim ? true : isToolEvent}>
+      <Text color={statusColor} bold={msg.bold} dimColor={msg.dim ? true : isToolEvent && !isExpanded}>
         {msg.eventType ? getEventIcon(msg.eventType) : ''}{renderedText}
       </Text>
     );
@@ -207,6 +268,16 @@ const ChatMessageItem: React.FC<{msg: ChatMessage; isExpanded: boolean; isSelect
       {collapsedCount > 0 && (
         <Box marginLeft={9}>
           <Text dimColor>{isToolEvent ? `[+${collapsedCount} lines — Enter to expand]` : `[+${collapsedCount} more]`}</Text>
+        </Box>
+      )}
+      {isLong && isExpanded && collapsedCount === 0 && (
+        <Box marginLeft={9}>
+          <Text dimColor>{'[Enter to collapse]'}</Text>
+        </Box>
+      )}
+      {extraLines > 0 && (
+        <Box marginLeft={9}>
+          <Text dimColor>{`[+${extraLines} more lines]`}</Text>
         </Box>
       )}
     </Box>
@@ -390,14 +461,22 @@ const ChatLog: React.FC<ChatLogProps> = ({
       )}
       {visibleMessages.map((msg, i) => {
         const prevMsg = i > 0 ? visibleMessages[i - 1] : null;
-        const showSeparator = prevMsg && timeDiffMinutes(prevMsg.timestamp, msg.timestamp) >= 5;
+        const gapMinutes = prevMsg ? timeDiffMinutes(prevMsg.timestamp, msg.timestamp) : 0;
+        const showSeparator = prevMsg && gapMinutes >= 5;
         const isSearchMatch = searchActive && searchMatchMsgIds.has(msg.id);
         const isCurrentMatch = searchActive && msg.id === currentMatchMsgId;
+        // Compute in-text highlight positions for this message
+        const msgSearchHighlights = searchActive && searchQuery
+          ? searchMatches.filter(m => filteredMessages[m.msgIdx]?.id === msg.id)
+          : [];
         return (
           <React.Fragment key={msg.id}>
-            {showSeparator && (
-              <Text dimColor>{`── ${msg.timestamp} ──`}</Text>
-            )}
+            {showSeparator && (() => {
+              const gapLabel = gapMinutes >= 60
+                ? `${Math.floor(gapMinutes / 60)}h ${gapMinutes % 60}m`
+                : `${gapMinutes}m`;
+              return <Text dimColor>{`── ${gapLabel} gap ──`}</Text>;
+            })()}
             <ChatMessageItem
               msg={msg}
               isExpanded={expandedIds.has(msg.id) || isCurrentMatch}
@@ -405,6 +484,8 @@ const ChatLog: React.FC<ChatLogProps> = ({
               terminalWidth={terminalWidth}
               isSearchMatch={isSearchMatch}
               isCurrentMatch={isCurrentMatch}
+              searchHighlights={msgSearchHighlights.length > 0 ? msgSearchHighlights : undefined}
+              searchQueryLen={searchQuery.length || undefined}
             />
           </React.Fragment>
         );

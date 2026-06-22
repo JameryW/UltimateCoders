@@ -292,6 +292,7 @@ message SubtaskProto {
     string parent_id = 6;
     repeated string file_constraints = 7;
     string expected_output = 8;
+    optional string result = 9;
 }
 
 // ── Batch Memory ────────────────────────────────────────
@@ -469,6 +470,7 @@ message DashboardSnapshot {
     optional GetSchedulerStatusResponse scheduler = 5;
     optional CircuitBreakerStatusResponse circuit_breaker = 6;
     repeated DashboardEventProto recent_events = 7;
+    repeated TaskEvent recent_task_events = 8;
 }
 
 message HealthSnapshot {

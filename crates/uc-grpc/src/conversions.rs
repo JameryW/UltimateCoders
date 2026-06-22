@@ -680,6 +680,17 @@ impl From<Subtask> for SubtaskProto {
             parent_id: st.parent_id.0,
             file_constraints: st.file_constraints,
             expected_output: st.expected_output,
+            result: st.result.and_then(|r| {
+                #[allow(clippy::unnecessary_lazy_evaluations)]
+                r.result.or_else(|| {
+                    // Fallback: use summary as result if result text is empty
+                    if r.summary.is_empty() {
+                        None
+                    } else {
+                        Some(r.summary)
+                    }
+                })
+            }),
         }
     }
 }
@@ -777,6 +788,7 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 subtask_id,
                 summary,
                 success,
+                result,
             } => (
                 "subtask_completed".to_string(),
                 task_id.0,
@@ -784,6 +796,7 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 vec![
                     ("summary".to_string(), summary),
                     ("success".to_string(), success.to_string()),
+                    ("result".to_string(), result),
                 ]
                 .into_iter()
                 .collect(),
@@ -938,7 +951,15 @@ impl From<SubtaskProto> for Subtask {
             depends_on: proto.depends_on.into_iter().map(TaskId).collect(),
             file_constraints: proto.file_constraints,
             expected_output: proto.expected_output,
-            result: None, // not carried by proto
+            result: proto.result.map(|r| uc_types::SubtaskResult {
+                subtask_id: TaskId::new(), // not carried by proto
+                worker_id: WorkerId::new(),
+                modified_files: Vec::new(),
+                summary: String::new(), // summary is in event data, not SubtaskProto
+                success: true,
+                completed_at: chrono::Utc::now(),
+                result: Some(r),
+            }),
         }
     }
 }
@@ -1113,6 +1134,7 @@ impl From<TaskEventProto> for AgentEvent {
                     .get("success")
                     .map(|s| s == "true")
                     .unwrap_or(true);
+                let result_text = proto.data.get("result").cloned().unwrap_or_default();
                 AgentEventPayload::SubtaskCompleted {
                     result: uc_types::SubtaskResult {
                         subtask_id,
@@ -1121,6 +1143,12 @@ impl From<TaskEventProto> for AgentEvent {
                         summary,
                         success,
                         completed_at: timestamp,
+                        // Carry full result text (truncated to 50KB at source)
+                        result: if result_text.is_empty() {
+                            None
+                        } else {
+                            Some(result_text)
+                        },
                     },
                 }
             }
@@ -1274,6 +1302,7 @@ mod tests {
                 parent_id: "task-1".to_string(),
                 file_constraints: vec![],
                 expected_output: String::new(),
+                result: None,
             }],
         };
         let task: Task = proto.into();

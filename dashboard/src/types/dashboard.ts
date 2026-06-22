@@ -162,6 +162,7 @@ export interface DashboardSnapshot {
   scheduler?: SchedulerData;
   circuit_breaker?: CircuitBreakerData;
   events?: DashboardEvent[];
+  recent_task_events?: TaskEvent[];
 }
 
 // ── POST Response ───────────────────────────────────────
