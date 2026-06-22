@@ -3740,7 +3740,9 @@ mod tests {
     #[test]
     fn worker_heartbeat_update_and_stale_detection() {
         let mut store = TaskStore::new();
-        assert!(store.mark_stale_workers(std::time::Duration::from_secs(1)).is_empty());
+        assert!(store
+            .mark_stale_workers(std::time::Duration::from_secs(1))
+            .is_empty());
 
         store.update_worker_heartbeat("worker-1");
         store.update_worker_heartbeat("worker-2");
@@ -3753,8 +3755,12 @@ mod tests {
         // Manually backdate heartbeat to simulate aging.
         {
             let old_ts = chrono::Utc::now() - chrono::Duration::seconds(60);
-            store.worker_heartbeats.insert("worker-1".to_string(), old_ts);
-            store.worker_heartbeats.insert("worker-2".to_string(), old_ts);
+            store
+                .worker_heartbeats
+                .insert("worker-1".to_string(), old_ts);
+            store
+                .worker_heartbeats
+                .insert("worker-2".to_string(), old_ts);
         }
 
         // Now with 30s timeout, both are stale
@@ -3809,7 +3815,10 @@ mod tests {
         // Subtask still assigned to worker-2
         let task = store.get_task(&task_id).unwrap();
         assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::InProgress);
-        assert_eq!(task.subtasks[0].assigned_worker, Some(uc_types::WorkerId("worker-2".to_string())));
+        assert_eq!(
+            task.subtasks[0].assigned_worker,
+            Some(uc_types::WorkerId("worker-2".to_string()))
+        );
     }
 
     // ── NATS event conversion tests ──────────────────────────
