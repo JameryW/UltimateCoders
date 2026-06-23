@@ -1510,3 +1510,36 @@ Completed optimize-realtime-feedback-and-smart-orchestration task (6/6 requireme
 ### Next Steps
 
 - None - task complete
+
+
+## Session 44: Fix Worker Python path: auto-detect .venv
+
+**Date**: 2026-06-23
+**Task**: Fix Worker Python path: auto-detect .venv
+**Branch**: `fix/dashboard-grpc-web-migration`
+
+### Summary
+
+LocalWorkerBridge 默认用系统 python3 启动 Worker，找不到 ultimate_coders 模块。新增 resolve_python_bin() 从 CWD 向上查找 .venv/bin/python3，优先级：UC_WORKER_PYTHON env > .venv/bin/python3 > python3。修复 3 个环境敏感测试。PR #131。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ea48fa12` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Agent capability spec — defines tool interface patterns for Orchestrator/Worker"}
+{"file": ".trellis/spec/backend/codegraph-integration.md", "reason": "Codegraph integration spec — how codegraph client is used by agents"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns for agent operations"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline spec — how Orchestrator publishes events"}
+{"file": ".trellis/tasks/06-23-orchestrator-agent/prd.md", "reason": "PRD — requirements and technical decisions for this task"}
