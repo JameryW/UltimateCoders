@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-22-rust-scheduler/prd.md", "reason": "Full PRD with requirements, acceptance criteria, and technical approach for R1/R2/R3"}
+{"file": "crates/uc-engine/src/scheduler/dependency.rs", "reason": "NEW: topological sort (Kahn's algorithm) for subtask dependency resolution"}
+{"file": "crates/uc-engine/src/scheduler/dispatcher.rs", "reason": "R2: OrchestratorDispatcher.dispatch() needs real execution: submit → wait update → topo sort → publish per layer"}
+{"file": "crates/uc-engine/src/scheduler/service.rs", "reason": "R3: dispatch_with_guard integration with event-driven layer scheduling"}
+{"file": "crates/uc-engine/src/scheduler/mod.rs", "reason": "Export new dependency module"}
+{"file": "crates/uc-types/src/agent.rs", "reason": "Subtask.depends_on field used by dependency resolver"}

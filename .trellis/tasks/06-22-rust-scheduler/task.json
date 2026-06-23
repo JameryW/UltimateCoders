@@ -3,7 +3,7 @@
   "name": "rust-scheduler",
   "title": "Rust调度器-依赖解析与subtask发布",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
