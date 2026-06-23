@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS subject contracts for uc.heartbeat, uc.subtask.execute, uc.task.event — failover relies on heartbeat monitoring and subtask re-dispatch via NATS"}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Rust scheduler dispatch logic — need to understand how ready subtasks are published and how results flow back after worker death"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline for subtask_completed/failed events — failover must emit reassignment events and wake dispatch loop"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capabilities and retry policies — max_retries, exponential backoff, recoverable vs non-recoverable failures"}

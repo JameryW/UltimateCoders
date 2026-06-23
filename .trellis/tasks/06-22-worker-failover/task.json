@@ -3,7 +3,7 @@
   "name": "worker-failover",
   "title": "Worker失败重分配",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
