@@ -605,14 +605,14 @@ class ClaudeCodeAdapter(AgentAdapter):
             return AgentOutput(
                 summary="Claude Code execution timed out",
                 success=False,
-                stderr=stderr_tail,
+                stderr_tail=stderr_tail,
             )
 
         if result.exit_code != 0:
             return AgentOutput(
                 summary=f"Claude Code exited with code {result.exit_code}: {result.stderr[:200]}",
                 success=False,
-                stderr=stderr_tail,
+                stderr_tail=stderr_tail,
             )
 
         # Try to parse JSON output

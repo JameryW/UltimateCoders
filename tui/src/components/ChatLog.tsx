@@ -63,6 +63,12 @@ export interface ChatLogProps {
   searchMatchIndex?: number;
   /** Whether all long messages should be force-expanded (A key toggle). */
   expandAll?: boolean;
+  /** Set of bookmarked message IDs. */
+  bookmarkedIds?: Set<string>;
+  /** Target message ID to jump to (consumed by ChatLog, then cleared). */
+  jumpToMessageId?: string | null;
+  /** Called when user presses B on a message to toggle bookmark. */
+  onToggleBookmark?: (messageId: string) => void;
 }
 
 function formatTime(): string {
@@ -311,7 +317,8 @@ const ChatMessageItem: React.FC<{
   msg: ChatMessage; isExpanded: boolean; isSelected: boolean; terminalWidth?: number;
   isSearchMatch?: boolean; isCurrentMatch?: boolean;
   searchHighlights?: Array<{pos: number}>; searchQueryLen?: number;
-}> = ({msg, isExpanded, isSelected, terminalWidth, isSearchMatch, isCurrentMatch, searchHighlights, searchQueryLen}) => {
+  isBookmarked?: boolean;
+}> = ({msg, isExpanded, isSelected, terminalWidth, isSearchMatch, isCurrentMatch, searchHighlights, searchQueryLen, isBookmarked}) => {
   const lines = msg.text.split('\n');
 
   const isToolEvent = !msg.isUser && !!msg.eventType && TOOL_EVENT_TYPES.has(msg.eventType);
@@ -335,6 +342,8 @@ const ChatMessageItem: React.FC<{
       <Box flexDirection="column">
         <Box>
           <Text dimColor>{`[${msg.timestamp}] `}</Text>
+          {isBookmarked && <Text color="yellow">{'★'}</Text>}
+          {!isBookmarked && <Text>{' '}</Text>}
           {isSelected && <Text color="yellow">{'▸'}</Text>}
           {!isSelected && <Text>{' '}</Text>}
           {isCurrentMatch && <Text color="yellow">{'◆'}</Text>}
@@ -410,6 +419,8 @@ const ChatMessageItem: React.FC<{
     <Box flexDirection="column">
       <Box>
         <Text dimColor>{`[${msg.timestamp}] `}</Text>
+        {isBookmarked && <Text color="yellow">{'★'}</Text>}
+        {!isBookmarked && <Text>{' '}</Text>}
         {isSelected && <Text color="yellow">{'▸'}</Text>}
         {!isSelected && <Text>{' '}</Text>}
         {isCurrentMatch && <Text color="yellow">{'◆'}</Text>}
@@ -453,6 +464,9 @@ const ChatLog: React.FC<ChatLogProps> = ({
   searchActive = false,
   searchMatchIndex = 0,
   expandAll = false,
+  bookmarkedIds = new Set(),
+  jumpToMessageId = null,
+  onToggleBookmark,
 }) => {
   const [pixelOffset, setPixelOffset] = useState(0);
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -559,6 +573,25 @@ const ChatLog: React.FC<ChatLogProps> = ({
       });
     }
   }, [isFocused, selectedMsgId, visibleMessages, visibleCount, filteredMessages]));
+
+  // B: toggle bookmark on selected message
+  useInput(useCallback((input: string, key: {shift?: boolean}) => {
+    if (!isFocused) return;
+    if (input === 'B' && !key.shift && onToggleBookmark && selectedMsgId) {
+      onToggleBookmark(selectedMsgId);
+    }
+  }, [isFocused, selectedMsgId, onToggleBookmark]));
+
+  // Jump to message when jumpToMessageId changes (bookmark nav / diagnostic jump)
+  useEffect(() => {
+    if (!jumpToMessageId) return;
+    const idx = filteredMessages.findIndex(m => m.id === jumpToMessageId);
+    if (idx < 0) return;
+    setSelectedMsgId(jumpToMessageId);
+    const targetPixel = cumulativeHeights[idx];
+    setPixelOffset(Math.max(0, targetPixel));
+    onSetFollowLog?.(false);
+  }, [jumpToMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useInput(useCallback((_input: string, key: {upArrow?: boolean; downArrow?: boolean}) => {
     if (!isFocused) return;

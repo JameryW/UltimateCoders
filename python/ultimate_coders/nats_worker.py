@@ -204,7 +204,9 @@ class NatsPublisher:
         }
         await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
 
-    async def publish_heartbeat(self, consumer_id: str, worker_info: dict[str, Any] | None = None) -> None:
+    async def publish_heartbeat(
+        self, consumer_id: str, worker_info: dict[str, Any] | None = None
+    ) -> None:
         """Publish a heartbeat to ``uc.heartbeat``."""
         payload: dict[str, Any] = {
             "consumer_id": consumer_id,
@@ -895,7 +897,9 @@ class NatsWorker:
             subtask_id = data.get("subtask_id", "")
             if subtask_id and self._current_task_id == task_id:
                 self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
-            # Wake _execute_subtasks loop so newly-unblocked subtasks dispatch immediately            self._dispatch_event.set()
+            # Wake _execute_subtasks loop so newly-unblocked subtasks
+            # dispatch immediately
+            self._dispatch_event.set()
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
 

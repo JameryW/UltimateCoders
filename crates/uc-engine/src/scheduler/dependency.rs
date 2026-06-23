@@ -15,9 +15,7 @@ use uc_types::{EngineError, Subtask, TaskId};
 ///
 /// Returns `EngineError::TaskError` if a circular dependency is detected
 /// (not all subtasks could be placed into a layer).
-pub fn resolve_execution_order(
-    subtasks: &[Subtask],
-) -> Result<Vec<Vec<TaskId>>, EngineError> {
+pub fn resolve_execution_order(subtasks: &[Subtask]) -> Result<Vec<Vec<TaskId>>, EngineError> {
     if subtasks.is_empty() {
         return Ok(vec![]);
     }
@@ -50,10 +48,7 @@ pub fn resolve_execution_order(
 
     while !queue.is_empty() {
         // Current layer = all nodes with in_degree 0
-        let layer_ids: Vec<TaskId> = queue
-            .iter()
-            .map(|&i| subtasks[i].id.clone())
-            .collect();
+        let layer_ids: Vec<TaskId> = queue.iter().map(|&i| subtasks[i].id.clone()).collect();
         visited += queue.len();
         layers.push(layer_ids);
 
@@ -91,7 +86,10 @@ mod tests {
             description: id.to_string(),
             status: SubtaskStatus::Pending,
             assigned_worker: None,
-            depends_on: depends_on.into_iter().map(|d| TaskId(d.to_string())).collect(),
+            depends_on: depends_on
+                .into_iter()
+                .map(|d| TaskId(d.to_string()))
+                .collect(),
             file_constraints: Vec::new(),
             expected_output: String::new(),
             result: None,
