@@ -1403,3 +1403,37 @@ Implemented per-worker heartbeat failover (update_worker_heartbeat, mark_stale_w
 ### Next Steps
 
 - None - task complete
+
+
+## Session 41: path-c-dashboard fix + pipeline/tui done + rust-scheduler dispatch+auto-completion
+
+**Date**: 2026-06-23
+**Task**: path-c-dashboard fix + pipeline/tui done + rust-scheduler dispatch+auto-completion
+**Branch**: `main`
+
+### Summary
+
+Fixed NATS subtask_completed result key mismatch (output→result fallback). Verified pipeline/tui-eventlog-worker-worker/path-c-dashboard all done. Implemented rust-scheduler: fixed timeout wrapping in NATS request-reply dispatch, added auto task completion detection in apply_worker_event_to_store (all subtasks done → TaskCompleted/TaskFailed). Archived 4 tasks.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5b7f5d9` | (see git log) |
+| `222083b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
