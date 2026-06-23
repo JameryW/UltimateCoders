@@ -7,7 +7,7 @@
 //! Python consumers switch between modes at construction time via the
 //! `uc-python` binding layer.
 
-use crate::agent::Task;
+use crate::agent::{DirListing, FileContent, Task};
 use crate::error::EngineError;
 use crate::index::{IndexRequest, IndexResponse};
 use crate::memory::{
@@ -83,6 +83,12 @@ pub trait EngineApi: Send + Sync {
     /// List all indexed repositories.
     async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError>;
 
+    /// List directory contents in a repo (File Browser).
+    async fn list_dir(&self, repo_id: &str, path: &str) -> Result<DirListing, EngineError>;
+
+    /// Read file content from a repo (File Browser).
+    async fn get_file(&self, repo_id: &str, path: &str) -> Result<FileContent, EngineError>;
+
     /// Stream search results for large result sets.
     ///
     /// The default implementation wraps a single `search()` call in
@@ -121,6 +127,8 @@ pub struct RepoIndexState {
     pub files_count: u32,
     pub symbols_count: u32,
     pub chunks_count: u32,
+    /// Local filesystem path to the repo (for File Browser).
+    pub local_path: Option<String>,
 }
 
 /// Engine health status.

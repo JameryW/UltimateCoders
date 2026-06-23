@@ -168,7 +168,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     if (retryCountRef.current > RETRY_INTERVALS.length) {
       setGrpcExhausted(true);
     }
-    console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
+    if (import.meta.env.DEV) console.log(`[gRPC-Web] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
     setConnectionState("reconnecting");
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {

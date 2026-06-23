@@ -2242,6 +2242,34 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
         Ok(Response::new(response))
     }
 
+    async fn list_dir(
+        &self,
+        request: Request<ListDirRequest>,
+    ) -> Result<Response<ListDirResponse>, Status> {
+        let req = request.into_inner();
+        let listing = self
+            .inner
+            .engine
+            .list_dir(&req.repo_id, &req.path)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(listing.into()))
+    }
+
+    async fn get_file(
+        &self,
+        request: Request<GetFileRequest>,
+    ) -> Result<Response<GetFileResponse>, Status> {
+        let req = request.into_inner();
+        let file = self
+            .inner
+            .engine
+            .get_file(&req.repo_id, &req.path)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(file.into()))
+    }
+
     type SearchStreamStream = std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<SearchResultItem, Status>> + Send>,
     >;
@@ -3414,7 +3442,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             let tid = task_id.clone();
 
             join_set.spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::warn!("Semaphore closed, skipping subtask {}", subtask_id.0);
+                        return;
+                    }
+                };
 
                 // Record SubtaskStarted
                 {
@@ -3515,7 +3549,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     }
                 }
 
-                (subtask_id, success)
+                let _ = (subtask_id, success);
             });
         }
 

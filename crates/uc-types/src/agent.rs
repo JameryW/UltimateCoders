@@ -198,3 +198,36 @@ pub enum AgentEventPayload {
         workers: Vec<WorkerId>,
     },
 }
+
+// ── File Browser types (for dashboard ListDir/GetFile) ────
+
+/// A directory entry (file or subdirectory).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: String,
+    /// "file" or "directory"
+    pub entry_type: String,
+    pub size: u64,
+}
+
+/// Result of listing a directory in a repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirListing {
+    pub repo_id: String,
+    pub path: String,
+    pub entries: Vec<DirEntry>,
+}
+
+/// Content of a single file from a repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContent {
+    pub repo_id: String,
+    pub path: String,
+    pub binary: bool,
+    pub size: u64,
+    pub content: Option<String>,
+    pub language: Option<String>,
+    pub truncated: bool,
+    pub lines: u32,
+}

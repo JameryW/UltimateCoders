@@ -1,76 +1,73 @@
 /**
- * DEPRECATED: These FastAPI endpoint functions are no longer used.
- * All dashboard data is now fetched via gRPC-Web (DashboardService).
+ * File Browser API — migrated from REST to gRPC-Web.
  *
- * The only remaining REST endpoints are for the File Browser,
- * which is served by the gRPC server's EngineService (ListRepos, etc.)
- * and accessed via gRPC-Web, not REST.
- *
- * This file is kept for reference only and should be removed in a future cleanup.
+ * All dashboard data now goes through gRPC-Web (EngineService).
+ * This module provides thin wrappers for the File Browser panel.
  */
 
-// ── File Browser endpoints (still using REST temporarily) ────────
-// These will be migrated to gRPC-Web EngineService in a follow-up.
+import { createClient } from "@connectrpc/connect";
+import { EngineService } from "@/grpc/engine_pb";
+import {
+  ListReposRequestSchema,
+  ListDirRequestSchema,
+  GetFileRequestSchema,
+} from "@/grpc/engine_pb";
+import { create } from "@bufbuild/protobuf";
+import { getSharedTransport } from "@/hooks/useGrpcWeb";
 
-import type {
-  ReposData,
-  DirectoryListing,
-  FileContent,
-} from "@/types/dashboard";
+import type { RepoInfo, DirEntry, FileContent } from "@/types/dashboard";
 
-const BASE = "/dashboard/api";
+// ── File Browser API (gRPC-Web) ────────────────────────────
 
-/** Read the auth token from localStorage (if any). */
-function getAuthToken(): string | null {
-  try {
-    return localStorage.getItem("uc_dashboard_token");
-  } catch {
-    return null;
-  }
+export async function getRepos(): Promise<{ repos: RepoInfo[] }> {
+  const transport = getSharedTransport();
+  const client = createClient(EngineService, transport);
+  const resp = await client.listRepos(create(ListReposRequestSchema, {}));
+  return {
+    repos: resp.repos.map((r) => ({
+      repo_id: r.repoId,
+      local_path: r.localPath ?? "",
+      exists: r.indexed,
+    })),
+  };
 }
 
-/** Build headers with optional Authorization Bearer token. */
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  const token = getAuthToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-  return headers;
+export async function getRepoTree(
+  repoId: string,
+  path = "",
+): Promise<{ entries: DirEntry[] }> {
+  const transport = getSharedTransport();
+  const client = createClient(EngineService, transport);
+  const resp = await client.listDir(
+    create(ListDirRequestSchema, { repoId, path }),
+  );
+  return {
+    entries: resp.entries.map((e) => ({
+      name: e.name,
+      path: e.path,
+      type: e.entryType === "directory" ? "directory" : "file",
+      size: Number(e.size),
+    })),
+  };
 }
 
-async function throwApiError(res: Response): Promise<never> {
-  let detail = "";
-  try {
-    const text = await res.text();
-    const json = JSON.parse(text);
-    detail = json.error ?? json.message ?? json.detail ?? text;
-  } catch {
-    detail = res.statusText || `HTTP ${res.status}`;
-  }
-  throw new Error(`API error ${res.status}: ${detail}`);
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders() });
-  if (!res.ok) await throwApiError(res);
-  return res.json() as Promise<T>;
-}
-
-// ── File Browser endpoints (still REST, served by gRPC server) ──
-
-export function getRepos() {
-  return fetchJson<ReposData>(`${BASE}/repos`);
-}
-
-export function getRepoTree(repoId: string, path = "") {
-  const params = new URLSearchParams();
-  if (path) params.set("path", path);
-  return fetchJson<DirectoryListing>(`${BASE}/repos/${repoId}/tree?${params}`);
-}
-
-export function getRepoFile(repoId: string, path: string) {
-  const params = new URLSearchParams();
-  params.set("path", path);
-  return fetchJson<FileContent>(`${BASE}/repos/${repoId}/file?${params}`);
+export async function getRepoFile(
+  repoId: string,
+  path: string,
+): Promise<FileContent> {
+  const transport = getSharedTransport();
+  const client = createClient(EngineService, transport);
+  const resp = await client.getFile(
+    create(GetFileRequestSchema, { repoId, path }),
+  );
+  return {
+    repo_id: resp.repoId,
+    path: resp.path,
+    binary: resp.binary,
+    size: Number(resp.size),
+    content: resp.content ?? undefined,
+    language: resp.language ?? undefined,
+    truncated: resp.truncated,
+    lines: resp.lines,
+  };
 }

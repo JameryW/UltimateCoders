@@ -13,6 +13,8 @@ service EngineService {
     rpc Health(HealthRequest) returns (HealthResponse);
     rpc BatchWriteMemory(BatchWriteMemoryRequest) returns (BatchWriteMemoryResponse);
     rpc ListRepos(ListReposRequest) returns (ListReposResponse);
+    rpc ListDir(ListDirRequest) returns (ListDirResponse);
+    rpc GetFile(GetFileRequest) returns (GetFileResponse);
     rpc SearchStream(SearchStreamRequest) returns (stream SearchResultItem);
 }
 
@@ -97,6 +99,7 @@ message GetIndexStateResponse {
     uint32 files_count = 4;
     uint32 symbols_count = 5;
     uint32 chunks_count = 6;
+    optional string local_path = 7;
 }
 
 message RemoveIndexRequest {
@@ -320,6 +323,43 @@ message RepoIndexStateProto {
     uint32 files_count = 4;
     uint32 symbols_count = 5;
     uint32 chunks_count = 6;
+    optional string local_path = 7;
+}
+
+// ── File Browser ─────────────────────────────────────────
+
+message ListDirRequest {
+    string repo_id = 1;
+    string path = 2;    // sub-path within repo, "" = root
+}
+
+message DirEntryProto {
+    string name = 1;
+    string path = 2;
+    string entry_type = 3;  // "file" or "directory"
+    uint64 size = 4;
+}
+
+message ListDirResponse {
+    string repo_id = 1;
+    string path = 2;
+    repeated DirEntryProto entries = 3;
+}
+
+message GetFileRequest {
+    string repo_id = 1;
+    string path = 2;
+}
+
+message GetFileResponse {
+    string repo_id = 1;
+    string path = 2;
+    bool binary = 3;
+    uint64 size = 4;
+    optional string content = 5;
+    optional string language = 6;
+    bool truncated = 7;
+    uint32 lines = 8;
 }
 
 // ── Search Stream ───────────────────────────────────────

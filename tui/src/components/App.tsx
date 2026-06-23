@@ -30,6 +30,7 @@ import ChatLog, {
   type ChatMessage,
   createUserMessage,
   createSystemMessage,
+  createTaskSummaryMessage,
   type ScrollCommand,
 } from './ChatLog.js';
 import SubtaskTree, {
@@ -245,6 +246,12 @@ const App: React.FC = () => {
         : notifyEvent.type === 'task_failed' ? 'Task failed!'
         : 'Subtask failed!';
       dispatch({type: 'SET_NOTIFICATION', text, color});
+    }
+    // ponytail: generate task summary card on task_completed
+    const completedEvent = [...newEvents].reverse().find(e => e.type === 'task_completed');
+    if (completedEvent && state.subtasks.length > 0) {
+      const summaryMsg = createTaskSummaryMessage(state.subtasks);
+      dispatch({type: 'ADD_MESSAGES', messages: [summaryMsg]});
     }
     // ponytail: stop streaming spinner on terminal task events
     const hasTerminalEvent = newEvents.some(

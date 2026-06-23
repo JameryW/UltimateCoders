@@ -1073,6 +1073,7 @@ class NatsWorker:
         try:
             payload = json.loads(msg.data.decode()) if msg.data else {}
         except Exception:
+            logger.warning("Failed to parse dashboard request payload")
             payload = {}
 
         handler = getattr(self, f"_dash_{rpc_name.lower()}", None)
@@ -1245,7 +1246,7 @@ class NatsWorker:
                     "version": h.version, "uptime_seconds": h.uptime_seconds,
                 }
             except Exception:
-                pass
+                logger.warning("Health check failed", exc_info=True)
 
         # Workers
         workers = await self._dash_listworkers({})
