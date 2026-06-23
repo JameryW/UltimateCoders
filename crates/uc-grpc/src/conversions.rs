@@ -798,7 +798,10 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 vec![
                     ("summary".to_string(), summary),
                     ("success".to_string(), success.to_string()),
-                    ("modified_files".to_string(), serde_json::to_string(&modified_files).unwrap_or_default()),
+                    (
+                        "modified_files".to_string(),
+                        serde_json::to_string(&modified_files).unwrap_or_default(),
+                    ),
                     ("output".to_string(), output),
                     ("simulated".to_string(), simulated.to_string()),
                 ]
@@ -825,7 +828,12 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 if !recent_tools.is_empty() {
                     data_map.insert("recent_tools".to_string(), recent_tools);
                 }
-                ("subtask_failed".to_string(), task_id.0, subtask_id.0, data_map)
+                (
+                    "subtask_failed".to_string(),
+                    task_id.0,
+                    subtask_id.0,
+                    data_map,
+                )
             }
             uc_engine::AgentEventType::CheckpointCreated {
                 task_id,

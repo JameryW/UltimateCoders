@@ -115,7 +115,82 @@ elif self.event_emitter is not None:
 
 ---
 
-## Design Decision: Sandbox-Only Worker Execution
+## Design Decision: Event-driven Dispatch (2026-06-23)
+
+**Context**: `_auto_execute_loop` in SandboxTUI polled every 2 seconds for ready subtasks, and `_execute_subtasks` in NatsWorker polled every 0.5s. Even after a subtask completed, the next ready subtask had to wait for the next poll cycle — adding ~2s latency in local mode and ~0.5s in NATS mode.
+
+**Options Considered**:
+1. Keep polling — simple, but adds fixed latency
+2. Event-driven with asyncio.Event — immediate wake on subtask completion/failure, with safety timeout
+3. Callback-based — worker completion triggers dispatch directly (tighter coupling)
+
+**Decision**: Option 2 — `asyncio.Event` + 30s safety timeout. `_listen_for_events()` (SandboxTUI) and `_handle_task_event()` (NatsWorker) call `self._dispatch_event.set()` when a subtask_completed/subtask_failed event arrives. The execute loop waits on `self._dispatch_event.wait()` instead of `asyncio.sleep()`. A 30s timeout prevents deadlock if events are lost.
+
+**Example**:
+```python
+# In __init__:
+self._dispatch_event = asyncio.Event()
+
+# In event listener / NATS handler:
+if event_type in ("subtask_completed", "subtask_failed"):
+    self._dispatch_event.set()
+
+# In execute loop:
+self._dispatch_event.clear()
+try:
+    await asyncio.wait_for(self._dispatch_event.wait(), timeout=30.0)
+except asyncio.TimeoutError:
+    pass  # Safety re-check
+```
+
+**Consequences**:
+- Subtask dispatch latency: ~2s → <100ms (local), ~0.5s → <100ms (NATS)
+- Safety timeout prevents deadlock in edge cases (NATS disconnect, missed events)
+- `_dispatch_event` must be cleared before wait to avoid stale wake
+
+---
+
+## Design Decision: Subtask Failure Context — stderr_tail + recent_tool_calls (2026-06-23)
+
+**Context**: When a subtask fails, the `subtask_failed` event only carried an `error` string. This made diagnosing failures difficult — users couldn't see what the agent was doing before it failed or what stderr output it produced.
+
+**Options Considered**:
+1. Keep minimal error only — simple but insufficient for debugging
+2. Add stderr_tail + recent_tool_calls — structured failure context, bounded size
+3. Full stderr + all tool calls — too much data, unbounded
+
+**Decision**: Option 2 — `stderr_tail` (last 10 lines of stderr, truncated to 2000 chars) and `recent_tool_calls` (last 5 tool call names, JSON-serialized for gRPC data map compatibility).
+
+**Example**:
+```python
+# In Worker.execute_subtask() — building failure event data:
+failure_data = {
+    "error": result.summary[:300],
+    "worker_id": self.worker_id,
+}
+if result.stderr_tail:
+    failure_data["stderr_tail"] = result.stderr_tail
+if result.recent_tool_calls:
+    failure_data["recent_tools"] = json.dumps(result.recent_tool_calls)  # JSON string for HashMap<String, String>
+```
+
+```typescript
+// In useTaskEvents processEvent — parsing recent_tools:
+const recentTools = Array.isArray(event.data?.recent_tools)
+    ? event.data.recent_tools as string[]
+    : typeof event.data?.recent_tools === 'string'
+        ? JSON.parse(event.data.recent_tools)  // JSON string from gRPC data map
+        : undefined;
+```
+
+**Gotcha**: `recent_tools` must be JSON-serialized because gRPC `data` is `map<string, string>` (HashMap<String, String> on Rust side). A Python list can't fit into a string-typed map value. The TUI must parse it back from JSON string.
+
+**Consequences**:
+- SubtaskResult has new `stderr_tail: str` and `recent_tool_calls: list[str]` fields
+- AgentOutput has new `stderr: str` and `tool_calls: list[str]` fields
+- Rust `AgentEventType::SubtaskFailed` has new `stderr_tail: String` and `recent_tools: String` fields
+- TUI `SubtaskItem` has new `stderrTail?: string` and `recentTools?: string[]` fields
+- SubtaskDetail renders stderr (red) and tool call chain (dim)
 
 **Context**: Worker previously supported two execution modes: LLM tool-calling loop (Python-side) and sandbox (Claude Code / Codex CLI). The LLM mode reimplemented a coding agent in Python — redundant with native agents that have superior tool chains.
 

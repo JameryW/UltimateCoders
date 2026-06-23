@@ -338,7 +338,7 @@ class SandboxTUI(App):
         with a 30s safety timeout to prevent deadlocks.
         """
         # ponytail: event-driven replaces 2s polling, 30s safety timeout prevents deadlock
-        DISPATCH_TIMEOUT = 30.0
+        dispatch_timeout = 30.0
 
         if self._orch is None or self._worker is None:
             return
@@ -423,7 +423,7 @@ class SandboxTUI(App):
                     self._dispatch_event.clear()
                     try:
                         await asyncio.wait_for(
-                            self._dispatch_event.wait(), timeout=DISPATCH_TIMEOUT
+                            self._dispatch_event.wait(), timeout=dispatch_timeout
                         )
                     except asyncio.TimeoutError:
                         pass  # Safety check: re-evaluate ready subtasks

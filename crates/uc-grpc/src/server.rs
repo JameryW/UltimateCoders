@@ -891,10 +891,7 @@ async fn decompose_task_smart(
 
 /// Parse LLM output into subtasks. Expects numbered items like "1. Do X"
 /// or bullet points. Subtasks have no dependencies (independent/parallel).
-fn parse_llm_subtasks(
-    parent_id: &uc_types::TaskId,
-    llm_output: &str,
-) -> Vec<uc_types::Subtask> {
+fn parse_llm_subtasks(parent_id: &uc_types::TaskId, llm_output: &str) -> Vec<uc_types::Subtask> {
     let lines: Vec<&str> = llm_output
         .lines()
         .map(|l| l.trim())
@@ -2798,8 +2795,16 @@ pub async fn apply_worker_event_to_store(
                 .get("recoverable")
                 .map(|s| s == "true")
                 .unwrap_or(false),
-            stderr_tail: worker_event.data.get("stderr_tail").cloned().unwrap_or_default(),
-            recent_tools: worker_event.data.get("recent_tools").cloned().unwrap_or_default(),
+            stderr_tail: worker_event
+                .data
+                .get("stderr_tail")
+                .cloned()
+                .unwrap_or_default(),
+            recent_tools: worker_event
+                .data
+                .get("recent_tools")
+                .cloned()
+                .unwrap_or_default(),
         }),
         "task_completed" => Some(uc_engine::AgentEventType::TaskCompleted {
             task_id: task_id.clone(),

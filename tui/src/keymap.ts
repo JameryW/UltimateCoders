@@ -97,6 +97,10 @@ const COMMANDS: KeyCommand[] = [
   {id: 'overlayDown', label: 'Navigate subtask down', shortLabel: '↓', key: 'Down', areas: [], global: false},
   {id: 'overlayDetail', label: 'Toggle subtask detail', shortLabel: 'Enter', key: 'Enter', areas: [], global: false},
   {id: 'overlayRetry', label: 'Retry failed subtask', shortLabel: 'R', key: 'R', areas: [], global: false},
+  {id: 'overlayDiag', label: 'Jump to failure in chat', shortLabel: 'D', key: 'D', areas: [], global: false},
+  // ── Bookmarks (chat focus) ──
+  {id: 'bookmark', label: 'Toggle bookmark on message', shortLabel: 'B', key: 'B', areas: ['chat'], global: false},
+  {id: 'bookmarkNext', label: 'Jump to next bookmark', shortLabel: 'S-B', key: 'Shift+B', areas: ['chat'], global: false},
 ];
 
 // ── Lookup Helpers ─────────────────────────────────────────

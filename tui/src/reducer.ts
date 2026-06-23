@@ -189,6 +189,12 @@ export interface TuiState {
 
   /** StatusBar hint rotation index (cycles through available shortcuts). */
   hintRotationIndex: number;
+
+  /** Set of bookmarked message IDs (B key toggle). */
+  bookmarkedIds: Set<string>;
+
+  /** Target message ID to jump to (D key diagnostic jump, consumed by ChatLog). */
+  jumpToMessageId: string | null;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -237,6 +243,8 @@ export const INITIAL_TUI_STATE: TuiState = {
   selectedCommandIndex: 0,
   welcomeBannerVisible: true,
   hintRotationIndex: 0,
+  bookmarkedIds: new Set(),
+  jumpToMessageId: null,
 };
 
 // ── Actions ─────────────────────────────────────────────────
