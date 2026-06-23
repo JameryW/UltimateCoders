@@ -9,12 +9,12 @@
 use std::pin::Pin;
 
 use futures::Stream;
+use uc_types::agent::{DirListing, FileContent};
 use uc_types::{
     async_trait, AgentEvent, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse,
     MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse,
     MemoryWriteRequest, RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
 };
-use uc_types::agent::{DirListing, FileContent};
 
 use crate::conversions::memory_key_to_parts;
 use crate::ultimate_coders::engine_service_client::EngineServiceClient;
@@ -458,14 +458,20 @@ impl EngineApi for GrpcEngineClient {
 
     async fn list_dir(&self, repo_id: &str, path: &str) -> Result<DirListing, EngineError> {
         let mut client = self.inner.clone();
-        let req = ListDirRequest { repo_id: repo_id.to_string(), path: path.to_string() };
+        let req = ListDirRequest {
+            repo_id: repo_id.to_string(),
+            path: path.to_string(),
+        };
         let response = client.list_dir(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
     }
 
     async fn get_file(&self, repo_id: &str, path: &str) -> Result<FileContent, EngineError> {
         let mut client = self.inner.clone();
-        let req = GetFileRequest { repo_id: repo_id.to_string(), path: path.to_string() };
+        let req = GetFileRequest {
+            repo_id: repo_id.to_string(),
+            path: path.to_string(),
+        };
         let response = client.get_file(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
     }

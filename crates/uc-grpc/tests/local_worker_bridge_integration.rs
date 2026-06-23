@@ -37,12 +37,11 @@ async fn spawn_mock_worker() -> LocalWorkerBridge {
 
 // ── Fallback tests (no Python needed) ─────────────────────────────
 
-/// Test: when Python worker is unavailable, submit_task falls back
-/// to newline-split decomposition. Uses UC_SKIP_CLAUDE to avoid
-/// real claude CLI calls (this tests decomposition, not execution).
+/// Test: when Python worker is unavailable, submit_task returns an error.
+/// Rust-side decomposition has been removed — all decomposition must go
+/// through the Python Orchestrator (NATS or local worker bridge).
 #[tokio::test]
 async fn fallback_without_worker() {
-    std::env::set_var("UC_SKIP_CLAUDE", "1");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 
@@ -58,18 +57,18 @@ async fn fallback_without_worker() {
     .unwrap();
 
     let inner = response.into_inner();
-    assert!(inner.success, "submit_task should succeed via fallback");
-    assert!(!inner.task_id.is_empty(), "should have a task_id");
-    assert_eq!(inner.status, "Completed");
-    assert_eq!(
-        inner.subtask_count, 3,
-        "newline-split should produce 3 subtasks"
+    assert!(
+        !inner.success,
+        "submit_task should fail when no Orchestrator is available"
+    );
+    assert!(
+        inner.error.unwrap().contains("No Orchestrator available"),
+        "error should explain no Orchestrator is available"
     );
 }
 
 #[tokio::test]
 async fn local_decomposition_single_line() {
-    std::env::set_var("UC_SKIP_CLAUDE", "1");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 
@@ -84,11 +83,8 @@ async fn local_decomposition_single_line() {
     .unwrap();
 
     let inner = response.into_inner();
-    assert!(inner.success);
-    assert_eq!(
-        inner.subtask_count, 1,
-        "single line should produce 1 subtask"
-    );
+    // No worker available — returns error
+    assert!(!inner.success);
 }
 
 /// Test: empty description returns error.

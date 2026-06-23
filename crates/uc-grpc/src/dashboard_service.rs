@@ -35,9 +35,17 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<ListWorkersRequest>,
     ) -> Result<Response<ListWorkersResponse>, Status> {
-        match self.nats_dashboard_request("ListWorkers", serde_json::json!({})).await {
+        match self
+            .nats_dashboard_request("ListWorkers", serde_json::json!({}))
+            .await
+        {
             Ok(json) => Ok(Response::new(json_to_list_workers_response(&json))),
-            Err(_) => Ok(Response::new(ListWorkersResponse { available: false, workers: vec![], total: 0, available_count: 0 })),
+            Err(_) => Ok(Response::new(ListWorkersResponse {
+                available: false,
+                workers: vec![],
+                total: 0,
+                available_count: 0,
+            })),
         }
     }
 
@@ -45,9 +53,18 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<GetSchedulerStatusRequest>,
     ) -> Result<Response<GetSchedulerStatusResponse>, Status> {
-        match self.nats_dashboard_request("GetSchedulerStatus", serde_json::json!({})).await {
+        match self
+            .nats_dashboard_request("GetSchedulerStatus", serde_json::json!({}))
+            .await
+        {
             Ok(json) => Ok(Response::new(json_to_scheduler_status_response(&json))),
-            Err(_) => Ok(Response::new(GetSchedulerStatusResponse { available: false, is_running: false, night_window: None, jobs: vec![], execution_history: vec![] })),
+            Err(_) => Ok(Response::new(GetSchedulerStatusResponse {
+                available: false,
+                is_running: false,
+                night_window: None,
+                jobs: vec![],
+                execution_history: vec![],
+            })),
         }
     }
 
@@ -55,9 +72,18 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<GetCircuitBreakerStatusRequest>,
     ) -> Result<Response<CircuitBreakerStatusResponse>, Status> {
-        match self.nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({})).await {
-            Ok(json) => Ok(Response::new(json_to_circuit_breaker_status_response(&json))),
-            Err(_) => Ok(Response::new(CircuitBreakerStatusResponse { available: false, circuit_breaker: None, rate_limiter: None })),
+        match self
+            .nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({}))
+            .await
+        {
+            Ok(json) => Ok(Response::new(json_to_circuit_breaker_status_response(
+                &json,
+            ))),
+            Err(_) => Ok(Response::new(CircuitBreakerStatusResponse {
+                available: false,
+                circuit_breaker: None,
+                rate_limiter: None,
+            })),
         }
     }
 
@@ -100,16 +126,25 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         request: Request<ListEventsRequest>,
     ) -> Result<Response<ListEventsResponse>, Status> {
         let req = request.into_inner();
-        match self.nats_dashboard_request(
+        match self
+            .nats_dashboard_request(
                 "ListEvents",
                 serde_json::json!({
                     "task_id": req.task_id,
                     "limit": req.limit,
                     "offset": req.offset,
                 }),
-            ).await {
+            )
+            .await
+        {
             Ok(json) => Ok(Response::new(json_to_list_events_response(&json))),
-            Err(_) => Ok(Response::new(ListEventsResponse { available: false, events: vec![], total: 0, offset: 0, limit: 0 })),
+            Err(_) => Ok(Response::new(ListEventsResponse {
+                available: false,
+                events: vec![],
+                total: 0,
+                offset: 0,
+                limit: 0,
+            })),
         }
     }
 

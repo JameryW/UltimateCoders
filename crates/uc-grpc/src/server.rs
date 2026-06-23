@@ -329,19 +329,33 @@ impl TaskStore {
         }
     }
 
-    /// Submit a new task: create it with no subtasks (Planning status), store, and return.
-    /// Actual decomposition happens in Python Orchestrator.
-    /// ponytail: kept for test compatibility; production uses submit_task_pending.
+    /// Submit a new task: create it with a single subtask (InProgress status), store, and return.
+    /// Production code uses `submit_task_pending` (Planning, no subtasks) and lets
+    /// the Python Orchestrator handle decomposition.
+    /// ponytail: this creates one subtask for backward compat with existing tests.
     pub fn submit_task(&mut self, description: String, project_id: String) -> uc_types::Task {
         let task_id = uc_types::TaskId::new();
         let now = chrono::Utc::now();
+        let subtask_id = uc_types::TaskId::new();
+
+        let subtask = uc_types::Subtask {
+            id: subtask_id.clone(),
+            parent_id: task_id.clone(),
+            description: description.clone(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+        };
 
         let task = uc_types::Task {
             id: task_id.clone(),
             description: description.clone(),
             project_id,
-            status: uc_types::TaskStatus::Planning,
-            subtasks: Vec::new(), // Decomposition happens in Python
+            status: uc_types::TaskStatus::InProgress,
+            subtasks: vec![subtask],
             created_at: now,
             updated_at: now,
         };
@@ -3192,7 +3206,6 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             ),
         }))
     }
-
 }
 
 #[cfg(test)]
@@ -3253,7 +3266,9 @@ mod tests {
             "project-1".to_string(),
         );
 
-        assert_eq!(task.subtasks.len(), 3);
+        // submit_task creates InProgress task with one subtask
+        // (production uses submit_task_pending — decomposition happens in Python)
+        assert_eq!(task.subtasks.len(), 1);
         assert_eq!(task.status, uc_types::TaskStatus::InProgress);
 
         // Get the task back
@@ -3354,26 +3369,8 @@ mod tests {
         assert!(events.is_empty());
     }
 
-    #[test]
-    fn decompose_task_single_line() {
-        let parent_id = uc_types::TaskId::new();
-        let subtasks = decompose_task(&parent_id, "Single task description");
-        assert_eq!(subtasks.len(), 1);
-        assert_eq!(subtasks[0].description, "Single task description");
-    }
-
-    #[test]
-    fn decompose_task_multiple_lines() {
-        let parent_id = uc_types::TaskId::new();
-        let subtasks = decompose_task(&parent_id, "1. First item\n2. Second item\n3. Third item");
-        assert_eq!(subtasks.len(), 3);
-        // Check that numbered prefixes are stripped
-        assert_eq!(subtasks[0].description, "First item");
-        assert_eq!(subtasks[1].description, "Second item");
-        // Check sequential dependencies
-        assert!(subtasks[0].depends_on.is_empty());
-        assert_eq!(subtasks[1].depends_on.len(), 1);
-    }
+    // decompose_task tests removed — Rust-side decomposition no longer exists;
+    // all decomposition goes through Python Orchestrator via NATS/bridge.
 
     #[test]
     fn task_status_to_proto_conversion() {
