@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { TasksData, DashboardEvent } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface TaskTrendChartProps {
   tasks: TasksData;
@@ -83,7 +84,7 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   }, [maxVal]);
 
   return (
-    <Card className="md:col-span-2" stale={stale}>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Task Activity</CardTitle>
         {tasks.available && (
@@ -175,11 +176,11 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
           <text x={PADDING.left + 84} y={svgH - 0} fontSize={10} fill="var(--text-muted)">failed</text>
         </svg>
       ) : (
-        <div className="h-[200px] flex items-center justify-center">
-          <p className="text-xs text-[var(--text-muted)]">
-            {tasks.available ? "No recent task events" : "Task data unavailable"}
-          </p>
-        </div>
+        <EmptyState
+          icon="activity"
+          title={tasks.available ? "No recent task events" : "Task data unavailable"}
+          description={tasks.available ? "Activity will appear here as tasks complete" : "Connect to the engine to see task activity"}
+        />
       )}
     </Card>
   );

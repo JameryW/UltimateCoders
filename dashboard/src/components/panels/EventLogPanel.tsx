@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { DashboardEvent } from "@/types/dashboard";
 
 function eventTypeColor(type: string): string {
@@ -148,9 +149,11 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
       )}
 
       {filteredEvents.length === 0 ? (
-        <p className="text-sm text-[var(--text-muted)]">
-          {events.length === 0 ? "No events" : "No matching events"}
-        </p>
+        <EmptyState
+          icon="activity"
+          title={events.length === 0 ? "No events yet" : "No matching events"}
+          description={events.length === 0 ? "Events will appear here as tasks are submitted and processed" : "Try adjusting your search or filter"}
+        />
       ) : (
         <div className="relative">
           <div

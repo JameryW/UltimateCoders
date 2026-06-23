@@ -54,7 +54,7 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
   const dashOk = dashGrpcState === "connected";
 
   return (
-    <header className="border-b border-[var(--border-color)] px-6 py-3">
+    <header className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--bg-surface)]/80 backdrop-blur-md px-6 py-3">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <h1 className="text-xl font-bold text-[var(--text-primary)]">UltimateCoders</h1>

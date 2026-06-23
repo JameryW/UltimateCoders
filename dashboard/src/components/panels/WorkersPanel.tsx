@@ -2,6 +2,7 @@ import { useState, useMemo, memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { WorkersData, WorkerInfo, TasksData, SubtaskSummary } from "@/types/dashboard";
 
 function loadBarColor(percent: number): string {
@@ -110,12 +111,14 @@ export const WorkersPanel = memo(function WorkersPanel({
   tasks,
   stale,
   onJumpTask,
+  embedded,
 }: {
   workers: WorkersData;
   tasks: TasksData;
   stale?: boolean;
-  /** Scroll to task in TasksPanel. ponytail: simple scrollIntoView, no global state. */
   onJumpTask?: (taskId: string) => void;
+  /** When true, render without Card wrapper (embedded in SidebarPanel) */
+  embedded?: boolean;
 }) {
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
 
@@ -138,19 +141,12 @@ export const WorkersPanel = memo(function WorkersPanel({
     setExpandedWorkerId(expandedWorkerId === workerId ? null : workerId);
   };
 
-  return (
-    <Card stale={stale}>
-      <CardHeader>
-        <CardTitle>Workers</CardTitle>
-        <Badge variant="ok">
-          {workers.available_count}/{workers.total}
-        </Badge>
-      </CardHeader>
-
+  const content = (
+    <>
       {!workers.available ? (
         <p className="text-sm text-[var(--text-muted)]"><Badge variant="unavailable">Unavailable</Badge></p>
       ) : workers.workers.length === 0 ? (
-        <p className="text-sm text-[var(--text-muted)]">No workers connected</p>
+        <EmptyState icon="workers" title="No workers connected" description="Workers will appear here when they connect to the engine" />
       ) : (
         <ul className="space-y-2">
           {workers.workers.map((w) => {
@@ -245,6 +241,20 @@ export const WorkersPanel = memo(function WorkersPanel({
           })}
         </ul>
       )}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <Card stale={stale}>
+      <CardHeader>
+        <CardTitle>Workers</CardTitle>
+        <Badge variant="ok">
+          {workers.available_count}/{workers.total}
+        </Badge>
+      </CardHeader>
+      {content}
     </Card>
   );
 });
