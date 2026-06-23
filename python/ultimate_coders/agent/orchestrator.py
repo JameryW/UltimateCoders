@@ -22,8 +22,12 @@ from ultimate_coders.agent.conflict import (
     LineRange,
     ResolutionTier,
 )
+from ultimate_coders.agent.llm import LLMResponse
 from ultimate_coders.agent.types import (
+    AgentEvent,
+    AgentEventType,
     AgentRunConfig,
+    ExecutionSpec,
     OrchestratorConfig,
     Subtask,
     SubtaskResult,
@@ -1271,9 +1275,6 @@ ORCHESTRATE RULES:
         """
         import asyncio
 
-        from ultimate_coders.agent.llm import LLMClient, LLMResponse
-        from ultimate_coders.agent.types import AgentEvent, AgentEventType
-
         cfg = run_config or AgentRunConfig(
             max_turns=self.config.planning_max_tool_rounds,
             token_budget=self.config.planning_context_budget,
@@ -1431,8 +1432,6 @@ ORCHESTRATE RULES:
             Returns ExecutionSpec with empty raw_text if LLM is not
             configured.
         """
-        from ultimate_coders.agent.types import ExecutionSpec
-
         if self.llm_client is None:
             # Fallback: gather context without LLM
             memory_ctx = await self._gather_memory_context(task)
@@ -1516,8 +1515,6 @@ ORCHESTRATE RULES:
         Tries to extract sections by ## headers. Falls back to
         raw_text-only if parsing fails.
         """
-        from ultimate_coders.agent.types import ExecutionSpec
-
         sections: dict[str, str] = {}
         current_section = ""
         current_lines: list[str] = []

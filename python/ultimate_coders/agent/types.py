@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 
 class TaskStatus(Enum):
@@ -160,3 +162,56 @@ class OrchestratorConfig:
     max_retries: int = 3
     heartbeat_timeout_seconds: int = 60
     subtask_timeout_seconds: int = 600  # 10 min default per subtask
+    # LLM planning context budget (tokens). Tool-calling loop stops
+    # gathering context when cumulative tokens approach this limit.
+    planning_context_budget: int = 50000
+    # Max tool-calling rounds for plan_task / ask
+    planning_max_tool_rounds: int = 5
+    # Max chars per tool result (truncated if exceeded)
+    tool_result_max_chars: int = 2000
+
+
+# ── Agent Loop Types ──────────────────────────────────────────────
+
+
+class AgentEventType(Enum):
+    """Event types emitted by the Orchestrator's agent loop."""
+    AGENT_START = "agent_start"
+    AGENT_END = "agent_end"
+    TURN_START = "turn_start"
+    TURN_END = "turn_end"
+    TOOL_START = "tool_start"
+    TOOL_END = "tool_end"
+    AGENT_ERROR = "agent_error"
+
+
+@dataclass
+class AgentEvent:
+    """A single event from the agent loop."""
+    type: AgentEventType
+    turn: int = 0
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentRunConfig:
+    """Configuration for a single agent loop run."""
+    max_turns: int = 5
+    token_budget: int = 50000
+    abort_event: asyncio.Event | None = None
+    steering_queue: asyncio.Queue | None = None
+
+
+@dataclass
+class ExecutionSpec:
+    """Structured output from plan_task() — an execution spec, not a design doc.
+
+    Every choice is pre-made so an implementer can execute top-to-bottom
+    with ZERO design decisions.
+    """
+    context: str = ""
+    approach: list[str] = field(default_factory=list)
+    critical_files: list[str] = field(default_factory=list)
+    verification: str = ""
+    assumptions: str = ""
+    raw_text: str = ""  # fallback for sandbox decomposition

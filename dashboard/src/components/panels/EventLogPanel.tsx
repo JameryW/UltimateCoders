@@ -57,6 +57,18 @@ function eventKey(evt: DashboardEvent): string {
   return `${evt.timestamp}-${evt.type}`;
 }
 
+
+// ponytail: export events as JSON download
+function exportEvents(events: DashboardEvent[]): void {
+  const blob = new Blob([JSON.stringify(events, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "events-" + new Date().toISOString().slice(0, 10) + ".json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -115,7 +127,18 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
     <Card stale={stale}>
       <CardHeader>
         <CardTitle>Event Log</CardTitle>
-        <Badge>{filteredEvents.length}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge>{filteredEvents.length}</Badge>
+          {filteredEvents.length > 0 && (
+            <button
+              onClick={() => exportEvents(filteredEvents)}
+              className="btn-action-info px-2 py-0.5 rounded text-xs cursor-pointer"
+              aria-label="Export events"
+            >
+              Export
+            </button>
+          )}
+        </div>
       </CardHeader>
 
       {events.length > 0 && (

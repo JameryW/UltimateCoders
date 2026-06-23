@@ -39,7 +39,7 @@ export const SidebarPanel = React.forwardRef<HTMLDivElement, SidebarPanelProps>(
           className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--bg-surface-alt)]/30 transition-colors duration-200"
           aria-expanded={!collapsed}
         >
-          <span className="text-sm font-semibold text-[var(--text-primary)]">{title}</span>
+          <span className="text-base font-semibold text-[var(--text-primary)]">{title}</span>
           <div className="flex items-center gap-2">
             {summary && (
               <span

@@ -121,6 +121,8 @@ export const WorkersPanel = memo(function WorkersPanel({
   embedded?: boolean;
 }) {
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<"load" | "name">("load");
+  const [filterOnline, setFilterOnline] = useState<boolean | null>(null);
 
   // ponytail: Map<workerId, SubtaskSummary[]> — O(tasks × subtasks), fine for dashboard scale
   const workerSubtasks = useMemo(() => {
@@ -137,6 +139,16 @@ export const WorkersPanel = memo(function WorkersPanel({
     return map;
   }, [tasks]);
 
+  // ponytail: sort + filter workers
+  const sortedWorkers = useMemo(() => {
+    let list = [...workers.workers];
+    if (filterOnline === true) list = list.filter((w) => w.is_available);
+    if (filterOnline === false) list = list.filter((w) => !w.is_available);
+    if (sortBy === "load") list.sort((a, b) => b.load_percent - a.load_percent);
+    else list.sort((a, b) => a.id.localeCompare(b.id));
+    return list;
+  }, [workers.workers, sortBy, filterOnline]);
+
   const toggleExpand = (workerId: string) => {
     setExpandedWorkerId(expandedWorkerId === workerId ? null : workerId);
   };
@@ -148,8 +160,29 @@ export const WorkersPanel = memo(function WorkersPanel({
       ) : workers.workers.length === 0 ? (
         <EmptyState icon="workers" title="No workers connected" description="Workers will appear here when they connect to the engine" />
       ) : (
-        <ul className="space-y-2">
-          {workers.workers.map((w) => {
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={() => setSortBy(sortBy === "load" ? "name" : "load")}
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            >
+              Sort: {sortBy === "load" ? "Load" : "Name"}
+            </button>
+            <button
+              onClick={() => setFilterOnline(filterOnline === true ? null : true)}
+              className={"text-xs cursor-pointer " + (filterOnline === true ? "text-green-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]")}
+            >
+              Online
+            </button>
+            <button
+              onClick={() => setFilterOnline(filterOnline === false ? null : false)}
+              className={"text-xs cursor-pointer " + (filterOnline === false ? "text-red-400" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]")}
+            >
+              Offline
+            </button>
+          </div>
+          <ul className="space-y-2">
+          {sortedWorkers.map((w) => {
             const activeSubtasks = workerSubtasks.get(w.id) ?? [];
             const activeCount = activeSubtasks.filter(
               (s) => s.status === "in_progress" || s.status === "assigned"
@@ -239,7 +272,8 @@ export const WorkersPanel = memo(function WorkersPanel({
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </>
       )}
     </>
   );
