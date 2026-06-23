@@ -1369,3 +1369,37 @@ Implemented per-worker heartbeat failover (update_worker_heartbeat, mark_stale_w
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: TUI 7项界面优化
+
+**Date**: 2026-06-23
+**Task**: TUI 7项界面优化
+**Branch**: `main`
+
+### Summary
+
+实现消息折叠增强(A/Shift+A)、子任务耗时(elapsedMs)、Worker并行面板、消息按子任务分组、命令面板(Ctrl+P)、宽屏双栏布局、快捷键发现性(欢迎Banner+hint轮播)。trellis-check修复Ctrl+P冲突/未用import/ANSI转义。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `25abae8` | (see git log) |
+| `972f2d8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

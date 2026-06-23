@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 39
-- **Last Active**: 2026-06-22
+- **Total Sessions**: 40
+- **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1371 | Active |
+| `journal-1.md` | ~1405 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 40 | 2026-06-23 | TUI 7项界面优化 | `25abae8`, `972f2d8` | `main` |
 | 39 | 2026-06-22 | TUI界面优化: EventLog虚拟滚动+WorkersPanel增强+StatusBar多Worker摘要 | `e46111a` | `feat/dashboard-file-browser` |
 | 38 | 2026-06-22 | Worker failover + dashboard layout cleanup + PR #113 | `982669d`, `1e6087a`, `5d0ac76` | `feat/dashboard-file-browser` |
 | 37 | 2026-06-21 | apply_update full upsert for dual-state sync | `8dbb329` | `feat/dashboard-file-browser` |
