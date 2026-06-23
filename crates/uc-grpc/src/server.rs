@@ -2796,7 +2796,11 @@ pub async fn apply_worker_event_to_store(
                 .get("recoverable")
                 .map(|s| s == "true")
                 .unwrap_or(false),
-            stderr_tail: worker_event.data.get("stderr_tail").cloned().unwrap_or_default(),
+            stderr_tail: worker_event
+                .data
+                .get("stderr_tail")
+                .cloned()
+                .unwrap_or_default(),
             recent_tools: worker_event
                 .data
                 .get("recent_tools")
@@ -2807,7 +2811,8 @@ pub async fn apply_worker_event_to_store(
                         s.clone()
                     } else {
                         // Comma-separated or single value — normalize to JSON array string
-                        let items: Vec<&str> = s.split(',')
+                        let items: Vec<&str> = s
+                            .split(',')
                             .map(|v| v.trim())
                             .filter(|v| !v.is_empty())
                             .collect();
@@ -2859,10 +2864,12 @@ pub async fn apply_worker_event_to_store(
                     return None;
                 }
                 let all_done = !task.subtasks.is_empty()
-                    && task
-                        .subtasks
-                        .iter()
-                        .all(|st| matches!(st.status, uc_types::SubtaskStatus::Completed | uc_types::SubtaskStatus::Failed));
+                    && task.subtasks.iter().all(|st| {
+                        matches!(
+                            st.status,
+                            uc_types::SubtaskStatus::Completed | uc_types::SubtaskStatus::Failed
+                        )
+                    });
                 if !all_done {
                     return None;
                 }

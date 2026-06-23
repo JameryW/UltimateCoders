@@ -1200,7 +1200,8 @@ impl From<TaskEventProto> for AgentEvent {
                             s.clone()
                         } else {
                             // Comma-separated or single value — normalize to JSON array string
-                            let items: Vec<&str> = s.split(',')
+                            let items: Vec<&str> = s
+                                .split(',')
                                 .map(|v| v.trim())
                                 .filter(|v| !v.is_empty())
                                 .collect();

@@ -328,6 +328,11 @@ export type TuiAction =
   | {type: 'TOGGLE_COMMAND_PALETTE'}
   | {type: 'SET_COMMAND_PALETTE_QUERY'; query: string}
   | {type: 'SELECT_COMMAND_PALETTE'; index: number}
+  // ── Bookmarks ──
+  | {type: 'TOGGLE_BOOKMARK'; messageId: string}
+  | {type: 'NEXT_BOOKMARK'}
+  // ── Diagnostic jump ──
+  | {type: 'DIAGNOSTIC_JUMP'}
   // ── Welcome banner ──
   | {type: 'DISMISS_WELCOME_BANNER'}
   // ── Hint rotation ──
@@ -770,6 +775,34 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'ROTATE_HINT':
       return {...state, hintRotationIndex: state.hintRotationIndex + 1};
+
+    case 'TOGGLE_BOOKMARK': {
+      const next = new Set(state.bookmarkedIds);
+      if (next.has(action.messageId)) next.delete(action.messageId);
+      else next.add(action.messageId);
+      return {...state, bookmarkedIds: next};
+    }
+
+    case 'NEXT_BOOKMARK': {
+      if (state.bookmarkedIds.size === 0) return state;
+      const msgIds = state.messages.map(m => m.id);
+      const bmIds = [...state.bookmarkedIds];
+      // Find next bookmark after any selected message (jumpToMessageId or last known)
+      const currentIdx = state.jumpToMessageId ? msgIds.indexOf(state.jumpToMessageId) : -1;
+      // Sort bookmark positions and find next one after current
+      const bmPositions = bmIds.map(id => msgIds.indexOf(id)).filter(i => i >= 0).sort((a, b) => a - b);
+      if (bmPositions.length === 0) return state;
+      const nextPos = bmPositions.find(p => p > currentIdx) ?? bmPositions[0];
+      return {...state, jumpToMessageId: msgIds[nextPos] ?? null};
+    }
+
+    case 'DIAGNOSTIC_JUMP': {
+      // Find first error/warning message and jump to it
+      const failMsg = state.messages.find(m =>
+        m.eventType === 'subtask_failed' || m.eventType === 'task_failed',
+      );
+      return failMsg ? {...state, jumpToMessageId: failMsg.id} : state;
+    }
 
     default:
       return state;

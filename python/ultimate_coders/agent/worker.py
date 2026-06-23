@@ -196,10 +196,10 @@ class Worker:
             file_constraints=", ".join(subtask.file_constraints) or "none",
         )
         output: AgentOutput = await self._sandbox_manager.execute(prompt)
-        # ponytail: extract stderr_tail (last 10 lines) and recent tool calls for failure context
-        stderr_tail = ""
-        if output.stderr:
-            stderr_tail = "\n".join(output.stderr.strip().splitlines()[-10:])
+        # ponytail: extract stderr_tail and recent tool calls for failure context
+        stderr_tail = output.stderr_tail
+        if not stderr_tail and hasattr(output, 'raw_stderr') and output.raw_stderr:
+            stderr_tail = "\n".join(output.raw_stderr.strip().splitlines()[-10:])
         return SubtaskResult(
             subtask_id=subtask.id,
             worker_id=self.worker_id,
