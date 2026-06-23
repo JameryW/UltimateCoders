@@ -666,7 +666,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                 summary=summary,
                 token_usage=token_usage,
                 success=True,
-                stderr=stderr_tail,
+                stderr_tail=stderr_tail,
                 tool_calls=tool_calls[-5:],  # ponytail: keep last 5 tool calls
             )
 
