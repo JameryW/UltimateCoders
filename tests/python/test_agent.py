@@ -90,7 +90,7 @@ class TestWorkerSandboxExecution:
             file_changes=[],
         )
 
-        async def fake_execute(prompt: str, **kwargs: Any) -> AgentOutput:
+        async def fake_execute(prompt: str, **_kw) -> AgentOutput:
             return fake_output
 
         monkeypatch.setattr(worker._sandbox_manager, "execute", fake_execute)
@@ -117,7 +117,7 @@ class TestWorkerSandboxExecution:
             file_changes=[],
         )
 
-        async def fake_execute(prompt: str, **kwargs: Any) -> AgentOutput:
+        async def fake_execute(prompt: str, **_kw) -> AgentOutput:
             return fake_output
 
         monkeypatch.setattr(worker._sandbox_manager, "execute", fake_execute)
@@ -135,7 +135,7 @@ class TestWorkerSandboxExecution:
     async def test_execute_subtask_timeout(self, monkeypatch):
         """Worker times out if sandbox takes too long."""
 
-        async def slow_execute(prompt: str, **kwargs: Any) -> AgentOutput:
+        async def slow_execute(prompt: str, **_kw) -> AgentOutput:
             await asyncio.sleep(10)
             return AgentOutput(success=True, summary="done", file_changes=[])
 
@@ -156,7 +156,7 @@ class TestWorkerSandboxExecution:
     async def test_execute_subtask_exception(self, monkeypatch):
         """Worker handles unexpected exceptions during execution."""
 
-        async def failing_execute(prompt: str, **kwargs: Any) -> AgentOutput:
+        async def failing_execute(prompt: str, **_kw) -> AgentOutput:
             raise RuntimeError("Unexpected error")
 
         worker = Worker()
