@@ -101,7 +101,7 @@ export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob,
 
       {data.execution_history.length > 0 && (
         <div className="border-t border-[var(--border-color)] pt-2">
-          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-1.5">
+          <p className="text-xs text-[var(--text-muted)] font-medium mb-1.5">
             Execution History
           </p>
           <ul className="space-y-1">

@@ -15,12 +15,14 @@ import { SearchPanel } from "@/components/panels/SearchPanel";
 import { FileBrowser } from "@/components/panels/FileBrowser";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { TaskDetail } from "@/components/panels/TaskDetail";
+import { StatsBar } from "@/components/panels/StatsBar";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { SidebarPanel } from "@/components/ui/sidebar-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
 import type { TaskEvent, HealthData, TaskSummary } from "@/types/dashboard";
 
 function eventKey(ev: TaskEvent): string {
@@ -121,7 +123,7 @@ function App() {
 
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
-  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: _grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     onSyncRequired: (_reason: string, _skipped: number) => {
       needsSyncCountRef.current += 1;
@@ -133,7 +135,7 @@ function App() {
   const {
     connectionState: dashGrpcState,
     connect: dashGrpcConnect,
-    disconnect: dashGrpcDisconnect,
+    disconnect: _dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
     getCircuitBreakerStatus,
@@ -348,7 +350,7 @@ function App() {
                 fetchScheduler: getSchedulerStatus,
                 fetchCircuitBreaker: getCircuitBreakerStatus,
                 fetchEvents: listEvents,
-                fetchTasks: grpcState === "connected" ? listTasks : undefined,
+                fetchTasks: (grpcState as string) === "connected" ? listTasks : undefined,
               }).then((errors) => {
                 setLoading(false);
                 if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
@@ -375,6 +377,7 @@ function App() {
     <div className="text-[var(--text-primary)] min-h-screen">
       <ToastContainer />
       <ConfirmDialog />
+      <KeyboardShortcuts />
       <Header
         connected={dashGrpcState === "connected" || grpcState === "connected"}
         grpcState={grpcState}
@@ -389,6 +392,7 @@ function App() {
         fetchErrors={dashboard.fetchErrors}
       />
       <main className="max-w-[1440px] mx-auto px-6 py-6">
+        <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} stale={grpcStale} />
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* ── Left column (8/12): Core panels ────────────── */}
           <div className="lg:col-span-8 space-y-6">

@@ -71,7 +71,7 @@ export const CircuitBreakerPanel = memo(function CircuitBreakerPanel({ data, onR
       )}
 
       <div className="border-t border-[var(--border-color)] pt-3">
-        <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide mb-2">Rate Limiter</p>
+        <p className="text-xs text-[var(--text-muted)] font-medium mb-2">Rate Limiter</p>
 
         {rl.available ? (
           <div className="space-y-1.5">

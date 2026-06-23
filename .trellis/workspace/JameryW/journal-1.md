@@ -1543,3 +1543,47 @@ LocalWorkerBridge 默认用系统 python3 启动 Worker，找不到 ultimate_cod
 ### Next Steps
 
 - None - task complete
+
+
+## Session 45: Full-pipeline optimization: 9 improvements (event detail/dedup/incremental/scheduling/checkpoint/eventsourcing/heartbeat/SSE)
+
+**Date**: 2026-06-23
+**Task**: Full-pipeline optimization: 9 improvements (event detail/dedup/incremental/scheduling/checkpoint/eventsourcing/heartbeat/SSE)
+**Branch**: `feat/pipeline-optimization`
+
+### Summary
+
+Implemented 9 full-pipeline optimizations across short/mid/long term:
+1. Stream-JSON parsing in _parse_sandbox_line (tool_use/tool_result events)
+2. SubtaskSummary extended with modified_files/retry_count/error
+3. Event dedup in handleTaskEvent (5s window)
+4. gRPC WatchDashboard incremental push (dual NATS subscription)
+5. Orchestrator.schedule_ready_subtasks() auto-dispatch
+6. Checkpoint enhancement (modified_files/tool_calls/error)
+7. NATS JetStream Event Sourcing + v:1 version field
+8. Worker heartbeat timeout event publishing
+9. Dashboard SSE fallback (auto-degrade after 5 gRPC failures)
+PR: https://github.com/JameryW/UltimateCoders/pull/132
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e56d9e10` | (see git log) |
+| `eb3718ce` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

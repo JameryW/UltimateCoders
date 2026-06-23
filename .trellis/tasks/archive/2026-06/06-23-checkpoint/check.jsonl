@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "验证事件管道变更符合现有规范"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "验证 NATS 增量推送和 JetStream 配置符合规范"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "验证 LocalWorker 事件 version 字段兼容性"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "验证 WatchDashboard 增量推送的 proto 兼容性"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "验证去重逻辑和 SubtaskSummary 扩展符合前端规范"}

@@ -6,7 +6,7 @@ import { showToast } from "@/components/ui/toast";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
-import type { TasksData, TaskEvent } from "@/types/dashboard";
+import type { TasksData, TaskEvent, SubtaskSummary } from "@/types/dashboard";
 
 function statusBorderColor(status: string): string {
   switch (status) {
@@ -30,7 +30,7 @@ interface TasksPanelProps {
   onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   onTaskCreated?: (taskId: string) => void;
-  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: Array<{ id: string; description: string; status: string; dependsOn: string[] }>) => void;
+  onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: SubtaskSummary[]) => void;
   onSelectTask?: (taskId: string) => void;
   selectedTaskId?: string | null;
 }
@@ -75,7 +75,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
       const resp = await grpcSubmitTask(desc, submitProj.trim());
       if (resp.success) {
         showToast(resp.subtaskCount > 0 ? `Task ${shortId(resp.taskId)} — ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}` : `Task ${shortId(resp.taskId)} submitted`, "success");
-        onOptimisticAdd?.(resp.taskId, desc, submitProj.trim(), resp.subtaskCount, resp.subtasks);
+        onOptimisticAdd?.(resp.taskId, desc, submitProj.trim(), resp.subtaskCount, resp.subtasks?.map((s) => ({ ...s, depends_on: s.dependsOn ?? [] })));
         setSubmitDesc("");
         setSubmitProj("");
         onTaskCreated?.(resp.taskId);
