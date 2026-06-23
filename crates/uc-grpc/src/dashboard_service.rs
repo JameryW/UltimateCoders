@@ -25,6 +25,10 @@ pub const NATS_SUBJECT_DASHBOARD_PREFIX: &str = "uc.dashboard";
 /// NATS subject for Dashboard snapshot streaming.
 pub const NATS_SUBJECT_DASHBOARD_SNAPSHOT: &str = "uc.dashboard.snapshot";
 
+/// NATS subject for incremental task events (event-driven push).
+#[cfg(feature = "messaging")]
+pub const NATS_SUBJECT_TASK_EVENT: &str = "uc.task.event";
+
 #[tonic::async_trait]
 impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
     type WatchDashboardStream = std::pin::Pin<
@@ -157,41 +161,109 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
             match self.nats_client() {
                 Some(nats_client) => {
                     let stream = async_stream::stream! {
-                        let mut subscriber = match nats_client
+                        // Subscribe to both snapshot and incremental event subjects
+                        let mut snapshot_sub = match nats_client
                             .subscribe(NATS_SUBJECT_DASHBOARD_SNAPSHOT)
                             .await
                         {
-                            Ok(s) => s,
+                            Ok(s) => Some(s),
                             Err(e) => {
                                 tracing::warn!("Dashboard snapshot subscribe failed: {e}");
-                                yield Err(Status::unavailable("NATS subscription failed"));
-                                return;
+                                None
+                            }
+                        };
+                        let mut event_sub = match nats_client
+                            .subscribe(NATS_SUBJECT_TASK_EVENT)
+                            .await
+                        {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                tracing::warn!("Dashboard event subscribe failed: {e}");
+                                None
                             }
                         };
 
+                        if snapshot_sub.is_none() && event_sub.is_none() {
+                            yield Err(Status::unavailable("NATS subscription failed"));
+                            return;
+                        }
+
+                        // Send initial full snapshot
+                        if let Some(ref mut sub) = snapshot_sub {
+                            if let Ok(Some(message)) = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                sub.next(),
+                            ).await {
+                                match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                                    Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                    Err(e) => tracing::warn!("Initial snapshot parse error: {e}"),
+                                }
+                            }
+                        }
+
+                        let snapshot_interval = std::time::Duration::from_secs(30);
+                        let mut last_snapshot = tokio::time::Instant::now();
+
                         loop {
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(30),
-                                subscriber.next(),
-                            )
-                            .await
-                            {
-                                Ok(Some(message)) => {
-                                    match serde_json::from_slice::<serde_json::Value>(&message.payload) {
-                                        Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
-                                        Err(e) => {
-                                            tracing::warn!("Dashboard snapshot parse error: {e}");
-                                            continue;
+                            // Priority: event_sub (incremental) > snapshot_sub (periodic)
+                            tokio::select! {
+                                // ── Incremental task events ─────────────────
+                                event_result = async {
+                                    match &mut event_sub {
+                                        Some(sub) => sub.next().await,
+                                        None => {
+                                            // No event subscription — sleep forever
+                                            std::future::pending::<Option<_>>().await
                                         }
                                     }
+                                } => {
+                                    match event_result {
+                                        Some(message) => {
+                                            match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                                                Ok(json_val) => {
+                                                    // Push as a lightweight snapshot with just the event
+                                                    yield Ok(event_to_dashboard_snapshot(&json_val));
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Dashboard event parse error: {e}");
+                                                }
+                                            }
+                                        }
+                                        None => break,
+                                    }
                                 }
-                                Ok(None) => break,
-                                Err(_) => {
-                                    // Timeout — send heartbeat
-                                    yield Ok(DashboardSnapshot {
-                                        timestamp: chrono::Utc::now().to_rfc3339(),
-                                        ..Default::default()
-                                    });
+                                // ── Periodic full snapshot ──────────────────
+                                snapshot_result = async {
+                                    match &mut snapshot_sub {
+                                        Some(sub) => sub.next().await,
+                                        None => {
+                                            // No snapshot subscription — wait for interval
+                                            tokio::time::sleep(snapshot_interval).await;
+                                            // Return None so we just send a heartbeat
+                                            futures::stream::pending::<()>().next().await
+                                        }
+                                    }
+                                } => {
+                                    match snapshot_result {
+                                        Some(message) => {
+                                            match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                                                Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                                Err(e) => tracing::warn!("Dashboard snapshot parse error: {e}"),
+                                            }
+                                            last_snapshot = tokio::time::Instant::now();
+                                        }
+                                        None => break,
+                                    }
+                                }
+                                // ── Heartbeat on idle ──────────────────────
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                                    // Only heartbeat if no recent snapshot
+                                    if last_snapshot.elapsed() > std::time::Duration::from_secs(20) {
+                                        yield Ok(DashboardSnapshot {
+                                            timestamp: chrono::Utc::now().to_rfc3339(),
+                                            ..Default::default()
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -598,6 +670,33 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
             .map(|arr| arr.iter().map(json_to_dashboard_event).collect())
             .unwrap_or_default(),
         recent_task_events: Vec::new(),
+    }
+}
+
+/// Convert a `uc.task.event` JSON payload into a lightweight DashboardSnapshot
+/// containing only the event in `recent_task_events`. Used for incremental push.
+#[cfg(feature = "messaging")]
+fn event_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
+    use crate::ultimate_coders::TaskEvent;
+    let event = TaskEvent {
+        timestamp: json_str(v, "timestamp").to_string(),
+        r#type: json_str(v, "type").to_string(),
+        task_id: json_str(v, "task_id").to_string(),
+        subtask_id: json_opt_str(v, "subtask_id").unwrap_or_default().into(),
+        data: v
+            .get("data")
+            .and_then(|d| d.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, val)| (k.clone(), val.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    DashboardSnapshot {
+        timestamp: event.timestamp.clone(),
+        recent_task_events: vec![event],
+        ..Default::default()
     }
 }
 

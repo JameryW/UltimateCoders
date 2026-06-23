@@ -13,8 +13,7 @@ import {
   WatchDashboardRequestSchema,
 } from "@/grpc/engine_pb";
 import type {
-  DashboardSnapshot as GrpcDashboardSnapshot,
-  DashboardEventProto,
+  DashboardSnapshot as DashboardEventProto,
   TaskEvent as GrpcTaskEvent,
   ListWorkersResponse,
   GetSchedulerStatusResponse,
@@ -236,6 +235,8 @@ interface UseDashboardGrpcOptions {
 /** Exponential backoff intervals (ms) for reconnection. */
 const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const MAX_RETRY_INTERVAL = 60000;
+/** After this many consecutive failures, fall back to SSE. */
+const SSE_FALLBACK_THRESHOLD = 5;
 
 export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const [connectionState, setConnectionState] =
@@ -248,6 +249,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const optsRef = useRef(opts);
   optsRef.current = opts;
   const connectRef = useRef<() => void>(() => {});
+  const sseRef = useRef<EventSource | null>(null);
+  const usingSseRef = useRef(false);
 
   const getTransport = useCallback(() => getSharedTransport(), []);
 
@@ -263,12 +266,84 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     retryCountRef.current += 1;
     if (import.meta.env.DEV) console.log(`[Dashboard gRPC] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
     setConnectionState("reconnecting");
+
+    // Fallback to SSE after too many gRPC failures
+    if (retryCountRef.current >= SSE_FALLBACK_THRESHOLD && !usingSseRef.current) {
+      if (import.meta.env.DEV) console.log("[Dashboard] gRPC failed repeatedly, falling back to SSE");
+      retryTimerRef.current = setTimeout(() => {
+        if (optsRef.current.enabled) {
+          connectSse();
+        }
+      }, 1000);
+      return;
+    }
+
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {
         connectRef.current();
       }
     }, delay);
-  }, []);
+  }, [connectSse]);
+
+  // ── SSE fallback ──────────────────────────────────────────
+
+  const connectSse = useCallback(() => {
+    sseRef.current?.close();
+    usingSseRef.current = true;
+
+    const sse = new EventSource("/dashboard/api/stream");
+    sseRef.current = sse;
+    setConnectionState("connected");
+
+    sse.addEventListener("task_event", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const taskEvent: TaskEvent = {
+          timestamp: data.timestamp ?? new Date().toISOString(),
+          type: data.type ?? "",
+          task_id: data.task_id ?? "",
+          subtask_id: data.subtask_id ?? undefined,
+          data: data.data ?? {},
+          _sseId: e.lastEventId || undefined,
+        };
+        optsRef.current.onTaskEvent?.(taskEvent);
+      } catch { /* ignore parse errors */ }
+    });
+
+    sse.addEventListener("update", (e) => {
+      try {
+        const snapshot = JSON.parse(e.data);
+        const converted: {
+          health?: HealthData;
+          workers?: WorkersData;
+          scheduler?: SchedulerData;
+          circuitBreaker?: CircuitBreakerData;
+          events?: DashboardEvent[];
+        } = {};
+        if (snapshot.health?.available) converted.health = snapshot.health;
+        if (snapshot.workers?.available) converted.workers = snapshot.workers;
+        if (snapshot.scheduler?.available) converted.scheduler = snapshot.scheduler;
+        if (snapshot.circuit_breaker?.available) converted.circuitBreaker = snapshot.circuit_breaker;
+        if (snapshot.tasks) {
+          // Merge task list from SSE snapshot
+          const { mergeGrpcTasks } = optsRef.current as Record<string, unknown>;
+          if (typeof mergeGrpcTasks === "function") {
+            mergeGrpcTasks(snapshot.tasks);
+          }
+        }
+        optsRef.current.onSnapshot?.(converted);
+      } catch { /* ignore */ }
+    });
+
+    sse.onerror = () => {
+      if (import.meta.env.DEV) console.log("[Dashboard SSE] Connection lost, reconnecting...");
+      setConnectionState("error");
+      sse.close();
+      sseRef.current = null;
+      usingSseRef.current = false;
+      scheduleReconnect();
+    };
+  }, [scheduleReconnect]);
 
   // ── WatchDashboard stream ─────────────────────────────────
 
@@ -276,6 +351,9 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     abortRef.current?.abort();
     clearRetryTimer();
     retryCountRef.current = 0;
+    sseRef.current?.close();
+    sseRef.current = null;
+    usingSseRef.current = false;
 
     const ac = new AbortController();
     abortRef.current = ac;
@@ -358,6 +436,9 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const disconnect = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    sseRef.current?.close();
+    sseRef.current = null;
+    usingSseRef.current = false;
     clearRetryTimer();
     retryCountRef.current = 0;
     setConnectionState("disconnected");

@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "核心：定义了 uc.task.event 管道的现有规范，#1 #3 #4 #7 都涉及事件管道变更"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS 桥接规范，#4 增量推送和 #7 JetStream Event Sourcing 需要"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "LocalWorker JSON-RPC 桥规范，#1 stdout 解析和 #7 事件 version 涉及"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskStore 规范，#4 WatchDashboard 增量推送和 #5 自动调度涉及"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard 后端 API 规范，#9 SSE fallback 涉及"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Agent 能力规范，#6 checkpoint 增强 和 #8 心跳超时涉及"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端状态管理规范，#2 SubtaskSummary 扩展 和 #3 去重逻辑涉及"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC 规范，#4 增量推送影响 TUI 消费端"}

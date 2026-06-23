@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type {
   TaskEvent,
   HealthData,
@@ -14,6 +14,14 @@ import type {
 /** #12: Maximum number of task entries to keep in interactionLog.
  *  Oldest entries are evicted when this limit is exceeded. */
 const INTERACTION_LOG_MAX_ENTRIES = 50;
+
+/** Dedup window in ms — events with the same key within this window are dropped. */
+const DEDUP_WINDOW_MS = 5000;
+
+/** Build a dedup key for a task event. */
+function dedupEventKey(ev: TaskEvent): string {
+  return `${ev.type}:${ev.task_id}:${ev.subtask_id ?? ""}:${ev.timestamp}`;
+}
 
 export function useDashboard() {
   const [health, setHealth] = useState<HealthData>({
@@ -68,6 +76,8 @@ export function useDashboard() {
   const [needsSync, setNeedsSync] = useState(false);
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
+  /** Dedup: Map<dedupKey, timestamp> — events within DEDUP_WINDOW_MS are dropped. */
+  const dedupRef = useRef<Map<string, number>>(new Map());
 
   // Handle WatchDashboard snapshot -- merge with existing state to avoid overwriting
   // fresher gRPC-Web incremental updates with stale snapshot data.
@@ -81,12 +91,27 @@ export function useDashboard() {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
     if (data.scheduler?.available) setScheduler(data.scheduler);
-    if (data.circuit_breaker?.available) setCircuitBreaker(data.circuit_breaker);
+    if (data.circuitBreaker?.available) setCircuitBreaker(data.circuitBreaker);
     if (data.events && data.events.length > 0) setEventLog(data.events);
   }, []);
 
-  // Handle SSE/gRPC-Web real-time task event
+  // Handle SSE/gRPC-Web real-time task event (with dedup)
   const handleTaskEvent = useCallback((ev: TaskEvent) => {
+    // ── Dedup: drop events we've already processed within the window ──
+    const key = dedupEventKey(ev);
+    const now = Date.now();
+    const seen = dedupRef.current.get(key);
+    if (seen !== undefined && now - seen < DEDUP_WINDOW_MS) {
+      return; // duplicate — skip
+    }
+    dedupRef.current.set(key, now);
+    // Prune old entries periodically (every 100 events)
+    if (dedupRef.current.size > 200) {
+      for (const [k, t] of dedupRef.current) {
+        if (now - t > DEDUP_WINDOW_MS) dedupRef.current.delete(k);
+      }
+    }
+
     const tid = ev.task_id;
     setInteractionLog((prev) => {
       const updated = {
@@ -139,6 +164,14 @@ export function useDashboard() {
             depends_on: (s.depends_on as string[]) ?? [],
             assigned_worker: s.assigned_worker ? String(s.assigned_worker) : undefined,
             result: s.result ? String(s.result) : undefined,
+            modified_files: Array.isArray(s.modified_files)
+              ? (s.modified_files as Array<Record<string, unknown>>).map((f) => ({
+                  path: String(f.path ?? f.file_path ?? ""),
+                  type: String(f.type ?? f.change_type ?? "modify"),
+                }))
+              : undefined,
+            retry_count: s.retry_count != null ? Number(s.retry_count) : undefined,
+            error: s.error ? String(s.error) : undefined,
           })) ?? [];
           const tasks = [
             {
@@ -229,6 +262,17 @@ export function useDashboard() {
             // If unrecoverable, mark parent task failed too
             const taskFailed = ev.data.recoverable === "false" || ev.data.recoverable === false;
             return { ...t, status: taskFailed ? "failed" as const : t.status, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
+          }),
+        }));
+        break;
+      }
+      case "subtask_retrying": {
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => {
+            if (t.id !== tid) return t;
+            const subtasks = mergeSubtaskEvent(t.subtasks ?? [], ev);
+            return { ...t, subtasks, subtask_count: subtasks.length, updated_at: ev.timestamp };
           }),
         }));
         break;
@@ -355,9 +399,10 @@ export function useDashboard() {
 /** Rank subtask status for comparison -- higher = more advanced. */
 function subtaskStatusRank(status: string): number {
   switch (status) {
-    case "completed": return 4;
-    case "failed": return 4;
-    case "in_progress": return 3;
+    case "completed": return 5;
+    case "failed": return 5;
+    case "in_progress": return 4;
+    case "retrying": return 3;
     case "assigned": return 2;
     case "pending": return 1;
     default: return 0;
@@ -390,6 +435,7 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
     subtask_started: "in_progress",
     subtask_completed: "completed",
     subtask_failed: "failed",
+    subtask_retrying: "retrying",
   };
   const newStatus = statusMap[ev.type];
   if (!newStatus) return subtasks;
@@ -399,9 +445,29 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
   const evWorker = ev.data.assigned_worker ? String(ev.data.assigned_worker) : undefined;
   // Carry result from completed events: prefer full result text, fallback to summary
   const evResult = ev.data.result ? String(ev.data.result) : ev.data.summary ? String(ev.data.summary) : undefined;
+  // Carry modified_files from completed events
+  const evModifiedFiles = Array.isArray(ev.data.modified_files)
+    ? (ev.data.modified_files as Array<Record<string, unknown>>).map((f) => ({
+        path: String(f.path ?? f.file_path ?? ""),
+        type: String(f.type ?? f.change_type ?? "modify"),
+      }))
+    : undefined;
+  // Carry retry_count from retrying events
+  const evRetryCount = ev.data.retry_count != null ? Number(ev.data.retry_count) : undefined;
+  // Carry error from failed events
+  const evError = ev.data.error ? String(ev.data.error) : undefined;
+
   if (existing) {
     return subtasks.map((s) =>
-      s.id === sid ? { ...s, status: newStatus, assigned_worker: evWorker ?? s.assigned_worker, result: evResult ?? s.result } : s,
+      s.id === sid ? {
+        ...s,
+        status: newStatus,
+        assigned_worker: evWorker ?? s.assigned_worker,
+        result: evResult ?? s.result,
+        modified_files: evModifiedFiles ?? s.modified_files,
+        retry_count: evRetryCount ?? s.retry_count,
+        error: evError ?? s.error,
+      } : s,
     );
   }
   return [
@@ -413,6 +479,9 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
       depends_on: (ev.data.depends_on as string[]) ?? [],
       assigned_worker: evWorker,
       result: evResult,
+      modified_files: evModifiedFiles,
+      retry_count: evRetryCount,
+      error: evError,
     },
   ];
 }

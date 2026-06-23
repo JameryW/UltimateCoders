@@ -23,6 +23,7 @@ from ultimate_coders.agent.conflict import (
     ResolutionTier,
 )
 from ultimate_coders.agent.types import (
+    AgentRunConfig,
     OrchestratorConfig,
     Subtask,
     SubtaskResult,
@@ -89,6 +90,8 @@ class Orchestrator:
         scheduler: Any = None,
         sandbox_manager: Any = None,
         nats_publisher: Any | None = None,
+        llm_client: Any | None = None,
+        codegraph_client: Any | None = None,
     ):
         """Initialize the Orchestrator.
 
@@ -104,6 +107,12 @@ class Orchestrator:
                 state changes to NATS. When set, the Orchestrator
                 publishes ``uc.task.update`` and ``uc.task.event``
                 messages after each state transition.
+            llm_client: Optional LLMClient for planning and Q&A.
+                When not provided, planning/Q&A features are disabled
+                but task decomposition still works via sandbox.
+            codegraph_client: Optional CodegraphClient for AST-aware
+                code search. When not provided, codegraph tools are
+                unavailable in the planning loop.
         """
         self.engine = engine
         self.sandbox_manager = sandbox_manager
@@ -119,6 +128,9 @@ class Orchestrator:
         self._pending_tasks: list[Task] = []
         # NATS publisher for state change events
         self.nats_publisher = nats_publisher
+        # LLM + Codegraph for planning and Q&A
+        self.llm_client = llm_client
+        self.codegraph_client = codegraph_client
         # Event emitter for real-time dashboard tracking
         from ultimate_coders.agent.event_emitter import TaskEventEmitter
 
@@ -211,6 +223,8 @@ class Orchestrator:
             task.subtasks = subtasks
             self._rebuild_subtask_index(task)
             task.status = TaskStatus.IN_PROGRESS
+            # Auto-schedule ready subtasks (no dependencies or all deps met)
+            await self.schedule_ready_subtasks(task)
         except Exception:
             logger.error("Failed to decompose task %s", task.id, exc_info=True)
             task.status = TaskStatus.FAILED
@@ -238,10 +252,10 @@ class Orchestrator:
     async def decompose_task(self, task: Task) -> list[Subtask]:
         """Decompose a task into subtasks via sandbox (Claude Code).
 
-        Invokes ``claude -p "decompose..."`` via the ``DecomposeAdapter``
-        and parses the JSON output. The sandbox agent (Claude Code) can
-        read files and understand the codebase on its own, so no
-        pre-gathered context is injected into the prompt.
+        When an LLM client is configured, first gathers code context
+        via ``plan_task()`` and injects it into the decomposition prompt.
+        The sandbox agent (Claude Code) still performs the actual
+        decomposition, but with richer context about the codebase.
 
         Args:
             task: The task to decompose.
@@ -263,7 +277,43 @@ class Orchestrator:
             parse_decomposition_output,
         )
 
-        # Build the decomposition prompt (simplified — no pre-gathered context)
+        # Gather planning context (LLM agent loop or direct search)
+        planning_spec = None
+        if self.llm_client is not None:
+            try:
+                planning_spec = await self.plan_task(task)
+            except Exception:
+                logger.warning(
+                    "plan_task() failed for task %s, proceeding without context",
+                    task.id[:8], exc_info=True,
+                )
+
+        # Build context string from ExecutionSpec or fallback
+        planning_context = ""
+        if planning_spec is not None and planning_spec.raw_text:
+            # Use structured spec + raw_text
+            parts: list[str] = []
+            if planning_spec.context:
+                parts.append(f"## Codebase Context\n{planning_spec.context}")
+            if planning_spec.approach:
+                steps = "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(planning_spec.approach)
+                )
+                parts.append(f"## Suggested Approach\n{steps}")
+            if planning_spec.critical_files:
+                files = "\n".join(f"- {f}" for f in planning_spec.critical_files)
+                parts.append(f"## Critical Files\n{files}")
+            if planning_spec.verification:
+                parts.append(f"## Verification\n{planning_spec.verification}")
+            planning_context = "\n\n".join(parts)
+        elif planning_spec is None:
+            # Fallback: direct context gathering without LLM
+            memory_ctx = await self._gather_memory_context(task)
+            code_ctx = await self._gather_code_context(task)
+            raw_parts = [p for p in [memory_ctx, code_ctx] if p]
+            planning_context = "\n\n".join(raw_parts)
+
+        # Build the decomposition prompt with context
         system = _DECOMPOSE_SYSTEM_PROMPT.format(
             max_subtasks=self.config.max_subtasks,
         )
@@ -272,11 +322,15 @@ class Orchestrator:
             description=task.description,
         )
 
+        # Inject planning context if available
+        if planning_context:
+            user_msg += f"\n\n## Codebase Context\n{planning_context}"
+
         # Combine system + user into a single prompt for `claude -p`
         combined_prompt = f"{system}\n\n{user_msg}"
         logger.info(
-            "Decomposing task %s via sandbox (prompt_len=%d)",
-            task.id, len(combined_prompt),
+            "Decomposing task %s via sandbox (prompt_len=%d, has_context=%s)",
+            task.id, len(combined_prompt), bool(planning_context),
         )
         adapter = DecomposeAdapter()
         request = adapter.build_request(
@@ -421,6 +475,30 @@ class Orchestrator:
 
         return worker_id
 
+    async def schedule_ready_subtasks(self, task: Task) -> list[str]:
+        """Assign all ready (pending, dependencies met) subtasks to workers.
+
+        Returns list of assigned worker IDs. Called automatically after
+        task decomposition and after subtask completion (when new
+        subtasks may become unblocked).
+
+        ponytail: simple greedy — no priority queue, upgrade if needed.
+        """
+        assigned: list[str] = []
+        # Build a set of completed subtask IDs for dependency checking
+        completed_ids = {st.id for st in task.subtasks if st.is_complete}
+        for subtask in task.subtasks:
+            if subtask.status != SubtaskStatus.PENDING:
+                continue
+            # Check dependencies — all must be completed
+            deps_met = all(dep_id in completed_ids for dep_id in subtask.depends_on)
+            if not deps_met:
+                continue
+            wid = await self.assign_subtask(subtask)
+            if wid is not None:
+                assigned.append(wid)
+        return assigned
+
     async def handle_subtask_result(self, result: SubtaskResult) -> None:
         """Handle a completed subtask result.
 
@@ -486,6 +564,7 @@ class Orchestrator:
                     subtask_id=subtask.id,
                     data={
                         "attempt": subtask.retry_count,
+                        "retry_count": subtask.retry_count,
                         "max_retries": self.config.max_retries,
                         "error": result.summary[:300],
                     },
@@ -838,22 +917,64 @@ class Orchestrator:
         return list(subtask_map.values())
 
     async def _gather_memory_context(self, task: Task) -> str:
-        """Return project identifier for decomposition context.
+        """Gather memory context for task decomposition.
 
-        Simplified: the sandbox agent (Claude Code) reads files and
-        understands the codebase on its own, so no pre-gathered memory
-        search results are injected.
+        Uses engine.read_memory to find relevant stored context.
+        Returns truncated markdown summary, or empty string.
         """
-        return task.project_id or ""
+        if self.engine is None:
+            return ""
+        try:
+            raw = self.engine.read_memory(
+                key_scope="task",
+                key="task_definition",
+            )
+            if raw:
+                return self._truncate(f"Task memory: {raw}")
+        except Exception:
+            logger.debug("Failed to read task memory for context", exc_info=True)
+        return ""
 
     async def _gather_code_context(self, task: Task) -> str:
-        """Return project identifier for decomposition context.
+        """Gather code context for task decomposition.
 
-        Simplified: the sandbox agent (Claude Code) reads files and
-        understands the codebase on its own, so no pre-gathered code
-        search results are injected.
+        Uses engine.search_code and codegraph to find relevant code.
+        Returns truncated markdown summary, or empty string.
         """
-        return task.project_id or ""
+        parts: list[str] = []
+
+        # Engine search
+        if self.engine is not None and hasattr(self.engine, "search_code"):
+            try:
+                results = self.engine.search_code(
+                    query=task.description,
+                    modes=["hybrid"],
+                    max_results=5,
+                )
+                if results:
+                    parts.append("## Search Results")
+                    for r in results[:5]:
+                        snippet = getattr(r, "content_snippet", str(r))[:200]
+                        path = getattr(r, "file_path", "")
+                        parts.append(f"- {path}: {snippet}")
+            except Exception:
+                logger.debug("Code search for context failed", exc_info=True)
+
+        # Codegraph explore
+        if self.codegraph_client is not None and self.codegraph_client.is_available():
+            try:
+                explore_result = self.codegraph_client.explore(
+                    task.description, max_nodes=8,
+                )
+                if explore_result:
+                    parts.append(explore_result)
+            except Exception:
+                logger.debug("Codegraph explore for context failed", exc_info=True)
+
+        if not parts:
+            return ""
+        combined = "\n\n".join(parts)
+        return self._truncate(combined)
 
     def _aggregate_results(self, task: Task) -> str:
         """Aggregate subtask results into a task result summary."""
@@ -874,6 +995,628 @@ class Orchestrator:
                 parts.append(f"  - {st.description}: {summary}")
 
         return "\n".join(parts)
+
+    # ── Agent Capabilities: Planning & Q&A ──────────────────────
+
+    # Orchestration rules (inspired by oh-my-pi's orchestrate-notice)
+    _ORCHESTRATE_NOTICE = """\
+ORCHESTRATE RULES:
+1. Decompose: Break into independently executable subtasks
+2. Dispatch: Each assignment must be self-contained (no assumptions)
+3. Verify: Check outputs after each phase
+4. Iterate: Respawn incomplete work rather than patching inline
+5. Enumerate: List full surface area before dispatching
+6. Parallelize: Maximize parallel execution; minimize serialization
+"""
+
+    # Tools that mutate state and must run exclusively (not concurrently)
+    _EXCLUSIVE_TOOLS: frozenset[str] = frozenset()
+
+    def _build_tools(self) -> list:
+        """Build tool definitions for the Orchestrator's agent loop.
+
+        Returns list of ToolDefinition objects. Tools that require
+        unavailable backends (engine, codegraph) are omitted.
+        """
+        from ultimate_coders.agent.llm import make_tool_definition
+
+        tools: list = []
+
+        if self.engine is not None and hasattr(self.engine, "search_code"):
+            tools.append(make_tool_definition(
+                "search_code",
+                "Search the codebase for relevant code. "
+                "Returns file paths and content snippets.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query text",
+                        "required": True,
+                    },
+                    "modes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Search modes: text, semantic, ast, hybrid",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max results (default 5)",
+                    },
+                },
+            ))
+
+        if self.engine is not None:
+            tools.append(make_tool_definition(
+                "search_memory",
+                "Search stored memory for relevant context "
+                "about past tasks, decisions, and results.",
+                {
+                    "key_scope": {
+                        "type": "string",
+                        "description": "Memory scope (task, checkpoint, etc.)",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Memory key prefix to search",
+                        "required": True,
+                    },
+                },
+            ))
+
+        if self.codegraph_client is not None and self.codegraph_client.is_available():
+            tools.append(make_tool_definition(
+                "codegraph_explore",
+                "Explore code structure via AST-aware search. "
+                "Returns symbols, dependencies, and impact analysis.",
+                {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query or symbol name",
+                        "required": True,
+                    },
+                },
+            ))
+
+        if self.engine is not None:
+            tools.append(make_tool_definition(
+                "read_file",
+                "Read a file's content from the project. "
+                "Returns up to 200 lines.",
+                {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to read",
+                        "required": True,
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "Start line (1-based, default 1)",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "End line (default start+200)",
+                    },
+                },
+            ))
+
+        return tools
+
+    async def _execute_tool(self, tool_call: Any) -> str:
+        """Execute a tool call and return the result string.
+
+        Args:
+            tool_call: ToolCall object with name, input, id.
+
+        Returns:
+            Tool result string, truncated to config.tool_result_max_chars.
+        """
+        name = tool_call.name
+        inp = tool_call.input if isinstance(tool_call.input, dict) else {}
+        max_chars = self.config.tool_result_max_chars
+
+        try:
+            if name == "search_code" and self.engine is not None:
+                query = inp.get("query", "")
+                modes = inp.get("modes", ["hybrid"])
+                max_results = inp.get("max_results", 5)
+                results = self.engine.search_code(
+                    query=query, modes=modes, max_results=max_results,
+                )
+                parts: list[str] = []
+                for r in results:
+                    path = getattr(r, "file_path", "")
+                    snippet = getattr(r, "content_snippet", str(r))[:200]
+                    score = getattr(r, "score", 0)
+                    parts.append(f"{path} (score={score:.2f}): {snippet}")
+                return self._truncate("\n".join(parts), max_chars)
+
+            if name == "search_memory" and self.engine is not None:
+                key_scope = inp.get("key_scope", "")
+                key = inp.get("key", "")
+                raw = self.engine.read_memory(key_scope=key_scope, key=key)
+                if raw is not None:
+                    return self._truncate(str(raw), max_chars)
+                return "(no memory found)"
+
+            if name == "codegraph_explore" and self.codegraph_client is not None:
+                query = inp.get("query", "")
+                result = self.codegraph_client.explore(query, max_nodes=10)
+                return self._truncate(result, max_chars) if result else "(no results)"
+
+            if name == "read_file" and self.engine is not None:
+                file_path = inp.get("file_path", "")
+                start = inp.get("start_line", 1)
+                end = inp.get("end_line", start + 200)
+                if hasattr(self.engine, "read_file"):
+                    content = self.engine.read_file(
+                        file_path, start_line=start, end_line=end,
+                    )
+                    return self._truncate(str(content), max_chars)
+                return "(read_file not supported by engine)"
+
+            return f"Unknown tool: {name}"
+
+        except Exception as e:
+            logger.warning("Tool %s execution failed: %s", name, e)
+            return f"Error: {e}"
+
+    def _truncate(self, text: str, max_chars: int | None = None) -> str:
+        """Truncate text to max_chars with ellipsis."""
+        limit = max_chars or self.config.tool_result_max_chars
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    def _estimate_tokens(self, messages: list[dict]) -> int:
+        """Rough token count: ~4 chars per token for English/code.
+
+        ponytail: crude estimate, 80% threshold gives safety margin.
+        Upgrade to tiktoken if accuracy matters.
+        """
+        total = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                total += len(content) // 4
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        text = block.get("content", block.get("text", ""))
+                        total += len(str(text)) // 4
+        return total
+
+    async def _compact_context(
+        self,
+        working_messages: list[dict],
+        keep_recent: int = 4,
+    ) -> list[dict]:
+        """Summarize old tool results when approaching token budget.
+
+        Keeps the last `keep_recent` messages intact. Summarizes
+        everything before into a single assistant message. Falls
+        back to truncation if no LLM is available for summarization.
+        """
+        if len(working_messages) <= keep_recent + 1:
+            return working_messages
+
+        old = working_messages[:-keep_recent]
+        recent = working_messages[-keep_recent:]
+
+        # Build summary of old messages
+        summary_parts: list[str] = []
+        for msg in old:
+            content = msg.get("content", "")
+            if isinstance(content, str) and content.strip():
+                summary_parts.append(content[:500])
+            elif isinstance(content, list):
+                for block in content:
+                    text = block.get("content", block.get("text", ""))
+                    if isinstance(text, str) and text.strip():
+                        summary_parts.append(text[:500])
+
+        summary_text = "\n".join(summary_parts)
+        if not summary_text.strip():
+            return recent
+
+        if self.llm_client is None:
+            # No LLM — just keep recent messages
+            return recent
+
+        try:
+            summary_response = await self.llm_client.complete(
+                messages=[{"role": "user", "content": (
+                    "Summarize the following tool results and context into "
+                    "a concise summary preserving key file paths, function "
+                    "names, and findings. Omit verbose output.\n\n"
+                    + summary_text
+                )}],
+                system="You are a context compaction assistant. "
+                       "Produce concise summaries preserving key facts.",
+                max_tokens=1024,
+            )
+            compacted = [
+                {
+                    "role": "assistant",
+                    "content": f"[Context Summary]\n{summary_response.text}",
+                },
+            ] + recent
+            logger.info("Compacted %d old messages into summary", len(old))
+            return compacted
+        except Exception:
+            logger.warning("Context compaction failed, keeping recent only")
+            return recent
+
+    async def _agent_loop(
+        self,
+        messages: list[dict],
+        tools: list | None = None,
+        system: str | None = None,
+        run_config: AgentRunConfig | None = None,
+    ) -> tuple[LLMResponse, list[dict[str, Any]], list[AgentEvent]]:
+        """Turn-based agent loop with abort, steering, and events.
+
+        Inspired by oh-my-pi's agent-loop.ts: a turn-based loop that
+        streams LLM responses, executes tool calls with concurrency
+        control, compacts context when approaching budget, and emits
+        granular lifecycle events.
+
+        Args:
+            messages: Initial conversation messages.
+            tools: Available tool definitions (None = no tool calling).
+            system: System prompt.
+            run_config: Loop configuration (max_turns, budget, abort, steering).
+
+        Returns:
+            Tuple of (final LLMResponse, tool_calls_log, AgentEvent list).
+        """
+        import asyncio
+
+        from ultimate_coders.agent.llm import LLMClient, LLMResponse
+        from ultimate_coders.agent.types import AgentEvent, AgentEventType
+
+        cfg = run_config or AgentRunConfig(
+            max_turns=self.config.planning_max_tool_rounds,
+            token_budget=self.config.planning_context_budget,
+        )
+        working_messages = list(messages)
+        events: list[AgentEvent] = []
+        tool_log: list[dict[str, Any]] = []
+        final_response = LLMResponse()  # ponytail: default empty response
+
+        events.append(AgentEvent(type=AgentEventType.AGENT_START))
+
+        for turn in range(cfg.max_turns):
+            # ── Check abort ──
+            if cfg.abort_event is not None and cfg.abort_event.is_set():
+                logger.info("Agent loop aborted at turn %d", turn)
+                events.append(AgentEvent(
+                    type=AgentEventType.AGENT_END, turn=turn,
+                    data={"reason": "abort"},
+                ))
+                return final_response, tool_log, events
+
+            # ── Drain steering messages ──
+            if cfg.steering_queue is not None:
+                while not cfg.steering_queue.empty():
+                    try:
+                        msg = cfg.steering_queue.get_nowait()
+                        working_messages.append(msg)
+                    except asyncio.QueueEmpty:
+                        break
+
+            events.append(AgentEvent(type=AgentEventType.TURN_START, turn=turn))
+
+            # ── LLM call ──
+            try:
+                if tools:
+                    response = await self.llm_client.complete_with_tools(
+                        messages=working_messages,
+                        tools=tools,
+                        system=system,
+                        max_tokens=2048,
+                        max_tool_rounds=1,  # ponytail: 1 round per turn; we control the loop
+                        tool_executor=self._execute_tool,
+                    )
+                    # complete_with_tools with max_tool_rounds=1 returns
+                    # after one LLM call + tool execution
+                    llm_response = response[0]
+                    tool_results = response[1]
+                    tool_log.extend(tool_results)
+
+                    # Emit tool events
+                    for entry in tool_results:
+                        tc = entry.get("tool_call", {})
+                        events.append(AgentEvent(
+                            type=AgentEventType.TOOL_START, turn=turn,
+                            data={"tool": tc.get("name"), "id": tc.get("id")},
+                        ))
+                        events.append(AgentEvent(
+                            type=AgentEventType.TOOL_END, turn=turn,
+                            data={
+                                "tool": tc.get("name"),
+                                "result_len": len(entry.get("result", "")),
+                            },
+                        ))
+
+                    # Update working_messages from the tool-calling results
+                    # (complete_with_tools modifies its internal working_messages,
+                    # but we need to track our own)
+                    # Re-send with accumulated context
+                    if llm_response.has_tool_calls:
+                        # Tool calls were executed — need to continue the loop
+                        # Reconstruct messages for next turn
+                        # The LLM response + tool results are already in working_messages
+                        # via the complete_with_tools internal loop
+                        # We need to sync: add the final response text if present
+                        final_response = llm_response
+                        working_messages.append({
+                            "role": "assistant",
+                            "content": llm_response.text or "...",
+                        })
+                    else:
+                        final_response = llm_response
+                        events.append(AgentEvent(
+                            type=AgentEventType.TURN_END, turn=turn,
+                        ))
+                        break
+
+                else:
+                    # No tools — direct completion
+                    llm_response = await self.llm_client.complete(
+                        messages=working_messages,
+                        system=system,
+                        max_tokens=4096,
+                    )
+                    final_response = llm_response
+                    events.append(AgentEvent(
+                        type=AgentEventType.TURN_END, turn=turn,
+                    ))
+                    break
+
+            except asyncio.CancelledError:
+                logger.info("Agent loop cancelled at turn %d", turn)
+                events.append(AgentEvent(
+                    type=AgentEventType.AGENT_ERROR, turn=turn,
+                    data={"error": "cancelled"},
+                ))
+                events.append(AgentEvent(
+                    type=AgentEventType.AGENT_END, turn=turn,
+                    data={"reason": "cancelled"},
+                ))
+                return final_response, tool_log, events
+
+            except Exception as e:
+                logger.error("Agent loop error at turn %d: %s", turn, e)
+                events.append(AgentEvent(
+                    type=AgentEventType.AGENT_ERROR, turn=turn,
+                    data={"error": str(e)},
+                ))
+                events.append(AgentEvent(
+                    type=AgentEventType.AGENT_END, turn=turn,
+                    data={"reason": "error"},
+                ))
+                return final_response, tool_log, events
+
+            # ── Check token budget → compact if needed ──
+            estimated = self._estimate_tokens(working_messages)
+            if estimated > cfg.token_budget * 0.8:
+                working_messages = await self._compact_context(working_messages)
+                logger.info(
+                    "Context compacted at turn %d: estimated %d tokens",
+                    turn, estimated,
+                )
+
+            events.append(AgentEvent(type=AgentEventType.TURN_END, turn=turn))
+
+        events.append(AgentEvent(
+            type=AgentEventType.AGENT_END,
+            data={"turns": turn + 1, "tool_calls": len(tool_log)},
+        ))
+        return final_response, tool_log, events
+
+    async def plan_task(self, task: Task) -> ExecutionSpec:
+        """Plan a task via the agent loop, producing an ExecutionSpec.
+
+        Uses the LLM to autonomously search the codebase, explore
+        code structure, and read relevant files. Returns a structured
+        execution spec with context, approach, critical files,
+        verification, and assumptions.
+
+        Args:
+            task: The task to plan.
+
+        Returns:
+            ExecutionSpec with gathered code context and plan.
+            raw_text is populated for sandbox decomposition fallback.
+            Returns ExecutionSpec with empty raw_text if LLM is not
+            configured.
+        """
+        from ultimate_coders.agent.types import ExecutionSpec
+
+        if self.llm_client is None:
+            # Fallback: gather context without LLM
+            memory_ctx = await self._gather_memory_context(task)
+            code_ctx = await self._gather_code_context(task)
+            parts = [p for p in [memory_ctx, code_ctx] if p]
+            raw = "\n\n".join(parts) if parts else ""
+            return ExecutionSpec(context=raw, raw_text=raw)
+
+        tools = self._build_tools()
+        if not tools:
+            memory_ctx = await self._gather_memory_context(task)
+            code_ctx = await self._gather_code_context(task)
+            parts = [p for p in [memory_ctx, code_ctx] if p]
+            raw = "\n\n".join(parts) if parts else ""
+            return ExecutionSpec(context=raw, raw_text=raw)
+
+        system = self._ORCHESTRATE_NOTICE + (
+            "\nYou are a task planning assistant. Given a task, produce "
+            "an EXECUTION SPEC (not a design document). Every choice "
+            "must be pre-made so an implementer can execute top-to-bottom "
+            "with ZERO design decisions.\n\n"
+            "Output structure:\n"
+            "## Context\n- What we know about the codebase\n\n"
+            "## Approach (ordered steps)\n"
+            "1. Step — file:line anchor, what to change\n\n"
+            "## Critical Files & Anchors\n"
+            "- path/to/file.py:ClassName.method_name\n\n"
+            "## Verification\n"
+            "- How to confirm each step worked\n\n"
+            "## Assumptions & Contingencies\n"
+            "- If X is not as assumed, do Y\n\n"
+            "Use the available tools to gather context. "
+            "Be efficient — 2-3 tool calls are usually enough. "
+            "Do NOT write code or make changes."
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"Project: {task.project_id or 'unknown'}\n"
+                    f"Task: {task.description}"
+                ),
+            },
+        ]
+
+        run_config = AgentRunConfig(
+            max_turns=self.config.planning_max_tool_rounds,
+            token_budget=self.config.planning_context_budget,
+        )
+
+        response, tool_log, _events = await self._agent_loop(
+            messages=messages,
+            tools=tools,
+            system=system,
+            run_config=run_config,
+        )
+
+        # Parse LLM response into ExecutionSpec
+        spec = self._parse_execution_spec(response.text or "")
+        # Fallback: include tool results in raw_text for sandbox path
+        tool_parts: list[str] = []
+        for entry in tool_log:
+            tc = entry.get("tool_call", {})
+            tool_parts.append(
+                f"### Tool: {tc.get('name', '?')}\n{entry.get('result', '')}"
+            )
+        if spec.raw_text:
+            tool_parts.append(f"### Plan\n{spec.raw_text}")
+        spec.raw_text = "\n\n".join(tool_parts) if tool_parts else spec.raw_text
+
+        logger.info(
+            "Planned task %s: %d tool calls, spec has %d approach steps",
+            task.id[:8], len(tool_log), len(spec.approach),
+        )
+        return spec
+
+    def _parse_execution_spec(self, text: str) -> ExecutionSpec:
+        """Parse LLM text output into an ExecutionSpec.
+
+        Tries to extract sections by ## headers. Falls back to
+        raw_text-only if parsing fails.
+        """
+        from ultimate_coders.agent.types import ExecutionSpec
+
+        sections: dict[str, str] = {}
+        current_section = ""
+        current_lines: list[str] = []
+
+        for line in text.splitlines():
+            if line.startswith("## ") or line.startswith("# "):
+                if current_section and current_lines:
+                    sections[current_section] = "\n".join(current_lines).strip()
+                current_section = line.lstrip("# ").strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+
+        if current_section and current_lines:
+            sections[current_section] = "\n".join(current_lines).strip()
+
+        # Map sections to ExecutionSpec fields
+        context = sections.get("Context", "")
+        approach_text = sections.get("Approach", "")
+        # Parse numbered steps into list
+        approach: list[str] = []
+        for line in approach_text.splitlines():
+            stripped = line.strip()
+            if stripped and (stripped[0].isdigit() or stripped.startswith("-")):
+                approach.append(stripped.lstrip("0123456789.- ").strip())
+        if not approach and approach_text.strip():
+            approach = [approach_text.strip()]
+
+        critical_files: list[str] = []
+        cf_text = sections.get("Critical Files & Anchors", "")
+        for line in cf_text.splitlines():
+            stripped = line.strip()
+            if stripped and stripped.startswith("-"):
+                critical_files.append(stripped.lstrip("- ").strip())
+
+        verification = sections.get("Verification", "")
+        assumptions = sections.get("Assumptions & Contingencies", "")
+
+        return ExecutionSpec(
+            context=context,
+            approach=approach,
+            critical_files=critical_files,
+            verification=verification,
+            assumptions=assumptions,
+            raw_text=text,
+        )
+
+    async def ask(
+        self,
+        question: str,
+        project_id: str = "",
+    ) -> str:
+        """Answer a question about the codebase via the agent loop.
+
+        Uses the LLM to search the codebase and produce an answer.
+        Falls back to a direct LLM completion if no tools are available.
+
+        Args:
+            question: The question to answer.
+            project_id: Optional project context.
+
+        Returns:
+            Answer string. Empty if LLM client is not configured.
+        """
+
+        if self.llm_client is None:
+            return "(LLM client not configured — cannot answer questions)"
+
+        tools = self._build_tools()
+
+        system = (
+            "You are a codebase expert assistant. "
+            "Answer questions about the codebase using the available "
+            "search and exploration tools. Be concise and specific — "
+            "cite file paths and line numbers. "
+            "If you cannot find the answer, say so."
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"Project: {project_id or 'unknown'}\n"
+                    f"Question: {question}"
+                ),
+            },
+        ]
+
+        run_config = AgentRunConfig(
+            max_turns=self.config.planning_max_tool_rounds,
+            token_budget=self.config.planning_context_budget,
+        )
+
+        response, _tool_log, _events = await self._agent_loop(
+            messages=messages,
+            tools=tools if tools else None,
+            system=system,
+            run_config=run_config,
+        )
+        return response.text
 
     async def schedule_subtasks(
         self,

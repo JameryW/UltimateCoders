@@ -83,6 +83,7 @@ class ForwardingEventEmitter(TaskEventEmitter):
         params: dict[str, Any] = {
             "type": event_type,
             "task_id": task_id,
+            "v": 1,
             "data": {},
         }
         if subtask_id:

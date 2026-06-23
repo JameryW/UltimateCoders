@@ -3,7 +3,7 @@
   "name": "checkpoint",
   "title": "全链路优化：事件详情回流、去重、增量推送、自动调度、checkpoint 增强",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
