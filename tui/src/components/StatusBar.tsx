@@ -55,6 +55,8 @@ export interface StatusBarProps {
   nextRetryAt?: number | null;
   /** Notification flash (auto-dismisses after 3s). */
   notification?: {text: string; color: string; timestamp: number} | null;
+  /** Hint rotation index for cycling StatusBar shortcuts. */
+  hintRotationIndex?: number;
 }
 
 const FOCUS_LABELS: Record<FocusedArea, string> = {
@@ -296,6 +298,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
   retryCount = 0,
   nextRetryAt = null,
   notification,
+  hintRotationIndex = 0,
 }) => {
   const isRetrying = connectionState === 'error' && retryCount > 0;
   // Drive 1-second re-renders when retrying, so countdown updates visually
@@ -307,7 +310,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
     return () => clearInterval(id);
   }, [isRetrying]);
 
-  const helpText = getStatusBarHelp(focusedArea, terminalWidth);
+  const helpText = getStatusBarHelp(focusedArea, terminalWidth, hintRotationIndex);
   const S = getSymbols();
 
   // ── Derive worker display text ──────────────────────────

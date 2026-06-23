@@ -61,6 +61,8 @@ export interface ChatLogProps {
   searchActive?: boolean;
   /** Current search match index. */
   searchMatchIndex?: number;
+  /** Whether all long messages should be force-expanded (A key toggle). */
+  expandAll?: boolean;
 }
 
 function formatTime(): string {
@@ -450,6 +452,7 @@ const ChatLog: React.FC<ChatLogProps> = ({
   searchQuery = '',
   searchActive = false,
   searchMatchIndex = 0,
+  expandAll = false,
 }) => {
   const [pixelOffset, setPixelOffset] = useState(0);
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -666,9 +669,16 @@ const ChatLog: React.FC<ChatLogProps> = ({
                   : `${gapMinutes}m`;
                 return <Text dimColor>{`── ${gapLabel} gap ──`}</Text>;
               })()}
+              {/* Subtask group separator: shown before subtask_started events */}
+              {msg.eventType === 'subtask_started' && (() => {
+                const desc = msg.text.replace(/^▶\s*/, '').split('\n')[0] ?? '';
+                const label = desc.length > 30 ? desc.slice(0, 27) + '…' : desc;
+                const sepWidth = Math.max(3, (terminalWidth ?? 80) - label.length - 16);
+                return <Text dimColor>{`\n── Subtask: ${label} ${'─'.repeat(sepWidth)}`}</Text>;
+              })()}
               <ChatMessageItem
                 msg={msg}
-                isExpanded={expandedIds.has(msg.id) || isCurrentMatch}
+                isExpanded={expandAll || expandedIds.has(msg.id) || isCurrentMatch}
                 isSelected={isFocused && msg.id === selectedMsgId}
                 terminalWidth={terminalWidth}
                 isSearchMatch={isSearchMatch}

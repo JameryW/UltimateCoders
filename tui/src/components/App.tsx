@@ -59,6 +59,8 @@ import {parseCommand, isCommandInput, formatHelpText, matchCommands, COMMANDS} f
 import type {SlashCommand} from '../commands.js';
 import {buildTaskListText} from '../task-list-utils.js';
 import {TaskListOverlay} from './TaskListOverlay.js';
+import WorkerPanel from './WorkerPanel.js';
+import CommandPalette from './CommandPalette.js';
 
 // ── Constants ───────────────────────────────────────────────
 
@@ -156,6 +158,23 @@ const App: React.FC = () => {
 
   // ── Track whether subtask summary message has been inserted ──
   const hasSubtaskSummaryRef = useRef(false);
+
+  // ── Auto-dismiss welcome banner after 3s ──
+  useEffect(() => {
+    if (!state.welcomeBannerVisible) return;
+    const timer = setTimeout(() => {
+      dispatch({type: 'DISMISS_WELCOME_BANNER'});
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [state.welcomeBannerVisible, dispatch]);
+
+  // ── Rotate StatusBar hint every 5s ──
+  useEffect(() => {
+    const timer = setInterval(() => {
+      dispatch({type: 'ROTATE_HINT'});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [dispatch]);
 
   // ── Connection state change notifications ───────────────
   useEffect(() => {
@@ -628,6 +647,12 @@ const App: React.FC = () => {
       return;
     }
 
+    // Ctrl+P: toggle command palette
+    if (key.ctrl && input === 'p' && !key.shift) {
+      dispatch({type: 'TOGGLE_COMMAND_PALETTE'});
+      return;
+    }
+
     // Ctrl+S: toggle search mode (chat focus only)
     if (key.ctrl && input === 's' && state.focusedArea === 'chat') {
       dispatch({type: 'SET_SEARCH_ACTIVE', active: !state.searchActive});
@@ -843,6 +868,15 @@ const App: React.FC = () => {
           }
         }
         // Enter handled by ChatLog internally (per-message expand)
+        // A: toggle expand all messages; Shift+A: collapse all
+        if (input === 'A' && key.shift && !key.ctrl && !key.meta) {
+          dispatch({type: 'COLLAPSE_ALL'});
+          return;
+        }
+        if (input === 'a' && !key.shift && !key.ctrl && !key.meta) {
+          dispatch({type: 'TOGGLE_EXPAND_ALL'});
+          return;
+        }
         break;
       }
 
@@ -997,6 +1031,24 @@ const App: React.FC = () => {
     );
   }
 
+  // Command palette overlay (Ctrl+P)
+  if (state.commandPaletteOpen) {
+    return (
+      <CommandPalette
+        query={state.commandPaletteQuery}
+        selectedIndex={state.selectedCommandIndex}
+        onSelect={(cmd, args) => handleSlashCommand(cmd, args, {
+          addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit,
+          listTasks: grpcListTasks, activeTaskId: state.activeTaskId, subtasks: state.subtasks,
+          isStreaming, symbolMode: state.symbolMode, messages: state.messages,
+        })}
+        onQueryChange={(q) => dispatch({type: 'SET_COMMAND_PALETTE_QUERY', query: q})}
+        onSelectIndex={(i) => dispatch({type: 'SELECT_COMMAND_PALETTE', index: i})}
+        onClose={() => dispatch({type: 'TOGGLE_COMMAND_PALETTE'})}
+      />
+    );
+  }
+
   // ── Render: Main layout ──────────────────────────────
   const layoutMode = getLayoutMode(terminalWidth);
   const isWideMode = layoutMode === 'wide' && state.subtasks.length > 0;
@@ -1010,6 +1062,7 @@ const App: React.FC = () => {
         terminalWidth={terminalWidth}
         brandChar={S.brand}
         version={VERSION}
+        welcomeVisible={state.welcomeBannerVisible}
       />
 
       {/* ── Content: ChatLog + optional SubtaskTree side-by-side ── */}
@@ -1030,6 +1083,7 @@ const App: React.FC = () => {
               searchQuery={state.searchQuery}
               searchActive={state.searchActive}
               searchMatchIndex={state.searchMatchIndex}
+              expandAll={state.expandAll}
             />
           </Box>
           <Box flexDirection="column" width={1}>
@@ -1043,6 +1097,9 @@ const App: React.FC = () => {
               isFocused={false}
               maxWidth={subtaskWidth}
             />
+            {state.workersExpanded && (
+              <WorkerPanel subtasks={state.subtasks} maxWidth={subtaskWidth} symbols={S} />
+            )}
           </Box>
         </Box>
       ) : (
@@ -1060,6 +1117,7 @@ const App: React.FC = () => {
           searchQuery={state.searchQuery}
           searchActive={state.searchActive}
           searchMatchIndex={state.searchMatchIndex}
+          expandAll={state.expandAll}
         />
       )}
 
@@ -1112,6 +1170,10 @@ const App: React.FC = () => {
       />
 
       {/* ── Status bar ──────────────────────────────── */}
+      {/* Worker panel above StatusBar when expanded (non-wide mode) */}
+      {state.workersExpanded && !isWideMode && state.subtasks.length > 0 && (
+        <WorkerPanel subtasks={state.subtasks} maxWidth={terminalWidth - 4} symbols={S} />
+      )}
       <StatusBar
         workerId={workerId}
         workerSummary={workerSummary}
@@ -1125,6 +1187,7 @@ const App: React.FC = () => {
         retryCount={retryCount}
         nextRetryAt={nextRetryAt}
         notification={state.notification}
+        hintRotationIndex={state.hintRotationIndex}
       />
     </Box>
   );

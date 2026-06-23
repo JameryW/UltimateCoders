@@ -48,7 +48,7 @@ const COMMANDS: KeyCommand[] = [
   {id: 'escToMain', label: 'Escape / close overlay', shortLabel: 'Esc', key: 'Esc', areas: [], global: true},
   {id: 'subtaskOverlay', label: 'Toggle subtask overlay', shortLabel: 'C-T', key: 'Ctrl+T', areas: [], global: true},
   {id: 'filter', label: 'Cycle event filter', shortLabel: 'C-F', key: 'Ctrl+F', areas: [], global: true},
-  {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
+  {id: 'pause', label: 'Pause/resume task', shortLabel: 'C-O', key: 'Ctrl+O', areas: [], global: true},
   {id: 'cancel', label: 'Cancel active task', shortLabel: 'C-X', key: 'Ctrl+X', areas: [], global: true},
   {id: 'reconnect', label: 'Reconnect gRPC', shortLabel: 'C-R', key: 'Ctrl+R', areas: [], global: true},
   {id: 'quit', label: 'Quit', shortLabel: 'C-Q', key: 'Ctrl+Q', areas: [], global: true},
@@ -79,6 +79,8 @@ const COMMANDS: KeyCommand[] = [
   {id: 'home', label: 'Jump to top', shortLabel: 'Home', key: 'Home', areas: ['chat'], global: false},
   {id: 'end', label: 'Jump to bottom', shortLabel: 'End', key: 'End', areas: ['chat'], global: false},
   {id: 'expandSelected', label: 'Expand/collapse selected message', shortLabel: 'Enter', key: 'Enter', areas: ['chat'], global: false},
+  {id: 'expandAll', label: 'Expand all messages', shortLabel: 'A', key: 'A', areas: ['chat'], global: false},
+  {id: 'collapseAll', label: 'Collapse all messages', shortLabel: 'S-A', key: 'Shift+A', areas: ['chat'], global: false},
   {id: 'clearLog', label: 'Clear log', shortLabel: 'C-L', key: 'Ctrl+L', areas: ['chat'], global: false},
   {id: 'search', label: 'Search messages', shortLabel: 'C-S', key: 'Ctrl+S', areas: ['chat'], global: false},
   {id: 'searchNext', label: 'Next search match', shortLabel: 'N', key: 'N', areas: ['chat'], global: false},
@@ -86,6 +88,9 @@ const COMMANDS: KeyCommand[] = [
 
   // ── Input history search ──
   {id: 'historySearch', label: 'Search input history', shortLabel: 'C-G', key: 'Ctrl+G', areas: ['input'], global: false},
+
+  // ── Command palette ──
+  {id: 'commandPalette', label: 'Command palette', shortLabel: 'C-P', key: 'Ctrl+P', areas: [], global: true},
 
   // ── Overlay (subtask Ctrl+T) ──
   {id: 'overlayUp', label: 'Navigate subtask up', shortLabel: '↑', key: 'Up', areas: [], global: false},
@@ -118,13 +123,30 @@ export function getCommandsForArea(area: FocusedArea): KeyCommand[] {
  * Budget-based: only outputs the most useful 2-3 shortcuts that fit.
  * Full shortcuts are in the ? help overlay.
  */
-export function getStatusBarHelp(area: FocusedArea, terminalWidth: number): string {
-  const candidates: Array<{shortcut: string; label: string}> = [
+export function getStatusBarHelp(area: FocusedArea, terminalWidth: number, hintRotationIndex?: number): string {
+  // Base candidates — always shown if they fit
+  const baseCandidates: Array<{shortcut: string; label: string}> = [
     {shortcut: getCommand('cycleFocus')!.shortLabel, label: 'focus'},
-    {shortcut: getCommand('subtaskOverlay')!.shortLabel, label: 'subtasks'},
     {shortcut: getCommand('help')!.shortLabel, label: 'help'},
     {shortcut: getCommand('quit')!.shortLabel, label: 'quit'},
   ];
+
+  // Rotating hint — cycles through these on each hintRotationIndex increment
+  const rotatingHints: Array<{shortcut: string; label: string}> = [
+    {shortcut: getCommand('subtaskOverlay')!.shortLabel, label: 'subtasks'},
+    {shortcut: getCommand('commandPalette')!.shortLabel, label: 'palette'},
+    {shortcut: getCommand('filter')!.shortLabel, label: 'filter'},
+    {shortcut: getCommand('search')!.shortLabel, label: 'search'},
+    {shortcut: getCommand('workersExpand')!.shortLabel, label: 'workers'},
+    {shortcut: getCommand('pause')!.shortLabel, label: 'pause'},
+    {shortcut: getCommand('expandAll')!.shortLabel, label: 'expand'},
+    {shortcut: getCommand('reconnect')!.shortLabel, label: 'reconnect'},
+  ];
+
+  const rotIdx = hintRotationIndex ?? 0;
+  const activeHint = rotatingHints[rotIdx % rotatingHints.length];
+
+  const candidates = [...baseCandidates, activeHint];
 
   const helpBudget = Math.max(7, Math.floor(terminalWidth / 4));
   const parts: string[] = [];

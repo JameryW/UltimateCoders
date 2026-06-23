@@ -171,6 +171,24 @@ export interface TuiState {
   /** Input history search mode. */
   historySearchActive: boolean;
   historySearchQuery: string;
+
+  /** Whether all long messages should be force-expanded (A key toggle). */
+  expandAll: boolean;
+
+  /** Whether the command palette overlay is open (Ctrl+P). */
+  commandPaletteOpen: boolean;
+
+  /** Command palette search query. */
+  commandPaletteQuery: string;
+
+  /** Currently selected command index in command palette (-1 = none). */
+  selectedCommandIndex: number;
+
+  /** Whether the welcome banner is visible (auto-dismisses after 3s). */
+  welcomeBannerVisible: boolean;
+
+  /** StatusBar hint rotation index (cycles through available shortcuts). */
+  hintRotationIndex: number;
 }
 
 export const INITIAL_TUI_STATE: TuiState = {
@@ -213,6 +231,12 @@ export const INITIAL_TUI_STATE: TuiState = {
   notification: null,
   historySearchActive: false,
   historySearchQuery: '',
+  expandAll: false,
+  commandPaletteOpen: false,
+  commandPaletteQuery: '',
+  selectedCommandIndex: 0,
+  welcomeBannerVisible: true,
+  hintRotationIndex: 0,
 };
 
 // ── Actions ─────────────────────────────────────────────────
@@ -288,7 +312,18 @@ export type TuiAction =
   | {type: 'CLEAR_NOTIFICATION'}
   // ── History search ──
   | {type: 'SET_HISTORY_SEARCH'; active: boolean}
-  | {type: 'SET_HISTORY_SEARCH_QUERY'; query: string};
+  | {type: 'SET_HISTORY_SEARCH_QUERY'; query: string}
+  // ── Expand/collapse all ──
+  | {type: 'TOGGLE_EXPAND_ALL'}
+  | {type: 'COLLAPSE_ALL'}
+  // ── Command palette ──
+  | {type: 'TOGGLE_COMMAND_PALETTE'}
+  | {type: 'SET_COMMAND_PALETTE_QUERY'; query: string}
+  | {type: 'SELECT_COMMAND_PALETTE'; index: number}
+  // ── Welcome banner ──
+  | {type: 'DISMISS_WELCOME_BANNER'}
+  // ── Hint rotation ──
+  | {type: 'ROTATE_HINT'};
 
 // ── Reducer ─────────────────────────────────────────────────
 
@@ -691,6 +726,42 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 
     case 'SET_HISTORY_SEARCH_QUERY':
       return {...state, historySearchQuery: action.query};
+
+    // ── Expand/collapse all ────────────────────────────────────
+
+    case 'TOGGLE_EXPAND_ALL':
+      return {...state, expandAll: !state.expandAll};
+
+    case 'COLLAPSE_ALL':
+      return {...state, expandAll: false};
+
+    // ── Command palette ────────────────────────────────────────
+
+    case 'TOGGLE_COMMAND_PALETTE': {
+      const opening = !state.commandPaletteOpen;
+      return {
+        ...state,
+        commandPaletteOpen: opening,
+        commandPaletteQuery: '',
+        selectedCommandIndex: 0,
+      };
+    }
+
+    case 'SET_COMMAND_PALETTE_QUERY':
+      return {...state, commandPaletteQuery: action.query, selectedCommandIndex: 0};
+
+    case 'SELECT_COMMAND_PALETTE':
+      return {...state, selectedCommandIndex: action.index};
+
+    // ── Welcome banner ─────────────────────────────────────────
+
+    case 'DISMISS_WELCOME_BANNER':
+      return {...state, welcomeBannerVisible: false};
+
+    // ── Hint rotation ──────────────────────────────────────────
+
+    case 'ROTATE_HINT':
+      return {...state, hintRotationIndex: state.hintRotationIndex + 1};
 
     default:
       return state;

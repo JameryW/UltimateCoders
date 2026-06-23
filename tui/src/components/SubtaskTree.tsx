@@ -38,10 +38,18 @@ export interface SubtaskItem {
   dependsOn?: string[];
   /** Error summary for failed subtasks. */
   errorSummary?: string;
+  /** Last N lines of stderr from failed subtask. */
+  stderrTail?: string;
+  /** Recent tool call names before failure. */
+  recentTools?: string[];
   /** Output from subtask execution (truncated). */
   output?: string;
   /** Files modified by this subtask. */
   modifiedFiles?: Array<{file_path: string; change_type: string; diff: string}>;
+  /** Elapsed time in milliseconds (from started to completed/failed). */
+  elapsedMs?: number;
+  /** Internal: timestamp when subtask started (for elapsed calculation). */
+  _startedAtMs?: number;
 }
 
 export interface SubtaskTreeProps {
@@ -195,6 +203,11 @@ const SubtaskRow: React.FC<SubtaskRowProps> = ({subtask, maxWidth, symbols, isSe
       {subtask.status === 'failed' && (
         <Text color="red">{` ✗`}</Text>
       )}
+      {subtask.elapsedMs != null && (subtask.status === 'completed' || subtask.status === 'failed') && (() => {
+        const secs = Math.round(subtask.elapsedMs / 1000);
+        const label = secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+        return <Text dimColor>{` (${label})`}</Text>;
+      })()}
       {dependedBy && dependedBy.length > 0 && (
         <Text dimColor>{` →${dependedBy.join(',')}`}</Text>
       )}
@@ -238,6 +251,22 @@ const SubtaskDetail: React.FC<{subtask: SubtaskItem; maxWidth: number}> = ({subt
         <Box marginLeft={1}>
           <Text dimColor>{'error: '}</Text>
           <Text color="red">{truncateToWidth(subtask.errorSummary, contentWidth - 7)}</Text>
+        </Box>
+      )}
+      {subtask.recentTools && subtask.recentTools.length > 0 && (
+        <Box marginLeft={1}>
+          <Text dimColor>{'tools: '}</Text>
+          <Text dimColor>{truncateToWidth(subtask.recentTools.join(' → '), contentWidth - 7)}</Text>
+        </Box>
+      )}
+      {subtask.stderrTail && (
+        <Box marginLeft={1} flexDirection="column">
+          <Text dimColor>{'stderr:'}</Text>
+          {subtask.stderrTail.split('\n').slice(0, 5).map((line, i) => (
+            <Box marginLeft={2} key={i}>
+              <Text color="red" dimColor>{truncateToWidth(line, contentWidth - 4)}</Text>
+            </Box>
+          ))}
         </Box>
       )}
       <Text dimColor>{'│'}</Text>

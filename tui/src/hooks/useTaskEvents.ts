@@ -47,6 +47,16 @@ const DEDUP_STATUS_EVENTS = new Set([
   'subtask_failed',
 ]);
 
+/** High-priority events: status transitions that should bypass batch buffer and flush immediately. */
+const HIGH_PRIORITY_EVENTS = new Set([
+  'subtask_assigned',
+  'subtask_started',
+  'subtask_completed',
+  'subtask_failed',
+  'task_completed',
+  'task_failed',
+]);
+
 /** Callback type for when a sync_required event is received from the server. */
 export type SyncRequiredCallback = (reason: string, skipped: number) => void;
 
@@ -123,12 +133,14 @@ export function processEvent(
     }
     case 'subtask_started': {
       if (event.subtaskId) {
+        const startedAtMs = new Date(event.timestamp).getTime();
         const existing = updated.get(event.subtaskId);
         if (existing) {
           updated.set(event.subtaskId, {
             ...existing,
             status: 'in_progress',
             assignedWorker: event.data?.worker_id ?? existing.assignedWorker,
+            _startedAtMs: startedAtMs,
           });
         } else {
           updated.set(event.subtaskId, {
@@ -138,6 +150,7 @@ export function processEvent(
             status: 'in_progress',
             assignedWorker: event.data?.worker_id,
             dependsOn: parseDependsOn(event.data?.depends_on),
+            _startedAtMs: startedAtMs,
           });
         }
       }
@@ -153,13 +166,18 @@ export function processEvent(
           } catch { /* ignore parse errors */ }
           return undefined;
         })();
+        const completedAtMs = new Date(event.timestamp).getTime();
         const existing = updated.get(event.subtaskId);
+        const elapsedMs = existing?._startedAtMs
+          ? Math.max(0, completedAtMs - existing._startedAtMs)
+          : undefined;
         if (existing) {
           updated.set(event.subtaskId, {
             ...existing,
             status: 'completed',
             output: event.data?.output ?? existing.output,
             modifiedFiles: modifiedFiles ?? existing.modifiedFiles,
+            elapsedMs,
           });
         } else {
           updated.set(event.subtaskId, {
@@ -170,6 +188,7 @@ export function processEvent(
             dependsOn: parseDependsOn(event.data?.depends_on),
             output: event.data?.output,
             modifiedFiles,
+            elapsedMs,
           });
         }
       }
@@ -177,12 +196,26 @@ export function processEvent(
     }
     case 'subtask_failed': {
       if (event.subtaskId) {
+        const failedAtMs = new Date(event.timestamp).getTime();
         const existing = updated.get(event.subtaskId);
+        const elapsedMs = existing?._startedAtMs
+          ? Math.max(0, failedAtMs - existing._startedAtMs)
+          : undefined;
+        // Extract failure context: stderr tail and recent tool calls
+        const stderrTail = typeof event.data?.stderr_tail === 'string'
+          ? event.data.stderr_tail
+          : undefined;
+        const recentTools = Array.isArray(event.data?.recent_tools)
+          ? event.data.recent_tools as string[]
+          : undefined;
         if (existing) {
           updated.set(event.subtaskId, {
             ...existing,
             status: 'failed',
             errorSummary: event.data?.error_summary ?? event.data?.error ?? undefined,
+            stderrTail,
+            recentTools,
+            elapsedMs,
           });
         } else {
           updated.set(event.subtaskId, {
@@ -191,7 +224,10 @@ export function processEvent(
             description: String(event.data?.description ?? ''),
             status: 'failed',
             errorSummary: event.data?.error_summary ?? event.data?.error ?? undefined,
+            stderrTail,
+            recentTools,
             dependsOn: parseDependsOn(event.data?.depends_on),
+            elapsedMs,
           });
         }
       }
@@ -380,12 +416,38 @@ export function useTaskEvents(
             return prev;
           });
 
-          // ponytail: batch events instead of updating state on each one
-          eventBufferRef.current.push(taskEvent);
-          if (!batchTimerRef.current) {
-            batchTimerRef.current = setTimeout(() => {
-              flushEventBuffer();
-            }, EVENT_BATCH_MS);
+          // ponytail: high-priority events (status transitions) bypass batch buffer
+          // and flush immediately for faster TUI feedback. Other events stay batched.
+          if (HIGH_PRIORITY_EVENTS.has(taskEvent.type)) {
+            // Flush any pending batch first, then apply high-priority event immediately
+            flushEventBuffer();
+            // Dedup check
+            const seen = seenEventsRef.current;
+            const order = seenEventsOrderRef.current;
+            if (DEDUP_STATUS_EVENTS.has(taskEvent.type)) {
+              const key = `${taskEvent.type}:${taskEvent.subtaskId ?? ''}:${taskEvent.taskId}`;
+              if (seen.has(key)) return; // duplicate
+              seen.add(key);
+              order.push(key);
+              if (order.length > MAX_SEEN_EVENTS) {
+                const excess = order.length - MAX_SEEN_EVENTS;
+                for (let i = 0; i < excess; i++) seen.delete(order[i]);
+                order.splice(0, excess);
+              }
+            }
+            setEvents((prev) => {
+              const next = [...prev, taskEvent];
+              return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+            });
+            setSubtaskMap((prev) => processEvent(taskEvent, prev));
+          } else {
+            // Low-priority: batch events for deferred flush
+            eventBufferRef.current.push(taskEvent);
+            if (!batchTimerRef.current) {
+              batchTimerRef.current = setTimeout(() => {
+                flushEventBuffer();
+              }, EVENT_BATCH_MS);
+            }
           }
         });
 

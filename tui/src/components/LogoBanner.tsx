@@ -18,6 +18,8 @@ export interface LogoBannerProps {
   brandChar: string;
   /** Version string. */
   version?: string;
+  /** Whether to show welcome hint (auto-dismisses via parent timer). */
+  welcomeVisible?: boolean;
 }
 
 // ── Pixel-game-style UC Logos ──────────────────────────────
@@ -49,6 +51,7 @@ export function LogoBanner({
   terminalWidth = 80,
   brandChar = '◆',
   version = '',
+  welcomeVisible = false,
 }: LogoBannerProps): React.ReactNode | null {
   // Hide on very narrow terminals
   if (terminalWidth < 60) return null;
@@ -78,6 +81,11 @@ export function LogoBanner({
         <Text bold color="magenta">{' UltimateCoders'}</Text>
         {version && <Text dimColor>{` v${version}`}</Text>}
       </Box>
+      {welcomeVisible && (
+        <Box marginTop={0}>
+          <Text dimColor>{'  按 ? 查看快捷键 │ Shift+Tab 切换焦点 │ Ctrl+P 命令面板'}</Text>
+        </Box>
+      )}
     </Box>
   );
 }
