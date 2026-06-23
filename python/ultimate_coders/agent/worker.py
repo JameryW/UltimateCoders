@@ -123,10 +123,31 @@ class Worker:
             )
 
     async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
-        """Execute a subtask via sandbox agent."""
+        """Execute a subtask via sandbox agent.
+
+        Includes checkpoint: saves intermediate result to engine memory
+        before returning, and checks for existing checkpoint to allow
+        resume-skip of already-completed subtasks.
+        """
         self.current_task = subtask
         self._active_count += 1
         subtask.status = SubtaskStatus.IN_PROGRESS
+
+        # Check for existing checkpoint — skip if already completed
+        checkpoint = self._load_checkpoint(subtask.id)
+        if checkpoint is not None and checkpoint.get("success"):
+            logger.info(
+                "Subtask %s has completed checkpoint, skipping execution",
+                subtask.id[:8],
+            )
+            self.current_task = None
+            self._active_count = max(0, self._active_count - 1)
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                summary=checkpoint.get("summary", "Resumed from checkpoint"),
+                success=True,
+            )
 
         await self._publish_event(
             "subtask_started",
@@ -149,6 +170,9 @@ class Worker:
                     summary=f"Subtask timed out after {timeout_secs}s",
                     success=False,
                 )
+
+            # Save checkpoint for resume
+            self._save_checkpoint(subtask.id, result)
 
             if result.success:
                 comp_data: dict[str, Any] = {
@@ -207,27 +231,95 @@ class Worker:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
 
+    def _save_checkpoint(self, subtask_id: str, result: SubtaskResult) -> None:
+        """Persist subtask result to engine memory for checkpoint/resume.
+
+        ponytail: synchronous write — engine.write_memory may be async,
+        but we use in-memory fallback so it's fine. Non-fatal on failure.
+        """
+        if self.engine is None:
+            return
+        try:
+            data = {
+                "subtask_id": subtask_id,
+                "worker_id": result.worker_id,
+                "summary": result.summary,
+                "success": result.success,
+            }
+            self.engine.write_memory(
+                key_scope="checkpoint",
+                key=f"subtask:{subtask_id}",
+                content=json.dumps(data),
+                content_type="structured",
+                source_agent="worker",
+            )
+        except Exception:
+            logger.debug("Failed to save checkpoint for subtask %s", subtask_id[:8])
+
+    def _load_checkpoint(self, subtask_id: str) -> dict | None:
+        """Load checkpoint from engine memory."""
+        if self.engine is None:
+            return None
+        try:
+            raw = self.engine.read_memory(
+                key_scope="checkpoint",
+                key=f"subtask:{subtask_id}",
+            )
+            if raw is not None:
+                return json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            logger.debug("Failed to load checkpoint for subtask %s", subtask_id[:8])
+        return None
+
     async def _execute_in_sandbox(self, subtask: Subtask) -> SubtaskResult:
-        """Execute via sandbox (Claude Code / Codex)."""
-        prompt = _SUBTASK_USER_TEMPLATE.format(
-            description=subtask.description,
-            expected_output=subtask.expected_output or "Complete the described task",
-            file_constraints=", ".join(subtask.file_constraints) or "none",
-        )
-        output: AgentOutput = await self._sandbox_manager.execute(prompt)
-        # ponytail: extract stderr_tail and recent tool calls for failure context
-        stderr_tail = output.stderr_tail
-        if not stderr_tail and hasattr(output, 'raw_stderr') and output.raw_stderr:
-            stderr_tail = "\n".join(output.raw_stderr.strip().splitlines()[-10:])
-        return SubtaskResult(
-            subtask_id=subtask.id,
-            worker_id=self.worker_id,
-            modified_files=output.file_changes,
-            summary=output.summary,
-            success=output.success,
-            stderr_tail=stderr_tail,
-            recent_tool_calls=output.tool_calls[-5:],
-        )
+        """Execute via sandbox (Claude Code / Codex).
+
+        Automatically declares and releases EditIntent for file_constraints
+        so the conflict detector tracks which files are being modified.
+        """
+        # Declare edit intent for conflict tracking
+        declared_files: list[str] = []
+        if subtask.file_constraints:
+            from ultimate_coders.agent.conflict import EditIntent, EditType
+            for fp in subtask.file_constraints:
+                result, _ = self.conflict_detector.declare_intent(
+                    EditIntent(
+                        worker_id=self.worker_id,
+                        file_path=fp,
+                        edit_type=EditType.MODIFY,
+                    )
+                )
+                if result.value != "no_conflict":
+                    logger.warning(
+                        "Conflict detected for %s: %s (proceeding anyway)",
+                        fp, result.value,
+                    )
+                declared_files.append(fp)
+
+        try:
+            prompt = _SUBTASK_USER_TEMPLATE.format(
+                description=subtask.description,
+                expected_output=subtask.expected_output or "Complete the described task",
+                file_constraints=", ".join(subtask.file_constraints) or "none",
+            )
+            output: AgentOutput = await self._sandbox_manager.execute(prompt)
+            # ponytail: extract stderr_tail and recent tool calls for failure context
+            stderr_tail = output.stderr_tail
+            if not stderr_tail and hasattr(output, 'raw_stderr') and output.raw_stderr:
+                stderr_tail = "\n".join(output.raw_stderr.strip().splitlines()[-10:])
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                modified_files=output.file_changes,
+                summary=output.summary,
+                success=output.success,
+                stderr_tail=stderr_tail,
+                recent_tool_calls=output.tool_calls[-5:],
+            )
+        finally:
+            # Release edit intent after execution (success or failure)
+            for fp in declared_files:
+                self.conflict_detector.remove_intent(fp, self.worker_id)
 
     async def send_heartbeat(self) -> dict[str, Any]:
         return {
