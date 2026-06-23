@@ -118,6 +118,39 @@ export function createSystemMessage(
   };
 }
 
+/** Build a task summary card message when all subtasks are done. */
+export function createTaskSummaryMessage(
+  subtasks: Array<{index: number; description: string; status: string; elapsedMs?: number}>,
+): ChatMessage {
+  const completed = subtasks.filter(s => s.status === 'completed');
+  const failed = subtasks.filter(s => s.status === 'failed');
+  const totalMs = subtasks.reduce((sum, s) => sum + (s.elapsedMs ?? 0), 0);
+  const totalSec = Math.round(totalMs / 1000);
+  const timeLabel = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m${totalSec % 60}s` : `${totalSec}s`;
+
+  const lines: string[] = ['╭─ Task Summary ──────────────────────╮'];
+  for (const st of subtasks) {
+    const icon = st.status === 'completed' ? '✓' : '✗';
+    const elapsed = st.elapsedMs != null ? (() => {
+      const s = Math.round(st.elapsedMs / 1000);
+      return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`;
+    })() : '';
+    const desc = st.description.length > 30 ? st.description.slice(0, 27) + '…' : st.description;
+    lines.push(`│ ${icon} #${st.index} ${desc} ${elapsed}`);
+  }
+  lines.push('│ ─────────────────────────────────────');
+  const modLabel = '';  // ponytail: modified files not available in subtask summary
+  if (modLabel) lines.push(`│ Modified: ${modLabel}`);
+  lines.push(`│ Total: ${timeLabel} │ ${completed.length}/${subtasks.length} done${failed.length > 0 ? ` │ ${failed.length} failed` : ''}`);
+  lines.push('╰──────────────────────────────────────╯');
+
+  return createSystemMessage(lines.join('\n'), {
+    eventType: 'task_completed',
+    color: failed.length > 0 ? 'yellow' : 'green',
+    bold: true,
+  });
+}
+
 export function filterMessages(messages: ChatMessage[], eventFilter: EventFilter): ChatMessage[] {
   if (eventFilter === 'all') return messages;
   return messages.filter((msg) => {

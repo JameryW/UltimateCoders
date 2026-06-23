@@ -10,17 +10,19 @@ use uc_types::{
     MemoryWriteRequest, RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult,
     SearchResultItem, Subtask, SubtaskStatus, Task, TaskId, TaskStatus, WorkerId,
 };
+use uc_types::agent::{DirEntry, DirListing, FileContent};
 
 // ── Import generated proto types ──────────────────────────
 
 use crate::ultimate_coders::{
-    ComponentHealthProto, DeleteMemoryRequest, GetIndexStateRequest, GetIndexStateResponse,
-    GetTaskResponse, HealthResponse, IndexRepoRequest, IndexRepoResponse, MemoryEntryProto,
-    MemorySearchResultProto, PauseTaskResponse, ReadMemoryRequest, ReadMemoryResponse,
-    RemoveIndexRequest, RepoIndexStateProto, ResumeTaskResponse, SearchMemoryRequest,
-    SearchMemoryResponse, SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem,
-    SearchStreamRequest, SubmitTaskResponse, SubtaskProto, TaskEvent as TaskEventProto, TaskProto,
-    WriteMemoryRequest, WriteMemoryResponse,
+    ComponentHealthProto, DeleteMemoryRequest, DirEntryProto, GetFileResponse,
+    GetIndexStateRequest, GetIndexStateResponse, GetTaskResponse, HealthResponse, IndexRepoRequest,
+    IndexRepoResponse, ListDirResponse, MemoryEntryProto, MemorySearchResultProto,
+    PauseTaskResponse, ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest,
+    RepoIndexStateProto, ResumeTaskResponse, SearchMemoryRequest, SearchMemoryResponse,
+    SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem, SearchStreamRequest,
+    SubmitTaskResponse, SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest,
+    WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -120,6 +122,7 @@ impl From<RepoIndexState> for GetIndexStateResponse {
             files_count: state.files_count,
             symbols_count: state.symbols_count,
             chunks_count: state.chunks_count,
+            local_path: state.local_path,
         }
     }
 }
@@ -442,6 +445,7 @@ impl From<GetIndexStateResponse> for RepoIndexState {
             files_count: resp.files_count,
             symbols_count: resp.symbols_count,
             chunks_count: resp.chunks_count,
+            local_path: resp.local_path,
         }
     }
 }
@@ -587,6 +591,7 @@ impl From<RepoIndexState> for RepoIndexStateProto {
             files_count: state.files_count,
             symbols_count: state.symbols_count,
             chunks_count: state.chunks_count,
+            local_path: state.local_path,
         }
     }
 }
@@ -600,6 +605,81 @@ impl From<RepoIndexStateProto> for RepoIndexState {
             files_count: proto.files_count,
             symbols_count: proto.symbols_count,
             chunks_count: proto.chunks_count,
+            local_path: proto.local_path,
+        }
+    }
+}
+
+// ── File Browser conversions ───────────────────────────────
+
+impl From<DirEntry> for DirEntryProto {
+    fn from(e: DirEntry) -> Self {
+        Self {
+            name: e.name,
+            path: e.path,
+            entry_type: e.entry_type,
+            size: e.size,
+        }
+    }
+}
+
+impl From<DirEntryProto> for DirEntry {
+    fn from(p: DirEntryProto) -> Self {
+        Self {
+            name: p.name,
+            path: p.path,
+            entry_type: p.entry_type,
+            size: p.size,
+        }
+    }
+}
+
+impl From<DirListing> for ListDirResponse {
+    fn from(d: DirListing) -> Self {
+        Self {
+            repo_id: d.repo_id,
+            path: d.path,
+            entries: d.entries.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListDirResponse> for DirListing {
+    fn from(p: ListDirResponse) -> Self {
+        Self {
+            repo_id: p.repo_id,
+            path: p.path,
+            entries: p.entries.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<FileContent> for GetFileResponse {
+    fn from(f: FileContent) -> Self {
+        Self {
+            repo_id: f.repo_id,
+            path: f.path,
+            binary: f.binary,
+            size: f.size,
+            content: f.content,
+            language: f.language,
+            truncated: f.truncated,
+            lines: f.lines,
+        }
+    }
+}
+
+impl From<GetFileResponse> for FileContent {
+    fn from(p: GetFileResponse) -> Self {
+        Self {
+            repo_id: p.repo_id,
+            path: p.path,
+            binary: p.binary,
+            size: p.size,
+            content: p.content,
+            language: p.language,
+            truncated: p.truncated,
+            lines: p.lines,
         }
     }
 }

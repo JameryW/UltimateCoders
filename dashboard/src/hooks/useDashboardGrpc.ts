@@ -261,7 +261,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const scheduleReconnect = useCallback(() => {
     const delay = RETRY_INTERVALS[retryCountRef.current] ?? MAX_RETRY_INTERVAL;
     retryCountRef.current += 1;
-    console.log(`[Dashboard gRPC] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
+    if (import.meta.env.DEV) console.log(`[Dashboard gRPC] Reconnecting in ${delay}ms (attempt ${retryCountRef.current})`);
     setConnectionState("reconnecting");
     retryTimerRef.current = setTimeout(() => {
       if (optsRef.current.enabled) {

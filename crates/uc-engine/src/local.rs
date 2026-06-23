@@ -15,6 +15,7 @@ use uc_types::{
     MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse, MemoryWriteRequest,
     RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
 };
+use uc_types::agent::{DirEntry, DirListing, FileContent};
 
 use crate::checkpoint::{CheckpointConfig, CheckpointManager};
 use crate::circuit_breaker::CircuitBreaker;
@@ -463,6 +464,7 @@ impl EngineApi for LocalEngine {
                 files_count: state.files_count as u32,
                 symbols_count: state.symbols_count as u32,
                 chunks_count: state.chunks_count as u32,
+                local_path: None,
             }),
             None => Ok(RepoIndexState {
                 repo_id: repo_id.to_string(),
@@ -471,6 +473,7 @@ impl EngineApi for LocalEngine {
                 files_count: 0,
                 symbols_count: 0,
                 chunks_count: 0,
+                local_path: None,
             }),
         }
     }
@@ -662,6 +665,107 @@ impl EngineApi for LocalEngine {
         Ok(states)
     }
 
+    async fn list_dir(&self, repo_id: &str, path: &str) -> Result<DirListing, EngineError> {
+        // ponytail: resolve local repo path from metadata or config
+        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+        let repo = repos.into_iter().find(|r| r.repo_id == repo_id)
+            .ok_or_else(|| EngineError::NotFound(format!("Repo {} not found", repo_id)))?;
+        let local_path = repo.local_path
+            .unwrap_or_else(|| std::env::temp_dir().join("uc-repos").join(repo_id).to_string_lossy().to_string());
+        let dir = std::path::Path::new(&local_path).join(path);
+
+        if !dir.exists() {
+            return Err(EngineError::NotFound(format!("Path {} not found in repo {}", path, repo_id)));
+        }
+
+        let mut entries = Vec::new();
+        let read_dir = std::fs::read_dir(&dir)
+            .map_err(|e| EngineError::IndexingError(format!("Failed to read dir: {}", e)))?;
+        for entry in read_dir {
+            let entry = entry.map_err(|e| EngineError::IndexingError(format!("Dir entry error: {}", e)))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') { continue; }
+            let meta = entry.metadata().map_err(|e| EngineError::IndexingError(format!("Metadata error: {}", e)))?;
+            let relative = if path.is_empty() { name.clone() } else { format!("{}/{}", path, name) };
+            entries.push(DirEntry {
+                name,
+                path: relative,
+                entry_type: if meta.is_dir() { "directory".to_string() } else { "file".to_string() },
+                size: meta.len(),
+            });
+        }
+        // Sort: directories first, then files, alphabetically
+        entries.sort_by(|a, b| {
+            let dir_cmp = b.entry_type.cmp(&a.entry_type); // "directory" < "file" reversed = dirs first
+            dir_cmp.then_with(|| a.name.cmp(&b.name))
+        });
+
+        Ok(DirListing { repo_id: repo_id.to_string(), path: path.to_string(), entries })
+    }
+
+    async fn get_file(&self, repo_id: &str, path: &str) -> Result<FileContent, EngineError> {
+        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+        let repo = repos.into_iter().find(|r| r.repo_id == repo_id)
+            .ok_or_else(|| EngineError::NotFound(format!("Repo {} not found", repo_id)))?;
+        let local_path = repo.local_path
+            .unwrap_or_else(|| std::env::temp_dir().join("uc-repos").join(repo_id).to_string_lossy().to_string());
+        let full_path = std::path::Path::new(&local_path).join(path);
+
+        if !full_path.exists() {
+            return Err(EngineError::NotFound(format!("File {} not found in repo {}", path, repo_id)));
+        }
+        let meta = std::fs::metadata(&full_path)
+            .map_err(|e| EngineError::IndexingError(format!("Metadata error: {}", e)))?;
+        let size = meta.len();
+
+        // Try reading as text; if it fails (binary), mark binary
+        let content_bytes = std::fs::read(&full_path)
+            .map_err(|e| EngineError::IndexingError(format!("Failed to read file: {}", e)))?;
+
+        // ponytail: max 500KB for dashboard display, truncate beyond that
+        const MAX_FILE_SIZE: usize = 512_000;
+        let is_binary = content_bytes.iter().any(|&b| b == 0);
+        let truncated = content_bytes.len() > MAX_FILE_SIZE;
+
+        if is_binary {
+            return Ok(FileContent {
+                repo_id: repo_id.to_string(),
+                path: path.to_string(),
+                binary: true,
+                size,
+                content: None,
+                language: None,
+                truncated: false,
+                lines: 0,
+            });
+        }
+
+        let text = String::from_utf8_lossy(&content_bytes[..MAX_FILE_SIZE.min(content_bytes.len())]);
+        let lines = text.lines().count() as u32;
+        // Detect language from extension
+        let language = std::path::Path::new(path).extension()
+            .and_then(|e| e.to_str())
+            .map(|e| match e {
+                "rs" => "rust", "py" => "python", "js" => "javascript", "ts" => "typescript",
+                "go" => "go", "java" => "java", "c" => "c", "cpp" => "cpp", "h" => "c",
+                "sh" => "bash", "yaml" | "yml" => "yaml", "toml" => "toml",
+                "json" => "json", "md" => "markdown", "sql" => "sql",
+                "html" => "html", "css" => "css", "proto" => "protobuf",
+                _ => e,
+            });
+
+        Ok(FileContent {
+            repo_id: repo_id.to_string(),
+            path: path.to_string(),
+            binary: false,
+            size,
+            content: Some(text.clone().into_owned()),
+            language: language.map(|s| s.to_string()),
+            truncated,
+            lines: if truncated { lines } else { text.lines().count() as u32 },
+        })
+    }
+
     async fn search_stream(&self, query: SearchQuery) -> Result<SearchStream, EngineError> {
         let result = self.search_engine.search(&query).await?;
         Ok(Box::pin(tokio_stream::once(result)))
@@ -697,6 +801,7 @@ impl EngineApi for LocalEngine {
         let mut store = self.task_store.lock().expect("task_store lock poisoned");
         store.resume_task(task_id).map_err(EngineError::TaskError)
     }
+
 }
 
 #[cfg(test)]

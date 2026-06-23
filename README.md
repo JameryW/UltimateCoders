@@ -146,6 +146,17 @@ An independent process that bridges the gRPC TaskService with the Python Orchest
 4. Publishes real-time events to `uc.task.event`
 5. Sends heartbeats to `uc.heartbeat` every 30 seconds
 
+### Multi-Worker Distributed Architecture
+
+Multiple NATS Worker processes can collaborate on a single task:
+
+- **NATS queue group** — each subtask delivered to exactly one worker via `uc.subtask.execute`
+- **Worker discovery** — default-mode NatsWorker monitors `uc.heartbeat` for remote workers
+- **Conditional dispatch** — remote workers available → dispatch to NATS; no remote workers → local execution (zero-config compat)
+- **File conflict detection** — `ConflictDetector` blocks subtasks with overlapping file constraints
+- **Worker failover** — stale worker detection (>90s no heartbeat) → subtask reassignment with retry limit (max 3)
+- **Event-driven scheduling** — `asyncio.Event` wakes dispatch loop immediately on subtask completion/failure
+
 ### Repository Structure
 
 ```
