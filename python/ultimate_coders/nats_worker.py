@@ -176,8 +176,12 @@ class NatsPublisher:
         subtask_id: str = "",
         data: dict[str, Any] | None = None,
     ) -> None:
-        """Publish a task event to ``uc.task.event``."""
+        """Publish a task event to ``uc.task.event``.
+
+        Events include a ``v`` (version) field for future schema migration.
+        """
         payload = _make_task_event_payload(event_type, task_id, subtask_id, data)
+        payload["v"] = 1
         await self._publish(NATS_SUBJECT_TASK_EVENT, payload)
 
     async def publish_submit(
@@ -284,6 +288,9 @@ class NatsWorker:
 
         # Connect to NATS with retry
         self._nc = await self._connect_with_retry()
+
+        # Set up JetStream for Event Sourcing (ensure stream exists)
+        await self._ensure_jetstream_stream()
 
         # Initialize publisher
         self._publisher = NatsPublisher(self._nc)
@@ -399,6 +406,42 @@ class NatsWorker:
 
         logger.info("NatsWorker stopped")
 
+    # ── JetStream Event Sourcing ────────────────────────────────────
+
+    async def _ensure_jetstream_stream(self) -> None:
+        """Ensure the UC_TASK_EVENTS JetStream stream exists.
+
+        Creates the stream if it doesn't exist, with:
+        - Subjects: uc.task.event
+        - Retention: interest-based, max age 7 days
+        - Duplicates: 2min window
+
+        This enables Event Sourcing — events are persisted to NATS
+        JetStream and can be replayed by consumers after restart.
+
+        ponytail: non-fatal — if JetStream is unavailable, core
+        functionality still works via in-memory event pipeline.
+        """
+        try:
+            js = self._nc.jetstream()
+            await js.add_stream(
+                name="UC_TASK_EVENTS",
+                subjects=["uc.task.event"],
+                retention="interest",
+                max_age=7 * 24 * 3600,  # 7 days in seconds
+                duplicate_window=120,     # 2 min dedup window
+            )
+            logger.info("JetStream stream UC_TASK_EVENTS created")
+        except Exception as e:
+            # Stream may already exist, or JetStream may be unavailable
+            err_msg = str(e)
+            if "stream already exists" in err_msg.lower():
+                logger.debug("JetStream stream UC_TASK_EVENTS already exists")
+            else:
+                logger.warning(
+                    "JetStream stream setup failed (non-fatal): %s", err_msg,
+                )
+
     # ── Component initialization ─────────────────────────────────
 
     async def _init_components(self) -> None:
@@ -414,10 +457,35 @@ class NatsWorker:
             )
             self._engine = None
 
-        # Orchestrator with NATS publisher hook
+        # LLM client for planning/Q&A (uses env vars for API key)
+        llm_client = None
+        try:
+            from ultimate_coders.agent.llm import LLMClient
+            llm_client = LLMClient()
+            logger.info("LLMClient initialized (provider=%s)", llm_client.provider)
+        except Exception:
+            logger.warning("LLMClient unavailable, planning/Q&A disabled")
+
+        # Codegraph client for AST-aware code search
+        codegraph_client = None
+        try:
+            from ultimate_coders.agent.codegraph import CodegraphClient
+            project_path = self._project_path or os.getcwd()
+            codegraph_client = CodegraphClient(project_path)
+            if codegraph_client.is_available():
+                logger.info("CodegraphClient initialized")
+            else:
+                logger.debug("Codegraph DB not found, codegraph tools disabled")
+                codegraph_client = None
+        except Exception:
+            logger.debug("CodegraphClient unavailable")
+
+        # Orchestrator with NATS publisher + LLM + Codegraph
         self._orchestrator = Orchestrator(
             engine=self._engine,
             nats_publisher=self._publisher,
+            llm_client=llm_client,
+            codegraph_client=codegraph_client,
         )
 
         # Worker — sandbox-only, always
@@ -1062,6 +1130,18 @@ class NatsWorker:
                                     "Reassigned subtask %s from dead worker %s",
                                     st.id[:8], wid[:8],
                                 )
+                                # Publish reassignment event for Dashboard/TUI visibility
+                                if self._publisher is not None:
+                                    await self._publisher.publish_event(
+                                        "subtask_retrying",
+                                        task_id=task.id,
+                                        subtask_id=st.id,
+                                        data={
+                                            "reason": "worker_timeout",
+                                            "worker_id": wid,
+                                            "retry_count": st.retry_count,
+                                        },
+                                    )
                         # Wake dispatch loop to pick up reassigned subtasks
                         self._dispatch_event.set()
 

@@ -47,6 +47,12 @@ export interface SubtaskSummary {
   depends_on: string[];
   assigned_worker?: string;
   result?: string;
+  /** Files modified by this subtask (from subtask_completed event). */
+  modified_files?: Array<{ path: string; type: string }>;
+  /** Current retry attempt (0 = first attempt). */
+  retry_count?: number;
+  /** Last error message if subtask failed. */
+  error?: string;
 }
 
 export interface TaskSummary {

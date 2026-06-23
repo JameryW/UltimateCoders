@@ -57,6 +57,9 @@ _FILE_MODIFIED_RE = re.compile(
 )
 _DIFF_RE = re.compile(r"^\s*```diff")
 _THINKING_RE = re.compile(r"^\s*(?:💭|thinking)[:\s]", re.IGNORECASE)
+# Claude Code stream-json events: {"type":"tool_use","name":"...","input":{...}}
+_STREAM_JSON_TOOL_USE_RE = re.compile(r'^\s*\{.*"type"\s*:\s*"tool_use"')
+_STREAM_JSON_TOOL_RESULT_RE = re.compile(r'^\s*\{.*"type"\s*:\s*"tool_result"')
 
 
 def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
@@ -64,16 +67,53 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
 
     Returns None for uninteresting lines (plain text output, blank lines).
     Recognized patterns:
+    - Stream-JSON events: {"type":"tool_use",...} / {"type":"tool_result",...}
     - Tool calls: "⚙ ToolName(args)" → ("tool_call", {...})
     - File changes: "📝 path" → ("file_modified", {...})
     - Diff blocks: "```diff" → ("diff_start", {})
     - Thinking: "💭 ..." → ("thinking", {...})
 
-    ponytail: regex-based — upgrade to structured JSON when Claude
-    Code gains a streaming event protocol.
+    ponytail: try JSON first (stream-json mode), then regex fallback.
     """
     if not line.strip():
         return None
+
+    # ── Try stream-JSON parsing first ────────────────────────
+    stripped = line.strip()
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+            evt_type = obj.get("type", "")
+            if evt_type == "tool_use":
+                return ("tool_call", {
+                    "tool_name": obj.get("name", "unknown"),
+                    "tool_id": obj.get("id", ""),
+                    "input_summary": json.dumps(obj.get("input", {}), ensure_ascii=False)[:300],
+                })
+            if evt_type == "tool_result":
+                content = obj.get("content", "")
+                if isinstance(content, list):
+                    # content_block list — extract text summaries
+                    texts = []
+                    for block in content:
+                        if isinstance(block, dict):
+                            texts.append(block.get("text", "")[:100])
+                    content = " ".join(texts)[:300]
+                elif isinstance(content, str):
+                    content = content[:300]
+                else:
+                    content = str(content)[:300]
+                return ("tool_result", {
+                    "tool_id": obj.get("tool_use_id", ""),
+                    "is_error": obj.get("is_error", False),
+                    "content_summary": content,
+                })
+            # Other stream-json event types (assistant, result, etc.) — skip
+            return None
+        except (json.JSONDecodeError, TypeError):
+            pass  # Not valid JSON — fall through to regex
+
+    # ── Regex fallback ────────────────────────────────────────
 
     # Tool call
     m = _TOOL_CALL_RE.match(line)
@@ -202,11 +242,23 @@ class Worker:
             )
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
+            # Restore full SubtaskResult from checkpoint
+            from ultimate_coders.agent.types import ChangeType, FileChange
+            mod_files = [
+                FileChange(
+                    file_path=f.get("file_path", ""),
+                    change_type=ChangeType(f.get("change_type", "modified")),
+                )
+                for f in (checkpoint.get("modified_files") or [])
+            ]
             return SubtaskResult(
                 subtask_id=subtask.id,
-                worker_id=self.worker_id,
+                worker_id=checkpoint.get("worker_id", self.worker_id),
                 summary=checkpoint.get("summary", "Resumed from checkpoint"),
                 success=True,
+                modified_files=mod_files,
+                recent_tool_calls=checkpoint.get("tool_calls", []),
+                stderr_tail=checkpoint.get("stderr_tail", ""),
             )
 
         await self._publish_event(
@@ -294,17 +346,27 @@ class Worker:
     def _save_checkpoint(self, subtask_id: str, result: SubtaskResult) -> None:
         """Persist subtask result to engine memory for checkpoint/resume.
 
+        Stores full result including modified_files, tool_calls, and error
+        so that resume can reconstruct a complete SubtaskResult.
+
         ponytail: synchronous write — engine.write_memory may be async,
         but we use in-memory fallback so it's fine. Non-fatal on failure.
         """
         if self.engine is None:
             return
         try:
-            data = {
+            data: dict[str, Any] = {
                 "subtask_id": subtask_id,
                 "worker_id": result.worker_id,
                 "summary": result.summary,
                 "success": result.success,
+                "modified_files": [
+                    {"file_path": f.file_path, "change_type": f.change_type.value}
+                    for f in (result.modified_files or [])
+                ],
+                "tool_calls": result.recent_tool_calls[-5:] if result.recent_tool_calls else [],
+                "error": result.summary if not result.success else None,
+                "stderr_tail": result.stderr_tail,
             }
             self.engine.write_memory(
                 key_scope="checkpoint",

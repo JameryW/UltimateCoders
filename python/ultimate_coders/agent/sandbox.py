@@ -668,7 +668,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             "command": "claude",
             "args": [
                 "-p", prompt,
-                "--output-format", "json",
+                "--output-format", "stream-json",
                 "--max-turns", "20",
                 "--dangerously-skip-permissions",
             ],
@@ -698,10 +698,65 @@ class ClaudeCodeAdapter(AgentAdapter):
                 stderr_tail=stderr_tail,
             )
 
-        # Try to parse JSON output
         import json
         output = result.stdout.strip()
 
+        # ── Try stream-json format (one JSON event per line) ──────
+        # When using --output-format stream-json, stdout is a series of
+        # newline-delimited JSON events.  The final event has type "result".
+        # Earlier events are tool_use / tool_result / assistant messages.
+        if output.startswith("{") and "\n{" in output:
+            summary = ""
+            tool_calls: list[str] = []
+            token_usage = None
+
+            for line in output.splitlines():
+                line = line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                evt_type = obj.get("type", "")
+                if evt_type == "result":
+                    summary = str(obj.get("result", ""))[:500]
+                    if "usage" in obj:
+                        u = obj["usage"]
+                        token_usage = TokenUsage(
+                            input_tokens=u.get("input_tokens", 0),
+                            output_tokens=u.get("output_tokens", 0),
+                            total_cost_usd=u.get("total_cost_usd"),
+                        )
+                elif evt_type == "assistant":
+                    content = obj.get("message", {}).get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                tool_calls.append(block.get("name", "unknown"))
+                        if not summary:
+                            texts = [
+                                b.get("text", "")
+                                for b in content
+                                if isinstance(b, dict)
+                                and b.get("type") == "text"
+                            ]
+                            if texts:
+                                summary = " ".join(texts)[:500]
+
+            if not summary:
+                summary = "Claude Code completed"
+
+            return AgentOutput(
+                summary=summary,
+                token_usage=token_usage,
+                success=True,
+                stderr_tail=stderr_tail,
+                tool_calls=tool_calls[-5:],
+            )
+
+        # ── Try single-JSON format (legacy --output-format json) ───
         try:
             parsed = json.loads(output)
             summary = ""
