@@ -528,11 +528,29 @@ class NatsWorker:
                 len(task.subtasks),
             )
 
-            # After submit_task completes, the Orchestrator's nats_publisher
-            # hook has already published the update. But we also need to
-            # assign and execute subtasks if workers are available.
-            # Fire as background task so _handle_submit returns immediately
-            # and NATS can process the next message concurrently.
+            # Reply with decomposed task if this is a request-reply message
+            if msg.reply:
+                reply_data = json.dumps({
+                    "task_id": task.id,
+                    "status": task.status.value,
+                    "subtask_count": len(task.subtasks),
+                    "subtasks": [
+                        {
+                            "id": st.id,
+                            "description": st.description,
+                            "depends_on": st.depends_on,
+                            "status": st.status.value,
+                        }
+                        for st in task.subtasks
+                    ],
+                }).encode()
+                await msg.respond(reply_data)
+                logger.info(
+                    "Replied to schedule trigger with %d subtasks",
+                    len(task.subtasks),
+                )
+
+            # Assign and execute subtasks in background
             asyncio.create_task(self._execute_subtasks(task))
 
         except Exception:

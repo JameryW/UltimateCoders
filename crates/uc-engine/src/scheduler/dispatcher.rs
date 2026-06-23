@@ -64,43 +64,127 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
             ))
         })?;
 
-        // Publish is async; we use a blocking approach here since
-        // ScheduleDispatcher::dispatch is currently a sync trait method.
-        // The dispatch is fire-and-forget — if NATS is temporarily
-        // unavailable, we log and continue (graceful degradation).
         info!(
             task_id = %task.id,
             subject = %subject,
-            "Publishing schedule trigger event to NATS"
+            description = %task.description,
+            "Dispatching scheduled task via NATS request-reply"
         );
 
-        // Try to publish synchronously via tokio runtime
+        // Send uc.task.submit as a request-reply to get subtask decomposition back.
+        // The Python NatsWorker handles this and replies with the decomposed task JSON.
         let client = self.nats_client.clone();
+        let timeout_secs: u64 = 120;
         let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async { client.publish(subject, payload.into()).await })
+            tokio::runtime::Handle::current().block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_secs),
+                    client.request(subject, payload.into()),
+                )
+                .await
+            })
         });
 
         match result {
-            Ok(()) => {
-                info!(
-                    task_id = %task.id,
-                    "Schedule trigger event published successfully"
-                );
+            Ok(Ok(reply)) => {
+                // Parse the reply to extract subtasks, resolve dependencies,
+                // and publish per-layer execution requests.
+                match self._process_decomposition_reply(task, &reply) {
+                    Ok(()) => {
+                        info!(task_id = %task.id, "Scheduled task dispatched successfully");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        warn!(task_id = %task.id, error = %e, "Decomposition reply processing failed");
+                        Err(e)
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(task_id = %task.id, error = %e, "NATS request failed (graceful degradation)");
                 Ok(())
             }
-            Err(e) => {
-                // Graceful degradation: log warning but don't fail the dispatch
-                // The task will still be recorded in execution history.
-                warn!(
-                    task_id = %task.id,
-                    error = %e,
-                    "Failed to publish schedule trigger to NATS (graceful degradation)"
-                );
-                // Return Ok so execution history is recorded as Completed
+            Err(_) => {
+                warn!(task_id = %task.id, timeout_secs, "NATS request-reply timed out (graceful degradation)");
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(feature = "messaging")]
+impl OrchestratorDispatcher {
+    /// Process the decomposition reply from the Orchestrator.
+    ///
+    /// The reply contains the decomposed task with subtasks. We resolve
+    /// the dependency order and publish `uc.subtask.execute` per layer.
+    fn _process_decomposition_reply(
+        &self,
+        _task: &ScheduledTask,
+        reply: &async_nats::Message,
+    ) -> Result<(), EngineError> {
+        let reply_data: serde_json::Value = serde_json::from_slice(&reply.payload)
+            .map_err(|e| EngineError::InternalError(format!("Invalid reply JSON: {e}")))?;
+
+        let subtasks = reply_data
+            .get("subtasks")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| EngineError::TaskError("Reply missing subtasks array".into()))?;
+
+        if subtasks.is_empty() {
+            info!("No subtasks in decomposition reply — nothing to dispatch");
+            return Ok(());
+        }
+
+        // Parse subtasks into uc_types::Subtask for dependency resolution
+        let parsed: Vec<uc_types::Subtask> = subtasks
+            .iter()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect();
+
+        if parsed.is_empty() {
+            warn!("Could not parse any subtasks from reply");
+            return Ok(());
+        }
+
+        // Resolve dependency order
+        let layers = super::dependency::resolve_execution_order(&parsed)?;
+
+        info!(
+            layer_count = layers.len(),
+            total_subtasks = parsed.len(),
+            "Resolved subtask execution order"
+        );
+
+        // Publish each layer as uc.subtask.execute messages.
+        // In the current synchronous dispatch, we publish all layers at once.
+        // The Worker/NatsWorker will respect dependencies based on depends_on.
+        // ponytail: full event-driven layer-wait would require async dispatch;
+        // for now, publish all with dependency info and let the Worker handle ordering.
+        let client = self.nats_client.clone();
+        for (layer_idx, layer) in layers.iter().enumerate() {
+            for subtask_id in layer {
+                let st = parsed.iter().find(|s| &s.id == subtask_id);
+                let desc = st.map(|s| s.description.as_str()).unwrap_or("");
+                let msg = serde_json::json!({
+                    "task_id": reply_data.get("task_id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "subtask_id": subtask_id.0,
+                    "description": desc,
+                    "layer": layer_idx,
+                });
+                let subject = "uc.subtask.execute".to_string();
+                let payload = serde_json::to_vec(&msg).map_err(|e| {
+                    EngineError::InternalError(format!("Failed to serialize subtask: {e}"))
+                })?;
+                let c = client.clone();
+                let _ = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { c.publish(subject, payload.into()).await })
+                });
+            }
+        }
+
+        Ok(())
     }
 }
 
