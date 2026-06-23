@@ -3081,7 +3081,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// and returns immediately. The background notification reader will apply
     /// updates and broadcast events as the worker processes the task.
     ///
-    /// Falls back to `submit_task_local` if the worker is unavailable.
+    /// Returns error if no Orchestrator is available.
     async fn submit_task_via_bridge(
         &self,
         req: SubmitTaskRequest,
