@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -44,8 +45,6 @@ File constraints (do NOT modify): {file_constraints}
 
 
 # ── Sandbox stdout line parser ────────────────────────────────────
-
-import re
 
 # Patterns Claude Code emits during execution
 _TOOL_CALL_RE = re.compile(
