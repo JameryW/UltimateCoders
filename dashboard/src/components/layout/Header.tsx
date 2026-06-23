@@ -55,10 +55,10 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
 
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--bg-surface)]/80 backdrop-blur-md px-6 py-3">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <div className="max-w-[1440px] mx-auto flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <h1 className="text-xl font-bold text-[var(--text-primary)]">UltimateCoders</h1>
-          <span className="text-sm text-[var(--text-secondary)]">Dashboard</span>
+          <span className="text-xs font-medium px-2 py-0.5 rounded bg-[var(--bg-surface-alt)] text-[var(--text-secondary)]">Dashboard</span>
         </div>
         {/* Nav links — desktop */}
         <nav className="hidden md:flex items-center space-x-3">
@@ -154,7 +154,7 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
       </div>
       {/* Partial failure warning banner */}
       {fetchErrors && Object.keys(fetchErrors).length > 0 && (
-        <div className="mt-2 px-3 py-1.5 rounded-md text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 flex items-center gap-2">
+        <div className="mt-2 max-w-[1440px] mx-auto px-3 py-1.5 rounded-md text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 flex items-center gap-2">
           <span>⚠</span>
           <span>Some panels unavailable: {Object.keys(fetchErrors).join(", ")}</span>
         </div>
