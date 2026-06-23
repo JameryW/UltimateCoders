@@ -1437,3 +1437,38 @@ Fixed NATS subtask_completed result key mismatch (output→result fallback). Ver
 ### Next Steps
 
 - None - task complete
+
+
+## Session 42: Fix dashboard panel errors: gRPC-Web migration + graceful degradation
+
+**Date**: 2026-06-23
+**Task**: Fix dashboard panel errors: gRPC-Web migration + graceful degradation
+**Branch**: `fix/dashboard-grpc-web-migration`
+
+### Summary
+
+Migrated File Browser from REST (/dashboard/api on port 8080) to gRPC-Web (EngineService.ListDir/GetFile). Added ListDir and GetFile RPC to proto, implemented in LocalEngine with directory listing and file content reading. DashboardService now gracefully degrades when NATS unavailable — returns available:false instead of UNAVAILABLE errors. WatchDashboard returns heartbeat stream instead of erroring. PR #128.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `29d97605` | (see git log) |
+| `7fd805cb` | (see git log) |
+| `0f3c8f26` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,7 @@
+{"file": "python/ultimate_coders/agent/worker.py", "reason": "Streaming stdout parse + checkpoint TiKV + smart re-decompose trigger"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Smart re-decompose on failure + DAG construction"}
+{"file": "python/ultimate_coders/agent/sandbox.py", "reason": "Stdout line-level streaming from sandbox execution"}
+{"file": "crates/uc-grpc/src/server.rs", "reason": "Remove Rust fallback decompose, route to Python via NATS"}
+{"file": "python/ultimate_coders/nats_worker.py", "reason": "Worker pool elastic scaling + heartbeat pending_count"}
+{"file": "tui/src/components/ChatLog.tsx", "reason": "DAG rendering for subtask dependencies"}
+{"file": "dashboard/src/hooks/useDashboardGrpc.ts", "reason": "Streaming tool_call events + DAG data"}
