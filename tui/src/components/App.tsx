@@ -74,16 +74,21 @@ function buildSubtaskSummaryText(subtasks: SubtaskItem[]): string {
   const inProgress = subtasks.filter((s) => s.status === 'in_progress').length;
   const failed = subtasks.filter((s) => s.status === 'failed').length;
   const total = subtasks.length;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  const parts: string[] = [];
-  parts.push(`${completed}/${total}`);
+  // ponytail: ANSI block progress bar + percentage
+  const barWidth = 8;
+  const filled = Math.round((completed / total) * barWidth);
+  const bar = '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, barWidth - filled));
+
+  const parts: string[] = [`${bar} ${pct}%`];
   if (completed === total) {
     parts.push('✅');
   } else {
     if (inProgress > 0) parts.push(`${inProgress} ⏳`);
     if (failed > 0) parts.push(`${failed} ✗`);
   }
-  return `📋 ${parts.join(' │ ')}`;
+  return `📋 ${parts.join(' ')}`;
 }
 
 // ── App Component ───────────────────────────────────────────

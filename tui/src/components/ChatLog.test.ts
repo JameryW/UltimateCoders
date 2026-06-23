@@ -1,5 +1,6 @@
 import {describe, it, expect} from 'vitest';
-import {createUserMessage, createSystemMessage} from './ChatLog.js';
+import {createUserMessage, createSystemMessage, buildProgressBar, filterMessages} from './ChatLog.js';
+import type {ChatMessage} from './ChatLog.js';
 
 // ── createUserMessage ────────────────────────────────────────
 
@@ -100,5 +101,71 @@ describe('createSystemMessage', () => {
   it('without options has undefined eventType', () => {
     const msg = createSystemMessage('plain');
     expect(msg.eventType).toBeUndefined();
+  });
+});
+
+// ── buildProgressBar ────────────────────────────────────────
+
+describe('buildProgressBar', () => {
+  it('returns empty string for zero total', () => {
+    expect(buildProgressBar(0, 0)).toBe('');
+  });
+
+  it('returns full bar for completed', () => {
+    expect(buildProgressBar(3, 3, 8)).toBe('████████ 100%');
+  });
+
+  it('returns empty bar for nothing completed', () => {
+    expect(buildProgressBar(0, 5, 8)).toBe('░░░░░░░░ 0%');
+  });
+
+  it('returns partial bar', () => {
+    expect(buildProgressBar(2, 3, 6)).toBe('████░░ 67%');
+  });
+
+  it('uses default width of 10', () => {
+    expect(buildProgressBar(5, 10)).toBe('█████░░░░░ 50%');
+  });
+
+  it('handles single item', () => {
+    expect(buildProgressBar(0, 1, 4)).toBe('░░░░ 0%');
+    expect(buildProgressBar(1, 1, 4)).toBe('████ 100%');
+  });
+});
+
+// ── filterMessages ─────────────────────────────────────────
+
+describe('filterMessages', () => {
+  const msgs: ChatMessage[] = [
+    {id: '1', timestamp: '12:00', text: 'user msg', isUser: true},
+    {id: '2', timestamp: '12:00', text: 'task started', isUser: false, eventType: 'task_submitted'},
+    {id: '3', timestamp: '12:00', text: 'subtask', isUser: false, eventType: 'subtask_started'},
+    {id: '4', timestamp: '12:00', text: 'tool', isUser: false, eventType: 'tool_call'},
+    {id: '5', timestamp: '12:00', text: 'fail', isUser: false, eventType: 'subtask_failed'},
+  ];
+
+  it('returns all for "all" filter', () => {
+    expect(filterMessages(msgs, 'all')).toHaveLength(5);
+  });
+
+  it('filters by task events', () => {
+    const result = filterMessages(msgs, 'task');
+    expect(result).toHaveLength(2); // user msg + task_submitted
+    expect(result[1]?.eventType).toBe('task_submitted');
+  });
+
+  it('filters by subtask events', () => {
+    const result = filterMessages(msgs, 'subtask');
+    expect(result).toHaveLength(3); // user msg + subtask_started + subtask_failed
+  });
+
+  it('filters by tool events', () => {
+    const result = filterMessages(msgs, 'tool');
+    expect(result).toHaveLength(2); // user msg + tool_call
+  });
+
+  it('filters by error events', () => {
+    const result = filterMessages(msgs, 'error');
+    expect(result).toHaveLength(2); // user msg + subtask_failed
   });
 });
