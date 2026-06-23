@@ -680,3 +680,38 @@ describe('tuiReducer: SYNC_TASKS', () => {
     expect(state.taskList).toHaveLength(1);
   });
 });
+
+// ── Bookmarks ──────────────────────────────────────────────
+
+describe('tuiReducer: TOGGLE_BOOKMARK', () => {
+  it('adds a bookmark', () => {
+    const msg = sysMsg('test');
+    const s1 = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [msg]});
+    const s2 = tuiReducer(s1, {type: 'TOGGLE_BOOKMARK', messageId: msg.id});
+    expect(s2.bookmarkedIds.has(msg.id)).toBe(true);
+  });
+
+  it('removes a bookmark on second toggle', () => {
+    const msg = sysMsg('test');
+    const s1 = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: [msg]});
+    const s2 = tuiReducer(s1, {type: 'TOGGLE_BOOKMARK', messageId: msg.id});
+    const s3 = tuiReducer(s2, {type: 'TOGGLE_BOOKMARK', messageId: msg.id});
+    expect(s3.bookmarkedIds.has(msg.id)).toBe(false);
+  });
+});
+
+describe('tuiReducer: DIAGNOSTIC_JUMP', () => {
+  it('jumps to first failed message', () => {
+    const msgs = [sysMsg('ok', 'subtask_started'), sysMsg('oops', 'subtask_failed')];
+    const s1 = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: msgs});
+    const s2 = tuiReducer(s1, {type: 'DIAGNOSTIC_JUMP'});
+    expect(s2.jumpToMessageId).toBe(msgs[1].id);
+  });
+
+  it('does nothing when no errors', () => {
+    const msgs = [sysMsg('ok', 'subtask_completed')];
+    const s1 = tuiReducer(INITIAL_TUI_STATE, {type: 'ADD_MESSAGES', messages: msgs});
+    const s2 = tuiReducer(s1, {type: 'DIAGNOSTIC_JUMP'});
+    expect(s2.jumpToMessageId).toBeNull();
+  });
+});
