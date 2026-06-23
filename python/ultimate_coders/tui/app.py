@@ -103,7 +103,6 @@ class SandboxTUI(App):
         self._subtask_index: dict[str, int] = {}
         # Event-driven dispatch: set when a subtask completes/fails, wakes _auto_execute_loop
         self._dispatch_event: asyncio.Event = asyncio.Event()
-
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
         yield LogoHeader()
@@ -335,8 +334,7 @@ class SandboxTUI(App):
 
         Runs as an asyncio task within Textual's event loop.
         Uses asyncio.Event to wake immediately when a subtask completes/fails,
-        with a 30s safety timeout to prevent deadlocks.
-        """
+        with a 30s safety timeout to prevent deadlocks.        """
         # ponytail: event-driven replaces 2s polling, 30s safety timeout prevents deadlock
         dispatch_timeout = 30.0
 
@@ -349,6 +347,14 @@ class SandboxTUI(App):
 
         try:
             while True:
+                # Event-driven: wait for subtask completion/failure signal,
+                # with 30s safety timeout to prevent deadlock
+                try:
+                    await asyncio.wait_for(self._dispatch_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass  # safety timeout — check for ready subtasks anyway
+                self._dispatch_event.clear()
+
                 # Check if current task is still active
                 task = orch.tasks.get(self.current_task_id)
                 if task is None:

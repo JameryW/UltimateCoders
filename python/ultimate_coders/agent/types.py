@@ -62,10 +62,9 @@ class SubtaskResult:
     success: bool = True
     completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     adaptation_strategy: AdaptationStrategy = AdaptationStrategy.NONE
-    # Failure context: last N lines of stderr for diagnostics
-    stderr_tail: str = ""
-    # Failure context: list of recent tool call names before failure
-    recent_tool_calls: list[str] = field(default_factory=list)
+    # Failure context (populated on failure)
+    stderr_tail: str = ""  # last ~10 lines of stderr
+    recent_tool_calls: list[str] = field(default_factory=list)  # last ~5 tool names
 
 
 @dataclass

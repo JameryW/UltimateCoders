@@ -111,8 +111,8 @@ class AgentOutput:
     file_changes: list[FileChange] = field(default_factory=list)
     token_usage: TokenUsage | None = None
     success: bool = True
-    # Raw stderr from the sandbox process (for failure diagnostics)
-    stderr: str = ""
+    # Failure context
+    stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
     # List of tool call names extracted from the agent output
     tool_calls: list[str] = field(default_factory=list)
 
@@ -245,6 +245,11 @@ class SandboxManager:
 
             # Parse output
             output = self._adapter.parse_output(result)
+
+            # Attach stderr tail for failure diagnostics
+            if result.stderr and not output.success:
+                lines = result.stderr.rstrip().splitlines()
+                output.stderr_tail = "\n".join(lines[-10:])
 
             # Get file changes via git diff (if baseline was created)
             if self.engine is not None and hasattr(self.engine, "get_changes_and_reset"):

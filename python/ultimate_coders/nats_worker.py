@@ -847,9 +847,9 @@ class NatsWorker:
     async def _handle_task_event(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle ``uc.task.event`` messages from NATS.
 
-        Currently processes ``task_paused`` and ``task_resumed`` events
-        originated by the Rust gRPC server.  Uses Orchestrator._local
-        methods to avoid a feedback loop (Python->Rust->NATS->Python).
+        Processes task_paused/resumed events originated by the Rust gRPC server,
+        and subtask_completed/failed events for event-driven dispatch wake-up.
+        Uses Orchestrator._local methods to avoid a feedback loop.
         """
         try:
             data = json.loads(msg.data.decode())
@@ -877,10 +877,8 @@ class NatsWorker:
             subtask_id = data.get("subtask_id", "")
             if subtask_id and self._current_task_id == task_id:
                 self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
-            # Wake _execute_subtasks loop so newly-unblocked subtasks dispatch immediately
-            self._dispatch_event.set()
+            # Wake _execute_subtasks loop so newly-unblocked subtasks dispatch immediately            self._dispatch_event.set()
         else:
-            # Other event types are handled by the Rust NATS subscriber
             logger.debug("Ignoring uc.task.event type=%s", event_type)
 
     # ── Remote worker discovery ─────────────────────────────────────
