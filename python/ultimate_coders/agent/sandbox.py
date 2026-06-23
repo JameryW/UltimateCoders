@@ -204,12 +204,20 @@ class SandboxManager:
         self._active[handle.id] = handle
         return handle
 
-    async def execute(self, prompt: str, working_dir: str | None = None) -> AgentOutput:
+    async def execute(
+        self,
+        prompt: str,
+        working_dir: str | None = None,
+        on_stdout_line: Any | None = None,
+    ) -> AgentOutput:
         """Execute an agent prompt in a sandbox.
 
         Args:
             prompt: The prompt/instruction for the agent.
             working_dir: Working directory (defaults to config.project_path).
+            on_stdout_line: Optional async callback ``async (line: str) -> None``
+                called for each stdout line during execution. Used for real-time
+                streaming of tool_call/file_modified events to TUI/Dashboard.
 
         Returns:
             AgentOutput with summary, file changes, and success status.
@@ -240,8 +248,10 @@ class SandboxManager:
                     timed_out=result_dict.get("timed_out", False),
                 )
             else:
-                # Pure Python fallback: run subprocess directly
-                result = await self._execute_subprocess(exec_request)
+                # Pure Python fallback: run subprocess with streaming
+                result = await self._execute_subprocess(
+                    exec_request, on_stdout_line=on_stdout_line,
+                )
 
             # Parse output
             output = self._adapter.parse_output(result)
@@ -319,11 +329,17 @@ class SandboxManager:
         """
         return await self._execute_subprocess(request)
 
-    async def _execute_subprocess(self, request: dict[str, Any]) -> ExecResult:
-        """Execute a command as a subprocess (pure Python fallback).
+    async def _execute_subprocess(
+        self,
+        request: dict[str, Any],
+        on_stdout_line: Any | None = None,
+    ) -> ExecResult:
+        """Execute a command as a subprocess with optional stdout streaming.
 
         Args:
             request: Execution request dict with command, args, etc.
+            on_stdout_line: Optional async callback ``async (line: str) -> None``
+                called for each stdout line during execution.
 
         Returns:
             ExecResult with the process output.
@@ -366,22 +382,89 @@ class SandboxManager:
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout_secs,
-                )
-                elapsed = time.monotonic() - start
+                # Stream stdout line-by-line if callback provided
+                if on_stdout_line is not None and proc.stdout is not None:
+                    stdout_lines: list[str] = []
+                    stderr_chunks: list[bytes] = []
 
-                result = ExecResult(
-                    exit_code=proc.returncode if proc.returncode is not None else -1,
-                    stdout=stdout.decode("utf-8", errors="replace"),
-                    stderr=stderr.decode("utf-8", errors="replace"),
-                    duration_ms=int(elapsed * 1000),
-                    timed_out=False,
-                )
+                    async def _read_stderr() -> bytes:
+                        """Read stderr in background."""
+                        if proc.stderr is None:
+                            return b""
+                        while True:
+                            chunk = await proc.stderr.read(4096)
+                            if not chunk:
+                                break
+                            stderr_chunks.append(chunk)
+                        return b"".join(stderr_chunks)
+
+                    stderr_task = asyncio.create_task(_read_stderr())
+
+                    try:
+                        while True:
+                            line_bytes = await asyncio.wait_for(
+                                proc.stdout.readline(),
+                                timeout=timeout_secs,
+                            )
+                            if not line_bytes:
+                                break
+                            line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+                            stdout_lines.append(line)
+                            # Emit streaming event
+                            try:
+                                await on_stdout_line(line)
+                            except Exception:
+                                logger.debug("stdout_line callback error", exc_info=True)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.wait()
+                        stderr_task.cancel()
+                        elapsed = time.monotonic() - start
+                        logger.error("Sandbox subprocess timed out during streaming")
+                        return ExecResult(
+                            exit_code=-1,
+                            stdout="\n".join(stdout_lines),
+                            stderr=f"Command timed out after {timeout_secs}s",
+                            duration_ms=int(elapsed * 1000),
+                            timed_out=True,
+                        )
+
+                    await proc.wait()
+                    try:
+                        await stderr_task
+                    except Exception:
+                        pass
+
+                    elapsed = time.monotonic() - start
+                    stderr_bytes = b"".join(stderr_chunks) if stderr_chunks else b""
+
+                    result = ExecResult(
+                        exit_code=proc.returncode if proc.returncode is not None else -1,
+                        stdout="\n".join(stdout_lines),
+                        stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                        duration_ms=int(elapsed * 1000),
+                        timed_out=False,
+                    )
+                else:
+                    # No streaming callback — use original communicate() path
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=timeout_secs,
+                    )
+                    elapsed = time.monotonic() - start
+
+                    result = ExecResult(
+                        exit_code=proc.returncode if proc.returncode is not None else -1,
+                        stdout=stdout.decode("utf-8", errors="replace"),
+                        stderr=stderr.decode("utf-8", errors="replace"),
+                        duration_ms=int(elapsed * 1000),
+                        timed_out=False,
+                    )
+
                 logger.info(
                     "Sandbox subprocess completed: exit=%d, time=%.1fs, stdout=%dB, stderr=%dB",
-                    result.exit_code, elapsed, len(result.stdout), len(result.stderr),
+                    result.exit_code, elapsed if 'elapsed' in dir() else 0,
+                    len(result.stdout), len(result.stderr),
                 )
                 if result.exit_code != 0:
                     logger.warning(
