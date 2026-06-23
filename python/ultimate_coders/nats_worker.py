@@ -589,11 +589,20 @@ class NatsWorker:
             # the same subtask twice within this iteration.
             ready_ids: list[str] = []
             seen: set[str] = set()
+            max_retries = self._orchestrator.config.max_retries if self._orchestrator else 3
             while True:
                 next_st = self._orchestrator.select_next_subtask(task)
                 if next_st is None or next_st.id in seen:
                     break
                 seen.add(next_st.id)
+                # Skip subtasks that exceeded max retries
+                if next_st.retry_count >= max_retries:
+                    next_st.status = SubtaskStatus.FAILED
+                    logger.warning(
+                        "Subtask %s exceeded max retries (%d), marking Failed",
+                        next_st.id[:8], max_retries,
+                    )
+                    continue
                 ready_ids.append(next_st.id)
 
             if not ready_ids:
@@ -1006,7 +1015,12 @@ class NatsWorker:
         return len(self._known_remote_workers) > 0
 
     async def _stale_worker_cleanup_loop(self) -> None:
-        """Periodically remove workers with no heartbeat for >90s."""
+        """Periodically remove workers with no heartbeat for >90s.
+
+        When a remote worker goes stale, reassign its in-progress
+        subtasks back to Pending so they can be picked up by
+        other workers or executed locally.
+        """
         while self._running:
             await asyncio.sleep(60)
             now = datetime.now(timezone.utc)
@@ -1019,6 +1033,25 @@ class NatsWorker:
             for wid in stale_ids:
                 del self._known_remote_workers[wid]
                 logger.info("Removed stale remote worker: %s", wid[:8])
+                # Reassign this worker's subtasks back to Pending
+                if self._orchestrator and self._current_task_id:
+                    task = self._orchestrator.get_task_status(self._current_task_id)
+                    if task:
+                        for st in task.subtasks:
+                            if (
+                                st.assigned_worker == wid
+                                and st.status
+                                in (SubtaskStatus.IN_PROGRESS, SubtaskStatus.ASSIGNED)
+                            ):
+                                st.status = SubtaskStatus.PENDING
+                                st.assigned_worker = None
+                                st.retry_count += 1
+                                logger.info(
+                                    "Reassigned subtask %s from dead worker %s",
+                                    st.id[:8], wid[:8],
+                                )
+                        # Wake dispatch loop to pick up reassigned subtasks
+                        self._dispatch_event.set()
 
     # ── Dashboard NATS request-reply handlers ──────────────────────
 
