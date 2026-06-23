@@ -63,18 +63,20 @@ const WorkerPanel: React.FC<WorkerPanelProps> = ({subtasks, maxWidth = 40, symbo
         const done = Math.round((w.completed / Math.max(w.total, 1)) * filled);
         const run = filled - done;
         const empty = barWidth - filled;
-        const bar =
-          S.barFilled.repeat(Math.max(0, done)) +
-          (run > 0 ? '\x1b[36m' + S.barHalf.repeat(run) + '\x1b[39m' : '') +
-          S.barEmpty.repeat(Math.max(0, empty));
+        const doneCount = Math.max(0, done);
+        const runCount = Math.max(0, run);
+        const emptyCount = Math.max(0, empty);
         const activeLabel = w.active.length > 0
           ? ` running: #${w.active[0]!.index} "${truncateToWidth(w.active[0]!.description, 16)}"`
           : '';
         const workerLabel = truncateToWidth(w.workerId, 8);
         return (
           <Box key={w.workerId}>
-            <Text dimColor>{`  ${workerLabel} `}</Text>
-            <Text>{`[${bar}] `}</Text>
+            <Text dimColor>{`  ${workerLabel} [`}</Text>
+            <Text>{S.barFilled.repeat(doneCount)}</Text>
+            {runCount > 0 && <Text color="cyan">{S.barHalf.repeat(runCount)}</Text>}
+            <Text>{S.barEmpty.repeat(emptyCount)}</Text>
+            <Text>{'] '}</Text>
             <Text dimColor>{`${w.completed}/${w.total}`}</Text>
             {activeLabel && <Text color="cyan">{activeLabel}</Text>}
           </Box>

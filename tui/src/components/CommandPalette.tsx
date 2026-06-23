@@ -2,8 +2,8 @@
  * CommandPalette — Ctrl+P overlay for searching and executing slash commands.
  * Reuses CjkTextInput for search, displays filtered COMMANDS list.
  */
-import React, {useState, useCallback} from 'react';
-import {Box, Text, useInput, useApp} from 'ink';
+import React, {useCallback} from 'react';
+import {Box, Text, useInput} from 'ink';
 import {COMMANDS, type SlashCommand} from '../commands.js';
 import CjkTextInput from './CjkTextInput.js';
 

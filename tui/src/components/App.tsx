@@ -596,8 +596,8 @@ const App: React.FC = () => {
       return;
     }
 
-    // Ctrl+P: pause/resume task (with error feedback)
-    if (key.ctrl && input === 'p') {
+    // Ctrl+O: pause/resume task (with error feedback)
+    if (key.ctrl && input === 'o') {
       if (state.activeTaskId) {
         const taskStatus = task?.status ? mapTaskStatus(task.status) : undefined;
         if (taskStatus === 'in_progress' || taskStatus === 'planning') {
