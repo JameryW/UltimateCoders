@@ -13,7 +13,7 @@ import {
   WatchDashboardRequestSchema,
 } from "@/grpc/engine_pb";
 import type {
-  DashboardSnapshot as DashboardEventProto,
+  DashboardEventProto,
   TaskEvent as GrpcTaskEvent,
   ListWorkersResponse,
   GetSchedulerStatusResponse,
@@ -251,6 +251,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const connectRef = useRef<() => void>(() => {});
   const sseRef = useRef<EventSource | null>(null);
   const usingSseRef = useRef(false);
+  const connectSseRef = useRef<() => void>(() => {});
 
   const getTransport = useCallback(() => getSharedTransport(), []);
 
@@ -272,7 +273,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       if (import.meta.env.DEV) console.log("[Dashboard] gRPC failed repeatedly, falling back to SSE");
       retryTimerRef.current = setTimeout(() => {
         if (optsRef.current.enabled) {
-          connectSse();
+          connectSseRef.current();
         }
       }, 1000);
       return;
@@ -283,7 +284,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         connectRef.current();
       }
     }, delay);
-  }, [connectSse]);
+  }, []);
 
   // ── SSE fallback ──────────────────────────────────────────
 
@@ -344,6 +345,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       scheduleReconnect();
     };
   }, [scheduleReconnect]);
+
+  connectSseRef.current = connectSse;
 
   // ── WatchDashboard stream ─────────────────────────────────
 
