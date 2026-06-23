@@ -275,18 +275,32 @@ class DashboardApp:
                         last_heartbeat = now
                         yield {"comment": "heartbeat"}
 
-                    # Drain NATS event queue (non-blocking) — the sole
-                    # source of real-time events for SSE.
+                    # Drain NATS event queue — push mode: await the
+                    # queue directly instead of polling at 0.5s intervals.
+                    # This reduces SSE latency from ~500ms to ~50ms.
                     had_event = False
                     if self._nats_client is not None:
                         try:
+                            # First event: blocking wait (max 2s for snapshot)
+                            nats_event = await asyncio.wait_for(
+                                self._get_nats_event_queue().get(), timeout=2.0,
+                            )
+                            if nats_event is not None:
+                                self._event_log.appendleft(nats_event)
+                                if self.event_emitter is not None:
+                                    self.event_emitter._recent.append(nats_event)
+                                event_id += 1
+                                yield {
+                                    "id": str(event_id),
+                                    "event": "task_event",
+                                    "data": json.dumps(nats_event),
+                                }
+                                had_event = True
+                            # Drain any remaining events non-blocking
                             while True:
                                 nats_event = self._get_nats_event_queue().get_nowait()
                                 if nats_event is not None:
                                     self._event_log.appendleft(nats_event)
-                                    # Also populate the ring buffer so REST API
-                                    # queries (GET /dashboard/api/events) can
-                                    # serve events received via NATS.
                                     if self.event_emitter is not None:
                                         self.event_emitter._recent.append(nats_event)
                                     event_id += 1
@@ -298,18 +312,24 @@ class DashboardApp:
                                     had_event = True
                                 else:
                                     break
+                        except asyncio.TimeoutError:
+                            pass  # No events — proceed to snapshot
                         except asyncio.QueueEmpty:
                             pass
 
-                    # No NATS events — wait a short time before next iteration.
-                    await cancellable_sleep(0.5)
+                    # No NATS — still need periodic iteration for snapshots
+                    if not had_event and self._nats_client is None:
+                        await cancellable_sleep(0.2)
 
-                    # Periodic full snapshot — interval adapts to activity.
-                    # Active (events this cycle): 3s. Idle: 10s.
-                    snapshot_interval = 3.0 if had_event else 10.0
-                    now = loop.time()
-                    if now - last_snapshot >= snapshot_interval:
-                        snapshot = self._get_full_snapshot()
+                    # Periodic full snapshot — incremental-first:
+                    # Skip snapshot when events are flowing (client already has
+                    # state from incremental task_event messages). Only send
+                    # full snapshot during idle periods for reconciliation.
+                    if not had_event:
+                        snapshot_interval = 10.0
+                        now = loop.time()
+                        if now - last_snapshot >= snapshot_interval:
+                            snapshot = self._get_full_snapshot()
                         last_snapshot = now
                         event_id += 1
                         yield {

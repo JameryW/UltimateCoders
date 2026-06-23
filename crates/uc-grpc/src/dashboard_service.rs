@@ -35,32 +35,30 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<ListWorkersRequest>,
     ) -> Result<Response<ListWorkersResponse>, Status> {
-        let json = self
-            .nats_dashboard_request("ListWorkers", serde_json::json!({}))
-            .await?;
-        Ok(Response::new(json_to_list_workers_response(&json)))
+        match self.nats_dashboard_request("ListWorkers", serde_json::json!({})).await {
+            Ok(json) => Ok(Response::new(json_to_list_workers_response(&json))),
+            Err(_) => Ok(Response::new(ListWorkersResponse { available: false, workers: vec![], total: 0, available_count: 0 })),
+        }
     }
 
     async fn get_scheduler_status(
         &self,
         _request: Request<GetSchedulerStatusRequest>,
     ) -> Result<Response<GetSchedulerStatusResponse>, Status> {
-        let json = self
-            .nats_dashboard_request("GetSchedulerStatus", serde_json::json!({}))
-            .await?;
-        Ok(Response::new(json_to_scheduler_status_response(&json)))
+        match self.nats_dashboard_request("GetSchedulerStatus", serde_json::json!({})).await {
+            Ok(json) => Ok(Response::new(json_to_scheduler_status_response(&json))),
+            Err(_) => Ok(Response::new(GetSchedulerStatusResponse { available: false, is_running: false, night_window: None, jobs: vec![], execution_history: vec![] })),
+        }
     }
 
     async fn get_circuit_breaker_status(
         &self,
         _request: Request<GetCircuitBreakerStatusRequest>,
     ) -> Result<Response<CircuitBreakerStatusResponse>, Status> {
-        let json = self
-            .nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({}))
-            .await?;
-        Ok(Response::new(json_to_circuit_breaker_status_response(
-            &json,
-        )))
+        match self.nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({})).await {
+            Ok(json) => Ok(Response::new(json_to_circuit_breaker_status_response(&json))),
+            Err(_) => Ok(Response::new(CircuitBreakerStatusResponse { available: false, circuit_breaker: None, rate_limiter: None })),
+        }
     }
 
     async fn reset_circuit_breaker(
@@ -102,17 +100,17 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         request: Request<ListEventsRequest>,
     ) -> Result<Response<ListEventsResponse>, Status> {
         let req = request.into_inner();
-        let json = self
-            .nats_dashboard_request(
+        match self.nats_dashboard_request(
                 "ListEvents",
                 serde_json::json!({
                     "task_id": req.task_id,
                     "limit": req.limit,
                     "offset": req.offset,
                 }),
-            )
-            .await?;
-        Ok(Response::new(json_to_list_events_response(&json)))
+            ).await {
+            Ok(json) => Ok(Response::new(json_to_list_events_response(&json))),
+            Err(_) => Ok(Response::new(ListEventsResponse { available: false, events: vec![], total: 0, offset: 0, limit: 0 })),
+        }
     }
 
     async fn watch_dashboard(
@@ -121,52 +119,65 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
     ) -> Result<Response<Self::WatchDashboardStream>, Status> {
         #[cfg(feature = "messaging")]
         {
-            let nats_client = self.nats_client().ok_or_else(|| {
-                Status::unavailable("NATS not connected — Dashboard streaming unavailable")
-            })?;
+            match self.nats_client() {
+                Some(nats_client) => {
+                    let stream = async_stream::stream! {
+                        let mut subscriber = match nats_client
+                            .subscribe(NATS_SUBJECT_DASHBOARD_SNAPSHOT)
+                            .await
+                        {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Dashboard snapshot subscribe failed: {e}");
+                                yield Err(Status::unavailable("NATS subscription failed"));
+                                return;
+                            }
+                        };
 
-            let stream = async_stream::stream! {
-                let mut subscriber = match nats_client
-                    .subscribe(NATS_SUBJECT_DASHBOARD_SNAPSHOT)
-                    .await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!("Dashboard snapshot subscribe failed: {e}");
-                        yield Err(Status::unavailable("NATS subscription failed"));
-                        return;
-                    }
-                };
-
-                loop {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(30),
-                        subscriber.next(),
-                    )
-                    .await
-                    {
-                        Ok(Some(message)) => {
-                            match serde_json::from_slice::<serde_json::Value>(&message.payload) {
-                                Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
-                                Err(e) => {
-                                    tracing::warn!("Dashboard snapshot parse error: {e}");
-                                    continue;
+                        loop {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                subscriber.next(),
+                            )
+                            .await
+                            {
+                                Ok(Some(message)) => {
+                                    match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                                        Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                        Err(e) => {
+                                            tracing::warn!("Dashboard snapshot parse error: {e}");
+                                            continue;
+                                        }
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(_) => {
+                                    // Timeout — send heartbeat
+                                    yield Ok(DashboardSnapshot {
+                                        timestamp: chrono::Utc::now().to_rfc3339(),
+                                        ..Default::default()
+                                    });
                                 }
                             }
                         }
-                        Ok(None) => break,
-                        Err(_) => {
-                            // Timeout — send heartbeat
+                    };
+                    Ok(Response::new(Box::pin(stream)))
+                }
+                // ponytail: no NATS — return a slow heartbeat stream instead of error,
+                // so the frontend doesn't infinite-retry
+                None => {
+                    let stream = async_stream::stream! {
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                             yield Ok(DashboardSnapshot {
                                 timestamp: chrono::Utc::now().to_rfc3339(),
                                 ..Default::default()
                             });
                         }
-                    }
+                    };
+                    Ok(Response::new(Box::pin(stream)))
                 }
-            };
-
-            Ok(Response::new(Box::pin(stream)))
+            }
         }
 
         #[cfg(not(feature = "messaging"))]

@@ -298,7 +298,48 @@ class Orchestrator:
             "Sandbox decomposition succeeded for task %s: %d subtasks",
             task.id, len(items),
         )
-        return self._parse_decomposition_items(items, task.id)
+        subtasks = self._parse_decomposition_items(items, task.id)
+        # Validate decomposition quality; retry once if invalid
+        if not self._validate_decomposition(subtasks, task):
+            logger.warning(
+                "Decomposition validation failed for task %s, retrying once",
+                task.id,
+            )
+            result2 = await self.sandbox_manager.execute_decompose(request)
+            output2 = adapter.parse_output(result2)
+            if output2.success:
+                items2 = parse_decomposition_output(result2.stdout)
+                subtasks2 = self._parse_decomposition_items(items2, task.id)
+                if self._validate_decomposition(subtasks2, task):
+                    return subtasks2
+                logger.warning("Retry decomposition still invalid for task %s", task.id)
+        return subtasks
+
+    def _validate_decomposition(
+        self, subtasks: list[Subtask], task: Task,
+    ) -> bool:
+        """Validate decomposition quality.
+
+        Returns False if the decomposition is clearly broken:
+        - Zero subtasks
+        - All subtasks have empty descriptions
+        - Single subtask that just restates the parent task
+        - More than max_subtasks
+        """
+        if not subtasks:
+            return False
+        if len(subtasks) > self.config.max_subtasks:
+            return False
+        # All descriptions empty
+        if all(not st.description.strip() for st in subtasks):
+            return False
+        # ponytail: single subtask rehashing parent — likely failed decomposition
+        if len(subtasks) == 1:
+            desc = subtasks[0].description.strip().lower()
+            parent = task.description.strip().lower()
+            if desc == parent or desc in parent:
+                return False
+        return True
 
     async def assign_subtask(
         self,

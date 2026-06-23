@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS subject schema and message format for SSE/event pipeline changes"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline architecture for SSE push optimization and dedup"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskService proto for TUI/Dashboard event stream changes"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "LocalWorker bridge spec for parallel execution changes"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capability spec for dynamic capacity changes"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard spec for incremental snapshot changes"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC spec for event dedup changes"}
