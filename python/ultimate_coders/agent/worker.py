@@ -132,18 +132,20 @@ class Worker:
                 )
 
             if result.success:
+                comp_data: dict[str, Any] = {
+                    "summary": result.summary[:300],
+                    "success": True,
+                    "modified_files": [
+                        {"path": f.file_path, "type": f.change_type.value}
+                        for f in (result.modified_files or [])
+                    ],
+                    "output": result.summary[:50000],  # ponytail: 50KB cap
+                }
                 await self._publish_event(
                     "subtask_completed",
                     task_id=subtask.parent_id,
                     subtask_id=subtask.id,
-                    data={
-                        "summary": result.summary[:300],
-                        "success": True,
-                        "modified_files": [
-                            {"path": f.file_path, "type": f.change_type.value}
-                            for f in (result.modified_files or [])
-                        ],
-                    },
+                    data=comp_data,
                 )
             else:
                 # Build failure context: stderr tail + recent tool calls

@@ -3,7 +3,7 @@
   "name": "tui-eventlog-worker-worker",
   "title": "TUI界面优化-EventLog虚拟滚动+Worker面板增强+多Worker状态摘要",
   "description": "",
-  "status": "in_progress",
+  "status": "done",
   "dev_type": null,
   "scope": null,
   "package": null,

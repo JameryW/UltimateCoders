@@ -3,7 +3,7 @@
   "name": "path-c-dashboard",
   "title": "事件管道全链路优化: Path C真执行+子任务结果回传+Dashboard细粒度事件",
   "description": "",
-  "status": "in_progress",
+  "status": "done",
   "dev_type": null,
   "scope": null,
   "package": null,
