@@ -31,9 +31,11 @@ interface TasksPanelProps {
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   onTaskCreated?: (taskId: string) => void;
   onOptimisticAdd?: (taskId: string, description: string, projectId: string, subtaskCount: number, subtasks?: Array<{ id: string; description: string; status: string; dependsOn: string[] }>) => void;
+  onSelectTask?: (taskId: string) => void;
+  selectedTaskId?: string | null;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [submitDesc, setSubmitDesc] = useState("");
@@ -57,7 +59,11 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
   }, [highlightTaskId, onHighlightShown]);
 
   const toggleExpand = (taskId: string) => {
-    setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
+    if (onSelectTask) {
+      onSelectTask(taskId);
+    } else {
+      setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
+    }
   };
 
   const handleInlineSubmit = async (e: React.FormEvent) => {
@@ -84,7 +90,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
   };
 
   return (
-    <Card className="md:col-span-2" stale={stale}>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Tasks</CardTitle>
         <div className="flex items-center gap-2">
@@ -167,9 +173,10 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   aria-expanded={expandedTaskId === task.id}
                   aria-label={`${task.description}, status ${task.status}`}
                   className={cn(
-                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r",
+                    "border-l-2 pl-2 py-1 cursor-pointer hover:bg-[var(--bg-surface-alt)]/50 rounded-r transition-all duration-200",
                     statusBorderColor(task.status),
-                    task.id === highlightTaskId && "highlight-ring"
+                    task.id === highlightTaskId && "highlight-ring",
+                    task.id === selectedTaskId && "border-l-blue-500 bg-[var(--bg-surface-alt)]/30"
                   )}
                   onClick={() => toggleExpand(task.id)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(task.id); } }}
@@ -210,8 +217,8 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   </div>
                 </div>
 
-                {/* Detail expansion */}
-                {expandedTaskId === task.id && (
+                {/* Detail expansion — only when no sidebar onSelectTask */}
+                {!onSelectTask && expandedTaskId === task.id && (
                   <TaskDetail
                     task={task}
                     interactionLog={interactionLog[task.id] ?? []}

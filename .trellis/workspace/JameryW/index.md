@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
+- **Total Sessions**: 42
 - **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1439 | Active |
+| `journal-1.md` | ~1474 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-06-23 | Fix dashboard panel errors: gRPC-Web migration + graceful degradation | `29d97605`, `7fd805cb`, `0f3c8f26` | `fix/dashboard-grpc-web-migration` |
 | 41 | 2026-06-23 | path-c-dashboard fix + pipeline/tui done + rust-scheduler dispatch+auto-completion | `5b7f5d9`, `222083b` | `main` |
 | 40 | 2026-06-23 | TUI 7项界面优化 | `25abae8`, `972f2d8` | `main` |
 | 39 | 2026-06-22 | TUI界面优化: EventLog虚拟滚动+WorkersPanel增强+StatusBar多Worker摘要 | `e46111a` | `feat/dashboard-file-browser` |

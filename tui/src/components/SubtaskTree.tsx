@@ -274,6 +274,82 @@ const SubtaskDetail: React.FC<{subtask: SubtaskItem; maxWidth: number}> = ({subt
   );
 };
 
+/**
+ * Render a compact ASCII DAG showing subtask dependencies and status.
+ * Uses box-drawing characters and status-colored node labels.
+ * ponytail: single-pass topological render, no layout engine.
+ */
+function AsciiDAG({subtasks, symbols}: {subtasks: SubtaskItem[]; symbols: SymbolSet}) {
+  const hasDeps = subtasks.some(st => (st.dependsOn?.length ?? 0) > 0);
+  if (!hasDeps || subtasks.length === 0) return null;
+
+  // Short IDs: s1, s2, ...
+  const idMap = new Map<string, string>();
+  subtasks.forEach((st, i) => idMap.set(st.id, `s${i + 1}`));
+
+  const statusIcon: Record<SubtaskStatusType, string> = {
+    pending: '○',
+    assigned: '◌',
+    in_progress: '◉',
+    completed: '●',
+    failed: '✗',
+    conflicted: '⚠',
+  };
+  const statusColor: Record<SubtaskStatusType, string | undefined> = {
+    pending: undefined,
+    assigned: undefined,
+    in_progress: 'cyan',
+    completed: 'green',
+    failed: 'red',
+    conflicted: 'yellow',
+  };
+
+  // Find roots (no depends_on)
+  const roots = subtasks.filter(st => !(st.dependsOn?.length));
+
+  // BFS layers
+  const visited = new Set<string>();
+  const layers: SubtaskItem[][] = [];
+  let frontier = roots;
+  while (frontier.length > 0) {
+    layers.push(frontier);
+    for (const st of frontier) visited.add(st.id);
+    const next: SubtaskItem[] = [];
+    for (const st of subtasks) {
+      if (visited.has(st.id)) continue;
+      if ((st.dependsOn?.length ?? 0) > 0 && st.dependsOn!.every(d => visited.has(d))) {
+        next.push(st);
+      }
+    }
+    frontier = next;
+  }
+  // Any unvisited → add as final layer
+  const remaining = subtasks.filter(st => !visited.has(st.id));
+  if (remaining.length > 0) layers.push(remaining);
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text dimColor>{'DAG:'}</Text>
+      {layers.map((layer, li) => (
+        <Box key={li} flexDirection="column">
+          {li > 0 && <Text dimColor>{'  │'}</Text>}
+          <Box flexDirection="row">
+            <Text dimColor>{'  '}</Text>
+            {layer.map((st, si) => (
+              <React.Fragment key={st.id}>
+                {si > 0 && <Text dimColor>{' → '}</Text>}
+                <Text color={statusColor[st.status]} bold={st.status === 'in_progress'}>
+                  {`${statusIcon[st.status]}${idMap.get(st.id)}`}
+                </Text>
+              </React.Fragment>
+            ))}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 const SubtaskTree: React.FC<SubtaskTreeProps> = ({
   subtasks,
   taskDescription = 'No task',
@@ -338,6 +414,7 @@ const SubtaskTree: React.FC<SubtaskTreeProps> = ({
           <Text>{truncatedTaskDesc}</Text>
         </Box>
       )}
+      <AsciiDAG subtasks={subtasks} symbols={symbols} />
       {subtasks.length === 0 ? (
         <Text dimColor>No subtasks yet.</Text>
       ) : (

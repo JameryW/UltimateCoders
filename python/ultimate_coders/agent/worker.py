@@ -43,6 +43,67 @@ File constraints (do NOT modify): {file_constraints}
 """
 
 
+# ── Sandbox stdout line parser ────────────────────────────────────
+
+import re
+
+# Patterns Claude Code emits during execution
+_TOOL_CALL_RE = re.compile(
+    r"^\s*(?:⚙|🔧|tool)\s*(?:call|using|running)[:\s]+(.+?)(?:\((.+?)\))?\s*$",
+    re.IGNORECASE,
+)
+_FILE_MODIFIED_RE = re.compile(
+    r"^\s*(?:📝|✏️|edit|wrote|modified|created|deleted)[:\s]+(.+?)\s*$",
+    re.IGNORECASE,
+)
+_DIFF_RE = re.compile(r"^\s*```diff")
+_THINKING_RE = re.compile(r"^\s*(?:💭|thinking)[:\s]", re.IGNORECASE)
+
+
+def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
+    """Parse a single sandbox stdout line into an event type + data.
+
+    Returns None for uninteresting lines (plain text output, blank lines).
+    Recognized patterns:
+    - Tool calls: "⚙ ToolName(args)" → ("tool_call", {...})
+    - File changes: "📝 path" → ("file_modified", {...})
+    - Diff blocks: "```diff" → ("diff_start", {})
+    - Thinking: "💭 ..." → ("thinking", {...})
+
+    ponytail: regex-based — upgrade to structured JSON when Claude
+    Code gains a streaming event protocol.
+    """
+    if not line.strip():
+        return None
+
+    # Tool call
+    m = _TOOL_CALL_RE.match(line)
+    if m:
+        tool_name = m.group(1).strip()
+        tool_args = m.group(2).strip() if m.group(2) else ""
+        return ("tool_call", {
+            "tool_name": tool_name,
+            "args": tool_args[:200],
+        })
+
+    # File modification
+    m = _FILE_MODIFIED_RE.match(line)
+    if m:
+        file_path = m.group(1).strip()
+        return ("file_modified", {"file_path": file_path})
+
+    # Diff block start
+    if _DIFF_RE.match(line):
+        return ("diff_start", {})
+
+    # Thinking
+    m = _THINKING_RE.match(line)
+    if m:
+        return ("thinking", {"snippet": line[:200]})
+
+    return None
+
+
 class Worker:
     """Executes subtasks via sandbox agent.
 
@@ -302,7 +363,23 @@ class Worker:
                 expected_output=subtask.expected_output or "Complete the described task",
                 file_constraints=", ".join(subtask.file_constraints) or "none",
             )
-            output: AgentOutput = await self._sandbox_manager.execute(prompt)
+
+            # Streaming callback: parse each stdout line and emit events
+            async def _on_stdout_line(line: str) -> None:
+                """Parse sandbox stdout line and emit real-time events."""
+                parsed = _parse_sandbox_line(line)
+                if parsed is not None:
+                    event_type, data = parsed
+                    await self._publish_event(
+                        event_type,
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data=data,
+                    )
+
+            output: AgentOutput = await self._sandbox_manager.execute(
+                prompt, on_stdout_line=_on_stdout_line,
+            )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
             if not stderr_tail and hasattr(output, 'raw_stderr') and output.raw_stderr:

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS subject schema for streaming tool_call events and worker pool coordination"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline for real-time sandbox stdout streaming"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskService proto for decompose alignment and DAG visualization"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capability spec for elastic pool scaling"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard spec for DAG visualization and real-time event display"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC spec for DAG rendering and streaming events"}

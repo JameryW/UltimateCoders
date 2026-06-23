@@ -70,10 +70,22 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
     });
 
     let graphDef = "graph LR\n";
+    // Status-aware class definitions
+    graphDef += "  classDef completed fill:#22c55e,stroke:#16a34a,color:#fff\n";
+    graphDef += "  classDef failed fill:#ef4444,stroke:#dc2626,color:#fff\n";
+    graphDef += "  classDef in_progress fill:#3b82f6,stroke:#2563eb,color:#fff\n";
+    graphDef += "  classDef pending fill:#6b7280,stroke:#4b5563,color:#fff\n";
+
     for (const st of subtasks) {
       const nodeId = idMap[st.id]!;
       const label = truncate(st.description, 25).replace(/"/g, "'");
       graphDef += `  ${nodeId}["${label}"]\n`;
+      // Apply status class
+      const cls = st.status === "completed" ? "completed"
+        : st.status === "failed" ? "failed"
+        : st.status === "in_progress" ? "in_progress"
+        : "pending";
+      graphDef += `  class ${nodeId} ${cls}\n`;
       for (const depId of st.depends_on) {
         const depNode = idMap[depId];
         if (depNode) graphDef += `  ${depNode} --> ${nodeId}\n`;

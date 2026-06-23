@@ -45,6 +45,7 @@ body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: "Inter", system-ui, -apple-system, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 ::-webkit-scrollbar {
@@ -166,3 +167,8 @@ body {
 
 [data-theme="light"] .toast-success { background-color: #dcfce7; color: #166534; }
 [data-theme="light"] .toast-error { background-color: #fee2e2; color: #991b1b; }
+
+/* ── Card hover effect (theme-aware) ─────────────────── */
+
+.card-hover:hover { border-color: var(--text-muted); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+[data-theme="light"] .card-hover:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }

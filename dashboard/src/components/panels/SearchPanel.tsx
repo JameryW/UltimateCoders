@@ -51,7 +51,7 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
   }, [query]);
 
   return (
-    <Card className="md:col-span-2" stale={stale}>
+    <Card stale={stale}>
       <CardHeader>
         <CardTitle>Code Search</CardTitle>
       </CardHeader>

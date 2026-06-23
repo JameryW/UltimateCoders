@@ -764,6 +764,7 @@ class NatsWorker:
             try:
                 if self._publisher is not None:
                     w_info = None
+                    pending_count = 0
                     if self._worker is not None:
                         info = self._worker.get_info()
                         w_info = {
@@ -771,7 +772,17 @@ class NatsWorker:
                             "capabilities": info.capabilities,
                             "current_load": info.current_load,
                             "max_capacity": info.max_capacity,
+                            "pending_subtask_count": info.current_load,
                         }
+                    # Include orchestrator pending count if available
+                    if self._orchestrator is not None:
+                        for task in self._orchestrator.tasks.values():
+                            pending_count += sum(
+                                1 for st in task.subtasks
+                                if st.status == SubtaskStatus.PENDING
+                            )
+                        if w_info is not None:
+                            w_info["pending_subtask_count"] = pending_count
                     await self._publisher.publish_heartbeat(self._consumer_id, w_info)
                     logger.debug(
                         "Heartbeat sent (consumer_id=%s)", self._consumer_id

@@ -930,6 +930,19 @@ class Orchestrator:
                     assignments.append((worker_id, subtask))
 
             if not assignments:
+                # Elastic scaling signal: pending subtasks exist but no workers available
+                pending = len(ready)
+                if pending > 0 and len(self.workers) == 0:
+                    await self._publish_event(
+                        "worker_scale_up",
+                        task_id=task.id,
+                        data={
+                            "reason": "no_workers_available",
+                            "pending_subtasks": pending,
+                            "active_workers": len(self.workers),
+                            "desired_workers": min(pending, self.config.max_subtasks),
+                        },
+                    )
                 break  # no workers available or no assignable subtasks
 
             # Execute concurrently

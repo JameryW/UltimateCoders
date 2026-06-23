@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, shortId } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { SchedulerData } from "@/types/dashboard";
 
 function schedulerStatusBadge(isRunning: boolean): "ok" | "degraded" | "unavailable" {
@@ -26,30 +27,26 @@ interface SchedulerPanelProps {
   data: SchedulerData;
   onTriggerJob?: (jobId: string) => void;
   stale?: boolean;
+  embedded?: boolean;
 }
 
-export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob, stale }: SchedulerPanelProps) {
+export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob, stale, embedded }: SchedulerPanelProps) {
   if (!data.available) {
+    const unavailable = <EmptyState icon="clock" title="Scheduler not available" description="The scheduler endpoint is unreachable" />;
+    if (embedded) return unavailable;
     return (
       <Card stale={stale}>
         <CardHeader>
           <CardTitle>Scheduler</CardTitle>
           <Badge variant="unavailable">Not Available</Badge>
         </CardHeader>
-        <p className="text-sm text-[var(--text-muted)]">Scheduler not available</p>
+        {unavailable}
       </Card>
     );
   }
 
-  return (
-    <Card stale={stale}>
-      <CardHeader>
-        <CardTitle>Scheduler</CardTitle>
-        <Badge variant={schedulerStatusBadge(data.is_running)}>
-          {data.is_running ? "RUNNING" : "STOPPED"}
-        </Badge>
-      </CardHeader>
-
+  const content = (
+    <>
       {data.night_window && (
         <div className="flex items-center gap-2 mb-3 text-sm">
           <span className="text-[var(--text-secondary)]">Night Window:</span>
@@ -117,6 +114,20 @@ export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob,
           </ul>
         </div>
       )}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <Card stale={stale}>
+      <CardHeader>
+        <CardTitle>Scheduler</CardTitle>
+        <Badge variant={schedulerStatusBadge(data.is_running)}>
+          {data.is_running ? "RUNNING" : "STOPPED"}
+        </Badge>
+      </CardHeader>
+      {content}
     </Card>
   );
 });
