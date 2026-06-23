@@ -65,14 +65,55 @@ interface UseTaskEventsReturn {
     setSubtasksFromSubmit: (subtasks: SubtaskProto[], task?: TaskProto) => void;
     updateSubtaskStatus: (subtaskId: string, status: SubtaskStatusType) => void;
     clearTask: () => void;
+    markStreamingFinished: () => void;
 }
 
-function useTaskEvents(client: TaskServiceClient | null, connectionState: string): UseTaskEventsReturn;
+function useTaskEvents(
+    client: TaskServiceClient | null,
+    connectionState: string,
+    activeTaskId?: string | null,
+    onSyncRequired?: SyncRequiredCallback,
+): UseTaskEventsReturn;
 
 // Exported pure functions (for testing and reuse):
 export function processEvent(event: TaskEventProto, subtasks: Map<string, SubtaskItem>): Map<string, SubtaskItem>;
 export function protoSubtasksToItems(subtasks: SubtaskProto[]): SubtaskItem[];
 ```
+
+### Event Priority (HIGH_PRIORITY_EVENTS)
+
+Status transition events bypass the 50ms batch buffer and flush immediately:
+
+```typescript
+const HIGH_PRIORITY_EVENTS = new Set([
+    'subtask_assigned', 'subtask_started', 'subtask_completed', 'subtask_failed',
+    'task_completed', 'task_failed',
+]);
+```
+
+In `stream.on('data')` callback: if `HIGH_PRIORITY_EVENTS.has(event.type)`, flush pending buffer first, then apply event directly (dedup check + `setSubtaskMap` + `setEvents`). Other events (tool_call, file_modified, etc.) go through the batch buffer.
+
+### SubtaskItem (failure context fields)
+
+```typescript
+interface SubtaskItem {
+    id: string;
+    index: number;
+    description: string;
+    status: SubtaskStatusType;
+    assignedWorker?: string;
+    dependsOn?: string[];
+    errorSummary?: string;
+    stderrTail?: string;        // Last 10 lines of stderr from failed subtask
+    recentTools?: string[];     // Last 5 tool call names before failure
+    output?: string;
+    modifiedFiles?: Array<{file_path: string; change_type: string; diff: string}>;
+    elapsedMs?: number;
+    _startedAtMs?: number;     // Internal: for elapsed calculation
+}
+```
+
+**Gotcha**: `recentTools` arrives as a JSON string in gRPC `data` (because `data` is `map<string, string>`). `processEvent` parses it: `Array.isArray` check first, then `JSON.parse` fallback for string values.
 
 ### CjkTextInput Component (`tui/src/components/CjkTextInput.tsx`)
 

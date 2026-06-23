@@ -257,6 +257,8 @@ class NatsWorker:
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._running = False
+        # Event-driven dispatch: set when a subtask completes/fails, wakes _execute_subtasks
+        self._dispatch_event: asyncio.Event = asyncio.Event()
 
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
@@ -554,8 +556,15 @@ class NatsWorker:
                 )
                 if not in_progress:
                     break
-                # Wait a bit for in-progress tasks to finish
-                await asyncio.sleep(0.5)
+                # Event-driven wait: wake immediately when a subtask completes/fails
+                # ponytail: 30s safety timeout prevents deadlock
+                self._dispatch_event.clear()
+                try:
+                    await asyncio.wait_for(
+                        self._dispatch_event.wait(), timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    pass  # Safety check: re-evaluate ready subtasks
                 updated_task = self._orchestrator.get_task_status(task.id)
                 if updated_task is not None:
                     task = updated_task
@@ -783,6 +792,9 @@ class NatsWorker:
             self._orchestrator.pause_task_local(task_id)
         elif event_type == "task_resumed":
             self._orchestrator.resume_task_local(task_id)
+        elif event_type in ("subtask_completed", "subtask_failed"):
+            # Wake _execute_subtasks loop so newly-unblocked subtasks dispatch immediately
+            self._dispatch_event.set()
         else:
             # Other event types are handled by the Rust NATS subscriber
             logger.debug("Ignoring uc.task.event type=%s", event_type)

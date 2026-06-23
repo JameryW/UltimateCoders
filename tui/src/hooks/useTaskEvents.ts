@@ -205,9 +205,16 @@ export function processEvent(
         const stderrTail = typeof event.data?.stderr_tail === 'string'
           ? event.data.stderr_tail
           : undefined;
-        const recentTools = Array.isArray(event.data?.recent_tools)
-          ? event.data.recent_tools as string[]
-          : undefined;
+        // recent_tools may be a JSON array string (from gRPC data map) or a native array
+        let recentTools: string[] | undefined;
+        if (Array.isArray(event.data?.recent_tools)) {
+          recentTools = event.data.recent_tools as string[];
+        } else if (typeof event.data?.recent_tools === 'string' && event.data.recent_tools.length > 0) {
+          try {
+            const parsed = JSON.parse(event.data.recent_tools);
+            if (Array.isArray(parsed)) recentTools = parsed as string[];
+          } catch { /* ignore parse errors */ }
+        }
         if (existing) {
           updated.set(event.subtaskId, {
             ...existing,

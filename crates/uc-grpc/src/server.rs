@@ -891,10 +891,7 @@ async fn decompose_task_smart(
 
 /// Parse LLM output into subtasks. Expects numbered items like "1. Do X"
 /// or bullet points. Subtasks have no dependencies (independent/parallel).
-fn parse_llm_subtasks(
-    parent_id: &uc_types::TaskId,
-    llm_output: &str,
-) -> Vec<uc_types::Subtask> {
+fn parse_llm_subtasks(parent_id: &uc_types::TaskId, llm_output: &str) -> Vec<uc_types::Subtask> {
     let lines: Vec<&str> = llm_output
         .lines()
         .map(|l| l.trim())
@@ -1599,6 +1596,8 @@ fn spawn_nats_subscriber(
                                                         subtask_id: subtask.id.clone(),
                                                         error: String::new(),
                                                         recoverable: false,
+                                                        stderr_tail: String::new(),
+                                                        recent_tools: String::new(),
                                                     })
                                                 }
                                                 _ => None,
@@ -1943,11 +1942,32 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .unwrap_or("Unknown error")
                 .to_string();
             let recoverable = json_bool_or_default(&event.data, "recoverable", false);
+            let stderr_tail = event
+                .data
+                .get("stderr_tail")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let recent_tools = event
+                .data
+                .get("recent_tools")
+                .map(|v| {
+                    // recent_tools may arrive as a JSON array or a string
+                    if v.is_string() {
+                        v.as_str().unwrap_or("").to_string()
+                    } else {
+                        // Serialize array or other value as JSON string
+                        serde_json::to_string(v).unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default();
             Some(uc_engine::AgentEventType::SubtaskFailed {
                 task_id,
                 subtask_id,
                 error,
                 recoverable,
+                stderr_tail,
+                recent_tools,
             })
         }
         "task_paused" => {
@@ -2775,6 +2795,16 @@ pub async fn apply_worker_event_to_store(
                 .get("recoverable")
                 .map(|s| s == "true")
                 .unwrap_or(false),
+            stderr_tail: worker_event
+                .data
+                .get("stderr_tail")
+                .cloned()
+                .unwrap_or_default(),
+            recent_tools: worker_event
+                .data
+                .get("recent_tools")
+                .cloned()
+                .unwrap_or_default(),
         }),
         "task_completed" => Some(uc_engine::AgentEventType::TaskCompleted {
             task_id: task_id.clone(),
@@ -2945,6 +2975,8 @@ pub async fn mark_tasks_failed_on_worker_death(
                         subtask_id: subtask.id.clone(),
                         error: "Worker process died".to_string(),
                         recoverable: true,
+                        stderr_tail: String::new(),
+                        recent_tools: String::new(),
                     });
                 }
             }

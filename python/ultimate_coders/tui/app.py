@@ -101,6 +101,8 @@ class SandboxTUI(App):
         self._event_listener_handle: asyncio.Task | None = None
         # Track subtask index mapping for display
         self._subtask_index: dict[str, int] = {}
+        # Event-driven dispatch: set when a subtask completes/fails, wakes _auto_execute_loop
+        self._dispatch_event: asyncio.Event = asyncio.Event()
 
     def compose(self) -> ComposeResult:
         """Build the TUI layout."""
@@ -207,6 +209,7 @@ class SandboxTUI(App):
                             subtask_id, SubtaskStatus.COMPLETED
                         )
                     self._update_progress()
+                    self._dispatch_event.set()
 
                 elif event_type == "subtask_failed":
                     chat_log.append(
@@ -218,6 +221,7 @@ class SandboxTUI(App):
                             subtask_id, SubtaskStatus.FAILED
                         )
                     self._update_progress()
+                    self._dispatch_event.set()
 
                 elif event_type == "task_completed":
                     status = data.get("status", "unknown")
@@ -327,15 +331,15 @@ class SandboxTUI(App):
         )
 
     async def _auto_execute_loop(self) -> None:
-        """Background loop that assigns and executes ready subtasks.
+        """Event-driven loop that assigns and executes ready subtasks.
 
         Runs as an asyncio task within Textual's event loop.
-        Polls every 2 seconds for pending subtasks whose dependencies
-        are all completed, then executes them via the sandbox Worker.
-
-        Handles cancellation gracefully by decrementing worker load for
-        any subtask that was in-flight when the cancel occurred.
+        Uses asyncio.Event to wake immediately when a subtask completes/fails,
+        with a 30s safety timeout to prevent deadlocks.
         """
+        # ponytail: event-driven replaces 2s polling, 30s safety timeout prevents deadlock
+        dispatch_timeout = 30.0
+
         if self._orch is None or self._worker is None:
             return
 
@@ -345,17 +349,12 @@ class SandboxTUI(App):
 
         try:
             while True:
-                await asyncio.sleep(2)
-
                 # Check if current task is still active
                 task = orch.tasks.get(self.current_task_id)
                 if task is None:
-                    # Task removed from orchestrator — stop the loop
-                    # rather than spinning forever with `continue`
                     break
 
                 if task.status.value not in ("in_progress", "planning"):
-                    # Task finished or paused -- stop the loop
                     chat_log.append(
                         f"Task loop ended (status: {task.status.value})",
                         style="dim",
@@ -419,6 +418,15 @@ class SandboxTUI(App):
                     if all_terminal and task.subtasks:
                         chat_log.append("All subtasks processed", style="dim")
                         break
+
+                    # Wait for a subtask to complete/fail (event-driven) with safety timeout
+                    self._dispatch_event.clear()
+                    try:
+                        await asyncio.wait_for(
+                            self._dispatch_event.wait(), timeout=dispatch_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        pass  # Safety check: re-evaluate ready subtasks
 
         except asyncio.CancelledError:
             # Decrement worker load for the currently executing subtask

@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-23-pipeline/prd.md", "reason": "Full PRD with requirements, acceptance criteria, and technical approach for PR1/PR2/PR3"}
+{"file": "python/ultimate_coders/tui/app.py", "reason": "PR1: SandboxTUI._auto_execute_loop needs event-driven dispatch replacing 2s polling"}
+{"file": "python/ultimate_coders/nats_worker.py", "reason": "PR1: NatsWorker._execute_subtasks inner sleep(0.5) needs event-driven replacement"}
+{"file": "python/ultimate_coders/agent/worker.py", "reason": "PR3: Worker.execute_subtask and _publish_event need stderr_tail and recent_tool_calls"}
+{"file": "python/ultimate_coders/agent/types.py", "reason": "PR3: SubtaskResult needs new fields stderr_tail and recent_tool_calls"}
+{"file": "tui/src/hooks/useTaskEvents.ts", "reason": "PR2: Event priority flush; PR3: Extract stderr_tail/recent_tools from subtask_failed events"}
+{"file": "tui/src/components/SubtaskTree.tsx", "reason": "PR3: SubtaskDetail component needs stderr_tail and recent_tools display"}
+{"file": "crates/uc-grpc/src/server.rs", "reason": "PR3: apply_worker_event_to_store SubtaskFailed branch needs stderr_tail/recent_tools"}

@@ -179,6 +179,10 @@ pub enum AgentEventPayload {
         subtask_id: TaskId,
         error: String,
         recoverable: bool,
+        /// Last N lines of stderr from the failed subtask (for diagnostics).
+        stderr_tail: String,
+        /// Recent tool call names before failure, JSON-serialized array of strings.
+        recent_tools: String,
     },
     CheckpointCreated {
         task_id: TaskId,

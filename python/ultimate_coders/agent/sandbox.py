@@ -111,6 +111,10 @@ class AgentOutput:
     file_changes: list[FileChange] = field(default_factory=list)
     token_usage: TokenUsage | None = None
     success: bool = True
+    # Raw stderr from the sandbox process (for failure diagnostics)
+    stderr: str = ""
+    # List of tool call names extracted from the agent output
+    tool_calls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -586,16 +590,24 @@ class ClaudeCodeAdapter(AgentAdapter):
         }
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
+        # ponytail: extract last 10 lines of stderr for failure diagnostics
+        stderr_tail = ""
+        if result.stderr:
+            stderr_lines = result.stderr.strip().splitlines()
+            stderr_tail = "\n".join(stderr_lines[-10:])
+
         if result.timed_out:
             return AgentOutput(
                 summary="Claude Code execution timed out",
                 success=False,
+                stderr=stderr_tail,
             )
 
         if result.exit_code != 0:
             return AgentOutput(
                 summary=f"Claude Code exited with code {result.exit_code}: {result.stderr[:200]}",
                 success=False,
+                stderr=stderr_tail,
             )
 
         # Try to parse JSON output
@@ -624,6 +636,17 @@ class ClaudeCodeAdapter(AgentAdapter):
             if not summary:
                 summary = "Claude Code completed"
 
+            # Extract tool call names from messages for failure context
+            tool_calls: list[str] = []
+            if "messages" in parsed:
+                for msg in parsed["messages"]:
+                    if msg.get("role") == "assistant":
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "tool_use":
+                                    tool_calls.append(block.get("name", "unknown"))
+
             # Extract token usage
             token_usage = None
             if "usage" in parsed:
@@ -638,6 +661,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 summary=summary,
                 token_usage=token_usage,
                 success=True,
+                stderr=stderr_tail,
+                tool_calls=tool_calls[-5:],  # ponytail: keep last 5 tool calls
             )
 
         except json.JSONDecodeError:

@@ -8,6 +8,7 @@ own tool chains and don't need a Python-side tool-calling loop.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any
@@ -145,11 +146,23 @@ class Worker:
                     },
                 )
             else:
+                # Build failure context: stderr tail + recent tool calls
+                failure_data: dict[str, Any] = {
+                    "error": result.summary[:300],
+                    "worker_id": self.worker_id,
+                }
+                if result.stderr_tail:
+                    failure_data["stderr_tail"] = result.stderr_tail
+                if result.recent_tool_calls:
+                    # Serialize as JSON string so it works through both
+                    # HashMap<String, String> (local worker) and
+                    # serde_json::Map<String, Value> (NATS) paths
+                    failure_data["recent_tools"] = json.dumps(result.recent_tool_calls)
                 await self._publish_event(
                     "subtask_failed",
                     task_id=subtask.parent_id,
                     subtask_id=subtask.id,
-                    data={"error": result.summary[:300], "worker_id": self.worker_id},
+                    data=failure_data,
                 )
             return result
 
@@ -166,6 +179,7 @@ class Worker:
                 worker_id=self.worker_id,
                 summary=f"Execution error: {e}",
                 success=False,
+                stderr_tail=str(e)[-2000:],
             )
 
         finally:
@@ -180,12 +194,18 @@ class Worker:
             file_constraints=", ".join(subtask.file_constraints) or "none",
         )
         output: AgentOutput = await self._sandbox_manager.execute(prompt)
+        # ponytail: extract stderr_tail (last 10 lines) and recent tool calls for failure context
+        stderr_tail = ""
+        if output.stderr:
+            stderr_tail = "\n".join(output.stderr.strip().splitlines()[-10:])
         return SubtaskResult(
             subtask_id=subtask.id,
             worker_id=self.worker_id,
             modified_files=output.file_changes,
             summary=output.summary,
             success=output.success,
+            stderr_tail=stderr_tail,
+            recent_tool_calls=output.tool_calls[-5:],
         )
 
     async def send_heartbeat(self) -> dict[str, Any]:

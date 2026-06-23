@@ -743,6 +743,8 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
                 subtask_id,
                 error: _,
                 recoverable: _,
+                stderr_tail: _,
+                recent_tools: _,
             } => (
                 "subtask_failed".to_string(),
                 String::new(),
