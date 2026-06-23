@@ -1,9 +1,9 @@
 {
   "id": "conflict-detection",
   "name": "conflict-detection",
-  "title": "文件冲突检测",
+  "title": "\u6587\u4ef6\u51b2\u7a81\u68c0\u6d4b",
   "description": "",
-  "status": "planning",
+  "status": "done",
   "dev_type": null,
   "scope": null,
   "package": null,

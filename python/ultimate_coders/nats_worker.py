@@ -664,7 +664,23 @@ class NatsWorker:
                         )
                     if self._publisher is not None:
                         await self._publisher.publish_update(task)
+                    # Declare edit intent for conflict tracking
+                    if st.file_constraints:
+                        from ultimate_coders.agent.conflict import EditIntent
+                        for fp in st.file_constraints:
+                            self._orchestrator.conflict_detector.declare_intent(
+                                EditIntent(
+                                    worker_id=self._worker.worker_id,
+                                    file_path=fp,
+                                )
+                            )
                     result = await self._worker.execute_subtask(st)
+                    # Remove edit intent after execution
+                    if st.file_constraints:
+                        for fp in st.file_constraints:
+                            self._orchestrator.conflict_detector.remove_intent(
+                                fp, self._worker.worker_id,
+                            )
                     await self._orchestrator.handle_subtask_result(result)
                     if self._publisher is not None:
                         await self._publisher.publish_update(task)
@@ -705,6 +721,14 @@ class NatsWorker:
 
         # Mark subtask as assigned in local Orchestrator
         self._orchestrator.assign_subtask(subtask, "remote")
+
+        # Declare edit intent for conflict tracking
+        if subtask.file_constraints:
+            from ultimate_coders.agent.conflict import EditIntent
+            for fp in subtask.file_constraints:
+                self._orchestrator.conflict_detector.declare_intent(
+                    EditIntent(worker_id="remote", file_path=fp)
+                )
 
         msg = json.dumps({
             "task_id": subtask.parent_id,
@@ -902,6 +926,49 @@ class NatsWorker:
             self._dispatch_event.set()
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
+
+    def _handle_remote_subtask_result(
+        self,
+        event_type: str,
+        task_id: str,
+        subtask_id: str,
+        data: dict[str, Any],
+    ) -> None:
+        """Process remote subtask completion/failure events.
+
+        Removes edit intents for the subtask's file constraints and
+        feeds the result into the Orchestrator.
+        """
+        # Remove edit intent for this subtask's files
+        if self._orchestrator:
+            # Find the subtask to get its file_constraints
+            task = self._orchestrator.get_task_status(task_id)
+            if task:
+                for st in task.subtasks:
+                    if st.id == subtask_id and st.file_constraints:
+                        for fp in st.file_constraints:
+                            self._orchestrator.conflict_detector.remove_intent(
+                                fp, "remote",
+                            )
+                        break
+
+        # Feed result into Orchestrator
+        if event_type == "subtask_completed" and self._orchestrator:
+            result = SubtaskResult(
+                subtask_id=subtask_id,
+                worker_id="remote",
+                summary=data.get("summary", ""),
+                success=True,
+            )
+            self._orchestrator.handle_subtask_result(result)
+        elif event_type == "subtask_failed" and self._orchestrator:
+            result = SubtaskResult(
+                subtask_id=subtask_id,
+                worker_id="remote",
+                summary=data.get("error", "Remote subtask failed"),
+                success=False,
+            )
+            self._orchestrator.handle_subtask_result(result)
 
     # ── Remote worker discovery ─────────────────────────────────────
 
