@@ -709,7 +709,6 @@ class ClaudeCodeAdapter(AgentAdapter):
             summary = ""
             tool_calls: list[str] = []
             token_usage = None
-            last_result = None
 
             for line in output.splitlines():
                 line = line.strip()
@@ -722,7 +721,6 @@ class ClaudeCodeAdapter(AgentAdapter):
 
                 evt_type = obj.get("type", "")
                 if evt_type == "result":
-                    last_result = obj
                     summary = str(obj.get("result", ""))[:500]
                     if "usage" in obj:
                         u = obj["usage"]
@@ -738,7 +736,12 @@ class ClaudeCodeAdapter(AgentAdapter):
                             if isinstance(block, dict) and block.get("type") == "tool_use":
                                 tool_calls.append(block.get("name", "unknown"))
                         if not summary:
-                            texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                            texts = [
+                                b.get("text", "")
+                                for b in content
+                                if isinstance(b, dict)
+                                and b.get("type") == "text"
+                            ]
                             if texts:
                                 summary = " ".join(texts)[:500]
 
