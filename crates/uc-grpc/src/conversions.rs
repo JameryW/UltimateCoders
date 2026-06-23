@@ -3,6 +3,7 @@
 //! Bidirectional mapping so the server can accept proto requests, call EngineApi,
 //! and return proto responses — while the client can do the reverse.
 
+use uc_types::agent::{DirEntry, DirListing, FileContent};
 use uc_types::{
     AgentEvent, AgentEventPayload, ComponentHealth, HealthStatus, IndexRequest, IndexResponse,
     MemoryContent, MemoryEntry, MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest,
@@ -10,7 +11,6 @@ use uc_types::{
     MemoryWriteRequest, RepoIndexState, RepoSpec, SearchMode, SearchQuery, SearchResult,
     SearchResultItem, Subtask, SubtaskStatus, Task, TaskId, TaskStatus, WorkerId,
 };
-use uc_types::agent::{DirEntry, DirListing, FileContent};
 
 // ── Import generated proto types ──────────────────────────
 

@@ -208,9 +208,8 @@ impl LocalWorkerBridge {
         let worker_module = std::env::var("UC_WORKER_MODULE")
             .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
 
-        // ponytail: allow overriding python binary (e.g. .venv/bin/python3)
-        let python_bin =
-            std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        // Resolve python binary: UC_WORKER_PYTHON > .venv/bin/python3 > python3
+        let python_bin = resolve_python_bin();
         let mut cmd = Command::new(&python_bin);
         cmd.arg("-m")
             .arg(&worker_module)
@@ -748,6 +747,39 @@ impl Drop for LocalWorkerBridge {
     }
 }
 
+/// Resolve the Python binary for the local worker.
+///
+/// Priority: `UC_WORKER_PYTHON` env > `.venv/bin/python3` (auto-detect) > `python3`
+///
+/// Auto-detection walks from CWD upward looking for `.venv/bin/python3`.
+fn resolve_python_bin() -> String {
+    // 1. Explicit override always wins
+    if let Ok(bin) = std::env::var("UC_WORKER_PYTHON") {
+        return bin;
+    }
+
+    // 2. Auto-detect .venv/bin/python3 by walking up from CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = cwd.as_path();
+        loop {
+            let venv_python = dir.join(".venv/bin/python3");
+            if venv_python.exists() {
+                let path = venv_python.to_string_lossy().to_string();
+                tracing::info!("Auto-detected venv Python: {}", path);
+                return path;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+
+    // 3. Fallback
+    tracing::info!("No .venv found, using system python3");
+    "python3".to_string()
+}
+
 /// Attempt to auto-restart the worker after a crash.
 ///
 /// Uses exponential backoff: 1s, 2s, 4s between attempts (max 3 attempts).
@@ -803,8 +835,7 @@ async fn attempt_auto_restart(
         }
 
         // Try to spawn a new worker
-        let python_bin =
-            std::env::var("UC_WORKER_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let python_bin = resolve_python_bin();
         let worker_module = std::env::var("UC_WORKER_MODULE")
             .unwrap_or_else(|_| "ultimate_coders.local_worker".to_string());
         match Command::new(&python_bin)
@@ -1126,8 +1157,11 @@ mod tests {
 
     #[tokio::test]
     async fn restart_without_worker_fails() {
+        // Force a nonexistent python so restart fails regardless of host .venv
         let bridge = LocalWorkerBridge::new();
+        std::env::set_var("UC_WORKER_PYTHON", "/nonexistent/python3");
         let result = bridge.restart().await;
+        std::env::remove_var("UC_WORKER_PYTHON");
         assert!(result.is_err());
         assert!(!bridge.is_available());
     }

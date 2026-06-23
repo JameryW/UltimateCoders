@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 42
+- **Total Sessions**: 43
 - **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1474 | Active |
+| `journal-1.md` | ~1512 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 43 | 2026-06-23 | Realtime feedback + gRPC decompose alignment + DAG viz + worker pool scaling | `3e5965f3`, `33618ae4`, `8de6b550`, `652db4d8`, `3d77cff5`, `f487daee` | `fix/dashboard-grpc-web-migration` |
 | 42 | 2026-06-23 | Fix dashboard panel errors: gRPC-Web migration + graceful degradation | `29d97605`, `7fd805cb`, `0f3c8f26` | `fix/dashboard-grpc-web-migration` |
 | 41 | 2026-06-23 | path-c-dashboard fix + pipeline/tui done + rust-scheduler dispatch+auto-completion | `5b7f5d9`, `222083b` | `main` |
 | 40 | 2026-06-23 | TUI 7项界面优化 | `25abae8`, `972f2d8` | `main` |
