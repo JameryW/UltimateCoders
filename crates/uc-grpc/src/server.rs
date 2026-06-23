@@ -2848,6 +2848,60 @@ pub async fn apply_worker_event_to_store(
         store.record_event(agent_event);
     }
     let _ = event_tx.send(proto_event);
+
+    // Auto-detect task completion: when all subtasks are done,
+    // mark the parent task as Completed or Failed.
+    match &worker_event.event_type {
+        ev if ev == "subtask_completed" || ev == "subtask_failed" => {
+            let mut store = task_store.lock().await;
+            let check = store.tasks.get(&worker_event.task_id).map(|task| {
+                if task.status != uc_types::TaskStatus::InProgress {
+                    return None;
+                }
+                let all_done = !task.subtasks.is_empty()
+                    && task
+                        .subtasks
+                        .iter()
+                        .all(|st| matches!(st.status, uc_types::SubtaskStatus::Completed | uc_types::SubtaskStatus::Failed));
+                if !all_done {
+                    return None;
+                }
+                let any_failed = task
+                    .subtasks
+                    .iter()
+                    .any(|st| st.status == uc_types::SubtaskStatus::Failed);
+                Some((any_failed, task.description.clone()))
+            });
+            let Some(Some((any_failed, description))) = check else {
+                return;
+            };
+            let task_id = uc_types::TaskId(worker_event.task_id.clone());
+            let new_status = if any_failed {
+                uc_types::TaskStatus::Failed
+            } else {
+                uc_types::TaskStatus::Completed
+            };
+            let auto_event = if any_failed {
+                uc_engine::AgentEventType::TaskFailed {
+                    task_id: task_id.clone(),
+                    error: "One or more subtasks failed".to_string(),
+                }
+            } else {
+                uc_engine::AgentEventType::TaskCompleted {
+                    task_id: task_id.clone(),
+                    description,
+                    result: String::new(),
+                }
+            };
+            if let Some(task) = store.tasks.get_mut(&worker_event.task_id) {
+                task.status = new_status;
+                task.updated_at = chrono::Utc::now();
+            }
+            store.record_event(auto_event.clone());
+            let _ = event_tx.send(auto_event.into());
+        }
+        _ => {}
+    }
 }
 
 /// Apply a worker task update to the TaskStore and broadcast events.
