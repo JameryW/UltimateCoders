@@ -262,6 +262,8 @@ impl CheckpointManager {
                     subtask_id,
                     error,
                     recoverable,
+                    stderr_tail: _,
+                    recent_tools: _,
                 } => {
                     if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == subtask_id.0) {
                         st.status = if *recoverable {
@@ -403,6 +405,8 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             subtask_id,
             error,
             recoverable,
+            stderr_tail: _,
+            recent_tools: _,
         } => {
             if let Some(st) = snapshot
                 .subtasks

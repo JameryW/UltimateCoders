@@ -100,6 +100,52 @@ describe('processEvent', () => {
     expect(result.get('sub-1')?.errorSummary).toBe('Timeout');
   });
 
+  it('extracts stderrTail and recentTools from subtask_failed (string recent_tools)', () => {
+    const map = new Map([['sub-1', makeSubtaskItem({status: 'in_progress'})]]);
+    const event = makeEvent({
+      type: 'subtask_failed',
+      subtaskId: 'sub-1',
+      data: {
+        error: 'Build failed',
+        stderr_tail: 'line 1\nline 2\nline 3',
+        recent_tools: '["read_file","write_file"]',
+      },
+    });
+    const result = processEvent(event, map);
+    expect(result.get('sub-1')?.status).toBe('failed');
+    expect(result.get('sub-1')?.stderrTail).toBe('line 1\nline 2\nline 3');
+    expect(result.get('sub-1')?.recentTools).toEqual(['read_file', 'write_file']);
+  });
+
+  it('extracts recentTools from subtask_failed (array recent_tools)', () => {
+    const map = new Map([['sub-1', makeSubtaskItem({status: 'in_progress'})]]);
+    const event = makeEvent({
+      type: 'subtask_failed',
+      subtaskId: 'sub-1',
+      data: {
+        error: 'Build failed',
+        recent_tools: ['edit_file', 'bash'],
+      },
+    } as any);
+    const result = processEvent(event, map);
+    expect(result.get('sub-1')?.recentTools).toEqual(['edit_file', 'bash']);
+  });
+
+  it('handles invalid JSON in recent_tools gracefully', () => {
+    const map = new Map([['sub-1', makeSubtaskItem({status: 'in_progress'})]]);
+    const event = makeEvent({
+      type: 'subtask_failed',
+      subtaskId: 'sub-1',
+      data: {
+        error: 'Build failed',
+        recent_tools: 'not-valid-json',
+      },
+    });
+    const result = processEvent(event, map);
+    expect(result.get('sub-1')?.status).toBe('failed');
+    expect(result.get('sub-1')?.recentTools).toBeUndefined();
+  });
+
   it('does not modify map on task_submitted event', () => {
     const original = makeSubtaskItem();
     const map = new Map([['sub-1', original]]);

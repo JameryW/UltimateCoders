@@ -810,17 +810,23 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 subtask_id,
                 error,
                 recoverable,
-            } => (
-                "subtask_failed".to_string(),
-                task_id.0,
-                subtask_id.0,
-                vec![
+                stderr_tail,
+                recent_tools,
+            } => {
+                let mut data_map: std::collections::HashMap<String, String> = vec![
                     ("error".to_string(), error),
                     ("recoverable".to_string(), recoverable.to_string()),
                 ]
                 .into_iter()
-                .collect(),
-            ),
+                .collect();
+                if !stderr_tail.is_empty() {
+                    data_map.insert("stderr_tail".to_string(), stderr_tail);
+                }
+                if !recent_tools.is_empty() {
+                    data_map.insert("recent_tools".to_string(), recent_tools);
+                }
+                ("subtask_failed".to_string(), task_id.0, subtask_id.0, data_map)
+            }
             uc_engine::AgentEventType::CheckpointCreated {
                 task_id,
                 snapshot_id,
@@ -1168,10 +1174,14 @@ impl From<TaskEventProto> for AgentEvent {
                     .get("recoverable")
                     .map(|s| s == "true")
                     .unwrap_or(false);
+                let stderr_tail = proto.data.get("stderr_tail").cloned().unwrap_or_default();
+                let recent_tools = proto.data.get("recent_tools").cloned().unwrap_or_default();
                 AgentEventPayload::SubtaskFailed {
                     subtask_id,
                     error,
                     recoverable,
+                    stderr_tail,
+                    recent_tools,
                 }
             }
             "checkpoint_created" => {
