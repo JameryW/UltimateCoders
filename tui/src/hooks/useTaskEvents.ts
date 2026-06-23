@@ -39,8 +39,11 @@ const EVENT_BATCH_MS = 50;
 /** Maximum number of dedup keys to retain in seenEvents. */
 const MAX_SEEN_EVENTS = 500;
 
-/** Event types that represent subtask status transitions and should be deduped. */
+/** Event types that should be deduped (all status-transition events). */
 const DEDUP_STATUS_EVENTS = new Set([
+  'task_submitted',
+  'task_completed',
+  'task_failed',
   'subtask_assigned',
   'subtask_started',
   'subtask_completed',
@@ -284,8 +287,8 @@ export function useTaskEvents(
   const streamRef = useRef<any>(null);
   const streamRetryCount = useRef(0);
   const streamRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Dedup: track seen event keys to skip duplicate status-transition events
-  const seenEventsRef = useRef<Set<string>>(new Set());
+  // Dedup: track seen event keys with timestamps for content-key + window dedup
+  const seenEventsRef = useRef<Map<string, number>>(new Map());
   const seenEventsOrderRef = useRef<string[]>([]);
 
   // ponytail: memoize subtasks array to prevent App re-render loop.
@@ -321,21 +324,23 @@ export function useTaskEvents(
     if (batch.length === 0) return;
     eventBufferRef.current = [];
 
-    // Dedup: filter out duplicate status-transition events
+    // Dedup: filter out duplicate status-transition events.
+    // Key includes timestamp for content-aware dedup (matches Dashboard pattern).
     const seen = seenEventsRef.current;
     const order = seenEventsOrderRef.current;
+    const now = Date.now();
     const filtered = batch.filter((event) => {
       if (!DEDUP_STATUS_EVENTS.has(event.type)) return true;
-      const key = `${event.type}:${event.subtaskId ?? ''}:${event.taskId}`;
-      if (seen.has(key)) return false; // duplicate
-      seen.add(key);
+      const key = `${event.type}:${event.subtaskId ?? ''}:${event.taskId}:${event.timestamp}`;
+      const lastSeen = seen.get(key);
+      // Content-key + 1s window dedup (same as Dashboard's dedupedHandleTaskEvent)
+      if (lastSeen !== undefined && now - lastSeen < 1000) return false;
+      seen.set(key, now);
       order.push(key);
-      // Evict oldest entries if set exceeds MAX_SEEN_EVENTS
+      // Evict oldest entries if map exceeds MAX_SEEN_EVENTS
       if (order.length > MAX_SEEN_EVENTS) {
         const excess = order.length - MAX_SEEN_EVENTS;
-        for (let i = 0; i < excess; i++) {
-          seen.delete(order[i]);
-        }
+        for (let i = 0; i < excess; i++) seen.delete(order[i]);
         order.splice(0, excess);
       }
       return true;
@@ -428,13 +433,15 @@ export function useTaskEvents(
           if (HIGH_PRIORITY_EVENTS.has(taskEvent.type)) {
             // Flush any pending batch first, then apply high-priority event immediately
             flushEventBuffer();
-            // Dedup check
+            // Dedup check (content-key + 1s window)
             const seen = seenEventsRef.current;
             const order = seenEventsOrderRef.current;
             if (DEDUP_STATUS_EVENTS.has(taskEvent.type)) {
-              const key = `${taskEvent.type}:${taskEvent.subtaskId ?? ''}:${taskEvent.taskId}`;
-              if (seen.has(key)) return; // duplicate
-              seen.add(key);
+              const key = `${taskEvent.type}:${taskEvent.subtaskId ?? ''}:${taskEvent.taskId}:${taskEvent.timestamp}`;
+              const now = Date.now();
+              const lastSeen = seen.get(key);
+              if (lastSeen !== undefined && now - lastSeen < 1000) return; // duplicate
+              seen.set(key, now);
               order.push(key);
               if (order.length > MAX_SEEN_EVENTS) {
                 const excess = order.length - MAX_SEEN_EVENTS;

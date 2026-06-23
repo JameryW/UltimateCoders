@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.orchestrator import Orchestrator, TaskStatus
+from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.engine import Engine
 
@@ -272,37 +273,117 @@ class LocalWorker:
         self._writer.write_response(id_, self._task_to_params(task))
 
     async def _execute_subtasks(self, task: Any) -> None:
-        """Assign and execute ready subtasks (same pattern as nats_worker)."""
+        """Assign and execute ready subtasks with concurrency.
+
+        Mirrors nats_worker._execute_subtasks: finds ALL ready subtasks
+        (pending, dependencies met), executes them concurrently bounded
+        by worker max_capacity, reports results, then checks for newly
+        unblocked subtasks. Repeats until all subtasks are done or
+        task is complete/failed.
+        """
         if self._orchestrator is None or self._worker is None:
             return
 
+        # Event-driven dispatch: wake immediately when a subtask completes/fails
+        dispatch_event = asyncio.Event()
+
         max_iterations = len(task.subtasks) * 2 + 1
         for _ in range(max_iterations):
-            next_subtask = self._orchestrator.select_next_subtask(task)
-            if next_subtask is None:
-                break
+            # Collect ready subtask IDs (not objects — avoid stale refs)
+            ready_ids: list[str] = []
+            seen: set[str] = set()
+            max_retries = self._orchestrator.config.max_retries
+            while True:
+                next_st = self._orchestrator.select_next_subtask(task)
+                if next_st is None or next_st.id in seen:
+                    break
+                seen.add(next_st.id)
+                # Skip subtasks that exceeded max retries
+                if next_st.retry_count >= max_retries:
+                    next_st.status = SubtaskStatus.FAILED
+                    logger.warning(
+                        "Subtask %s exceeded max retries (%d), marking Failed",
+                        next_st.id[:8], max_retries,
+                    )
+                    continue
+                ready_ids.append(next_st.id)
 
-            worker_id = await self._orchestrator.assign_subtask(
-                next_subtask, self._worker.worker_id
-            )
-            if worker_id is None:
-                logger.warning("Failed to assign subtask %s, skipping", next_subtask.id)
+            if not ready_ids:
+                # No more ready subtasks — either all done or blocked
+                in_progress = any(
+                    st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks
+                )
+                if not in_progress:
+                    break
+                # Event-driven wait: wake on subtask completion/fails
+                dispatch_event.clear()
+                try:
+                    await asyncio.wait_for(dispatch_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+                updated_task = await self._orchestrator.get_task_status(task.id)
+                if updated_task is not None:
+                    task = updated_task
                 continue
 
-            # Notify: subtask assigned
-            self._writer.write_notification("task_update", self._task_to_params(task))
+            # Execute ready subtasks concurrently (bounded by capacity)
+            capacity = self._worker.max_capacity
+            batch_ids = ready_ids[:capacity]
 
-            result = await self._worker.execute_subtask(next_subtask)
-            await self._orchestrator.handle_subtask_result(result)
+            async def _run_one(subtask_id: str) -> SubtaskResult:
+                """Assign, execute, and report a single subtask."""
+                st = None
+                for s in task.subtasks:
+                    if s.id == subtask_id:
+                        st = s
+                        break
+                if st is None:
+                    return SubtaskResult(
+                        subtask_id=subtask_id,
+                        worker_id=self._worker.worker_id,
+                        summary="Subtask not found",
+                        success=False,
+                    )
+                wid = await self._orchestrator.assign_subtask(
+                    st, self._worker.worker_id,
+                )
+                if wid is None:
+                    logger.warning("Failed to assign subtask %s", st.id)
+                    return SubtaskResult(
+                        subtask_id=st.id,
+                        worker_id=self._worker.worker_id,
+                        summary="Assignment failed",
+                        success=False,
+                    )
+                # Notify: subtask assigned
+                self._writer.write_notification("task_update", self._task_to_params(task))
 
-            # Notify: subtask completed/failed
-            self._writer.write_notification("task_update", self._task_to_params(task))
+                result = await self._worker.execute_subtask(st)
+                await self._orchestrator.handle_subtask_result(result)
+                dispatch_event.set()
 
+                # Notify: subtask completed/failed
+                self._writer.write_notification("task_update", self._task_to_params(task))
+                return result
+
+            # Run batch concurrently
+            results = await asyncio.gather(
+                *[_run_one(sid) for sid in batch_ids],
+                return_exceptions=True,
+            )
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    logger.error(
+                        "Subtask %s raised exception: %s",
+                        batch_ids[i], r, exc_info=True,
+                    )
+
+            # Refresh task state
             updated_task = await self._orchestrator.get_task_status(task.id)
             if updated_task is not None:
                 task = updated_task
 
-            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED):
                 break
 
     def _task_to_params(self, task: Any) -> dict[str, Any]:
