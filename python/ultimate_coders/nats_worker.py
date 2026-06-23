@@ -204,12 +204,14 @@ class NatsPublisher:
         }
         await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
 
-    async def publish_heartbeat(self, consumer_id: str) -> None:
+    async def publish_heartbeat(self, consumer_id: str, worker_info: dict[str, Any] | None = None) -> None:
         """Publish a heartbeat to ``uc.heartbeat``."""
-        payload = {
+        payload: dict[str, Any] = {
             "consumer_id": consumer_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if worker_info:
+            payload.update(worker_info)
         await self._publish(NATS_SUBJECT_HEARTBEAT, payload)
 
     async def _publish(self, subject: str, payload: dict[str, Any]) -> None:
@@ -259,6 +261,11 @@ class NatsWorker:
         self._running = False
         # Event-driven dispatch: set when a subtask completes/fails, wakes _execute_subtasks
         self._dispatch_event: asyncio.Event = asyncio.Event()
+        # Remote worker discovery via heartbeat
+        self._known_remote_workers: dict[str, dict[str, Any]] = {}
+        self._cleanup_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Track current task ID for remote result collection
+        self._current_task_id: str = ""
 
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
@@ -304,6 +311,14 @@ class NatsWorker:
             self._subscriptions.append(sub)
             logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SUBMIT)
 
+            # Subscribe to uc.heartbeat for remote worker discovery
+            hb_sub = await self._nc.subscribe(
+                NATS_SUBJECT_HEARTBEAT,
+                cb=self._handle_heartbeat,
+            )
+            self._subscriptions.append(hb_sub)
+            logger.info("Subscribed to %s (remote worker discovery)", NATS_SUBJECT_HEARTBEAT)
+
             # Subscribe to Dashboard passthrough RPCs (uc.dashboard.>)
             dash_sub = await self._nc.subscribe(
                 "uc.dashboard.>",
@@ -322,6 +337,9 @@ class NatsWorker:
 
             # Start dashboard snapshot publisher
             self._snapshot_task = asyncio.create_task(self._snapshot_loop())
+
+            # Start stale worker cleanup loop
+            self._cleanup_task = asyncio.create_task(self._stale_worker_cleanup_loop())
 
         # Start heartbeat loop (both modes)
         self._running = True
@@ -351,6 +369,15 @@ class NatsWorker:
             except asyncio.CancelledError:
                 pass
             self._snapshot_task = None
+
+        # Cancel stale worker cleanup
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
 
         # Unsubscribe
         for sub in self._subscriptions:
@@ -570,57 +597,72 @@ class NatsWorker:
                     task = updated_task
                 continue
 
-            # Execute ready subtasks concurrently (bounded by capacity)
+            # Execute ready subtasks — remote or local depending on worker availability
+            use_remote = self._has_remote_workers()
             capacity = self._worker.max_capacity
             batch_ids = ready_ids[:capacity]
 
-            async def _run_one(subtask_id: str) -> SubtaskResult:
-                """Assign, execute, and report a single subtask."""
-                # Look up fresh subtask from current task state
-                st = None
-                for s in task.subtasks:
-                    if s.id == subtask_id:
-                        st = s
-                        break
-                if st is None:
-                    return SubtaskResult(
-                        subtask_id=subtask_id,
-                        worker_id=self._worker.worker_id,
-                        summary="Subtask not found",
-                        success=False,
+            if use_remote:
+                # Remote dispatch: publish uc.subtask.execute for each ready subtask
+                for sid in batch_ids:
+                    st = None
+                    for s in task.subtasks:
+                        if s.id == sid:
+                            st = s
+                            break
+                    if st is None:
+                        continue
+                    await self._dispatch_remote(st)
+                # Remote workers will report results via uc.task.event
+                # → _handle_task_event → _dispatch_event.set() → next iteration
+            else:
+                # Local execution: existing _run_one logic
+                async def _run_one(subtask_id: str) -> SubtaskResult:
+                    """Assign, execute, and report a single subtask locally."""
+                    st = None
+                    for s in task.subtasks:
+                        if s.id == subtask_id:
+                            st = s
+                            break
+                    if st is None:
+                        return SubtaskResult(
+                            subtask_id=subtask_id,
+                            worker_id=self._worker.worker_id,
+                            summary="Subtask not found",
+                            success=False,
+                        )
+                    wid = await self._orchestrator.assign_subtask(
+                        st, self._worker.worker_id,
                     )
-                wid = await self._orchestrator.assign_subtask(
-                    st, self._worker.worker_id,
+                    if wid is None:
+                        logger.warning("Failed to assign subtask %s", st.id)
+                        return SubtaskResult(
+                            subtask_id=st.id,
+                            worker_id=self._worker.worker_id,
+                            summary="Assignment failed",
+                            success=False,
+                        )
+                    if self._publisher is not None:
+                        await self._publisher.publish_update(task)
+                    result = await self._worker.execute_subtask(st)
+                    await self._orchestrator.handle_subtask_result(result)
+                    if self._publisher is not None:
+                        await self._publisher.publish_update(task)
+                    return result
+
+                # Run batch concurrently
+                results = await asyncio.gather(
+                    *[_run_one(sid) for sid in batch_ids],
+                    return_exceptions=True,
                 )
-                if wid is None:
-                    logger.warning("Failed to assign subtask %s", st.id)
-                    return SubtaskResult(
-                        subtask_id=st.id,
-                        worker_id=self._worker.worker_id,
-                        summary="Assignment failed",
-                        success=False,
-                    )
-                if self._publisher is not None:
-                    await self._publisher.publish_update(task)
-                result = await self._worker.execute_subtask(st)
-                await self._orchestrator.handle_subtask_result(result)
-                if self._publisher is not None:
-                    await self._publisher.publish_update(task)
-                return result
 
-            # Run batch concurrently
-            results = await asyncio.gather(
-                *[_run_one(sid) for sid in batch_ids],
-                return_exceptions=True,
-            )
-
-            # Log any exceptions from gather
-            for i, r in enumerate(results):
-                if isinstance(r, Exception):
-                    logger.error(
-                        "Subtask %s raised exception: %s",
-                        batch_ids[i], r, exc_info=True,
-                    )
+                # Log any exceptions from gather
+                for i, r in enumerate(results):
+                    if isinstance(r, Exception):
+                        logger.error(
+                            "Subtask %s raised exception: %s",
+                            batch_ids[i], r, exc_info=True,
+                        )
 
             # Refresh task state
             updated_task = self._orchestrator.get_task_status(task.id)
@@ -631,6 +673,35 @@ class NatsWorker:
             if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED):
                 break
 
+    async def _dispatch_remote(self, subtask: Subtask) -> None:
+        """Dispatch a subtask to remote Workers via NATS.
+
+        Publishes a ``uc.subtask.execute`` message. The NATS queue group
+        ensures exactly one remote Worker picks it up. Results come back
+        via ``uc.task.event`` (handled by _handle_task_event).
+        """
+        if self._publisher is None or self._nc is None:
+            return
+
+        # Mark subtask as assigned in local Orchestrator
+        self._orchestrator.assign_subtask(subtask, "remote")
+
+        msg = json.dumps({
+            "task_id": subtask.parent_id,
+            "subtask_id": subtask.id,
+            "description": subtask.description,
+            "depends_on": subtask.depends_on,
+            "file_constraints": subtask.file_constraints,
+            "expected_output": subtask.expected_output,
+            "timeout_seconds": subtask.timeout_seconds or 600,
+        }).encode()
+
+        await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
+        logger.info(
+            "Dispatched subtask %s to remote workers",
+            subtask.id[:8],
+        )
+
     # ── Heartbeat loop ───────────────────────────────────────────
 
     async def _heartbeat_loop(self) -> None:
@@ -638,7 +709,16 @@ class NatsWorker:
         while self._running:
             try:
                 if self._publisher is not None:
-                    await self._publisher.publish_heartbeat(self._consumer_id)
+                    w_info = None
+                    if self._worker is not None:
+                        info = self._worker.get_info()
+                        w_info = {
+                            "worker_id": info.id,
+                            "capabilities": info.capabilities,
+                            "current_load": info.current_load,
+                            "max_capacity": info.max_capacity,
+                        }
+                    await self._publisher.publish_heartbeat(self._consumer_id, w_info)
                     logger.debug(
                         "Heartbeat sent (consumer_id=%s)", self._consumer_id
                     )
@@ -793,11 +873,65 @@ class NatsWorker:
         elif event_type == "task_resumed":
             self._orchestrator.resume_task_local(task_id)
         elif event_type in ("subtask_completed", "subtask_failed"):
+            # For remote dispatch: feed the result back into the Orchestrator
+            subtask_id = data.get("subtask_id", "")
+            if subtask_id and self._current_task_id == task_id:
+                self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
             # Wake _execute_subtasks loop so newly-unblocked subtasks dispatch immediately
             self._dispatch_event.set()
         else:
             # Other event types are handled by the Rust NATS subscriber
             logger.debug("Ignoring uc.task.event type=%s", event_type)
+
+    # ── Remote worker discovery ─────────────────────────────────────
+
+    async def _handle_heartbeat(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.heartbeat`` messages for remote worker discovery.
+
+        Updates known_remote_workers with the sender's info.
+        Skips heartbeats from our own worker_id to avoid self-discovery.
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.debug("Failed to parse heartbeat message", exc_info=True)
+            return
+
+        worker_id = data.get("worker_id", "")
+        if not worker_id or worker_id == (self._worker.worker_id if self._worker else ""):
+            return  # Skip self
+
+        self._known_remote_workers[worker_id] = {
+            "id": worker_id,
+            "capabilities": data.get("capabilities", []),
+            "load": data.get("current_load", 0),
+            "max_capacity": data.get("max_capacity", 3),
+            "last_seen": datetime.now(timezone.utc),
+        }
+        logger.debug(
+            "Remote worker heartbeat: %s (total remote: %d)",
+            worker_id[:8],
+            len(self._known_remote_workers),
+        )
+
+    def _has_remote_workers(self) -> bool:
+        """Whether any remote workers are currently known."""
+        return len(self._known_remote_workers) > 0
+
+    async def _stale_worker_cleanup_loop(self) -> None:
+        """Periodically remove workers with no heartbeat for >90s."""
+        while self._running:
+            await asyncio.sleep(60)
+            now = datetime.now(timezone.utc)
+            stale_cutoff = 90  # seconds
+            stale_ids = [
+                wid
+                for wid, info in self._known_remote_workers.items()
+                if (now - info["last_seen"]).total_seconds() > stale_cutoff
+            ]
+            for wid in stale_ids:
+                del self._known_remote_workers[wid]
+                logger.info("Removed stale remote worker: %s", wid[:8])
 
     # ── Dashboard NATS request-reply handlers ──────────────────────
 

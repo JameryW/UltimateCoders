@@ -1919,6 +1919,7 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
             let output = event
                 .data
                 .get("output")
+                .or_else(|| event.data.get("result"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -2795,15 +2796,24 @@ pub async fn apply_worker_event_to_store(
                 .get("recoverable")
                 .map(|s| s == "true")
                 .unwrap_or(false),
-            stderr_tail: worker_event
-                .data
-                .get("stderr_tail")
-                .cloned()
-                .unwrap_or_default(),
+            stderr_tail: worker_event.data.get("stderr_tail").cloned().unwrap_or_default(),
             recent_tools: worker_event
                 .data
                 .get("recent_tools")
-                .cloned()
+                .map(|s| {
+                    // Parse JSON array or comma-separated string into JSON-serialized format
+                    if s.starts_with('[') {
+                        // Already JSON array format — keep as-is
+                        s.clone()
+                    } else {
+                        // Comma-separated or single value — normalize to JSON array string
+                        let items: Vec<&str> = s.split(',')
+                            .map(|v| v.trim())
+                            .filter(|v| !v.is_empty())
+                            .collect();
+                        serde_json::to_string(&items).unwrap_or_default()
+                    }
+                })
                 .unwrap_or_default(),
         }),
         "task_completed" => Some(uc_engine::AgentEventType::TaskCompleted {

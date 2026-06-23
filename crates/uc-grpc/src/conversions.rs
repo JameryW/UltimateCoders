@@ -826,7 +826,14 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                     data_map.insert("stderr_tail".to_string(), stderr_tail);
                 }
                 if !recent_tools.is_empty() {
-                    data_map.insert("recent_tools".to_string(), recent_tools);
+                    // recent_tools is a String (may be JSON-serialized array or plain text).
+                    // If it's already a JSON array, store as-is; otherwise serialize as JSON array.
+                    let serialized = if recent_tools.starts_with('[') {
+                        recent_tools
+                    } else {
+                        serde_json::to_string(&vec![recent_tools]).unwrap_or_default()
+                    };
+                    data_map.insert("recent_tools".to_string(), serialized);
                 }
                 (
                     "subtask_failed".to_string(),
@@ -1183,7 +1190,24 @@ impl From<TaskEventProto> for AgentEvent {
                     .map(|s| s == "true")
                     .unwrap_or(false);
                 let stderr_tail = proto.data.get("stderr_tail").cloned().unwrap_or_default();
-                let recent_tools = proto.data.get("recent_tools").cloned().unwrap_or_default();
+                let recent_tools = proto
+                    .data
+                    .get("recent_tools")
+                    .map(|s| {
+                        // recent_tools may arrive as a JSON array string or comma-separated string
+                        if s.starts_with('[') {
+                            // Already a JSON array string — use as-is
+                            s.clone()
+                        } else {
+                            // Comma-separated or single value — normalize to JSON array string
+                            let items: Vec<&str> = s.split(',')
+                                .map(|v| v.trim())
+                                .filter(|v| !v.is_empty())
+                                .collect();
+                            serde_json::to_string(&items).unwrap_or_default()
+                        }
+                    })
+                    .unwrap_or_default();
                 AgentEventPayload::SubtaskFailed {
                     subtask_id,
                     error,
