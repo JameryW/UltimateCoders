@@ -78,6 +78,25 @@ class Worker:
         self.nats_publisher = nats_publisher
         self.event_emitter = event_emitter
 
+    def _dynamic_capacity(self, subtask: Subtask | None = None) -> int:
+        """Return effective concurrency limit for this worker.
+
+        Read-only subtasks (no file_constraints) can run more concurrently
+        since they can't conflict. Write-heavy subtasks are limited.
+
+        ponytail: simple heuristic — upgrade path is per-account locks.
+        """
+        base = self.max_capacity
+        if subtask is None:
+            return base
+        # No file constraints → likely read-only → allow double concurrency
+        if not subtask.file_constraints:
+            return min(base * 2, 6)
+        # Multiple file constraints → high conflict risk → limit to 1
+        if len(subtask.file_constraints) >= 3:
+            return max(1, base // 2)
+        return base
+
     def get_info(self) -> WorkerInfo:
         return WorkerInfo(
             id=self.worker_id,

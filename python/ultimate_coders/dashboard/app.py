@@ -321,12 +321,15 @@ class DashboardApp:
                     if not had_event and self._nats_client is None:
                         await cancellable_sleep(0.2)
 
-                    # Periodic full snapshot — interval adapts to activity.
-                    # Active (events this cycle): 3s. Idle: 10s.
-                    snapshot_interval = 3.0 if had_event else 10.0
-                    now = loop.time()
-                    if now - last_snapshot >= snapshot_interval:
-                        snapshot = self._get_full_snapshot()
+                    # Periodic full snapshot — incremental-first:
+                    # Skip snapshot when events are flowing (client already has
+                    # state from incremental task_event messages). Only send
+                    # full snapshot during idle periods for reconciliation.
+                    if not had_event:
+                        snapshot_interval = 10.0
+                        now = loop.time()
+                        if now - last_snapshot >= snapshot_interval:
+                            snapshot = self._get_full_snapshot()
                         last_snapshot = now
                         event_id += 1
                         yield {

@@ -1,0 +1,7 @@
+{"file": "python/ultimate_coders/local_worker.py", "reason": "Parallel subtask execution - verify gather pattern matches nats_worker"}
+{"file": "python/ultimate_coders/nats_worker.py", "reason": "SSE push optimization - verify NATS callback → generator"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Decompose validation + retry, conflict detection integration"}
+{"file": "python/ultimate_coders/agent/worker.py", "reason": "Dynamic capacity, checkpoint, auto declare/release EditIntent"}
+{"file": "python/ultimate_coders/dashboard/app.py", "reason": "Incremental snapshot + SSE push"}
+{"file": "dashboard/src/hooks/useDashboardGrpc.ts", "reason": "Incremental event-driven dashboard"}
+{"file": "tui/src/hooks/useTaskEvents.ts", "reason": "Content-key dedup for TUI"}

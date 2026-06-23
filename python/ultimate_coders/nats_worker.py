@@ -628,7 +628,8 @@ class NatsWorker:
 
             # Execute ready subtasks — remote or local depending on worker availability
             use_remote = self._has_remote_workers()
-            capacity = self._worker.max_capacity
+            # ponytail: dynamic capacity — read-only subtasks get higher concurrency
+            capacity = self._worker._dynamic_capacity()
             batch_ids = ready_ids[:capacity]
 
             if use_remote:
