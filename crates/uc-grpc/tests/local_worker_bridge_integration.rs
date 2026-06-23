@@ -40,8 +40,12 @@ async fn spawn_mock_worker() -> LocalWorkerBridge {
 /// Test: when Python worker is unavailable, submit_task returns an error.
 /// Rust-side decomposition has been removed — all decomposition must go
 /// through the Python Orchestrator (NATS or local worker bridge).
+///
+/// Sets UC_WORKER_PYTHON to a nonexistent path so the worker truly can't start,
+/// regardless of whether a .venv exists in the project.
 #[tokio::test]
 async fn fallback_without_worker() {
+    std::env::set_var("UC_WORKER_PYTHON", "/nonexistent/python3-uc-test");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 
@@ -65,10 +69,12 @@ async fn fallback_without_worker() {
         inner.error.unwrap().contains("No Orchestrator available"),
         "error should explain no Orchestrator is available"
     );
+    std::env::remove_var("UC_WORKER_PYTHON");
 }
 
 #[tokio::test]
 async fn local_decomposition_single_line() {
+    std::env::set_var("UC_WORKER_PYTHON", "/nonexistent/python3-uc-test");
     let engine = LocalEngine::new_fallback();
     let server = GrpcServer::new(engine);
 
@@ -85,6 +91,7 @@ async fn local_decomposition_single_line() {
     let inner = response.into_inner();
     // No worker available — returns error
     assert!(!inner.success);
+    std::env::remove_var("UC_WORKER_PYTHON");
 }
 
 /// Test: empty description returns error.
