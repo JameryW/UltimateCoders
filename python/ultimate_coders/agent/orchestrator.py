@@ -45,6 +45,7 @@ Output a JSON array of subtask objects with these fields:
 - "description": What the subtask should accomplish (be specific about files, functions, etc.)
 - "depends_on": List of 1-based indices of subtasks this depends on (empty if none)
 - "file_constraints": List of file paths that should NOT be modified
+- "files": List of file paths that this subtask WILL modify (used for conflict detection)
 - "expected_output": What the completed subtask should produce
 
 Guidelines:
@@ -54,6 +55,7 @@ Guidelines:
 - Make dependencies minimal but correct (don't create unnecessary serialization)
 - Include a "research" subtask first if the task requires understanding existing code
 - Include a "test" subtask if the task involves writing code
+- List files each subtask will modify in "files" — this prevents parallel conflicts
 
 Respond with ONLY the JSON array, no other text.
 """
@@ -689,9 +691,37 @@ class Orchestrator:
         if not candidates:
             return None
 
+        # Filter out subtasks with file conflicts (active intents from other workers)
+        conflict_free = []
+        for st in candidates:
+            if not st.file_constraints:
+                conflict_free.append(st)
+                continue
+            # Check each file in constraints against active intents
+            blocked = False
+            for fp in st.file_constraints:
+                intents = self.conflict_detector.get_intents(fp)
+                # Blocked if another worker has an active intent on this file
+                if any(i.worker_id != st.assigned_worker for i in intents):
+                    blocked = True
+                    break
+            if not blocked:
+                conflict_free.append(st)
+            else:
+                logger.debug(
+                    "Subtask %s blocked by file conflict: %s",
+                    st.id[:8], st.file_constraints,
+                )
+
+        if not conflict_free:
+            # All candidates blocked — fall back to first candidate
+            # (deadlock prevention: if everything is blocked, pick one anyway)
+            candidates.sort(key=lambda st: -st.priority)
+            return candidates[0]
+
         # Sort by priority descending (higher priority first)
-        candidates.sort(key=lambda st: -st.priority)
-        return candidates[0]
+        conflict_free.sort(key=lambda st: -st.priority)
+        return conflict_free[0]
 
     def select_next_subtask(self, task: Task) -> Subtask | None:
         """Public API for selecting the next ready subtask.
@@ -749,7 +779,8 @@ class Orchestrator:
                 description=item.get("description", f"Subtask {idx + 1}"),
                 status=SubtaskStatus.PENDING,
                 priority=item.get("priority", 0),
-                file_constraints=item.get("file_constraints", []),
+                file_constraints=item.get("file_constraints", [])
+                    or item.get("files", []),
                 expected_output=item.get("expected_output", ""),
             )
             subtask_map[idx] = subtask
