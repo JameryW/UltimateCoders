@@ -702,6 +702,12 @@ class Orchestrator:
                     task_id=task.id,
                     data={"count": len(newly_assigned), "worker_ids": newly_assigned},
                 )
+            # Auto-checkpoint after each subtask result
+            # ponytail: fire-and-forget, don't block scheduling on checkpoint failure
+            try:
+                await self.checkpoint_task(task.id)
+            except Exception:
+                logger.debug("Auto-checkpoint failed for task %s", task.id, exc_info=True)
 
     async def register_worker(self, worker_info: WorkerInfo) -> None:
         """Register a new worker.
@@ -2041,7 +2047,8 @@ ORCHESTRATE RULES:
         """Recover a task from the latest checkpoint.
 
         Tries the engine's recovery system first, then falls back to
-        reading from engine memory.
+        reading from engine memory. Restores the Task object into
+        self.tasks and rebuilds the subtask index.
 
         Args:
             task_id: The task ID to recover.
@@ -2049,22 +2056,54 @@ ORCHESTRATE RULES:
         Returns:
             The recovered task state dict, or None if recovery failed.
         """
+        state: dict | None = None
+
         # Try engine recovery (if available)
         if self.engine is not None and hasattr(self.engine, "recover_task"):
             try:
                 state = self.engine.recover_task(task_id)
                 logger.info("Recovered task %s from engine", task_id)
-                return state
             except Exception:
                 logger.warning("Engine recovery failed for %s", task_id, exc_info=True)
 
-        # Fallback: check if task exists in local dict
-        task = self.tasks.get(task_id)
-        if task is not None:
-            logger.info("Recovered task %s from local state", task_id)
-            return task.to_dict()
+        # Fallback: try reading from engine memory (last checkpoint)
+        if state is None and self.engine is not None:
+            try:
+                # ponytail: scan for most recent checkpoint for this task
+                mem = self.engine.read_memory(
+                    key_scope="task",
+                    key=f"checkpoint_snap-{task_id}-",
+                    source_agent="orchestrator",
+                    task_id=task_id,
+                )
+                if mem is not None:
+                    import json
+                    state = json.loads(mem) if isinstance(mem, str) else mem
+            except Exception:
+                pass
 
-        return None
+        # Fallback: check if task exists in local dict
+        if state is None:
+            task = self.tasks.get(task_id)
+            if task is not None:
+                logger.info("Recovered task %s from local state", task_id)
+                return task.to_dict()
+            return None
+
+        # Restore live Task object from checkpoint dict
+        try:
+            from ultimate_coders.agent.types import Task as TaskType
+            task = TaskType.from_dict(state)
+            self.tasks[task.id] = task
+            self._rebuild_subtask_index(task)
+            logger.info(
+                "Restored task %s with %d subtasks from checkpoint",
+                task.id, len(task.subtasks),
+            )
+        except Exception:
+            logger.warning("Failed to restore task %s from checkpoint dict", task_id, exc_info=True)
+
+        return state
 
     def check_edit_conflict(
         self,

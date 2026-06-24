@@ -896,8 +896,11 @@ class TestTaskEventEmitter:
 
         emitter = TaskEventEmitter(buffer_size=5)
         loop = asyncio.new_event_loop()
+        # Use different event types to avoid dedup (same type+task+subtask within 5s)
         for i in range(10):
-            loop.run_until_complete(emitter.emit("ev", task_id="t", data={"i": i}))
+            loop.run_until_complete(
+                emitter.emit(f"ev_{i}", task_id=f"t_{i}", data={"i": i})
+            )
         assert len(emitter.get_recent_events()) == 5
         loop.close()
 
