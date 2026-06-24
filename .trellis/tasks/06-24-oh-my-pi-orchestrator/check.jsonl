@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "验证 checkpoint/resume + retry 实现符合规范"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "验证 gRPC 同步接口兼容性"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证错误处理和重试策略符合规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量检查标准"}
+{"file": ".trellis/tasks/06-24-oh-my-pi-orchestrator/prd.md", "reason": "对照 AC 逐项验证"}

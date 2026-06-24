@@ -1622,3 +1622,37 @@ Completed 3 tasks merged via PR #133: (1) Orchestrator Agent — plan_task, ask,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 47: Checkpoint全链路优化收尾 + gRPC UpdateTask事件推送 + event version字段
+
+**Date**: 2026-06-24
+**Task**: Checkpoint全链路优化收尾 + gRPC UpdateTask事件推送 + event version字段
+**Branch**: `main`
+
+### Summary
+
+验证06-23-checkpoint全部9项需求已实现（stdout streaming/SubtaskSummary扩展/事件去重/增量推送/自动调度/checkpoint增强/JetStream Event Sourcing/心跳超时/SSE fallback），补充event v:1 version字段（Python TaskEvent+NatsTaskEvent+Rust WorkerTaskEvent+NatsTaskEvent），归档3个已完成任务
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c02bbdad` | (see git log) |
+| `70de9410` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

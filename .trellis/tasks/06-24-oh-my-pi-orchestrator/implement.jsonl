@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Checkpoint/resume + retry + heartbeat 规范，omp 侧需对齐"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskStore 接口 — UpdateTask + WatchTask 定义"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "事件管道规范 — omp 侧状态同步需遵循"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS 桥接规范 — omp 侧不需要 NATS 但需理解事件结构"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理规范 — 重试 + backoff 策略"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量标准"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端状态管理 — Dashboard 事件消费方式"}
+{"file": ".trellis/tasks/06-24-oh-my-pi-orchestrator/prd.md", "reason": "本任务 PRD — 完整需求和 AC"}
+{"file": ".trellis/tasks/06-23-oh-my-pi-orchestrator/prd.md", "reason": "原始 PRD — 架构设计参考"}
+{"file": ".trellis/tasks/archive/2026-06/06-23-checkpoint/prd.md", "reason": "Python 侧全链路优化 PRD — checkpoint/重试/心跳的参考实现"}
