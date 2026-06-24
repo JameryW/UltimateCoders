@@ -1,10 +1,10 @@
 /**
  * gRPC Bridge — Connects uc-orchestrator to UC Rust core engine.
  *
- * Uses gRPC-Web (HTTP+protobuf) to communicate with the UC gRPC server.
+ * Uses gRPC-Web (HTTP+JSON) to communicate with the UC gRPC server.
  * This avoids needing native gRPC libraries in the Bun runtime.
  *
- * ponytail: HTTP fetch + protobuf binary — no @grpc/grpc-js dependency.
+ * ponytail: HTTP fetch + JSON — no @grpc/grpc-js dependency.
  * Upgrade to native gRPC if perf matters.
  */
 
@@ -32,6 +32,9 @@ export interface TaskSync {
 	}>;
 }
 
+// ponytail: internal response type to avoid Record<string, unknown> everywhere
+type RpcResp = Record<string, unknown>;
+
 // ── Bridge ─────────────────────────────────────────────────────────
 
 export class GrpcBridge {
@@ -51,7 +54,10 @@ export class GrpcBridge {
 	async health(): Promise<{ status: string; version: string }> {
 		try {
 			const resp = await this.rpc("Health", {});
-			return { status: resp.status ?? "unknown", version: resp.version ?? "0.0.0" };
+			return {
+				status: (resp.status as string) ?? "unknown",
+				version: (resp.version as string) ?? "0.0.0",
+			};
 		} catch {
 			return { status: "unavailable", version: "0.0.0" };
 		}
@@ -65,7 +71,7 @@ export class GrpcBridge {
 				description,
 				project_id: projectId,
 			});
-			if (!resp.success) return null;
+			if (!(resp.success as boolean)) return null;
 			return this.parseTaskSync(resp);
 		} catch {
 			return null;
@@ -75,8 +81,8 @@ export class GrpcBridge {
 	async getTask(taskId: string): Promise<TaskSync | null> {
 		try {
 			const resp = await this.rpc("GetTask", { task_id: taskId });
-			if (!resp.available) return null;
-			return this.parseTaskSync(resp.task);
+			if (!(resp.available as boolean)) return null;
+			return this.parseTaskSync(resp.task as RpcResp);
 		} catch {
 			return null;
 		}
@@ -85,10 +91,59 @@ export class GrpcBridge {
 	async listTasks(): Promise<TaskSync[]> {
 		try {
 			const resp = await this.rpc("ListTasks", {});
-			if (!resp.available) return [];
-			return (resp.tasks ?? []).map(this.parseTaskSync);
+			if (!(resp.available as boolean)) return [];
+			return ((resp.tasks as RpcResp[]) ?? []).map(this.parseTaskSync);
 		} catch {
 			return [];
+		}
+	}
+
+	// ── Upsert (create or update) ──────────────────────────────
+
+	/**
+	 * Upsert task: if task exists on server, update it; otherwise create.
+	 * ponytail: single submitTask with task_id — server handles upsert.
+	 */
+	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
+		try {
+			const resp = await this.rpc("SubmitTask", {
+				description: task.description,
+				project_id: "",
+				task_id: task.id,
+				status: task.status,
+				control_state: task.controlState,
+				subtasks: task.subtasks.map((st) => ({
+					id: st.id,
+					description: st.description,
+					status: st.status,
+					depends_on: st.dependsOn,
+					result: st.result ?? "",
+					error: st.error ?? "",
+				})),
+			});
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
+	// ── Task Control ────────────────────────────────────────────
+
+	async pauseTask(taskId: string): Promise<boolean> {
+		try {
+			const resp = await this.rpc("PauseTask", { task_id: taskId });
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
+	async resumeTask(taskId: string): Promise<boolean> {
+		try {
+			const resp = await this.rpc("ResumeTask", { task_id: taskId });
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
 		}
 	}
 
@@ -107,7 +162,8 @@ export class GrpcBridge {
 				task_id: taskId,
 				project_id: projectId,
 			});
-			return resp.entry?.content ?? null;
+			const entry = resp.entry as RpcResp | undefined;
+			return entry?.content as string ?? null;
 		} catch {
 			return null;
 		}
@@ -151,9 +207,9 @@ export class GrpcBridge {
 				project_id: projectId,
 				max_results: maxResults,
 			});
-			return (resp.results ?? []).map((r: Record<string, unknown>) => ({
-				content: (r.entry as Record<string, string>)?.content ?? "",
-				score: r.score as number ?? 0,
+			return ((resp.results as RpcResp[]) ?? []).map((r) => ({
+				content: ((r.entry as RpcResp | undefined)?.content as string) ?? "",
+				score: (r.score as number) ?? 0,
 			}));
 		} catch {
 			return [];
@@ -173,10 +229,10 @@ export class GrpcBridge {
 				modes,
 				max_results: maxResults,
 			});
-			return (resp.items ?? []).map((item: Record<string, unknown>) => ({
-				filePath: item.file_path as string ?? "",
-				snippet: item.content_snippet as string ?? "",
-				score: item.score as number ?? 0,
+			return ((resp.items as RpcResp[]) ?? []).map((item) => ({
+				filePath: (item.file_path as string) ?? "",
+				snippet: (item.content_snippet as string) ?? "",
+				score: (item.score as number) ?? 0,
 			}));
 		} catch {
 			return [];
@@ -191,7 +247,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private async rpc(method: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+	private async rpc(method: string, payload: Record<string, unknown>): Promise<RpcResp> {
 		const service = this.resolveService(method);
 		const url = `${this.config.serverUrl}/ultimate_coders.${service}/${method}`;
 
@@ -214,7 +270,7 @@ export class GrpcBridge {
 			}
 
 			this.connected = true;
-			return await resp.json() as Record<string, unknown>;
+			return (await resp.json()) as RpcResp;
 		} finally {
 			clearTimeout(timer);
 		}
@@ -236,16 +292,16 @@ export class GrpcBridge {
 		return "EngineService";
 	}
 
-	private parseTaskSync = (raw: Record<string, unknown>): TaskSync => ({
-		taskId: raw.id as string ?? "",
-		description: raw.description as string ?? "",
-		status: raw.status as string ?? "",
-		projectId: raw.project_id as string ?? "",
-		subtasks: (raw.subtasks as Array<Record<string, unknown>> ?? []).map((st) => ({
-			id: st.id as string ?? "",
-			description: st.description as string ?? "",
-			status: st.status as string ?? "",
-			dependsOn: st.depends_on as string[] ?? [],
+	private parseTaskSync = (raw: RpcResp): TaskSync => ({
+		taskId: (raw.id as string) ?? "",
+		description: (raw.description as string) ?? "",
+		status: (raw.status as string) ?? "",
+		projectId: (raw.project_id as string) ?? "",
+		subtasks: ((raw.subtasks as RpcResp[]) ?? []).map((st) => ({
+			id: (st.id as string) ?? "",
+			description: (st.description as string) ?? "",
+			status: (st.status as string) ?? "",
+			dependsOn: (st.depends_on as string[]) ?? [],
 			assignedWorker: st.assigned_worker as string | undefined,
 			result: st.result as string | undefined,
 		})),
