@@ -43,3 +43,13 @@ export function statusBadgeClass(status: string): string {
     default: return "status-default";
   }
 }
+
+/** Compute the p-th percentile (0–100) from a sorted numeric array. */
+export function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo]!;
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (idx - lo);
+}

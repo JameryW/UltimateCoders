@@ -71,6 +71,7 @@ function exportEvents(events: DashboardEvent[]): void {
 
 export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [errorsOnly, setErrorsOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   // ponytail: deferred search — expensive JSON.stringify filter only runs after user pauses typing
@@ -81,9 +82,13 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
     [events]
   );
 
+  const ERROR_TYPES = new Set(["task_failed", "subtask_failed", "circuit_breaker_reset"]);
+
   const filteredEvents = useMemo(() => {
     let result = events;
-    if (typeFilter) {
+    if (errorsOnly) {
+      result = result.filter((e) => ERROR_TYPES.has(e.type));
+    } else if (typeFilter) {
       result = result.filter((e) => e.type === typeFilter);
     }
     if (deferredSearch.trim()) {
@@ -146,24 +151,37 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
 
       {events.length > 0 && (
         <div className="space-y-2 mb-2">
-          {uniqueTypes.length > 1 && (
-            <div className="flex flex-wrap gap-1">
-              {uniqueTypes.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setTypeFilter(typeFilter === type ? null : type)}
-                  className={cn(
-                    "text-xs px-1.5 py-0.5 rounded cursor-pointer",
-                    eventTypeBg(type),
-                    eventTypeColor(type),
-                    typeFilter === type && "ring-1 ring-[var(--text-muted)]"
-                  )}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setErrorsOnly(!errorsOnly); if (!errorsOnly) setTypeFilter(null); }}
+              className={cn(
+                "text-xs px-2 py-0.5 rounded cursor-pointer border",
+                errorsOnly
+                  ? "bg-red-500/20 text-red-400 border-red-500/40"
+                  : "text-[var(--text-muted)] border-[var(--border-color)] hover:text-red-400"
+              )}
+            >
+              Errors
+            </button>
+            {!errorsOnly && uniqueTypes.length > 1 && (
+              <div className="flex flex-wrap gap-1">
+                {uniqueTypes.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setTypeFilter(typeFilter === type ? null : type)}
+                    className={cn(
+                      "text-xs px-1.5 py-0.5 rounded cursor-pointer",
+                      eventTypeBg(type),
+                      eventTypeColor(type),
+                      typeFilter === type && "ring-1 ring-[var(--text-muted)]"
+                    )}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <input
             type="text"
             value={searchQuery}

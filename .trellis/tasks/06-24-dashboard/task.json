@@ -1,7 +1,7 @@
 {
-  "id": "dashboard-auth",
-  "name": "dashboard-auth",
-  "title": "Dashboard功能完善：auth验证+数据映射修复+错误可见性",
+  "id": "dashboard",
+  "name": "dashboard",
+  "title": "Dashboard可观测性增强：指标面板+状态洞察+错误追踪",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
