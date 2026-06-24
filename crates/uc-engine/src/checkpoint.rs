@@ -344,6 +344,7 @@ fn extract_task_id(event: &AgentEventType) -> Option<String> {
         AgentEventType::TaskFailed { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::TaskPaused { task_id } => Some(task_id.0.clone()),
         AgentEventType::TaskResumed { task_id } => Some(task_id.0.clone()),
+        AgentEventType::TaskUpdated { task_id, .. } => Some(task_id.0.clone()),
     }
 }
 
@@ -427,6 +428,9 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
         }
         AgentEventType::TaskResumed { .. } => {
             snapshot.status = "in_progress".to_string();
+        }
+        AgentEventType::TaskUpdated { status, .. } => {
+            snapshot.status = status.to_lowercase();
         }
         AgentEventType::ToolInvoked { .. }
         | AgentEventType::ToolResult { .. }

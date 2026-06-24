@@ -101,20 +101,25 @@ export class GrpcBridge {
 	// ── Upsert (create or update) ──────────────────────────────
 
 	/**
-	 * Upsert task: if task exists on server, update it; otherwise create.
-	 * ponytail: server has no UpdateTask RPC yet, so we check existence
-	 * with GetTask first and skip if already present. Full upsert
-	 * requires adding UpdateTask to the proto — tracked as TODO.
+	 * Upsert task: if task exists on server, call UpdateTask; otherwise SubmitTask.
 	 */
 	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
 		try {
-			// Check if task already exists on server
 			const existing = await this.getTask(task.id);
 			if (existing) {
-				// Task exists — server has no UpdateTask RPC yet.
-				// Re-submit would create a duplicate; skip for now.
-				// TODO: implement proper update once UpdateTask RPC is added.
-				return true; // Consider existing task as "synced"
+				// Task exists — update via UpdateTask RPC
+				const resp = await this.rpc("UpdateTask", {
+					task_id: task.id,
+					status: task.status,
+					subtasks: task.subtasks.map((st) => ({
+						id: st.id,
+						description: st.description,
+						status: st.status,
+						depends_on: st.dependsOn,
+						result: st.result ?? "",
+					})),
+				});
+				return (resp.success as boolean) ?? false;
 			}
 
 			const resp = await this.rpc("SubmitTask", {
@@ -290,7 +295,7 @@ export class GrpcBridge {
 	private resolveService(method: string): string {
 		const taskMethods = new Set([
 			"SubmitTask", "GetTask", "ListTasks",
-			"WatchTask", "PauseTask", "ResumeTask",
+			"WatchTask", "PauseTask", "ResumeTask", "UpdateTask",
 		]);
 		const engineMethods = new Set([
 			"Search", "IndexRepo", "GetIndexState", "RemoveIndex",

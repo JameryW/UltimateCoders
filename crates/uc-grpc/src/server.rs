@@ -19,7 +19,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
-use crate::conversions::{memory_key_from_proto, task_status_to_proto};
+use crate::conversions::{memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str, task_status_to_proto};
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
@@ -471,6 +471,59 @@ impl TaskStore {
         }
     }
 
+    /// Update an existing task's status and subtasks via gRPC UpdateTask RPC.
+    ///
+    /// Performs full upsert on subtasks: matches by ID, updates status/result,
+    /// adds new subtasks. Records a TaskUpdated event for WatchTask stream.
+    pub fn update_task(
+        &mut self,
+        task_id: &str,
+        status: &str,
+        subtasks: Vec<uc_types::Subtask>,
+    ) -> Result<uc_types::Task, String> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("Task not found: {}", task_id))?;
+
+        // Update status
+        if let Ok(parsed) = proto_status_to_task_status(status) {
+            task.status = parsed;
+        }
+        task.updated_at = chrono::Utc::now();
+
+        // Upsert subtasks: update existing, add new
+        for st in subtasks {
+            if let Some(existing) = task.subtasks.iter_mut().find(|s| s.id == st.id) {
+                existing.status = st.status;
+                existing.result = st.result.clone();
+                if !st.description.is_empty() {
+                    existing.description = st.description;
+                }
+                if !st.depends_on.is_empty() {
+                    existing.depends_on = st.depends_on;
+                }
+                if st.assigned_worker.is_some() {
+                    existing.assigned_worker = st.assigned_worker.clone();
+                }
+            } else {
+                task.subtasks.push(st);
+            }
+        }
+
+        let updated = task.clone();
+
+        // Record TaskUpdated event for WatchTask consumers (Dashboard)
+        self.record_event(
+            uc_engine::AgentEventType::TaskUpdated {
+                task_id: uc_types::TaskId(task_id.to_string()),
+                status: status.to_string(),
+            },
+        );
+
+        Ok(updated)
+    }
+
     /// Read events from the given offset (from inline log).
     /// For persistent reads, use `event_store().read_from()` instead.
     pub fn read_events_from(&self, offset: usize) -> Vec<uc_engine::AgentEventType> {
@@ -633,6 +686,9 @@ impl TaskStore {
                 format!("task.{}", task_id.0)
             }
             uc_engine::AgentEventType::TaskResumed { task_id } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::TaskUpdated { task_id, .. } => {
                 format!("task.{}", task_id.0)
             }
             _ => "events".to_string(),
@@ -2472,6 +2528,70 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 }))
             }
             Err(e) => Ok(Response::new(ResumeTaskResponse {
+                success: false,
+                task_id: req.task_id,
+                status: String::new(),
+                error: Some(e),
+            })),
+        }
+    }
+
+    async fn update_task(
+        &self,
+        request: Request<UpdateTaskRequest>,
+    ) -> Result<Response<UpdateTaskResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        let status_str = req.status.clone();
+
+        // Convert proto subtasks to Rust Subtask type
+        let subtasks: Vec<uc_types::Subtask> = req.subtasks.into_iter().map(|st| {
+            let sub_status = proto_subtask_status_from_str(&st.status)
+                .unwrap_or(uc_types::SubtaskStatus::Pending);
+            uc_types::Subtask {
+                id: uc_types::TaskId(st.id),
+                parent_id: uc_types::TaskId(task_id.clone()),
+                description: st.description,
+                status: sub_status,
+                assigned_worker: st.assigned_worker.map(uc_types::WorkerId),
+                depends_on: st.depends_on.into_iter().map(uc_types::TaskId).collect(),
+                file_constraints: Vec::new(),
+                expected_output: String::new(),
+                result: None, // Result updated separately via SubtaskCompleted event
+            }
+        }).collect();
+
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.update_task(&task_id, &status_str, subtasks) {
+                Ok(task) => {
+                    // TaskUpdated event is already recorded inside update_task
+                    // Broadcast to WatchTask streams
+                    let proto_event = TaskEvent {
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                        r#type: "task_updated".to_string(),
+                        task_id: task.id.0.clone(),
+                        subtask_id: None,
+                        data: HashMap::from([
+                            ("status".to_string(), status_str.clone()),
+                        ]),
+                    };
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+
+        match result {
+            Ok(task) => Ok(Response::new(UpdateTaskResponse {
+                success: true,
+                task_id: task.id.0,
+                status: task_status_to_proto(&task.status).to_string(),
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(UpdateTaskResponse {
                 success: false,
                 task_id: req.task_id,
                 status: String::new(),
