@@ -19,7 +19,10 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
-use crate::conversions::{memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str, task_status_to_proto};
+use crate::conversions::{
+    memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str,
+    task_status_to_proto,
+};
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
@@ -494,14 +497,22 @@ impl TaskStore {
 
         // Collect subtask state transitions for event emission
         // ponytail: collect before mutation, emit after
-        let mut subtask_transitions: Vec<(uc_types::TaskId, uc_types::SubtaskStatus, uc_types::SubtaskStatus)> = Vec::new();
+        let mut subtask_transitions: Vec<(
+            uc_types::TaskId,
+            uc_types::SubtaskStatus,
+            uc_types::SubtaskStatus,
+        )> = Vec::new();
         let mut new_subtask_ids: Vec<uc_types::TaskId> = Vec::new();
 
         // Upsert subtasks: update existing, add new
         for st in subtasks {
             if let Some(existing) = task.subtasks.iter_mut().find(|s| s.id == st.id) {
                 if existing.status != st.status {
-                    subtask_transitions.push((st.id.clone(), existing.status.clone(), st.status.clone()));
+                    subtask_transitions.push((
+                        st.id.clone(),
+                        existing.status.clone(),
+                        st.status.clone(),
+                    ));
                 }
                 existing.status = st.status;
                 existing.result = st.result.clone();
@@ -2605,21 +2616,25 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         let status_str = req.status.clone();
 
         // Convert proto subtasks to Rust Subtask type
-        let subtasks: Vec<uc_types::Subtask> = req.subtasks.into_iter().map(|st| {
-            let sub_status = proto_subtask_status_from_str(&st.status)
-                .unwrap_or(uc_types::SubtaskStatus::Pending);
-            uc_types::Subtask {
-                id: uc_types::TaskId(st.id),
-                parent_id: uc_types::TaskId(task_id.clone()),
-                description: st.description,
-                status: sub_status,
-                assigned_worker: st.assigned_worker.map(uc_types::WorkerId),
-                depends_on: st.depends_on.into_iter().map(uc_types::TaskId).collect(),
-                file_constraints: Vec::new(),
-                expected_output: String::new(),
-                result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
-            }
-        }).collect();
+        let subtasks: Vec<uc_types::Subtask> = req
+            .subtasks
+            .into_iter()
+            .map(|st| {
+                let sub_status = proto_subtask_status_from_str(&st.status)
+                    .unwrap_or(uc_types::SubtaskStatus::Pending);
+                uc_types::Subtask {
+                    id: uc_types::TaskId(st.id),
+                    parent_id: uc_types::TaskId(task_id.clone()),
+                    description: st.description,
+                    status: sub_status,
+                    assigned_worker: st.assigned_worker.map(uc_types::WorkerId),
+                    depends_on: st.depends_on.into_iter().map(uc_types::TaskId).collect(),
+                    file_constraints: Vec::new(),
+                    expected_output: String::new(),
+                    result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
+                }
+            })
+            .collect();
 
         let result = {
             let mut store = self.inner.task_store.lock().await;
