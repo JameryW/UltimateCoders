@@ -31,24 +31,25 @@ function formatBucketLabel(key: string, range: TimeRange): string {
     d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function bucketEvents(events: DashboardEvent[], range: TimeRange): { name: string; completed: number; failed: number }[] {
+function bucketEvents(events: DashboardEvent[], range: TimeRange): { name: string; submitted: number; completed: number; failed: number }[] {
   const hours = TIME_RANGE_HOURS[range];
   const now = Date.now();
   const cutoff = now - hours * 3600 * 1000;
-  const buckets: Record<string, { completed: number; failed: number }> = {};
+  const buckets: Record<string, { submitted: number; completed: number; failed: number }> = {};
   const bucketMs = range === "7d" ? 24 * 3600 * 1000 : 3600 * 1000;
   // ponytail: 7d = 7 daily buckets, other ranges = hourly buckets matching hours count
   const bucketCount = range === "7d" ? 7 : hours;
   for (let i = bucketCount - 1; i >= 0; i--) {
     const ts = now - i * bucketMs;
     const key = toBucketKey(ts, range);
-    buckets[key] = { completed: 0, failed: 0 };
+    buckets[key] = { submitted: 0, completed: 0, failed: 0 };
   }
   for (const ev of events) {
     const ts = new Date(ev.timestamp).getTime();
     if (isNaN(ts) || ts < cutoff) continue;
     const key = toBucketKey(ts, range);
-    if (!buckets[key]) buckets[key] = { completed: 0, failed: 0 };
+    if (!buckets[key]) buckets[key] = { submitted: 0, completed: 0, failed: 0 };
+    if (ev.type === "task_submitted" || ev.type === "subtask_assigned") buckets[key].submitted++;
     if (ev.type === "task_completed" || ev.type === "subtask_completed") buckets[key].completed++;
     if (ev.type === "subtask_failed" || ev.type === "task_failed") buckets[key].failed++;
   }
@@ -68,7 +69,7 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
   const trendData = useMemo(() => bucketEvents(eventLog, range), [eventLog, range]);
   const statusCounts = tasks.available ? tasks.status_counts : {};
   const total = tasks.available ? tasks.total : 0;
-  const maxVal = useMemo(() => Math.max(1, ...trendData.map((d) => d.completed + d.failed)), [trendData]);
+  const maxVal = useMemo(() => Math.max(1, ...trendData.map((d) => d.submitted + d.completed + d.failed)), [trendData]);
   const plotW = trendData.length * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
   const svgW = plotW + PADDING.left + PADDING.right;
   const svgH = CHART_H + PADDING.top + PADDING.bottom;
@@ -128,28 +129,35 @@ export function TaskTrendChart({ tasks, eventLog, stale }: TaskTrendChartProps) 
             })}
             {trendData.map((d, i) => {
               const x = PADDING.left + i * (BAR_WIDTH + BAR_GAP);
+              const submittedH = (d.submitted / maxVal) * plotH;
               const completedH = (d.completed / maxVal) * plotH;
               const failedH = (d.failed / maxVal) * plotH;
-              const totalH = completedH + failedH;
-              const barY = PADDING.top + plotH - totalH;
+              // Stacked: submitted (bottom) → completed → failed (top)
+              const submittedY = PADDING.top + plotH - submittedH;
+              const completedY = submittedY - completedH;
+              const failedY = completedY - failedH;
               const isHovered = hoveredIdx === i;
               return (
                 <g key={d.name} onMouseEnter={() => handleBarHover(i)} onMouseLeave={() => handleBarHover(null)}>
                   <rect x={x - BAR_GAP / 2} y={PADDING.top} width={BAR_WIDTH + BAR_GAP} height={plotH} fill={isHovered ? "var(--bg-surface-alt)" : "transparent"} opacity={0.5} />
-                  {d.completed > 0 && <rect x={x} y={PADDING.top + plotH - completedH} width={BAR_WIDTH} height={completedH} fill="var(--status-completed, #22c55e)" rx={1} opacity={isHovered ? 1 : 0.85} />}
-                  {d.failed > 0 && <rect x={x} y={barY} width={BAR_WIDTH} height={failedH} fill="var(--status-failed, #ef4444)" rx={1} opacity={isHovered ? 1 : 0.85} />}
+                  {d.submitted > 0 && <rect x={x} y={submittedY} width={BAR_WIDTH} height={submittedH} fill="var(--status-submitted, #3b82f6)" rx={1} opacity={isHovered ? 1 : 0.85} />}
+                  {d.completed > 0 && <rect x={x} y={completedY} width={BAR_WIDTH} height={completedH} fill="var(--status-completed, #22c55e)" rx={1} opacity={isHovered ? 1 : 0.85} />}
+                  {d.failed > 0 && <rect x={x} y={failedY} width={BAR_WIDTH} height={failedH} fill="var(--status-failed, #ef4444)" rx={1} opacity={isHovered ? 1 : 0.85} />}
                   {i % labelEvery === 0 && <text x={x + BAR_WIDTH / 2} y={PADDING.top + plotH + 16} textAnchor="middle" fontSize={9} fill="var(--text-muted)">{d.name.split(" ")[1] ?? d.name}</text>}
                 </g>
               );
             })}
-            <rect x={PADDING.left} y={svgH - 6} width={8} height={8} fill="var(--status-completed, #22c55e)" rx={1} />
-            <text x={PADDING.left + 12} y={svgH - 0} fontSize={10} fill="var(--text-muted)">completed</text>
-            <rect x={PADDING.left + 72} y={svgH - 6} width={8} height={8} fill="var(--status-failed, #ef4444)" rx={1} />
-            <text x={PADDING.left + 84} y={svgH - 0} fontSize={10} fill="var(--text-muted)">failed</text>
+            <rect x={PADDING.left} y={svgH - 6} width={8} height={8} fill="var(--status-submitted, #3b82f6)" rx={1} />
+            <text x={PADDING.left + 12} y={svgH - 0} fontSize={10} fill="var(--text-muted)">submitted</text>
+            <rect x={PADDING.left + 68} y={svgH - 6} width={8} height={8} fill="var(--status-completed, #22c55e)" rx={1} />
+            <text x={PADDING.left + 80} y={svgH - 0} fontSize={10} fill="var(--text-muted)">completed</text>
+            <rect x={PADDING.left + 140} y={svgH - 6} width={8} height={8} fill="var(--status-failed, #ef4444)" rx={1} />
+            <text x={PADDING.left + 152} y={svgH - 0} fontSize={10} fill="var(--text-muted)">failed</text>
           </svg>
           {hoveredIdx !== null && trendData[hoveredIdx] && (
             <div className="absolute top-2 pointer-events-none bg-[var(--bg-surface)] border border-[var(--border-color)] rounded-lg px-3 py-2 shadow-lg text-xs z-10" style={{ left: Math.min(PADDING.left + hoveredIdx * (BAR_WIDTH + BAR_GAP) + BAR_WIDTH / 2, svgW - 120) }}>
               <p className="font-medium text-[var(--text-primary)]">{trendData[hoveredIdx].name}</p>
+              <p className="text-blue-400">submitted: {trendData[hoveredIdx].submitted}</p>
               <p className="text-green-400">completed: {trendData[hoveredIdx].completed}</p>
               <p className="text-red-400">failed: {trendData[hoveredIdx].failed}</p>
             </div>

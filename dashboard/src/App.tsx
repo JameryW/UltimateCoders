@@ -20,6 +20,7 @@ import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { SidebarPanel } from "@/components/ui/sidebar-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
+import { AlertBar } from "@/components/ui/alert-bar";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
@@ -411,7 +412,14 @@ function App() {
       />
       <main className="max-w-[1440px] mx-auto px-6 py-6">
         <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} stale={grpcStale} />
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <AlertBar
+          workers={dashboard.workers}
+          circuitBreaker={dashboard.circuitBreaker}
+          eventLog={dashboard.eventLog}
+          onJumpWorkers={() => document.getElementById("workers")?.scrollIntoView({ behavior: "smooth" })}
+          onJumpCB={() => document.getElementById("circuit-breaker")?.scrollIntoView({ behavior: "smooth" })}
+        />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
           {/* ── Left column (8/12): Core panels ────────────── */}
           <div className="lg:col-span-8 space-y-6">
             <ErrorBoundary name="Tasks">

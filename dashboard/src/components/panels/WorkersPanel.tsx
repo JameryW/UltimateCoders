@@ -139,6 +139,15 @@ export const WorkersPanel = memo(function WorkersPanel({
     setExpandedWorkerId(expandedWorkerId === workerId ? null : workerId);
   };
 
+  // ponytail: cluster load summary
+  const clusterSummary = useMemo(() => {
+    if (!workers.available || workers.workers.length === 0) return null;
+    const totalLoad = workers.workers.reduce((s, w) => s + w.current_load, 0);
+    const totalCap = workers.workers.reduce((s, w) => s + w.max_capacity, 0);
+    const pct = totalCap > 0 ? Math.round((totalLoad / totalCap) * 100) : 0;
+    return { totalLoad, totalCap, pct };
+  }, [workers]);
+
   const content = (
     <>
       {!workers.available ? (
@@ -270,9 +279,19 @@ export const WorkersPanel = memo(function WorkersPanel({
     <Card stale={stale}>
       <CardHeader>
         <CardTitle>Workers</CardTitle>
-        <Badge variant="ok">
-          {workers.available_count}/{workers.total}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="ok">
+            {workers.available_count}/{workers.total}
+          </Badge>
+          {clusterSummary && (
+            <span className={cn(
+              "text-xs font-mono",
+              clusterSummary.pct >= 80 ? "text-yellow-400" : "text-[var(--text-muted)]"
+            )}>
+              {clusterSummary.totalLoad}/{clusterSummary.totalCap} ({clusterSummary.pct}%)
+            </span>
+          )}
+        </div>
       </CardHeader>
       {content}
     </Card>
