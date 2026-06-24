@@ -1835,3 +1835,36 @@ OMP orchestrator checkpoint/resume + retry + failed task recovery + memory scope
 ### Next Steps
 
 - None - task complete
+
+
+## Session 52: Dashboard 可观测性与指标增强 v3
+
+**Date**: 2026-06-24
+**Task**: Dashboard 可观测性与指标增强 v3
+**Branch**: `feat/omp-deferred-ac-prd-update`
+
+### Summary
+
+新增 MetricsAggregator 后端滑动窗口聚合 + proto MetricsSnapshot 扩展 + 前端 MetricsPanel 4区指标卡片 + StatsBar 后端指标去重 + 趋势箭头。24 个 Python unit test，tsc/eslint/pytest 全通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c7b0f13` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

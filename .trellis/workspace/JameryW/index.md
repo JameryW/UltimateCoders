@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 51
+- **Total Sessions**: 52
 - **Last Active**: 2026-06-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1837 | Active |
+| `journal-1.md` | ~1870 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-06-24 | Dashboard 可观测性与指标增强 v3 | `4c7b0f13` | `feat/omp-deferred-ac-prd-update` |
 | 51 | 2026-06-24 | OMP Orchestrator AC milestone — 16/18 + 2 P3 deferred | `ddbb714d`, `86d56087`, `a2f7ed49`, `5896405d`, `e54546b2`, `f6d35670` | `feat/omp-deferred-ac-prd-update` |
 | 50 | 2026-06-24 | Dashboard v2 — InteractionLog auto-scroll, task duration+sort, failed summary, event time range | `b72c65ad` | `main` |
 | 49 | 2026-06-24 | Dashboard Observability — StatsBar 6-card, AlertBar, Errors filter, Cluster load | `44f3ac5e`, `0fad73c4` | `main` |
