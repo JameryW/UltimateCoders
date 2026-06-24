@@ -38,6 +38,8 @@ export function statusBadgeClass(status: string): string {
     case "failed": return "status-failed";
     case "paused": return "status-paused";
     case "in_progress": return "status-in_progress";
+    case "assigned": return "status-assigned";
+    case "conflicted": return "status-conflicted";
     default: return "status-default";
   }
 }

@@ -94,6 +94,9 @@ export interface ScheduledJob {
 export interface ExecutionHistory {
   task_id: string;
   status: string;
+  started_at?: string;
+  completed_at?: string;
+  result_summary?: string;
 }
 
 export interface SchedulerData {

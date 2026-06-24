@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo, useEffect, useRef } from "react";
 import type { GrpcConnectionState } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
@@ -46,15 +46,34 @@ const NAV_SECTIONS = [
   { hash: "files", label: "Files" },
 ];
 
-export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, lastUpdate, theme, onToggleTheme, onLogout, onReconnectGrpc, onReconnectDashGrpc, fetchErrors }: HeaderProps) {
+// ponytail: extracted timestamp — only this re-renders on lastUpdate change
+const LastUpdateTimestamp = memo(function LastUpdateTimestamp({ lastUpdate }: { lastUpdate?: string }) {
+  if (!lastUpdate) return null;
+  return <span className="text-xs text-[var(--text-muted)]">{new Date(lastUpdate).toLocaleTimeString()}</span>;
+});
+
+export const Header = memo(function Header({ connected, grpcState, grpcExhausted, dashGrpcState, lastUpdate, theme, onToggleTheme, onLogout, onReconnectGrpc, onReconnectDashGrpc, fetchErrors }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
   const grpc = grpcState ? GRPC_LABELS[grpcState] : null;
   const dash = dashGrpcState ? DASH_LABELS[dashGrpcState] : null;
   const grpcOk = grpcState === "connected";
   const dashOk = dashGrpcState === "connected";
 
+  // ponytail: click-outside handler for mobile menu
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (headerRef.current && !headerRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--bg-surface)]/80 backdrop-blur-md px-6 py-3">
+    <header ref={headerRef} className="sticky top-0 z-40 border-b border-[var(--border-color)] bg-[var(--bg-surface)]/80 backdrop-blur-md px-6 py-3">
       <div className="max-w-[1440px] mx-auto flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <h1 className="text-xl font-bold text-[var(--text-primary)]">UltimateCoders</h1>
@@ -89,7 +108,7 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
               </svg>
             )}
           </button>
-          {lastUpdate && <span className="text-xs text-[var(--text-muted)]">{new Date(lastUpdate).toLocaleTimeString()}</span>}
+          <LastUpdateTimestamp lastUpdate={lastUpdate} />
           <span className={`pulse-dot ${connected ? "bg-green-500" : "bg-red-500"}`} title={connected ? "Connected" : "Disconnected"} />
           {/* Task gRPC indicator — clickable to reconnect */}
           {grpc && (
@@ -176,4 +195,4 @@ export function Header({ connected, grpcState, grpcExhausted, dashGrpcState, las
       )}
     </header>
   );
-}
+});

@@ -36,8 +36,12 @@ function setStoredToken(token: string | null) {
  * Flow:
  * 1. On mount, try gRPC-Web EngineService.Health.
  *    - reachable → authenticated (no auth gate when only gRPC is running)
- * 2. `login(password)` stores token for future use (e.g. SSE query params).
+ * 2. `login(password)` stores token for future use (e.g. Bearer header).
  * 3. Token is persisted in localStorage so it survives page reload.
+ *
+ * TODO(security): When the Python backend enforces DASHBOARD_PASSWORD,
+ * login() should validate the password by calling Health with the
+ * Bearer token and only set isAuthenticated on success.
  */
 export function useAuth(): AuthState {
   const [token, setToken] = useState<string | null>(getStoredToken);
@@ -56,6 +60,7 @@ export function useAuth(): AuthState {
         });
         // Any response (even gRPC error) means the gRPC server is reachable
         if (res.status !== 0) {
+          setConnectionError(false);
           setIsAuthenticated(true);
           return;
         }
@@ -63,7 +68,6 @@ export function useAuth(): AuthState {
         // gRPC-Web unreachable
       }
 
-      // Both unreachable — true connection error
       setConnectionError(true);
       setIsAuthenticated(false);
     };
@@ -72,9 +76,8 @@ export function useAuth(): AuthState {
   }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {
-    // ponytail: no separate auth server — just store the token
-    // When DASHBOARD_PASSWORD is set on the Python side, the gRPC
-    // DashboardService passthrough will enforce it. For now, accept any password.
+    // ponytail: store token for Bearer header; clear connection error on attempt
+    setConnectionError(false);
     setStoredToken(password);
     setToken(password);
     setIsAuthenticated(true);

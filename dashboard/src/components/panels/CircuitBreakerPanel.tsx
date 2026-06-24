@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatNumber } from "@/lib/utils";
+import { cn, formatNumber } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { CircuitBreakerData } from "@/types/dashboard";
 
@@ -75,9 +75,15 @@ export const CircuitBreakerPanel = memo(function CircuitBreakerPanel({ data, onR
 
         {rl.available ? (
           <div className="space-y-1.5">
+            {/* ponytail: RPM usage gauge */}
             <div className="flex items-center justify-between text-sm">
               <span className="text-[var(--text-secondary)]">RPM</span>
-              <span className="text-[var(--text-primary)] font-mono">{formatNumber(rl.rpm_available)}</span>
+              <div className="flex items-center gap-2">
+                <div className="w-20 h-1.5 bg-[var(--bg-surface-alt)] rounded overflow-hidden">
+                  <div className={cn("h-full rounded", rl.rpm_available / Math.max(rl.total_requests, 1) > 0.8 ? "bg-red-500" : "bg-blue-500")} style={{ width: `${Math.min(100, (rl.rpm_available / Math.max(rl.total_requests, 1)) * 100)}%` }} />
+                </div>
+                <span className="text-[var(--text-primary)] font-mono text-xs">{formatNumber(rl.rpm_available)}/{formatNumber(rl.total_requests)}</span>
+              </div>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-[var(--text-secondary)]">TPM</span>
@@ -86,10 +92,6 @@ export const CircuitBreakerPanel = memo(function CircuitBreakerPanel({ data, onR
             <div className="flex items-center justify-between text-sm">
               <span className="text-[var(--text-secondary)]">Active</span>
               <span className="text-blue-400 font-mono">{rl.active_count}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--text-secondary)]">Total</span>
-              <span className="text-[var(--text-primary)] font-mono">{rl.total_requests}</span>
             </div>
           </div>
         ) : (

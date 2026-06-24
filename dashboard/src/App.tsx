@@ -105,6 +105,20 @@ function App() {
       }
     }
     dashboard.handleTaskEvent(ev);
+    // ponytail: proactive toasts for key async events
+    switch (ev.type) {
+      case "task_completed":
+        showToast(`Task ${ev.task_id.slice(0, 8)} completed`, "success");
+        break;
+      case "task_failed":
+        showToast(`Task ${ev.task_id.slice(0, 8)} failed`, "error");
+        break;
+      case "subtask_failed": {
+        const err = ev.data.error ? `: ${String(ev.data.error).slice(0, 60)}` : "";
+        showToast(`Subtask ${ev.subtask_id?.slice(0, 8) ?? "?"} failed${err}`, "error");
+        break;
+      }
+    }
   };
 
   // Track last update timestamp for Header display
@@ -154,6 +168,7 @@ function App() {
       dedupedHandleTaskEvent(ev);
       setLastUpdate(ev.timestamp);
     },
+    mergeGrpcTasks: dashboard.mergeGrpcTasks,
     enabled: true,
   });
 
@@ -419,7 +434,7 @@ function App() {
 
             <ErrorBoundary name="Event Log">
               <div id="events" className="scroll-mt-20">
-                <EventLogPanel events={dashboard.eventLog} stale={grpcStale} />
+                <EventLogPanel events={dashboard.eventLog} stale={grpcStale} onSelectTask={setSelectedTaskId} />
               </div>
             </ErrorBoundary>
 
@@ -466,6 +481,7 @@ function App() {
                     task={selectedTask}
                     interactionLog={dashboard.interactionLog[selectedTask.id] ?? []}
                     onNavigateFile={(nav) => setFileBrowserNav(nav)}
+                    repoId={selectedTask.project_id || undefined}
                   />
                 </div>
               </div>
@@ -481,7 +497,7 @@ function App() {
                     onToggle={() => togglePanel("workers")}
                     stale={grpcStale}
                   >
-                    <WorkersPanel workers={dashboard.workers} tasks={dashboard.tasks} stale={grpcStale} embedded />
+                    <WorkersPanel workers={dashboard.workers} tasks={dashboard.tasks} stale={grpcStale} onJumpTask={setSelectedTaskId} embedded />
                   </SidebarPanel>
                 </ErrorBoundary>
 

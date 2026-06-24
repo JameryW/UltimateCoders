@@ -11,6 +11,8 @@ import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 
 // ponytail: uses shared transport from useGrpcWeb — single HTTP/2 connection
 
+type SearchMode = "text" | "semantic" | "ast";
+
 interface SearchResult {
   repoId: string;
   filePath: string;
@@ -29,6 +31,14 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [maxResults, setMaxResults] = useState(20);
+  const [showFilters, setShowFilters] = useState(false);
+  const [modes, setModes] = useState<SearchMode[]>([]);
+  const [language, setLanguage] = useState("");
+
+  const toggleMode = (m: SearchMode) => {
+    setModes((prev) => prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]);
+  };
 
   const handleSearch = useCallback(async () => {
     const q = query.trim();
@@ -38,7 +48,12 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
     try {
       const transport = getSharedTransport();
       const client = createClient(EngineService, transport);
-      const req = create(SearchRequestSchema, { query: q, maxResults: 20 });
+      const req = create(SearchRequestSchema, {
+        query: q,
+        maxResults,
+        modes: modes.length > 0 ? modes : undefined,
+        languages: language.trim() ? [language.trim()] : undefined,
+      });
       const resp = await client.search(req);
       setResults(resp.items.map(mapResult));
       setSearched(true);
@@ -48,7 +63,7 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
     } finally {
       setSearching(false);
     }
-  }, [query]);
+  }, [query, maxResults, modes, language]);
 
   return (
     <Card stale={stale}>
@@ -56,7 +71,7 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
         <CardTitle>Code Search</CardTitle>
       </CardHeader>
 
-      <div className="flex gap-2 mb-3">
+      <div className="flex gap-2 mb-2">
         <input
           type="text"
           value={query}
@@ -74,7 +89,54 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
         >
           {searching ? "Searching…" : "Search"}
         </button>
+        <select
+          value={maxResults}
+          onChange={(e) => setMaxResults(Number(e.target.value))}
+          aria-label="Max results"
+          className="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-2 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+        {/* ponytail: toggle filter panel */}
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={cn(
+            "px-2 py-2 rounded-md border text-sm cursor-pointer transition-colors",
+            showFilters ? "border-blue-500 text-blue-400" : "border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          )}
+          title="Search filters"
+        >
+          ⚙
+        </button>
       </div>
+
+      {/* ponytail: collapsible filter controls */}
+      {showFilters && (
+        <div className="flex flex-wrap items-center gap-2 mb-2 p-2 bg-[var(--bg-primary)] rounded-md border border-[var(--border-color)]">
+          <span className="text-xs text-[var(--text-muted)]">Mode:</span>
+          {(["text", "semantic", "ast"] as SearchMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => toggleMode(m)}
+              className={cn(
+                "text-xs px-1.5 py-0.5 rounded cursor-pointer",
+                modes.includes(m) ? matchTypeClass(m) : "bg-[var(--bg-surface-alt)] text-[var(--text-secondary)]"
+              )}
+            >
+              {m}
+            </button>
+          ))}
+          <span className="text-xs text-[var(--text-muted)] ml-2">Lang:</span>
+          <input
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            placeholder="e.g. rust, python"
+            className="w-28 bg-[var(--bg-surface-alt)] border border-[var(--border-color)] rounded px-2 py-0.5 text-xs text-[var(--text-primary)] focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+      )}
 
       {error && (
         <p className="text-xs text-red-400 mb-2">Search failed: {error}</p>

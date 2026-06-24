@@ -30,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.props.fallback) return this.props.fallback;
 
     return (
-      <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-4">
+      <div className="rounded-lg border border-red-500/50 bg-red-500/10 p-4" role="alert">
         <p className="text-sm text-red-500 font-medium">
           {this.props.name ? `${this.props.name} — ` : ""}Error
         </p>
