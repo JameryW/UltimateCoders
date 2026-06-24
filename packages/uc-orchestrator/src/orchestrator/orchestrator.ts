@@ -46,6 +46,12 @@ interface SubtaskResult {
 	review?: ReviewResult;
 	startedAt?: number;
 	completedAt?: number;
+	/** Files modified by this subtask (populated on completion). */
+	modifiedFiles?: string[];
+	/** Recent tool calls (last 5, for checkpoint + debugging). */
+	recentToolCalls?: string[];
+	/** Last lines of stderr (for failure context). */
+	stderrTail?: string;
 }
 
 interface ReviewResult {
@@ -703,7 +709,8 @@ export class UCOrchestrator {
 				}
 			} else {
 				result.status = "failed";
-				result.error = subResult.stderr.slice(0, 500) || "unknown error";
+				result.error = (subResult.stderr ?? "").slice(0, 500) || "unknown error";
+					result.stderrTail = (subResult.stderr ?? "").slice(-500) || undefined;
 			}
 		} catch (err) {
 			if ((err as Error).name === "AbortError") {
