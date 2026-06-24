@@ -480,7 +480,7 @@ impl TaskStore {
         task_id: &str,
         status: &str,
         subtasks: Vec<uc_types::Subtask>,
-    ) -> Result<uc_types::Task, String> {
+    ) -> Result<(uc_types::Task, Vec<uc_engine::AgentEventType>), String> {
         let task = self
             .tasks
             .get_mut(task_id)
@@ -492,9 +492,17 @@ impl TaskStore {
         }
         task.updated_at = chrono::Utc::now();
 
+        // Collect subtask state transitions for event emission
+        // ponytail: collect before mutation, emit after
+        let mut subtask_transitions: Vec<(uc_types::TaskId, uc_types::SubtaskStatus, uc_types::SubtaskStatus)> = Vec::new();
+        let mut new_subtask_ids: Vec<uc_types::TaskId> = Vec::new();
+
         // Upsert subtasks: update existing, add new
         for st in subtasks {
             if let Some(existing) = task.subtasks.iter_mut().find(|s| s.id == st.id) {
+                if existing.status != st.status {
+                    subtask_transitions.push((st.id.clone(), existing.status.clone(), st.status.clone()));
+                }
                 existing.status = st.status;
                 existing.result = st.result.clone();
                 if !st.description.is_empty() {
@@ -507,21 +515,73 @@ impl TaskStore {
                     existing.assigned_worker = st.assigned_worker.clone();
                 }
             } else {
+                new_subtask_ids.push(st.id.clone());
                 task.subtasks.push(st);
             }
         }
 
         let updated = task.clone();
 
-        // Record TaskUpdated event for WatchTask consumers (Dashboard)
-        self.record_event(
-            uc_engine::AgentEventType::TaskUpdated {
-                task_id: uc_types::TaskId(task_id.to_string()),
-                status: status.to_string(),
-            },
-        );
+        // Build all events to record + broadcast
+        let mut events: Vec<uc_engine::AgentEventType> = Vec::new();
 
-        Ok(updated)
+        // TaskUpdated event
+        events.push(uc_engine::AgentEventType::TaskUpdated {
+            task_id: uc_types::TaskId(task_id.to_string()),
+            status: status.to_string(),
+        });
+
+        // Subtask state transition events
+        let tid = uc_types::TaskId(task_id.to_string());
+        for (subtask_id, _old_status, new_status) in subtask_transitions {
+            match new_status {
+                uc_types::SubtaskStatus::InProgress => {
+                    events.push(uc_engine::AgentEventType::SubtaskStarted {
+                        task_id: tid.clone(),
+                        subtask_id,
+                        worker_id: uc_types::WorkerId::new(),
+                    });
+                }
+                uc_types::SubtaskStatus::Completed => {
+                    events.push(uc_engine::AgentEventType::SubtaskCompleted {
+                        task_id: tid.clone(),
+                        subtask_id,
+                        summary: String::new(),
+                        success: true,
+                        modified_files: Vec::new(),
+                        output: String::new(),
+                        simulated: false,
+                    });
+                }
+                uc_types::SubtaskStatus::Failed => {
+                    events.push(uc_engine::AgentEventType::SubtaskFailed {
+                        task_id: tid.clone(),
+                        subtask_id,
+                        error: String::new(),
+                        recoverable: false,
+                        stderr_tail: String::new(),
+                        recent_tools: String::new(),
+                    });
+                }
+                _ => {} // Pending, Assigned, Conflicted — no event
+            }
+        }
+
+        // SubtaskAssigned for newly added subtasks
+        for subtask_id in new_subtask_ids {
+            events.push(uc_engine::AgentEventType::SubtaskAssigned {
+                task_id: tid.clone(),
+                subtask_id,
+                worker_id: uc_types::WorkerId::new(),
+            });
+        }
+
+        // Record all events to EventStore
+        for event in &events {
+            self.record_event(event.clone());
+        }
+
+        Ok((updated, events))
     }
 
     /// Read events from the given offset (from inline log).
@@ -2557,27 +2617,20 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 depends_on: st.depends_on.into_iter().map(uc_types::TaskId).collect(),
                 file_constraints: Vec::new(),
                 expected_output: String::new(),
-                result: None, // Result updated separately via SubtaskCompleted event
+                result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
             }
         }).collect();
 
         let result = {
             let mut store = self.inner.task_store.lock().await;
             match store.update_task(&task_id, &status_str, subtasks) {
-                Ok(task) => {
-                    // TaskUpdated event is already recorded inside update_task
-                    // Broadcast to WatchTask streams
-                    let proto_event = TaskEvent {
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        r#type: "task_updated".to_string(),
-                        task_id: task.id.0.clone(),
-                        subtask_id: None,
-                        data: HashMap::from([
-                            ("status".to_string(), status_str.clone()),
-                        ]),
-                    };
-                    drop(store);
-                    let _ = self.inner.event_tx.send(proto_event);
+                Ok((task, events)) => {
+                    // Convert all events to proto and broadcast to WatchTask streams
+                    let tx = &self.inner.event_tx;
+                    for event in &events {
+                        let proto_event: TaskEvent = event.clone().into();
+                        let _ = tx.send(proto_event);
+                    }
                     Ok(task)
                 }
                 Err(e) => Err(e),
