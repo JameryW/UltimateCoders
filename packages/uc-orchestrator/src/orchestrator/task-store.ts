@@ -24,6 +24,8 @@ export interface PersistedTask {
 		description: string;
 		status: string;
 		dependsOn: string[];
+		/** Declared file intents from SubtaskDef.files (for resume conflict detection). */
+		files: string[];
 		result?: string;
 		error?: string;
 		review?: { approved: boolean; issues: string[]; suggestions: string[] };

@@ -110,8 +110,8 @@ describe("TaskStore", () => {
 			status: "in_progress",
 			controlState: "running",
 			subtasks: [
-				{ id: "st-1", description: "subtask 1", status: "completed", dependsOn: [] },
-				{ id: "st-2", description: "subtask 2", status: "pending", dependsOn: ["st-1"] },
+				{ id: "st-1", description: "subtask 1", status: "completed", dependsOn: [], files: [] },
+				{ id: "st-2", description: "subtask 2", status: "pending", dependsOn: ["st-1"], files: [] },
 			],
 			createdAt: Date.now(),
 			...overrides,
@@ -234,6 +234,7 @@ describe("TaskStore", () => {
 					description: "subtask 1",
 					status: "completed",
 					dependsOn: [],
+					files: ["src/main.ts"],
 					result: "All tests pass",
 					review: { approved: true, issues: [], suggestions: ["Add more tests"] },
 					startedAt: 1000,
@@ -278,6 +279,24 @@ describe("TaskStore", () => {
 
 			const loaded = await store.load("uc-no-wave");
 			expect(loaded!.resumeFromWave).toBeUndefined();
+		});
+
+		it("persists and restores subtask files", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({
+				id: "uc-files-persist",
+				subtasks: [
+					{ id: "st-1", description: "subtask 1", status: "pending", dependsOn: [], files: ["a.ts", "b.ts"] },
+					{ id: "st-2", description: "subtask 2", status: "pending", dependsOn: ["st-1"], files: ["c.ts"] },
+				],
+			});
+			await store.save(task);
+
+			const loaded = await store.load("uc-files-persist");
+			expect(loaded!.subtasks[0].files).toEqual(["a.ts", "b.ts"]);
+			expect(loaded!.subtasks[1].files).toEqual(["c.ts"]);
 		});
 
 		// ── Checkpoint save/load ───────────────────────────────────────
@@ -400,6 +419,35 @@ describe("splitWavesByFileOverlap", () => {
 		expect(split[0][0].id).toBe("a");
 		expect(split[1][0].id).toBe("b");
 	});
+
+	it("handles multi-wave input where only middle wave needs splitting", () => {
+		// Wave 1: [a] (no split needed), Wave 2: [b, c] (share file, needs split), Wave 3: [d]
+		const waves = buildDAG([
+			st("a", "a", [], ["file1.ts"]),
+			st("b", "b", ["a"], ["file2.ts"]),
+			st("c", "c", ["a"], ["file2.ts"]),
+			st("d", "d", ["b", "c"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		// Wave 1 [a] unchanged, Wave 2 [b,c] split into 2, Wave 3 [d] unchanged = 4 sub-waves
+		expect(split.length).toBe(4);
+		expect(split[0].map((s) => s.id)).toEqual(["a"]);
+		expect(split[3].map((s) => s.id)).toEqual(["d"]);
+	});
+
+	it("partial overlap causes split", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["x.ts"]),
+			st("b", "b", [], ["y.ts"]),
+			st("c", "c", [], ["x.ts", "y.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		// c conflicts with both a and b; a and b don't conflict with each other
+		// Greedy coloring: a=0, b=0, c=1 -> 2 sub-waves: [a,b] and [c]
+		expect(split.length).toBe(2);
+		expect(split[0].length).toBe(2);
+		expect(split[1].length).toBe(1);
+	});
 });
 
 // ── FileIntentTracker tests ────────────────────────────────────────
@@ -451,5 +499,30 @@ describe("FileIntentTracker", () => {
 		tracker.clear();
 		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
 		expect(tracker.getOwnedFiles().size).toBe(0);
+	});
+
+	it("re-declare releases old intents first", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts", "b.ts"]);
+		// Re-declare with different files — old intents should be released
+		tracker.declare("st-1", ["c.ts"]);
+		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
+		expect(tracker.isConflicting(["b.ts"]).size).toBe(0);
+		expect(tracker.isConflicting(["c.ts"]).size).toBe(1);
+		const owned = tracker.getOwnedFiles();
+		expect(owned.has("a.ts")).toBe(false);
+		expect(owned.has("b.ts")).toBe(false);
+		expect(owned.get("c.ts")).toEqual(["st-1"]);
+	});
+
+	it("same file owned by multiple subtasks", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["shared.ts"]);
+		tracker.declare("st-2", ["shared.ts"]);
+		const conflicting = tracker.isConflicting(["shared.ts"]);
+		expect(conflicting).toEqual(new Set(["st-1", "st-2"]));
+		// Releasing one should still leave the other
+		tracker.release("st-1");
+		expect(tracker.isConflicting(["shared.ts"])).toEqual(new Set(["st-2"]));
 	});
 });

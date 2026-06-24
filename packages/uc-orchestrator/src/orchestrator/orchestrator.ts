@@ -67,6 +67,8 @@ interface SubtaskResult {
 	description: string;
 	status: "pending" | "running" | "reviewing" | "completed" | "failed" | "cancelled";
 	dependsOn: string[];
+	/** Declared file intents from SubtaskDef.files (for resume conflict detection). */
+	files: string[];
 	result?: string;
 	error?: string;
 	review?: ReviewResult;
@@ -187,6 +189,7 @@ export class UCOrchestrator {
 			description: def.description,
 			status: "pending",
 			dependsOn: def.dependsOn,
+			files: def.files,
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
@@ -384,9 +387,13 @@ export class UCOrchestrator {
 
 				// Declare file intent before execution
 				intentTracker.declare(def.id, def.files);
-				const result = await this.executeSubtaskWithRetry(def, task, ctx);
-				// Release file intent after execution
-				intentTracker.release(def.id);
+				let result: SubtaskResult;
+				try {
+					result = await this.executeSubtaskWithRetry(def, task, ctx);
+				} finally {
+					// Release file intent even on unexpected error to prevent livelock
+					intentTracker.release(def.id);
+				}
 				results.push(result);
 				this.runningCount--;
 			}
@@ -491,7 +498,7 @@ export class UCOrchestrator {
 				id: s.id,
 				description: s.description,
 				dependsOn: s.dependsOn,
-				files: [],
+				files: s.files,
 			}));
 
 		if (pendingDefs.length === 0) {
@@ -757,6 +764,7 @@ export class UCOrchestrator {
 			description: def.description,
 			status: "running",
 			dependsOn: def.dependsOn,
+			files: def.files,
 			startedAt: Date.now(),
 		};
 
@@ -913,6 +921,7 @@ export class UCOrchestrator {
 				description: s.description,
 				status: s.status,
 				dependsOn: s.dependsOn,
+				files: s.files,
 				result: s.result,
 				error: s.error,
 				review: s.review,
@@ -941,6 +950,7 @@ export class UCOrchestrator {
 				description: s.description,
 				status: s.status as SubtaskResult["status"],
 				dependsOn: s.dependsOn,
+				files: s.files ?? [],
 				result: s.result,
 				error: s.error,
 				review: s.review,
