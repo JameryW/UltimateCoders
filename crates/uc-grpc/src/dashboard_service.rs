@@ -239,8 +239,9 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                                         None => {
                                             // No snapshot subscription — wait for interval
                                             tokio::time::sleep(snapshot_interval).await;
-                                            // Return None so we just send a heartbeat
-                                            futures::stream::pending::<()>().next().await
+                                            // ponytail: None<Msg> — signals no message, triggers
+                                            // the snapshot path below (periodic reconciliation)
+                                            None
                                         }
                                     }
                                 } => {
