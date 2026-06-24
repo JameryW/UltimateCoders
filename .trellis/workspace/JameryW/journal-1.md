@@ -1868,3 +1868,37 @@ OMP orchestrator checkpoint/resume + retry + failed task recovery + memory scope
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: Dashboard Sparkline 趋势图与 CSV 导出
+
+**Date**: 2026-06-24
+**Task**: Dashboard Sparkline 趋势图与 CSV 导出
+**Branch**: `feat/omp-deferred-ac-prd-update`
+
+### Summary
+
+新增 Sparkline 内联折线图组件 + MetricsTrendChart 全宽趋势面板 + CSV 导出。内联 sparkline 嵌入 MetricsPanel 各指标行，全宽面板 4 线叠加+hover+toggle，CSV 导出快照+trend。tsc/eslint clean。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `283870e2` | (see git log) |
+| `431cc131` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
