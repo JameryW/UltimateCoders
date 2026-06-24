@@ -525,6 +525,7 @@ message DashboardSnapshot {
     optional CircuitBreakerStatusResponse circuit_breaker = 6;
     repeated DashboardEventProto recent_events = 7;
     repeated TaskEvent recent_task_events = 8;
+    optional MetricsSnapshot metrics = 9;
 }
 
 message HealthSnapshot {
@@ -532,4 +533,54 @@ message HealthSnapshot {
     string status = 2;
     optional string version = 3;
     optional uint64 uptime_seconds = 4;
+}
+
+// ── Metrics (observability) ──────────────────────────────
+
+message MetricsSnapshot {
+    TaskMetrics task = 1;
+    WorkerMetrics worker = 2;
+    EventMetrics event = 3;
+    SystemMetrics system = 4;
+    repeated MetricsSample trend = 5;
+}
+
+message MetricsSample {
+    int64 timestamp = 1;
+    double events_per_minute = 2;
+    double avg_duration_ms = 3;
+    double error_rate = 4;
+    double cluster_utilization = 5;
+}
+
+message TaskMetrics {
+    double avg_duration_ms = 1;
+    double p50_duration_ms = 2;
+    double p95_duration_ms = 3;
+    double p99_duration_ms = 4;
+    double retry_rate = 5;
+    uint32 slow_tasks_count = 6;
+    uint32 total_completed = 7;
+    uint32 total_failed = 8;
+    double success_rate = 9;
+}
+
+message WorkerMetrics {
+    double avg_heartbeat_age_seconds = 1;
+    map<string, uint32> per_worker_tool_calls = 2;
+    map<string, uint32> per_worker_subtask_count = 3;
+    double cluster_load_pct = 4;
+}
+
+message EventMetrics {
+    double events_per_minute = 1;
+    bool error_spike = 2;
+    map<string, uint32> event_type_counts = 3;
+}
+
+message SystemMetrics {
+    uint64 uptime_seconds = 1;
+    string circuit_breaker_state = 2;
+    double rate_limiter_remaining_ratio = 3;
+    double cluster_utilization_pct = 4;
 }

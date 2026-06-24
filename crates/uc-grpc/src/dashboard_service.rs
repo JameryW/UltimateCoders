@@ -648,6 +648,106 @@ fn json_to_list_tasks_response(v: &serde_json::Value) -> ListTasksResponse {
     }
 }
 
+fn json_to_metrics_sample(v: &serde_json::Value) -> MetricsSample {
+    MetricsSample {
+        timestamp: v.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0),
+        events_per_minute: json_f64(v, "events_per_minute"),
+        avg_duration_ms: json_f64(v, "avg_duration_ms"),
+        error_rate: json_f64(v, "error_rate"),
+        cluster_utilization: json_f64(v, "cluster_utilization"),
+    }
+}
+
+fn json_to_task_metrics(v: &serde_json::Value) -> TaskMetrics {
+    TaskMetrics {
+        avg_duration_ms: json_f64(v, "avg_duration_ms"),
+        p50_duration_ms: json_f64(v, "p50_duration_ms"),
+        p95_duration_ms: json_f64(v, "p95_duration_ms"),
+        p99_duration_ms: json_f64(v, "p99_duration_ms"),
+        retry_rate: json_f64(v, "retry_rate"),
+        slow_tasks_count: json_u32(v, "slow_tasks_count"),
+        total_completed: json_u32(v, "total_completed"),
+        total_failed: json_u32(v, "total_failed"),
+        success_rate: json_f64(v, "success_rate"),
+    }
+}
+
+fn json_to_worker_metrics(v: &serde_json::Value) -> WorkerMetrics {
+    WorkerMetrics {
+        avg_heartbeat_age_seconds: json_f64(v, "avg_heartbeat_age_seconds"),
+        per_worker_tool_calls: v
+            .get("per_worker_tool_calls")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as u32)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        per_worker_subtask_count: v
+            .get("per_worker_subtask_count")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as u32)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        cluster_load_pct: json_f64(v, "cluster_load_pct"),
+    }
+}
+
+fn json_to_event_metrics(v: &serde_json::Value) -> EventMetrics {
+    EventMetrics {
+        events_per_minute: json_f64(v, "events_per_minute"),
+        error_spike: json_bool(v, "error_spike"),
+        event_type_counts: v
+            .get("event_type_counts")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_u64().map(|n| (k.clone(), n as u32)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn json_to_system_metrics(v: &serde_json::Value) -> SystemMetrics {
+    SystemMetrics {
+        uptime_seconds: v.get("uptime_seconds").and_then(|v| v.as_u64()).unwrap_or(0),
+        circuit_breaker_state: json_str(v, "circuit_breaker_state").to_string(),
+        rate_limiter_remaining_ratio: json_f64(v, "rate_limiter_remaining_ratio"),
+        cluster_utilization_pct: json_f64(v, "cluster_utilization_pct"),
+    }
+}
+
+fn json_to_metrics_snapshot(v: &serde_json::Value) -> MetricsSnapshot {
+    MetricsSnapshot {
+        task: Some(v
+            .get("task")
+            .map(json_to_task_metrics)
+            .unwrap_or_default()),
+        worker: Some(v
+            .get("worker")
+            .map(json_to_worker_metrics)
+            .unwrap_or_default()),
+        event: Some(v
+            .get("event")
+            .map(json_to_event_metrics)
+            .unwrap_or_default()),
+        system: Some(v
+            .get("system")
+            .map(json_to_system_metrics)
+            .unwrap_or_default()),
+        trend: v
+            .get("trend")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(json_to_metrics_sample).collect())
+            .unwrap_or_default(),
+    }
+}
+
 /// Used by `watch_dashboard` stream (messaging feature only).
 #[allow(dead_code)]
 fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
@@ -671,6 +771,7 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
             .map(|arr| arr.iter().map(json_to_dashboard_event).collect())
             .unwrap_or_default(),
         recent_task_events: Vec::new(),
+        metrics: v.get("metrics").map(json_to_metrics_snapshot),
     }
 }
 
@@ -796,5 +897,6 @@ async fn build_local_snapshot(
         circuit_breaker: None,
         recent_events: Vec::new(),
         recent_task_events,
+        metrics: None,
     }
 }

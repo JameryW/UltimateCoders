@@ -16,6 +16,7 @@ import { FileBrowser } from "@/components/panels/FileBrowser";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import { StatsBar } from "@/components/panels/StatsBar";
+import { MetricsPanel } from "@/components/panels/MetricsPanel";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { SidebarPanel } from "@/components/ui/sidebar-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -411,7 +412,7 @@ function App() {
         fetchErrors={dashboard.fetchErrors}
       />
       <main className="max-w-[1440px] mx-auto px-6 py-6">
-        <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} stale={grpcStale} />
+        <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} metrics={dashboard.metrics} stale={grpcStale} />
         <AlertBar
           workers={dashboard.workers}
           circuitBreaker={dashboard.circuitBreaker}
@@ -453,6 +454,10 @@ function App() {
               <div id="chart" className="scroll-mt-20">
                 <TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} />
               </div>
+            </ErrorBoundary>
+
+            <ErrorBoundary name="Metrics">
+              <MetricsPanel metrics={dashboard.metrics} stale={grpcStale} />
             </ErrorBoundary>
 
             <ErrorBoundary name="Code Search">

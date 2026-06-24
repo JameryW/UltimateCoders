@@ -9,6 +9,7 @@ import type {
   SchedulerData,
   CircuitBreakerData,
   DashboardEvent,
+  MetricsSnapshot,
 } from "@/types/dashboard";
 
 /** #12: Maximum number of task entries to keep in interactionLog.
@@ -75,6 +76,7 @@ export function useDashboard() {
   const [needsSync, setNeedsSync] = useState(false);
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
+  const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
   /** Dedup: Map<dedupKey, timestamp> — events within DEDUP_WINDOW_MS are dropped. */
   const dedupRef = useRef<Map<string, number>>(new Map());
 
@@ -86,12 +88,14 @@ export function useDashboard() {
     scheduler?: SchedulerData;
     circuitBreaker?: CircuitBreakerData;
     events?: DashboardEvent[];
+    metrics?: MetricsSnapshot;
   }) => {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
     if (data.scheduler?.available) setScheduler(data.scheduler);
     if (data.circuitBreaker?.available) setCircuitBreaker(data.circuitBreaker);
     if (data.events && data.events.length > 0) setEventLog(data.events);
+    if (data.metrics) setMetrics(data.metrics);
   }, []);
 
   // Handle SSE/gRPC-Web real-time task event (with dedup)
@@ -381,6 +385,7 @@ export function useDashboard() {
     circuitBreaker,
     eventLog,
     interactionLog,
+    metrics,
     needsSync,
     setNeedsSync,
     fetchErrors,

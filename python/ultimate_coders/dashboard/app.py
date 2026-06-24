@@ -37,6 +37,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from ultimate_coders.dashboard.metrics import MetricsAggregator
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,6 +109,7 @@ class DashboardApp:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._event_log: deque[dict[str, Any]] = deque(maxlen=500)
+        self._metrics = MetricsAggregator()
         # Auth configuration
         self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
         # Connect to Orchestrator's event emitter if available
@@ -289,6 +292,10 @@ class DashboardApp:
                                 self._event_log.appendleft(nats_event)
                                 if self.event_emitter is not None:
                                     self.event_emitter._recent.append(nats_event)
+                                self._metrics.record_event(
+                                    nats_event.get("type", ""),
+                                    nats_event.get("data", {}),
+                                )
                                 event_id += 1
                                 yield {
                                     "id": str(event_id),
@@ -303,6 +310,10 @@ class DashboardApp:
                                     self._event_log.appendleft(nats_event)
                                     if self.event_emitter is not None:
                                         self.event_emitter._recent.append(nats_event)
+                                    self._metrics.record_event(
+                                        nats_event.get("type", ""),
+                                        nats_event.get("data", {}),
+                                    )
                                     event_id += 1
                                     yield {
                                         "id": str(event_id),
@@ -941,14 +952,14 @@ class DashboardApp:
                 details, it is promoted to the top-level task_id field.
         """
         task_id = details.pop("task_id", "")
-        self._event_log.appendleft(
-            {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "type": event_type,
-                "task_id": task_id,
-                "data": details,
-            }
-        )
+        event = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": event_type,
+            "task_id": task_id,
+            "data": details,
+        }
+        self._event_log.appendleft(event)
+        self._metrics.record_event(event_type, details)
 
     def _get_health_data(self) -> dict:
         """Collect engine health data.
@@ -1245,15 +1256,56 @@ class DashboardApp:
         transmission to the browser.
         """
         health = self._get_health_data()
+        workers = self._get_workers_data()
+        # Update metrics with current system state before snapshotting
+        self._update_system_metrics(health, workers)
+        metrics_snap = self._metrics.snapshot()
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "health": health,
-            "workers": self._get_workers_data(),
+            "workers": workers,
             "tasks": self._get_tasks_data(),
             "scheduler": self._get_scheduler_data(),
             "circuit_breaker": self._get_circuit_breaker_data(health_data=health),
             "events": list(self._event_log),
+            "metrics": self._metrics_to_dict(metrics_snap),
         }
+
+    def _update_system_metrics(self, health: dict, workers: dict) -> None:
+        """Push current system state into MetricsAggregator before snapshot."""
+        cb_data = self._get_circuit_breaker_data(health_data=health)
+        cb_state = "unknown"
+        rl_remaining = 1.0
+        if cb_data.get("available"):
+            cb = cb_data.get("circuit_breaker", {})
+            cb_state = cb.get("state", "unknown")
+            # Rate limiter from Python-side data
+            rl = cb_data.get("rate_limiter", {})
+            rl_remaining = rl.get("remaining_ratio", 1.0)
+
+        # Cluster utilization from workers
+        cluster_pct = 0.0
+        avg_hb = 0.0
+        if workers.get("available"):
+            ws = workers.get("workers", [])
+            total_load = sum(w.get("current_load", 0) for w in ws)
+            total_cap = sum(w.get("max_capacity", 0) for w in ws)
+            cluster_pct = (total_load / total_cap * 100) if total_cap > 0 else 0.0
+            hb_ages = [w.get("heartbeat_age_seconds", 0) for w in ws]
+            avg_hb = sum(hb_ages) / len(hb_ages) if hb_ages else 0.0
+
+        self._metrics.update_system_state(
+            circuit_breaker_state=cb_state,
+            rate_limiter_remaining=rl_remaining,
+            cluster_utilization_pct=cluster_pct,
+            avg_heartbeat_age=avg_hb,
+        )
+
+    @staticmethod
+    def _metrics_to_dict(snap: "MetricsSnapshot") -> dict:  # type: ignore[name-defined]
+        """Convert a MetricsSnapshot dataclass to a JSON-serializable dict."""
+        import dataclasses
+        return dataclasses.asdict(snap)
 
     # ── Server Lifecycle ─────────────────────────────────────────
 
