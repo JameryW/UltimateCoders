@@ -74,7 +74,7 @@ export const MetricsTrendChart = memo(function MetricsTrendChart({ trend, stale 
     return (
       <Card className={cn(stale && "opacity-70")}>
         <CardHeader><CardTitle>Metrics Trend</CardTitle></CardHeader>
-        <EmptyState message="Waiting for trend data…" />
+        <EmptyState icon="activity" title="Waiting for trend data…" />
       </Card>
     );
   }

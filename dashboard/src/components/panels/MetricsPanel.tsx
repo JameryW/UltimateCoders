@@ -105,6 +105,13 @@ function TaskEfficiency({ t, trend }: { t: TaskMetrics; trend: MetricsSample[] }
         className="text-cyan-400"
         sparkline={<Sparkline data={trend.map((s) => s.avg_duration_ms)} color="#3b82f6" />}
       />
+      <MetricRow
+        label="Error Rate"
+        value={Math.round(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0)}
+        unit="%"
+        className={pctClass(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0, [10, 30])}
+        sparkline={<Sparkline data={trend.map((s) => s.error_rate * 100)} color="#ef4444" />}
+      />
       <DurationMetric label="P50" ms={t.p50_duration_ms} className="text-blue-400" />
       <DurationMetric label="P95" ms={t.p95_duration_ms} className="text-purple-400" />
       <DurationMetric label="P99" ms={t.p99_duration_ms} className="text-fuchsia-400" />
@@ -199,13 +206,6 @@ function EventFlow({ e, trend }: { e: EventMetrics; trend: MetricsSample[] }) {
           {e.error_spike ? "⚠ DETECTED" : "✓ Normal"}
         </span>
       </div>
-      <MetricRow
-        label="Error Rate"
-        value={Math.round(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0)}
-        unit="%"
-        className={pctClass(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0, [10, 30])}
-        sparkline={<Sparkline data={trend.map((t) => t.error_rate * 100)} color="#ef4444" />}
-      />
       {topTypes.length > 0 && (
         <div className="mt-2">
           <p className="text-xs text-[var(--text-muted)] font-medium mb-1">Event Types (1h)</p>
@@ -284,7 +284,7 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
         <CardHeader>
           <CardTitle>Metrics</CardTitle>
         </CardHeader>
-        <EmptyState message="Waiting for metrics data…" />
+        <EmptyState icon="activity" title="Waiting for metrics data…" />
       </Card>
     );
   }
