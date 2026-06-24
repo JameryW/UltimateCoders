@@ -919,6 +919,139 @@ class Engine:
         )
 
 
+    # ── Multi-Repo Configuration ─────────────────────────────────
+
+    def load_repos_config(
+        self,
+        path: str | None = None,
+        auto_index: bool = True,
+    ) -> object:
+        """Load repos.yaml and index declared/discovered repositories.
+
+        Args:
+            path: Path to repos.yaml (auto-discovered if None).
+            auto_index: Whether to index newly discovered repos.
+
+        Returns:
+            RepoConfig with loaded configuration.
+        """
+        from ultimate_coders.repo_config import (  # noqa: I001
+            RepoScanner,
+            load_repos_config as _load,
+        )
+
+        config = _load(path)
+        if not auto_index:
+            return config
+
+        # Get already-indexed repo IDs
+        indexed_ids: set[str] = set()
+        try:
+            repos = self.list_repos()
+            if repos:
+                indexed_ids = {getattr(r, "repo_id", "") for r in repos}
+        except Exception:
+            pass
+
+        # Index explicitly declared repos
+        for entry in config.repos:
+            if entry.repo_id not in indexed_ids:
+                try:
+                    self.index_repo(
+                        entry.repo_id,
+                        entry.local_path,
+                        entry.remote_url or None,
+                        entry.default_branch,
+                    )
+                    indexed_ids.add(entry.repo_id)
+                except Exception:
+                    logger.warning("Failed to index declared repo %s", entry.repo_id, exc_info=True)
+
+        # Auto-discover and index
+        if config.scan_dirs:
+            scanner = RepoScanner(engine=self)
+            scanner.discover_and_index(config, indexed_repo_ids=indexed_ids)
+
+        return config
+
+    def start_repo_watcher(
+        self,
+        path: str | None = None,
+    ) -> object | None:
+        """Start watching repos.yaml for changes and auto-reload.
+
+        Args:
+            path: Path to repos.yaml (auto-discovered if None).
+
+        Returns:
+            RepoConfigWatcher instance, or None if no config file found.
+        """
+        from ultimate_coders.repo_config import (  # noqa: I001
+            RepoConfigWatcher,
+            _resolve_config_path,
+        )
+
+        resolved = _resolve_config_path(path)
+        if resolved is None:
+            logger.debug("No repos config to watch")
+            return None
+
+        watcher = RepoConfigWatcher(resolved, on_change=self._on_repos_config_changed)
+        watcher.start()
+        self._repo_watcher = watcher
+        return watcher
+
+    def stop_repo_watcher(self) -> None:
+        """Stop watching repos.yaml for changes."""
+        watcher = getattr(self, "_repo_watcher", None)
+        if watcher is not None:
+            watcher.stop()
+            self._repo_watcher = None
+
+    def _on_repos_config_changed(self, config: object) -> None:
+        """Callback when repos.yaml changes — re-index new repos."""
+        from ultimate_coders.repo_config import RepoConfig
+
+        if not isinstance(config, RepoConfig):
+            return
+
+        # Get already-indexed repo IDs
+        indexed_ids: set[str] = set()
+        try:
+            repos = self.list_repos()
+            if repos:
+                indexed_ids = {getattr(r, "repo_id", "") for r in repos}
+        except Exception:
+            pass
+
+        # Index new declared repos
+        for entry in config.repos:
+            if entry.repo_id not in indexed_ids:
+                try:
+                    self.index_repo(
+                        entry.repo_id,
+                        entry.local_path,
+                        entry.remote_url or None,
+                        entry.default_branch,
+                    )
+                    indexed_ids.add(entry.repo_id)
+                    logger.info("Hot-loaded new repo: %s", entry.repo_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to index hot-loaded repo %s",
+                        entry.repo_id, exc_info=True,
+                    )
+
+        # Re-scan for newly discovered repos
+        if config.scan_dirs:
+            from ultimate_coders.repo_config import RepoScanner  # noqa: I001
+
+            scanner = RepoScanner(engine=self)
+            new = scanner.discover_and_index(config, indexed_repo_ids=indexed_ids)
+            for entry in new:
+                logger.info("Hot-discovered new repo: %s", entry.repo_id)
+
+
 def create_engine(
     mode: str = "local",
     grpc_endpoint: str | None = None,

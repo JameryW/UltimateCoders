@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, type SubtaskDef } from "./scheduler";
+import { buildDAG, splitWavesByFileOverlap, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import { TaskStore, type PersistedTask } from "./task-store";
 
@@ -180,7 +180,7 @@ export class UCOrchestrator {
 		}
 
 		// ── Step 2: Build DAG ──
-		const waves = buildDAG(subtaskDefs);
+		const waves = splitWavesByFileOverlap(buildDAG(subtaskDefs));
 
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
@@ -480,7 +480,7 @@ export class UCOrchestrator {
 			return true;
 		}
 
-		const waves = buildDAG(pendingDefs);
+		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
 		ctx.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
 
