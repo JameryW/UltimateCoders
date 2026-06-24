@@ -2,6 +2,46 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
+
+// ponytail: format task duration from created_at to now/completed_at
+function formatTaskDuration(createdAt: string, completedAt?: string): string {
+  const start = new Date(createdAt).getTime();
+  if (isNaN(start)) return "";
+  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  if (isNaN(end)) return "";
+  const diffMs = end - start;
+  if (diffMs < 0) return "";
+  if (diffMs < 60_000) return `${Math.round(diffMs / 1000)}s`;
+  const m = Math.floor(diffMs / 60_000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+type SortKey = "time" | "status" | "duration";
+
+function sortTasks(tasks: TaskSummary[], sort: SortKey): TaskSummary[] {
+  const sorted = [...tasks];
+  switch (sort) {
+    case "status":
+      // in_progress first, then submitted, paused, completed, failed
+      const rank: Record<string, number> = { in_progress: 0, submitted: 1, assigned: 2, paused: 3, completed: 4, failed: 5 };
+      sorted.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+      break;
+    case "duration": {
+      const now = Date.now();
+      sorted.sort((a, b) => {
+        const da = now - new Date(a.created_at).getTime();
+        const db = now - new Date(b.created_at).getTime();
+        return db - da; // longest first
+      });
+      break;
+    }
+    default: // time — newest first (already default order)
+      break;
+  }
+  return sorted;
+}
 import { showToast } from "@/components/ui/toast";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
@@ -39,6 +79,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("time");
   const [submitDesc, setSubmitDesc] = useState("");
   const [submitProj, setSubmitProj] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -182,6 +223,17 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   ))}
                 </select>
               )}
+              {/* Sort buttons */}
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                aria-label="Sort tasks"
+                className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-1.5 py-0.5"
+              >
+                <option value="time">Newest</option>
+                <option value="status">Status</option>
+                <option value="duration">Duration</option>
+              </select>
             </div>
           )}
 
@@ -192,9 +244,12 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           )}
 
           <ul className="space-y-1.5 max-h-[600px] overflow-y-auto" aria-label="Task list">
-            {data.tasks
-              .filter((task) => !statusFilter || task.status === statusFilter)
-              .filter((task) => !projectFilter || task.project_id === projectFilter)
+            {sortTasks(
+              data.tasks
+                .filter((task) => !statusFilter || task.status === statusFilter)
+                .filter((task) => !projectFilter || task.project_id === projectFilter),
+              sortKey
+            )
               .map((task) => (
               <li key={task.id} ref={task.id === highlightTaskId ? highlightRef : undefined}>
                 <div
@@ -244,6 +299,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5">
                     <span className="font-mono">{shortId(task.id)}</span>
                     {task.project_id && <span>proj: {shortId(task.project_id)}</span>}
+                    <span className="text-cyan-400/70">{formatTaskDuration(task.created_at, task.updated_at)}</span>
                   </div>
                 </div>
 

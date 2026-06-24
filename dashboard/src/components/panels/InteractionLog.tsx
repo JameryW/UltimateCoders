@@ -1,6 +1,7 @@
-import { useRef, useCallback, useMemo, memo, useState } from "react";
+import { useRef, useCallback, useMemo, memo, useState, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { TaskEvent } from "@/types/dashboard";
+import { cn } from "@/lib/utils";
 
 interface InteractionLogProps {
   events: TaskEvent[];
@@ -66,13 +67,26 @@ function renderDetail(ev: TaskEvent): React.ReactNode {
 
 const ROW_HEIGHT = 24;
 
+const EVENT_TYPE_FILTERS = [
+  { key: "tool", label: "Tools", match: (t: string) => t.startsWith("tool_") },
+  { key: "llm", label: "LLM", match: (t: string) => t === "llm_request" },
+  { key: "subtask", label: "Subtasks", match: (t: string) => t.startsWith("subtask_") },
+] as const;
+
 export const InteractionLog = memo(function InteractionLog({ events, filterSubtaskId }: InteractionLogProps) {
-  const filtered = useMemo(() =>
-    filterSubtaskId
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  const filtered = useMemo(() => {
+    let result = filterSubtaskId
       ? events.filter((e) => e.subtask_id === filterSubtaskId)
-      : events,
-    [events, filterSubtaskId],
-  );
+      : events;
+    if (typeFilter) {
+      const matcher = EVENT_TYPE_FILTERS.find((f) => f.key === typeFilter);
+      if (matcher) result = result.filter((e) => matcher.match(e.type));
+    }
+    return result;
+  }, [events, filterSubtaskId, typeFilter]);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -84,42 +98,111 @@ export const InteractionLog = memo(function InteractionLog({ events, filterSubta
     overscan: 20,
   });
 
-  if (filtered.length === 0) {
+  // Auto-scroll to bottom when new events arrive
+  useEffect(() => {
+    if (!autoScroll || filtered.length === 0) return;
+    virtualizer.scrollToIndex(filtered.length - 1, { align: "end" });
+  }, [filtered.length, autoScroll, virtualizer]);
+
+  const onScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    setAutoScroll(atBottom);
+  }, []);
+
+  const scrollToLatest = useCallback(() => {
+    setAutoScroll(true);
+    virtualizer.scrollToIndex(filtered.length - 1, { align: "end" });
+  }, [filtered.length, virtualizer]);
+
+  if (filtered.length === 0 && !typeFilter) {
     return <p className="text-xs text-[var(--text-muted)]">No interaction events</p>;
   }
 
   return (
-    <div ref={parentRef} className="max-h-64 overflow-auto space-y-0" role="log" aria-label="Interaction log" aria-live="polite">
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const ev = filtered[virtualRow.index]!;
-          const style = eventTypeStyle(ev.type);
-          const time = ev.timestamp
-            ? new Date(ev.timestamp).toLocaleTimeString()
-            : "--";
-          const isExpanded = expandedIdx === virtualRow.index;
-          const canExpand = hasDetailData(ev);
-          return (
-            <div
-              key={`${ev.timestamp}-${ev.type}-${virtualRow.index}`}
-              className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs ${canExpand ? "cursor-pointer hover:bg-[var(--bg-surface-alt)]/30" : ""}`}
-              style={{
-                position: "absolute",
-                top: virtualRow.start,
-                left: 0,
-                width: "100%",
-                height: virtualRow.size,
-              }}
-              onClick={() => canExpand && setExpandedIdx(isExpanded ? null : virtualRow.index)}
-            >
-              <span className="text-[var(--text-muted)] mr-1">{time}</span>
-              <span className={style.dot}>●</span>{" "}
-              <span className="text-[var(--text-primary)]">{eventContent(ev)}</span>
-              {canExpand && <span className="text-[var(--text-muted)] ml-1">{isExpanded ? "[-]" : "[+]"}</span>}
-              {isExpanded && renderDetail(ev)}
+    <div className="space-y-1">
+      {/* Event type filter buttons */}
+      <div className="flex items-center gap-1.5">
+        {EVENT_TYPE_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setTypeFilter(typeFilter === f.key ? null : f.key)}
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded cursor-pointer",
+              typeFilter === f.key
+                ? "bg-blue-500/20 text-blue-400"
+                : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+        {typeFilter && (
+          <button
+            onClick={() => setTypeFilter(null)}
+            className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            All
+          </button>
+        )}
+      </div>
+
+      <div className="relative">
+        <div
+          ref={parentRef}
+          onScroll={onScroll}
+          className="max-h-64 overflow-auto space-y-0"
+          role="log"
+          aria-label="Interaction log"
+          aria-live="polite"
+        >
+          {filtered.length === 0 ? (
+            <p className="text-xs text-[var(--text-muted)] py-2">No matching events</p>
+          ) : (
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const ev = filtered[virtualRow.index]!;
+                const style = eventTypeStyle(ev.type);
+                const time = ev.timestamp
+                  ? new Date(ev.timestamp).toLocaleTimeString()
+                  : "--";
+                const isExpanded = expandedIdx === virtualRow.index;
+                const canExpand = hasDetailData(ev);
+                return (
+                  <div
+                    key={`${ev.timestamp}-${ev.type}-${virtualRow.index}`}
+                    className={`border-l-2 ${style.border} pl-2 py-0.5 text-xs ${canExpand ? "cursor-pointer hover:bg-[var(--bg-surface-alt)]/30" : ""}`}
+                    style={{
+                      position: "absolute",
+                      top: virtualRow.start,
+                      left: 0,
+                      width: "100%",
+                      height: virtualRow.size,
+                    }}
+                    onClick={() => canExpand && setExpandedIdx(isExpanded ? null : virtualRow.index)}
+                  >
+                    <span className="text-[var(--text-muted)] mr-1">{time}</span>
+                    <span className={style.dot}>●</span>{" "}
+                    <span className="text-[var(--text-primary)]">{eventContent(ev)}</span>
+                    {canExpand && <span className="text-[var(--text-muted)] ml-1">{isExpanded ? "[-]" : "[+]"}</span>}
+                    {isExpanded && renderDetail(ev)}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          )}
+        </div>
+
+        {/* "Return to latest" button */}
+        {!autoScroll && filtered.length > 0 && (
+          <button
+            onClick={scrollToLatest}
+            className="absolute bottom-1 right-2 text-xs bg-blue-500/80 text-white px-2 py-0.5 rounded hover:bg-blue-500 transition-colors"
+          >
+            ↓ Latest
+          </button>
+        )}
       </div>
     </div>
   );
