@@ -10,9 +10,10 @@ interface TaskDetailProps {
   task: TaskSummary;
   interactionLog: TaskEvent[];
   onNavigateFile?: (nav: FileBrowserNavigateEvent) => void;
+  repoId?: string;
 }
 
-function OutputFiles({ events, onNavigateFile }: { events: TaskEvent[]; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void }) {
+function OutputFiles({ events, onNavigateFile, repoId }: { events: TaskEvent[]; onNavigateFile?: (nav: FileBrowserNavigateEvent) => void; repoId?: string }) {
   const files: { path: string; type: string; subtask: string }[] = [];
   for (const ev of events) {
     if (ev.type === "subtask_completed" && ev.data.modified_files) {
@@ -37,7 +38,7 @@ function OutputFiles({ events, onNavigateFile }: { events: TaskEvent[]; onNaviga
           return (
             <button
               key={f.path}
-              onClick={() => onNavigateFile?.({ repoId: "default", path: f.path })}
+              onClick={() => onNavigateFile?.({ repoId: repoId ?? "default", path: f.path })}
               className={cn("flex items-center gap-1.5 py-0.5 px-2 rounded text-xs w-full text-left hover:opacity-80", bg)}
             >
               <span className={cn("font-mono font-bold w-3 text-center", color)}>{icon}</span>
@@ -179,7 +180,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
   );
 }
 
-export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailProps) {
+export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: TaskDetailProps) {
   const subtasks = task.subtasks ?? [];
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
@@ -291,7 +292,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile }: TaskDetailP
       </div>
 
       {/* Output files */}
-      <OutputFiles events={interactionLog} onNavigateFile={onNavigateFile} />
+      <OutputFiles events={interactionLog} onNavigateFile={onNavigateFile} repoId={repoId} />
 
       {/* Mermaid DAG */}
       <SubtaskDAG subtasks={subtasks} />

@@ -1,0 +1,20 @@
+{
+	"compilerOptions": {
+		"target": "ES2024",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"moduleDetection": "force",
+		"strict": true,
+		"skipLibCheck": true,
+		"noEmit": true,
+		"resolveJsonModule": true,
+		"esModuleInterop": true,
+		"verbatimModuleSyntax": true,
+		"paths": {
+			"@oh-my-pi/pi-coding-agent": ["../../vendor/oh-my-pi/packages/coding-agent/src"],
+			"@oh-my-pi/pi-utils": ["../../vendor/oh-my-pi/packages/utils/src"]
+		}
+	},
+	"include": ["src"],
+	"exclude": ["../../vendor/oh-my-pi"]
+}

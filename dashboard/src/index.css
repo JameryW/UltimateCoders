@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -98,12 +99,16 @@ body {
 .status-error, .status-failed { background-color: #7f1d1d80; color: #fca5a5; }
 .status-warn, .status-paused { background-color: #713f1280; color: #fde047; }
 .status-info, .status-in_progress { background-color: #1e3a5f80; color: #93c5fd; }
+.status-assigned { background-color: #1e3a8a80; color: #93c5fd; }
+.status-conflicted { background-color: #713f1280; color: #fde047; }
 .status-default { background-color: #37415180; color: #9ca3af; }
 
 [data-theme="light"] .status-ok, [data-theme="light"] .status-completed { background-color: #dcfce7; color: #166534; }
 [data-theme="light"] .status-error, [data-theme="light"] .status-failed { background-color: #fee2e2; color: #991b1b; }
 [data-theme="light"] .status-warn, [data-theme="light"] .status-paused { background-color: #fef9c3; color: #713f12; }
 [data-theme="light"] .status-info, [data-theme="light"] .status-in_progress { background-color: #dbeafe; color: #1e40af; }
+[data-theme="light"] .status-assigned { background-color: #dbeafe; color: #1e40af; }
+[data-theme="light"] .status-conflicted { background-color: #fef9c3; color: #713f12; }
 [data-theme="light"] .status-default { background-color: #f3f4f6; color: #4b5563; }
 
 /* ── Event type tints (theme-aware) ──────────────────── */

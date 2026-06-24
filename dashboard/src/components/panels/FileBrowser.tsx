@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import hljs from "highlight.js";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
+// ponytail: common subset only (~37 langs) vs full 384-language bundle — saves ~350KB
+import hljs from "highlight.js/lib/common";
 import * as api from "@/api/endpoints";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RepoInfo, DirEntry, FileContent } from "@/types/dashboard";
@@ -24,7 +25,7 @@ interface FileBrowserProps {
   stale?: boolean;
 }
 
-export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBrowserProps) {
+export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBrowserProps) {
   const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [currentPath, setCurrentPath] = useState("");
@@ -33,7 +34,7 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
-  const codeRef = useRef<HTMLElement>(null);
+  const codeBlockRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<HTMLTableRowElement>(null);
 
   // Load repos on mount
@@ -67,29 +68,8 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
     if (selectedRepo) loadDirectory(selectedRepo, "");
   }, [selectedRepo, loadDirectory]);
 
-  // Handle initial navigation from external components
-  useEffect(() => {
-    if (!initialNav) return;
-    if (initialNav.repoId !== selectedRepo) {
-      setSelectedRepo(initialNav.repoId);
-    }
-    // Navigate then open file
-    const nav = initialNav;
-    // Check if it's a file (has extension) or directory
-    const pathParts = nav.path.split("/");
-    const lastPart = pathParts[pathParts.length - 1]!;
-    const hasExtension = lastPart.includes(".");
-    if (hasExtension) {
-      // It's a file — load its content
-      loadFile(nav.repoId, nav.path, nav.line);
-    } else {
-      loadDirectory(nav.repoId, nav.path);
-    }
-    onNavConsumed?.();
-  }, [initialNav]);
-
-  // Load file content
-  const loadFile = async (repoId: string, path: string, line?: number) => {
+  // Load file content — useCallback for stable reference in initialNav effect
+  const loadFile = useCallback(async (repoId: string, path: string, line?: number) => {
     setLoading(true);
     setError("");
     setHighlightLine(line ?? null);
@@ -102,16 +82,36 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Apply highlight.js after file content loads
+  // Handle initial navigation from external components
   useEffect(() => {
-    if (fileContent?.content && codeRef.current) {
-      // Reset previous highlight
-      codeRef.current.removeAttribute("data-highlighted");
-      hljs.highlightElement(codeRef.current);
+    if (!initialNav) return;
+    if (initialNav.repoId !== selectedRepo) {
+      setSelectedRepo(initialNav.repoId);
     }
-    // Scroll to highlighted line
+    const nav = initialNav;
+    const pathParts = nav.path.split("/");
+    const lastPart = pathParts[pathParts.length - 1]!;
+    const hasExtension = lastPart.includes(".");
+    if (hasExtension) {
+      loadFile(nav.repoId, nav.path, nav.line);
+    } else {
+      loadDirectory(nav.repoId, nav.path);
+    }
+    onNavConsumed?.();
+  }, [initialNav, selectedRepo, loadFile, loadDirectory, onNavConsumed]);
+
+  // Apply highlight.js to the entire code block after file content loads
+  // ponytail: highlight the parent <code> block wrapping all lines, not individual <code> per line
+  useEffect(() => {
+    if (fileContent?.content && codeBlockRef.current) {
+      const codeEl = codeBlockRef.current.querySelector("code");
+      if (codeEl) {
+        codeEl.removeAttribute("data-highlighted");
+        hljs.highlightElement(codeEl);
+      }
+    }
     if (highlightLine && lineRef.current) {
       lineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
@@ -124,17 +124,14 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
     path: pathParts.slice(0, i + 1).join("/"),
   }))];
 
-  // Navigate into directory
   const navigateTo = (path: string) => {
     loadDirectory(selectedRepo, path);
   };
 
-  // Navigate breadcrumb
   const onBreadcrumb = (path: string) => {
     navigateTo(path);
   };
 
-  // Click file entry
   const onFileClick = (entry: DirEntry) => {
     if (entry.type === "directory") {
       navigateTo(entry.path);
@@ -143,7 +140,6 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
     }
   };
 
-  // Back to directory from file view
   const backToDirectory = () => {
     if (fileContent) {
       const dirPath = fileContent.path.includes("/")
@@ -154,6 +150,9 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
       loadDirectory(selectedRepo, dirPath || currentPath);
     }
   };
+
+  // Split content into lines for line-numbered display
+  const contentLines = fileContent?.content?.split("\n") ?? [];
 
   // Repo selector
   const repoSelector = (
@@ -218,34 +217,34 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
             Binary file ({fmtSize(fileContent.size)})
           </div>
         ) : (
-          <div className="overflow-auto max-h-[500px] border border-[var(--border-color)] rounded text-xs font-mono">
-            <table className="w-full">
-              <tbody>
-                {fileContent.content!.split("\n").map((line, i) => {
-                  const lineNum = i + 1;
-                  const isHighlighted = lineNum === highlightLine;
-                  return (
-                    <tr
-                      key={i}
-                      ref={isHighlighted ? lineRef : undefined}
-                      className={isHighlighted ? "bg-yellow-500/20" : "hover:bg-[var(--bg-surface-alt)]"}
-                    >
-                      <td className="text-right text-[var(--text-muted)] pr-3 pl-2 select-none border-r border-[var(--border-color)] w-12 align-top">
-                        {lineNum}
-                      </td>
-                      <td className="pl-3 pr-2 whitespace-pre">
-                        <code
-                          ref={i === 0 ? codeRef : undefined}
-                          className={fileContent.language ? `language-${fileContent.language}` : ""}
+          <div ref={codeBlockRef} className="overflow-auto max-h-[500px] border border-[var(--border-color)] rounded text-xs font-mono">
+            {/* ponytail: single <pre><code> block for highlight.js to process the whole file at once */}
+            <pre className={`m-0 p-0 bg-transparent ${fileContent.language ? `language-${fileContent.language}` : ""}`}>
+              <code className={fileContent.language ? `language-${fileContent.language}` : ""}>
+                <table className="w-full">
+                  <tbody>
+                    {contentLines.map((line, i) => {
+                      const lineNum = i + 1;
+                      const isHighlighted = lineNum === highlightLine;
+                      return (
+                        <tr
+                          key={lineNum}
+                          ref={isHighlighted ? lineRef : undefined}
+                          className={isHighlighted ? "bg-yellow-500/20" : "hover:bg-[var(--bg-surface-alt)]"}
                         >
-                          {line}
-                        </code>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          <td className="text-right text-[var(--text-muted)] pr-3 pl-2 select-none border-r border-[var(--border-color)] w-12 align-top">
+                            {lineNum}
+                          </td>
+                          <td className="pl-3 pr-2 whitespace-pre">
+                            {line}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </code>
+            </pre>
           </div>
         )}
       </Card>
@@ -290,4 +289,4 @@ export function FileBrowser({ initialNav, onNavConsumed, stale = false }: FileBr
       )}
     </Card>
   );
-}
+});

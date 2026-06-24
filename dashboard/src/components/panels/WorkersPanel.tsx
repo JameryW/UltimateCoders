@@ -1,7 +1,7 @@
 import { useState, useMemo, memo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn, shortId } from "@/lib/utils";
+import { cn, shortId, truncate, statusBadgeClass } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { WorkersData, WorkerInfo, TasksData, SubtaskSummary } from "@/types/dashboard";
 
@@ -19,25 +19,9 @@ function formatHeartbeatAge(seconds: number): string {
   return `${h}h ${m % 60}m ago`;
 }
 
-// ponytail: inline helpers — no new utils file needed
-const statusBadgeClass = (status: string) => {
-  switch (status) {
-    case "completed": return "bg-green-500/20 text-green-400";
-    case "in_progress": return "bg-cyan-500/20 text-cyan-400";
-    case "assigned": return "bg-blue-500/20 text-blue-400";
-    case "failed": return "bg-red-500/20 text-red-400";
-    case "conflicted": return "bg-yellow-500/20 text-yellow-400";
-    default: return "bg-[var(--bg-surface-alt)] text-[var(--text-secondary)]";
-  }
-};
-const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n) + "…" : s;
-
-function WorkerDetail({ worker, activeSubtasks, onJumpTask }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[]; onJumpTask?: (taskId: string) => void }) {
-  // ponytail: derive task id from subtask id prefix — subtask ids are "taskId-subtaskN"
-  const taskIdFromSubtask = (subtaskId: string) => {
-    const lastDash = subtaskId.lastIndexOf("-");
-    return lastDash > 0 ? subtaskId.substring(0, lastDash) : subtaskId;
-  };
+function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[]; subtaskToTask: Map<string, string>; onJumpTask?: (taskId: string) => void }) {
+  // ponytail: look up parent task ID from the subtask→task map (replaces fragile lastIndexOf heuristic)
+  const taskIdFromSubtask = (subtaskId: string) => subtaskToTask.get(subtaskId) ?? subtaskId;
 
   return (
     <div className="mt-2 ml-1 space-y-1.5 text-xs border-t border-[var(--border-color)] pt-2">
@@ -124,19 +108,21 @@ export const WorkersPanel = memo(function WorkersPanel({
   const [sortBy, setSortBy] = useState<"load" | "name">("load");
   const [filterOnline, setFilterOnline] = useState<boolean | null>(null);
 
-  // ponytail: Map<workerId, SubtaskSummary[]> — O(tasks × subtasks), fine for dashboard scale
-  const workerSubtasks = useMemo(() => {
-    const map = new Map<string, SubtaskSummary[]>();
+  // ponytail: Map<workerId, SubtaskSummary[]> + Map<subtaskId, taskId> — built in one pass
+  const { workerSubtasks, subtaskToTask } = useMemo(() => {
+    const wMap = new Map<string, SubtaskSummary[]>();
+    const sMap = new Map<string, string>();
     for (const t of tasks.tasks) {
       for (const s of t.subtasks ?? []) {
+        sMap.set(s.id, t.id);
         if (s.assigned_worker) {
-          const arr = map.get(s.assigned_worker) ?? [];
+          const arr = wMap.get(s.assigned_worker) ?? [];
           arr.push(s);
-          map.set(s.assigned_worker, arr);
+          wMap.set(s.assigned_worker, arr);
         }
       }
     }
-    return map;
+    return { workerSubtasks: wMap, subtaskToTask: sMap };
   }, [tasks]);
 
   // ponytail: sort + filter workers
@@ -267,7 +253,7 @@ export const WorkersPanel = memo(function WorkersPanel({
 
                 {/* Detail expansion */}
                 {expandedWorkerId === w.id && (
-                  <WorkerDetail worker={w} activeSubtasks={activeSubtasks} onJumpTask={onJumpTask} />
+                  <WorkerDetail worker={w} activeSubtasks={activeSubtasks} subtaskToTask={subtaskToTask} onJumpTask={onJumpTask} />
                 )}
               </li>
             );

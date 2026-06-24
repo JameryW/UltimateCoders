@@ -1,4 +1,4 @@
-import { useState, useMemo, memo, useRef, useCallback, useEffect } from "react";
+import { useState, useMemo, memo, useRef, useCallback, useEffect, useDeferredValue } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -69,9 +69,12 @@ function exportEvents(events: DashboardEvent[]): void {
   URL.revokeObjectURL(url);
 }
 
-export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { events: DashboardEvent[]; stale?: boolean }) {
+export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  // ponytail: deferred search — expensive JSON.stringify filter only runs after user pauses typing
+  const deferredSearch = useDeferredValue(searchQuery);
 
   const uniqueTypes = useMemo(
     () => [...new Set(events.map((e) => e.type))],
@@ -83,15 +86,15 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
     if (typeFilter) {
       result = result.filter((e) => e.type === typeFilter);
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.toLowerCase();
       result = result.filter((e) =>
         e.type.toLowerCase().includes(q) ||
         JSON.stringify(e.details).toLowerCase().includes(q)
       );
     }
     return result;
-  }, [events, typeFilter, searchQuery]);
+  }, [events, typeFilter, deferredSearch]);
 
   // ── Virtual scrolling + tail mode ──────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -195,6 +198,7 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
             >
               {virtualizer.getVirtualItems().map((item) => {
                 const evt = filteredEvents[item.index]!;
+                const isExpanded = expandedIdx === item.index;
                 return (
                   <div
                     key={eventKey(evt)}
@@ -214,10 +218,33 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale }: { ev
                     <span className={cn("shrink-0 font-medium", eventTypeColor(evt.type))}>
                       {evt.type}
                     </span>
+                    {/* ponytail: clickable task_id to navigate to task */}
+                    {evt.details.task_id && typeof evt.details.task_id === "string" && onSelectTask ? (
+                      <button
+                        onClick={() => onSelectTask(evt.details.task_id as string)}
+                        className="text-blue-400 hover:text-blue-300 hover:underline font-mono shrink-0"
+                        title="Go to task"
+                      >
+                        {(evt.details.task_id as string).slice(0, 8)}
+                      </button>
+                    ) : null}
                     {Object.keys(evt.details).length > 0 && (
-                      <span className="text-[var(--text-muted)] truncate">
-                        {eventSummary(evt.details)}
-                      </span>
+                      isExpanded ? (
+                        <pre
+                          className="text-[var(--text-muted)] text-[10px] whitespace-pre-wrap break-all cursor-pointer hover:text-[var(--text-secondary)]"
+                          onClick={() => setExpandedIdx(null)}
+                        >
+                          {JSON.stringify(evt.details, null, 2)}
+                        </pre>
+                      ) : (
+                        <span
+                          className="text-[var(--text-muted)] truncate cursor-pointer hover:text-[var(--text-secondary)]"
+                          onClick={() => setExpandedIdx(item.index)}
+                          title="Click to expand"
+                        >
+                          {eventSummary(evt.details)}
+                        </span>
+                      )
                     )}
                   </div>
                 );

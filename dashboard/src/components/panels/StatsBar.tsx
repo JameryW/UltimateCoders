@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import type { TasksData, WorkersData, DashboardEvent } from "@/types/dashboard";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +9,7 @@ interface StatsBarProps {
   stale?: boolean;
 }
 
-export function StatsBar({ tasks, workers, eventLog, stale }: StatsBarProps) {
+export const StatsBar = memo(function StatsBar({ tasks, workers, eventLog, stale }: StatsBarProps) {
   const stats = useMemo(() => {
     if (!tasks.available) return null;
 
@@ -58,6 +58,7 @@ export function StatsBar({ tasks, workers, eventLog, stale }: StatsBarProps) {
     {
       label: "Avg Duration",
       value: stats.avgDurationMs != null ? formatDuration(stats.avgDurationMs) : "—",
+      subtitle: stats.avgDurationMs == null ? "No completed tasks yet" : undefined,
       icon: (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -88,12 +89,13 @@ export function StatsBar({ tasks, workers, eventLog, stale }: StatsBarProps) {
           <div>
             <p className="text-xs text-[var(--text-muted)]">{c.label}</p>
             <p className={cn("text-lg font-semibold", c.accent)}>{c.value}</p>
+            {c.subtitle && <p className="text-[10px] text-[var(--text-muted)]">{c.subtitle}</p>}
           </div>
         </div>
       ))}
     </div>
   );
-}
+});
 
 // ponytail: simple duration formatter — ms to human readable
 function formatDuration(ms: number): string {

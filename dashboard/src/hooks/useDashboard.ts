@@ -72,7 +72,6 @@ export function useDashboard() {
   const [interactionLog, setInteractionLog] = useState<
     Record<string, TaskEvent[]>
   >({});
-  const [connected, setConnected] = useState(false);
   const [needsSync, setNeedsSync] = useState(false);
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
@@ -382,8 +381,6 @@ export function useDashboard() {
     circuitBreaker,
     eventLog,
     interactionLog,
-    connected,
-    setConnected,
     needsSync,
     setNeedsSync,
     fetchErrors,

@@ -1,0 +1,188 @@
+/**
+ * UC Orchestrator Extension — Task orchestration for UltimateCoders.
+ *
+ * Registers:
+ * - /uc submit <description>  — Submit a task for orchestration
+ * - /uc status [task-id]      — Check task status
+ * - /uc help                  — Show help
+ *
+ * LLM-callable tools:
+ * - uc_memory  — Read/write/search UC layered memory
+ * - uc_search  — Search UC hybrid index (text + semantic + AST)
+ *
+ * Uses omp's agent runtime (runSubprocess, agent definitions) as the
+ * execution layer. UC provides scheduling strategy, memory bridge,
+ * and gRPC integration with the Rust core engine.
+ */
+
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { UCOrchestrator } from "./orchestrator/orchestrator";
+import { GrpcBridge } from "./orchestrator/grpc-bridge";
+
+export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
+	pi.setLabel("UC Orchestrator");
+
+	const bridge = new GrpcBridge();
+	const orchestrator = new UCOrchestrator(pi, undefined, bridge);
+
+	pi.registerCommand("uc", {
+		description: "UltimateCoders task orchestration",
+		getArgumentCompletions: (prefix: string) => {
+			const subcommands = ["submit", "status", "help"];
+			if (!prefix) return subcommands.map((s) => ({ label: s, value: s }));
+			return subcommands
+				.filter((s) => s.startsWith(prefix))
+				.map((s) => ({ label: s, value: s }));
+		},
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const parts = args.trim().split(/\s+/);
+			const subcommand = parts[0] ?? "help";
+			const rest = parts.slice(1).join(" ");
+
+			switch (subcommand) {
+				case "submit": {
+					if (!rest) {
+						ctx.ui.notify("Usage: /uc submit <task description>", "error");
+						return;
+					}
+					await orchestrator.submitTask(rest, ctx);
+					return;
+				}
+				case "status": {
+					await orchestrator.showStatus(rest || undefined, ctx);
+					return;
+				}
+				default:
+					ctx.ui.notify(
+						[
+							"UC Orchestrator — distributed AI coding orchestration",
+							"",
+							"  /uc submit <description>  Submit a task",
+							"  /uc status [task-id]      Check task status",
+							"  /uc help                  Show this help",
+						].join("\n"),
+						"info",
+					);
+					return;
+			}
+		},
+	});
+
+	// ── LLM-callable tools ─────────────────────────────────────
+
+	pi.registerTool({
+		name: "uc_memory",
+		label: "UC Memory",
+		description:
+			"Read/write UltimateCoders layered memory. " +
+			"Short-term (TiKV), long-term (Qdrant semantic), metadata (PostgreSQL).",
+		parameters: pi.zod.object({
+			action: pi.zod
+				.enum(["read", "write", "search"])
+				.describe("Memory operation"),
+			scope: pi.zod
+				.string()
+				.describe("Memory scope: short_term, long_term, metadata"),
+			key: pi.zod.string().describe("Memory key"),
+			content: pi.zod
+				.string()
+				.optional()
+				.describe("Content to write (required for write action)"),
+		}),
+		async execute(_id, params, _signal, _onUpdate, _ctx) {
+			try {
+				if (params.action === "read") {
+					const result = await bridge.readMemory(params.scope, params.key);
+					if (result === null) {
+						return {
+							content: [{ type: "text" as const, text: "(no memory found)" }],
+							useless: true,
+						};
+					}
+					return {
+						content: [{ type: "text" as const, text: result }],
+					};
+				}
+				if (params.action === "write") {
+					if (!params.content) {
+						return {
+							content: [{ type: "text" as const, text: "Error: content required for write action" }],
+							isError: true,
+						};
+					}
+					const ok = await bridge.writeMemory(
+						params.scope, params.key, params.content,
+					);
+					return {
+						content: [{ type: "text" as const, text: ok ? "Written successfully" : "Write failed" }],
+					};
+				}
+				if (params.action === "search") {
+					const results = await bridge.searchMemory(params.key);
+					if (results.length === 0) {
+						return {
+							content: [{ type: "text" as const, text: "(no results)" }],
+							useless: true,
+						};
+					}
+					const lines = results.map(
+						(r) => `[${r.score.toFixed(2)}] ${r.content.slice(0, 200)}`,
+					);
+					return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+				}
+				return {
+					content: [{ type: "text" as const, text: `Unknown action: ${params.action}` }],
+					isError: true,
+				};
+			} catch (err) {
+				return {
+					content: [{ type: "text" as const, text: `UC Memory error: ${err instanceof Error ? err.message : String(err)}` }],
+					isError: true,
+				};
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "uc_search",
+		label: "UC Search",
+		description:
+			"Search UltimateCoders hybrid index (text + semantic + AST). " +
+			"Routes through UC Rust engine via gRPC.",
+		parameters: pi.zod.object({
+			query: pi.zod.string().describe("Search query"),
+			modes: pi.zod
+				.array(pi.zod.string())
+				.optional()
+				.describe("Search modes: text, semantic, ast, hybrid"),
+			max_results: pi.zod
+				.number()
+				.optional()
+				.describe("Max results (default 5)"),
+		}),
+		async execute(_id, params, _signal, _onUpdate, _ctx) {
+			try {
+				const results = await bridge.searchCode(
+					params.query,
+					params.modes,
+					params.max_results,
+				);
+				if (results.length === 0) {
+					return {
+						content: [{ type: "text" as const, text: "(no results)" }],
+						useless: true,
+					};
+				}
+				const lines = results.map(
+					(r) => `${r.filePath} (score=${r.score.toFixed(2)}): ${r.snippet.slice(0, 150)}`,
+				);
+				return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+			} catch (err) {
+				return {
+					content: [{ type: "text" as const, text: `UC Search error: ${err instanceof Error ? err.message : String(err)}` }],
+					isError: true,
+				};
+			}
+		},
+	});
+}

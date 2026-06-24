@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { createClient } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
+import type { Interceptor } from "@connectrpc/connect";
 import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
@@ -11,12 +12,24 @@ import type { TaskEvent } from "@/types/dashboard";
 const GRPC_WEB_ADDR =
   import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
 
+// ponytail: auth interceptor — reads token from localStorage, attaches as authorization header
+const authInterceptor: Interceptor = (next) => async (req) => {
+  const token = localStorage.getItem("uc_dashboard_token");
+  if (token) {
+    req.header.set("authorization", `Bearer ${token}`);
+  }
+  return next(req);
+};
+
 // ponytail: module-level shared transport — single HTTP/2 connection reused by
 // useGrpcWeb, SearchPanel, and any future gRPC-Web consumer.
 let _sharedTransport: ReturnType<typeof createGrpcWebTransport> | null = null;
 export function getSharedTransport() {
   if (!_sharedTransport) {
-    _sharedTransport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+    _sharedTransport = createGrpcWebTransport({
+      baseUrl: GRPC_WEB_ADDR,
+      interceptors: [authInterceptor],
+    });
   }
   return _sharedTransport;
 }
@@ -331,7 +344,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
       })),
       total: resp.total,
       status_counts: resp.statusCounts as Record<string, number>,
-      pending_task_count: 0,
+      // ponytail: derive pending_task_count from status_counts instead of hardcoding 0
+      pending_task_count: (resp.statusCounts as Record<string, number>)["pending"] ?? (resp.statusCounts as Record<string, number>)["submitted"] ?? 0,
     };
   }, []);
 

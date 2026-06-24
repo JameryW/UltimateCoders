@@ -39,6 +39,7 @@ import type {
   RateLimiterInfo,
   DashboardEvent,
   TaskEvent,
+  TasksData,
 } from "@/types/dashboard";
 import { getSharedTransport } from "@/hooks/useGrpcWeb";
 
@@ -100,6 +101,9 @@ function grpcExecutionHistoryToDashboard(e: ExecutionHistoryProto): ExecutionHis
   return {
     task_id: e.jobId,
     status: e.success ? "success" : "failed",
+    started_at: e.startedAt ?? undefined,
+    completed_at: e.completedAt ?? undefined,
+    result_summary: e.resultSummary ?? undefined,
   };
 }
 
@@ -229,6 +233,8 @@ interface UseDashboardGrpcOptions {
     events?: DashboardEvent[];
   }) => void;
   onTaskEvent?: (event: TaskEvent) => void;
+  /** Merge task list from SSE snapshot into dashboard state. */
+  mergeGrpcTasks?: (data: TasksData) => void;
   enabled?: boolean;
 }
 
@@ -327,9 +333,8 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         if (snapshot.circuit_breaker?.available) converted.circuitBreaker = snapshot.circuit_breaker;
         if (snapshot.tasks) {
           // Merge task list from SSE snapshot
-          const { mergeGrpcTasks } = optsRef.current as Record<string, unknown>;
-          if (typeof mergeGrpcTasks === "function") {
-            mergeGrpcTasks(snapshot.tasks);
+          if (optsRef.current.mergeGrpcTasks) {
+            optsRef.current.mergeGrpcTasks(snapshot.tasks as TasksData);
           }
         }
         optsRef.current.onSnapshot?.(converted);

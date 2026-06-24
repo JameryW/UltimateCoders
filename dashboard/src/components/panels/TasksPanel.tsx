@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn, truncate, shortId, statusBadgeClass } from "@/lib/utils";
@@ -38,10 +38,17 @@ interface TasksPanelProps {
 export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [submitDesc, setSubmitDesc] = useState("");
   const [submitProj, setSubmitProj] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const highlightRef = useRef<HTMLLIElement>(null);
+
+  // ponytail: derive unique project IDs for filter dropdown
+  const uniqueProjects = useMemo(
+    () => [...new Set(data.tasks.map((t) => t.project_id).filter(Boolean))],
+    [data.tasks],
+  );
 
   // ponytail: auto-expand and scroll to highlighted task after submit
   useEffect(() => {
@@ -75,7 +82,15 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
       const resp = await grpcSubmitTask(desc, submitProj.trim());
       if (resp.success) {
         showToast(resp.subtaskCount > 0 ? `Task ${shortId(resp.taskId)} — ${resp.subtaskCount} subtask${resp.subtaskCount > 1 ? "s" : ""}` : `Task ${shortId(resp.taskId)} submitted`, "success");
-        onOptimisticAdd?.(resp.taskId, desc, submitProj.trim(), resp.subtaskCount, resp.subtasks?.map((s) => ({ ...s, depends_on: s.dependsOn ?? [] })));
+        onOptimisticAdd?.(resp.taskId, desc, submitProj.trim(), resp.subtaskCount,
+          resp.subtasks?.map((s) => ({
+            id: s.id,
+            description: s.description,
+            status: s.status,
+            depends_on: [...(s.dependsOn ?? [])],
+            assigned_worker: s.assignedWorker ?? undefined,
+          }))
+        );
         setSubmitDesc("");
         setSubmitProj("");
         onTaskCreated?.(resp.taskId);
@@ -153,6 +168,20 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                   {status}: {count}
                 </button>
               ))}
+              {/* ponytail: project filter — client-side, derived from task list */}
+              {uniqueProjects.length > 1 && (
+                <select
+                  value={projectFilter ?? ""}
+                  onChange={(e) => setProjectFilter(e.target.value || null)}
+                  aria-label="Filter by project"
+                  className="text-xs bg-[var(--bg-primary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded px-1.5 py-0.5"
+                >
+                  <option value="">All projects</option>
+                  {uniqueProjects.map((p) => (
+                    <option key={p} value={p}>{shortId(p)}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
 
@@ -165,6 +194,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
           <ul className="space-y-1.5 max-h-[600px] overflow-y-auto" aria-label="Task list">
             {data.tasks
               .filter((task) => !statusFilter || task.status === statusFilter)
+              .filter((task) => !projectFilter || task.project_id === projectFilter)
               .map((task) => (
               <li key={task.id} ref={task.id === highlightTaskId ? highlightRef : undefined}>
                 <div

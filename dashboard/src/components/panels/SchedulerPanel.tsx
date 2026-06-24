@@ -23,6 +23,24 @@ function executionStatusColor(status: string): string {
   }
 }
 
+// ponytail: format relative time from ISO timestamp
+function relativeTime(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+// ponytail: format duration between two ISO timestamps
+function formatDuration(start: string, end: string): string {
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
 interface SchedulerPanelProps {
   data: SchedulerData;
   onTriggerJob?: (jobId: string) => void;
@@ -106,9 +124,15 @@ export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob,
           </p>
           <ul className="space-y-1">
             {data.execution_history.map((exec, i) => (
-              <li key={`${exec.task_id}-${i}`} className="flex items-center gap-2 text-xs">
+              <li key={exec.started_at ?? `${exec.task_id}-${i}`} className="flex items-center gap-2 text-xs">
                 <span className="font-mono text-[var(--text-secondary)]">{shortId(exec.task_id)}</span>
                 <span className={executionStatusColor(exec.status)}>{exec.status}</span>
+                {exec.started_at && (
+                  <span className="text-[var(--text-muted)]">{relativeTime(exec.started_at)}</span>
+                )}
+                {exec.started_at && exec.completed_at && (
+                  <span className="text-[var(--text-muted)]">({formatDuration(exec.started_at, exec.completed_at)})</span>
+                )}
               </li>
             ))}
           </ul>
