@@ -50,6 +50,12 @@ interface OrchestratorConfig {
 	enableReview: boolean;
 	/** Timeout for supervisor review (ms). Default: 60000. */
 	reviewTimeoutMs: number;
+	/** Max concurrent subtask agents. Default: 3. */
+	maxConcurrency: number;
+	/** Max retries per failed subtask. Default: 2. */
+	maxRetries: number;
+	/** Base delay for retry backoff (ms). Default: 5000. */
+	retryBaseDelayMs: number;
 }
 
 // ── Orchestrator ───────────────────────────────────────────────────
@@ -60,10 +66,18 @@ export class UCOrchestrator {
 	private taskCounter = 0;
 	private config: OrchestratorConfig;
 	private bridge: GrpcBridge;
+	private runningCount = 0;
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
-		this.config = { enableReview: true, reviewTimeoutMs: 60_000, ...config };
+		this.config = {
+			enableReview: true,
+			reviewTimeoutMs: 60_000,
+			maxConcurrency: 3,
+			maxRetries: 2,
+			retryBaseDelayMs: 5_000,
+			...config,
+		};
 		this.bridge = bridge ?? new GrpcBridge();
 	}
 
@@ -123,9 +137,7 @@ export class UCOrchestrator {
 					"info",
 				);
 
-				const results = await Promise.all(
-					wave.map((subtaskDef) => this.executeSubtask(subtaskDef, ctx)),
-				);
+				const results = await this.executeWave(wave, ctx);
 
 				for (const result of results) {
 					const st = task.subtasks.find((s) => s.id === result.id);
@@ -322,6 +334,67 @@ export class UCOrchestrator {
 			}
 		}
 		return subtasks;
+	}
+
+	// ── Wave Execution (with concurrency control) ─────────────────────
+
+	private async executeWave(
+		wave: SubtaskDef[],
+		ctx: ExtensionCommandContext,
+	): Promise<SubtaskResult[]> {
+		// ponytail: semaphore-style concurrency — max N subagents in parallel
+		const results: SubtaskResult[] = [];
+		const queue = [...wave];
+
+		const runNext = async (): Promise<void> => {
+			while (queue.length > 0) {
+				const def = queue.shift()!;
+				const result = await this.executeSubtaskWithRetry(def, ctx);
+				results.push(result);
+				this.runningCount--;
+			}
+		};
+
+		const starters = Math.min(this.config.maxConcurrency, wave.length);
+		const workers: Promise<void>[] = [];
+		for (let i = 0; i < starters; i++) {
+			this.runningCount++;
+			workers.push(runNext());
+		}
+		await Promise.all(workers);
+
+		// Sort by original wave order for deterministic state updates
+		const order = new Map(wave.map((d, i) => [d.id, i]));
+		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+		return results;
+	}
+
+	private async executeSubtaskWithRetry(
+		def: SubtaskDef,
+		ctx: ExtensionCommandContext,
+	): Promise<SubtaskResult> {
+		let lastResult: SubtaskResult | null = null;
+
+		for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+			const result = await this.executeSubtask(def, ctx);
+
+			// Don't retry on review rejection — that's a correctness issue
+			if (result.status === "completed" || (result.error?.startsWith("Review rejected"))) {
+				return result;
+			}
+
+			lastResult = result;
+
+			if (attempt < this.config.maxRetries) {
+				const delay = this.config.retryBaseDelayMs * Math.pow(2, attempt);
+				this.pi.logger.info(
+					`Retrying subtask ${def.id} (attempt ${attempt + 1}/${this.config.maxRetries}) after ${delay}ms`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, delay));
+			}
+		}
+
+		return lastResult!;
 	}
 
 	// ── Subtask Execution ──────────────────────────────────────────
