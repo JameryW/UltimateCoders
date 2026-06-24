@@ -732,6 +732,19 @@ class Orchestrator:
             del self.workers[worker_id]
             logger.info("Unregistered worker %s", worker_id)
 
+    def refresh_heartbeat(self, worker_id: str) -> None:
+        """Update last_heartbeat for a registered worker.
+
+        Called when a heartbeat is received from the worker,
+        so Orchestrator can track worker liveness.
+
+        Args:
+            worker_id: ID of the worker.
+        """
+        worker = self.workers.get(worker_id)
+        if worker is not None:
+            worker.last_heartbeat = datetime.now(timezone.utc)
+
     async def get_task_status(self, task_id: str) -> Task | None:
         """Get current task status.
 
@@ -2031,7 +2044,7 @@ ORCHESTRATE RULES:
                 self.engine.write_memory(
                     key_scope="task",
                     key=f"checkpoint_{snapshot_id}",
-                    content=json.dumps(task.to_dict()),
+                    content=json.dumps({**task.to_dict(), "v": 1}),
                     content_type="structured",
                     source_agent="orchestrator",
                     task_id=task_id,
