@@ -1622,3 +1622,54 @@ Completed 3 tasks merged via PR #133: (1) Orchestrator Agent — plan_task, ask,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 47: Complete pipeline optimization: Event Sourcing replay + Worker heartbeat + CI fixes
+
+**Date**: 2026-06-24
+**Task**: Complete pipeline optimization: Event Sourcing replay + Worker heartbeat + CI fixes
+**Branch**: `feat/dashboard-polish-and-orchestrator`
+
+### Summary
+
+Completed the 2 remaining partial items from the full-pipeline optimization PRD:
+1. Event Sourcing persistence (#7) — added JetStream durable consumer (dashboard-replay), replay-on-restart logic (_replay_missed_events with bounded 500-event replay), and js_last_seq persistence via engine memory for restart recovery. Periodic seq save in snapshot loop (~60s cadence).
+2. Worker self-heartbeat monitoring (#8) — added Worker._last_heartbeat_at tracking, updated send_heartbeat() to record timestamp, and extended _stale_worker_cleanup_loop to detect local Worker stall (>90s gap) and release current subtask back to PENDING for reschedule.
+
+Also fixed 5 CI/build issues discovered during PR creation:
+- Rust type mismatch in dashboard_service.rs (Option<Message> vs Option<()>)
+- TS2589 deep instantiation in registerTool parameters (as never cast)
+- PYTHONPATH missing for dashboard import check in CI
+- @tailwindcss/vite dependency missing from package.json
+- mermaid, clsx, tailwind-merge dependencies missing from package.json
+- ClaudeCodeAdapter test asserting 'json' instead of 'stream-json'
+
+All 9 PRD acceptance criteria now fully implemented. PR #136 created with all CI checks green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f461a554` | (see git log) |
+| `4f4a1601` | (see git log) |
+| `f54843b7` | (see git log) |
+| `517e7ebb` | (see git log) |
+| `dad3726f` | (see git log) |
+| `751d58a5` | (see git log) |
+| `f0020200` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

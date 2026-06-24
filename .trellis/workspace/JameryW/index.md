@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
+- **Total Sessions**: 47
 - **Last Active**: 2026-06-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1624 | Active |
+| `journal-1.md` | ~1675 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-06-24 | Complete pipeline optimization: Event Sourcing replay + Worker heartbeat + CI fixes | `f461a554`, `4f4a1601`, `f54843b7`, `517e7ebb`, `dad3726f`, `751d58a5`, `f0020200` | `feat/dashboard-polish-and-orchestrator` |
 | 46 | 2026-06-24 | Orchestrator Agent + Dashboard UI + Pipeline Optimization — PR #133 merged | `9669b128`, `3b9ee7f3`, `ddfe88b5` | `feat/pipeline-optimization` |
 | 45 | 2026-06-23 | Full-pipeline optimization: 9 improvements (event detail/dedup/incremental/scheduling/checkpoint/eventsourcing/heartbeat/SSE) | `e56d9e10`, `eb3718ce` | `feat/pipeline-optimization` |
 | 44 | 2026-06-23 | Fix Worker Python path: auto-detect .venv | `ea48fa12` | `fix/dashboard-grpc-web-migration` |
