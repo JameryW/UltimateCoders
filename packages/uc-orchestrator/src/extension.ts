@@ -120,6 +120,16 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── LLM-callable tools ─────────────────────────────────────
+	// ponytail: `as never` on parameters to dodge TS2589 deep instantiation
+	// in registerTool<TParams extends TSchema> — runtime schema is correct,
+	// only the compile-time inference overflows. Execute callback types params manually.
+
+	const memorySchema = pi.zod.object({
+		action: pi.zod.enum(["read", "write", "search"]).describe("Memory operation"),
+		scope: pi.zod.string().describe("Memory scope: short_term, long_term, metadata"),
+		key: pi.zod.string().describe("Memory key"),
+		content: pi.zod.string().optional().describe("Content to write (required for write action)"),
+	});
 
 	pi.registerTool({
 		name: "uc_memory",
@@ -127,23 +137,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 		description:
 			"Read/write UltimateCoders layered memory. " +
 			"Short-term (TiKV), long-term (Qdrant semantic), metadata (PostgreSQL).",
-		parameters: pi.zod.object({
-			action: pi.zod
-				.enum(["read", "write", "search"])
-				.describe("Memory operation"),
-			scope: pi.zod
-				.string()
-				.describe("Memory scope: short_term, long_term, metadata"),
-			key: pi.zod.string().describe("Memory key"),
-			content: pi.zod
-				.string()
-				.optional()
-				.describe("Content to write (required for write action)"),
-		}),
-		async execute(_id, params, _signal, _onUpdate, _ctx) {
+		parameters: memorySchema as never,
+		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
+			const p = params as { action: string; scope: string; key: string; content?: string };
 			try {
-				if (params.action === "read") {
-					const result = await bridge.readMemory(params.scope, params.key);
+				if (p.action === "read") {
+					const result = await bridge.readMemory(p.scope, p.key);
 					if (result === null) {
 						return {
 							content: [{ type: "text" as const, text: "(no memory found)" }],
@@ -154,22 +153,20 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						content: [{ type: "text" as const, text: result }],
 					};
 				}
-				if (params.action === "write") {
-					if (!params.content) {
+				if (p.action === "write") {
+					if (!p.content) {
 						return {
 							content: [{ type: "text" as const, text: "Error: content required for write action" }],
 							isError: true,
 						};
 					}
-					const ok = await bridge.writeMemory(
-						params.scope, params.key, params.content,
-					);
+					const ok = await bridge.writeMemory(p.scope, p.key, p.content);
 					return {
 						content: [{ type: "text" as const, text: ok ? "Written successfully" : "Write failed" }],
 					};
 				}
-				if (params.action === "search") {
-					const results = await bridge.searchMemory(params.key);
+				if (p.action === "search") {
+					const results = await bridge.searchMemory(p.key);
 					if (results.length === 0) {
 						return {
 							content: [{ type: "text" as const, text: "(no results)" }],
@@ -182,7 +179,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 				}
 				return {
-					content: [{ type: "text" as const, text: `Unknown action: ${params.action}` }],
+					content: [{ type: "text" as const, text: `Unknown action: ${p.action}` }],
 					isError: true,
 				};
 			} catch (err) {
@@ -194,30 +191,23 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const searchSchema = pi.zod.object({
+		query: pi.zod.string().describe("Search query"),
+		modes: pi.zod.array(pi.zod.string()).optional().describe("Search modes: text, semantic, ast, hybrid"),
+		max_results: pi.zod.number().optional().describe("Max results (default 5)"),
+	});
+
 	pi.registerTool({
 		name: "uc_search",
 		label: "UC Search",
 		description:
 			"Search UltimateCoders hybrid index (text + semantic + AST). " +
 			"Routes through UC Rust engine via gRPC.",
-		parameters: pi.zod.object({
-			query: pi.zod.string().describe("Search query"),
-			modes: pi.zod
-				.array(pi.zod.string())
-				.optional()
-				.describe("Search modes: text, semantic, ast, hybrid"),
-			max_results: pi.zod
-				.number()
-				.optional()
-				.describe("Max results (default 5)"),
-		}),
-		async execute(_id, params, _signal, _onUpdate, _ctx) {
+		parameters: searchSchema as never,
+		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
+			const p = params as { query: string; modes?: string[]; max_results?: number };
 			try {
-				const results = await bridge.searchCode(
-					params.query,
-					params.modes,
-					params.max_results,
-				);
+				const results = await bridge.searchCode(p.query, p.modes, p.max_results);
 				if (results.length === 0) {
 					return {
 						content: [{ type: "text" as const, text: "(no results)" }],
