@@ -17,6 +17,7 @@ import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import { StatsBar } from "@/components/panels/StatsBar";
 import { MetricsPanel } from "@/components/panels/MetricsPanel";
+import { RepoManagementPanel } from "@/components/panels/RepoManagementPanel";
 import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
 import { SidebarPanel } from "@/components/ui/sidebar-panel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -469,6 +470,12 @@ function App() {
             <ErrorBoundary name="Files">
               <div id="files" className="scroll-mt-20">
                 <FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} />
+              </div>
+            </ErrorBoundary>
+
+            <ErrorBoundary name="Repos">
+              <div id="repos" className="scroll-mt-20">
+                <RepoManagementPanel />
               </div>
             </ErrorBoundary>
           </div>
