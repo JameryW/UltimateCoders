@@ -229,16 +229,16 @@ describe("TaskStore", () => {
 			const task = makeTask({
 				id: "uc-with-results",
 				subtasks: [
-					{
-						id: "st-1",
-						description: "subtask 1",
-						status: "completed",
-						dependsOn: [],
-						result: "All tests pass",
-						review: { approved: true, issues: [], suggestions: ["Add more tests"] },
-						startedAt: 1000,
-						completedAt: 2000,
-					},
+				{
+					id: "st-1",
+					description: "subtask 1",
+					status: "completed",
+					dependsOn: [],
+					result: "All tests pass",
+					review: { approved: true, issues: [], suggestions: ["Add more tests"] },
+					startedAt: 1000,
+					completedAt: 2000,
+				},
 				],
 			});
 			await store.save(task);
