@@ -74,6 +74,7 @@ const ERROR_TYPES: ReadonlySet<string> = new Set(["task_failed", "subtask_failed
 export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [errorsOnly, setErrorsOnly] = useState(false);
+  const [timeRange, setTimeRange] = useState<"5m" | "30m" | "1h" | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   // ponytail: deferred search — expensive JSON.stringify filter only runs after user pauses typing
@@ -84,8 +85,15 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
     [events]
   );
 
+  const TIME_RANGE_MS: Record<string, number> = { "5m": 300_000, "30m": 1_800_000, "1h": 3_600_000 };
+
   const filteredEvents = useMemo(() => {
     let result = events;
+    // Time range filter
+    if (timeRange !== "all") {
+      const cutoff = Date.now() - (TIME_RANGE_MS[timeRange] ?? 0);
+      result = result.filter((e) => new Date(e.timestamp).getTime() >= cutoff);
+    }
     if (errorsOnly) {
       result = result.filter((e) => ERROR_TYPES.has(e.type));
     } else if (typeFilter) {
@@ -99,7 +107,7 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
       );
     }
     return result;
-  }, [events, typeFilter, errorsOnly, deferredSearch]);
+  }, [events, typeFilter, errorsOnly, timeRange, deferredSearch]);
 
   // ── Virtual scrolling + tail mode ──────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -189,6 +197,21 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
             placeholder="Search events..."
             className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-blue-500 focus:outline-none"
           />
+          {/* Time range filter */}
+          <div className="flex items-center bg-[var(--bg-primary)] rounded-md border border-[var(--border-color)] overflow-hidden">
+            {(["5m", "30m", "1h", "all"] as const).map((r) => (
+              <button
+                key={r}
+                onClick={() => setTimeRange(r)}
+                className={cn(
+                  "text-xs px-2 py-0.5 transition-colors cursor-pointer",
+                  timeRange === r ? "bg-blue-600 text-white" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                )}
+              >
+                {r === "all" ? "All" : r}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

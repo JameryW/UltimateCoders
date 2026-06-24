@@ -1690,3 +1690,37 @@ Completed 2 tasks merged via PR #139: (1) Dashboard Auth — all 8 AC verified (
 ### Next Steps
 
 - None - task complete
+
+
+## Session 49: Dashboard Observability — StatsBar 6-card, AlertBar, Errors filter, Cluster load
+
+**Date**: 2026-06-24
+**Task**: Dashboard Observability — StatsBar 6-card, AlertBar, Errors filter, Cluster load
+**Branch**: `main`
+
+### Summary
+
+Dashboard 可观测性增强 (PR #140 merged): (1) StatsBar 扩展为 6 卡片 — Throughput (/h), Error Rate (1h), Latency P95 (从 eventLog duration_ms 计算), Cluster Load (workers 聚合负载); (2) TaskTrendChart 三层 stacked bar — submitted/completed/failed; (3) AlertBar 活跃告警条 — stale workers, CB open, RL >80%, recent failures; (4) EventLogPanel Errors 快速过滤按钮; (5) WorkersPanel 集群负载摘要 X/Y (Z%). 所有指标从现有前端数据计算，零后端改动。Fix lint: ERROR_TYPES hoisted to module scope.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `44f3ac5e` | (see git log) |
+| `0fad73c4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

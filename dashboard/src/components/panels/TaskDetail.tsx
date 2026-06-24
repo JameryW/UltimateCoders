@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
 import type { TaskSummary, SubtaskSummary, TaskEvent } from "@/types/dashboard";
 import { InteractionLog } from "@/components/panels/InteractionLog";
@@ -182,6 +182,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
 
 export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: TaskDetailProps) {
   const subtasks = task.subtasks ?? [];
+  const failedSubtasks = useMemo(() => subtasks.filter((s) => s.status === "failed"), [subtasks]);
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
 
@@ -210,7 +211,28 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
       {/* Subtask list */}
       {subtasks.length > 0 && (
         <div>
-          <p className="text-[var(--text-primary)] font-medium mb-1">Subtasks:</p>
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-[var(--text-primary)] font-medium">Subtasks:</p>
+            {failedSubtasks.length > 0 && (
+              <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-medium">
+                {failedSubtasks.length} failed
+              </span>
+            )}
+          </div>
+          {/* Failed subtask error summaries */}
+          {failedSubtasks.length > 0 && (
+            <div className="mb-2 space-y-0.5">
+              {failedSubtasks.map((st) => (
+                <div key={st.id} className="flex items-start gap-1.5 text-xs border-l-2 border-l-red-500/50 pl-2 py-0.5">
+                  <span className="text-red-400 shrink-0">✗</span>
+                  <span className="text-[var(--text-primary)] truncate">{truncate(st.description, 40)}</span>
+                  {st.error && (
+                    <span className="text-red-400/70 truncate" title={st.error}>{truncate(st.error, 50)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           <div className="space-y-0.5">
             {subtasks.map((st) => (
               <div key={st.id}>
