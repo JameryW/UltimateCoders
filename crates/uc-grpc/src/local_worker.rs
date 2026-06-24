@@ -117,6 +117,9 @@ pub struct WorkerSubtaskUpdate {
 /// from the Python worker to the Rust gRPC server without NATS.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct WorkerTaskEvent {
+    /// Event schema version. Consumers ignore unknown versions.
+    #[serde(default = "default_event_version")]
+    pub v: u32,
     #[serde(rename = "type")]
     pub event_type: String,
     pub task_id: String,
@@ -124,6 +127,10 @@ pub struct WorkerTaskEvent {
     pub subtask_id: Option<String>,
     #[serde(default)]
     pub data: std::collections::HashMap<String, String>,
+}
+
+fn default_event_version() -> u32 {
+    1
 }
 
 // ── Bridge ────────────────────────────────────────────────────

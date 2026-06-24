@@ -44,6 +44,7 @@ class TaskEvent:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization."""
         result: dict[str, Any] = {
+            "v": 1,
             "timestamp": self.timestamp,
             "type": self.type,
             "task_id": self.task_id,

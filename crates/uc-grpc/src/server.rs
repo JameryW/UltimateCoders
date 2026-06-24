@@ -95,6 +95,9 @@ pub struct NatsSubtaskUpdate {
 /// log for WatchTask streaming.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskEvent {
+    /// Event schema version. Consumers ignore unknown versions.
+    #[serde(default = "default_event_version")]
+    pub v: u32,
     /// Deduplication key for at-least-once NATS delivery.
     /// Format: `{task_id}:{event_type}:{subtask_id}:{timestamp_ms}`
     #[serde(default)]
@@ -105,6 +108,10 @@ pub struct NatsTaskEvent {
     pub subtask_id: Option<String>,
     #[serde(default)]
     pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+fn default_event_version() -> u32 {
+    1
 }
 
 /// Payload for `uc.subtask.execute` messages.

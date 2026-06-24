@@ -107,6 +107,7 @@ def _make_task_event_payload(
     ts_ms = int(time.time() * 1000)
     message_id = f"{task_id}:{event_type}:{subtask_id}:{ts_ms}"
     payload: dict[str, Any] = {
+        "v": 1,
         "message_id": message_id,
         "type": event_type,
         "task_id": task_id,
