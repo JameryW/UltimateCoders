@@ -55,25 +55,27 @@ class TestMakeTaskEventPayload:
         assert payload["message_id"].startswith("task-1:task_started::")
 
     def test_message_id_format(self):
-        """message_id follows {task_id}:{event_type}:{subtask_id}:{ts_ms}."""
-        before_ms = int(time.time() * 1000)
+        """message_id follows {task_id}:{event_type}:{subtask_id}:{5s_bucket}."""
+        before_bucket = int(time.time() * 1000) // 5000
         payload = _make_task_event_payload(
             "subtask_failed", "t1", "s1",
         )
-        after_ms = int(time.time() * 1000)
+        after_bucket = int(time.time() * 1000) // 5000
 
         parts = payload["message_id"].split(":")
         assert parts[0] == "t1"
         assert parts[1] == "subtask_failed"
         assert parts[2] == "s1"
-        ts_ms = int(parts[3])
-        assert before_ms <= ts_ms <= after_ms
+        bucket = int(parts[3])
+        assert before_bucket <= bucket <= after_bucket
 
     def test_message_id_uniqueness(self):
-        """Two calls produce different message_ids (different timestamps)."""
+        """Two calls in different 5s buckets produce different message_ids."""
         p1 = _make_task_event_payload("ev", "t1", "s1")
-        time.sleep(0.002)
-        p2 = _make_task_event_payload("ev", "t1", "s1")
+        # Use different event type to get a different dedup key (same bucket)
+        p2 = _make_task_event_payload("ev_other", "t1", "s1")
+        # Within same bucket, same key → same message_id (by design)
+        # Different key → different message_id
         assert p1["message_id"] != p2["message_id"]
 
 

@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Verify event dedup and auto-scheduling match spec"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "Verify NATS message_id and dedup window"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "Verify SubtaskResult fields match gRPC types"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Verify heartbeat and checkpoint behavior"}

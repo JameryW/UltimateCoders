@@ -23,6 +23,32 @@ import { TaskStore, type PersistedTask } from "./task-store";
 
 type ControlState = "running" | "paused" | "cancelled";
 
+// ponytail: heuristic extractors — parse agent output for checkpoint fields
+/** Extract file paths mentioned in tool_use / Edit / Write blocks from agent output. */
+function extractModifiedFiles(output: string): string[] {
+	const files: string[] = [];
+	// Match common patterns: file_path, file_path in tool calls
+	for (const m of output.matchAll(/(?:file_path|path|file):\s*["']([^"']+)["']/g)) {
+		if (m[1] && !files.includes(m[1])) files.push(m[1]);
+	}
+	return files.slice(0, 20);
+}
+
+/** Extract last N tool call names from agent output. */
+function extractRecentToolCalls(output: string, n: number): string[] {
+	const calls: string[] = [];
+	for (const m of output.matchAll(/"type"\s*:\s*"tool_use"[^}]*"name"\s*:\s*"([^"]+)"/g)) {
+		calls.push(m[1]);
+	}
+	// Fallback: match tool_use lines in text
+	if (calls.length === 0) {
+		for (const m of output.matchAll(/Using tool:\s*(\w+)/g)) {
+			calls.push(m[1]);
+		}
+	}
+	return calls.slice(-n);
+}
+
 interface TaskState {
 	id: string;
 	description: string;
@@ -689,6 +715,11 @@ export class UCOrchestrator {
 
 			if (subResult.exitCode === 0) {
 				result.result = subResult.output.slice(0, 2000) || "(completed)";
+				// ponytail: extract modified files from patchPath if available, else from output
+				result.modifiedFiles = subResult.patchPath
+					? ["(patch available)"]
+					: extractModifiedFiles(subResult.output);
+				result.recentToolCalls = extractRecentToolCalls(subResult.output, 5);
 
 				if (this.config.enableReview) {
 					result.status = "reviewing";
@@ -710,7 +741,7 @@ export class UCOrchestrator {
 			} else {
 				result.status = "failed";
 				result.error = (subResult.stderr ?? "").slice(0, 500) || "unknown error";
-					result.stderrTail = (subResult.stderr ?? "").slice(-500) || undefined;
+				result.stderrTail = (subResult.stderr ?? "").slice(-500) || undefined;
 			}
 		} catch (err) {
 			if ((err as Error).name === "AbortError") {
@@ -801,6 +832,9 @@ export class UCOrchestrator {
 				review: s.review,
 				startedAt: s.startedAt,
 				completedAt: s.completedAt,
+					modifiedFiles: s.modifiedFiles,
+					recentToolCalls: s.recentToolCalls,
+					stderrTail: s.stderrTail,
 			})),
 			createdAt: task.createdAt,
 			completedAt: task.completedAt,
@@ -824,6 +858,9 @@ export class UCOrchestrator {
 				review: s.review,
 				startedAt: s.startedAt,
 				completedAt: s.completedAt,
+					modifiedFiles: s.modifiedFiles,
+					recentToolCalls: s.recentToolCalls,
+					stderrTail: s.stderrTail,
 			})),
 			createdAt: p.createdAt,
 			completedAt: p.completedAt,

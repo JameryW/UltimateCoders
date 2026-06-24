@@ -67,6 +67,8 @@ class SubtaskResult:
     # Failure context (populated on failure)
     stderr_tail: str = ""  # last ~10 lines of stderr
     recent_tool_calls: list[str] = field(default_factory=list)  # last ~5 tool names
+    retry_count: int = 0  # how many retries this subtask used
+    error: str = ""  # error message on failure
 
 
 @dataclass
@@ -121,6 +123,7 @@ class Task:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for JSON serialization (checkpoint/recovery)."""
         return {
+            "__version": 1,
             "id": self.id,
             "description": self.description,
             "project_id": self.project_id,
@@ -142,7 +145,11 @@ class Task:
                         "subtask_id": st.result.subtask_id,
                         "worker_id": st.result.worker_id,
                         "modified_files": [
-                            {"path": fc.file_path, "change_type": fc.change_type.value}
+                            {
+                                "path": fc.file_path,
+                                "change_type": fc.change_type.value,
+                                "diff_stats": fc.diff[:200] if fc.diff else "",
+                            }
                             for fc in st.result.modified_files
                         ],
                         "summary": st.result.summary,
@@ -151,6 +158,8 @@ class Task:
                         "adaptation_strategy": st.result.adaptation_strategy.value,
                         "stderr_tail": st.result.stderr_tail,
                         "recent_tool_calls": st.result.recent_tool_calls,
+                        "retry_count": st.result.retry_count,
+                        "error": st.result.error,
                     } if st.result else None,
                 }
                 for st in self.subtasks
@@ -159,6 +168,63 @@ class Task:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Task:
+        """Reconstruct a Task from a checkpoint dict (inverse of to_dict).
+
+        ponytail: handles version 1 format; ignores unknown keys for forward compat.
+        """
+        task = cls(
+            id=data.get("id", ""),
+            description=data.get("description", ""),
+            project_id=data.get("project_id", ""),
+            status=TaskStatus(data["status"]) if "status" in data else TaskStatus.CREATED,
+            result=data.get("result"),
+        )
+        if "created_at" in data:
+            task.created_at = datetime.fromisoformat(data["created_at"])
+        if "updated_at" in data:
+            task.updated_at = datetime.fromisoformat(data["updated_at"])
+        task.subtasks = []
+        for sd in data.get("subtasks", []):
+            st = Subtask(
+                id=sd.get("id", ""),
+                parent_id=sd.get("parent_id", ""),
+                description=sd.get("description", ""),
+                status=SubtaskStatus(sd["status"]) if "status" in sd else SubtaskStatus.PENDING,
+                assigned_worker=sd.get("assigned_worker"),
+                depends_on=sd.get("depends_on", []),
+                priority=sd.get("priority", 0),
+                file_constraints=sd.get("file_constraints", []),
+                expected_output=sd.get("expected_output", ""),
+                retry_count=sd.get("retry_count", 0),
+                timeout_seconds=sd.get("timeout_seconds", 0),
+            )
+            rd = sd.get("result")
+            if rd is not None:
+                st.result = SubtaskResult(
+                    subtask_id=rd.get("subtask_id", ""),
+                    worker_id=rd.get("worker_id", ""),
+                    summary=rd.get("summary", ""),
+                    success=rd.get("success", True),
+                    adaptation_strategy=AdaptationStrategy(rd.get("adaptation_strategy", "none")),
+                    stderr_tail=rd.get("stderr_tail", ""),
+                    recent_tool_calls=rd.get("recent_tool_calls", []),
+                    retry_count=rd.get("retry_count", 0),
+                    error=rd.get("error", ""),
+                )
+                if "modified_files" in rd:
+                    for fc in rd["modified_files"]:
+                        st.result.modified_files.append(FileChange(
+                            file_path=fc.get("path", ""),
+                            change_type=ChangeType(fc.get("change_type", "modified")),
+                            diff=fc.get("diff_stats", ""),
+                        ))
+                if "completed_at" in rd:
+                    st.result.completed_at = datetime.fromisoformat(rd["completed_at"])
+            task.subtasks.append(st)
+        return task
 
     @property
     def is_complete(self) -> bool:

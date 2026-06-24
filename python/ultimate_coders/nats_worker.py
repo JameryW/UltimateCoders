@@ -66,6 +66,8 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
     import time
 
     ts_ms = int(time.time() * 1000)
+    # ponytail: bucket by 5s for NATS dedup (same as event payloads)
+    bucket = ts_ms // 5000
     subtasks = []
     for st in task.subtasks:
         entry: dict[str, Any] = {
@@ -78,10 +80,18 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
             entry["assigned_worker"] = st.assigned_worker
         if st.result is not None:
             entry["result"] = st.result.summary
+            entry["modified_files"] = [
+                {"path": fc.file_path, "change_type": fc.change_type.value}
+                for fc in st.result.modified_files
+            ]
+            if st.result.error:
+                entry["error"] = st.result.error[:500]
+            if st.result.retry_count:
+                entry["retry_count"] = st.result.retry_count
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
-        "message_id": f"{task.id}:update:{ts_ms}",
+        "message_id": f"{task.id}:update:{bucket}",
         "task_id": task.id,
         "status": _task_status_to_nats(task.status),
         "subtasks": subtasks,
@@ -105,7 +115,12 @@ def _make_task_event_payload(
     import time
 
     ts_ms = int(time.time() * 1000)
-    message_id = f"{task_id}:{event_type}:{subtask_id}:{ts_ms}"
+    # ponytail: semantic key with 5s bucket — NATS JetStream deduplicates
+    # identical message_ids within duplicate_window. Bucketing by 5s means
+    # two events with the same (task, subtask, type) within 5s get the same
+    # message_id and JetStream drops the duplicate.
+    bucket = ts_ms // 5000
+    message_id = f"{task_id}:{event_type}:{subtask_id}:{bucket}"
     payload: dict[str, Any] = {
         "v": 1,
         "message_id": message_id,
