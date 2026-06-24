@@ -35,13 +35,13 @@ Fix the `resumeFromWave` persistence bug and add task-level checkpoint snapshots
 
 ## Open Questions
 
-1. Should we keep task-level snapshots (history of N checkpoints) or just latest-wins?
-2. Should checkpoint include git diff/workspace state, or just task metadata?
+~~1. Should we keep task-level snapshots (history of N checkpoints) or just latest-wins?~~ → latest-wins
+~~2. Should checkpoint include git diff/workspace state, or just task metadata?~~ → task metadata only
 
 ## Requirements
 
 1. **Fix `resumeFromWave` persistence** — add to `PersistedTask`, round-trip correctly
-2. **Add task-level checkpoint** — auto-save snapshot after each wave completes (matching Python 侧 pattern)
+2. **Add task-level checkpoint** — auto-save snapshot after each wave completes (matching Python 侧 pattern). Dual storage: local file primary + gRPC sync optional.
 3. **Restore from checkpoint** — on startup `restore()`, load latest snapshot and resume from correct wave
 4. **PRD gap closure** — update the alignment table: retry = ✅, checkpoint = ✅, resume = ✅
 
@@ -85,8 +85,9 @@ Fix the `resumeFromWave` persistence bug and add task-level checkpoint snapshots
 `toPersisted()` (line 861) does NOT include `resumeFromWave`.
 `fromPersisted()` (line 888) sets `resumeFromWave: 0` heuristically — always resumes from wave 0.
 
-### Checkpoint design (latest-wins)
+### Checkpoint design (latest-wins, dual storage)
 
+**Primary: local file**
 ```
 .uc/
   tasks/
@@ -94,5 +95,11 @@ Fix the `resumeFromWave` persistence bug and add task-level checkpoint snapshots
   checkpoints/
     uc-1-xxx.snap.json     # latest wave-completed snapshot
 ```
+
+**Secondary: gRPC sync** (fire-and-forget, non-blocking)
+- After saving local snapshot, also write to engine memory via `bridge.writeMemory()`
+- `key_scope="task"`, `key=f"checkpoint_snap-{taskId}-{timestamp}"`
+- Mirrors Python 侧's `checkpoint_task()` fallback pattern
+- Failure is logged but does not block — local file is the source of truth
 
 Snapshot = copy of task state at wave boundary (after all subtasks in a wave complete, before next wave starts). On restore, if checkpoint exists and task was paused/failed, use checkpoint's `resumeFromWave` value.

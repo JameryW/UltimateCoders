@@ -1294,6 +1294,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 .as_millis() as u64;
             let message_id = format!("{}:{}::{}", task_id, event_type, ts_ms);
             let event = NatsTaskEvent {
+                v: default_event_version(),
                 message_id: Some(message_id.clone()),
                 r#type: event_type.to_string(),
                 task_id: task_id.to_string(),
@@ -4106,6 +4107,7 @@ mod tests {
         );
 
         let event = NatsTaskEvent {
+            v: default_event_version(),
             message_id: None,
             r#type: "subtask_assigned".to_string(),
             task_id: "t-1".to_string(),
@@ -4133,6 +4135,7 @@ mod tests {
     #[test]
     fn nats_event_to_agent_event_unknown_type() {
         let event = NatsTaskEvent {
+            v: default_event_version(),
             message_id: None,
             r#type: "unknown_type".to_string(),
             task_id: "t-1".to_string(),
@@ -4158,6 +4161,7 @@ mod tests {
         );
 
         let event = NatsTaskEvent {
+            v: default_event_version(),
             message_id: None,
             r#type: "tool_call".to_string(),
             task_id: "t-1".to_string(),
