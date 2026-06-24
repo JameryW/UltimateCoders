@@ -25,6 +25,12 @@ import type {
   CircuitBreakerProto,
   RateLimiterProto,
   HealthSnapshot,
+  MetricsSnapshot as GrpcMetricsSnapshot,
+  TaskMetrics as GrpcTaskMetrics,
+  WorkerMetrics as GrpcWorkerMetrics,
+  EventMetrics as GrpcEventMetrics,
+  SystemMetrics as GrpcSystemMetrics,
+  MetricsSample as GrpcMetricsSample,
 } from "@/grpc/engine_pb";
 import type {
   HealthData,
@@ -40,6 +46,7 @@ import type {
   DashboardEvent,
   TaskEvent,
   TasksData,
+  MetricsSnapshot as MetricsSnapshotType,
 } from "@/types/dashboard";
 import { getSharedTransport } from "@/hooks/useGrpcWeb";
 
@@ -221,6 +228,79 @@ function grpcTaskEventToTaskEvent(ev: GrpcTaskEvent): TaskEvent {
   };
 }
 
+// ── Metrics converters (gRPC → dashboard types) ──────────────
+
+function grpcTaskMetricsToDashboard(m: GrpcTaskMetrics): MetricsSnapshotType["task"] {
+  return {
+    avg_duration_ms: m.avgDurationMs,
+    p50_duration_ms: m.p50DurationMs,
+    p95_duration_ms: m.p95DurationMs,
+    p99_duration_ms: m.p99DurationMs,
+    retry_rate: m.retryRate,
+    slow_tasks_count: m.slowTasksCount,
+    total_completed: m.totalCompleted,
+    total_failed: m.totalFailed,
+    success_rate: m.successRate,
+  };
+}
+
+function grpcWorkerMetricsToDashboard(m: GrpcWorkerMetrics): MetricsSnapshotType["worker"] {
+  const toolCalls: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m.perWorkerToolCalls)) toolCalls[k] = v;
+  const subtaskCounts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m.perWorkerSubtaskCount)) subtaskCounts[k] = v;
+  return {
+    avg_heartbeat_age_seconds: m.avgHeartbeatAgeSeconds,
+    per_worker_tool_calls: toolCalls,
+    per_worker_subtask_count: subtaskCounts,
+    cluster_load_pct: m.clusterLoadPct,
+  };
+}
+
+function grpcEventMetricsToDashboard(m: GrpcEventMetrics): MetricsSnapshotType["event"] {
+  const counts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m.eventTypeCounts)) counts[k] = v;
+  return {
+    events_per_minute: m.eventsPerMinute,
+    error_spike: m.errorSpike,
+    event_type_counts: counts,
+  };
+}
+
+function grpcSystemMetricsToDashboard(m: GrpcSystemMetrics): MetricsSnapshotType["system"] {
+  return {
+    uptime_seconds: Number(m.uptimeSeconds),
+    circuit_breaker_state: m.circuitBreakerState,
+    rate_limiter_remaining_ratio: m.rateLimiterRemainingRatio,
+    cluster_utilization_pct: m.clusterUtilizationPct,
+  };
+}
+
+function grpcMetricsToDashboard(m: GrpcMetricsSnapshot): MetricsSnapshotType {
+  return {
+    task: m.task ? grpcTaskMetricsToDashboard(m.task) : {
+      avg_duration_ms: 0, p50_duration_ms: 0, p95_duration_ms: 0, p99_duration_ms: 0,
+      retry_rate: 0, slow_tasks_count: 0, total_completed: 0, total_failed: 0, success_rate: 0,
+    },
+    worker: m.worker ? grpcWorkerMetricsToDashboard(m.worker) : {
+      avg_heartbeat_age_seconds: 0, per_worker_tool_calls: {}, per_worker_subtask_count: {}, cluster_load_pct: 0,
+    },
+    event: m.event ? grpcEventMetricsToDashboard(m.event) : {
+      events_per_minute: 0, error_spike: false, event_type_counts: {},
+    },
+    system: m.system ? grpcSystemMetricsToDashboard(m.system) : {
+      uptime_seconds: 0, circuit_breaker_state: "unknown", rate_limiter_remaining_ratio: 1.0, cluster_utilization_pct: 0,
+    },
+    trend: m.trend.map((s: GrpcMetricsSample) => ({
+      timestamp: Number(s.timestamp),
+      events_per_minute: s.eventsPerMinute,
+      avg_duration_ms: s.avgDurationMs,
+      error_rate: s.errorRate,
+      cluster_utilization: s.clusterUtilization,
+    })),
+  };
+}
+
 // ── Hook interface ────────────────────────────────────────────
 
 export type DashboardConnectionState =
@@ -237,6 +317,7 @@ interface UseDashboardGrpcOptions {
     scheduler?: SchedulerData;
     circuitBreaker?: CircuitBreakerData;
     events?: DashboardEvent[];
+    metrics?: MetricsSnapshotType;
   }) => void;
   onTaskEvent?: (event: TaskEvent) => void;
   /** Merge task list from SSE snapshot into dashboard state. */
@@ -332,11 +413,13 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           scheduler?: SchedulerData;
           circuitBreaker?: CircuitBreakerData;
           events?: DashboardEvent[];
+          metrics?: MetricsSnapshotType;
         } = {};
         if (snapshot.health?.available) converted.health = snapshot.health;
         if (snapshot.workers?.available) converted.workers = snapshot.workers;
         if (snapshot.scheduler?.available) converted.scheduler = snapshot.scheduler;
         if (snapshot.circuit_breaker?.available) converted.circuitBreaker = snapshot.circuit_breaker;
+        if (snapshot.metrics) converted.metrics = snapshot.metrics;
         if (snapshot.tasks) {
           // Merge task list from SSE snapshot
           if (optsRef.current.mergeGrpcTasks) {
@@ -398,6 +481,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
             scheduler?: SchedulerData;
             circuitBreaker?: CircuitBreakerData;
             events?: DashboardEvent[];
+            metrics?: MetricsSnapshotType;
           } = {};
 
           if (snapshot.health) {
@@ -414,6 +498,9 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           }
           if (snapshot.recentEvents.length > 0) {
             converted.events = snapshot.recentEvents.map(grpcEventProtoToDashboardEvent);
+          }
+          if (snapshot.metrics) {
+            converted.metrics = grpcMetricsToDashboard(snapshot.metrics);
           }
 
           optsRef.current.onSnapshot?.(converted);

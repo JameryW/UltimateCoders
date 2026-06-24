@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard backend architecture, API contracts, SSE/gRPC data flow"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline: NATS → SSE/gRPC push, event types, TaskEventEmitter"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "gRPC TaskService/DashboardService proto contracts, DashboardSnapshot structure"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns for MetricsAggregator edge cases"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "React component patterns, memo, empty state conventions"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Hook patterns for useDashboard, state management conventions"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "State management patterns, snapshot merging, dedup"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript type patterns for dashboard types"}
+{"file": ".trellis/tasks/06-24-dashboard-v3/prd.md", "reason": "Task PRD with full requirements, proto schema, acceptance criteria"}

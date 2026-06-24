@@ -166,6 +166,56 @@ export interface TaskEvent {
   _sseId?: string;
 }
 
+// ── Metrics (observability) ─────────────────────────────
+
+export interface TaskMetrics {
+  avg_duration_ms: number;
+  p50_duration_ms: number;
+  p95_duration_ms: number;
+  p99_duration_ms: number;
+  retry_rate: number;
+  slow_tasks_count: number;
+  total_completed: number;
+  total_failed: number;
+  success_rate: number;
+}
+
+export interface WorkerMetrics {
+  avg_heartbeat_age_seconds: number;
+  per_worker_tool_calls: Record<string, number>;
+  per_worker_subtask_count: Record<string, number>;
+  cluster_load_pct: number;
+}
+
+export interface EventMetrics {
+  events_per_minute: number;
+  error_spike: boolean;
+  event_type_counts: Record<string, number>;
+}
+
+export interface SystemMetrics {
+  uptime_seconds: number;
+  circuit_breaker_state: string;
+  rate_limiter_remaining_ratio: number;
+  cluster_utilization_pct: number;
+}
+
+export interface MetricsSample {
+  timestamp: number;
+  events_per_minute: number;
+  avg_duration_ms: number;
+  error_rate: number;
+  cluster_utilization: number;
+}
+
+export interface MetricsSnapshot {
+  task: TaskMetrics;
+  worker: WorkerMetrics;
+  event: EventMetrics;
+  system: SystemMetrics;
+  trend: MetricsSample[];
+}
+
 // ── SSE Full Snapshot ───────────────────────────────────
 
 export interface DashboardSnapshot {
@@ -177,6 +227,7 @@ export interface DashboardSnapshot {
   circuit_breaker?: CircuitBreakerData;
   events?: DashboardEvent[];
   recent_task_events?: TaskEvent[];
+  metrics?: MetricsSnapshot;
 }
 
 // ── POST Response ───────────────────────────────────────
