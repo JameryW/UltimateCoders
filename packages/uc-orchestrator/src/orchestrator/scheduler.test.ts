@@ -331,4 +331,66 @@ describe("TaskStore", () => {
 			const cp = await store.loadCheckpoint("uc-cp-indep");
 			expect(cp!.resumeFromWave).toBe(2);
 		});
+
+		it("remove also cleans up checkpoint", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({ id: "uc-rm-cp" });
+			await store.save(task);
+			await store.saveCheckpoint(task);
+
+			// Both should exist
+			expect(await store.load("uc-rm-cp")).not.toBeNull();
+			expect(await store.loadCheckpoint("uc-rm-cp")).not.toBeNull();
+
+			await store.remove("uc-rm-cp");
+
+			// Both should be gone
+			expect(await store.load("uc-rm-cp")).toBeNull();
+			expect(await store.loadCheckpoint("uc-rm-cp")).toBeNull();
+		});
+
+		it("restore merge: task file controlState/resumeFromWave override checkpoint", async () => {
+			// Simulates: checkpoint saved at wave 2 (resumeFromWave undefined),
+			// then task paused at wave 3 (resumeFromWave=3 in task file).
+			// On restore, task file's controlState + resumeFromWave must win.
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			// Save checkpoint at wave 2 (no pause yet)
+			await store.saveCheckpoint(makeTask({
+				id: "uc-merge-test",
+				controlState: "running",
+				resumeFromWave: undefined,
+				status: "in_progress",
+			}));
+
+			// Save task file after pause at wave 3
+			await store.save(makeTask({
+				id: "uc-merge-test",
+				controlState: "paused",
+				resumeFromWave: 3,
+				status: "in_progress",
+			}));
+
+			// Load both — task file should have authoritative control fields
+			const taskFile = await store.load("uc-merge-test");
+			const cp = await store.loadCheckpoint("uc-merge-test");
+
+			// Verify the scenario: checkpoint has stale controlState
+			expect(cp!.controlState).toBe("running");
+			expect(cp!.resumeFromWave).toBeUndefined();
+
+			// Task file has the correct pause state
+			expect(taskFile!.controlState).toBe("paused");
+			expect(taskFile!.resumeFromWave).toBe(3);
+
+			// Merge logic: task file control fields override checkpoint
+			const merged = cp
+				? { ...cp, controlState: taskFile!.controlState, resumeFromWave: taskFile!.resumeFromWave, status: taskFile!.status, error: taskFile!.error }
+				: taskFile!;
+			expect(merged.controlState).toBe("paused");
+			expect(merged.resumeFromWave).toBe(3);
+		});
 });

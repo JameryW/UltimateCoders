@@ -130,9 +130,13 @@ export class UCOrchestrator {
 		await this.store.init();
 		const recoverable = await this.store.loadRecoverable();
 		for (const p of recoverable) {
-			// Prefer checkpoint data (has accurate resumeFromWave)
+			// Checkpoint may have richer subtask state, but task file has
+			// the authoritative resumeFromWave + controlState (set after pause).
+			// Merge: prefer task file for control fields, checkpoint for subtask data.
 			const cp = await this.store.loadCheckpoint(p.id);
-			const source = cp ?? p;
+			const source: PersistedTask = cp
+				? { ...cp, controlState: p.controlState, resumeFromWave: p.resumeFromWave, status: p.status, error: p.error }
+				: p;
 			const task = this.fromPersisted(source);
 			this.tasks.set(task.id, task);
 			// Update counter to avoid ID collision

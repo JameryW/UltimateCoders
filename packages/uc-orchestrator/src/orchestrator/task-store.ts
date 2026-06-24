@@ -90,6 +90,12 @@ export class TaskStore {
 		} catch {
 			// already removed is fine
 		}
+		// Also clean up checkpoint snapshot
+		try {
+			await fs.unlink(path.join(this.checkpointDir, `${taskId}.snap.json`));
+		} catch {
+			// already removed is fine
+		}
 	}
 
 	/** Load tasks that are recoverable (not completed/cancelled). */
