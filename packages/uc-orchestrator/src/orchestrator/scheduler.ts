@@ -212,3 +212,72 @@ function hasFileOverlap(a: string[], b: string[]): boolean {
 	const setB = new Set(b);
 	return a.some((f) => setB.has(f));
 }
+
+// ── Runtime File Intent Tracking ────────────────────────────────────
+
+/**
+ * Track which files each running subtask intends to modify.
+ *
+ * Used at execution time to defer subtasks whose files conflict
+ * with already-running subtasks. Complements the static
+ * splitWavesByFileOverlap by handling cases where actual modified
+ * files differ from declared files.
+ */
+export class FileIntentTracker {
+	/** subtaskId → Set of file paths */
+	private intents = new Map<string, Set<string>>();
+	/** filePath → Set of subtask IDs owning it */
+	private fileOwners = new Map<string, Set<string>>();
+
+	/** Declare that a subtask intends to modify the given files. */
+	declare(subtaskId: string, files: string[]): void {
+		const fileSet = new Set(files);
+		this.intents.set(subtaskId, fileSet);
+		for (const f of files) {
+			if (!this.fileOwners.has(f)) this.fileOwners.set(f, new Set());
+			this.fileOwners.get(f)!.add(subtaskId);
+		}
+	}
+
+	/** Release all file intents for a completed/failed/cancelled subtask. */
+	release(subtaskId: string): void {
+		const files = this.intents.get(subtaskId);
+		if (!files) return;
+		for (const f of files) {
+			const owners = this.fileOwners.get(f);
+			if (owners) {
+				owners.delete(subtaskId);
+				if (owners.size === 0) this.fileOwners.delete(f);
+			}
+		}
+		this.intents.delete(subtaskId);
+	}
+
+	/** Check if any of the given files conflict with running subtasks.
+	 *  Returns the set of conflicting subtask IDs (empty if no conflict). */
+	isConflicting(files: string[]): Set<string> {
+		const conflicting = new Set<string>();
+		for (const f of files) {
+			const owners = this.fileOwners.get(f);
+			if (owners) {
+				for (const id of owners) conflicting.add(id);
+			}
+		}
+		return conflicting;
+	}
+
+	/** Get all currently tracked file ownerships (for debugging/status). */
+	getOwnedFiles(): Map<string, string[]> {
+		const result = new Map<string, string[]>();
+		for (const [file, owners] of this.fileOwners) {
+			result.set(file, [...owners]);
+		}
+		return result;
+	}
+
+	/** Clear all intents. */
+	clear(): void {
+		this.intents.clear();
+		this.fileOwners.clear();
+	}
+}

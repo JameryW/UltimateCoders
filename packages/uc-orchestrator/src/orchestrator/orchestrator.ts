@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, splitWavesByFileOverlap, type SubtaskDef } from "./scheduler";
+import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import { TaskStore, type PersistedTask } from "./task-store";
 
@@ -353,6 +353,7 @@ export class UCOrchestrator {
 		const abortCtrl = this.abortControllers.get(task.id);
 		const results: SubtaskResult[] = [];
 		const queue = [...activeWave];
+		const intentTracker = new FileIntentTracker();
 
 		const runNext = async (): Promise<void> => {
 			while (queue.length > 0) {
@@ -363,8 +364,29 @@ export class UCOrchestrator {
 					return;
 				}
 
-				const def = queue.shift()!;
+				// Find next subtask without file conflict
+				let def: SubtaskDef | undefined;
+				let defIdx = -1;
+				for (let i = 0; i < queue.length; i++) {
+					const candidate = queue[i];
+					if (intentTracker.isConflicting(candidate.files).size === 0) {
+						def = candidate;
+						defIdx = i;
+						break;
+					}
+				}
+				if (!def) {
+					// All remaining subtasks conflict — wait for a running one to finish
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					continue;
+				}
+				queue.splice(defIdx, 1);
+
+				// Declare file intent before execution
+				intentTracker.declare(def.id, def.files);
 				const result = await this.executeSubtaskWithRetry(def, task, ctx);
+				// Release file intent after execution
+				intentTracker.release(def.id);
 				results.push(result);
 				this.runningCount--;
 			}
@@ -378,6 +400,7 @@ export class UCOrchestrator {
 		}
 		await Promise.all(workers);
 
+		intentTracker.clear();
 		const order = new Map(wave.map((d, i) => [d.id, i]));
 		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 		return results;

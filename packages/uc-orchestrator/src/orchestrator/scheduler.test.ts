@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, type SubtaskDef } from "./scheduler";
+import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -331,4 +331,125 @@ describe("TaskStore", () => {
 			const cp = await store.loadCheckpoint("uc-cp-indep");
 			expect(cp!.resumeFromWave).toBe(2);
 		});
+});
+
+// ── File-Aware Wave Splitting tests ────────────────────────────────
+
+describe("splitWavesByFileOverlap", () => {
+	it("no-op when all subtasks have no files", () => {
+		const waves = buildDAG([st("a", "a"), st("b", "b"), st("c", "c")]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(1);
+		expect(split[0].length).toBe(3);
+	});
+
+	it("no-op when no file overlap", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["file1.ts"]),
+			st("b", "b", [], ["file2.ts"]),
+			st("c", "c", [], ["file3.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(1);
+		expect(split[0].length).toBe(3);
+	});
+
+	it("splits wave when two subtasks share a file", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["file1.ts", "file2.ts"]),
+			st("b", "b", [], ["file2.ts", "file3.ts"]),
+			st("c", "c", [], ["file4.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		// a and b conflict, c is independent → 2 sub-waves
+		expect(split.length).toBe(2);
+		const sizes = split.map((w) => w.length).sort();
+		expect(sizes).toEqual([1, 2]);
+	});
+
+	it("fully sequential when all subtasks share a file", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["shared.ts"]),
+			st("b", "b", [], ["shared.ts"]),
+			st("c", "c", [], ["shared.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(3);
+		for (const w of split) {
+			expect(w.length).toBe(1);
+		}
+	});
+
+	it("subtasks with empty files never conflict", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["file1.ts"]),
+			st("b", "b", [], []),
+			st("c", "c", [], ["file1.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(2);
+	});
+
+	it("preserves dependency ordering across waves", () => {
+		const waves = buildDAG([
+			st("a", "a"),
+			st("b", "b", ["a"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(2);
+		expect(split[0][0].id).toBe("a");
+		expect(split[1][0].id).toBe("b");
+	});
+});
+
+// ── FileIntentTracker tests ────────────────────────────────────────
+
+describe("FileIntentTracker", () => {
+	it("declares and releases intents", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts", "b.ts"]);
+		expect(tracker.isConflicting(["a.ts"]).size).toBe(1);
+		tracker.release("st-1");
+		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
+	});
+
+	it("detects conflict across multiple subtasks", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts"]);
+		tracker.declare("st-2", ["b.ts"]);
+		expect(tracker.isConflicting(["a.ts"])).toEqual(new Set(["st-1"]));
+		expect(tracker.isConflicting(["b.ts"])).toEqual(new Set(["st-2"]));
+		expect(tracker.isConflicting(["c.ts"]).size).toBe(0);
+	});
+
+	it("no conflict for empty files", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts"]);
+		expect(tracker.isConflicting([]).size).toBe(0);
+	});
+
+	it("release is idempotent", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts"]);
+		tracker.release("st-1");
+		tracker.release("st-1");
+		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
+	});
+
+	it("getOwnedFiles returns correct map", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts", "b.ts"]);
+		tracker.declare("st-2", ["a.ts"]);
+		const owned = tracker.getOwnedFiles();
+		expect(owned.get("a.ts")!.sort()).toEqual(["st-1", "st-2"]);
+		expect(owned.get("b.ts")).toEqual(["st-1"]);
+	});
+
+	it("clear removes all intents", () => {
+		const tracker = new FileIntentTracker();
+		tracker.declare("st-1", ["a.ts"]);
+		tracker.clear();
+		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
+		expect(tracker.getOwnedFiles().size).toBe(0);
+	});
 });
