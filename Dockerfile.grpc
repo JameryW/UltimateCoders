@@ -1,0 +1,25 @@
+# ── Stage 1: Build the Rust gRPC server ────────────────────────────
+FROM rust:1.82-slim AS builder
+
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+
+RUN cargo build --release -p uc-grpc-server
+
+# ── Stage 2: Runtime image ────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    libssl3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/uc-grpc-server /usr/local/bin/uc-grpc-server
+
+ENV RUST_LOG=info
+EXPOSE 50051
+
+ENTRYPOINT ["uc-grpc-server"]

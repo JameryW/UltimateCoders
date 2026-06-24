@@ -9,6 +9,7 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/ci-python.yml"
+      - "dashboard/**"
   pull_request:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/ci-python.yml"
+      - "dashboard/**"
 
 jobs:
   lint:
@@ -28,6 +30,20 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff pyyaml
       - run: ruff check python/ tests/
+
+  # ponytail: dashboard lint + import check
+  dashboard:
+    name: dashboard checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff fastapi uvicorn httpx
+      - run: ruff check python/ultimate_coders/dashboard/
+      - name: Import check
+        run: python -c "from ultimate_coders.dashboard.app import DashboardApp; print('dashboard import OK')"
 
   test:
     name: test (Python ${{ matrix.python-version }})
