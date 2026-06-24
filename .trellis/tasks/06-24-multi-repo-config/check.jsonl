@@ -1,0 +1,8 @@
+[
+  {"path": ".trellis/tasks/06-24-multi-repo-config/prd.md", "reason": "PRD spec for acceptance criteria"},
+  {"path": "python/ultimate_coders/repo_config.py", "reason": "New module to verify"},
+  {"path": "tests/python/test_repo_config.py", "reason": "Unit tests for repo config + scanner"},
+  {"path": "dashboard/src/components/panels/RepoManagementPanel.tsx", "reason": "New dashboard panel"},
+  {"path": "dashboard/src/types/dashboard.ts", "reason": "Extended RepoInfo type"},
+  {"path": "python/ultimate_coders/agent/scheduler_config.py", "reason": "Scheduler tags integration"}
+]

@@ -140,3 +140,144 @@ export function detectCycles(subtasks: SubtaskDef[]): string[] | null {
 
 	return null;
 }
+
+// ── File-Aware Wave Splitting ───────────────────────────────────────
+
+/**
+ * Split waves so that no two subtasks in the same sub-wave share files.
+ *
+ * Within each wave from buildDAG(), further partition into sub-waves
+ * where all subtasks have disjoint file sets. Subtasks with no files
+ * (empty array) are always safe to parallelize.
+ *
+ * Uses greedy graph coloring: subtasks sharing files get an edge,
+ * then each color class becomes a sub-wave.
+ *
+ * ponytail: O(V²) greedy — fine for ≤10 subtasks per wave.
+ */
+export function splitWavesByFileOverlap(waves: DAGWave[]): DAGWave[] {
+	const result: DAGWave[] = [];
+	for (const wave of waves) {
+		if (wave.length <= 1 || wave.every((s) => s.files.length === 0)) {
+			result.push(wave);
+			continue;
+		}
+		// Build conflict graph: edge if two subtasks share any file
+		const conflictPairs = new Set<string>();
+		for (let i = 0; i < wave.length; i++) {
+			for (let j = i + 1; j < wave.length; j++) {
+				if (hasFileOverlap(wave[i].files, wave[j].files)) {
+					conflictPairs.add(`${i}:${j}`);
+				}
+			}
+		}
+		if (conflictPairs.size === 0) {
+			result.push(wave);
+			continue;
+		}
+		// Greedy coloring
+		const colorAssignment = new Map<number, number>(); // index → color
+		for (let i = 0; i < wave.length; i++) {
+			const neighborColors = new Set<number>();
+			for (let j = 0; j < wave.length; j++) {
+				if (i === j) continue;
+				const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+				if (conflictPairs.has(key) && colorAssignment.has(j)) {
+					neighborColors.add(colorAssignment.get(j)!);
+				}
+			}
+			// Assign lowest available color
+			let color = 0;
+			while (neighborColors.has(color)) color++;
+			colorAssignment.set(i, color);
+		}
+		// Group by color → sub-waves
+		const colorGroups = new Map<number, SubtaskDef[]>();
+		for (const [idx, color] of colorAssignment) {
+			if (!colorGroups.has(color)) colorGroups.set(color, []);
+			colorGroups.get(color)!.push(wave[idx]);
+		}
+		// Insert sub-waves in color order
+		const maxColor = Math.max(...colorAssignment.values());
+		for (let c = 0; c <= maxColor; c++) {
+			const group = colorGroups.get(c);
+			if (group) result.push(group);
+		}
+	}
+	return result;
+}
+
+function hasFileOverlap(a: string[], b: string[]): boolean {
+	if (a.length === 0 || b.length === 0) return false;
+	const setB = new Set(b);
+	return a.some((f) => setB.has(f));
+}
+
+// ── Runtime File Intent Tracking ────────────────────────────────────
+
+/**
+ * Track which files each running subtask intends to modify.
+ *
+ * Used at execution time to defer subtasks whose files conflict
+ * with already-running subtasks. Complements the static
+ * splitWavesByFileOverlap by handling cases where actual modified
+ * files differ from declared files.
+ */
+export class FileIntentTracker {
+	/** subtaskId → Set of file paths */
+	private intents = new Map<string, Set<string>>();
+	/** filePath → Set of subtask IDs owning it */
+	private fileOwners = new Map<string, Set<string>>();
+
+	/** Declare that a subtask intends to modify the given files. */
+	declare(subtaskId: string, files: string[]): void {
+		const fileSet = new Set(files);
+		this.intents.set(subtaskId, fileSet);
+		for (const f of files) {
+			if (!this.fileOwners.has(f)) this.fileOwners.set(f, new Set());
+			this.fileOwners.get(f)!.add(subtaskId);
+		}
+	}
+
+	/** Release all file intents for a completed/failed/cancelled subtask. */
+	release(subtaskId: string): void {
+		const files = this.intents.get(subtaskId);
+		if (!files) return;
+		for (const f of files) {
+			const owners = this.fileOwners.get(f);
+			if (owners) {
+				owners.delete(subtaskId);
+				if (owners.size === 0) this.fileOwners.delete(f);
+			}
+		}
+		this.intents.delete(subtaskId);
+	}
+
+	/** Check if any of the given files conflict with running subtasks.
+	 *  Returns the set of conflicting subtask IDs (empty if no conflict). */
+	isConflicting(files: string[]): Set<string> {
+		const conflicting = new Set<string>();
+		for (const f of files) {
+			const owners = this.fileOwners.get(f);
+			if (owners) {
+				for (const id of owners) conflicting.add(id);
+			}
+		}
+		return conflicting;
+	}
+
+	/** Get all currently tracked file ownerships (for debugging/status). */
+	getOwnedFiles(): Map<string, string[]> {
+		const result = new Map<string, string[]>();
+		for (const [file, owners] of this.fileOwners) {
+			result.set(file, [...owners]);
+		}
+		return result;
+	}
+
+	/** Clear all intents. */
+	clear(): void {
+		this.intents.clear();
+		this.fileOwners.clear();
+	}
+}
