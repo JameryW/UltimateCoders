@@ -999,6 +999,9 @@ class NatsWorker:
                         if w_info is not None:
                             w_info["pending_subtask_count"] = pending_count
                     await self._publisher.publish_heartbeat(self._consumer_id, w_info)
+                    # Refresh own worker heartbeat on Orchestrator side
+                    if self._orchestrator is not None and self._worker is not None:
+                        self._orchestrator.refresh_heartbeat(self._worker.worker_id)
                     logger.debug(
                         "Heartbeat sent (consumer_id=%s)", self._consumer_id
                     )
@@ -1231,6 +1234,9 @@ class NatsWorker:
             "max_capacity": data.get("max_capacity", 3),
             "last_seen": datetime.now(timezone.utc),
         }
+        # Refresh heartbeat on Orchestrator side so it tracks worker liveness
+        if self._orchestrator is not None:
+            self._orchestrator.refresh_heartbeat(worker_id)
         logger.debug(
             "Remote worker heartbeat: %s (total remote: %d)",
             worker_id[:8],
