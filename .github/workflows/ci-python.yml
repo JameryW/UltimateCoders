@@ -43,7 +43,7 @@ jobs:
       - run: pip install ruff fastapi uvicorn httpx
       - run: ruff check python/ultimate_coders/dashboard/
       - name: Import check
-        run: python -c "from ultimate_coders.dashboard.app import DashboardApp; print('dashboard import OK')"
+        run: PYTHONPATH=python python -c "from ultimate_coders.dashboard.app import DashboardApp; print('dashboard import OK')"
 
   test:
     name: test (Python ${{ matrix.python-version }})
