@@ -47,11 +47,11 @@ Fix the `resumeFromWave` persistence bug and add task-level checkpoint snapshots
 
 ## Acceptance Criteria
 
-* [ ] `resumeFromWave` persists correctly — pause at wave N, restart process, resume from wave N
-* [ ] Auto-checkpoint after each wave — snapshot saved to `.uc/checkpoints/{taskId}.snap.json`
-* [ ] Restore loads latest checkpoint on startup
-* [ ] `toPersisted()` / `fromPersisted()` round-trip test passes
-* [ ] PRD alignment table updated: retry ✅, checkpoint ✅, resume ✅
+* [x] `resumeFromWave` persists correctly — pause at wave N, restart process, resume from wave N
+* [x] Auto-checkpoint after each wave — snapshot saved to `.uc/checkpoints/{taskId}.snap.json`
+* [x] Restore loads latest checkpoint on startup
+* [x] `toPersisted()` / `fromPersisted()` round-trip test passes
+* [x] PRD alignment table updated: retry ✅, checkpoint ✅, resume ✅
 
 ## Definition of Done
 

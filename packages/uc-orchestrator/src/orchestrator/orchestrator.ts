@@ -130,7 +130,10 @@ export class UCOrchestrator {
 		await this.store.init();
 		const recoverable = await this.store.loadRecoverable();
 		for (const p of recoverable) {
-			const task = this.fromPersisted(p);
+			// Prefer checkpoint data (has accurate resumeFromWave)
+			const cp = await this.store.loadCheckpoint(p.id);
+			const source = cp ?? p;
+			const task = this.fromPersisted(source);
 			this.tasks.set(task.id, task);
 			// Update counter to avoid ID collision
 			const counterPart = task.id.match(/^uc-(\d+)-/)?.[1];
@@ -247,6 +250,9 @@ export class UCOrchestrator {
 				this.updateWidget(ctx, widgetKey, task);
 				await this.persist(task);
 				this.syncTaskToGrpc(task);
+
+				// Auto-checkpoint after wave completes (dual storage)
+				await this.checkpoint(task);
 
 				// Write subtask results + reviews to UC memory (fire-and-forget)
 				for (const result of results) {
@@ -858,6 +864,19 @@ export class UCOrchestrator {
 		await this.store.save(this.toPersisted(task));
 	}
 
+	/** Auto-checkpoint: local file (primary) + gRPC sync (secondary, fire-and-forget). */
+	private async checkpoint(task: TaskState): Promise<void> {
+		const snap = this.toPersisted(task);
+		// Primary: local file
+		await this.store.saveCheckpoint(snap);
+		// Secondary: gRPC sync (fire-and-forget)
+		this.bridge.writeMemory(
+			"task", `checkpoint_snap-${task.id}-${Date.now().toString(36)}`,
+			JSON.stringify({ ...snap, _v: 1 }),
+			"structured", "uc-orchestrator", task.id,
+		).catch(() => {});
+	}
+
 	private toPersisted(task: TaskState): PersistedTask {
 		return {
 			id: task.id,
@@ -865,6 +884,7 @@ export class UCOrchestrator {
 			status: task.status,
 			error: task.error,
 			controlState: task.controlState,
+			resumeFromWave: task.resumeFromWave,
 			subtasks: task.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,
@@ -875,9 +895,9 @@ export class UCOrchestrator {
 				review: s.review,
 				startedAt: s.startedAt,
 				completedAt: s.completedAt,
-					modifiedFiles: s.modifiedFiles,
-					recentToolCalls: s.recentToolCalls,
-					stderrTail: s.stderrTail,
+				modifiedFiles: s.modifiedFiles,
+				recentToolCalls: s.recentToolCalls,
+				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
 			})),
 			createdAt: task.createdAt,
@@ -892,6 +912,7 @@ export class UCOrchestrator {
 			status: p.status as TaskState["status"],
 			controlState: p.controlState,
 			error: p.error,
+			resumeFromWave: p.resumeFromWave,
 			subtasks: p.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,
@@ -902,14 +923,13 @@ export class UCOrchestrator {
 				review: s.review,
 				startedAt: s.startedAt,
 				completedAt: s.completedAt,
-					modifiedFiles: s.modifiedFiles,
-					recentToolCalls: s.recentToolCalls,
-					stderrTail: s.stderrTail,
+				modifiedFiles: s.modifiedFiles,
+				recentToolCalls: s.recentToolCalls,
+				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
 			})),
 			createdAt: p.createdAt,
 			completedAt: p.completedAt,
-			resumeFromWave: (p.controlState === "paused" || p.status === "failed") ? 0 : undefined,
 		};
 	}
 

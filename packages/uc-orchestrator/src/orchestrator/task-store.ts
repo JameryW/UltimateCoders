@@ -17,6 +17,8 @@ export interface PersistedTask {
 	status: string;
 	error?: string;
 	controlState: "running" | "paused" | "cancelled";
+	/** Which wave to resume from (persisted — fixes resume-from-wave-0 bug). */
+	resumeFromWave?: number;
 	subtasks: Array<{
 		id: string;
 		description: string;
@@ -40,13 +42,16 @@ export interface PersistedTask {
 
 export class TaskStore {
 	private dir: string;
+	private checkpointDir: string;
 
 	constructor(cwd: string) {
 		this.dir = path.join(cwd, ".uc", "tasks");
+		this.checkpointDir = path.join(cwd, ".uc", "checkpoints");
 	}
 
 	async init(): Promise<void> {
 		await fs.mkdir(this.dir, { recursive: true });
+		await fs.mkdir(this.checkpointDir, { recursive: true });
 	}
 
 	async save(task: PersistedTask): Promise<void> {
@@ -93,5 +98,22 @@ export class TaskStore {
 		return all.filter(
 			(t) => t.status === "planning" || t.status === "in_progress" || t.status === "failed" || t.controlState === "paused",
 		);
+	}
+
+	/** Save a wave-boundary checkpoint snapshot (latest-wins). */
+	async saveCheckpoint(task: PersistedTask): Promise<void> {
+		const filePath = path.join(this.checkpointDir, `${task.id}.snap.json`);
+		await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
+	}
+
+	/** Load the latest checkpoint for a task, or null if none exists. */
+	async loadCheckpoint(taskId: string): Promise<PersistedTask | null> {
+		try {
+			const filePath = path.join(this.checkpointDir, `${taskId}.snap.json`);
+			const raw = await fs.readFile(filePath, "utf-8");
+			return JSON.parse(raw) as PersistedTask;
+		} catch {
+			return null;
+		}
 	}
 }

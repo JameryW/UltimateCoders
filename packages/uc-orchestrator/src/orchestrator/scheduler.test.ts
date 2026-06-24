@@ -250,4 +250,85 @@ describe("TaskStore", () => {
 			expect(loaded!.subtasks[0].startedAt).toBe(1000);
 			expect(loaded!.subtasks[0].completedAt).toBe(2000);
 		});
+
+		// ── resumeFromWave round-trip ──────────────────────────────────
+
+		it("persists and restores resumeFromWave", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({
+				id: "uc-wave-persist",
+				controlState: "paused",
+				resumeFromWave: 3,
+			});
+			await store.save(task);
+
+			const loaded = await store.load("uc-wave-persist");
+			expect(loaded!.resumeFromWave).toBe(3);
+			expect(loaded!.controlState).toBe("paused");
+		});
+
+		it("resumeFromWave undefined when not set", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({ id: "uc-no-wave" });
+			await store.save(task);
+
+			const loaded = await store.load("uc-no-wave");
+			expect(loaded!.resumeFromWave).toBeUndefined();
+		});
+
+		// ── Checkpoint save/load ───────────────────────────────────────
+
+		it("saves and loads a checkpoint", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({
+				id: "uc-cp-test",
+				controlState: "paused",
+				resumeFromWave: 2,
+			});
+			await store.saveCheckpoint(task);
+
+			const cp = await store.loadCheckpoint("uc-cp-test");
+			expect(cp).not.toBeNull();
+			expect(cp!.id).toBe("uc-cp-test");
+			expect(cp!.resumeFromWave).toBe(2);
+			expect(cp!.controlState).toBe("paused");
+		});
+
+		it("returns null for nonexistent checkpoint", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			expect(await store.loadCheckpoint("no-such-task")).toBeNull();
+		});
+
+		it("checkpoint overwrites on second save (latest-wins)", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			await store.saveCheckpoint(makeTask({ id: "uc-cp-ow", resumeFromWave: 1 }));
+			await store.saveCheckpoint(makeTask({ id: "uc-cp-ow", resumeFromWave: 4 }));
+
+			const cp = await store.loadCheckpoint("uc-cp-ow");
+			expect(cp!.resumeFromWave).toBe(4);
+		});
+
+		it("checkpoint is independent from task file", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({ id: "uc-cp-indep", resumeFromWave: 2 });
+			await store.save(task);
+			await store.saveCheckpoint(task);
+
+			// Update task file — checkpoint should still have old value
+			await store.save(makeTask({ id: "uc-cp-indep", resumeFromWave: 5 }));
+			const cp = await store.loadCheckpoint("uc-cp-indep");
+			expect(cp!.resumeFromWave).toBe(2);
+		});
 });
