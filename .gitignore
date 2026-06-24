@@ -66,3 +66,7 @@ node_modules/
 package.json
 pnpm-lock.yaml
 .playwright-mcp/
+
+# uc-orchestrator package
+packages/uc-orchestrator/node_modules/
+packages/uc-orchestrator/bun.lock
