@@ -722,6 +722,32 @@ pub fn task_status_to_proto(status: &TaskStatus) -> &'static str {
     }
 }
 
+/// Convert proto status string back to TaskStatus. Returns Err for unknown values.
+pub fn proto_status_to_task_status(s: &str) -> Result<TaskStatus, String> {
+    match s {
+        "Created" => Ok(TaskStatus::Created),
+        "Planning" => Ok(TaskStatus::Planning),
+        "InProgress" => Ok(TaskStatus::InProgress),
+        "Completed" => Ok(TaskStatus::Completed),
+        "Failed" => Ok(TaskStatus::Failed),
+        "Paused" => Ok(TaskStatus::Paused),
+        other => Err(format!("Unknown TaskStatus: {}", other)),
+    }
+}
+
+/// Convert proto subtask status string back to SubtaskStatus.
+pub fn proto_subtask_status_from_str(s: &str) -> Result<SubtaskStatus, String> {
+    match s {
+        "Pending" => Ok(SubtaskStatus::Pending),
+        "Assigned" => Ok(SubtaskStatus::Assigned),
+        "InProgress" => Ok(SubtaskStatus::InProgress),
+        "Completed" => Ok(SubtaskStatus::Completed),
+        "Failed" => Ok(SubtaskStatus::Failed),
+        "Conflicted" => Ok(SubtaskStatus::Conflicted),
+        other => Err(format!("Unknown SubtaskStatus: {}", other)),
+    }
+}
+
 /// Convert SubtaskStatus to proto string representation.
 pub fn subtask_status_to_proto(status: &SubtaskStatus) -> &'static str {
     match status {
@@ -984,6 +1010,12 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 task_id.0,
                 String::new(),
                 std::collections::HashMap::new(),
+            ),
+            uc_engine::AgentEventType::TaskUpdated { task_id, status } => (
+                "task_updated".to_string(),
+                task_id.0,
+                String::new(),
+                vec![("status".to_string(), status)].into_iter().collect(),
             ),
         };
 

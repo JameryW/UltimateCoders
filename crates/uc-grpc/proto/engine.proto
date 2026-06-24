@@ -27,6 +27,7 @@ service TaskService {
     rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
     rpc PauseTask(PauseTaskRequest) returns (PauseTaskResponse);
     rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
+    rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
 }
 
 // ── Dashboard Service (NATS passthrough to Python Orchestrator) ──
@@ -257,6 +258,19 @@ message ResumeTaskRequest {
 }
 
 message ResumeTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    string status = 3;
+    optional string error = 4;
+}
+
+message UpdateTaskRequest {
+    string task_id = 1;
+    string status = 2;
+    repeated SubtaskProto subtasks = 3;
+}
+
+message UpdateTaskResponse {
     bool success = 1;
     string task_id = 2;
     string status = 3;
