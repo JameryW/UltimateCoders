@@ -11,6 +11,20 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { GrpcBridge } from "./grpc-bridge";
 
+// ponytail: scope mapping — omp uses short_term/long_term/metadata,
+// gRPC uses task/project/global. Map here so agents can use either.
+const SCOPE_MAP: Record<string, string> = {
+	short_term: "task",
+	long_term: "global",
+	metadata: "project",
+	task: "task",
+	project: "project",
+	global: "global",
+};
+function mapScope(scope: string): string {
+	return SCOPE_MAP[scope] ?? scope;
+}
+
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct,
 // only compile-time inference overflows. Execute callback types params manually.
@@ -28,13 +42,13 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 		label: "UC Memory",
 		description:
 			"Read/write UltimateCoders layered memory. " +
-			"Short-term (TiKV), long-term (Qdrant semantic), metadata (PostgreSQL).",
+			"Scopes: short_term=task(TiKV), long_term=global(Qdrant), metadata=project(PostgreSQL). Also accepts task/project/global.",
 		parameters: memorySchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
 			const p = params as { action: string; scope: string; key: string; content?: string };
 			try {
 				if (p.action === "read") {
-					const result = await bridge.readMemory(p.scope, p.key);
+					const result = await bridge.readMemory(mapScope(p.scope), p.key);
 					if (result === null) {
 						return { content: [{ type: "text" as const, text: "(no memory found)" }], useless: true };
 					}
@@ -47,11 +61,11 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 							isError: true,
 						};
 					}
-					const ok = await bridge.writeMemory(p.scope, p.key, p.content);
+					const ok = await bridge.writeMemory(mapScope(p.scope), p.key, p.content);
 					return { content: [{ type: "text" as const, text: ok ? "Written successfully" : "Write failed" }] };
 				}
 				if (p.action === "search") {
-					const results = await bridge.searchMemory(p.key);
+					const results = await bridge.searchMemory(p.key, mapScope(p.scope));
 					if (results.length === 0) {
 						return { content: [{ type: "text" as const, text: "(no results)" }], useless: true };
 					}

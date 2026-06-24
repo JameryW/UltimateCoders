@@ -248,12 +248,23 @@ export class UCOrchestrator {
 				await this.persist(task);
 				this.syncTaskToGrpc(task);
 
-				// Write completed subtask results to UC memory (fire-and-forget)
+				// Write subtask results + reviews to UC memory (fire-and-forget)
 				for (const result of results) {
-					if (result.status === "completed" && result.result) {
+					if (result.result) {
 						this.bridge.writeMemory(
 							"task", `subtask_result_${result.id}`,
 							result.result, "text", "uc-orchestrator", task.id,
+						).catch(() => {});
+					}
+					if (result.review) {
+						this.bridge.writeMemory(
+							"task", `subtask_review_${result.id}`,
+							JSON.stringify({
+								approved: result.review.approved,
+								issues: result.review.issues,
+								suggestions: result.review.suggestions,
+							}),
+							"structured", "uc-orchestrator", task.id,
 						).catch(() => {});
 					}
 				}
@@ -998,7 +1009,10 @@ const WORKER_PROMPT = `You are a coding worker agent. Execute the assigned subta
 
 If the prompt includes [Completed prerequisite subtasks], use that context
 to understand what was already done by previous workers. You can also use
-the uc_memory tool to read detailed results from prior subtasks.
+the uc_memory tool to read detailed results from prior subtasks:
+  - uc_memory(action="read", scope="task", key="subtask_result_<id>") for full output
+  - uc_memory(action="read", scope="task", key="subtask_review_<id>") for review feedback
+  - uc_memory(action="search", scope="task", key="<query>") for semantic search across results
 
 Be thorough but efficient. Focus on the specific subtask — do not expand scope.`;
 
