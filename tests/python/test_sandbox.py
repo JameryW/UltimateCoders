@@ -150,7 +150,7 @@ class TestClaudeCodeAdapter:
         assert "-p" in request["args"]
         assert "Fix the bug" in request["args"]
         assert "--output-format" in request["args"]
-        assert "json" in request["args"]
+        assert "stream-json" in request["args"]
         assert "--dangerously-skip-permissions" in request["args"]
         assert request["working_dir"] == "/tmp/project"
 

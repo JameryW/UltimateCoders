@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-24-orchestrator/prd.md", "reason": "PRD with all requirements, decisions, and technical approach"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "TaskService gRPC API spec — needed for updateTask method and correct sync logic"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Agent capability spec — worker/decomposer/supervisor tool definitions"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline spec — task lifecycle events for cancel/pause/resume"}

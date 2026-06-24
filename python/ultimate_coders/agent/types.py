@@ -117,6 +117,49 @@ class Task:
         """Update the updated_at timestamp."""
         self.updated_at = datetime.now(timezone.utc)
 
+    # ponytail: to_dict for checkpoint serialization — called by orchestrator.checkpoint_task
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization (checkpoint/recovery)."""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "project_id": self.project_id,
+            "status": self.status.value,
+            "subtasks": [
+                {
+                    "id": st.id,
+                    "parent_id": st.parent_id,
+                    "description": st.description,
+                    "status": st.status.value,
+                    "assigned_worker": st.assigned_worker,
+                    "depends_on": st.depends_on,
+                    "priority": st.priority,
+                    "file_constraints": st.file_constraints,
+                    "expected_output": st.expected_output,
+                    "retry_count": st.retry_count,
+                    "timeout_seconds": st.timeout_seconds,
+                    "result": {
+                        "subtask_id": st.result.subtask_id,
+                        "worker_id": st.result.worker_id,
+                        "modified_files": [
+                            {"path": fc.file_path, "change_type": fc.change_type.value}
+                            for fc in st.result.modified_files
+                        ],
+                        "summary": st.result.summary,
+                        "success": st.result.success,
+                        "completed_at": st.result.completed_at.isoformat(),
+                        "adaptation_strategy": st.result.adaptation_strategy.value,
+                        "stderr_tail": st.result.stderr_tail,
+                        "recent_tool_calls": st.result.recent_tool_calls,
+                    } if st.result else None,
+                }
+                for st in self.subtasks
+            ],
+            "result": self.result,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
     @property
     def is_complete(self) -> bool:
         """Whether all subtasks have completed successfully."""

@@ -555,12 +555,14 @@ impl TaskStore {
                     subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
                 }
                 if let Some(result_str) = &subtask_update.result {
+                    // ponytail: derive success from subtask status, not hardcoded true
+                    let success = subtask_update.status != "failed";
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
                         modified_files: Vec::new(),
                         summary: result_str.clone(),
-                        success: true,
+                        success,
                         completed_at: chrono::Utc::now(),
                         result: Some(result_str.clone()),
                     });

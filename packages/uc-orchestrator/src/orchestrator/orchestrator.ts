@@ -7,30 +7,39 @@
  * 3. Execute waves of subtasks via omp runSubprocess
  * 4. Optionally review subtask results via supervisor agent
  * 5. Collect results and inject summary into conversation
- * 6. Sync state to UC gRPC TaskStore for Dashboard visibility
+ * 6. Persist state to local JSON + sync to UC gRPC TaskStore
+ *
+ * Supports: cancel/pause/resume, subtask-level control,
+ * context injection from completed subtasks.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
 import { buildDAG, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
+import { TaskStore, type PersistedTask } from "./task-store";
 
 // ── Types ──────────────────────────────────────────────────────────
+
+type ControlState = "running" | "paused" | "cancelled";
 
 interface TaskState {
 	id: string;
 	description: string;
-	status: "planning" | "in_progress" | "completed" | "failed";
+	status: "planning" | "in_progress" | "completed" | "failed" | "cancelled";
+	controlState: ControlState;
 	subtasks: SubtaskResult[];
 	createdAt: number;
 	completedAt?: number;
 	error?: string;
+	/** Which wave to resume from (for pause/resume). */
+	resumeFromWave?: number;
 }
 
 interface SubtaskResult {
 	id: string;
 	description: string;
-	status: "pending" | "running" | "reviewing" | "completed" | "failed";
+	status: "pending" | "running" | "reviewing" | "completed" | "failed" | "cancelled";
 	dependsOn: string[];
 	result?: string;
 	error?: string;
@@ -46,15 +55,10 @@ interface ReviewResult {
 }
 
 interface OrchestratorConfig {
-	/** Enable supervisor review after each subtask. Default: true. */
 	enableReview: boolean;
-	/** Timeout for supervisor review (ms). Default: 60000. */
 	reviewTimeoutMs: number;
-	/** Max concurrent subtask agents. Default: 3. */
 	maxConcurrency: number;
-	/** Max retries per failed subtask. Default: 2. */
 	maxRetries: number;
-	/** Base delay for retry backoff (ms). Default: 5000. */
 	retryBaseDelayMs: number;
 }
 
@@ -63,9 +67,11 @@ interface OrchestratorConfig {
 export class UCOrchestrator {
 	private pi: ExtensionAPI;
 	private tasks: Map<string, TaskState> = new Map();
+	private abortControllers: Map<string, AbortController> = new Map();
 	private taskCounter = 0;
 	private config: OrchestratorConfig;
 	private bridge: GrpcBridge;
+	private store: TaskStore;
 	private runningCount = 0;
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
@@ -79,7 +85,32 @@ export class UCOrchestrator {
 			...config,
 		};
 		this.bridge = bridge ?? new GrpcBridge();
+		// ponytail: workspaceRoot may not exist on Settings — fallback to cwd
+		const settings = pi.pi.settings as unknown as Record<string, unknown>;
+		const ws = settings.workspaceRoot;
+		this.store = new TaskStore(typeof ws === "string" ? ws : process.cwd());
 	}
+
+	/** Restore recoverable tasks from disk. Call once at startup. */
+	async restore(): Promise<void> {
+		await this.store.init();
+		const recoverable = await this.store.loadRecoverable();
+		for (const p of recoverable) {
+			const task = this.fromPersisted(p);
+			this.tasks.set(task.id, task);
+			// Update counter to avoid ID collision
+			const counterPart = task.id.match(/^uc-(\d+)-/)?.[1];
+			if (counterPart) {
+				const n = parseInt(counterPart, 10);
+				if (n > this.taskCounter) this.taskCounter = n;
+			}
+		}
+		if (recoverable.length > 0) {
+			this.pi.logger.info(`Restored ${recoverable.length} task(s) from disk`);
+		}
+	}
+
+	// ── Task Submission ──────────────────────────────────────────────
 
 	async submitTask(description: string, ctx: ExtensionCommandContext): Promise<void> {
 		const taskId = `uc-${++this.taskCounter}-${Date.now().toString(36)}`;
@@ -88,12 +119,15 @@ export class UCOrchestrator {
 			id: taskId,
 			description,
 			status: "planning",
+			controlState: "running",
 			subtasks: [],
 			createdAt: Date.now(),
 		};
 		this.tasks.set(taskId, task);
+		this.abortControllers.set(taskId, new AbortController());
 
 		ctx.ui.notify(`Task ${taskId}: planning...`, "info");
+		await this.persist(task);
 
 		// ── Step 1: Decompose ──
 		let subtaskDefs: SubtaskDef[];
@@ -103,6 +137,7 @@ export class UCOrchestrator {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
 			ctx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
+			await this.persist(task);
 			this.syncTaskToGrpc(task);
 			return;
 		}
@@ -110,7 +145,6 @@ export class UCOrchestrator {
 		// ── Step 2: Build DAG ──
 		const waves = buildDAG(subtaskDefs);
 
-		// Initialize subtask results
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
 			description: def.description,
@@ -118,6 +152,7 @@ export class UCOrchestrator {
 			dependsOn: def.dependsOn,
 		}));
 		task.status = "in_progress";
+		await this.persist(task);
 		this.syncTaskToGrpc(task);
 
 		ctx.ui.notify(
@@ -126,18 +161,43 @@ export class UCOrchestrator {
 		);
 
 		// ── Step 3: Execute waves ──
-		const widgetKey = `uc-${taskId}`;
+		await this.executeWaves(task, waves, ctx);
+	}
+
+	// ── Wave Execution ───────────────────────────────────────────────
+
+	private async executeWaves(
+		task: TaskState,
+		waves: SubtaskDef[][],
+		ctx: ExtensionCommandContext,
+	): Promise<void> {
+		const widgetKey = `uc-${task.id}`;
+		const startWave = task.resumeFromWave ?? 0;
 		this.updateWidget(ctx, widgetKey, task);
 
 		try {
-			for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
+			for (let waveIdx = startWave; waveIdx < waves.length; waveIdx++) {
+				// Check control state before each wave
+				if (task.controlState === "cancelled") {
+					task.status = "cancelled";
+					await this.persist(task);
+					break;
+				}
+				if (task.controlState === "paused") {
+					task.resumeFromWave = waveIdx;
+					await this.persist(task);
+					this.updateWidget(ctx, widgetKey, task);
+					ctx.ui.notify(`Task ${task.id}: paused at wave ${waveIdx + 1}`, "info");
+					return; // Exit without completing — resume will re-enter
+				}
+
 				const wave = waves[waveIdx];
 				ctx.ui.notify(
-					`Task ${taskId}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
+					`Task ${task.id}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
 					"info",
 				);
 
-				const results = await this.executeWave(wave, ctx);
+				const results = await this.executeWave(wave, task, ctx);
 
 				for (const result of results) {
 					const st = task.subtasks.find((s) => s.id === result.id);
@@ -151,9 +211,28 @@ export class UCOrchestrator {
 				}
 
 				this.updateWidget(ctx, widgetKey, task);
+				await this.persist(task);
 				this.syncTaskToGrpc(task);
 
+				// Write completed subtask results to UC memory (fire-and-forget)
+				for (const result of results) {
+					if (result.status === "completed" && result.result) {
+						this.bridge.writeMemory(
+							"task", `subtask_result_${result.id}`,
+							result.result, "text", "uc-orchestrator", task.id,
+						).catch(() => {});
+					}
+				}
+
 				const failed = results.filter((r) => r.status === "failed");
+				const cancelled = results.filter((r) => r.status === "cancelled");
+				if (cancelled.length > 0) {
+					// Cancelled subtask — cascade to downstream
+					this.cascadeCancel(task, cancelled.map((r) => r.id));
+					task.status = "cancelled";
+					task.error = `Cancelled: ${cancelled.map((f) => f.id).join(", ")}`;
+					break;
+				}
 				if (failed.length > 0) {
 					task.status = "failed";
 					task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
@@ -166,25 +245,26 @@ export class UCOrchestrator {
 				task.completedAt = Date.now();
 			}
 		} catch (err) {
-			task.status = "failed";
-			task.error = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
+			if ((err as Error).name === "AbortError") {
+				task.status = "cancelled";
+			} else {
+				task.status = "failed";
+				task.error = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
+			}
 		}
 
-		// Clear widget
 		ctx.ui.setWidget(widgetKey, undefined);
-
-		// ── Step 4: Inject summary ──
+		await this.persist(task);
 		this.syncTaskToGrpc(task);
 
 		const summary = this.buildSummary(task);
 		const notifyType = task.status === "completed" ? "info" : "error";
-		ctx.ui.notify(`Task ${taskId}: ${task.status}`, notifyType);
+		ctx.ui.notify(`Task ${task.id}: ${task.status}`, notifyType);
 
-		// Write task result to UC memory (fire-and-forget)
 		this.bridge.writeMemory(
 			"task", `task_result_${task.id}`,
 			summary, "structured", "uc-orchestrator", task.id,
-		);
+		).catch(() => {});
 
 		this.pi.sendMessage(
 			{
@@ -201,6 +281,159 @@ export class UCOrchestrator {
 		);
 	}
 
+	private async executeWave(
+		wave: SubtaskDef[],
+		task: TaskState,
+		ctx: ExtensionCommandContext,
+	): Promise<SubtaskResult[]> {
+		// Filter out already-cancelled subtasks
+		const activeWave = wave.filter((def) => {
+			const existing = task.subtasks.find((s) => s.id === def.id);
+			return !existing || existing.status !== "cancelled";
+		});
+
+		if (activeWave.length === 0) return [];
+
+		const abortCtrl = this.abortControllers.get(task.id);
+		const results: SubtaskResult[] = [];
+		const queue = [...activeWave];
+
+		const runNext = async (): Promise<void> => {
+			while (queue.length > 0) {
+				// Check cancel before picking next
+				if (task.controlState === "cancelled") {
+					abortCtrl?.abort();
+					return;
+				}
+
+				const def = queue.shift()!;
+				const result = await this.executeSubtaskWithRetry(def, task, ctx);
+				results.push(result);
+				this.runningCount--;
+			}
+		};
+
+		const starters = Math.min(this.config.maxConcurrency, activeWave.length);
+		const workers: Promise<void>[] = [];
+		for (let i = 0; i < starters; i++) {
+			this.runningCount++;
+			workers.push(runNext());
+		}
+		await Promise.all(workers);
+
+		const order = new Map(wave.map((d, i) => [d.id, i]));
+		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+		return results;
+	}
+
+	// ── Control: Cancel / Pause / Resume ──────────────────────────────
+
+	async cancelTask(taskId: string, subtaskId?: string, ctx?: ExtensionCommandContext): Promise<boolean> {
+		const task = this.tasks.get(taskId);
+		if (!task) return false;
+
+		if (subtaskId) {
+			// Subtask-level cancel
+			const st = task.subtasks.find((s) => s.id === subtaskId);
+			if (!st) return false;
+
+			st.status = "cancelled";
+			st.completedAt = Date.now();
+			this.cascadeCancel(task, [subtaskId]);
+			await this.persist(task);
+			ctx?.ui.notify(`Subtask ${subtaskId} cancelled (cascade applied)`, "info");
+			return true;
+		}
+
+		// Task-level cancel
+		task.controlState = "cancelled";
+		task.status = "cancelled";
+		task.completedAt = Date.now();
+
+		const abortCtrl = this.abortControllers.get(taskId);
+		abortCtrl?.abort();
+
+		// Mark running subtasks as cancelled
+		for (const st of task.subtasks) {
+			if (st.status === "running" || st.status === "pending" || st.status === "reviewing") {
+				st.status = "cancelled";
+				st.completedAt = Date.now();
+			}
+		}
+
+		await this.persist(task);
+		this.syncTaskToGrpc(task);
+		ctx?.ui.notify(`Task ${taskId} cancelled`, "info");
+		return true;
+	}
+
+	async pauseTask(taskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
+		const task = this.tasks.get(taskId);
+		if (!task) return false;
+		if (task.status !== "in_progress" && task.status !== "planning") return false;
+
+		task.controlState = "paused";
+		await this.persist(task);
+		ctx?.ui.notify(`Task ${taskId} pausing (will stop after current wave)`, "info");
+		return true;
+	}
+
+	async resumeTask(taskId: string, ctx: ExtensionCommandContext): Promise<boolean> {
+		const task = this.tasks.get(taskId);
+		if (!task) return false;
+		if (task.controlState !== "paused") return false;
+
+		task.controlState = "running";
+		task.status = "in_progress";
+		this.abortControllers.set(taskId, new AbortController());
+
+		// Rebuild waves from current subtask state
+		const pendingDefs: SubtaskDef[] = task.subtasks
+			.filter((s) => s.status === "pending" || s.status === "running")
+			.map((s) => ({
+				id: s.id,
+				description: s.description,
+				dependsOn: s.dependsOn,
+				files: [],
+			}));
+
+		if (pendingDefs.length === 0) {
+			task.status = "completed";
+			task.completedAt = Date.now();
+			await this.persist(task);
+			ctx.ui.notify(`Task ${taskId}: all subtasks already completed`, "info");
+			return true;
+		}
+
+		const waves = buildDAG(pendingDefs);
+		await this.persist(task);
+		ctx.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
+
+		// Execute remaining waves
+		await this.executeWaves(task, waves, ctx);
+		return true;
+	}
+
+	/** Cascade cancel to all downstream subtasks that depend on cancelled ones. */
+	private cascadeCancel(task: TaskState, cancelledIds: string[]): void {
+		const cancelled = new Set(cancelledIds);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const st of task.subtasks) {
+				if (st.status === "cancelled") continue;
+				if (st.dependsOn.some((dep) => cancelled.has(dep))) {
+					st.status = "cancelled";
+					st.completedAt = Date.now();
+					cancelled.add(st.id);
+					changed = true;
+				}
+			}
+		}
+	}
+
+	// ── Status ───────────────────────────────────────────────────────
+
 	async showStatus(taskId: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
 		if (!taskId) {
 			if (this.tasks.size === 0) {
@@ -211,8 +444,9 @@ export class UCOrchestrator {
 			for (const task of this.tasks.values()) {
 				const done = task.subtasks.filter((s) => s.status === "completed").length;
 				const total = task.subtasks.length;
+				const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 				lines.push(
-					`  ${task.id}: ${task.status} (${done}/${total} subtasks) — ${task.description.slice(0, 60)}`,
+					`  ${task.id}: ${task.status}${ctrl} (${done}/${total} subtasks) — ${task.description.slice(0, 60)}`,
 				);
 			}
 			ctx.ui.notify(lines.join("\n"), "info");
@@ -229,6 +463,7 @@ export class UCOrchestrator {
 			`Task: ${task.id}`,
 			`Description: ${task.description}`,
 			`Status: ${task.status}`,
+			`Control: ${task.controlState}`,
 			`Subtasks:`,
 		];
 		for (const st of task.subtasks) {
@@ -336,50 +571,36 @@ export class UCOrchestrator {
 		return subtasks;
 	}
 
-	// ── Wave Execution (with concurrency control) ─────────────────────
+	// ── Context Injection ────────────────────────────────────────────
 
-	private async executeWave(
-		wave: SubtaskDef[],
-		ctx: ExtensionCommandContext,
-	): Promise<SubtaskResult[]> {
-		// ponytail: semaphore-style concurrency — max N subagents in parallel
-		const results: SubtaskResult[] = [];
-		const queue = [...wave];
+	/** Build context string from completed subtasks for a given subtask. */
+	private buildContextForSubtask(def: SubtaskDef, task: TaskState): string {
+		const completedSubtasks = task.subtasks.filter(
+			(s) => s.status === "completed" && def.dependsOn.includes(s.id),
+		);
+		if (completedSubtasks.length === 0) return "";
 
-		const runNext = async (): Promise<void> => {
-			while (queue.length > 0) {
-				const def = queue.shift()!;
-				const result = await this.executeSubtaskWithRetry(def, ctx);
-				results.push(result);
-				this.runningCount--;
-			}
-		};
+		const parts = completedSubtasks.map((s) => {
+			const result = s.result ? s.result.slice(0, 300) : "(no result)";
+			return `  - ${s.id}: ${s.description}\n    Result: ${result}`;
+		});
 
-		const starters = Math.min(this.config.maxConcurrency, wave.length);
-		const workers: Promise<void>[] = [];
-		for (let i = 0; i < starters; i++) {
-			this.runningCount++;
-			workers.push(runNext());
-		}
-		await Promise.all(workers);
-
-		// Sort by original wave order for deterministic state updates
-		const order = new Map(wave.map((d, i) => [d.id, i]));
-		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
-		return results;
+		return `[Completed prerequisite subtasks]\n${parts.join("\n")}\n`;
 	}
+
+	// ── Subtask Execution ──────────────────────────────────────────
 
 	private async executeSubtaskWithRetry(
 		def: SubtaskDef,
+		task: TaskState,
 		ctx: ExtensionCommandContext,
 	): Promise<SubtaskResult> {
 		let lastResult: SubtaskResult | null = null;
 
 		for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-			const result = await this.executeSubtask(def, ctx);
+			const result = await this.executeSubtask(def, task, ctx);
 
-			// Don't retry on review rejection — that's a correctness issue
-			if (result.status === "completed" || (result.error?.startsWith("Review rejected"))) {
+			if (result.status === "completed" || result.status === "cancelled" || (result.error?.startsWith("Review rejected"))) {
 				return result;
 			}
 
@@ -397,10 +618,9 @@ export class UCOrchestrator {
 		return lastResult!;
 	}
 
-	// ── Subtask Execution ──────────────────────────────────────────
-
 	private async executeSubtask(
 		def: SubtaskDef,
+		task: TaskState,
 		ctx: ExtensionCommandContext,
 	): Promise<SubtaskResult> {
 		const result: SubtaskResult = {
@@ -411,7 +631,14 @@ export class UCOrchestrator {
 			startedAt: Date.now(),
 		};
 
+		// Inject context from completed prerequisites
+		const contextPrefix = this.buildContextForSubtask(def, task);
+		const taskPrompt = contextPrefix
+			? `${contextPrefix}\n## Your subtask\n${def.description}`
+			: def.description;
+
 		try {
+			const abortCtrl = this.abortControllers.get(task.id);
 			const subResult = await runSubprocess({
 				cwd: ctx.cwd,
 				agent: {
@@ -420,10 +647,10 @@ export class UCOrchestrator {
 					systemPrompt: WORKER_PROMPT,
 					source: "project" as const,
 				},
-				task: def.description,
+				task: taskPrompt,
 				id: def.id,
 				index: 0,
-				signal: AbortSignal.timeout(300_000),
+				signal: abortCtrl?.signal ?? AbortSignal.timeout(300_000),
 				modelRegistry: ctx.modelRegistry,
 				settings: this.pi.pi.settings,
 				enableLsp: true,
@@ -454,8 +681,12 @@ export class UCOrchestrator {
 				result.error = subResult.stderr.slice(0, 500) || "unknown error";
 			}
 		} catch (err) {
-			result.status = "failed";
-			result.error = err instanceof Error ? err.message : String(err);
+			if ((err as Error).name === "AbortError") {
+				result.status = "cancelled";
+			} else {
+				result.status = "failed";
+				result.error = err instanceof Error ? err.message : String(err);
+			}
 		}
 
 		result.completedAt = Date.now();
@@ -515,12 +746,65 @@ export class UCOrchestrator {
 		}
 	}
 
+	// ── Persistence ──────────────────────────────────────────────────
+
+	private async persist(task: TaskState): Promise<void> {
+		await this.store.save(this.toPersisted(task));
+	}
+
+	private toPersisted(task: TaskState): PersistedTask {
+		return {
+			id: task.id,
+			description: task.description,
+			status: task.status,
+			error: task.error,
+			controlState: task.controlState,
+			subtasks: task.subtasks.map((s) => ({
+				id: s.id,
+				description: s.description,
+				status: s.status,
+				dependsOn: s.dependsOn,
+				result: s.result,
+				error: s.error,
+				review: s.review,
+				startedAt: s.startedAt,
+				completedAt: s.completedAt,
+			})),
+			createdAt: task.createdAt,
+			completedAt: task.completedAt,
+		};
+	}
+
+	private fromPersisted(p: PersistedTask): TaskState {
+		return {
+			id: p.id,
+			description: p.description,
+			status: p.status as TaskState["status"],
+			controlState: p.controlState,
+			error: p.error,
+			subtasks: p.subtasks.map((s) => ({
+				id: s.id,
+				description: s.description,
+				status: s.status as SubtaskResult["status"],
+				dependsOn: s.dependsOn,
+				result: s.result,
+				error: s.error,
+				review: s.review,
+				startedAt: s.startedAt,
+				completedAt: s.completedAt,
+			})),
+			createdAt: p.createdAt,
+			completedAt: p.completedAt,
+			resumeFromWave: p.controlState === "paused" ? 0 : undefined,
+		};
+	}
+
 	// ── gRPC Sync ────────────────────────────────────────────────
 
-	/** Fire-and-forget sync of task state to UC gRPC TaskStore. */
+	/** Sync task state to UC gRPC TaskStore. Fire-and-forget. */
 	private syncTaskToGrpc(task: TaskState): void {
 		// ponytail: fire-and-forget — don't await, don't block orchestrator
-		this.bridge.submitTask(task.description).catch(() => {
+		this.bridge.upsertTask(this.toPersisted(task)).catch(() => {
 			// gRPC sync is best-effort; failure is non-fatal
 		});
 	}
@@ -532,7 +816,8 @@ export class UCOrchestrator {
 		key: string,
 		task: TaskState,
 	): void {
-		const lines = [`UC Task: ${task.id}`, `Status: ${task.status}`, "Subtasks:"];
+		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
+		const lines = [`UC Task: ${task.id}`, `Status: ${task.status}${ctrl}`, "Subtasks:"];
 		for (const st of task.subtasks) {
 			const icon =
 				st.status === "completed"
@@ -543,7 +828,9 @@ export class UCOrchestrator {
 							? "◉"
 							: st.status === "failed"
 								? "✗"
-								: "○";
+								: st.status === "cancelled"
+									? "⊘"
+									: "○";
 			lines.push(`  ${icon} ${st.id}: ${st.description.slice(0, 50)}`);
 		}
 		ctx.ui.setWidget(key, lines);
@@ -555,6 +842,7 @@ export class UCOrchestrator {
 		lines.push("");
 		lines.push(`- **Description**: ${task.description}`);
 		lines.push(`- **Status**: ${task.status}`);
+		lines.push(`- **Control**: ${task.controlState}`);
 		lines.push(`- **Subtasks**: ${task.subtasks.length}`);
 		const completed = task.subtasks.filter((s) => s.status === "completed").length;
 		lines.push(`- **Completed**: ${completed}/${task.subtasks.length}`);
@@ -604,6 +892,10 @@ const WORKER_PROMPT = `You are a coding worker agent. Execute the assigned subta
 2. Make the necessary changes
 3. Verify your changes work (run tests if available)
 4. Report what you did
+
+If the prompt includes [Completed prerequisite subtasks], use that context
+to understand what was already done by previous workers. You can also use
+the uc_memory tool to read detailed results from prior subtasks.
 
 Be thorough but efficient. Focus on the specific subtask — do not expand scope.`;
 

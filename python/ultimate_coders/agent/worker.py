@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from ultimate_coders.agent.conflict import (
@@ -177,6 +178,10 @@ class Worker:
         # Event publishing — NATS (preferred) or local event_emitter fallback
         self.nats_publisher = nats_publisher
         self.event_emitter = event_emitter
+
+        # Self-heartbeat monitoring — track last heartbeat timestamp
+        # so stale_worker_cleanup can detect local worker stalls
+        self._last_heartbeat_at: datetime = datetime.now(timezone.utc)
 
     def _dynamic_capacity(self, subtask: Subtask | None = None) -> int:
         """Return effective concurrency limit for this worker.
@@ -460,6 +465,7 @@ class Worker:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
 
     async def send_heartbeat(self) -> dict[str, Any]:
+        self._last_heartbeat_at = datetime.now(timezone.utc)
         return {
             "worker_id": self.worker_id,
             "capabilities": self.capabilities,
