@@ -44,7 +44,7 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
       if (data.repos.length > 0 && !selectedRepo) {
         setSelectedRepo(data.repos[0]!.repo_id);
       }
-    }).catch(() => { /* ignore */ });
+    }).catch((err) => { console.warn("[FileBrowser] getRepos failed:", err); });
   }, []);
 
   // Load directory when repo or path changes

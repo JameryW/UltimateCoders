@@ -79,7 +79,7 @@ export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob,
             {data.night_window.is_active ? "ACTIVE" : "INACTIVE"}
           </span>
           <span className="text-xs text-[var(--text-muted)]">
-            {data.night_window.start} - {data.night_window.end} ({data.night_window.timezone})
+            {data.night_window.start} - {data.night_window.end}
           </span>
         </div>
       )}

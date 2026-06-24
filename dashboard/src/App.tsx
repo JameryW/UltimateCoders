@@ -31,7 +31,7 @@ function eventKey(ev: TaskEvent): string {
 }
 
 /** Login modal shown when auth is required but user is not authenticated. */
-function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolean> }) {
+function LoginModal({ onLogin, loginError }: { onLogin: (password: string) => Promise<boolean>; loginError?: string | null }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -46,6 +46,9 @@ function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolea
     }
     setSubmitting(false);
   };
+
+  // Show server-returned login error if present
+  const displayError = error || loginError;
 
   return (
     <div
@@ -71,7 +74,7 @@ function LoginModal({ onLogin }: { onLogin: (password: string) => Promise<boolea
           autoFocus
           className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-md px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none mb-3"
         />
-        {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+        {displayError && <p className="text-sm text-red-400 mb-2">{displayError}</p>}
         <button
           type="submit"
           disabled={submitting || !password}
@@ -196,7 +199,7 @@ function App() {
     if (dashGrpcState !== "connected" && grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
-      }).catch(() => { /* ignore */ });
+      }).catch((err) => { console.warn("[Dashboard] listTasks failed (grpc→dash merge):", err); });
     }
   }, [dashGrpcState, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
@@ -206,7 +209,7 @@ function App() {
     if (grpcState === "connected") {
       listTasks().then((data) => {
         if (data.available) dashboard.mergeGrpcTasks(data);
-      }).catch(() => { /* ignore */ });
+      }).catch((err) => { console.warn("[Dashboard] listTasks failed (sync):", err); });
     }
   }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
@@ -221,7 +224,7 @@ function App() {
         const h = await healthCheck();
         setGrpcHealthComponents(h.components);
         setLastUpdate(new Date().toISOString());
-      } catch { /* ignore */ }
+      } catch (err) { console.warn("[Dashboard] Health poll failed:", err); }
     };
     poll();
     const timer = setInterval(poll, 30000);
@@ -334,7 +337,7 @@ function App() {
     }
     return (
       <div className="min-h-screen bg-[var(--bg-primary)]">
-        <LoginModal onLogin={auth.login} />
+        <LoginModal onLogin={auth.login} loginError={auth.loginError} />
       </div>
     );
   }

@@ -122,18 +122,24 @@ function grpcCircuitBreakerToDashboard(cb: CircuitBreakerProto): CircuitBreakerI
     available: true,
     state: cb.state,
     failure_count: cb.failureCount,
-    total_calls: cb.failureThreshold,
-    total_rejected: 0,
+    failure_threshold: cb.failureThreshold,
+    // Proto doesn't track total_calls / total_rejected — mark N/A
+    total_calls: -1,
+    total_rejected: -1,
+    recovery_timeout_seconds: cb.recoveryTimeoutSeconds,
+    last_failure: cb.lastFailure ?? undefined,
   };
 }
 
 function grpcRateLimiterToDashboard(rl: RateLimiterProto): RateLimiterInfo {
   return {
     available: true,
-    rpm_available: rl.maxRequests,
-    tpm_available: 0,
+    rpm_available: Math.round(rl.maxRequests * rl.remainingRatio),
+    tpm_available: -1, // not in proto
     active_count: rl.currentRequests,
     total_requests: rl.maxRequests,
+    remaining_ratio: rl.remainingRatio,
+    window_seconds: rl.windowSeconds,
   };
 }
 
@@ -142,10 +148,10 @@ function grpcCircuitBreakerStatusToDashboard(resp: CircuitBreakerStatusResponse)
     available: resp.available,
     circuit_breaker: resp.circuitBreaker
       ? grpcCircuitBreakerToDashboard(resp.circuitBreaker)
-      : { available: false, state: "Unknown", failure_count: 0, total_calls: 0, total_rejected: 0 },
+      : { available: false, state: "Unknown", failure_count: 0, failure_threshold: 0, total_calls: -1, total_rejected: -1, recovery_timeout_seconds: 0 },
     rate_limiter: resp.rateLimiter
       ? grpcRateLimiterToDashboard(resp.rateLimiter)
-      : { available: false, rpm_available: 0, tpm_available: 0, active_count: 0, total_requests: 0 },
+      : { available: false, rpm_available: 0, tpm_available: -1, active_count: 0, total_requests: 0, remaining_ratio: 0, window_seconds: 0 },
     engine_circuit_breaker: resp.circuitBreaker ?? {},
     engine_rate_limiter: resp.rateLimiter ?? {},
   };
@@ -314,7 +320,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           _sseId: e.lastEventId || undefined,
         };
         optsRef.current.onTaskEvent?.(taskEvent);
-      } catch { /* ignore parse errors */ }
+      } catch (e) { console.warn("[Dashboard SSE] task_event parse error:", e); }
     });
 
     sse.addEventListener("update", (e) => {
@@ -338,7 +344,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           }
         }
         optsRef.current.onSnapshot?.(converted);
-      } catch { /* ignore */ }
+      } catch (e) { console.warn("[Dashboard SSE] snapshot parse error:", e); }
     });
 
     sse.onerror = () => {

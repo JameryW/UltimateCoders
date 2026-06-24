@@ -113,8 +113,11 @@ export interface CircuitBreakerInfo {
   available: boolean;
   state: string;
   failure_count: number;
+  failure_threshold: number;
   total_calls: number;
   total_rejected: number;
+  recovery_timeout_seconds: number;
+  last_failure?: string;
   error?: string;
 }
 
@@ -124,6 +127,8 @@ export interface RateLimiterInfo {
   tpm_available: number;
   active_count: number;
   total_requests: number;
+  remaining_ratio: number;
+  window_seconds: number;
   error?: string;
 }
 
