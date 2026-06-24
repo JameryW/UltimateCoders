@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-24-orchestrator-grpc-updatetask/prd.md", "reason": "PRD with requirements"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "TaskService gRPC spec"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "OMP Orchestrator section"}
+
