@@ -78,6 +78,8 @@ interface SubtaskResult {
 	recentToolCalls?: string[];
 	/** Last lines of stderr (for failure context). */
 	stderrTail?: string;
+	/** How many retries this subtask has used (for checkpoint). */
+	retryCount?: number;
 }
 
 interface ReviewResult {
@@ -422,16 +424,27 @@ export class UCOrchestrator {
 	async resumeTask(taskId: string, ctx: ExtensionCommandContext): Promise<boolean> {
 		const task = this.tasks.get(taskId);
 		if (!task) return false;
-		if (task.controlState !== "paused") return false;
+		if (task.controlState !== "paused" && task.status !== "failed") return false;
 
 		task.controlState = "running";
 		task.status = "in_progress";
-		task.resumeFromWave = undefined; // Clear — will rebuild waves from scratch
+		task.error = undefined;
+		task.resumeFromWave = undefined;
 		this.abortControllers.set(taskId, new AbortController());
 		this.bridge.resumeTask(taskId).catch(() => {});
 		this.syncTaskToGrpc(task);
 
-		// Rebuild waves from current subtask state
+		// Reset failed subtasks back to pending (skip completed ones)
+		for (const st of task.subtasks) {
+			if (st.status === "failed") {
+				st.status = "pending";
+				st.error = undefined;
+				st.result = undefined;
+				st.retryCount = 0;
+			}
+		}
+
+		// Rebuild waves from current subtask state (pending + running, skip completed/cancelled)
 		const pendingDefs: SubtaskDef[] = task.subtasks
 			.filter((s) => s.status === "pending" || s.status === "running")
 			.map((s) => ({
@@ -516,6 +529,7 @@ export class UCOrchestrator {
 			lines.push(`  ${st.id}: ${st.status}${deps}`);
 			if (st.result) lines.push(`    result: ${st.result.slice(0, 100)}`);
 			if (st.error) lines.push(`    error: ${st.error}`);
+			if (st.retryCount && st.retryCount > 0) lines.push(`    retries: ${st.retryCount}`);
 			if (st.review) {
 				lines.push(`    review: ${st.review.approved ? "approved" : "rejected"}`);
 				if (st.review.issues.length > 0) lines.push(`    issues: ${st.review.issues.join(", ")}`);
@@ -656,6 +670,7 @@ export class UCOrchestrator {
 
 		for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
 			const result = await this.executeSubtask(def, task, ctx);
+			result.retryCount = attempt;
 
 			if (result.status === "completed" || result.status === "cancelled" || (result.error?.startsWith("Review rejected"))) {
 				return result;
@@ -671,6 +686,23 @@ export class UCOrchestrator {
 				await new Promise((resolve) => setTimeout(resolve, delay));
 			}
 		}
+
+		// Retries exhausted — mark failed and notify Dashboard
+		lastResult!.retryCount = this.config.maxRetries;
+		this.pi.logger.warn(
+			`Subtask ${def.id} failed permanently after ${this.config.maxRetries} retries`,
+		);
+		this.syncTaskToGrpc(task);
+		this.bridge.writeMemory(
+			"task", `subtask_failed_${def.id}`,
+			JSON.stringify({
+				subtask_id: def.id,
+				retry_count: this.config.maxRetries,
+				error: lastResult!.error,
+				stderr_tail: lastResult!.stderrTail,
+			}),
+			"structured", "uc-orchestrator", task.id,
+		).catch(() => {});
 
 		return lastResult!;
 	}
@@ -835,6 +867,7 @@ export class UCOrchestrator {
 					modifiedFiles: s.modifiedFiles,
 					recentToolCalls: s.recentToolCalls,
 					stderrTail: s.stderrTail,
+				retryCount: s.retryCount,
 			})),
 			createdAt: task.createdAt,
 			completedAt: task.completedAt,
@@ -861,10 +894,11 @@ export class UCOrchestrator {
 					modifiedFiles: s.modifiedFiles,
 					recentToolCalls: s.recentToolCalls,
 					stderrTail: s.stderrTail,
+				retryCount: s.retryCount,
 			})),
 			createdAt: p.createdAt,
 			completedAt: p.completedAt,
-			resumeFromWave: p.controlState === "paused" ? 0 : undefined,
+			resumeFromWave: (p.controlState === "paused" || p.status === "failed") ? 0 : undefined,
 		};
 	}
 
