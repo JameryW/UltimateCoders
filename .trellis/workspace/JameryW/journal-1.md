@@ -1902,3 +1902,37 @@ OMP orchestrator checkpoint/resume + retry + failed task recovery + memory scope
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: Dashboard Observability PR + CI fixes
+
+**Date**: 2026-06-24
+**Task**: Dashboard Observability PR + CI fixes
+**Branch**: `feat/omp-checkpoint-resume-enhancement`
+
+### Summary
+
+Created PR #145 (dashboard observability), fixed CI: NatsTaskEvent.v field (4 sites), cargo fmt, ruff lint (E501/I001/UP037/F821). Also archived omp tasks (PR #144/#146 merged).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `971f75c7` | (see git log) |
+| `dac0ea12` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
