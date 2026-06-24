@@ -140,3 +140,75 @@ export function detectCycles(subtasks: SubtaskDef[]): string[] | null {
 
 	return null;
 }
+
+// ── File-Aware Wave Splitting ───────────────────────────────────────
+
+/**
+ * Split waves so that no two subtasks in the same sub-wave share files.
+ *
+ * Within each wave from buildDAG(), further partition into sub-waves
+ * where all subtasks have disjoint file sets. Subtasks with no files
+ * (empty array) are always safe to parallelize.
+ *
+ * Uses greedy graph coloring: subtasks sharing files get an edge,
+ * then each color class becomes a sub-wave.
+ *
+ * ponytail: O(V²) greedy — fine for ≤10 subtasks per wave.
+ */
+export function splitWavesByFileOverlap(waves: DAGWave[]): DAGWave[] {
+	const result: DAGWave[] = [];
+	for (const wave of waves) {
+		if (wave.length <= 1 || wave.every((s) => s.files.length === 0)) {
+			result.push(wave);
+			continue;
+		}
+		// Build conflict graph: edge if two subtasks share any file
+		const conflictPairs = new Set<string>();
+		for (let i = 0; i < wave.length; i++) {
+			for (let j = i + 1; j < wave.length; j++) {
+				if (hasFileOverlap(wave[i].files, wave[j].files)) {
+					conflictPairs.add(`${i}:${j}`);
+				}
+			}
+		}
+		if (conflictPairs.size === 0) {
+			result.push(wave);
+			continue;
+		}
+		// Greedy coloring
+		const colorAssignment = new Map<number, number>(); // index → color
+		for (let i = 0; i < wave.length; i++) {
+			const neighborColors = new Set<number>();
+			for (let j = 0; j < wave.length; j++) {
+				if (i === j) continue;
+				const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+				if (conflictPairs.has(key) && colorAssignment.has(j)) {
+					neighborColors.add(colorAssignment.get(j)!);
+				}
+			}
+			// Assign lowest available color
+			let color = 0;
+			while (neighborColors.has(color)) color++;
+			colorAssignment.set(i, color);
+		}
+		// Group by color → sub-waves
+		const colorGroups = new Map<number, SubtaskDef[]>();
+		for (const [idx, color] of colorAssignment) {
+			if (!colorGroups.has(color)) colorGroups.set(color, []);
+			colorGroups.get(color)!.push(wave[idx]);
+		}
+		// Insert sub-waves in color order
+		const maxColor = Math.max(...colorAssignment.values());
+		for (let c = 0; c <= maxColor; c++) {
+			const group = colorGroups.get(c);
+			if (group) result.push(group);
+		}
+	}
+	return result;
+}
+
+function hasFileOverlap(a: string[], b: string[]): boolean {
+	if (a.length === 0 || b.length === 0) return false;
+	const setB = new Set(b);
+	return a.some((f) => setB.has(f));
+}

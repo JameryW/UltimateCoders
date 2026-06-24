@@ -1,0 +1,14 @@
+[
+  {"path": ".trellis/tasks/06-24-multi-repo-config/prd.md", "reason": "PRD spec for the task"},
+  {"path": "python/ultimate_coders/config.py", "reason": "Existing YAML/TOML config loading pattern to follow"},
+  {"path": "python/ultimate_coders/engine.py", "reason": "Engine.index_repo() API to call from repo_config"},
+  {"path": "python/ultimate_coders/agent/scheduler_config.py", "reason": "YAML config loading precedent"},
+  {"path": "crates/uc-types/src/index.rs", "reason": "RepoSpec/IndexRequest types"},
+  {"path": "crates/uc-engine/src/config.rs", "reason": "EngineConfig structure"},
+  {"path": "dashboard/src/types/dashboard.ts", "reason": "RepoInfo type to extend"},
+  {"path": "dashboard/src/hooks/useGrpcWeb.ts", "reason": "gRPC hook to extend with repo operations"},
+  {"path": "dashboard/src/api/endpoints.ts", "reason": "API layer with existing getRepos()"},
+  {"path": "dashboard/src/App.tsx", "reason": "Layout to add RepoManagementPanel"},
+  {"path": "dashboard/src/components/panels/FileBrowser.tsx", "reason": "Panel pattern to follow"},
+  {"path": "crates/uc-grpc/proto/engine.proto", "reason": "EngineService RPCs to reuse"}
+]
