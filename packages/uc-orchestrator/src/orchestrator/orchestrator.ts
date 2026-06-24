@@ -227,11 +227,16 @@ export class UCOrchestrator {
 				const failed = results.filter((r) => r.status === "failed");
 				const cancelled = results.filter((r) => r.status === "cancelled");
 				if (cancelled.length > 0) {
-					// Cancelled subtask — cascade to downstream
+					// Cascade cancel to downstream subtasks
 					this.cascadeCancel(task, cancelled.map((r) => r.id));
-					task.status = "cancelled";
-					task.error = `Cancelled: ${cancelled.map((f) => f.id).join(", ")}`;
-					break;
+					// Only cancel the whole task if this was a task-level cancel
+					// @ts-expect-error TS2367 — controlState is mutable, TS narrowing is wrong
+					if (task.controlState === "cancelled") {
+						task.status = "cancelled";
+						task.error = `Cancelled: ${cancelled.map((f) => f.id).join(", ")}`;
+						break;
+					}
+					// Subtask-level cancel: continue with remaining non-cancelled paths
 				}
 				if (failed.length > 0) {
 					task.status = "failed";
@@ -303,6 +308,7 @@ export class UCOrchestrator {
 				// Check cancel before picking next
 				if (task.controlState === "cancelled") {
 					abortCtrl?.abort();
+					this.runningCount--;
 					return;
 				}
 
@@ -341,6 +347,7 @@ export class UCOrchestrator {
 			st.completedAt = Date.now();
 			this.cascadeCancel(task, [subtaskId]);
 			await this.persist(task);
+			this.syncTaskToGrpc(task);
 			ctx?.ui.notify(`Subtask ${subtaskId} cancelled (cascade applied)`, "info");
 			return true;
 		}
@@ -374,6 +381,8 @@ export class UCOrchestrator {
 
 		task.controlState = "paused";
 		await this.persist(task);
+		this.syncTaskToGrpc(task);
+		this.bridge.pauseTask(taskId).catch(() => {});
 		ctx?.ui.notify(`Task ${taskId} pausing (will stop after current wave)`, "info");
 		return true;
 	}
@@ -385,7 +394,10 @@ export class UCOrchestrator {
 
 		task.controlState = "running";
 		task.status = "in_progress";
+		task.resumeFromWave = undefined; // Clear — will rebuild waves from scratch
 		this.abortControllers.set(taskId, new AbortController());
+		this.bridge.resumeTask(taskId).catch(() => {});
+		this.syncTaskToGrpc(task);
 
 		// Rebuild waves from current subtask state
 		const pendingDefs: SubtaskDef[] = task.subtasks
@@ -401,6 +413,7 @@ export class UCOrchestrator {
 			task.status = "completed";
 			task.completedAt = Date.now();
 			await this.persist(task);
+			this.syncTaskToGrpc(task);
 			ctx.ui.notify(`Task ${taskId}: all subtasks already completed`, "info");
 			return true;
 		}
@@ -575,15 +588,27 @@ export class UCOrchestrator {
 
 	/** Build context string from completed subtasks for a given subtask. */
 	private buildContextForSubtask(def: SubtaskDef, task: TaskState): string {
+		const MAX_SUMMARY_LEN = 500;
+
 		const completedSubtasks = task.subtasks.filter(
 			(s) => s.status === "completed" && def.dependsOn.includes(s.id),
 		);
 		if (completedSubtasks.length === 0) return "";
 
-		const parts = completedSubtasks.map((s) => {
-			const result = s.result ? s.result.slice(0, 300) : "(no result)";
-			return `  - ${s.id}: ${s.description}\n    Result: ${result}`;
-		});
+		const parts: string[] = [];
+		let totalLen = 0;
+		for (const s of completedSubtasks) {
+			const result = s.result ? s.result.slice(0, 200) : "(no result)";
+			const line = `  - ${s.id}: ${s.description}\n    Result: ${result}`;
+			if (totalLen + line.length > MAX_SUMMARY_LEN) {
+				// Truncate to fit within budget
+				const remaining = MAX_SUMMARY_LEN - totalLen;
+				if (remaining > 0) parts.push(line.slice(0, remaining) + "...");
+				break;
+			}
+			parts.push(line);
+			totalLen += line.length + 1; // +1 for newline separator
+		}
 
 		return `[Completed prerequisite subtasks]\n${parts.join("\n")}\n`;
 	}
