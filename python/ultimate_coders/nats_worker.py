@@ -272,6 +272,8 @@ class NatsWorker:
         self._cleanup_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Track current task ID for remote result collection
         self._current_task_id: str = ""
+        # JetStream Event Sourcing: last acked sequence for replay
+        self._js_last_seq: int = 0
 
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
@@ -289,14 +291,19 @@ class NatsWorker:
         # Connect to NATS with retry
         self._nc = await self._connect_with_retry()
 
-        # Set up JetStream for Event Sourcing (ensure stream exists)
+        # Set up JetStream for Event Sourcing (ensure stream + consumer exist)
         await self._ensure_jetstream_stream()
+        await self._ensure_jetstream_consumer()
 
         # Initialize publisher
         self._publisher = NatsPublisher(self._nc)
 
         # Initialize Engine, Orchestrator, Worker
         await self._init_components()
+
+        # Replay missed events from JetStream (catch up after restart)
+        if self._mode != "worker":
+            await self._replay_missed_events()
 
         if self._mode == "worker":
             # Worker mode: subscribe to subtask execution via queue group
@@ -441,6 +448,130 @@ class NatsWorker:
                 logger.warning(
                     "JetStream stream setup failed (non-fatal): %s", err_msg,
                 )
+
+    async def _ensure_jetstream_consumer(self) -> None:
+        """Ensure a durable consumer exists for Event Sourcing replay.
+
+        Creates a push consumer "dashboard-replay" on UC_TASK_EVENTS.
+        On restart, _replay_missed_events uses this consumer to catch up
+        from the last acked sequence.
+
+        ponytail: non-fatal — JetStream unavailable = no replay, live events still work.
+        """
+        try:
+            js = self._nc.jetstream()
+            try:
+                await js.add_consumer(
+                    stream="UC_TASK_EVENTS",
+                    durable_name="dashboard-replay",
+                    deliver_subject="uc.task.event.replay",
+                    ack_policy="explicit",
+                    max_deliver=1,
+                )
+                logger.info("JetStream consumer dashboard-replay created")
+            except Exception as e:
+                if "consumer already exists" in str(e).lower():
+                    logger.debug("JetStream consumer dashboard-replay already exists")
+                else:
+                    logger.warning(
+                        "JetStream consumer setup failed (non-fatal): %s", e,
+                    )
+        except Exception as e:
+            logger.warning("JetStream consumer setup failed (non-fatal): %s", e)
+
+    async def _replay_missed_events(self) -> None:
+        """Replay missed events from JetStream on restart.
+
+        Reads from the dashboard-replay consumer starting after the last
+        acked sequence. Feeds events into _handle_task_event so the
+        Orchestrator state catches up before live subscriptions begin.
+
+        ponytail: bounded replay — max 500 events to avoid startup stall.
+        If more were missed, the periodic snapshot reconciliation covers the gap.
+        """
+        # Restore last acked sequence from engine memory
+        self._js_last_seq = self._load_js_seq()
+
+        if self._js_last_seq == 0:
+            # First start — no replay needed, record current stream state
+            try:
+                js = self._nc.jetstream()
+                info = await js.stream_info("UC_TASK_EVENTS")
+                self._js_last_seq = info.state.last_seq or 0
+                self._save_js_seq(self._js_last_seq)
+                logger.info("JetStream initial seq=%d, no replay needed", self._js_last_seq)
+            except Exception:
+                logger.debug("JetStream stream info unavailable, skipping replay")
+            return
+
+        try:
+            js = self._nc.jetstream()
+            info = await js.stream_info("UC_TASK_EVENTS")
+            current_seq = info.state.last_seq or 0
+            if current_seq <= self._js_last_seq:
+                logger.debug(
+                    "JetStream no new events (seq %d ≤ %d)",
+                    current_seq, self._js_last_seq,
+                )
+                return
+
+            gap = current_seq - self._js_last_seq
+            logger.info(
+                "JetStream replaying %d missed events (seq %d→%d)",
+                gap, self._js_last_seq, current_seq,
+            )
+
+            # Fetch missed messages via pull consumer
+            sub = await js.pull_subscribe("uc.task.event", durable="dashboard-replay")
+            try:
+                # ponytail: bounded — replay at most 500 events
+                batch_size = min(gap, 500)
+                msgs = await sub.fetch(batch=batch_size, timeout=5.0)
+                for msg in msgs:
+                    try:
+                        await self._handle_task_event(msg)
+                        await msg.ack()
+                        self._js_last_seq = msg.sequence
+                    except Exception:
+                        logger.debug("Replay event handling failed", exc_info=True)
+                self._save_js_seq(self._js_last_seq)
+                logger.info("JetStream replay done (%d events)", len(msgs))
+            except asyncio.TimeoutError:
+                logger.debug("JetStream replay fetch timed out (no missed events)")
+            finally:
+                await sub.unsubscribe()
+        except Exception:
+            logger.warning("JetStream replay failed (non-fatal)", exc_info=True)
+
+    def _save_js_seq(self, seq: int) -> None:
+        """Persist JetStream last-acked sequence for restart recovery."""
+        if self._engine is None:
+            return
+        try:
+            self._engine.write_memory(
+                key_scope="event_sourcing",
+                key="js_last_seq",
+                content=str(seq),
+                content_type="structured",
+                source_agent="nats_worker",
+            )
+        except Exception:
+            logger.debug("Failed to save js_last_seq")
+
+    def _load_js_seq(self) -> int:
+        """Load JetStream last-acked sequence from engine memory."""
+        if self._engine is None:
+            return 0
+        try:
+            raw = self._engine.read_memory(
+                key_scope="event_sourcing",
+                key="js_last_seq",
+            )
+            if raw is not None:
+                return int(raw) if isinstance(raw, str) else int(raw)
+        except Exception:
+            logger.debug("Failed to load js_last_seq")
+        return 0
 
     # ── Component initialization ─────────────────────────────────
 
@@ -1145,6 +1276,35 @@ class NatsWorker:
                         # Wake dispatch loop to pick up reassigned subtasks
                         self._dispatch_event.set()
 
+            # Self-heartbeat stall detection: if local Worker hasn't
+            # sent a heartbeat in >90s, release its current subtask
+            if self._worker is not None:
+                stall_gap = (
+                    datetime.now(timezone.utc) - self._worker._last_heartbeat_at
+                ).total_seconds()
+                if stall_gap > 90 and self._worker.current_task is not None:
+                    st = self._worker.current_task
+                    logger.warning(
+                        "Local worker heartbeat stall (%.0fs), releasing subtask %s",
+                        stall_gap, st.id[:8],
+                    )
+                    st.status = SubtaskStatus.PENDING
+                    st.assigned_worker = None
+                    st.retry_count += 1
+                    self._worker.current_task = None
+                    if self._publisher is not None:
+                        await self._publisher.publish_event(
+                            "subtask_retrying",
+                            task_id=st.parent_id,
+                            subtask_id=st.id,
+                            data={
+                                "reason": "local_worker_stall",
+                                "worker_id": self._worker.worker_id,
+                                "retry_count": st.retry_count,
+                            },
+                        )
+                    self._dispatch_event.set()
+
     # ── Dashboard NATS request-reply handlers ──────────────────────
 
     NATS_SUBJECT_DASHBOARD_SNAPSHOT: str = "uc.dashboard.snapshot"
@@ -1310,6 +1470,7 @@ class NatsWorker:
 
         This replaces the SSE full-snapshot mechanism for gRPC-Web clients.
         """
+        snapshot_count = 0
         while self._running:
             try:
                 if self._nc is not None and self._orchestrator is not None:
@@ -1318,6 +1479,10 @@ class NatsWorker:
                     await self._nc.publish(
                         self.NATS_SUBJECT_DASHBOARD_SNAPSHOT, payload
                     )
+                    # Persist JetStream seq every 12 snapshots (~60s)
+                    snapshot_count += 1
+                    if snapshot_count % 12 == 0 and self._js_last_seq > 0:
+                        self._save_js_seq(self._js_last_seq)
             except Exception:
                 logger.debug("Dashboard snapshot publish failed", exc_info=True)
             await asyncio.sleep(5.0)
