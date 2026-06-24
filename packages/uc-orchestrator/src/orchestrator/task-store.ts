@@ -27,6 +27,9 @@ export interface PersistedTask {
 		review?: { approved: boolean; issues: string[]; suggestions: string[] };
 		startedAt?: number;
 		completedAt?: number;
+		modifiedFiles?: string[];
+		recentToolCalls?: string[];
+		stderrTail?: string;
 	}>;
 	createdAt: number;
 	completedAt?: number;

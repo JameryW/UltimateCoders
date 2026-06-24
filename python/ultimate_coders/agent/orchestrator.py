@@ -545,6 +545,10 @@ class Orchestrator:
 
         # Update subtask state
         subtask.result = result
+        # Fill backflow fields on the result
+        result.retry_count = subtask.retry_count
+        if not result.success:
+            result.error = result.summary[:500]
         if result.success:
             subtask.status = SubtaskStatus.COMPLETED
             logger.info("Subtask %s completed successfully", result.subtask_id)
@@ -586,14 +590,27 @@ class Orchestrator:
             worker = self.workers[subtask.assigned_worker]
             worker.current_load = max(0, worker.current_load - 1)
 
-        # Store result in memory
+        # Store result in memory (full structured result, not just summary)
         if self.engine is not None:
             try:
+                import json
                 self.engine.write_memory(
                     key_scope="task",
                     key=f"result_{result.subtask_id}",
-                    content=result.summary,
-                    content_type="text",
+                    content=json.dumps({
+                        "subtask_id": result.subtask_id,
+                        "success": result.success,
+                        "summary": result.summary,
+                        "modified_files": [
+                            {"path": fc.file_path, "change_type": fc.change_type.value}
+                            for fc in result.modified_files
+                        ],
+                        "retry_count": result.retry_count,
+                        "error": result.error,
+                        "stderr_tail": result.stderr_tail[:500],
+                        "recent_tool_calls": result.recent_tool_calls[:5],
+                    }),
+                    content_type="structured",
                     source_agent="orchestrator",
                     importance=0.7 if result.success else 0.9,
                     task_id=task.id,
@@ -677,6 +694,14 @@ class Orchestrator:
                     "result": result.summary[:50000],
                 },
             )
+            # Auto-schedule newly unblocked subtasks after completion
+            newly_assigned = await self.schedule_ready_subtasks(task)
+            if newly_assigned:
+                await self._publish_event(
+                    "subtasks_scheduled",
+                    task_id=task.id,
+                    data={"count": len(newly_assigned), "worker_ids": newly_assigned},
+                )
 
     async def register_worker(self, worker_info: WorkerInfo) -> None:
         """Register a new worker.

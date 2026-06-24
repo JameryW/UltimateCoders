@@ -67,6 +67,8 @@ class SubtaskResult:
     # Failure context (populated on failure)
     stderr_tail: str = ""  # last ~10 lines of stderr
     recent_tool_calls: list[str] = field(default_factory=list)  # last ~5 tool names
+    retry_count: int = 0  # how many retries this subtask used
+    error: str = ""  # error message on failure
 
 
 @dataclass
@@ -142,7 +144,7 @@ class Task:
                         "subtask_id": st.result.subtask_id,
                         "worker_id": st.result.worker_id,
                         "modified_files": [
-                            {"path": fc.file_path, "change_type": fc.change_type.value}
+                            {"path": fc.file_path, "change_type": fc.change_type.value, "diff_stats": fc.diff[:200] if fc.diff else ""}
                             for fc in st.result.modified_files
                         ],
                         "summary": st.result.summary,
@@ -151,6 +153,8 @@ class Task:
                         "adaptation_strategy": st.result.adaptation_strategy.value,
                         "stderr_tail": st.result.stderr_tail,
                         "recent_tool_calls": st.result.recent_tool_calls,
+                        "retry_count": st.result.retry_count,
+                        "error": st.result.error,
                     } if st.result else None,
                 }
                 for st in self.subtasks
