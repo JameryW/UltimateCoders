@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 import pytest
-
 from ultimate_coders.dashboard.metrics import (
-    ERROR_SPIKE_THRESHOLD,
+    WINDOW_SECONDS,
     MetricsAggregator,
     MetricsSnapshot,
     _percentile,
-    WINDOW_SECONDS,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────
 

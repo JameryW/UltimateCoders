@@ -3667,6 +3667,7 @@ mod tests {
         );
 
         let msg = NatsTaskEvent {
+            v: default_event_version(),
             message_id: Some("abc-123:tool_call:st-1:1700000000".to_string()),
             r#type: "tool_call".to_string(),
             task_id: "abc-123".to_string(),

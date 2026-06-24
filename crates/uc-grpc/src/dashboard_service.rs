@@ -715,7 +715,10 @@ fn json_to_event_metrics(v: &serde_json::Value) -> EventMetrics {
 
 fn json_to_system_metrics(v: &serde_json::Value) -> SystemMetrics {
     SystemMetrics {
-        uptime_seconds: v.get("uptime_seconds").and_then(|v| v.as_u64()).unwrap_or(0),
+        uptime_seconds: v
+            .get("uptime_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
         circuit_breaker_state: json_str(v, "circuit_breaker_state").to_string(),
         rate_limiter_remaining_ratio: json_f64(v, "rate_limiter_remaining_ratio"),
         cluster_utilization_pct: json_f64(v, "cluster_utilization_pct"),
@@ -724,22 +727,22 @@ fn json_to_system_metrics(v: &serde_json::Value) -> SystemMetrics {
 
 fn json_to_metrics_snapshot(v: &serde_json::Value) -> MetricsSnapshot {
     MetricsSnapshot {
-        task: Some(v
-            .get("task")
-            .map(json_to_task_metrics)
-            .unwrap_or_default()),
-        worker: Some(v
-            .get("worker")
-            .map(json_to_worker_metrics)
-            .unwrap_or_default()),
-        event: Some(v
-            .get("event")
-            .map(json_to_event_metrics)
-            .unwrap_or_default()),
-        system: Some(v
-            .get("system")
-            .map(json_to_system_metrics)
-            .unwrap_or_default()),
+        task: Some(v.get("task").map(json_to_task_metrics).unwrap_or_default()),
+        worker: Some(
+            v.get("worker")
+                .map(json_to_worker_metrics)
+                .unwrap_or_default(),
+        ),
+        event: Some(
+            v.get("event")
+                .map(json_to_event_metrics)
+                .unwrap_or_default(),
+        ),
+        system: Some(
+            v.get("system")
+                .map(json_to_system_metrics)
+                .unwrap_or_default(),
+        ),
         trend: v
             .get("trend")
             .and_then(|v| v.as_array())

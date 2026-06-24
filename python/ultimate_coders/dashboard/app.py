@@ -1302,7 +1302,7 @@ class DashboardApp:
         )
 
     @staticmethod
-    def _metrics_to_dict(snap: "MetricsSnapshot") -> dict:  # type: ignore[name-defined]
+    def _metrics_to_dict(snap: MetricsSnapshot) -> dict:  # noqa: F821
         """Convert a MetricsSnapshot dataclass to a JSON-serializable dict."""
         import dataclasses
         return dataclasses.asdict(snap)

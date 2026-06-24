@@ -16,7 +16,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ── Constants ──────────────────────────────────────────────
 
 WINDOW_SECONDS = 3600  # 1h sliding window for event data
@@ -189,7 +188,10 @@ class MetricsAggregator:
                 if e.event_type in ("task_completed", "subtask_completed")
                 and e.duration_ms is not None
             ]
-            durations = sorted(e.duration_ms for e in completed_events if e.duration_ms is not None and e.duration_ms > 0)
+            durations = sorted(
+                e.duration_ms for e in completed_events
+                if e.duration_ms is not None and e.duration_ms > 0
+            )
 
             if durations:
                 avg = sum(durations) / len(durations)
@@ -236,12 +238,20 @@ class MetricsAggregator:
 
             # ── Event metrics ──────────────────────────────
             rate_events = [e for e in recent if e.ts >= event_rate_cutoff]
-            rate_window_seconds = min(EVENT_RATE_WINDOW, now - rate_events[0].ts) if rate_events else EVENT_RATE_WINDOW
-            events_per_minute = len(rate_events) / (rate_window_seconds / 60) if rate_window_seconds > 0 else 0.0
+            rate_window_seconds = (
+                min(EVENT_RATE_WINDOW, now - rate_events[0].ts)
+                if rate_events else EVENT_RATE_WINDOW
+            )
+            events_per_minute = (
+                len(rate_events) / (rate_window_seconds / 60)
+                if rate_window_seconds > 0 else 0.0
+            )
 
             # Error spike: error rate in event rate window
-            rate_completed = sum(1 for e in rate_events if e.event_type in ("task_completed", "subtask_completed"))
-            rate_failed = sum(1 for e in rate_events if e.event_type in ("task_failed", "subtask_failed"))
+            _completed = ("task_completed", "subtask_completed")
+            _failed = ("task_failed", "subtask_failed")
+            rate_completed = sum(1 for e in rate_events if e.event_type in _completed)
+            rate_failed = sum(1 for e in rate_events if e.event_type in _failed)
             rate_total = rate_completed + rate_failed
             error_rate = rate_failed / rate_total if rate_total > 0 else 0.0
             error_spike = error_rate > ERROR_SPIKE_THRESHOLD and rate_total >= 3
