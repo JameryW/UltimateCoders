@@ -1724,3 +1724,36 @@ Dashboard 可观测性增强 (PR #140 merged): (1) StatsBar 扩展为 6 卡片 �
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: Dashboard v2 — InteractionLog auto-scroll, task duration+sort, failed summary, event time range
+
+**Date**: 2026-06-24
+**Task**: Dashboard v2 — InteractionLog auto-scroll, task duration+sort, failed summary, event time range
+**Branch**: `main`
+
+### Summary
+
+Dashboard 交互增强 (PR #141 merged): (1) InteractionLog 自动跟随新事件 (pause on scroll + ↓ Latest 按钮) + 事件类型过滤 (Tools/LLM/Subtasks); (2) TasksPanel 每行显示持续时间 + 排序选项 (Newest/Status/Duration); (3) TaskDetail 失败子任务计数 badge + error 摘要行; (4) EventLogPanel 时间范围快捷过滤 (5m/30m/1h/All). 全部前端计算，零后端改动。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b72c65ad` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

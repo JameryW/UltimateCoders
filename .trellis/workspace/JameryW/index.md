@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-06-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1726 | Active |
+| `journal-1.md` | ~1759 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-06-24 | Dashboard v2 — InteractionLog auto-scroll, task duration+sort, failed summary, event time range | `b72c65ad` | `main` |
 | 49 | 2026-06-24 | Dashboard Observability — StatsBar 6-card, AlertBar, Errors filter, Cluster load | `44f3ac5e`, `0fad73c4` | `main` |
 | 48 | 2026-06-24 | Orchestrator Phase3 + Dashboard Auth — PR #139 merged | `623a55ad`, `3db90444` | `main` |
 | 47 | 2026-06-24 | Checkpoint全链路优化收尾 + gRPC UpdateTask事件推送 + event version字段 | `c02bbdad`, `70de9410` | `main` |
