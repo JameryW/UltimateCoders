@@ -69,6 +69,8 @@ function exportEvents(events: DashboardEvent[]): void {
   URL.revokeObjectURL(url);
 }
 
+const ERROR_TYPES: ReadonlySet<string> = new Set(["task_failed", "subtask_failed", "circuit_breaker_reset"]);
+
 export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -81,8 +83,6 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
     () => [...new Set(events.map((e) => e.type))],
     [events]
   );
-
-  const ERROR_TYPES = new Set(["task_failed", "subtask_failed", "circuit_breaker_reset"]);
 
   const filteredEvents = useMemo(() => {
     let result = events;
@@ -99,7 +99,7 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
       );
     }
     return result;
-  }, [events, typeFilter, deferredSearch]);
+  }, [events, typeFilter, errorsOnly, deferredSearch]);
 
   // ── Virtual scrolling + tail mode ──────────────────────
   const scrollRef = useRef<HTMLDivElement>(null);
