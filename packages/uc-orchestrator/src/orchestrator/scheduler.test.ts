@@ -166,8 +166,8 @@ describe("TaskStore", () => {
 		await store.save(makeTask({ id: "uc-failed", status: "failed", controlState: "running" }));
 
 		const recoverable = await store.loadRecoverable();
-		expect(recoverable.length).toBe(2);
-		expect(recoverable.map((t) => t.id).sort()).toEqual(["uc-paused", "uc-recoverable"]);
+		expect(recoverable.length).toBe(3);
+		expect(recoverable.map((t) => t.id).sort()).toEqual(["uc-failed", "uc-paused", "uc-recoverable"]);
 	});
 
 	it("removes a task", async () => {

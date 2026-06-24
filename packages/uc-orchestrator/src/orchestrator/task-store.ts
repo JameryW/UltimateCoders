@@ -30,6 +30,7 @@ export interface PersistedTask {
 		modifiedFiles?: string[];
 		recentToolCalls?: string[];
 		stderrTail?: string;
+		retryCount?: number;
 	}>;
 	createdAt: number;
 	completedAt?: number;
@@ -86,11 +87,11 @@ export class TaskStore {
 		}
 	}
 
-	/** Load tasks that are recoverable (not completed/failed/cancelled). */
+	/** Load tasks that are recoverable (not completed/cancelled). */
 	async loadRecoverable(): Promise<PersistedTask[]> {
 		const all = await this.loadAll();
 		return all.filter(
-			(t) => t.status === "planning" || t.status === "in_progress" || t.controlState === "paused",
+			(t) => t.status === "planning" || t.status === "in_progress" || t.status === "failed" || t.controlState === "paused",
 		);
 	}
 }

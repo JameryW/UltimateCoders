@@ -97,7 +97,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					const ok = await orchestrator.resumeTask(taskId, ctx);
 					if (!ok) {
-						ctx.ui.notify(`Resume failed: task ${taskId} not found or not paused`, "error");
+						ctx.ui.notify(`Resume failed: task ${taskId} not found or not paused/failed`, "error");
 					}
 					return;
 				}
@@ -110,7 +110,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"  /uc status [task-id]           Check task status",
 							"  /uc cancel <task-id> [<st-id>] Cancel task or subtask",
 							"  /uc pause <task-id>            Pause after current wave",
-							"  /uc resume <task-id>           Resume a paused task",
+							"  /uc resume <task-id>           Resume a paused or failed task",
 							"  /uc help                       Show this help",
 						].join("\n"),
 						"info",
