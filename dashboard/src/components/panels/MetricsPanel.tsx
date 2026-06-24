@@ -1,8 +1,10 @@
-import { memo } from "react";
+import { memo, useCallback } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatUptime, formatNumber } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
-import type { MetricsSnapshot, TaskMetrics, WorkerMetrics, EventMetrics, SystemMetrics } from "@/types/dashboard";
+import { Sparkline } from "@/components/charts/Sparkline";
+import { MetricsTrendChart } from "@/components/charts/MetricsTrendChart";
+import type { MetricsSnapshot, TaskMetrics, WorkerMetrics, EventMetrics, SystemMetrics, MetricsSample } from "@/types/dashboard";
 
 interface MetricsPanelProps {
   metrics: MetricsSnapshot | null;
@@ -11,19 +13,23 @@ interface MetricsPanelProps {
 
 // ── Shared sub-components ──────────────────────────────────
 
-function MetricRow({ label, value, unit, className }: {
+function MetricRow({ label, value, unit, className, sparkline }: {
   label: string;
   value: number;
   unit?: string;
   className?: string;
+  sparkline?: React.ReactNode;
 }) {
   const display = value === 0 && unit ? "—" : `${formatNumber(value)}${unit ?? ""}`;
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-[var(--text-secondary)]">{label}</span>
-      <span className={cn("font-mono", className ?? "text-[var(--text-primary)]")}>
-        {display}
-      </span>
+      <div className="flex items-center gap-2">
+        {sparkline}
+        <span className={cn("font-mono", className ?? "text-[var(--text-primary)]")}>
+          {display}
+        </span>
+      </div>
     </div>
   );
 }
@@ -48,22 +54,26 @@ function pctClass(pct: number, thresholds = [60, 85]): string {
 
 // ── Section blocks ─────────────────────────────────────────
 
-function DurationMetric({ label, ms, className }: {
+function DurationMetric({ label, ms, className, sparkline }: {
   label: string;
   ms: number;
   className?: string;
+  sparkline?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-[var(--text-secondary)]">{label}</span>
-      <span className={cn("font-mono", ms > 0 ? className : "text-[var(--text-muted)]")}>
-        {formatDuration(ms)}
-      </span>
+      <div className="flex items-center gap-2">
+        {sparkline}
+        <span className={cn("font-mono", ms > 0 ? className : "text-[var(--text-muted)]")}>
+          {formatDuration(ms)}
+        </span>
+      </div>
     </div>
   );
 }
 
-function SystemOverview({ s }: { s: SystemMetrics }) {
+function SystemOverview({ s, trend }: { s: SystemMetrics; trend: MetricsSample[] }) {
   return (
     <div className="space-y-1">
       <MetricRow label="Uptime" value={s.uptime_seconds} unit="" className="text-cyan-400" />
@@ -75,21 +85,42 @@ function SystemOverview({ s }: { s: SystemMetrics }) {
         </span>
       </div>
       <MetricRow label="Rate Limiter" value={Math.round(s.rate_limiter_remaining_ratio * 100)} unit="%" className={pctClass(s.rate_limiter_remaining_ratio * 100, [30, 60])} />
-      <MetricRow label="Cluster Utilization" value={Math.round(s.cluster_utilization_pct)} unit="%" className={pctClass(s.cluster_utilization_pct)} />
+      <MetricRow
+        label="Cluster Utilization"
+        value={Math.round(s.cluster_utilization_pct)}
+        unit="%"
+        className={pctClass(s.cluster_utilization_pct)}
+        sparkline={<Sparkline data={trend.map((t) => t.cluster_utilization * 100)} color="#f59e0b" />}
+      />
     </div>
   );
 }
 
-function TaskEfficiency({ t }: { t: TaskMetrics }) {
+function TaskEfficiency({ t, trend }: { t: TaskMetrics; trend: MetricsSample[] }) {
   return (
     <div className="space-y-1">
-      <DurationMetric label="Avg Duration" ms={t.avg_duration_ms} className="text-cyan-400" />
+      <DurationMetric
+        label="Avg Duration"
+        ms={t.avg_duration_ms}
+        className="text-cyan-400"
+        sparkline={<Sparkline data={trend.map((s) => s.avg_duration_ms)} color="#3b82f6" />}
+      />
       <DurationMetric label="P50" ms={t.p50_duration_ms} className="text-blue-400" />
       <DurationMetric label="P95" ms={t.p95_duration_ms} className="text-purple-400" />
       <DurationMetric label="P99" ms={t.p99_duration_ms} className="text-fuchsia-400" />
-      <MetricRow label="Retry Rate" value={Math.round(t.retry_rate * 100)} unit="%" className={t.retry_rate <= 0.1 ? "text-green-400" : t.retry_rate <= 0.3 ? "text-yellow-400" : "text-red-400"} />
+      <MetricRow
+        label="Retry Rate"
+        value={Math.round(t.retry_rate * 100)}
+        unit="%"
+        className={t.retry_rate <= 0.1 ? "text-green-400" : t.retry_rate <= 0.3 ? "text-yellow-400" : "text-red-400"}
+      />
       <MetricRow label="Slow Tasks" value={t.slow_tasks_count} className={t.slow_tasks_count === 0 ? "text-green-400" : "text-yellow-400"} />
-      <MetricRow label="Success Rate" value={Math.round(t.success_rate * 100)} unit="%" className={t.success_rate >= 0.8 ? "text-green-400" : t.success_rate >= 0.5 ? "text-yellow-400" : "text-red-400"} />
+      <MetricRow
+        label="Success Rate"
+        value={Math.round(t.success_rate * 100)}
+        unit="%"
+        className={t.success_rate >= 0.8 ? "text-green-400" : t.success_rate >= 0.5 ? "text-yellow-400" : "text-red-400"}
+      />
       <div className="flex gap-3 text-xs text-[var(--text-muted)] mt-1">
         <span>✓ {t.total_completed}</span>
         <span>✗ {t.total_failed}</span>
@@ -98,7 +129,7 @@ function TaskEfficiency({ t }: { t: TaskMetrics }) {
   );
 }
 
-function WorkerPerformance({ w }: { w: WorkerMetrics }) {
+function WorkerPerformance({ w, trend }: { w: WorkerMetrics; trend: MetricsSample[] }) {
   const toolEntries = Object.entries(w.per_worker_tool_calls).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const subtaskEntries = Object.entries(w.per_worker_subtask_count).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const maxTools = Math.max(1, ...toolEntries.map(([, v]) => v));
@@ -110,7 +141,13 @@ function WorkerPerformance({ w }: { w: WorkerMetrics }) {
           {w.avg_heartbeat_age_seconds > 0 ? `${w.avg_heartbeat_age_seconds.toFixed(1)}s` : "—"}
         </span>
       </div>
-      <MetricRow label="Cluster Load" value={Math.round(w.cluster_load_pct)} unit="%" className={pctClass(w.cluster_load_pct)} />
+      <MetricRow
+        label="Cluster Load"
+        value={Math.round(w.cluster_load_pct)}
+        unit="%"
+        className={pctClass(w.cluster_load_pct)}
+        sparkline={<Sparkline data={trend.map((t) => t.cluster_utilization * 100)} color="#f59e0b" />}
+      />
 
       {toolEntries.length > 0 && (
         <div className="mt-2">
@@ -146,17 +183,29 @@ function WorkerPerformance({ w }: { w: WorkerMetrics }) {
   );
 }
 
-function EventFlow({ e }: { e: EventMetrics }) {
+function EventFlow({ e, trend }: { e: EventMetrics; trend: MetricsSample[] }) {
   const topTypes = Object.entries(e.event_type_counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
   return (
     <div className="space-y-1">
-      <MetricRow label="Events/min" value={Math.round(e.events_per_minute * 10) / 10} className="text-emerald-400" />
+      <MetricRow
+        label="Events/min"
+        value={Math.round(e.events_per_minute * 10) / 10}
+        className="text-emerald-400"
+        sparkline={<Sparkline data={trend.map((t) => t.events_per_minute)} color="#22c55e" />}
+      />
       <div className="flex items-center justify-between text-sm">
         <span className="text-[var(--text-secondary)]">Error Spike</span>
         <span className={cn("font-mono text-xs px-1.5 py-0.5 rounded", e.error_spike ? "bg-red-900/30 text-red-400" : "bg-green-900/30 text-green-400")}>
           {e.error_spike ? "⚠ DETECTED" : "✓ Normal"}
         </span>
       </div>
+      <MetricRow
+        label="Error Rate"
+        value={Math.round(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0)}
+        unit="%"
+        className={pctClass(trend.length > 0 ? trend[trend.length - 1]!.error_rate * 100 : 0, [10, 30])}
+        sparkline={<Sparkline data={trend.map((t) => t.error_rate * 100)} color="#ef4444" />}
+      />
       {topTypes.length > 0 && (
         <div className="mt-2">
           <p className="text-xs text-[var(--text-muted)] font-medium mb-1">Event Types (1h)</p>
@@ -174,9 +223,61 @@ function EventFlow({ e }: { e: EventMetrics }) {
   );
 }
 
+// ── CSV Export ─────────────────────────────────────────────
+
+function exportMetricsCsv(metrics: MetricsSnapshot) {
+  const BOM = "﻿";
+  const rows: string[] = [];
+
+  // Section 1: Current snapshot
+  rows.push("Section,Metric,Value");
+  const t = metrics.task;
+  rows.push(`Task,Avg Duration (ms),${t.avg_duration_ms}`);
+  rows.push(`Task,P50 Duration (ms),${t.p50_duration_ms}`);
+  rows.push(`Task,P95 Duration (ms),${t.p95_duration_ms}`);
+  rows.push(`Task,P99 Duration (ms),${t.p99_duration_ms}`);
+  rows.push(`Task,Retry Rate,${t.retry_rate}`);
+  rows.push(`Task,Slow Tasks,${t.slow_tasks_count}`);
+  rows.push(`Task,Total Completed,${t.total_completed}`);
+  rows.push(`Task,Total Failed,${t.total_failed}`);
+  rows.push(`Task,Success Rate,${t.success_rate}`);
+  const s = metrics.system;
+  rows.push(`System,Uptime (s),${s.uptime_seconds}`);
+  rows.push(`System,Circuit Breaker,${s.circuit_breaker_state}`);
+  rows.push(`System,Rate Limiter Ratio,${s.rate_limiter_remaining_ratio}`);
+  rows.push(`System,Cluster Utilization (%),${s.cluster_utilization_pct}`);
+  const w = metrics.worker;
+  rows.push(`Worker,Avg Heartbeat Age (s),${w.avg_heartbeat_age_seconds}`);
+  rows.push(`Worker,Cluster Load (%),${w.cluster_load_pct}`);
+  const e = metrics.event;
+  rows.push(`Event,Events/min,${e.events_per_minute}`);
+  rows.push(`Event,Error Spike,${e.error_spike}`);
+
+  // Section 2: Trend time series
+  rows.push("");
+  rows.push("Timestamp,Events/min,Avg Duration (ms),Error Rate,Cluster Utilization");
+  for (const sample of metrics.trend) {
+    const ts = new Date(sample.timestamp * 1000).toISOString();
+    rows.push(`${ts},${sample.events_per_minute},${sample.avg_duration_ms},${sample.error_rate},${sample.cluster_utilization}`);
+  }
+
+  const csv = BOM + rows.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `metrics-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Main panel ─────────────────────────────────────────────
 
 export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: MetricsPanelProps) {
+  const handleExport = useCallback(() => {
+    if (metrics) exportMetricsCsv(metrics);
+  }, [metrics]);
+
   if (!metrics) {
     return (
       <Card className={cn(stale && "opacity-70")}>
@@ -188,47 +289,64 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
     );
   }
 
+  const trend = metrics.trend ?? [];
+
   return (
-    <div className={cn("grid grid-cols-1 md:grid-cols-2 gap-4", stale && "opacity-70")}>
-      {/* System Overview */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">System Overview</CardTitle>
-        </CardHeader>
-        <div className="px-4 pb-4">
-          <SystemOverview s={metrics.system} />
-        </div>
-      </Card>
+    <div className={cn("space-y-4", stale && "opacity-70")}>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">Metrics</h3>
+        <button
+          onClick={handleExport}
+          className="text-xs px-2.5 py-1 rounded-md border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-alt)] transition-colors cursor-pointer"
+        >
+          Export CSV
+        </button>
+      </div>
 
-      {/* Task Efficiency */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Task Efficiency</CardTitle>
-        </CardHeader>
-        <div className="px-4 pb-4">
-          <TaskEfficiency t={metrics.task} />
-        </div>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* System Overview */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">System Overview</CardTitle>
+          </CardHeader>
+          <div className="px-4 pb-4">
+            <SystemOverview s={metrics.system} trend={trend} />
+          </div>
+        </Card>
 
-      {/* Worker Performance */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Worker Performance</CardTitle>
-        </CardHeader>
-        <div className="px-4 pb-4">
-          <WorkerPerformance w={metrics.worker} />
-        </div>
-      </Card>
+        {/* Task Efficiency */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Task Efficiency</CardTitle>
+          </CardHeader>
+          <div className="px-4 pb-4">
+            <TaskEfficiency t={metrics.task} trend={trend} />
+          </div>
+        </Card>
 
-      {/* Event Flow */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Event Flow</CardTitle>
-        </CardHeader>
-        <div className="px-4 pb-4">
-          <EventFlow e={metrics.event} />
-        </div>
-      </Card>
+        {/* Worker Performance */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Worker Performance</CardTitle>
+          </CardHeader>
+          <div className="px-4 pb-4">
+            <WorkerPerformance w={metrics.worker} trend={trend} />
+          </div>
+        </Card>
+
+        {/* Event Flow */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Event Flow</CardTitle>
+          </CardHeader>
+          <div className="px-4 pb-4">
+            <EventFlow e={metrics.event} trend={trend} />
+          </div>
+        </Card>
+      </div>
+
+      {/* Full-width trend chart */}
+      <MetricsTrendChart trend={trend} stale={stale} />
     </div>
   );
 });
