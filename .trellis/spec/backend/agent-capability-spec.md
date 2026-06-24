@@ -260,3 +260,157 @@ candidates.sort(key=lambda w: (-cap_matches[w.id], w.current_load, -w.max_capaci
 results = self.engine.search_memory(query=subtask.description, scope_type="all", max_results=3)
 experience_parts = [r.text[:200] for r in results if r.key.startswith("experience_")]
 ```
+
+---
+
+## OMP Orchestrator Extension (TypeScript)
+
+### Scope / Trigger
+
+- Trigger: Any change to `packages/uc-orchestrator/` — task persistence, context injection, cancel/pause/resume, gRPC bridge
+- Cross-layer: OMP extension → Rust gRPC TaskService → Dashboard
+
+### Signatures
+
+#### TaskStore (`packages/uc-orchestrator/src/orchestrator/task-store.ts`)
+
+```typescript
+class TaskStore {
+  constructor(cwd: string)
+  init(): Promise<void>
+  save(task: PersistedTask): Promise<void>
+  load(taskId: string): Promise<PersistedTask | null>
+  loadAll(): Promise<PersistedTask[]>
+  loadRecoverable(): Promise<PersistedTask[]>
+  remove(taskId: string): Promise<void>
+}
+```
+
+#### PersistedTask
+
+```typescript
+interface PersistedTask {
+  id: string
+  description: string
+  status: string  // "planning" | "in_progress" | "completed" | "failed" | "cancelled"
+  error?: string
+  controlState: "running" | "paused" | "cancelled"
+  subtasks: Array<{
+    id: string; description: string; status: string; dependsOn: string[]
+    result?: string; error?: string
+    review?: { approved: boolean; issues: string[]; suggestions: string[] }
+    startedAt?: number; completedAt?: number
+  }>
+  createdAt: number; completedAt?: number
+}
+```
+
+#### Orchestrator Control Methods
+
+```typescript
+class UCOrchestrator {
+  cancelTask(taskId: string, subtaskId?: string, ctx?: ExtensionCommandContext): Promise<boolean>
+  pauseTask(taskId: string, ctx?: ExtensionCommandContext): Promise<boolean>
+  resumeTask(taskId: string, ctx: ExtensionCommandContext): Promise<boolean>
+  restore(): Promise<void>  // Recover persisted tasks on startup
+}
+```
+
+#### GrpcBridge Extensions
+
+```typescript
+class GrpcBridge {
+  upsertTask(task: PersistedTask): Promise<boolean>
+  pauseTask(taskId: string): Promise<boolean>
+  resumeTask(taskId: string): Promise<boolean>
+}
+```
+
+### Contracts
+
+#### Persistence Strategy (Dual-Write)
+
+| Priority | Storage | Purpose | Failure Mode |
+|----------|---------|---------|-------------|
+| 1 (truth) | `.uc/tasks/<id>.json` | Local persistence, restart recovery | No failure (local fs) |
+| 2 (view) | gRPC TaskService | Dashboard visibility | Best-effort, fire-and-forget |
+
+- Every state change: `persist(task)` first, then `syncTaskToGrpc(task)` async
+- `syncTaskToGrpc` uses `upsertTask` which checks existence via `getTask()` before submitting
+- gRPC failures are non-fatal (catch + ignore)
+
+#### Context Injection (500-char limit)
+
+- `buildContextForSubtask(def, task)` injects summaries of completed prerequisite subtasks
+- Total summary capped at 500 chars (accumulative tracking, truncated)
+- Each subtask result sliced to 200 chars within summary
+- Worker results auto-written to uc_memory: `scope="task", key="subtask_result_<id>"`
+
+#### Cancel/Pause/Resume
+
+| Command | Behavior | State Validation |
+|---------|----------|-----------------|
+| `/uc cancel <task-id>` | Abort running subtasks, mark task cancelled | Any status → cancelled |
+| `/uc cancel <task-id> <subtask-id>` | Cancel subtask + cascade downstream, task continues | Subtask must exist |
+| `/uc pause <task-id>` | Finish current wave, mark paused | Only in_progress/planning |
+| `/uc resume <task-id>` | Rebuild DAG from pending subtasks, continue | Only paused |
+
+- Cascade cancel: if subtask X is cancelled, all subtasks depending on X are also cancelled
+- Subtask-level cancel does NOT cancel the whole task — remaining non-dependent paths continue
+- Pause: `resumeFromWave` tracks wave index; `resumeTask` rebuilds DAG from pending subtasks
+- `AbortController` per task: cancel aborts all running worker subprocesses
+
+#### Extension Commands
+
+| Command | Arguments | Description |
+|---------|-----------|-------------|
+| `/uc submit` | `<description>` | Submit task for orchestration |
+| `/uc status` | `[task-id]` | Show task status |
+| `/uc cancel` | `<task-id> [<subtask-id>]` | Cancel task or subtask |
+| `/uc pause` | `<task-id>` | Pause after current wave |
+| `/uc resume` | `<task-id>` | Resume paused task |
+| `/uc help` | — | Show help |
+
+### Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| No `.uc/tasks/` directory | `TaskStore.init()` creates it via `mkdir -p` |
+| Corrupt JSON in task file | `TaskStore.load()` returns null (try/catch) |
+| gRPC server unavailable | All bridge methods return defaults (null/[]/false) |
+| Cancel non-existent task | `cancelTask` returns false |
+| Pause completed task | `pauseTask` returns false (wrong status) |
+| Resume non-paused task | `resumeTask` returns false |
+| Resume with no pending subtasks | Task marked completed immediately |
+| All subtasks cancelled (subtask-level) | Task continues, remaining paths execute |
+
+### Good/Base/Bad Cases
+
+- **Good**: Submit → decompose → execute waves → all complete → persist + sync
+- **Base**: Submit → wave 2 fails → task failed → persist + sync
+- **Bad**: Submit → process crashes mid-wave → restart → `restore()` recovers in_progress task → resume
+
+### Tests Required
+
+| Test | Assertion |
+|------|-----------|
+| `task_store_save_load` | Round-trip: save then load returns same task |
+| `task_store_load_nonexistent` | Returns null |
+| `task_store_load_all` | Multiple saves → loadAll returns all |
+| `task_store_recoverable` | Only planning/in_progress/paused returned |
+| `task_store_recoverable_excludes_cancelled` | Cancelled tasks excluded |
+| `task_store_empty_dir` | Empty directory returns [] |
+| `task_store_overwrite` | Save same ID twice → last write wins |
+| `task_store_subtask_data` | Result, review, timestamps survive round-trip |
+
+### Common Mistakes
+
+1. **Casting `pi.zod.object({...})` directly into `registerTool` parameters** — causes TS2589 "Type instantiation is excessively deep". Extract schema as variable and use `as never` cast, type params manually in execute callback.
+
+2. **Subtask-level cancel cancelling the whole task** — only cascade downstream subtasks; the parent task should continue executing remaining non-dependent paths.
+
+3. **Forgetting `syncTaskToGrpc` after control operations** — cancel/pause/resume must sync state to gRPC for dashboard visibility.
+
+4. **`runningCount` not decremented on early return** — if a worker exits early (e.g., cancel), must decrement `runningCount` to prevent counter leak.
+
+5. **Context summary exceeding token budget** — `buildContextForSubtask` must cap total at 500 chars to avoid token overflow in worker prompts.

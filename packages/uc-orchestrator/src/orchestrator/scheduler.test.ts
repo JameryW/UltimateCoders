@@ -4,7 +4,7 @@
  * Run: bun test src/orchestrator/scheduler.test.ts
  */
 
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { buildDAG, detectCycles, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
@@ -100,8 +100,8 @@ describe("buildDAG", () => {
 // ── TaskStore tests ────────────────────────────────────────────────
 
 describe("TaskStore", () => {
-	// ponytail: use /tmp for test isolation
-	const testDir = `/tmp/uc-test-tasks-${Date.now()}`;
+	// ponytail: unique dir per test to avoid cross-test leakage
+	let testDir: string;
 
 	function makeTask(overrides?: Partial<PersistedTask>): PersistedTask {
 		return {
@@ -117,6 +117,11 @@ describe("TaskStore", () => {
 			...overrides,
 		};
 	}
+
+	// Fresh directory per test
+	beforeEach(() => {
+		testDir = `/tmp/uc-test-tasks-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	});
 
 	it("saves and loads a task", async () => {
 		const store = new TaskStore(testDir);
@@ -176,4 +181,73 @@ describe("TaskStore", () => {
 		await store.remove(task.id);
 		expect(await store.load(task.id)).toBeNull();
 	});
+
+		it("recovers planning tasks", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			await store.save(makeTask({ id: "uc-planning", status: "planning", controlState: "running" }));
+
+			const recoverable = await store.loadRecoverable();
+			expect(recoverable.length).toBe(1);
+			expect(recoverable[0].id).toBe("uc-planning");
+		});
+
+		it("does not recover cancelled tasks", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			await store.save(makeTask({ id: "uc-cancelled", status: "cancelled", controlState: "cancelled" }));
+
+			const recoverable = await store.loadRecoverable();
+			expect(recoverable.length).toBe(0);
+		});
+
+		it("handles empty directory gracefully", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			expect(await store.loadAll()).toEqual([]);
+			expect(await store.loadRecoverable()).toEqual([]);
+		});
+
+		it("overwrites existing task on save", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			await store.save(makeTask({ id: "uc-1", status: "in_progress" }));
+			await store.save(makeTask({ id: "uc-1", status: "completed" }));
+
+			const loaded = await store.load("uc-1");
+			expect(loaded!.status).toBe("completed");
+		});
+
+		it("persists subtask results and reviews", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({
+				id: "uc-with-results",
+				subtasks: [
+				{
+					id: "st-1",
+					description: "subtask 1",
+					status: "completed",
+					dependsOn: [],
+					result: "All tests pass",
+					review: { approved: true, issues: [], suggestions: ["Add more tests"] },
+					startedAt: 1000,
+					completedAt: 2000,
+				},
+				],
+			});
+			await store.save(task);
+
+			const loaded = await store.load("uc-with-results");
+			expect(loaded!.subtasks[0].result).toBe("All tests pass");
+			expect(loaded!.subtasks[0].review?.approved).toBe(true);
+			expect(loaded!.subtasks[0].review?.suggestions).toEqual(["Add more tests"]);
+			expect(loaded!.subtasks[0].startedAt).toBe(1000);
+			expect(loaded!.subtasks[0].completedAt).toBe(2000);
+		});
 });

@@ -102,10 +102,21 @@ export class GrpcBridge {
 
 	/**
 	 * Upsert task: if task exists on server, update it; otherwise create.
-	 * ponytail: single submitTask with task_id — server handles upsert.
+	 * ponytail: server has no UpdateTask RPC yet, so we check existence
+	 * with GetTask first and skip if already present. Full upsert
+	 * requires adding UpdateTask to the proto — tracked as TODO.
 	 */
 	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
 		try {
+			// Check if task already exists on server
+			const existing = await this.getTask(task.id);
+			if (existing) {
+				// Task exists — server has no UpdateTask RPC yet.
+				// Re-submit would create a duplicate; skip for now.
+				// TODO: implement proper update once UpdateTask RPC is added.
+				return true; // Consider existing task as "synced"
+			}
+
 			const resp = await this.rpc("SubmitTask", {
 				description: task.description,
 				project_id: "",
