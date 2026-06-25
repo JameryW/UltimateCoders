@@ -1,0 +1,9 @@
+{
+  "id": "uc-3-mqtes80t",
+  "description": "Smoke test task",
+  "status": "failed",
+  "error": "Decomposition failed: baseSettings.get is not a function. (In 'baseSettings.get(key)', 'baseSettings.get' is undefined)",
+  "controlState": "running",
+  "subtasks": [],
+  "createdAt": 1782386301341
+}

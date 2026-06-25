@@ -25,6 +25,8 @@ import type {
   PauseTaskResponse,
   ResumeTaskRequest,
   ResumeTaskResponse,
+  CancelTaskRequest,
+  CancelTaskResponse,
   WatchTaskRequest,
   TaskEventProto,
 } from './types.js';
@@ -188,6 +190,22 @@ export class TaskServiceClient {
       (this.client as any).ResumeTask(
         {taskId: request.taskId},
         (err: grpc.ServiceError | null, response: ResumeTaskResponse) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(response);
+          }
+        },
+      );
+    });
+  }
+
+  /** Cancel a task. */
+  cancelTask(request: CancelTaskRequest): Promise<CancelTaskResponse> {
+    return new Promise((resolve, reject) => {
+      (this.client as any).CancelTask(
+        {taskId: request.taskId},
+        (err: grpc.ServiceError | null, response: CancelTaskResponse) => {
           if (err) {
             reject(err);
           } else {

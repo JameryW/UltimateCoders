@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "uc-rpc-server.ts JSONL protocol — reference for how RPC server dispatches control commands to orchestrator"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "JSON-RPC bridge pattern — reference for how Rust↔Python control signals propagate over stdin/stdout"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "TaskService proto contracts — need to add CancelTask RPC, understand PauseTask/ResumeTask flow"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS message protocol — understand existing subjects and event format for adding task_cancelled"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline — understand how events flow from gRPC server to subscribers"}
+{"file": ".trellis/tasks/06-25-tui-omp-unified-control-path-seamless-handoff/research/architecture-gaps.md", "reason": "7 architecture gaps analysis — primary research document for this task"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI gRPC client spec — need to add cancelTask method"}

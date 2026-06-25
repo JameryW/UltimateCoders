@@ -61,6 +61,17 @@ export interface ResumeTaskResponse {
   error?: string;
 }
 
+export interface CancelTaskRequest {
+  taskId: string;
+}
+
+export interface CancelTaskResponse {
+  success: boolean;
+  taskId: string;
+  status: string;
+  error?: string;
+}
+
 export interface WatchTaskRequest {
   taskId: string; // empty = watch all tasks
 }

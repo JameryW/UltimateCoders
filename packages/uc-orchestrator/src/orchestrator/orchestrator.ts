@@ -18,6 +18,7 @@ import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
 import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import { TaskStore, type PersistedTask } from "./task-store";
+import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ export class UCOrchestrator {
 	private store: TaskStore;
 	private runningCount = 0;
 	private circuitBreaker = new CircuitBreaker();
+	private controlSubscriber: ControlSignalSubscriber;
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
@@ -128,6 +130,8 @@ export class UCOrchestrator {
 		const settings = pi.pi.settings as unknown as Record<string, unknown>;
 		const ws = settings.workspaceRoot;
 		this.store = new TaskStore(typeof ws === "string" ? ws : process.cwd());
+		// ponytail: subscribe to NATS control events (pause/resume/cancel from TUI/Dashboard)
+		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler);
 	}
 
 	/** Restore recoverable tasks from disk. Call once at startup. */
@@ -150,6 +154,10 @@ export class UCOrchestrator {
 		if (recoverable.length > 0) {
 			this.pi.logger.info(`Restored ${recoverable.length} task(s) from disk`);
 		}
+		// Start NATS control subscriber (or polling fallback) — non-blocking
+		this.controlSubscriber.start().catch((err) => {
+			this.pi.logger.warn(`ControlSubscriber start failed: ${err}`);
+		});
 	}
 
 	// ── Task Submission ──────────────────────────────────────────────
@@ -1215,6 +1223,13 @@ export class UCOrchestrator {
 
 	getAllTaskStates(): TaskState[] {
 		return [...this.tasks.values()];
+	}
+
+	/** Return IDs of non-terminal tasks (for ControlSignalHandler polling). */
+	getActiveTaskIds(): string[] {
+		return [...this.tasks.values()]
+			.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed")
+			.map((t) => t.id);
 	}
 
 	private buildSummary(task: TaskState): string {

@@ -29,6 +29,8 @@ import type {
   PauseTaskResponse,
   ResumeTaskRequest,
   ResumeTaskResponse,
+  CancelTaskRequest,
+  CancelTaskResponse,
 } from '../grpc/types.js';
 
 // ── Constants ───────────────────────────────────────────────
@@ -68,6 +70,9 @@ export interface UseGrpcClientReturn {
 
   /** Resume a task. */
   resumeTask: (request: ResumeTaskRequest) => Promise<ResumeTaskResponse | null>;
+
+  /** Cancel a task. */
+  cancelTask: (request: CancelTaskRequest) => Promise<CancelTaskResponse | null>;
 
   /** Manually reconnect (interrupts backoff, immediately retries). */
   reconnect: () => void;
@@ -305,6 +310,19 @@ export function useGrpcClient(): UseGrpcClientReturn {
     }
   }, [client]);
 
+  const cancelTask = useCallback(async (request: CancelTaskRequest): Promise<CancelTaskResponse | null> => {
+    if (!client) return null;
+    try {
+      return await client.cancelTask(request);
+    } catch (err: any) {
+      if (isUnavailableError(err)) {
+        setConnectionState('error');
+        setLastError(getErrorMessage(err));
+      }
+      return null;
+    }
+  }, [client]);
+
   // ── Manual reconnect: interrupts backoff, immediately retries ──
   // ponytail: read client from ref so reconnect has stable identity (no client dep)
   const reconnect = useCallback(() => {
@@ -329,6 +347,7 @@ export function useGrpcClient(): UseGrpcClientReturn {
     listTasks,
     pauseTask,
     resumeTask,
+    cancelTask,
     reconnect,
     client,
     lastError,
