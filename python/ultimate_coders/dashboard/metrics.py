@@ -67,6 +67,7 @@ class TaskMetrics:
     slow_tasks_count: int = 0
     total_completed: int = 0
     total_failed: int = 0
+    recent_failed: int = 0  # failures within the sliding window
     success_rate: float = 0.0
 
 
@@ -161,7 +162,12 @@ class MetricsAggregator:
         # Time-series store (SQLite)
         self._metrics_store = MetricsStore()
         # Restore trend from SQLite on startup
-        self._trend = deque(self._metrics_store.get_trend(TREND_MAX_SAMPLES), maxlen=TREND_MAX_SAMPLES)
+        # TREND_MAX_SAMPLES samples at TREND_INTERVAL seconds each
+        restore_minutes = TREND_MAX_SAMPLES * TREND_INTERVAL // 60
+        self._trend = deque(
+            self._metrics_store.get_trend(minutes=restore_minutes),
+            maxlen=TREND_MAX_SAMPLES,
+        )
 
     # ── Public API ─────────────────────────────────────────
 
@@ -261,6 +267,9 @@ class MetricsAggregator:
             total_outcomes = self._total_completed + self._total_failed
             retry_rate = self._total_retries / total_outcomes if total_outcomes > 0 else 0.0
             success_rate = self._total_completed / total_outcomes if total_outcomes > 0 else 0.0
+            # Count failures within the sliding window (for alerting)
+            _fail_types = ("task_failed", "subtask_failed")
+            recent_failed = sum(1 for e in recent if e.event_type in _fail_types)
 
             task = TaskMetrics(
                 avg_duration_ms=avg,
@@ -271,6 +280,7 @@ class MetricsAggregator:
                 slow_tasks_count=slow_count,
                 total_completed=self._total_completed,
                 total_failed=self._total_failed,
+                recent_failed=recent_failed,
                 success_rate=success_rate,
             )
 
@@ -350,9 +360,10 @@ class MetricsAggregator:
 
     # ── Alert checking ─────────────────────────────────────
 
-    def check_alerts(self, snap: MetricsSnapshot) -> list[Alert]:
-        """Check alert conditions against a snapshot. Returns newly triggered alerts.
+    def check_alerts(self, snap: MetricsSnapshot) -> tuple[list[Alert], list[str]]:
+        """Check alert conditions against a snapshot.
 
+        Returns (newly_triggered_alerts, resolved_alert_types).
         Compares current state against configurable thresholds. New alerts are
         persisted to SQLite. Resolved alerts are marked in the store.
         """
@@ -373,7 +384,8 @@ class MetricsAggregator:
         if cfg.slow_tasks_alert and snap.task.slow_tasks_count > 0:
             current_types.add("slow_tasks")
             if "slow_tasks" not in self._active_alert_types:
-                a = Alert("slow_tasks", f"{snap.task.slow_tasks_count} slow task(s) (>5min)", "warning", now)
+                msg = f"{snap.task.slow_tasks_count} slow task(s) (>5min)"
+                a = Alert("slow_tasks", msg, "warning", now)
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
@@ -381,7 +393,10 @@ class MetricsAggregator:
         if cfg.high_latency_alert and snap.task.p95_duration_ms > cfg.high_latency_ms:
             current_types.add("high_latency")
             if "high_latency" not in self._active_alert_types:
-                a = Alert("high_latency", f"P95 latency {snap.task.p95_duration_ms:.0f}ms exceeds {cfg.high_latency_ms:.0f}ms", "warning", now)
+                p95 = snap.task.p95_duration_ms
+                threshold = cfg.high_latency_ms
+                msg = f"P95 latency {p95:.0f}ms exceeds {threshold:.0f}ms"
+                a = Alert("high_latency", msg, "warning", now)
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
@@ -406,16 +421,20 @@ class MetricsAggregator:
         if snap.worker.avg_heartbeat_age_seconds > cfg.stale_worker_threshold_seconds:
             current_types.add("stale_workers")
             if "stale_workers" not in self._active_alert_types:
-                a = Alert("stale_workers", f"Avg heartbeat age {snap.worker.avg_heartbeat_age_seconds:.1f}s (>{cfg.stale_worker_threshold_seconds:.0f}s)", "warning", now)
+                age = snap.worker.avg_heartbeat_age_seconds
+                threshold = cfg.stale_worker_threshold_seconds
+                msg = f"Avg heartbeat age {age:.1f}s (>{threshold:.0f}s)"
+                a = Alert("stale_workers", msg, "warning", now)
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
-        # 7. Recent failures
-        if snap.task.total_failed > 0:
-            # Use cumulative failed count as proxy — frontend filters by time
+        # 7. Recent failures (within sliding window)
+        if snap.task.recent_failed > 0:
             current_types.add("recent_failures")
-            if "recent_failures" not in self._active_alert_types and snap.task.total_failed >= cfg.failure_count_threshold:
-                a = Alert("recent_failures", f"{snap.task.total_failed} total failures", "critical", now)
+            if "recent_failures" not in self._active_alert_types \
+                    and snap.task.recent_failed >= cfg.failure_count_threshold:
+                msg = f"{snap.task.recent_failed} recent failure(s) (1h window)"
+                a = Alert("recent_failures", msg, "critical", now)
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
@@ -425,8 +444,7 @@ class MetricsAggregator:
             self._alert_store.resolve(t)
 
         self._active_alert_types = current_types
-        self._resolved_this_cycle: list[str] = list(resolved_types)
-        return new_alerts
+        return new_alerts, list(resolved_types)
 
     @property
     def alert_store(self) -> AlertStore:
@@ -580,7 +598,7 @@ class MetricsStore:
             (sample.timestamp, sample.events_per_minute, sample.avg_duration_ms, sample.error_rate, sample.cluster_utilization),
         )
         conn.commit()
-        # Retention cleanup — check every 60 writes (ponytail: no cron)
+        # Retention cleanup — approximately once per hour (when timestamp is near the hour mark)
         if sample.timestamp % 3600 < 60:
             cutoff = sample.timestamp - _METRICS_RETENTION_DAYS * 86400
             conn.execute("DELETE FROM metrics_samples WHERE timestamp < ?", (cutoff,))

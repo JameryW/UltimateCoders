@@ -289,10 +289,7 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
 
   // Fetch extended trend when range > 60min (SSE only provides last 1h)
   useEffect(() => {
-    if (trendRange <= 60 || !metrics) {
-      setExtendedTrend(null);
-      return;
-    }
+    if (trendRange <= 60 || !metrics) return;
     let cancelled = false;
     fetch(`/dashboard/api/trend?minutes=${trendRange}`)
       .then(res => res.ok ? res.json() : null)
@@ -304,6 +301,9 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
       .catch(() => { /* graceful fallback */ });
     return () => { cancelled = true; };
   }, [trendRange, metrics]);
+
+  // Reset extended trend when switching back to 1h (SSE data is sufficient)
+  const effectiveTrend = trendRange <= 60 ? null : extendedTrend;
 
   if (!metrics) {
     return (
@@ -317,7 +317,7 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
   }
 
   // Use extended trend from API when range > 60min, otherwise SSE trend
-  const trend = trendRange > 60 && extendedTrend ? extendedTrend : (metrics.trend ?? []);
+  const trend = effectiveTrend ?? (metrics.trend ?? []);
 
   return (
     <div className={cn("space-y-4", stale && "opacity-70")}>

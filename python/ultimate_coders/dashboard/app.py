@@ -37,7 +37,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from ultimate_coders.dashboard.metrics import MetricsAggregator, Alert
+from ultimate_coders.dashboard.metrics import MetricsAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -1299,8 +1299,8 @@ class DashboardApp:
         # Update metrics with current system state before snapshotting
         self._update_system_metrics(health, workers)
         metrics_snap = self._metrics.snapshot()
-        # Check alert conditions and get newly triggered alerts
-        new_alerts = self._metrics.check_alerts(metrics_snap)
+        # Check alert conditions and get newly triggered/resolved alerts
+        new_alerts, resolved_types = self._metrics.check_alerts(metrics_snap)
         result = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "health": health,
@@ -1317,10 +1317,7 @@ class DashboardApp:
                 {"type": "alert_triggered", "alert_type": a.alert_type, "message": a.message, "severity": a.severity, "timestamp": a.timestamp}
                 for a in new_alerts
             ]
-        # Attach resolved alert types
-        # ponytail: resolved alerts detected in check_alerts already update the store;
-        # we just need to signal the frontend which types resolved this cycle.
-        resolved_types = getattr(self._metrics, "_resolved_this_cycle", [])
+        # Attach resolved alert types for SSE push
         if resolved_types:
             result["alert_resolved"] = resolved_types
         return result
