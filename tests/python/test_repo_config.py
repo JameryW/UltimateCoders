@@ -242,6 +242,42 @@ class TestRepoScanner:
         assert len(new) == 1
         engine.index_repo.assert_called_once()
 
+    def test_discover_and_index_excludes_failed(self, tmp_path):
+        """discover_and_index should not include repos that fail to index."""
+        repo_dir = tmp_path / "bad-repo"
+        self._make_git_repo(repo_dir)
+
+        engine = MagicMock()
+        engine.index_repo.side_effect = RuntimeError("index failed")
+        scanner = RepoScanner(engine=engine)
+        config = RepoConfig(scan_dirs=[str(tmp_path)])
+
+        indexed = scanner.discover_and_index(config, indexed_repo_ids=set())
+        assert len(indexed) == 0  # failed repo not in result
+
+    def test_discover_excludes_declared_repo_ids(self, tmp_path):
+        """discover should skip repos whose repo_id is in exclude_repo_ids."""
+        repo_dir = tmp_path / "declared-repo"
+        self._make_git_repo(repo_dir)
+
+        scanner = RepoScanner()
+        results = scanner.discover(
+            [str(tmp_path)], scan_depth=3,
+            exclude_repo_ids={"declared-repo"},
+        )
+        assert len(results) == 0
+
+    def test_discover_deduplicates(self, tmp_path):
+        """discover should deduplicate repos found in multiple scan_dirs."""
+        repo_dir = tmp_path / "shared-repo"
+        self._make_git_repo(repo_dir)
+
+        scanner = RepoScanner()
+        results = scanner.discover(
+            [str(tmp_path), str(tmp_path)], scan_depth=3,
+        )
+        assert len(results) == 1
+
 
 # ── RepoConfigWatcher ──────────────────────────────────────────
 

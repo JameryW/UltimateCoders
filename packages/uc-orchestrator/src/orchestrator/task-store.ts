@@ -19,6 +19,8 @@ export interface PersistedTask {
 	controlState: "running" | "paused" | "cancelled";
 	/** Which wave to resume from (persisted — fixes resume-from-wave-0 bug). */
 	resumeFromWave?: number;
+	/** Whether re-decomposition has been attempted (one-shot guard, persisted). */
+	redecomposed?: boolean;
 	subtasks: Array<{
 		id: string;
 		description: string;
