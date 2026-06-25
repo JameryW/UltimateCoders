@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, type SubtaskDef } from "./scheduler";
+import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import { TaskStore, type PersistedTask } from "./task-store";
 
@@ -111,6 +111,7 @@ export class UCOrchestrator {
 	private bridge: GrpcBridge;
 	private store: TaskStore;
 	private runningCount = 0;
+	private circuitBreaker = new CircuitBreaker();
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
@@ -154,6 +155,7 @@ export class UCOrchestrator {
 	// ── Task Submission ──────────────────────────────────────────────
 
 	async submitTask(description: string, ctx: ExtensionCommandContext): Promise<void> {
+		this.circuitBreaker.reset();
 		const taskId = `uc-${++this.taskCounter}-${Date.now().toString(36)}`;
 
 		const task: TaskState = {
@@ -411,7 +413,26 @@ export class UCOrchestrator {
 				intentTracker.declare(def.id, def.files);
 				let result: SubtaskResult;
 				try {
-					result = await this.executeSubtaskWithRetry(def, task, ctx);
+					// Circuit breaker: fail fast if service is degraded
+					if (!this.circuitBreaker.canExecute()) {
+						result = {
+							id: def.id,
+							description: def.description,
+							status: "failed",
+							dependsOn: def.dependsOn,
+							files: def.files,
+							error: "Circuit breaker open — too many consecutive failures",
+							startedAt: Date.now(),
+							completedAt: Date.now(),
+						};
+					} else {
+						result = await this.executeSubtaskWithRetry(def, task, ctx);
+						if (result.status === "failed") {
+							this.circuitBreaker.recordFailure();
+						} else {
+							this.circuitBreaker.recordSuccess();
+						}
+					}
 				} finally {
 					// Release file intent even on unexpected error to prevent livelock
 					intentTracker.release(def.id);
