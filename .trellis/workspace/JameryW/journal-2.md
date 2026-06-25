@@ -139,3 +139,41 @@ Implemented ControlSignalSubscriber: NATS subscription for task_paused/resumed/c
 ### Next Steps
 
 - None - task complete
+
+
+## Session 60: PR 155: OMP RPC Server + TUI-OMP control path
+
+**Date**: 2026-06-25
+**Task**: PR 155: OMP RPC Server + TUI-OMP control path
+**Branch**: `main`
+
+### Summary
+
+uc-rpc-server.ts JSONL bridge, ControlSignalSubscriber NATS+polling, Dashboard cancelTask, PR 155, cargo fmt fix
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7872acd3` | (see git log) |
+| `c6fa1905` | (see git log) |
+| `4c29850a` | (see git log) |
+| `d6955e80` | (see git log) |
+| `581a38a0` | (see git log) |
+| `dd7fb098` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
