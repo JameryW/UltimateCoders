@@ -523,7 +523,9 @@ class DashboardApp:
                     {"success": False, "error": "Orchestrator not available"},
                     status_code=503,
                 )
-            success = await orch.pause_task(task_id)
+            # ponytail: pause_task may be sync (old Orchestrator) or async (thin bridge)
+            result = orch.pause_task(task_id)
+            success = result if not asyncio.iscoroutine(result) else await result
             if success:
                 self._record_event("task_pause", task_id=task_id)
                 return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
@@ -587,7 +589,8 @@ class DashboardApp:
                     {"success": False, "error": "Orchestrator not available"},
                     status_code=503,
                 )
-            success = await orch.resume_task(task_id)
+            result = orch.resume_task(task_id)
+            success = result if not asyncio.iscoroutine(result) else await result
             if success:
                 self._record_event("task_resume", task_id=task_id)
                 return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress"})
