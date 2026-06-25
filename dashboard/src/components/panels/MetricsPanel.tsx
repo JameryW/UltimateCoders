@@ -1,10 +1,16 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatUptime, formatNumber } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { MetricsTrendChart } from "@/components/charts/MetricsTrendChart";
 import type { MetricsSnapshot, TaskMetrics, WorkerMetrics, EventMetrics, SystemMetrics, MetricsSample } from "@/types/dashboard";
+
+const TREND_RANGES = [
+  { label: "1h", minutes: 60 },
+  { label: "6h", minutes: 360 },
+  { label: "24h", minutes: 1440 },
+] as const;
 
 interface MetricsPanelProps {
   metrics: MetricsSnapshot | null;
@@ -274,9 +280,30 @@ function exportMetricsCsv(metrics: MetricsSnapshot) {
 // ── Main panel ─────────────────────────────────────────────
 
 export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: MetricsPanelProps) {
+  const [trendRange, setTrendRange] = useState<number>(60); // minutes
+  const [extendedTrend, setExtendedTrend] = useState<MetricsSample[] | null>(null);
+
   const handleExport = useCallback(() => {
     if (metrics) exportMetricsCsv(metrics);
   }, [metrics]);
+
+  // Fetch extended trend when range > 60min (SSE only provides last 1h)
+  useEffect(() => {
+    if (trendRange <= 60 || !metrics) {
+      setExtendedTrend(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/dashboard/api/trend?minutes=${trendRange}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!cancelled && data?.trend) {
+          setExtendedTrend(data.trend);
+        }
+      })
+      .catch(() => { /* graceful fallback */ });
+    return () => { cancelled = true; };
+  }, [trendRange, metrics]);
 
   if (!metrics) {
     return (
@@ -289,18 +316,37 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
     );
   }
 
-  const trend = metrics.trend ?? [];
+  // Use extended trend from API when range > 60min, otherwise SSE trend
+  const trend = trendRange > 60 && extendedTrend ? extendedTrend : (metrics.trend ?? []);
 
   return (
     <div className={cn("space-y-4", stale && "opacity-70")}>
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-[var(--text-primary)]">Metrics</h3>
-        <button
-          onClick={handleExport}
-          className="text-xs px-2.5 py-1 rounded-md border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-alt)] transition-colors cursor-pointer"
-        >
-          Export CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md border border-[var(--border-color)] overflow-hidden">
+            {TREND_RANGES.map(r => (
+              <button
+                key={r.minutes}
+                onClick={() => setTrendRange(r.minutes)}
+                className={cn(
+                  "px-2 py-0.5 text-xs transition-colors cursor-pointer",
+                  trendRange === r.minutes
+                    ? "bg-[var(--bg-surface-alt)] text-[var(--text-primary)] font-medium"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={handleExport}
+            className="text-xs px-2.5 py-1 rounded-md border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-alt)] transition-colors cursor-pointer"
+          >
+            Export CSV
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
