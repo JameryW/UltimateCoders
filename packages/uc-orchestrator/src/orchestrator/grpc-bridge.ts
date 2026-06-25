@@ -295,7 +295,7 @@ export class GrpcBridge {
 	private resolveService(method: string): string {
 		const taskMethods = new Set([
 			"SubmitTask", "GetTask", "ListTasks",
-			"WatchTask", "PauseTask", "ResumeTask", "UpdateTask",
+			"WatchTask", "PauseTask", "ResumeTask", "CancelTask", "UpdateTask",
 		]);
 		const engineMethods = new Set([
 			"Search", "IndexRepo", "GetIndexState", "RemoveIndex",

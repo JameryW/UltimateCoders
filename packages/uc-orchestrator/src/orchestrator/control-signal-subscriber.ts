@@ -198,6 +198,12 @@ export class ControlSignalSubscriber {
 	/**
 	 * Check if the gRPC TaskStore's task state differs from our local knowledge.
 	 * If a control signal is detected (paused/cancelled), invoke the handler.
+	 *
+	 * Note: gRPC cancel_task sets status to "Failed", which is indistinguishable
+	 * from a natural failure via polling alone. We guard against false positives
+	 * by only treating a "Failed" transition as a cancel if the Orchestrator
+	 * still considers the task active (not already failed/cancelled locally).
+	 * When NATS is available, the exact event_type disambiguates automatically.
 	 */
 	private checkControlStateChange(taskId: string, task: TaskSync): void {
 		const currentStatus = task.status;
@@ -214,15 +220,16 @@ export class ControlSignalSubscriber {
 			console.info(`[ControlSignalSubscriber] Polling detected pause for task ${taskId}`);
 			this.handler.pauseTask(taskId).catch(() => {});
 		} else if (currentStatus === "Failed" && previous !== "Failed") {
-			// Could be a cancel (Failed from InProgress/Planning/Paused)
-			// Check if this looks like a cancel vs a natural failure.
-			// We can't distinguish perfectly, so we only treat it as cancel
-			// if the task was previously running or paused.
-			// Actually, the gRPC cancel_task sets status to Failed.
-			// We check if the handler's task is still running — if so, cancel it.
-			// For now, we just notify the handler.
-			console.info(`[ControlSignalSubscriber] Polling detected failure for task ${taskId}`);
-			this.handler.cancelTask(taskId).catch(() => {});
+			// gRPC cancel_task sets status to Failed. Distinguish from natural
+			// failure by checking whether the Orchestrator still considers the
+			// task active — if so, the failure must have come from gRPC (cancel).
+			const activeIds = this.handler.getActiveTaskIds();
+			if (activeIds.includes(taskId)) {
+				console.info(`[ControlSignalSubscriber] Polling detected cancel (Failed) for active task ${taskId}`);
+				this.handler.cancelTask(taskId).catch(() => {});
+			} else {
+				console.info(`[ControlSignalSubscriber] Polling detected natural failure for task ${taskId} (already terminal locally)`);
+			}
 		}
 	}
 }
