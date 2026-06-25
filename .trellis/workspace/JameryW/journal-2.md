@@ -73,3 +73,34 @@ Implemented uc-rpc-server.ts: JSONL stdio bridge for Python OmpBridge ↔ TypeSc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 58: Session check-in — no active task
+
+**Date**: 2026-06-25
+**Task**: Session check-in — no active task
+**Branch**: `main`
+
+### Summary
+
+No active task this session. One planning task (TUI-OMP unified control path) remains in backlog. No code changes.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
