@@ -38,3 +38,38 @@ Implemented Dashboard v3 observability phase 2: AlertBar 7 conditions + SQLite a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: OMP RPC Server — uc-rpc-server.ts JSONL stdio bridge
+
+**Date**: 2026-06-25
+**Task**: OMP RPC Server — uc-rpc-server.ts JSONL stdio bridge
+**Branch**: `main`
+
+### Summary
+
+Implemented uc-rpc-server.ts: JSONL stdio bridge for Python OmpBridge ↔ TypeScript UCOrchestrator. Added createTask/runTask split for immediate task_id response, public getters (getTaskState, getAllTaskStates), optional ctx on submitTask/resumeTask, stub ExtensionAPI/ExtensionCommandContext. 8 RPC methods: submit_task, cancel_task, pause_task, resume_task, show_status, get_task, list_tasks, shutdown. 10 unit tests / 18 assertions passing. Spec: omp-rpc-server-spec.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7872acd3` | (see git log) |
+| `c6fa1905` | (see git log) |
+| `19c854bb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

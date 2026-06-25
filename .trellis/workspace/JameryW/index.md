@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 56
+- **Total Sessions**: 57
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~40 | Active |
+| `journal-2.md` | ~75 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 57 | 2026-06-25 | OMP RPC Server — uc-rpc-server.ts JSONL stdio bridge | `7872acd3`, `c6fa1905`, `19c854bb` | `main` |
 | 56 | 2026-06-25 | Dashboard v3 Phase 2 — alerts, Prometheus, SQLite persistence | `5ff7a022` | `main` |
 | 55 | 2026-06-25 | Multi-repo config + auto-discovery + Dashboard | `9a1bebdb`, `9854ab47`, `ef96d260`, `579d5db3` | `main` |
 | 54 | 2026-06-25 | OMP P1 File Conflict Detection + Constraint-Aware Scheduling | `a644979f`, `973654ad` | `main` |
