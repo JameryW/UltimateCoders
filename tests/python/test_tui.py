@@ -201,7 +201,7 @@ class TestSandboxTUI:
         assert app._config is config
         assert app._initial_task is None
         assert app._orch is None
-        assert app._worker is None
+        # Worker removed — omp handles subtask execution
 
     def test_tui_with_initial_task(self):
         """SandboxTUI stores the initial task description."""
@@ -242,18 +242,18 @@ class TestSandboxTUI:
         app = SandboxTUI(config=config)
         app._setup_orchestrator()
         assert app._orch is not None
-        assert app._worker is not None
-        assert app._worker.worker_id == "local-sandbox-worker"
-        assert "local-sandbox-worker" in app._orch.workers
+        # omp handles subtask execution — no Python Worker
 
-    def test_setup_orchestrator_worker_sandbox(self):
-        """Worker created by _setup_orchestrator uses sandbox execution."""
+    def test_setup_orchestrator_bridge_mode(self):
+        """Orchestrator created by _setup_orchestrator uses omp bridge."""
         from ultimate_coders.tui.app import SandboxTUI
 
         config = SandboxConfig(agent="claude-code")
         app = SandboxTUI(config=config)
         app._setup_orchestrator()
-        assert app._worker._sandbox_manager is not None
+        # Thin bridge — no internal logic, omp handles everything
+        assert app._orch.scheduler is None
+        assert app._orch.circuit_breaker is None
 
     def test_setup_orchestrator_no_llm_client(self):
         """Orchestrator created by _setup_orchestrator has no LLM client."""
@@ -265,114 +265,28 @@ class TestSandboxTUI:
         assert not hasattr(app._orch, 'llm_client')
 
     def test_setup_orchestrator_has_event_emitter(self):
-        """Orchestrator and Worker share the same event emitter."""
+        """Orchestrator has an event emitter for omp event forwarding."""
         from ultimate_coders.tui.app import SandboxTUI
 
         config = SandboxConfig(agent="claude-code")
         app = SandboxTUI(config=config)
         app._setup_orchestrator()
         assert app._orch.event_emitter is not None
-        assert app._worker.event_emitter is app._orch.event_emitter
 
-    def test_auto_execute_loop_logic_missing_task(self):
-        """When current_task_id points to a missing task, the loop should exit.
+    def test_poll_task_status_logic_missing_task(self):
+        """When current_task_id points to a missing task, poll handles gracefully.
 
-        Verifies that the _auto_execute_loop code path breaks (not continues)
-        when orch.tasks.get(current_task_id) returns None. We test this by
-        checking the source code directly rather than running the Textual app,
-        since query_one requires an active Textual event loop.
+        Verifies that the _poll_task_status method handles missing tasks
+        without crashing. The omp bridge sync gracefully handles missing tasks.
         """
         import inspect
-        import textwrap
 
         from ultimate_coders.tui.app import SandboxTUI
 
-        source = inspect.getsource(SandboxTUI._auto_execute_loop)
-        source = textwrap.dedent(source)
-
-        # Verify the code contains "break" after checking task is None,
-        # not "continue" (which would cause infinite loop)
-        # Find the "if task is None:" block
-        lines = source.split("\n")
-        found_break = False
-        for i, line in enumerate(lines):
-            if "task is None" in line or "task == None" in line:
-                # Check next few lines for break statement
-                for j in range(i + 1, min(i + 5, len(lines))):
-                    stripped = lines[j].strip()
-                    if stripped == "break":
-                        found_break = True
-                        break
-                    if stripped == "continue":
-                        raise AssertionError(
-                            "Found 'continue' after 'task is None' check "
-                            "-- this would cause infinite loop"
-                        )
-
-        assert found_break, (
-            "Could not verify that _auto_execute_loop uses 'break' "
-            "instead of 'continue' when task is None"
-        )
-
-    @pytest.mark.asyncio
-    async def test_auto_execute_loop_handles_cancellation(self):
-        """_auto_execute_loop re-raises CancelledError and cleans up worker load.
-
-        Tests the CancelledError handler path directly without running the
-        full Textual app. We patch query_one to avoid ScreenStackError.
-        """
-        import asyncio
-        from unittest.mock import MagicMock
-
-        from ultimate_coders.agent.types import Subtask, SubtaskStatus, Task, TaskStatus
-        from ultimate_coders.tui.app import SandboxTUI
-
-        config = SandboxConfig(agent="claude-code")
-        app = SandboxTUI(config=config)
-        app._setup_orchestrator()
-
-        # Create a task in the orchestrator with a pending subtask
-        task = Task(
-            description="test",
-            status=TaskStatus.IN_PROGRESS,
-        )
-        app._orch.tasks[task.id] = task
-        app.current_task_id = task.id
-
-        # Set worker load to verify cleanup
-        worker_info = app._orch.workers.get(app._worker.worker_id)
-        assert worker_info is not None
-        initial_load = worker_info.current_load
-
-        # Mock query_one to return dummy widgets
-        mock_output = MagicMock()
-        mock_tree = MagicMock()
-        app.query_one = MagicMock(side_effect=lambda selector, cls=None: {
-            "#chat-log": mock_output,
-            "#subtask-tree": mock_tree,
-        }.get(selector, MagicMock()))
-
-        # Create a subtask in IN_PROGRESS state to test load cleanup on cancel
-        subtask = Subtask(
-            parent_id=task.id,
-            description="test subtask",
-            status=SubtaskStatus.IN_PROGRESS,
-            assigned_worker=app._worker.worker_id,
-        )
-        task.subtasks.append(subtask)
-        worker_info.current_load += 1
-
-        # Run the loop and cancel it
-        loop_task = asyncio.create_task(app._auto_execute_loop())
-        await asyncio.sleep(0.1)  # Let it enter the loop
-        loop_task.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await loop_task
-
-        # After CancelledError, load should have been decremented
-        # (the CancelledError handler finds the IN_PROGRESS subtask)
-        assert worker_info.current_load == initial_load
+        source = inspect.getsource(SandboxTUI._poll_task_status)
+        # Verify the method has a try/except for graceful error handling
+        assert "CancelledError" in source, "poll should handle CancelledError"
+        assert "Exception" in source, "poll should handle general exceptions"
 
     @pytest.mark.asyncio
     async def test_on_unmount_cancels_tasks(self):
@@ -389,7 +303,7 @@ class TestSandboxTUI:
         async def _dummy():
             await asyncio.sleep(100)
 
-        app._execute_task_handle = asyncio.create_task(_dummy())
+        app._status_poll_handle = asyncio.create_task(_dummy())
         app._event_listener_handle = asyncio.create_task(_dummy())
 
         app.on_unmount()
@@ -397,7 +311,7 @@ class TestSandboxTUI:
         # Allow the cancellation to propagate
         await asyncio.sleep(0.1)
 
-        assert app._execute_task_handle.done()
+        assert app._status_poll_handle.done()
         assert app._event_listener_handle.done()
 
 

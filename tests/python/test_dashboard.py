@@ -423,76 +423,46 @@ class TestDashboardAPIEndpoints:
 
 
 class TestOrchestratorDashboard:
-    """Test Orchestrator.start_dashboard() and stop_dashboard()."""
+    """Test Dashboard integration with thin Orchestrator bridge."""
 
-    def test_start_dashboard_creates_app(self):
-        """start_dashboard() creates a DashboardApp instance."""
+    def test_start_dashboard_noop_in_bridge_mode(self):
+        """start_dashboard() is a no-op in thin bridge mode (omp handles orchestration).
+
+        The dashboard can still be run independently via scripts/run_dashboard.py,
+        but the thin Orchestrator bridge does not embed it.
+        """
         orch = _make_orchestrator()
-        orch.engine.health.return_value = _mock_health_response()
+        # start_dashboard is a no-op stub in bridge mode — should not raise
+        orch.start_dashboard(host="127.0.0.1", port=9999)
+        # No _dashboard_app attribute created — dashboard runs separately
+        assert not hasattr(orch, "_dashboard_app")
 
-        with patch("ultimate_coders.dashboard.app.DashboardApp.start") as mock_start:
-            orch.start_dashboard(host="127.0.0.1", port=9999)
-            assert hasattr(orch, "_dashboard_app")
-            assert orch._dashboard_app is not None
-            mock_start.assert_called_once_with(host="127.0.0.1", port=9999)
-
-    def test_stop_dashboard_cleans_up(self):
-        """stop_dashboard() cleans up the DashboardApp reference."""
-        orch = _make_orchestrator()
-        with patch("ultimate_coders.dashboard.app.DashboardApp.start"):
-            orch.start_dashboard()
-        with patch.object(orch._dashboard_app, "stop") as mock_stop:
-            orch.stop_dashboard()
-            mock_stop.assert_called_once()
-            assert orch._dashboard_app is None
-
-    def test_stop_dashboard_when_not_running(self):
-        """stop_dashboard() handles case when dashboard not started."""
+    def test_stop_dashboard_noop_in_bridge_mode(self):
+        """stop_dashboard() is a no-op in thin bridge mode."""
         orch = _make_orchestrator()
         # Should not raise
         orch.stop_dashboard()
 
     def test_start_dashboard_idempotent(self):
-        """start_dashboard() warns but does not create duplicate if already running."""
+        """start_dashboard() is a no-op in thin bridge mode — calling twice is safe."""
         orch = _make_orchestrator()
-        with patch("ultimate_coders.dashboard.app.DashboardApp.start"):
-            orch.start_dashboard()
-            first_app = orch._dashboard_app
-
-            # Second call should not replace the app
-            orch.start_dashboard()
-            assert orch._dashboard_app is first_app
+        # In thin bridge mode, start_dashboard is a no-op stub
+        orch.start_dashboard()
+        orch.start_dashboard()
+        # No _dashboard_app attribute created — dashboard runs separately
+        assert not hasattr(orch, "_dashboard_app")
 
     def test_start_dashboard_import_error(self):
-        """start_dashboard() raises ImportError when deps missing."""
+        """start_dashboard() is a no-op in thin bridge mode — no ImportError possible.
+
+        In the legacy Orchestrator, start_dashboard() would import DashboardApp
+        and could raise ImportError if deps were missing. In thin bridge mode,
+        start_dashboard is a no-op stub (omp handles orchestration).
+        """
         orch = _make_orchestrator()
-        # Make the dashboard.app module raise ImportError on import
-        # by temporarily removing it from sys.modules and inserting
-        # a mock that raises ImportError.
-        import sys
-
-        original_mod = sys.modules.get("ultimate_coders.dashboard.app")
-        try:
-            # Remove the cached module so the import re-executes
-            if "ultimate_coders.dashboard.app" in sys.modules:
-                del sys.modules["ultimate_coders.dashboard.app"]
-
-            # Create a module mock that will raise ImportError when
-            # DashboardApp is accessed (simulates missing dependency)
-            class _FailingModule:
-                def __getattr__(self, name):
-                    raise ImportError("no fastapi")
-
-            sys.modules["ultimate_coders.dashboard.app"] = _FailingModule()
-
-            with pytest.raises(ImportError, match="Dashboard dependencies"):
-                orch.start_dashboard()
-        finally:
-            # Restore the original module
-            if original_mod is not None:
-                sys.modules["ultimate_coders.dashboard.app"] = original_mod
-            elif "ultimate_coders.dashboard.app" in sys.modules:
-                del sys.modules["ultimate_coders.dashboard.app"]
+        # No ImportError — start_dashboard is a no-op in bridge mode
+        orch.start_dashboard()
+        assert not hasattr(orch, "_dashboard_app")
 
 
 # ── Fallback Mode Tests ────────────────────────────────────
@@ -765,47 +735,77 @@ class TestOrchestratorInteractiveMethods:
 
     def test_pause_task(self):
         """Orchestrator.pause_task pauses an in-progress task."""
+        import asyncio
+
         orch = _make_orchestrator()
         t = Task(description="Test", status=TaskStatus.IN_PROGRESS)
         orch.tasks[t.id] = t
 
-        result = orch.pause_task(t.id)
-        assert result is True
-        assert orch.tasks[t.id].status == TaskStatus.PAUSED
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(orch.pause_task(t.id))
+            assert result is True
+            assert orch.tasks[t.id].status == TaskStatus.PAUSED
+        finally:
+            loop.close()
 
     def test_pause_task_not_found(self):
         """Orchestrator.pause_task returns False for missing task."""
+        import asyncio
+
         orch = _make_orchestrator()
-        result = orch.pause_task("nonexistent")
-        assert result is False
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(orch.pause_task("nonexistent"))
+            assert result is False
+        finally:
+            loop.close()
 
     def test_pause_task_wrong_status(self):
         """Orchestrator.pause_task returns False for completed task."""
+        import asyncio
+
         orch = _make_orchestrator()
         t = Task(description="Done", status=TaskStatus.COMPLETED)
         orch.tasks[t.id] = t
 
-        result = orch.pause_task(t.id)
-        assert result is False
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(orch.pause_task(t.id))
+            assert result is False
+        finally:
+            loop.close()
 
     def test_resume_task(self):
         """Orchestrator.resume_task resumes a paused task."""
+        import asyncio
+
         orch = _make_orchestrator()
         t = Task(description="Paused", status=TaskStatus.PAUSED)
         orch.tasks[t.id] = t
 
-        result = orch.resume_task(t.id)
-        assert result is True
-        assert orch.tasks[t.id].status == TaskStatus.IN_PROGRESS
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(orch.resume_task(t.id))
+            assert result is True
+            assert orch.tasks[t.id].status == TaskStatus.IN_PROGRESS
+        finally:
+            loop.close()
 
     def test_resume_task_not_paused(self):
         """Orchestrator.resume_task returns False for non-paused task."""
+        import asyncio
+
         orch = _make_orchestrator()
         t = Task(description="Active", status=TaskStatus.IN_PROGRESS)
         orch.tasks[t.id] = t
 
-        result = orch.resume_task(t.id)
-        assert result is False
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(orch.resume_task(t.id))
+            assert result is False
+        finally:
+            loop.close()
 
     def test_reset_circuit_breaker(self):
         """Orchestrator no longer has reset_circuit_breaker (removed in sandbox-only mode)."""
@@ -813,9 +813,9 @@ class TestOrchestratorInteractiveMethods:
         assert not hasattr(orch, 'reset_circuit_breaker')
 
     def test_reset_circuit_breaker_none(self):
-        """Orchestrator no longer has circuit_breaker attribute (removed in sandbox-only mode)."""
+        """Orchestrator.circuit_breaker is None in thin bridge mode (omp has its own)."""
         orch = _make_orchestrator()
-        assert not hasattr(orch, 'circuit_breaker')
+        assert orch.circuit_breaker is None
 
 
 # ── CircuitBreaker reset() Tests ─────────────────────────────
@@ -1138,12 +1138,16 @@ class TestOrchestratorTaskCompleted:
     """Test that task_completed event is emitted when all subtasks finish."""
 
     def test_task_completed_emitted_on_success(self):
-        """handle_subtask_result emits task_completed when all subtasks succeed."""
+        """Task completion emits task_completed event when all subtasks succeed.
+
+        In thin bridge mode, handle_subtask_result is a no-op (omp handles
+        results). This test verifies that the event_emitter correctly records
+        a task_completed event when task state is updated to completed.
+        """
         import asyncio
 
         from ultimate_coders.agent.types import (
             Subtask,
-            SubtaskResult,
             SubtaskStatus,
             Task,
             TaskStatus,
@@ -1155,21 +1159,25 @@ class TestOrchestratorTaskCompleted:
         subtask = Subtask(
             parent_id=task.id,
             description="Sub 1",
-            status=SubtaskStatus.IN_PROGRESS,
+            status=SubtaskStatus.COMPLETED,
         )
         task.subtasks = [subtask]
         orch.tasks[task.id] = task
 
-        result = SubtaskResult(
-            subtask_id=subtask.id,
-            worker_id="w1",
-            summary="Done",
-            success=True,
-        )
+        # In thin bridge mode, omp updates task state. Simulate by
+        # directly updating status and emitting the event.
+        task.status = TaskStatus.COMPLETED
+        task.update_timestamp()
 
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(orch.handle_subtask_result(result))
+            loop.run_until_complete(
+                orch.event_emitter.emit(
+                    "task_completed",
+                    task_id=task.id,
+                    data={"status": "completed"},
+                )
+            )
             # Task should be completed
             assert task.status == TaskStatus.COMPLETED
             # Event should be emitted
@@ -1181,12 +1189,16 @@ class TestOrchestratorTaskCompleted:
             loop.close()
 
     def test_task_completed_emitted_on_failure(self):
-        """handle_subtask_result emits task_completed with failed status after retries exhaust."""
+        """Task completion emits task_completed with failed status.
+
+        In thin bridge mode, handle_subtask_result is a no-op (omp handles
+        results). This test verifies that the event_emitter correctly records
+        a task_completed event when task state is updated to failed.
+        """
         import asyncio
 
         from ultimate_coders.agent.types import (
             Subtask,
-            SubtaskResult,
             SubtaskStatus,
             Task,
             TaskStatus,
@@ -1198,33 +1210,31 @@ class TestOrchestratorTaskCompleted:
         subtask = Subtask(
             parent_id=task.id,
             description="Sub 1",
-            status=SubtaskStatus.IN_PROGRESS,
+            status=SubtaskStatus.FAILED,
         )
         task.subtasks = [subtask]
         orch.tasks[task.id] = task
 
-        result = SubtaskResult(
-            subtask_id=subtask.id,
-            worker_id="w1",
-            summary="Failed",
-            success=False,
-        )
+        # In thin bridge mode, omp updates task state. Simulate by
+        # directly updating status and emitting the event.
+        task.status = TaskStatus.FAILED
+        task.update_timestamp()
 
         loop = asyncio.new_event_loop()
         try:
-            # Exhaust retries so subtask permanently fails
-            # Each call increments retry_count; it fails permanently when retry_count >= max_retries
-            for _ in range(orch.config.max_retries + 1):
-                loop.run_until_complete(orch.handle_subtask_result(result))
-            # Subtask should now be FAILED; task may be IN_PROGRESS if re-decomposition succeeded
-            # or FAILED if no re-decomposition possible
+            loop.run_until_complete(
+                orch.event_emitter.emit(
+                    "task_completed",
+                    task_id=task.id,
+                    data={"status": "failed"},
+                )
+            )
+            # Subtask should be FAILED
             assert subtask.status == SubtaskStatus.FAILED
-            # Check for either task_completed or task_redecomposed event
+            # Check for task_completed event
             events = orch.event_emitter.get_recent_events(task_id=task.id)
-            completed_or_redecomposed = [
-                e for e in events if e["type"] in ("task_completed", "task_redecomposed")
-            ]
-            assert len(completed_or_redecomposed) >= 1
+            completed = [e for e in events if e["type"] == "task_completed"]
+            assert len(completed) >= 1
         finally:
             loop.close()
 
