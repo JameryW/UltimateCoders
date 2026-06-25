@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 53
-- **Last Active**: 2026-06-24
+- **Total Sessions**: 54
+- **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1904 | Active |
+| `journal-1.md` | ~1938 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 54 | 2026-06-25 | OMP P1 File Conflict Detection + Constraint-Aware Scheduling | `a644979f`, `973654ad` | `main` |
 | 53 | 2026-06-24 | Dashboard Sparkline 趋势图与 CSV 导出 | `283870e2`, `431cc131` | `feat/omp-deferred-ac-prd-update` |
 | 52 | 2026-06-24 | Dashboard 可观测性与指标增强 v3 | `4c7b0f13` | `feat/omp-deferred-ac-prd-update` |
 | 51 | 2026-06-24 | OMP Orchestrator AC milestone — 16/18 + 2 P3 deferred | `ddbb714d`, `86d56087`, `a2f7ed49`, `5896405d`, `e54546b2`, `f6d35670` | `feat/omp-deferred-ac-prd-update` |
