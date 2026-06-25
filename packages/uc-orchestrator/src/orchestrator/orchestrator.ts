@@ -113,6 +113,11 @@ export class UCOrchestrator {
 	private runningCount = 0;
 	private circuitBreaker = new CircuitBreaker();
 
+	/** Read-only access to task state (for RPC server / dashboard). */
+	get taskStates(): ReadonlyMap<string, TaskState> {
+		return this.tasks;
+	}
+
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
 		this.config = {

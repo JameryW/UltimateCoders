@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
-import sys
-from typing import Any
+from typing import Any, Callable
 
 from .types import Task, TaskStatus, SubtaskStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 class OmpBridgeError(Exception):
@@ -34,7 +37,8 @@ class OmpBridge:
         self._req_id = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task[None] | None = None
-        self._event_handlers: list[asyncio.Event] = []  # ponytail: simple event signaling
+        # Event callback — called with (event_type, data) for each async event from omp
+        self._on_event: Callable[[str, dict[str, Any]], None] | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────
 
@@ -83,6 +87,12 @@ class OmpBridge:
     async def __aexit__(self, *args: Any) -> None:
         await self.stop()
 
+    # ── Event Callback ─────────────────────────────────────────
+
+    def on_event(self, callback: Callable[[str, dict[str, Any]], None]) -> None:
+        """Set callback for async events from omp (for TUI/Dashboard integration)."""
+        self._on_event = callback
+
     # ── Orchestrator Methods ───────────────────────────────────
 
     async def submit_task(self, description: str) -> dict[str, Any]:
@@ -111,6 +121,16 @@ class OmpBridge:
             params["task_id"] = task_id
         return await self._send("show_status", params)
 
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """Get full task state from omp (with subtask details)."""
+        result = await self._send("get_task", {"task_id": task_id})
+        return result.get("task")
+
+    async def list_tasks(self) -> list[dict[str, Any]]:
+        """List all tasks from omp."""
+        result = await self._send("list_tasks", {})
+        return result.get("tasks", [])
+
     # ── Internal ───────────────────────────────────────────────
 
     async def _send(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -130,7 +150,6 @@ class OmpBridge:
         self._proc.stdin.write(payload.encode())
         await self._proc.stdin.drain()
 
-        # Wait for response with timeout
         try:
             result = await asyncio.wait_for(future, timeout=300)
         except asyncio.TimeoutError:
@@ -139,7 +158,7 @@ class OmpBridge:
         return result
 
     async def _reader_loop(self) -> None:
-        """Background task reading JSONL responses from stdout."""
+        """Background task reading JSONL responses and events from stdout."""
         assert self._proc and self._proc.stdout
         while True:
             line = await self._read_line()
@@ -152,8 +171,9 @@ class OmpBridge:
                     future.set_exception(OmpBridgeError(line["error"]))
                 else:
                     future.set_result(line.get("result", {}))
-            # Async event — log for now
-            # ponytail: future — expose event stream if needed
+            # Async event — forward to callback
+            elif "event" in line and self._on_event:
+                self._on_event(line["event"], line.get("data", {}))
 
     async def _read_line(self) -> dict[str, Any] | None:
         """Read one JSON line from stdout."""
@@ -165,15 +185,3 @@ class OmpBridge:
             return json.loads(raw.decode().strip())
         except json.JSONDecodeError:
             return None
-
-
-# ── Self-check ──────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    async def demo():
-        async with OmpBridge() as bridge:
-            r = await bridge.submit_task("Test task from OmpBridge")
-            print(f"submit_task result: {r}")
-            s = await bridge.show_status()
-            print(f"show_status result: {s}")
-    asyncio.run(demo())

@@ -10,12 +10,18 @@
  *   Event:    {"event": "<type>", "data": {...}}
  *
  * Methods:
- *   submit_task   → {description: string} → {task_id: string}
+ *   submit_task   → {description: string} → {ok: boolean}
  *   cancel_task   → {task_id: string, subtask_id?: string} → {ok: boolean}
  *   pause_task    → {task_id: string} → {ok: boolean}
  *   resume_task   → {task_id: string} → {ok: boolean}
  *   show_status   → {task_id?: string} → {status: object}
+ *   get_task      → {task_id: string} → {task: object}
+ *   list_tasks    → {} → {tasks: object[]}
  *   shutdown      → {} → {}
+ *
+ * Events (async, streamed to stdout):
+ *   task_submitted, subtask_started, subtask_completed, subtask_failed, task_completed
+ */
  */
 
 import { readJsonl } from "@oh-my-pi/pi-utils";
@@ -34,7 +40,51 @@ class RpcUIContext {
 	}
 
 	notify(message: string, type?: "info" | "warning" | "error"): void {
+		// Emit both raw notify and parsed structured events for TUI/Dashboard
 		this.output({ event: "notify", data: { message, type } });
+		// ponytail: parse omp notify messages into structured events for Python event_emitter
+		this._parseStructuredEvent(message);
+	}
+
+	/** Parse omp's notify messages into structured events for Python TUI. */
+	private _parseStructuredEvent(message: string): void {
+		// "Task uc-1-xxx: planning..."
+		const taskPlanMatch = message.match(/^Task (uc-\S+): planning/);
+		if (taskPlanMatch) {
+			this.output({ event: "task_submitted", data: { task_id: taskPlanMatch[1] } });
+			return;
+		}
+		// "Task uc-1-xxx: 3 subtasks, 2 wave(s)"
+		const decompMatch = message.match(/^Task (uc-\S+): (\d+) subtasks, (\d+) wave/);
+		if (decompMatch) {
+			this.output({ event: "task_decomposed", data: {
+				task_id: decompMatch[1],
+				subtask_count: parseInt(decompMatch[2]),
+				wave_count: parseInt(decompMatch[3]),
+			} });
+			return;
+		}
+		// "Task uc-1-xxx: wave 1/2 — [st-1, st-2]"
+		const waveMatch = message.match(/^Task (uc-\S+): wave (\d+)\/(\d+) — \[(.+?)\]/);
+		if (waveMatch) {
+			const subtaskIds = waveMatch[4].split(", ").map(s => s.trim());
+			this.output({ event: "wave_started", data: {
+				task_id: waveMatch[1],
+				wave: parseInt(waveMatch[2]),
+				total_waves: parseInt(waveMatch[3]),
+				subtask_ids: subtaskIds,
+			} });
+			for (const stId of subtaskIds) {
+				this.output({ event: "subtask_started", data: { task_id: waveMatch[1], subtask_id: stId } });
+			}
+			return;
+		}
+		// "Task uc-1-xxx: completed" / "Task uc-1-xxx: failed"
+		const doneMatch = message.match(/^Task (uc-\S+): (completed|failed|cancelled)/);
+		if (doneMatch) {
+			this.output({ event: "task_completed", data: { task_id: doneMatch[1], status: doneMatch[2] } });
+			return;
+		}
 	}
 
 	setWidget(_key: string, _content: unknown): void {
@@ -108,6 +158,34 @@ interface RpcResult {
 	id?: number;
 	result?: unknown;
 	error?: string;
+}
+
+// ── Serialization ───────────────────────────────────────────────
+
+// ponytail: serialize TaskState + SubtaskResult for Python consumption
+function serializeTask(task: any): object {
+	return {
+		id: task.id,
+		description: task.description,
+		status: task.status,
+		control_state: task.controlState,
+		created_at: task.createdAt,
+		completed_at: task.completedAt ?? null,
+		error: task.error ?? null,
+		subtasks: (task.subtasks ?? []).map((st: any) => ({
+			id: st.id,
+			description: st.description,
+			status: st.status,
+			depends_on: st.dependsOn,
+			files: st.files,
+			result: st.result ?? null,
+			error: st.error ?? null,
+			started_at: st.startedAt ?? null,
+			completed_at: st.completedAt ?? null,
+			review: st.review ?? null,
+			retry_count: st.retryCount ?? 0,
+		})),
+	};
 }
 
 // ── Main ─────────────────────────────────────────────────────────
@@ -200,6 +278,17 @@ export async function runUcRpcServer(): Promise<void> {
 				case "show_status": {
 					await orchestrator.showStatus(params.task_id as string | undefined, ctx);
 					return { id, result: { ok: true } };
+				}
+				case "get_task": {
+					const taskId = params.task_id as string;
+					if (!taskId) return { id, error: "Missing task_id" };
+					const task = orchestrator.taskStates.get(taskId);
+					if (!task) return { id, error: `Task ${taskId} not found` };
+					return { id, result: { task: serializeTask(task) } };
+				}
+				case "list_tasks": {
+					const tasks = Array.from(orchestrator.taskStates.values()).map(serializeTask);
+					return { id, result: { tasks } };
 				}
 				case "shutdown": {
 					output({ id, result: { ok: true } });

@@ -5,7 +5,8 @@ retry, circuit breaker, conflict detection) to the omp subprocess
 via JSONL RPC. Python only handles:
 1. NATS message consumption → OmpBridge call
 2. Task state publishing back to NATS
-3. Event emission for dashboard tracking
+3. Event emission for dashboard/TUI tracking
+4. Real-time task state sync from omp for TUI rendering
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from typing import Any
 from ultimate_coders.agent.omp_bridge import OmpBridge, OmpBridgeError
 from ultimate_coders.agent.types import (
     OrchestratorConfig,
+    Subtask,
+    SubtaskStatus,
     Task,
     TaskStatus,
     WorkerInfo,
@@ -34,13 +37,35 @@ _NOOP_SYNC = (
     "pause_task_local resume_task_local"
 ).split()
 
+# Map omp subtask status → Python SubtaskStatus
+_OMP_ST_TO_PY = {
+    "pending": SubtaskStatus.PENDING,
+    "running": SubtaskStatus.IN_PROGRESS,
+    "reviewing": SubtaskStatus.IN_PROGRESS,
+    "completed": SubtaskStatus.COMPLETED,
+    "failed": SubtaskStatus.FAILED,
+    "cancelled": SubtaskStatus.FAILED,  # ponytail: omp cancelled → Python failed (no CANCELLED in enum)
+}
+
+# Map omp task status → Python TaskStatus
+_OMP_TASK_ST_TO_PY = {
+    "planning": TaskStatus.PLANNING,
+    "in_progress": TaskStatus.IN_PROGRESS,
+    "completed": TaskStatus.COMPLETED,
+    "failed": TaskStatus.FAILED,
+    "cancelled": TaskStatus.FAILED,  # ponytail: no CANCELLED in TaskStatus, map to FAILED
+}
+
 
 class Orchestrator:
     """Thin bridge to the omp UCOrchestrator.
 
     All orchestration logic is delegated to the omp subprocess.
     This class provides NATS-facing task lifecycle methods and
-    event emission for the dashboard.
+    event emission for the dashboard/TUI.
+
+    Task state is synced from omp via get_task() so TUI can read
+    orchestrator.tasks[task_id].subtasks with live subtask status.
     """
 
     def __init__(
@@ -64,7 +89,6 @@ class Orchestrator:
 
     # ── Dynamic no-op dispatch ─────────────────────────────────
     # nats_worker.py calls methods that omp now handles internally.
-    # Return None / [] / no-op instead of breaking.
 
     def __getattr__(self, name: str) -> Any:
         if name in _NOOP_ASYNC:
@@ -82,6 +106,8 @@ class Orchestrator:
     async def _ensure_bridge(self) -> OmpBridge:
         if self._bridge is None:
             self._bridge = OmpBridge()
+            # Wire omp events → Python event_emitter + task state sync
+            self._bridge.on_event(self._on_omp_event)
             await self._bridge.start()
         return self._bridge
 
@@ -89,6 +115,73 @@ class Orchestrator:
         if self._bridge:
             await self._bridge.stop()
             self._bridge = None
+
+    # ── omp Event → Python Event Bridge ───────────────────────
+
+    def _on_omp_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Forward omp events to Python event_emitter for TUI/Dashboard."""
+        task_id = data.get("task_id", "")
+        subtask_id = data.get("subtask_id", "")
+
+        # Emit to Python event_emitter (drives TUI real-time updates)
+        self.event_emitter.emit(event_type, task_id=task_id, subtask_id=subtask_id, data=data)
+
+        # Sync task state from omp on significant events
+        if event_type in ("task_decomposed", "subtask_started",
+                          "subtask_completed", "subtask_failed",
+                          "task_completed", "wave_started"):
+            # Schedule async state sync (don't block event callback)
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._sync_task_from_omp(task_id))
+            except RuntimeError:
+                pass  # no event loop — skip sync
+
+    async def _sync_task_from_omp(self, task_id: str) -> None:
+        """Pull live task state from omp and update local cache."""
+        if not self._bridge or not task_id:
+            return
+        try:
+            omp_task = await self._bridge.get_task(task_id)
+            if omp_task:
+                self._merge_omp_task(omp_task)
+        except OmpBridgeError:
+            logger.debug("Failed to sync task %s from omp", task_id)
+
+    def _merge_omp_task(self, omp_task: dict[str, Any]) -> None:
+        """Merge omp task state into local Python Task object."""
+        task_id = omp_task.get("id", "")
+        if not task_id:
+            return
+
+        # Get or create local Task
+        task = self.tasks.get(task_id)
+        if task is None:
+            task = Task(
+                id=task_id,
+                description=omp_task.get("description", ""),
+                status=_OMP_TASK_ST_TO_PY.get(omp_task.get("status", ""), TaskStatus.IN_PROGRESS),
+            )
+            self.tasks[task_id] = task
+
+        # Update status
+        task.status = _OMP_TASK_ST_TO_PY.get(omp_task.get("status", ""), task.status)
+
+        # Sync subtasks
+        omp_subtasks = omp_task.get("subtasks", [])
+        if omp_subtasks:
+            task.subtasks = [
+                Subtask(
+                    id=st.get("id", ""),
+                    description=st.get("description", ""),
+                    status=_OMP_ST_TO_PY.get(st.get("status", ""), SubtaskStatus.PENDING),
+                    depends_on=st.get("depends_on", []),
+                    result=st.get("result"),
+                    error=st.get("error"),
+                )
+                for st in omp_subtasks
+            ]
 
     # ── Task Lifecycle ─────────────────────────────────────────
 
@@ -109,7 +202,11 @@ class Orchestrator:
 
         bridge = await self._ensure_bridge()
         try:
-            await bridge.submit_task(description)
+            result = await bridge.submit_task(description)
+            # Sync full task state from omp (gets task_id + subtasks)
+            omp_task = await bridge.list_tasks()
+            if omp_task:
+                self._merge_omp_task(omp_task[-1])  # latest task
         except OmpBridgeError:
             logger.error("OmpBridge submit_task failed", exc_info=True)
 
@@ -130,9 +227,9 @@ class Orchestrator:
             ok = r.get("ok", False)
         except OmpBridgeError:
             return False
-        if ok and task_id in self.tasks:
-            self.tasks[task_id].status = TaskStatus.CANCELLED
-            if self.nats_publisher:
+        if ok:
+            await self._sync_task_from_omp(task_id)
+            if self.nats_publisher and task_id in self.tasks:
                 await self.nats_publisher.publish_update(self.tasks[task_id])
         return ok
 
@@ -143,9 +240,9 @@ class Orchestrator:
             ok = r.get("ok", False)
         except OmpBridgeError:
             return False
-        if ok and task_id in self.tasks:
-            self.tasks[task_id].status = TaskStatus.PAUSED
-            if self.nats_publisher:
+        if ok:
+            await self._sync_task_from_omp(task_id)
+            if self.nats_publisher and task_id in self.tasks:
                 await self.nats_publisher.publish_update(self.tasks[task_id])
         return ok
 
@@ -156,13 +253,14 @@ class Orchestrator:
             ok = r.get("ok", False)
         except OmpBridgeError:
             return False
-        if ok and task_id in self.tasks:
-            self.tasks[task_id].status = TaskStatus.IN_PROGRESS
-            if self.nats_publisher:
+        if ok:
+            await self._sync_task_from_omp(task_id)
+            if self.nats_publisher and task_id in self.tasks:
                 await self.nats_publisher.publish_update(self.tasks[task_id])
         return ok
 
     def get_task_status(self, task_id: str) -> Task | None:
+        """Get task from local cache. Auto-syncs from omp if bridge is active."""
         return self.tasks.get(task_id)
 
     # ── Worker Registration (pass-through) ─────────────────────
