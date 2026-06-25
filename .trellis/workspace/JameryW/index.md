@@ -7,8 +7,8 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-1.md`
-- **Total Sessions**: 55
+- **Active File**: `journal-2.md`
+- **Total Sessions**: 56
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1974 | Active |
+| `journal-2.md` | ~40 | Active |
+| `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 56 | 2026-06-25 | Dashboard v3 Phase 2 — alerts, Prometheus, SQLite persistence | `5ff7a022` | `main` |
 | 55 | 2026-06-25 | Multi-repo config + auto-discovery + Dashboard | `9a1bebdb`, `9854ab47`, `ef96d260`, `579d5db3` | `main` |
 | 54 | 2026-06-25 | OMP P1 File Conflict Detection + Constraint-Aware Scheduling | `a644979f`, `973654ad` | `main` |
 | 53 | 2026-06-24 | Dashboard Sparkline 趋势图与 CSV 导出 | `283870e2`, `431cc131` | `feat/omp-deferred-ac-prd-update` |
