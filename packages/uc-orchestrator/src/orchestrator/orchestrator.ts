@@ -60,6 +60,8 @@ interface TaskState {
 	error?: string;
 	/** Which wave to resume from (for pause/resume). */
 	resumeFromWave?: number;
+	/** Whether re-decomposition has been attempted (one-shot guard). */
+	redecomposed?: boolean;
 }
 
 interface SubtaskResult {
@@ -293,6 +295,26 @@ export class UCOrchestrator {
 					// Subtask-level cancel: continue with remaining non-cancelled paths
 				}
 				if (failed.length > 0) {
+					// Try re-decomposing failed subtasks before giving up
+					const redecomposed = await this.tryRedecompose(task, ctx);
+					if (redecomposed) {
+						// Re-execute with new subtasks
+						const pendingDefs: SubtaskDef[] = task.subtasks
+							.filter((s) => s.status === "pending" || s.status === "running")
+							.map((s) => ({
+								id: s.id,
+								description: s.description,
+								dependsOn: s.dependsOn,
+								files: s.files,
+							}));
+						const newWaves = splitWavesByFileOverlap(buildDAG(pendingDefs));
+						ctx.ui.notify(
+							`Task ${task.id}: re-decomposed ${failed.length} failed subtask(s) into ${pendingDefs.length} new one(s)`,
+							"info",
+						);
+						await this.executeWaves(task, newWaves, ctx);
+						return;
+					}
 					task.status = "failed";
 					task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
 					break;
@@ -411,6 +433,83 @@ export class UCOrchestrator {
 		const order = new Map(wave.map((d, i) => [d.id, i]));
 		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 		return results;
+	}
+
+	// ── Re-decompose Failed Subtasks ────────────────────────────────────
+
+	/**
+	 * Attempt to re-decompose permanently failed subtasks into smaller ones.
+	 *
+	 * Only tries once per task (one-shot guard). New subtasks depend on all
+	 * completed subtasks and have retryCount = maxRetries (no further retries).
+	 * Returns true if re-decomposition succeeded and new subtasks were added.
+	 */
+	private async tryRedecompose(
+		task: TaskState,
+		ctx: ExtensionCommandContext,
+	): Promise<boolean> {
+		// One-shot guard
+		if (task.redecomposed) return false;
+
+		const failed = task.subtasks.filter((s) => s.status === "failed");
+		if (failed.length === 0) return false;
+
+		// Build context from completed subtasks
+		const completedSummaries = task.subtasks
+			.filter((s) => s.status === "completed" && s.result)
+			.map((s) => `- ${s.description}: ${s.result!.slice(0, 200)}`)
+			.slice(0, 5);
+
+		const failedDescriptions = failed.map(
+			(s) => `- ${s.description} (error: ${s.error?.slice(0, 200) ?? "unknown"})`,
+		);
+
+		const redecomposePrompt =
+			"The following subtasks of a larger task failed:\n" +
+			failedDescriptions.join("\n") +
+			"\n\nCompleted subtasks so far:\n" +
+			(completedSummaries.length > 0 ? completedSummaries.join("\n") : "(none)") +
+			"\n\nOriginal task: " + task.description +
+			"\n\nDecompose each failed subtask into 1-2 simpler, more specific subtasks." +
+			"\nOutput a JSON object with a 'subtasks' array, each having id, description, depends_on, and files.";
+
+		try {
+			const newDefs = await this.decompose(redecomposePrompt, ctx);
+
+			// Remove failed subtasks, add new ones
+			const completedIds = task.subtasks
+				.filter((s) => s.status === "completed")
+				.map((s) => s.id);
+
+			const newSubtasks: SubtaskResult[] = newDefs.map((def) => ({
+				id: def.id,
+				description: def.description,
+				status: "pending" as const,
+				dependsOn: [...completedIds, ...def.dependsOn],
+				files: def.files,
+				retryCount: this.config.maxRetries, // no further retries
+			}));
+
+			task.subtasks = [
+				...task.subtasks.filter((s) => s.status !== "failed"),
+				...newSubtasks,
+			];
+			task.redecomposed = true;
+			task.error = undefined;
+			task.status = "in_progress";
+
+			await this.persist(task);
+			this.syncTaskToGrpc(task);
+			this.pi.logger.info(
+				`Re-decomposed ${failed.length} failed subtask(s) into ${newSubtasks.length} new one(s)`,
+			);
+			return true;
+		} catch (err) {
+			this.pi.logger.warn(
+				`Re-decomposition failed: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			return false;
+		}
 	}
 
 	// ── Control: Cancel / Pause / Resume ──────────────────────────────
