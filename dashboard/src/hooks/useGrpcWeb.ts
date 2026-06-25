@@ -5,7 +5,7 @@ import type { Interceptor } from "@connectrpc/connect";
 import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
-import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema } from "@/grpc/engine_pb";
+import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema, CancelTaskRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
 
 /** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
@@ -365,10 +365,18 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
   }, []);
 
+  /** Cancel a task via gRPC-Web. */
+  const cancelTask = useCallback(async (taskId: string) => {
+    const transport = getTransport();
+    const client = createClient(TaskService, transport);
+    const resp = await client.cancelTask(create(CancelTaskRequestSchema, { taskId }));
+    return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
+  }, []);
+
   useEffect(() => {
     connect();
     return disconnect;
   }, [connect, disconnect]);
 
-  return { connectionState, grpcExhausted, connect, disconnect, submitTask, healthCheck, listTasks, pauseTask, resumeTask };
+  return { connectionState, grpcExhausted, connect, disconnect, submitTask, healthCheck, listTasks, pauseTask, resumeTask, cancelTask };
 }
