@@ -1,5 +1,5 @@
 /**
- * uc-rpc-server.ts — JSONL stdio bridge for Python OmpBridge.
+ * uc-rpc-server.ts -- JSONL stdio bridge for Python OmpBridge.
  *
  * Reads JSONL commands from stdin, dispatches to UCOrchestrator,
  * writes JSONL responses + events to stdout.
@@ -18,7 +18,7 @@ import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 
-// ── Types ──────────────────────────────────────────────────────────
+// -- Types -------------------------------------------------------------------
 
 interface JsonRpcRequest {
 	jsonrpc?: string;
@@ -38,9 +38,9 @@ interface JsonRpcEvent {
 	data: unknown;
 }
 
-// ── Stub ExtensionAPI ──────────────────────────────────────────────
+// -- Stub ExtensionAPI -------------------------------------------------------
 
-// ponytail: minimal stub — logger to stderr, settings with workspaceRoot
+// Minimal stub: logger to stderr, settings with workspaceRoot
 const stubPi: ExtensionAPI = {
 	pi: { settings: { workspaceRoot: process.cwd() } },
 	logger: {
@@ -48,9 +48,10 @@ const stubPi: ExtensionAPI = {
 		warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
 		error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
 	},
+	sendMessage: () => {},
 } as unknown as ExtensionAPI;
 
-// ponytail: stub ctx for orchestrator methods that need it
+// Stub ctx for orchestrator methods that need it
 function stubCtx(): ExtensionCommandContext {
 	return {
 		cwd: process.cwd(),
@@ -61,7 +62,7 @@ function stubCtx(): ExtensionCommandContext {
 	} as unknown as ExtensionCommandContext;
 }
 
-// ── Serialize helpers ──────────────────────────────────────────────
+// -- Serialize helpers -------------------------------------------------------
 
 function serializeTask(task: TaskState): Record<string, unknown> {
 	return {
@@ -83,7 +84,7 @@ function serializeTask(task: TaskState): Record<string, unknown> {
 	};
 }
 
-// ── Server ─────────────────────────────────────────────────────────
+// -- Server ------------------------------------------------------------------
 
 class RpcServer {
 	private orchestrator: UCOrchestrator;
@@ -122,7 +123,19 @@ class RpcServer {
 			case "submit_task": {
 				const description = String(params.description ?? "");
 				if (!description) throw new Error("description is required");
-				const taskId = await this.orchestrator.submitTask(description, stubCtx());
+				// Fire-and-forget: submitTask blocks until decomposition + execution
+				// complete, but the RPC protocol requires an immediate task_id response.
+				// Generate the task ID synchronously, return it, then run the
+				// orchestrator lifecycle in the background.
+				const taskId = this.orchestrator.createTask(description);
+				this.orchestrator
+					.runTask(taskId, stubCtx())
+					.catch((err) => {
+						this.emitEvent("task_error", {
+							task_id: taskId,
+							error: err instanceof Error ? err.message : String(err),
+						});
+					});
 				return { task_id: taskId };
 			}
 
@@ -193,9 +206,13 @@ class RpcServer {
 				throw new Error(`Unknown method: ${method}`);
 		}
 	}
+
+	private emitEvent(type: string, data: unknown): void {
+		writeLine(JSON.stringify({ event: type, data }));
+	}
 }
 
-// ── Main ───────────────────────────────────────────────────────────
+// -- Main --------------------------------------------------------------------
 
 async function main(): Promise<void> {
 	const server = new RpcServer();

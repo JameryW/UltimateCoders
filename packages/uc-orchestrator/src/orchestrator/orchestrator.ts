@@ -212,6 +212,74 @@ export class UCOrchestrator {
 		return taskId;
 	}
 
+	/**
+	 * Create a task entry synchronously and return its ID.
+	 * Used by the RPC server to get an immediate task_id before
+	 * the async decomposition + execution begins.
+	 */
+	createTask(description: string): string {
+		this.circuitBreaker.reset();
+		const taskId = `uc-${++this.taskCounter}-${Date.now().toString(36)}`;
+		const task: TaskState = {
+			id: taskId,
+			description,
+			status: "planning",
+			controlState: "running",
+			subtasks: [],
+			createdAt: Date.now(),
+		};
+		this.tasks.set(taskId, task);
+		this.abortControllers.set(taskId, new AbortController());
+		this.persist(task).catch(() => {});
+		return taskId;
+	}
+
+	/**
+	 * Run the full lifecycle (decompose + execute) for a task created by createTask().
+	 * Designed to be called fire-and-forget from the RPC server.
+	 */
+	async runTask(taskId: string, ctx?: ExtensionCommandContext): Promise<void> {
+		const task = this.tasks.get(taskId);
+		if (!task) throw new Error(`Task ${taskId} not found`);
+
+		const execCtx = ctx ?? stubContext();
+		execCtx.ui.notify(`Task ${taskId}: planning...`, "info");
+
+		// Step 1: Decompose
+		let subtaskDefs: SubtaskDef[];
+		try {
+			subtaskDefs = await this.decompose(task.description, execCtx);
+		} catch (err) {
+			task.status = "failed";
+			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
+			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
+			await this.persist(task);
+			this.syncTaskToGrpc(task);
+			return;
+		}
+
+		// Step 2: Build DAG
+		const waves = splitWavesByFileOverlap(buildDAG(subtaskDefs));
+		task.subtasks = subtaskDefs.map((def) => ({
+			id: def.id,
+			description: def.description,
+			status: "pending",
+			dependsOn: def.dependsOn,
+			files: def.files,
+		}));
+		task.status = "in_progress";
+		await this.persist(task);
+		this.syncTaskToGrpc(task);
+
+		execCtx.ui.notify(
+			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
+			"info",
+		);
+
+		// Step 3: Execute waves
+		await this.executeWaves(task, waves, execCtx);
+	}
+
 	// ── Wave Execution ───────────────────────────────────────────────
 
 	private async executeWaves(
