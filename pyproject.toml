@@ -41,6 +41,7 @@ python-source = "python"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+pythonpath = ["python"]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests requiring infrastructure (TiKV/Qdrant/PostgreSQL/NATS)",
