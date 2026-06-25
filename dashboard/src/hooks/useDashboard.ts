@@ -10,6 +10,7 @@ import type {
   CircuitBreakerData,
   DashboardEvent,
   MetricsSnapshot,
+  AlertEvent,
 } from "@/types/dashboard";
 
 /** #12: Maximum number of task entries to keep in interactionLog.
@@ -77,6 +78,8 @@ export function useDashboard() {
   /** #6: Track errors from fetchInitial so callers can surface them in the UI. */
   const [fetchErrors, setFetchErrors] = useState<Record<string, string>>({});
   const [metrics, setMetrics] = useState<MetricsSnapshot | null>(null);
+  const [activeAlerts, setActiveAlerts] = useState<AlertEvent[]>([]);
+  const [resolvedAlertTypes, setResolvedAlertTypes] = useState<string[]>([]);
   /** Dedup: Map<dedupKey, timestamp> — events within DEDUP_WINDOW_MS are dropped. */
   const dedupRef = useRef<Map<string, number>>(new Map());
 
@@ -89,6 +92,8 @@ export function useDashboard() {
     circuitBreaker?: CircuitBreakerData;
     events?: DashboardEvent[];
     metrics?: MetricsSnapshot;
+    alert_events?: AlertEvent[];
+    alert_resolved?: string[];
   }) => {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
@@ -96,6 +101,13 @@ export function useDashboard() {
     if (data.circuitBreaker?.available) setCircuitBreaker(data.circuitBreaker);
     if (data.events && data.events.length > 0) setEventLog(data.events);
     if (data.metrics) setMetrics(data.metrics);
+    if (data.alert_events && data.alert_events.length > 0) {
+      setActiveAlerts(prev => [...prev, ...data.alert_events!].slice(-50));
+    }
+    if (data.alert_resolved && data.alert_resolved.length > 0) {
+      setResolvedAlertTypes(data.alert_resolved);
+      setActiveAlerts(prev => prev.filter(a => !data.alert_resolved!.includes(a.alert_type)));
+    }
   }, []);
 
   // Handle SSE/gRPC-Web real-time task event (with dedup)
@@ -386,6 +398,8 @@ export function useDashboard() {
     eventLog,
     interactionLog,
     metrics,
+    activeAlerts,
+    resolvedAlertTypes,
     needsSync,
     setNeedsSync,
     fetchErrors,

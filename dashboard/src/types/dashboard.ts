@@ -228,6 +228,8 @@ export interface DashboardSnapshot {
   events?: DashboardEvent[];
   recent_task_events?: TaskEvent[];
   metrics?: MetricsSnapshot;
+  alert_events?: AlertEvent[];
+  alert_resolved?: string[];
 }
 
 // ── POST Response ───────────────────────────────────────
@@ -243,6 +245,25 @@ export interface TaskSubmitResponse extends ActionResponse {
   status?: string;
   subtask_count?: number;
   subtasks?: SubtaskSummary[];
+}
+
+// ── Alert system ──────────────────────────────────────────
+
+export interface AlertEvent {
+  type: "alert_triggered";
+  alert_type: string;
+  message: string;
+  severity: "warning" | "critical";
+  timestamp: number;
+}
+
+export interface AlertRecord {
+  id: number;
+  timestamp: number;
+  alert_type: string;
+  message: string;
+  severity: "warning" | "critical";
+  resolved: number; // 0 = active, 1 = resolved
 }
 
 // ── File Browser ────────────────────────────────────────

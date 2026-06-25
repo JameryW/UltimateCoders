@@ -418,6 +418,8 @@ function App() {
           workers={dashboard.workers}
           circuitBreaker={dashboard.circuitBreaker}
           eventLog={dashboard.eventLog}
+          metrics={dashboard.metrics}
+          activeAlerts={dashboard.activeAlerts}
           onJumpWorkers={() => document.getElementById("workers")?.scrollIntoView({ behavior: "smooth" })}
           onJumpCB={() => document.getElementById("circuit-breaker")?.scrollIntoView({ behavior: "smooth" })}
         />
