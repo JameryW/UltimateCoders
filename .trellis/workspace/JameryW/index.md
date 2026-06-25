@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 56
+- **Total Sessions**: 57
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~41 | Active |
+| `journal-2.md` | ~75 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 57 | 2026-06-25 | OMP Orchestrator P2 — Re-decompose + Circuit Breaker + Subtask Events | `6b724b36`, `4de08e1d` | `feat/omp-circuit-breaker` |
 | 56 | 2026-06-25 | OMP subtask events + re-decompose + checkpoint/resume — archive cleanup | `53e6b610`, `b8040383` | `feat/omp-circuit-breaker` |
 | 55 | 2026-06-25 | Multi-repo config + auto-discovery + Dashboard | `9a1bebdb`, `9854ab47`, `ef96d260`, `579d5db3` | `main` |
 | 54 | 2026-06-25 | OMP P1 File Conflict Detection + Constraint-Aware Scheduling | `a644979f`, `973654ad` | `main` |
