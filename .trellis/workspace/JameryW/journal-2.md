@@ -104,3 +104,38 @@ No active task this session. One planning task (TUI-OMP unified control path) re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 59: TUI-OMP unified control path — seamless handoff
+
+**Date**: 2026-06-25
+**Task**: TUI-OMP unified control path — seamless handoff
+**Branch**: `main`
+
+### Summary
+
+Implemented ControlSignalSubscriber: NATS subscription for task_paused/resumed/cancelled events from gRPC server → UCOrchestrator. Polling fallback (2s) when NATS unavailable. CancelTask RPC already existed (proto+Rust+TUI). Fixed GrpcBridge CancelTask routing. Non-blocking subscriber start. Updated spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c29850a` | (see git log) |
+| `d6955e80` | (see git log) |
+| `581a38a0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
