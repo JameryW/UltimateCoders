@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, type SubtaskDef } from "./scheduler";
+import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -524,5 +524,59 @@ describe("FileIntentTracker", () => {
 		// Releasing one should still leave the other
 		tracker.release("st-1");
 		expect(tracker.isConflicting(["shared.ts"])).toEqual(new Set(["st-2"]));
+	});
+});
+
+// ── CircuitBreaker tests ────────────────────────────────────────────
+
+describe("CircuitBreaker", () => {
+	it("starts in closed state", () => {
+		const cb = new CircuitBreaker();
+		expect(cb.canExecute()).toBe(true);
+		expect(cb.getState()).toBe("closed");
+	});
+
+	it("opens after threshold consecutive failures", () => {
+		const cb = new CircuitBreaker(3, 1000);
+		cb.recordFailure();
+		cb.recordFailure();
+		expect(cb.canExecute()).toBe(true); // still closed
+		cb.recordFailure();
+		expect(cb.canExecute()).toBe(false); // now open
+		expect(cb.getState()).toBe("open");
+	});
+
+	it("resets to closed on success", () => {
+		const cb = new CircuitBreaker(2, 1000);
+		cb.recordFailure();
+		cb.recordFailure();
+		expect(cb.getState()).toBe("open");
+		cb.recordSuccess();
+		expect(cb.getState()).toBe("closed");
+		expect(cb.canExecute()).toBe(true);
+	});
+
+	it("transitions to half_open after reset timeout", () => {
+		const cb = new CircuitBreaker(2, 50); // 50ms reset
+		cb.recordFailure();
+		cb.recordFailure();
+		expect(cb.getState()).toBe("open");
+		// Wait for reset timeout
+		return new Promise<void>((resolve) => {
+			setTimeout(() => {
+				expect(cb.canExecute()).toBe(true);
+				expect(cb.getState()).toBe("half_open");
+				resolve();
+			}, 60);
+		});
+	});
+
+	it("reset() clears all state", () => {
+		const cb = new CircuitBreaker(2, 1000);
+		cb.recordFailure();
+		cb.recordFailure();
+		cb.reset();
+		expect(cb.getState()).toBe("closed");
+		expect(cb.canExecute()).toBe(true);
 	});
 });

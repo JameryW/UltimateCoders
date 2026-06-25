@@ -286,3 +286,67 @@ export class FileIntentTracker {
 		this.fileOwners.clear();
 	}
 }
+
+// ── Circuit Breaker ─────────────────────────────────────────────────
+
+export type CircuitState = "closed" | "open" | "half_open";
+
+/**
+ * Simple circuit breaker for subtask execution.
+ *
+ * Prevents cascading failures: if too many subtasks fail consecutively,
+ * the circuit opens and subsequent attempts fail fast (with a delay
+ * before trying again in half-open state).
+ *
+ * ponytail: no token buckets, no RPM/TPM tracking — omp host process
+ * handles API rate limiting. This only prevents wasting resources on
+ * a degraded service.
+ */
+export class CircuitBreaker {
+	private state: CircuitState = "closed";
+	private failureCount = 0;
+	private lastFailureTime = 0;
+
+	constructor(
+		private readonly threshold = 3,
+		private readonly resetMs = 30_000,
+	) {}
+
+	/** Check if execution is allowed. Returns false if circuit is open. */
+	canExecute(): boolean {
+		if (this.state === "closed") return true;
+		if (this.state === "half_open") return true;
+		// Open: check if reset timeout has elapsed
+		if (Date.now() - this.lastFailureTime >= this.resetMs) {
+			this.state = "half_open";
+			return true;
+		}
+		return false;
+	}
+
+	/** Record a successful execution. */
+	recordSuccess(): void {
+		this.failureCount = 0;
+		this.state = "closed";
+	}
+
+	/** Record a failed execution. */
+	recordFailure(): void {
+		this.failureCount++;
+		this.lastFailureTime = Date.now();
+		if (this.failureCount >= this.threshold) {
+			this.state = "open";
+		}
+	}
+
+	/** Get current circuit state (for debugging/status). */
+	getState(): CircuitState {
+		return this.state;
+	}
+
+	/** Reset the circuit to closed state. */
+	reset(): void {
+		this.failureCount = 0;
+		this.state = "closed";
+	}
+}
