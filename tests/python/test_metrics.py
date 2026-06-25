@@ -7,14 +7,13 @@ import time
 
 import pytest
 from ultimate_coders.dashboard.metrics import (
-    AlertStore,
-    MetricsStore,
     WINDOW_SECONDS,
+    AlertStore,
     MetricsAggregator,
     MetricsSnapshot,
+    MetricsStore,
     _percentile,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────
 
@@ -225,7 +224,6 @@ class TestMetricsAggregator:
 
     def test_trend_sampling(self) -> None:
         # Use a temp db to avoid contamination from previous test runs
-        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".db", delete=True) as tmp:
             agg = MetricsAggregator()
             # Override metrics store to use temp db
