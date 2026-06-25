@@ -112,6 +112,7 @@ const App: React.FC = () => {
     reconnect,
     pauseTask,
     resumeTask,
+    cancelTask,
     client,
     retryCount,
     nextRetryAt,
@@ -453,7 +454,7 @@ const App: React.FC = () => {
         dispatch({type: 'ADD_INPUT_HISTORY', text: description});
         handleSlashCommand(parsed.command, parsed.args, {
           addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit,
-          listTasks: grpcListTasks, activeTaskId: state.activeTaskId,
+          listTasks: grpcListTasks, cancelTask, activeTaskId: state.activeTaskId,
           subtasks: state.subtasks, isStreaming, symbolMode: state.symbolMode,
           messages: state.messages,
         });
@@ -585,6 +586,10 @@ const App: React.FC = () => {
         for (const tid of state.offlineTimerIds) clearTimeout(tid);
         dispatch({type: 'CLEAR_OFFLINE_TIMERS'});
         dispatch({type: 'SET_SUBMITTING', submitting: false});
+        // Send cancel RPC to gRPC server if connected
+        if (state.activeTaskId && connectionState === 'connected') {
+          cancelTask({taskId: state.activeTaskId}).catch(() => {});
+        }
         dispatch({type: 'CLEAR_TASK'});
         clearStreamTask();
         addMessage(createSystemMessage('Task cancelled.', {color: 'yellow'}));
@@ -1046,7 +1051,7 @@ const App: React.FC = () => {
         selectedIndex={state.selectedCommandIndex}
         onSelect={(cmd, args) => handleSlashCommand(cmd, args, {
           addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit,
-          listTasks: grpcListTasks, activeTaskId: state.activeTaskId, subtasks: state.subtasks,
+          listTasks: grpcListTasks, cancelTask, activeTaskId: state.activeTaskId, subtasks: state.subtasks,
           isStreaming, symbolMode: state.symbolMode, messages: state.messages,
         })}
         onQueryChange={(q) => dispatch({type: 'SET_COMMAND_PALETTE_QUERY', query: q})}
@@ -1214,6 +1219,7 @@ function handleSlashCommand(
     reconnect: () => void;
     exit: () => void;
     listTasks: (req: {}) => Promise<import('../grpc/types.js').ListTasksResponse | null>;
+    cancelTask: (req: import('../grpc/types.js').CancelTaskRequest) => Promise<import('../grpc/types.js').CancelTaskResponse | null>;
     activeTaskId: string | null;
     subtasks: SubtaskItem[];
     isStreaming: boolean;
@@ -1221,7 +1227,7 @@ function handleSlashCommand(
     messages: ChatMessage[];
   },
 ): void {
-  const {addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit, listTasks, activeTaskId, subtasks, isStreaming, symbolMode, messages} = deps;
+  const {addMessage, dispatch, connectionState, client, serverAddr, reconnect, exit, listTasks, cancelTask, activeTaskId, subtasks, isStreaming, symbolMode, messages} = deps;
 
   switch (command.name) {
     case 'help':
@@ -1234,6 +1240,10 @@ function handleSlashCommand(
       if (activeTaskId || isStreaming) {
         dispatch({type: 'CANCEL_TASK'});
         dispatch({type: 'SET_SUBMITTING', submitting: false});
+        // Send cancel RPC to gRPC server if connected
+        if (activeTaskId && connectionState === 'connected') {
+          cancelTask({taskId: activeTaskId}).catch(() => {});
+        }
         dispatch({type: 'CLEAR_TASK'});
         addMessage(createSystemMessage('Task cancelled.', {color: 'yellow'}));
       } else {

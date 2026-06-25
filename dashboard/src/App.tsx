@@ -143,7 +143,7 @@ function App() {
 
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
-  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: _grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask } = useGrpcWeb({
+  const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: _grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask, cancelTask: grpcCancelTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
     onSyncRequired: (_reason: string, _skipped: number) => {
       needsSyncCountRef.current += 1;
@@ -290,6 +290,18 @@ function App() {
       showToast(`Resume failed: ${String(e)}`, "error");
     }
   };
+  const handleCancelTask = async (taskId: string) => {
+    dashboard.optimisticStatusUpdate(taskId, "cancelled");
+    try {
+      if (grpcState === "connected") {
+        const r = await grpcCancelTask(taskId);
+        r.success ? showToast("Task cancelled", "success") : showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error");
+      }
+    } catch (e) {
+      dashboard.optimisticStatusUpdate(taskId, "in_progress");
+      showToast(`Cancel failed: ${String(e)}`, "error");
+    }
+  };
   const handleResetCB = async () => {
     const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
     if (!ok) return;
@@ -434,6 +446,7 @@ function App() {
                   onFlush={handleFlush}
                   onPauseTask={handlePauseTask}
                   onResumeTask={handleResumeTask}
+                  onCancelTask={handleCancelTask}
                   stale={grpcStale}
                   highlightTaskId={highlightTaskId}
                   onHighlightShown={() => setHighlightTaskId(null)}

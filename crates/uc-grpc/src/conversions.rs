@@ -1011,6 +1011,12 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 String::new(),
                 std::collections::HashMap::new(),
             ),
+            uc_engine::AgentEventType::TaskCancelled { task_id } => (
+                "task_cancelled".to_string(),
+                task_id.0,
+                String::new(),
+                std::collections::HashMap::new(),
+            ),
             uc_engine::AgentEventType::TaskUpdated { task_id, status } => (
                 "task_updated".to_string(),
                 task_id.0,

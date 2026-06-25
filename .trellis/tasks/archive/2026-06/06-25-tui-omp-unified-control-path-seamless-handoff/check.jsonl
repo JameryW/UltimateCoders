@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "Verify CancelTask RPC added correctly to proto + Rust impl"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "Verify NATS subject and event format for task_cancelled"}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "Verify uc-rpc-server still works — no regressions from Orchestrator NATS changes"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "Verify cancelTask method added to TUI gRPC client"}
+{"file": ".trellis/tasks/06-25-tui-omp-unified-control-path-seamless-handoff/prd.md", "reason": "Check implementation against all acceptance criteria"}

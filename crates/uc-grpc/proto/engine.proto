@@ -27,6 +27,7 @@ service TaskService {
     rpc WatchTask(WatchTaskRequest) returns (stream TaskEvent);
     rpc PauseTask(PauseTaskRequest) returns (PauseTaskResponse);
     rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
+    rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
     rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
 }
 
@@ -258,6 +259,17 @@ message ResumeTaskRequest {
 }
 
 message ResumeTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    string status = 3;
+    optional string error = 4;
+}
+
+message CancelTaskRequest {
+    string task_id = 1;
+}
+
+message CancelTaskResponse {
     bool success = 1;
     string task_id = 2;
     string status = 3;

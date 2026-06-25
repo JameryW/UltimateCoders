@@ -481,6 +481,40 @@ impl TaskStore {
         }
     }
 
+    /// Cancel a task. Tasks in InProgress, Planning, or Paused status can be cancelled.
+    /// Marks running/pending subtasks as Failed and sets the task to Failed.
+    pub fn cancel_task(&mut self, task_id: &str) -> Result<uc_types::Task, String> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| format!("Task not found: {}", task_id))?;
+        match &task.status {
+            uc_types::TaskStatus::InProgress
+            | uc_types::TaskStatus::Planning
+            | uc_types::TaskStatus::Paused => {
+                task.status = uc_types::TaskStatus::Failed;
+                task.updated_at = chrono::Utc::now();
+                // Mark running/pending subtasks as Failed
+                for st in &mut task.subtasks {
+                    if matches!(
+                        st.status,
+                        uc_types::SubtaskStatus::InProgress
+                            | uc_types::SubtaskStatus::Pending
+                            | uc_types::SubtaskStatus::Assigned
+                    ) {
+                        st.status = uc_types::SubtaskStatus::Failed;
+                    }
+                }
+                Ok(task.clone())
+            }
+            uc_types::TaskStatus::Failed => Err("Task is already failed".to_string()),
+            uc_types::TaskStatus::Completed => {
+                Err("Cannot cancel task in Completed state".to_string())
+            }
+            uc_types::TaskStatus::Created => Err("Cannot cancel task in Created state".to_string()),
+        }
+    }
+
     /// Update an existing task's status and subtasks via gRPC UpdateTask RPC.
     ///
     /// Performs full upsert on subtasks: matches by ID, updates status/result,
@@ -764,6 +798,9 @@ impl TaskStore {
                 format!("task.{}", task_id.0)
             }
             uc_engine::AgentEventType::TaskResumed { task_id } => {
+                format!("task.{}", task_id.0)
+            }
+            uc_engine::AgentEventType::TaskCancelled { task_id } => {
                 format!("task.{}", task_id.0)
             }
             uc_engine::AgentEventType::TaskUpdated { task_id, .. } => {
@@ -1934,6 +1971,10 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
             let task_id = uc_types::TaskId(event.task_id.clone());
             Some(uc_engine::AgentEventType::TaskResumed { task_id })
         }
+        "task_cancelled" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskCancelled { task_id })
+        }
         _ => {
             tracing::debug!(
                 event_type = %event.r#type,
@@ -2607,6 +2648,50 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 }))
             }
             Err(e) => Ok(Response::new(ResumeTaskResponse {
+                success: false,
+                task_id: req.task_id,
+                status: String::new(),
+                error: Some(e),
+            })),
+        }
+    }
+
+    async fn cancel_task(
+        &self,
+        request: Request<CancelTaskRequest>,
+    ) -> Result<Response<CancelTaskResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        let result = {
+            let mut store = self.inner.task_store.lock().await;
+            match store.cancel_task(&task_id) {
+                Ok(task) => {
+                    // Record event + broadcast to WatchTask streams
+                    let event = uc_engine::AgentEventType::TaskCancelled {
+                        task_id: task.id.clone(),
+                    };
+                    store.record_event(event.clone());
+                    let proto_event: TaskEvent = event.into();
+                    drop(store);
+                    let _ = self.inner.event_tx.send(proto_event);
+                    Ok(task)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(task) => {
+                // Publish NATS event for Python side
+                self.publish_task_status_event(&task_id, "task_cancelled")
+                    .await;
+                Ok(Response::new(CancelTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
+            Err(e) => Ok(Response::new(CancelTaskResponse {
                 success: false,
                 task_id: req.task_id,
                 status: String::new(),
@@ -3537,6 +3622,58 @@ mod tests {
 
         // Resume without pausing first (invalid: InProgress -> InProgress)
         let result = store.resume_task(&task_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn task_store_cancel_valid() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        let cancelled = store.cancel_task(&task_id).unwrap();
+        assert_eq!(cancelled.status, uc_types::TaskStatus::Failed);
+        // Subtask should also be marked Failed
+        assert_eq!(cancelled.subtasks.len(), 1);
+        assert_eq!(
+            cancelled.subtasks[0].status,
+            uc_types::SubtaskStatus::Failed
+        );
+    }
+
+    #[test]
+    fn task_store_cancel_paused() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Pause first, then cancel
+        store.pause_task(&task_id).unwrap();
+        let cancelled = store.cancel_task(&task_id).unwrap();
+        assert_eq!(cancelled.status, uc_types::TaskStatus::Failed);
+    }
+
+    #[test]
+    fn task_store_cancel_completed() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Manually set task to Completed
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.status = uc_types::TaskStatus::Completed;
+        }
+
+        // Cannot cancel a completed task
+        let result = store.cancel_task(&task_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn task_store_cancel_nonexistent() {
+        let mut store = TaskStore::new();
+        let result = store.cancel_task("nonexistent");
         assert!(result.is_err());
     }
 

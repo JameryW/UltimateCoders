@@ -70,3 +70,4 @@ pnpm-lock.yaml
 # uc-orchestrator package
 packages/uc-orchestrator/node_modules/
 packages/uc-orchestrator/bun.lock
+.uc/

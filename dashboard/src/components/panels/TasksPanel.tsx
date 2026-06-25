@@ -64,6 +64,7 @@ interface TasksPanelProps {
   onFlush?: () => void;
   onPauseTask?: (taskId: string) => void;
   onResumeTask?: (taskId: string) => void;
+  onCancelTask?: (taskId: string) => void;
   stale?: boolean;
   highlightTaskId?: string | null;
   onHighlightShown?: () => void;
@@ -75,7 +76,7 @@ interface TasksPanelProps {
   selectedTaskId?: string | null;
 }
 
-export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId }: TasksPanelProps) {
+export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResumeTask, onCancelTask, stale, highlightTaskId, onHighlightShown, onNavigateFile, grpcSubmitTask, onTaskCreated, onOptimisticAdd, onSelectTask, selectedTaskId }: TasksPanelProps) {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -287,6 +288,15 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
                           className="btn-action-ok px-2 py-0.5 rounded text-xs cursor-pointer"
                         >
                           Resume
+                        </button>
+                      )}
+                      {(task.status === "in_progress" || task.status === "paused") && onCancelTask && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onCancelTask(task.id); }}
+                          aria-label={`Cancel task ${shortId(task.id)}`}
+                          className="btn-action-error px-2 py-0.5 rounded text-xs cursor-pointer"
+                        >
+                          Cancel
                         </button>
                       )}
                       <span
