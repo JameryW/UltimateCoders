@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-25-omp-migration-python-orchestrator-thin-bridge/prd.md", "reason": "Task PRD with migration strategy and acceptance criteria"}
+{"file": "packages/uc-orchestrator/src/extension.ts", "reason": "UCOrchestrator extension entry — registers /uc commands and memory tools"}
+{"file": "packages/uc-orchestrator/src/orchestrator/orchestrator.ts", "reason": "UCOrchestrator core — submitTask, cancelTask, pauseTask, resumeTask, showStatus"}
+{"file": "packages/uc-orchestrator/src/orchestrator/grpc-bridge.ts", "reason": "gRPC bridge used by UCOrchestrator for TaskStore sync"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Python Orchestrator to be refactored to thin bridge"}
+{"file": "python/ultimate_coders/nats_worker.py", "reason": "NATS worker entry point — must continue working after migration"}

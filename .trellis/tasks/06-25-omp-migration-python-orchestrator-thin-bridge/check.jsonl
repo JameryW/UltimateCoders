@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/06-25-omp-migration-python-orchestrator-thin-bridge/prd.md", "reason": "Acceptance criteria and DoD"}
+{"file": "python/ultimate_coders/nats_worker.py", "reason": "NATS worker must still function end-to-end"}
+{"file": "python/ultimate_coders/agent/orchestrator.py", "reason": "Must be < 200 lines after refactoring"}
