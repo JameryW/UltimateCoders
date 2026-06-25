@@ -49,7 +49,7 @@ function extractRecentToolCalls(output: string, n: number): string[] {
 	return calls.slice(-n);
 }
 
-interface TaskState {
+export interface TaskState {
 	id: string;
 	description: string;
 	status: "planning" | "in_progress" | "completed" | "failed" | "cancelled";
@@ -64,7 +64,7 @@ interface TaskState {
 	redecomposed?: boolean;
 }
 
-interface SubtaskResult {
+export interface SubtaskResult {
 	id: string;
 	description: string;
 	status: "pending" | "running" | "reviewing" | "completed" | "failed" | "cancelled";
@@ -154,7 +154,7 @@ export class UCOrchestrator {
 
 	// ── Task Submission ──────────────────────────────────────────────
 
-	async submitTask(description: string, ctx: ExtensionCommandContext): Promise<void> {
+	async submitTask(description: string, ctx?: ExtensionCommandContext): Promise<string> {
 		this.circuitBreaker.reset();
 		const taskId = `uc-${++this.taskCounter}-${Date.now().toString(36)}`;
 
@@ -169,20 +169,23 @@ export class UCOrchestrator {
 		this.tasks.set(taskId, task);
 		this.abortControllers.set(taskId, new AbortController());
 
-		ctx.ui.notify(`Task ${taskId}: planning...`, "info");
+		ctx?.ui.notify(`Task ${taskId}: planning...`, "info");
 		await this.persist(task);
+
+		// ponytail: stub ctx for rpc server (no omp context)
+		const execCtx = ctx ?? stubContext();
 
 		// ── Step 1: Decompose ──
 		let subtaskDefs: SubtaskDef[];
 		try {
-			subtaskDefs = await this.decompose(description, ctx);
+			subtaskDefs = await this.decompose(description, execCtx);
 		} catch (err) {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
-			ctx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
+			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
-			return;
+			return taskId;
 		}
 
 		// ── Step 2: Build DAG ──
@@ -199,13 +202,14 @@ export class UCOrchestrator {
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
 
-		ctx.ui.notify(
+		execCtx.ui.notify(
 			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
 			"info",
 		);
 
 		// ── Step 3: Execute waves ──
-		await this.executeWaves(task, waves, ctx);
+		await this.executeWaves(task, waves, execCtx);
+		return taskId;
 	}
 
 	// ── Wave Execution ───────────────────────────────────────────────
@@ -597,7 +601,7 @@ export class UCOrchestrator {
 		return true;
 	}
 
-	async resumeTask(taskId: string, ctx: ExtensionCommandContext): Promise<boolean> {
+	async resumeTask(taskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
 		const task = this.tasks.get(taskId);
 		if (!task) return false;
 		if (task.controlState !== "paused" && task.status !== "failed") return false;
@@ -635,16 +639,17 @@ export class UCOrchestrator {
 			task.completedAt = Date.now();
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
-			ctx.ui.notify(`Task ${taskId}: all subtasks already completed`, "info");
+			ctx?.ui.notify(`Task ${taskId}: all subtasks already completed`, "info");
 			return true;
 		}
 
 		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
-		ctx.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
+		ctx?.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
 
-		// Execute remaining waves
-		await this.executeWaves(task, waves, ctx);
+		// Execute remaining waves — stub ctx if not provided (ponytail: rpc server doesn't have omp context)
+		const execCtx = ctx ?? stubContext();
+		await this.executeWaves(task, waves, execCtx);
 		return true;
 	}
 
@@ -1134,6 +1139,16 @@ export class UCOrchestrator {
 		ctx.ui.setWidget(key, lines);
 	}
 
+	// ── Public getters (for uc-rpc-server) ────────────────────────
+
+	getTaskState(id: string): TaskState | undefined {
+		return this.tasks.get(id);
+	}
+
+	getAllTaskStates(): TaskState[] {
+		return [...this.tasks.values()];
+	}
+
 	private buildSummary(task: TaskState): string {
 		const lines: string[] = [];
 		lines.push(`## UC Task: ${task.id}`);
@@ -1214,3 +1229,14 @@ Output a JSON object with:
 - approved: boolean (true if the subtask is satisfactorily completed)
 - issues: string[] (list of problems found, empty if approved)
 - suggestions: string[] (optional improvements, not blockers)`;
+
+// ponytail: stub ExtensionCommandContext for RPC server (no omp runtime)
+function stubContext(): ExtensionCommandContext {
+	return {
+		cwd: process.cwd(),
+		ui: {
+			notify: () => {},
+			setWidget: () => {},
+		},
+	} as unknown as ExtensionCommandContext;
+}
