@@ -477,7 +477,8 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
 
 # ── AlertStore (SQLite persistence) ──────────────────────────
 
-_ALERTS_DB_PATH = os.environ.get("UC_METRICS_DB", os.path.expanduser("~/.ultimate_coders/metrics.db"))
+_METRICS_DB_DEFAULT = os.path.expanduser("~/.ultimate_coders/metrics.db")
+_ALERTS_DB_PATH = os.environ.get("UC_METRICS_DB", _METRICS_DB_DEFAULT)
 
 
 class AlertStore:
@@ -519,7 +520,9 @@ class AlertStore:
     def insert(self, alert: Alert) -> int:
         conn = self._conn()
         cur = conn.execute(
-            "INSERT INTO alerts (timestamp, alert_type, message, severity, resolved) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO alerts "
+            "(timestamp, alert_type, message, severity, resolved) "
+            "VALUES (?, ?, ?, ?, ?)",
             (alert.timestamp, alert.alert_type, alert.message, alert.severity, int(alert.resolved)),
         )
         conn.commit()
@@ -537,7 +540,8 @@ class AlertStore:
     def get_recent(self, limit: int = 100) -> list[dict]:
         conn = self._conn()
         rows = conn.execute(
-            "SELECT id, timestamp, alert_type, message, severity, resolved FROM alerts ORDER BY id DESC LIMIT ?",
+            "SELECT id, timestamp, alert_type, message, severity, resolved "
+            "FROM alerts ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -545,7 +549,8 @@ class AlertStore:
     def get_active(self) -> list[dict]:
         conn = self._conn()
         rows = conn.execute(
-            "SELECT id, timestamp, alert_type, message, severity FROM alerts WHERE resolved = 0 ORDER BY id DESC",
+            "SELECT id, timestamp, alert_type, message, severity "
+            "FROM alerts WHERE resolved = 0 ORDER BY id DESC",
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -594,8 +599,12 @@ class MetricsStore:
     def insert(self, sample: MetricsSample) -> None:
         conn = self._conn()
         conn.execute(
-            "INSERT OR REPLACE INTO metrics_samples (timestamp, events_per_minute, avg_duration_ms, error_rate, cluster_utilization) VALUES (?, ?, ?, ?, ?)",
-            (sample.timestamp, sample.events_per_minute, sample.avg_duration_ms, sample.error_rate, sample.cluster_utilization),
+            "INSERT OR REPLACE INTO metrics_samples "
+            "(timestamp, events_per_minute, avg_duration_ms, "
+            "error_rate, cluster_utilization) VALUES (?, ?, ?, ?, ?)",
+            (sample.timestamp, sample.events_per_minute,
+             sample.avg_duration_ms, sample.error_rate,
+             sample.cluster_utilization),
         )
         conn.commit()
         # Retention cleanup — approximately once per hour (when timestamp is near the hour mark)
@@ -609,7 +618,9 @@ class MetricsStore:
         cutoff = int(time.time()) - minutes * 60
         conn = self._conn()
         rows = conn.execute(
-            "SELECT timestamp, events_per_minute, avg_duration_ms, error_rate, cluster_utilization FROM metrics_samples WHERE timestamp >= ? ORDER BY timestamp",
+            "SELECT timestamp, events_per_minute, avg_duration_ms, "
+            "error_rate, cluster_utilization "
+            "FROM metrics_samples WHERE timestamp >= ? ORDER BY timestamp",
             (cutoff,),
         ).fetchall()
         return [
@@ -662,13 +673,18 @@ class PrometheusExporter:
             "uc_events_total", "Total events", ["event_type"], registry=registry,
         )
         self.workers_heartbeat_age = pc.Gauge(
-            "uc_workers_heartbeat_age_seconds", "Worker heartbeat age", ["worker_id"], registry=registry,
+            "uc_workers_heartbeat_age_seconds",
+            "Worker heartbeat age", ["worker_id"],
+            registry=registry,
         )
         self.cluster_utilization = pc.Gauge(
-            "uc_cluster_utilization", "Cluster utilization ratio", registry=registry,
+            "uc_cluster_utilization",
+            "Cluster utilization ratio", registry=registry,
         )
         self.circuit_breaker_state = pc.Gauge(
-            "uc_circuit_breaker_state", "Circuit breaker state (0=closed, 0.5=half_open, 1=open)", registry=registry,
+            "uc_circuit_breaker_state",
+            "Circuit breaker state (0=closed, 0.5=half_open, 1=open)",
+            registry=registry,
         )
         self.rate_limiter_remaining = pc.Gauge(
             "uc_rate_limiter_remaining_ratio", "Rate limiter remaining ratio", registry=registry,
@@ -702,7 +718,9 @@ class PrometheusExporter:
         worker_id = data.get("worker_id") or data.get("assigned_worker")
         if worker_id and "heartbeat_age" in data:
             try:
-                self.workers_heartbeat_age.labels(worker_id=str(worker_id)).set(float(data["heartbeat_age"]))
+                self.workers_heartbeat_age.labels(
+                    worker_id=str(worker_id)
+                ).set(float(data["heartbeat_age"]))
             except (ValueError, TypeError):
                 pass
 

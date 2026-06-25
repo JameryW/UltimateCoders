@@ -1314,7 +1314,13 @@ class DashboardApp:
         # Attach alert events for SSE push
         if new_alerts:
             result["alert_events"] = [
-                {"type": "alert_triggered", "alert_type": a.alert_type, "message": a.message, "severity": a.severity, "timestamp": a.timestamp}
+                {
+                    "type": "alert_triggered",
+                    "alert_type": a.alert_type,
+                    "message": a.message,
+                    "severity": a.severity,
+                    "timestamp": a.timestamp,
+                }
                 for a in new_alerts
             ]
         # Attach resolved alert types for SSE push
