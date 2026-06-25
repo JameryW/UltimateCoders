@@ -1015,6 +1015,7 @@ export class UCOrchestrator {
 			error: task.error,
 			controlState: task.controlState,
 			resumeFromWave: task.resumeFromWave,
+			redecomposed: task.redecomposed,
 			subtasks: task.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,
@@ -1044,6 +1045,7 @@ export class UCOrchestrator {
 			controlState: p.controlState,
 			error: p.error,
 			resumeFromWave: p.resumeFromWave,
+			redecomposed: p.redecomposed,
 			subtasks: p.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,

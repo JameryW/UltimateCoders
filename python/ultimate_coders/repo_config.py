@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -115,6 +116,13 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
 class RepoScanner:
     """Scan directories for git repositories."""
 
+    # Directories to skip during scan
+    _SKIP_DIRS = frozenset({
+        "node_modules", "__pycache__", ".tox", ".venv", "venv",
+        "env", ".mypy_cache", ".pytest_cache", "dist", "build",
+        ".cargo", "target",
+    })
+
     def __init__(self, engine: object | None = None) -> None:
         """Initialize scanner.
 
@@ -124,19 +132,31 @@ class RepoScanner:
         """
         self._engine = engine
 
-    def discover(self, scan_dirs: list[str], scan_depth: int = 3) -> list[RepoEntry]:
+    def discover(
+        self,
+        scan_dirs: list[str],
+        scan_depth: int = 3,
+        exclude_repo_ids: set[str] | None = None,
+    ) -> list[RepoEntry]:
         """Scan directories for git repos and return RepoEntry list.
 
         Args:
             scan_dirs: Directories to scan.
             scan_depth: Max directory depth to descend.
+            exclude_repo_ids: Repo IDs to skip (e.g. already declared in repos section).
 
         Returns:
-            List of discovered RepoEntry objects.
+            List of discovered RepoEntry objects, deduplicated by repo_id.
         """
+        if exclude_repo_ids is None:
+            exclude_repo_ids = set()
+        seen_ids: set[str] = set()
         found: list[RepoEntry] = []
         for dir_path in scan_dirs:
-            found.extend(self._scan_dir(dir_path, scan_depth))
+            for entry in self._scan_dir(dir_path, scan_depth):
+                if entry.repo_id not in seen_ids and entry.repo_id not in exclude_repo_ids:
+                    seen_ids.add(entry.repo_id)
+                    found.append(entry)
         return found
 
     def discover_and_index(
@@ -151,18 +171,22 @@ class RepoScanner:
             indexed_repo_ids: Set of already-indexed repo IDs to skip.
 
         Returns:
-            List of newly discovered RepoEntry objects.
+            List of newly indexed RepoEntry objects (excludes failures).
         """
         if indexed_repo_ids is None:
             indexed_repo_ids = set()
 
-        discovered = self.discover(config.scan_dirs, config.scan_depth)
-        new_repos: list[RepoEntry] = []
+        # Exclude repos already declared in the repos section
+        declared_ids = {r.repo_id for r in config.repos}
+        discovered = self.discover(
+            config.scan_dirs, config.scan_depth,
+            exclude_repo_ids=declared_ids,
+        )
+        indexed: list[RepoEntry] = []
 
         for entry in discovered:
             if entry.repo_id in indexed_repo_ids:
                 continue
-            new_repos.append(entry)
             if self._engine is not None:
                 try:
                     self._engine.index_repo(
@@ -172,14 +196,18 @@ class RepoScanner:
                         entry.default_branch,
                     )
                     indexed_repo_ids.add(entry.repo_id)
+                    indexed.append(entry)
                     logger.info("Auto-discovered and indexed repo: %s", entry.repo_id)
                 except Exception:
                     logger.warning(
                         "Failed to index discovered repo %s",
                         entry.repo_id, exc_info=True,
                     )
+            else:
+                indexed.append(entry)
+                indexed_repo_ids.add(entry.repo_id)
 
-        return new_repos
+        return indexed
 
     def _scan_dir(self, dir_path: str, max_depth: int) -> list[RepoEntry]:
         """Recursively scan a directory for git repos."""
@@ -198,23 +226,14 @@ class RepoScanner:
         if depth < 0:
             return
 
+        name = dir_path.name
         # Skip hidden directories and common non-project dirs
-        if dir_path.name.startswith(".") or dir_path.name in (
-            "node_modules", "__pycache__", ".tox", ".venv", "venv",
-        ):
+        if name.startswith(".") or name in self._SKIP_DIRS:
             return
 
         git_dir = dir_path / ".git"
         if git_dir.is_dir():
-            repo_id = self._derive_repo_id(dir_path)
-            remote_url = self._get_remote_url(dir_path)
-            branch = self._get_default_branch(dir_path)
-            results.append(RepoEntry(
-                repo_id=repo_id,
-                local_path=str(dir_path),
-                remote_url=remote_url,
-                default_branch=branch,
-            ))
+            results.append(self._make_entry(dir_path))
             # Don't recurse into git repos — they won't contain other git repos
             return
 
@@ -226,18 +245,27 @@ class RepoScanner:
             logger.debug("Permission denied scanning: %s", dir_path)
 
     @staticmethod
-    def _derive_repo_id(path: Path) -> str:
-        """Derive a repo_id from directory name or git remote."""
-        remote = RepoScanner._get_remote_url(path)
-        if remote:
-            # Extract last segment of URL, strip .git
-            # e.g. https://github.com/org/repo.git -> repo
-            name = remote.rstrip("/").rsplit("/", 1)[-1]
+    def _make_entry(path: Path) -> RepoEntry:
+        """Create a RepoEntry from a git repo directory (single subprocess batch)."""
+        remote_url = RepoScanner._get_remote_url(path)
+        repo_id = RepoScanner._derive_repo_id(path, remote_url)
+        branch = RepoScanner._get_default_branch(path)
+        return RepoEntry(
+            repo_id=repo_id,
+            local_path=str(path),
+            remote_url=remote_url,
+            default_branch=branch,
+        )
+
+    @staticmethod
+    def _derive_repo_id(path: Path, remote_url: str = "") -> str:
+        """Derive a repo_id from remote URL or directory name."""
+        if remote_url:
+            name = remote_url.rstrip("/").rsplit("/", 1)[-1]
             if name.endswith(".git"):
                 name = name[:-4]
             if name:
                 return name
-        # Fallback: directory name
         return path.name
 
     @staticmethod
@@ -286,21 +314,22 @@ class RepoConfigWatcher:
         self,
         config_path: str | Path,
         on_change: Callable[[RepoConfig], None],
-        poll_interval: float = 2.0,
+        debounce_seconds: float = 0.5,
     ) -> None:
         """Initialize watcher.
 
         Args:
             config_path: Path to repos.yaml to watch.
             on_change: Callback invoked with new RepoConfig when file changes.
-            poll_interval: Fallback polling interval in seconds.
+            debounce_seconds: Seconds to wait after last change before reloading.
         """
         self._config_path = Path(config_path)
         self._on_change = on_change
-        self._poll_interval = poll_interval
+        self._debounce_seconds = debounce_seconds
         self._observer: object | None = None
         self._running = False
-        self._last_mtime: float = 0.0
+        self._reload_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
 
     def start(self) -> None:
         """Start watching the config file."""
@@ -319,7 +348,7 @@ class RepoConfigWatcher:
                 def on_modified(self, event: object) -> None:  # noqa: N805
                     from watchdog.events import FileModifiedEvent  # type: ignore[import-untyped]
                     if isinstance(event, FileModifiedEvent) and event.src_path.endswith(filename):
-                        self._watcher._reload()  # type: ignore[attr-defined]
+                        self._watcher._schedule_reload()  # type: ignore[attr-defined]
 
             self._observer = Observer()
             self._observer.schedule(Handler(self), parent_dir, recursive=False)  # type: ignore[union-attr]
@@ -331,10 +360,23 @@ class RepoConfigWatcher:
     def stop(self) -> None:
         """Stop watching."""
         self._running = False
+        with self._lock:
+            if self._reload_timer is not None:
+                self._reload_timer.cancel()
+                self._reload_timer = None
         if self._observer is not None:
             self._observer.stop()  # type: ignore[union-attr]
             self._observer.join(timeout=5)  # type: ignore[union-attr]
             self._observer = None
+
+    def _schedule_reload(self) -> None:
+        """Debounce: cancel pending timer, schedule a new one."""
+        with self._lock:
+            if self._reload_timer is not None:
+                self._reload_timer.cancel()
+            self._reload_timer = threading.Timer(self._debounce_seconds, self._reload)
+            self._reload_timer.daemon = True
+            self._reload_timer.start()
 
     def _reload(self) -> None:
         """Reload config and invoke callback."""
