@@ -259,26 +259,8 @@ export class UCOrchestrator {
 				// Auto-checkpoint after wave completes (dual storage)
 				await this.checkpoint(task);
 
-				// Write subtask results + reviews to UC memory (fire-and-forget)
-				for (const result of results) {
-					if (result.result) {
-						this.bridge.writeMemory(
-							"task", `subtask_result_${result.id}`,
-							result.result, "text", "uc-orchestrator", task.id,
-						).catch(() => {});
-					}
-					if (result.review) {
-						this.bridge.writeMemory(
-							"task", `subtask_review_${result.id}`,
-							JSON.stringify({
-								approved: result.review.approved,
-								issues: result.review.issues,
-								suggestions: result.review.suggestions,
-							}),
-							"structured", "uc-orchestrator", task.id,
-						).catch(() => {});
-					}
-				}
+				// Subtask results/reviews already written per-subtask in executeWave
+				// (moved to subtask-level for real-time Dashboard visibility)
 
 				const failed = results.filter((r) => r.status === "failed");
 				const cancelled = results.filter((r) => r.status === "cancelled");
@@ -418,6 +400,33 @@ export class UCOrchestrator {
 				}
 				results.push(result);
 				this.runningCount--;
+				// Subtask-level event: sync to gRPC + write memory for Dashboard visibility
+				const st = task.subtasks.find((s) => s.id === result.id);
+				if (st) {
+					st.status = result.status;
+					st.result = result.result;
+					st.error = result.error;
+					st.review = result.review;
+					st.completedAt = result.completedAt;
+				}
+				this.syncTaskToGrpc(task);
+				if (result.result) {
+					this.bridge.writeMemory(
+						"task", `subtask_result_${result.id}`,
+						result.result, "text", "uc-orchestrator", task.id,
+					).catch(() => {});
+				}
+				if (result.review) {
+					this.bridge.writeMemory(
+						"task", `subtask_review_${result.id}`,
+						JSON.stringify({
+							approved: result.review.approved,
+							issues: result.review.issues,
+							suggestions: result.review.suggestions,
+						}),
+						"structured", "uc-orchestrator", task.id,
+					).catch(() => {});
+				}
 			}
 		};
 
