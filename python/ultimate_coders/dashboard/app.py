@@ -35,7 +35,7 @@ from uuid import uuid4
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ultimate_coders.dashboard.metrics import MetricsAggregator
 
@@ -523,7 +523,7 @@ class DashboardApp:
                     {"success": False, "error": "Orchestrator not available"},
                     status_code=503,
                 )
-            success = orch.pause_task(task_id)
+            success = await orch.pause_task(task_id)
             if success:
                 self._record_event("task_pause", task_id=task_id)
                 return JSONResponse({"success": True, "task_id": task_id, "status": "paused"})
@@ -587,7 +587,7 @@ class DashboardApp:
                     {"success": False, "error": "Orchestrator not available"},
                     status_code=503,
                 )
-            success = orch.resume_task(task_id)
+            success = await orch.resume_task(task_id)
             if success:
                 self._record_event("task_resume", task_id=task_id)
                 return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress"})
@@ -707,6 +707,45 @@ class DashboardApp:
             if (resp := self._check_auth(request)) is not None:
                 return resp
             return JSONResponse(self._get_repos_data())
+
+        @app.get("/dashboard/api/alerts")
+        async def alerts_api(request: Request, limit: int = 100):
+            """Return alert history from SQLite store."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            return JSONResponse({
+                "alerts": self._metrics.alert_store.get_recent(limit=limit),
+                "active": self._metrics.alert_store.get_active(),
+            })
+
+        @app.get("/metrics")
+        async def prometheus_metrics(request: Request):
+            """Prometheus exposition endpoint."""
+            return Response(
+                content=self._metrics.generate_prometheus(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
+
+        @app.get("/dashboard/api/trend")
+        async def trend_api(request: Request, minutes: int = 60):
+            """Return trend samples for the last N minutes from SQLite."""
+            if (resp := self._check_auth(request)) is not None:
+                return resp
+            minutes = max(1, min(minutes, 1440))  # clamp 1-1440min (24h)
+            samples = self._metrics.get_trend(minutes)
+            return JSONResponse({
+                "trend": [
+                    {
+                        "timestamp": s.timestamp,
+                        "events_per_minute": s.events_per_minute,
+                        "avg_duration_ms": s.avg_duration_ms,
+                        "error_rate": s.error_rate,
+                        "cluster_utilization": s.cluster_utilization,
+                    }
+                    for s in samples
+                ],
+                "minutes": minutes,
+            })
 
         @app.get("/dashboard/api/repos/{repo_id}/tree")
         async def repo_tree_api(repo_id: str, request: Request, path: str = ""):
@@ -1260,7 +1299,9 @@ class DashboardApp:
         # Update metrics with current system state before snapshotting
         self._update_system_metrics(health, workers)
         metrics_snap = self._metrics.snapshot()
-        return {
+        # Check alert conditions — returns (new_alerts, resolved_types)
+        new_alerts, resolved_types = self._metrics.check_alerts(metrics_snap)
+        result = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "health": health,
             "workers": workers,
@@ -1270,6 +1311,22 @@ class DashboardApp:
             "events": list(self._event_log),
             "metrics": self._metrics_to_dict(metrics_snap),
         }
+        # Attach alert events for SSE push
+        if new_alerts:
+            result["alert_events"] = [
+                {
+                    "type": "alert_triggered",
+                    "alert_type": a.alert_type,
+                    "message": a.message,
+                    "severity": a.severity,
+                    "timestamp": a.timestamp,
+                }
+                for a in new_alerts
+            ]
+        # Attach resolved alert types for SSE push
+        if resolved_types:
+            result["alert_resolved"] = resolved_types
+        return result
 
     def _update_system_metrics(self, health: dict, workers: dict) -> None:
         """Push current system state into MetricsAggregator before snapshot."""

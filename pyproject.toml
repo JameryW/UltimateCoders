@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+prometheus = [
+    "prometheus-client>=0.20.0",
+]
 tui = [
     "textual>=0.40",
     "rich>=13.0",
@@ -38,6 +41,7 @@ python-source = "python"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+pythonpath = ["python"]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests requiring infrastructure (TiKV/Qdrant/PostgreSQL/NATS)",

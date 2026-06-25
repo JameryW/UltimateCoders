@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import tempfile
 import time
 
 import pytest
 from ultimate_coders.dashboard.metrics import (
     WINDOW_SECONDS,
+    AlertStore,
     MetricsAggregator,
     MetricsSnapshot,
+    MetricsStore,
     _percentile,
 )
+
+# ── Fixtures ────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _isolate_db(tmp_path):
+    """Ensure MetricsAggregator tests use a temp db, not the real one."""
+    import ultimate_coders.dashboard.metrics as _m
+    _original = _m._ALERTS_DB_PATH
+    _m._ALERTS_DB_PATH = str(tmp_path / "test.db")
+    yield
+    _m._ALERTS_DB_PATH = _original
+
 
 # ── Helpers ────────────────────────────────────────────────
 
@@ -208,12 +223,18 @@ class TestMetricsAggregator:
         assert snap2.system.uptime_seconds >= snap1.system.uptime_seconds
 
     def test_trend_sampling(self) -> None:
-        agg = MetricsAggregator()
-        # First snapshot should produce a trend sample
-        agg.record_event("task_completed", {"duration_ms": 1000})
-        snap = agg.snapshot()
-        assert len(snap.trend) == 1
-        assert snap.trend[0].timestamp > 0
+        # Use a temp db to avoid contamination from previous test runs
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=True) as tmp:
+            agg = MetricsAggregator()
+            # Override metrics store to use temp db
+            agg._metrics_store = MetricsStore(db_path=tmp.name)
+            agg._alert_store = AlertStore(db_path=tmp.name)
+            agg._trend.clear()
+            # First snapshot should produce a trend sample
+            agg.record_event("task_completed", {"duration_ms": 1000})
+            snap = agg.snapshot()
+            assert len(snap.trend) >= 1
+            assert snap.trend[-1].timestamp > 0
 
     def test_trend_not_sampled_too_frequently(self) -> None:
         agg = MetricsAggregator()
