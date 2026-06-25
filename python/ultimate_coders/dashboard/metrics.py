@@ -138,7 +138,11 @@ class MetricsAggregator:
     to get the current aggregated metrics for SSE/gRPC push.
     """
 
-    def __init__(self, alert_config: AlertConfig | None = None) -> None:
+    def __init__(
+        self,
+        alert_config: AlertConfig | None = None,
+        db_path: str | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._events: deque[_TimedEvent] = deque()
         self._start_time = time.monotonic()
@@ -155,12 +159,12 @@ class MetricsAggregator:
         self._avg_heartbeat_age: float = 0.0
         # Alert system
         self._alert_config = alert_config or AlertConfig()
-        self._alert_store = AlertStore()
-        self._active_alert_types: set[str] = set()  # track which types are currently firing
+        self._alert_store = AlertStore(db_path=db_path)
+        self._active_alert_types: set[str] = set()
         # Prometheus exporter (no-op if prometheus_client not installed)
         self._prom = PrometheusExporter()
         # Time-series store (SQLite)
-        self._metrics_store = MetricsStore()
+        self._metrics_store = MetricsStore(db_path=db_path)
         # Restore trend from SQLite on startup
         # TREND_MAX_SAMPLES samples at TREND_INTERVAL seconds each
         restore_minutes = TREND_MAX_SAMPLES * TREND_INTERVAL // 60
