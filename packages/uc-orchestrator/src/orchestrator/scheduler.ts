@@ -229,8 +229,13 @@ export class FileIntentTracker {
 	/** filePath → Set of subtask IDs owning it */
 	private fileOwners = new Map<string, Set<string>>();
 
-	/** Declare that a subtask intends to modify the given files. */
+	/** Declare that a subtask intends to modify the given files.
+	 *  If the subtask already has declared intents, releases old ones first. */
 	declare(subtaskId: string, files: string[]): void {
+		// Release any previous intents for this subtask to avoid stale entries
+		if (this.intents.has(subtaskId)) {
+			this.release(subtaskId);
+		}
 		const fileSet = new Set(files);
 		this.intents.set(subtaskId, fileSet);
 		for (const f of files) {

@@ -250,7 +250,25 @@ export interface TaskSubmitResponse extends ActionResponse {
 export interface RepoInfo {
   repo_id: string;
   local_path: string;
+  remote_url?: string;
+  default_branch?: string;
+  tags?: string[];
   exists: boolean;
+  /** Index state (from GetIndexState RPC). */
+  indexed?: boolean;
+  files_count?: number;
+  symbols_count?: number;
+  chunks_count?: number;
+  last_indexed_sha?: string;
+  last_indexed_at?: string;
+}
+
+/** A repo discovered by scan_dirs but not yet indexed. */
+export interface DiscoveredRepo {
+  repo_id: string;
+  local_path: string;
+  remote_url: string;
+  default_branch: string;
 }
 
 export interface ReposData {

@@ -66,6 +66,12 @@ class ScheduledTaskConfig:
     project_id: str | None = None
     """Project/repository context for the task."""
 
+    repo_id: str | None = None
+    """Target a specific repository by repo_id for index tasks."""
+
+    tags: list[str] = field(default_factory=list)
+    """Target repositories by tags (from repos.yaml) for index tasks."""
+
     night_window_start: str | None = None
     """Override night window start time in HH:MM format."""
 
@@ -132,6 +138,8 @@ def _parse_task_entry(data: dict[str, Any]) -> ScheduledTaskConfig:
         cron_expression=data.get("cron_expression"),
         execute_after=data.get("execute_after"),
         project_id=data.get("project_id"),
+        repo_id=data.get("repo_id"),
+        tags=data.get("tags", []),
         night_window_start=data.get("night_window_start"),
         night_window_end=data.get("night_window_end"),
         timezone=data.get("timezone", "UTC"),
