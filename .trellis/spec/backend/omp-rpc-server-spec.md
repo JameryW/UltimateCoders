@@ -258,3 +258,29 @@ Two JSONL bridge protocols exist:
 2. **Local Worker Bridge** (local-worker-bridge-spec.md): Rust ↔ Python, for task execution
 
 Both use newline-delimited JSON but different protocols (JSON-RPC 2.0 vs simple JSONL).
+
+---
+
+## Control Signal Flow (TUI/Dashboard → Orchestrator)
+
+When TUI or Dashboard calls PauseTask/ResumeTask/CancelTask via gRPC:
+
+```
+TUI pause ─▸ gRPC PauseTask ─▸ NATS uc.task.event(task_paused) ─▸ ControlSignalSubscriber ─▸ orchestrator.pauseTask()
+TUI resume ─▸ gRPC ResumeTask ─▸ NATS uc.task.event(task_resumed) ─▸ ControlSignalSubscriber ─▸ orchestrator.resumeTask()
+TUI cancel ─▸ gRPC CancelTask ─▸ NATS uc.task.event(task_cancelled) ─▸ ControlSignalSubscriber ─▸ orchestrator.cancelTask()
+```
+
+**Fallback (NATS unavailable):**
+```
+TUI pause ─▸ gRPC PauseTask ─▸ TaskStore (paused) ─▸ polling detect ─▸ orchestrator.pauseTask()
+```
+
+### ControlSignalSubscriber (`control-signal-subscriber.ts`)
+
+- Subscribes to NATS `uc.task.event` subject
+- Filters for `task_paused`, `task_resumed`, `task_cancelled` events
+- Dedup: message_id based, 5-minute window, 10K entry cap
+- Polling fallback: 2s interval, GrpcBridge.getTask() per active task
+- Start is non-blocking (2s NATS connect timeout)
+- Guard against cancel false-positives in polling (only cancel if task still active in Orchestrator)
