@@ -83,3 +83,6 @@ dashboard/vite-dev.log
 packages/uc-orchestrator/node_modules/
 packages/uc-orchestrator/bun.lock
 .uc/
+.logs/
+.nats-data/
+.cluster-pids
