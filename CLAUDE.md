@@ -10,61 +10,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Rust 核心引擎** (5 crates): uc-types, uc-engine, uc-grpc, uc-grpc-server, uc-python
 - **OMP Extension** (TypeScript): UC Orchestrator — 任务编排 + UI 组件 + LLM tools + Coding Agent
-- **Python Worker/Sandbox**: gRPC LocalWorkerBridge/NATS fallback 路径 (Worker, SandboxManager, LLMClient)
-- **桥接**: PyO3 FFI (本地) + gRPC-Web (OMP→Rust), 运行时切换
+- **Python Worker/Sandbox**: gRPC LocalWorkerBridge/NATS fallback 路径
+- **桥接**: PyO3 FFI (本地) + gRPC-Web (OMP→Rust)
 - **存储**: TiKV (短期 Memory) + Qdrant (长期 Memory + 语义检索) + PostgreSQL (结构化元数据)
 
 ## Repository Structure
 
 ```
 ultimate-coders/
-├── Cargo.toml              # Workspace root
-├── pyproject.toml           # Maturin build config
-├── run-omp.sh               # Start OMP with UC extension
-├── crates/
-│   ├── uc-types/            # Shared types + EngineApi trait
-│   ├── uc-engine/           # Core engine (LocalEngine implementation)
-│   ├── uc-grpc/             # gRPC server/client + proto
-│   ├── uc-grpc-server/      # Standalone gRPC server binary
-│   └── uc-python/           # PyO3 Python binding
+├── run-omp.sh               # Start OMP with UC extension (primary entry point)
+├── Cargo.toml               # Rust workspace root
+├── pyproject.toml            # Maturin build config
+├── crates/                   # Rust core engine
+│   ├── uc-types/             #   Shared types + EngineApi trait
+│   ├── uc-engine/            #   LocalEngine + sandbox + scheduler
+│   ├── uc-grpc/              #   gRPC server/client + proto + broadcast
+│   ├── uc-grpc-server/       #   Standalone gRPC server binary
+│   └── uc-python/            #   PyO3 Python binding
 ├── packages/
-│   └── uc-orchestrator/     # OMP extension + rich TUI components
-│       ├── src/extension.ts  # Extension entry (commands, shortcuts, renderers)
-│       ├── src/orchestrator/ # Core orchestration logic + events
-│       ├── src/ui/           # pi-tui components (progress, overlays, formatters)
-│       └── src/uc-rpc-server.ts # JSONL stdio bridge for Python
-├── python/
-│   └── ultimate_coders/     # Python ergonomic layer
-├── proto/                   # Shared proto definitions
-├── tests/                   # Test suites
-└── docs/                    # Documentation
+│   └── uc-orchestrator/     # OMP extension (TypeScript)
+│       └── src/
+│           ├── extension.ts  #   Commands, shortcuts, renderers
+│           ├── orchestrator/ #   Core logic + events + bridges
+│           ├── ui/           #   pi-tui components
+│           └── agents/       #   LLM role prompts
+├── python/ultimate_coders/  # Python layer
+│   ├── agent/               #   Worker, Sandbox, Scheduler
+│   ├── dashboard/           #   FastAPI metrics + SSE
+│   ├── search/              #   SearchQuery builder
+│   └── memory/              #   Memory read/write
+├── dashboard/               # Vite + React web dashboard
+├── docker/                  # Dockerfiles + configs + scheduler config
+├── scripts/                 # run_tui.sh
+└── tests/                   # Rust + Python tests
 ```
 
 ## Build & Run
 
 ```bash
-# Rust build
 cargo check                  # Check all crates
 cargo test -p uc-engine      # Run engine tests (no features)
-cargo test                   # Run all tests (requires storage infra)
-
-# Python build (requires maturin)
-maturin develop              # Build Rust extension + install in editable mode
-
-# gRPC server
-cargo run -p uc-grpc-server  # Start standalone gRPC server
-
-# UC Orchestrator (OMP extension)
-./run-omp.sh                 # Start OMP with UC extension (primary interface)
+maturin develop              # Build Rust extension + install
+cargo run -p uc-grpc-server  # Start gRPC server
+./run-omp.sh                 # Start OMP with UC extension (primary)
 ```
 
 ## Key Types
 
-- `EngineApi` trait (uc-types/src/engine.rs) — unified contract for all engine operations
-- `EngineError` enum (uc-types/src/error.rs) — shared error types, mapped to both PyO3 exceptions and gRPC Status codes
-- `SearchQuery/SearchResult` (uc-types/src/search.rs) — hybrid search types
-- `MemoryKey/MemoryEntry` (uc-types/src/memory.rs) — layered memory types
-- `Task/Subtask/AgentEvent` (uc-types/src/agent.rs) — orchestration types
+- `EngineApi` trait (uc-types/src/engine.rs) — unified engine contract
+- `EngineError` (uc-types/src/error.rs) — shared error types
+- `SearchQuery/SearchResult` (uc-types/src/search.rs) — hybrid search
+- `MemoryKey/MemoryEntry` (uc-types/src/memory.rs) — layered memory
+- `Task/Subtask/AgentEvent` (uc-types/src/agent.rs) — orchestration
 
 ## Repository
 

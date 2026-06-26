@@ -218,21 +218,20 @@ ultimate-coders/
 │   └── ultimate_coders/      # Python ergonomic layer
 │       ├── engine.py         # create_engine() factory
 │       ├── agent/            # Worker + Sandbox + Scheduler
-│       ├── dashboard/        # Vite/React web dashboard + gRPC-Web streaming
-│       ├── local_worker.py   # JSON-RPC worker subprocess
+│       ├── dashboard/        # FastAPI metrics + SSE streaming
+│       ├── local_worker.py   # JSON-RPC worker subprocess (gRPC bridge)
 │       ├── nats_worker.py    # NATS consumer/producer bridge
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
+├── dashboard/                # Vite + React web dashboard
+├── docker/                   # Docker configs + Dockerfiles + scheduler config
 ├── scripts/
-│   ├── run_tui.sh            # Start OMP + optional gRPC server + dashboard
-│   └── run_dashboard.py      # Start Dashboard dev server
-├── proto/                    # Protobuf definitions
+│   └── run_tui.sh            # Start OMP + optional gRPC server
 ├── tests/
 │   ├── rust/                 # Rust integration tests
 │   └── python/               # Python unit tests
-└── docs/
-    └── architecture.md       # Architecture document
+└── vendor/                   # oh-my-pi (OMP runtime)
 ```
 
 ## Building
