@@ -295,6 +295,23 @@ export class UCOrchestrator {
 		await this.executeWaves(task, waves, execCtx);
 	}
 
+	// ── Worker Availability Check ────────────────────────────────────
+
+	/**
+	 * Check if any worker is available via gRPC bridge.
+	 * Returns true if at least one worker is available, false otherwise.
+	 * In degraded mode (Health RPC fallback), treats local_worker as available.
+	 */
+	private async checkWorkerAvailability(): Promise<boolean> {
+		try {
+			const result = await this.bridge.listWorkers();
+			if (!result.available) return false;
+			return result.availableCount > 0;
+		} catch {
+			return false;
+		}
+	}
+
 	// ── Wave Execution ───────────────────────────────────────────────
 
 	private async executeWaves(
@@ -324,6 +341,15 @@ export class UCOrchestrator {
 				}
 
 				const wave = waves[waveIdx];
+
+				// Check worker availability before executing wave
+				const workersAvailable = await this.checkWorkerAvailability();
+				if (!workersAvailable) {
+					task.status = "failed";
+					task.error = "No workers available — all workers offline or overloaded";
+					ctx.ui.notify(`Task ${task.id}: failed — no workers available`, "error");
+					break;
+				}
 				ctx.ui.notify(
 					`Task ${task.id}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
 					"info",

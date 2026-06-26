@@ -25,6 +25,7 @@ Trigger: any change to tool schemas, bridge methods, or new tool registration.
 | `uc_task` | task-bridge.ts | submitTask, cancelTask, pauseTask, resumeTask, getTask, listTasks | Task lifecycle |
 | `uc_index` | index-bridge.ts | indexRepo, getIndexState, removeIndex, listRepos | Index management |
 | `uc_file` | file-bridge.ts | listDir, getFile | File browsing |
+| `uc_worker` | worker-bridge.ts | listWorkers | Worker status awareness |
 
 Registration pattern: each file exports `register*(pi, bridge)` called from `extension.ts`.
 
@@ -91,6 +92,15 @@ Registration pattern: each file exports `register*(pi, bridge)` called from `ext
 }
 ```
 
+### uc_worker
+
+```typescript
+{
+  action: "list" | "status",
+  worker_id?: string,       // required for status; prefix matching supported
+}
+```
+
 ---
 
 ## 4. GrpcBridge Method Contracts
@@ -111,6 +121,14 @@ Registration pattern: each file exports `register*(pi, bridge)` called from `ext
 | Method | Payload | Response | Error |
 |--------|---------|----------|-------|
 | ReadMemory | `{key_scope, key, task_id, project_id}` | `{entry}` | catch → null |
+
+### DashboardService RPCs
+
+| Method | Payload | Response | Error |
+|--------|---------|----------|-------|
+| ListWorkers | `{}` | `{available, workers[{id, capabilities, current_load, max_capacity, load_percent, last_heartbeat, heartbeat_age_seconds, heartbeat_stale, is_available}], total, available_count}` | catch → Health RPC fallback → `{available: true, workers:[{id:"local_worker", max_capacity:-1, degraded:true}], total:1}` or `{available: false, workers:[]}` |
+
+**Degraded mode**: When `ListWorkers` RPC fails (NATS unavailable), `listWorkers()` falls back to the `Health` RPC's `local_worker` component. The synthetic worker has `maxCapacity: -1` and `WorkerListResult.degraded: true` to signal approximate data. Display code checks `maxCapacity < 0` to render "unknown (degraded mode)" instead of misleading "0/0 (0%)".
 | WriteMemory | `{key_scope, key, content, content_type, source_agent, task_id, project_id, importance?, tags?}` | (empty) | catch → false |
 | SearchMemory | `{query, scope_type, project_id, max_results}` | `{results[]}` | catch → [] |
 | DeleteMemory | `{key_scope, key, task_id, project_id}` | `{success}` | catch → false |
@@ -144,6 +162,15 @@ Mapping in `memory-bridge.ts`:
 - `short_term` → `task`
 - `long_term` → `global`
 - `metadata` → `project`
+
+### RPC service routing
+`GrpcBridge.resolveService(method)` maps method names to gRPC service paths:
+- `TaskService`: SubmitTask, GetTask, ListTasks, WatchTask, PauseTask, ResumeTask, CancelTask, UpdateTask
+- `EngineService`: Search, IndexRepo, GetIndexState, RemoveIndex, ReadMemory, WriteMemory, DeleteMemory, SearchMemory, Health, BatchWriteMemory, ListRepos, ListDir, GetFile
+- `DashboardService`: ListWorkers, GetSchedulerStatus, GetDashboardData
+
+### Worker availability check in Orchestrator
+Before each wave execution, `UCOrchestrator.checkWorkerAvailability()` calls `bridge.listWorkers()`. If no workers are available (`availableCount === 0`), the task fails fast with error "No workers available — all workers offline or overloaded" instead of letting subtasks time out.
 
 ### Zod schema pattern
 ```typescript
