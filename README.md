@@ -6,7 +6,7 @@
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to Dashboard consumers. The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools.
+The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. It uses OMP's `runSubprocess` API to invoke Claude Code CLI for task decomposition and subtask execution. The Rust core handles indexing, search, memory, and scheduling. Python Worker/Sandbox handles the gRPC LocalWorkerBridge fallback path. A broadcast channel delivers real-time task events to Dashboard consumers.
 
 ## Quick Start
 
@@ -96,26 +96,30 @@ The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cl
 See [docs/architecture.md](docs/architecture.md) for the full architecture document.
 
 ```
-+-------------------+     +-------------------+     +-------------------------------+     +---------------+
-|   Python Agent    |     |   Python Agent    |     |  OMP + UC Extension           |     |  Dashboard    |
-|   Orchestrator    |     |     Worker        |     |  +-------------------------+  |     |  (Vite/React) |
-+--------+----------+     +--------+----------+     |  │ Orchestrator Core       │  |     +-------+-------+
-         |                         |                |  │  ├─ Scheduler (DAG)     │  |             |
-         |  Engine API (PyO3)      |                |  │  ├─ TaskStore (SQLite)  │  |             | SSE
-         |                         |                |  │  ├─ GrpcBridge          │  |             |
-+--------v-------------------------v----------+     |  │  ├─ ControlSignals      │  |             |
-|              Rust Core Engine               |     |  │  └─ MemoryBridge (LLM) │  |             |
-|  +----------+ +--------+ +---------+       |     |  +-------------------------+  |     +-------v-------+
-|  | Indexer  | | Search | | Memory  |       |     |  │ UI Components           │  |     |  uc-grpc-server|
-|  +----------+ +--------+ +---------+       |     |  │  ├─ ProgressWidget      │  |     +-------+-------+
-|  +----------+ +----------+ +---------+     |     |  │  ├─ SubtaskTreeOverlay  │  |             |
-|  |Scheduler | |Checkpoint| |Conflict|      |     |  │  ├─ TaskListOverlay     │  |             | broadcast
-|  +----------+ +----------+ +---------+     |     |  │  ├─ TaskResultRenderer  │  |             | channel
-+--------+----------+---------+---------+-----+     |  │  └─ FooterStatus        │  |             | (TaskEvent)
-         |          |         |         |           |  +-------------------------+  |             |
-    +----v---+ +----v---+ +--v----+ +--v----+      +---------------+---------------+             |
-    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<---------------------+-----------------------------+
-    +--------+ +--------+ +-------+ +-------+    NATS pub/sub (task events) + gRPC WatchTask
++-------------------+     +-------------------------------+     +---------------+
+|   Python Worker   |     |  OMP + UC Extension           |     |  Dashboard    |
+|  (LocalWorker/    |     |  +-------------------------+  |     |  (Vite/React) |
+|   NATS fallback)  |     |  │ Orchestrator Core       │  |     +-------+-------+
++--------+----------+     |  │  ├─ Scheduler (DAG)     │  |             |
+         |                |  │  ├─ TaskStore (SQLite)  │  |     +-------v-------+
+         | Engine API     |  │  ├─ GrpcBridge          │──┼────►│  uc-grpc-server|
+         | (PyO3/gRPC)    |  │  ├─ ControlSignals      │  |     +-------+-------+
++--------v-----------+    |  │  └─ MemoryBridge (LLM) │  |             | broadcast
+|  Rust Core Engine  |    |  +-------------------------+  |             | channel
+|  +----------+      |    |  │ Coding Agent (OMP API)  │  |             | (TaskEvent)
+|  | Indexer  |      |    |  │  └─ runSubprocess       │  |             |
+|  +----------+      |    |  │     → claude -p ...     │  |             |
+|  +--------+ +----+ |    |  +-------------------------+  |             |
+|  | Search | |Mem | |    |  │ UI Components           │  |             |
+|  +--------+ +----+ |    |  │  ├─ ProgressWidget      │  |             |
+|  +----------+------| |    |  │  ├─ SubtaskTreeOverlay  │  |             |
+|  |Scheduler|Ckpt  | |    |  │  ├─ TaskListOverlay     │  |             |
+|  +----------+------| |    |  │  ├─ TaskResultRenderer  │  |             |
++---+------+---+--+--+ +    |  │  └─ FooterStatus        │  |             |
+    |      |   |  |         +---------------+---------------+             |
+ +--v--+ +v-+-v--v--+                        |                             |
+ | TiKV | |Qdrant| PgSQL | NATS  <-----------+-----------------------------+
+ +-----+ +------+-------+-------+   NATS pub/sub + gRPC WatchTask
 ```
 
 ### Real-Time Event Flow
@@ -155,10 +159,10 @@ When NATS is unavailable, the gRPC server can execute tasks locally via a Python
 
 ### NATS Worker
 
-An independent process that bridges the gRPC TaskService with the Python Orchestrator:
+An independent process that bridges the gRPC TaskService with Python Worker/Sandbox:
 
 1. Subscribes to `uc.task.submit` (from gRPC server)
-2. Calls `Orchestrator.submit_task()` for LLM/sandbox decomposition
+2. Calls `Worker.execute_subtask()` for sandbox decomposition
 3. Publishes status updates to `uc.task.update`
 4. Publishes real-time events to `uc.task.event`
 5. Sends heartbeats to `uc.heartbeat` every 30 seconds
@@ -213,7 +217,7 @@ ultimate-coders/
 ├── python/
 │   └── ultimate_coders/      # Python ergonomic layer
 │       ├── engine.py         # create_engine() factory
-│       ├── agent/            # Orchestrator + Worker + Sandbox + Scheduler
+│       ├── agent/            # Worker + Sandbox + Scheduler
 │       ├── dashboard/        # Vite/React web dashboard + gRPC-Web streaming
 │       ├── local_worker.py   # JSON-RPC worker subprocess
 │       ├── nats_worker.py    # NATS consumer/producer bridge
@@ -313,21 +317,6 @@ Docker Compose default credentials:
 | TiKV PD | localhost | 2379 | - | - |
 | NATS | localhost | 4222 | - | - |
 | NATS Monitor | localhost | 8222 | - | - |
-
-## Development Progress
-
-- ✅ PR1: Rust workspace + uc-types + uc-engine skeleton
-- ✅ PR2: 存储客户端集成 + Memory 读写 (in-memory fallback; TiKV/Qdrant/PostgreSQL clients coded, need infra)
-- ✅ PR3: 文本检索 + AST 索引引擎 (language-aware tokenization, tree-sitter AST, text search)
-- ✅ PR4: 语义检索 + 混合检索 API (BLAKE3 fallback embeddings, hybrid search engine)
-- ✅ PR5: gRPC + PyO3 桥接层 (tonic server/client, proto compilation, PyEngine wired)
-- ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
-- ✅ PR7: 容错机制 (Event Sourcing, Checkpoint/Resume, Conflict Detection, Rate Limiting, Circuit Breaker)
-- ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
-- ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
-- ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
-- ✅ PR11-30: TUI 实时监控 → Broadcast channel → LocalWorkerBridge → Dashboard SSE → NATS Worker → OMP 替换
-- ✅ PR31: Replace TUI with OMP — rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel, LLM-callable memory tools, SQLite task persistence
 
 ## Development
 
