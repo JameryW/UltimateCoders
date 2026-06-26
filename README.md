@@ -2,12 +2,11 @@
 
 [![Rust CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-rust.yml)
 [![Python CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-python.yml)
-[![TUI CI](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-tui.yml/badge.svg)](https://github.com/JameryW/UltimateCoders/actions/workflows/ci-tui.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to TUI and Dashboard consumers. An Ink-based TUI provides terminal monitoring with CJK/IME support, and a Vite/React Dashboard offers web-based cluster monitoring via gRPC-Web streaming.
+Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to Dashboard consumers. The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, and custom message rendering.
 
 ## Quick Start
 
@@ -76,20 +75,19 @@ Then connect from Python:
 engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 ```
 
-### 6. Run TUI or Dashboard
+### 6. Run UC Orchestrator
 
 ```bash
-# TUI only (connects to gRPC server)
-./scripts/run_tui.sh
+# Start OMP with UC Orchestrator extension (recommended)
+./run-omp.sh
 
-# gRPC server + Dashboard in background, TUI in foreground
+# Or with gRPC server for distributed scenarios
 ./scripts/run_tui.sh --server
-
-# TUI in build mode
-./scripts/run_tui.sh --build
 ```
 
-The TUI connects to the gRPC server and provides real-time task monitoring with CJK/IME input support. The Dashboard (Vite + React) provides a web UI at `http://localhost:5173`. See [tui/README.md](tui/README.md) for keyboard shortcuts and architecture details.
+The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>` to submit tasks, `/uc status` to check progress, and `/uc cancel/pause/resume` for control. Keyboard shortcuts: **Ctrl+T** for subtask tree overlay, **Ctrl+Shift+T** for task list.
+
+The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.
 
 ## Architecture
 
@@ -97,8 +95,8 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 
 ```
 +-------------------+     +-------------------+     +---------------+     +---------------+
-|   Python Agent    |     |   Python Agent    |     |  Ink TUI      |     |  Dashboard    |
-|   Orchestrator    |     |     Worker        |     |  (Node.js)    |     |  (Vite/React) |
+|   Python Agent    |     |   Python Agent    |     |  OMP + UC     |     |  Dashboard    |
+|   Orchestrator    |     |     Worker        |     |  Extension    |     |  (Vite/React) |
 +--------+----------+     +--------+----------+     +-------+-------+     +-------+-------+
          |                         |                         |                     |
          |  Engine API (PyO3)      |                         | gRPC                | SSE
@@ -180,14 +178,15 @@ ultimate-coders/
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
-├── tui/                      # Ink-based Terminal UI
-│   ├── src/
-│   │   ├── components/       # React/Ink UI components (App, SubtaskTree, StatusBar, CjkTextInput, TaskInput)
-│   │   ├── hooks/            # gRPC connection + event hooks
-│   │   ├── grpc/             # Node.js gRPC client
-│   │   ├── reducer.ts        # Central state management
-│   │   └── keymap.ts         # Keyboard command definitions
-│   └── vitest.config.ts      # Test configuration
+├── packages/
+│   └── uc-orchestrator/        # OMP extension — task orchestration + rich TUI
+│       ├── src/
+│       │   ├── extension.ts    # Extension entry point
+│       │   ├── orchestrator/   # Core orchestration logic
+│       │   └── ui/             # pi-tui components (progress widget, overlays, renderers)
+│       └── uc-rpc-server.ts    # JSONL stdio bridge for Python
+├── scripts/
+│   └── run_tui.sh              # Start OMP + optional gRPC server + dashboard
 ├── proto/                    # Protobuf definitions
 ├── tests/
 │   ├── rust/                 # Rust integration tests
@@ -216,15 +215,14 @@ maturin develop                # Build and install in editable mode
 pytest tests/python/ -v        # Run Python tests
 ```
 
-### TUI
+### UC Orchestrator
 
 ```bash
-./scripts/run_tui.sh              # Dev mode
-./scripts/run_tui.sh --build     # Build + run
-./scripts/run_tui.sh --server    # With gRPC server + dashboard
+# Start OMP with UC extension
+./run-omp.sh
 
-# Or manually:
-cd tui && npm install && npm start
+# With gRPC server
+./scripts/run_tui.sh --server
 ```
 
 ### Docker Compose
@@ -242,13 +240,12 @@ docker compose down -v
 
 ## CI
 
-Three independent CI workflows run on PRs targeting `main`:
+Two independent CI workflows run on PRs targeting `main`:
 
 | Workflow | Trigger paths | Checks |
 |----------|--------------|--------|
 | **Rust CI** | `crates/`, `Cargo.toml`, `Cargo.lock` | check, clippy, fmt, test (3 feature combos) |
 | **Python CI** | `python/`, `tests/`, `pyproject.toml` | ruff lint, pytest (3.9 + 3.12) |
-| **TUI CI** | `tui/` | tsc --noEmit, vitest |
 
 Storage integration tests only run on `main` pushes or manual dispatch (requires Docker Compose infra).
 
@@ -295,6 +292,7 @@ Docker Compose default credentials:
 - ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
 - ✅ PR11-20: TUI 实时监控 (Ink + React, gRPC streaming, CJK/IME input, segment-based StatusBar, 280+ tests)
 - ✅ PR21-30: Broadcast channel + LocalWorkerBridge + Dashboard SSE + NATS Worker + TUI CI
+- ✅ PR31: Replace TUI with OMP — rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel
 
 ## Development
 
@@ -316,8 +314,8 @@ PYTHONPATH=python pytest tests/python/ -v
 # Python tests with Rust extension
 maturin develop && pytest tests/python/ -v
 
-# TUI tests
-cd tui && npm test
+# UC Orchestrator tests
+cd packages/uc-orchestrator && npx tsc --noEmit
 ```
 
 ### Linting
@@ -330,8 +328,8 @@ cargo fmt --all -- --check
 # Python
 ruff check python/ tests/
 
-# TUI
-cd tui && npm run typecheck
+# UC Orchestrator
+cd packages/uc-orchestrator && npx tsc --noEmit
 ```
 
 ## License

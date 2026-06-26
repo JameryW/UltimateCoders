@@ -12,8 +12,8 @@ for arg in "$@"; do
     --help|-h)
       echo "Usage: $0 [--server]"
       echo ""
-      echo "  (default)  TUI only (auto-starts gRPC server)"
-      echo "  --server   also start web dashboard in background"
+      echo "  (default)  Start OMP with UC Orchestrator extension"
+      echo "  --server   also start gRPC server in background"
       exit 0
       ;;
     *)
@@ -34,51 +34,26 @@ if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
     }
 fi
 
-# Ensure gRPC server is running
-if ! lsof -i :50051 >/dev/null 2>&1; then
-    echo ">>> Starting gRPC server..."
-    cd "$PROJECT_ROOT"
-    PATH="$PROJECT_ROOT/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
-        cargo run -p uc-grpc-server &
-    SERVER_PID=$!
-    echo "    Server PID: $SERVER_PID"
-    # Wait for server to be ready
-    for i in $(seq 1 20); do
-        if lsof -i :50051 >/dev/null 2>&1; then
-            echo "    Server ready on :50051"
-            break
-        fi
-        sleep 0.5
-    done
-fi
-
-# ── Start dashboard if requested ──────────────────────────────
-DASH_PID=""
+# ── Start gRPC server if requested ────────────────────────────
 if [ "$START_DASH" = true ]; then
-    if [ ! -d "$PROJECT_ROOT/dashboard/node_modules" ]; then
-        echo ">>> Installing Dashboard dependencies..."
-        cd "$PROJECT_ROOT/dashboard" && npm install
+    if ! lsof -i :50051 >/dev/null 2>&1; then
+        echo ">>> Starting gRPC server..."
+        cd "$PROJECT_ROOT"
+        PATH="$PROJECT_ROOT/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
+            cargo run -p uc-grpc-server &
+        SERVER_PID=$!
+        echo "    Server PID: $SERVER_PID"
+        for i in $(seq 1 20); do
+            if lsof -i :50051 >/dev/null 2>&1; then
+                echo "    Server ready on :50051"
+                break
+            fi
+            sleep 0.5
+        done
     fi
-    echo ">>> Starting dashboard..."
-    (cd "$PROJECT_ROOT/dashboard" && npx vite --host) &
-    DASH_PID=$!
-    for i in $(seq 1 20); do
-        if curl -s http://localhost:5173 >/dev/null 2>&1; then break; fi
-        sleep 0.5
-    done
-    echo "    Dashboard: http://localhost:5173"
 fi
 
-cleanup() {
-    if [ -n "$DASH_PID" ]; then
-        echo ">>> Stopping dashboard (PID $DASH_PID)..."
-        kill "$DASH_PID" 2>/dev/null || true
-        wait "$DASH_PID" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-
-# Start TUI
-echo ">>> Starting TUI..."
-cd "$PROJECT_ROOT/tui"
-npx tsx src/index.tsx
+# Start OMP with UC Orchestrator extension
+echo ">>> Starting OMP with UC Orchestrator..."
+cd "$PROJECT_ROOT"
+exec bash run-omp.sh
