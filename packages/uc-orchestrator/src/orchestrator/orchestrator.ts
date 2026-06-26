@@ -19,6 +19,8 @@ import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, t
 import { GrpcBridge } from "./grpc-bridge";
 import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
+import { OrchestratorEventEmitter } from "./events";
+import type { OrchestratorEvents } from "./events";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -114,6 +116,8 @@ export class UCOrchestrator {
 	private runningCount = 0;
 	private circuitBreaker = new CircuitBreaker();
 	private controlSubscriber: ControlSignalSubscriber;
+	/** Internal event emitter — decouples orchestration from presentation */
+	readonly events = new OrchestratorEventEmitter();
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
@@ -178,6 +182,7 @@ export class UCOrchestrator {
 		this.abortControllers.set(taskId, new AbortController());
 
 		ctx?.ui.notify(`Task ${taskId}: planning...`, "info");
+		this.events.emit("task_planning", { taskId, description });
 		await this.persist(task);
 
 		// ponytail: stub ctx for rpc server (no omp context)
@@ -214,6 +219,7 @@ export class UCOrchestrator {
 			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
 			"info",
 		);
+		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length, waveCount: waves.length });
 
 		// ── Step 3: Execute waves ──
 		await this.executeWaves(task, waves, execCtx);
@@ -283,6 +289,7 @@ export class UCOrchestrator {
 			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
 			"info",
 		);
+		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length, waveCount: waves.length });
 
 		// Step 3: Execute waves
 		await this.executeWaves(task, waves, execCtx);
@@ -312,6 +319,7 @@ export class UCOrchestrator {
 					await this.persist(task);
 					this.updateWidget(ctx, widgetKey, task);
 					ctx.ui.notify(`Task ${task.id}: paused at wave ${waveIdx + 1}`, "info");
+					this.events.emit("task_paused", { taskId: task.id, waveIdx });
 					return; // Exit without completing — resume will re-enter
 				}
 
@@ -320,6 +328,7 @@ export class UCOrchestrator {
 					`Task ${task.id}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
 					"info",
 				);
+					this.events.emit("wave_start", { taskId: task.id, waveIdx, totalWaves: waves.length, subtaskIds: wave.map(s => s.id) });
 
 				const results = await this.executeWave(wave, task, ctx);
 
@@ -337,6 +346,7 @@ export class UCOrchestrator {
 				this.updateWidget(ctx, widgetKey, task);
 				await this.persist(task);
 				this.syncTaskToGrpc(task);
+					this.events.emit("wave_end", { taskId: task.id, waveIdx, totalWaves: waves.length, results });
 
 				// Auto-checkpoint after wave completes (dual storage)
 				await this.checkpoint(task);
@@ -405,6 +415,7 @@ export class UCOrchestrator {
 		const summary = this.buildSummary(task);
 		const notifyType = task.status === "completed" ? "info" : "error";
 		ctx.ui.notify(`Task ${task.id}: ${task.status}`, notifyType);
+			this.events.emit("task_complete", { taskId: task.id, status: task.status, summary });
 
 		this.bridge.writeMemory(
 			"task", `task_result_${task.id}`,
@@ -488,6 +499,7 @@ export class UCOrchestrator {
 							completedAt: Date.now(),
 						};
 					} else {
+						this.events.emit("subtask_start", { taskId: task.id, subtaskId: def.id, description: def.description });
 						result = await this.executeSubtaskWithRetry(def, task, ctx);
 						if (result.status === "failed") {
 							this.circuitBreaker.recordFailure();
@@ -661,6 +673,7 @@ export class UCOrchestrator {
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
 		ctx?.ui.notify(`Task ${taskId} cancelled`, "info");
+			this.events.emit("task_cancelled", { taskId });
 		return true;
 	}
 
@@ -722,6 +735,7 @@ export class UCOrchestrator {
 		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
 		ctx?.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
+			this.events.emit("task_resumed", { taskId });
 
 		// Execute remaining waves — stub ctx if not provided (ponytail: rpc server doesn't have omp context)
 		const execCtx = ctx ?? stubContext();
@@ -1013,6 +1027,7 @@ export class UCOrchestrator {
 
 				if (this.config.enableReview) {
 					result.status = "reviewing";
+						this.events.emit("subtask_reviewing", { taskId: task.id, subtaskId: result.id });
 					try {
 						const review = await this.reviewSubtask(def, result.result, ctx);
 						result.review = review;
@@ -1043,6 +1058,14 @@ export class UCOrchestrator {
 		}
 
 		result.completedAt = Date.now();
+		// Emit subtask-level events for real-time UI updates
+		if (result.status === "completed") {
+			this.events.emit("subtask_end", { taskId: task.id, subtaskId: result.id, result: result.result });
+		} else if (result.status === "failed") {
+			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error, retryCount: result.retryCount });
+		} else if (result.status === "cancelled") {
+			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: "cancelled" });
+		}
 		return result;
 	}
 

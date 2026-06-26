@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/prd.md", "reason": "Acceptance criteria and requirements to verify against"}
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/research/omp-extension-ui-api.md", "reason": "Verify Component API usage is correct (render signature, handleInput, overlay lifecycle)"}
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/research/omp-event-streaming.md", "reason": "Verify event emission patterns and JSONL event format correctness"}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "Verify JSONL event payloads conform to protocol spec"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify status icons and state transitions match TaskStatus/SubtaskStatus enums"}

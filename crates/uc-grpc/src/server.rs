@@ -511,7 +511,9 @@ impl TaskStore {
             uc_types::TaskStatus::Completed => {
                 Err("Cannot cancel task in Completed state".to_string())
             }
-            uc_types::TaskStatus::Created => Err("Cannot cancel task in Created state".to_string()),
+            uc_types::TaskStatus::Created => {
+                Err("Cannot cancel task in Created state".to_string())
+            }
         }
     }
 
@@ -3635,10 +3637,7 @@ mod tests {
         assert_eq!(cancelled.status, uc_types::TaskStatus::Failed);
         // Subtask should also be marked Failed
         assert_eq!(cancelled.subtasks.len(), 1);
-        assert_eq!(
-            cancelled.subtasks[0].status,
-            uc_types::SubtaskStatus::Failed
-        );
+        assert_eq!(cancelled.subtasks[0].status, uc_types::SubtaskStatus::Failed);
     }
 
     #[test]

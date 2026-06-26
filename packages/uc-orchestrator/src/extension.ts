@@ -3,25 +3,40 @@
  *
  * Registers:
  * - /uc submit <description>     — Submit a task for orchestration
- * - /uc status [task-id]         — Check task status
+ * - /uc status [task-id]         — Check task status (styled)
  * - /uc cancel <task-id> [<st>]  — Cancel task or specific subtask
  * - /uc pause <task-id>          — Pause task after current wave
  * - /uc resume <task-id>         — Resume a paused task
  * - /uc help                     — Show help
  *
+ * Keyboard shortcuts:
+ * - Ctrl+T        — Open SubtaskTree overlay
+ * - Ctrl+Shift+T  — Open TaskList overlay
+ *
  * LLM-callable tools:
  * - uc_memory  — Read/write/search UC layered memory
  * - uc_search  — Search UC hybrid index (text + semantic + AST)
  *
- * Uses omp's agent runtime (runSubprocess, agent definitions) as the
- * execution layer. UC provides scheduling strategy, memory bridge,
- * and gRPC integration with the Rust core engine.
+ * UI features:
+ * - Rich progress widget above editor (real-time subtask progress)
+ * - SubtaskTree overlay (Ctrl+T) with keyboard navigation
+ * - TaskList overlay (Ctrl+Shift+T)
+ * - Custom message renderer for task results
+ * - Connection status in footer
  */
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { UCOrchestrator } from "./orchestrator/orchestrator";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { KeyId } from "@oh-my-pi/pi-tui";
+import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
 import { registerMemoryTools } from "./orchestrator/memory-bridge";
+import { createProgressWidget, type ProgressWidgetState } from "./ui/progress-widget";
+import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
+import { createTaskListOverlay } from "./ui/task-list-overlay";
+import { createTaskResultRenderer } from "./ui/task-result-renderer";
+import { FooterStatusRenderer, type StatusRenderer } from "./ui/status-renderer";
+import { formatTaskList, formatTaskDetail } from "./ui/status-formatter";
+import type { OrchestratorEventType, OrchestratorEvents } from "./orchestrator/events";
 
 export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	pi.setLabel("UC Orchestrator");
@@ -29,10 +44,160 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	const bridge = new GrpcBridge();
 	const orchestrator = new UCOrchestrator(pi, undefined, bridge);
 
-	// Restore persisted tasks on startup
+	// ── Live state for widgets/overlays ─────────────────────────
+	const progressState: Map<string, ProgressWidgetState> = new Map();
+	let statusRenderer: StatusRenderer | undefined;
+
+	// ── Restore persisted tasks on startup ──────────────────────
 	orchestrator.restore().catch((err) => {
 		pi.logger.warn(`Failed to restore tasks: ${err}`);
 	});
+
+	// ── Register message renderer for task results ──────────────
+	pi.registerMessageRenderer("uc-task-result", createTaskResultRenderer());
+
+	// ── Wire orchestrator events → UI updates ───────────────────
+	pi.on("session_start", async (_event, ctx) => {
+		statusRenderer = new FooterStatusRenderer(ctx.ui);
+		statusRenderer.setField("conn", "UC: ready");
+
+		const progressEvents: OrchestratorEventType[] = [
+			"task_planning", "task_decomposed", "task_complete",
+			"task_paused", "task_resumed", "task_cancelled",
+			"wave_start", "wave_end",
+			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+		];
+
+		for (const type of progressEvents) {
+			orchestrator.events.on(type, (data) => {
+				handleOrchestratorEvent(type, data, ctx as unknown as ExtensionCommandContext);
+			});
+		}
+	});
+
+	pi.on("session_shutdown", async () => {
+		orchestrator.events.clear();
+	});
+
+	// ── Event handler ───────────────────────────────────────────
+	function handleOrchestratorEvent(
+		type: OrchestratorEventType,
+		data: OrchestratorEvents[OrchestratorEventType],
+		ctx: ExtensionCommandContext,
+	): void {
+		switch (type) {
+			case "task_planning": {
+				const d = data as OrchestratorEvents["task_planning"];
+				progressState.set(d.taskId, { task: getTaskOrEmpty(d.taskId) });
+				ctx.ui.setWorkingMessage(`UC: Planning ${d.taskId.slice(0, 8)}...`);
+				statusRenderer?.setField("active", `UC: planning`);
+				break;
+			}
+			case "task_decomposed": {
+				const d = data as OrchestratorEvents["task_decomposed"];
+				ctx.ui.setWorkingMessage(`UC: ${d.subtaskCount} subtasks, ${d.waveCount} waves`);
+				break;
+			}
+			case "wave_start": {
+				const d = data as OrchestratorEvents["wave_start"];
+				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
+				ctx.ui.setWorkingMessage(`UC: Wave ${d.waveIdx + 1}/${d.totalWaves}`);
+				break;
+			}
+			case "subtask_start": {
+				const d = data as OrchestratorEvents["subtask_start"];
+				ctx.ui.setWorkingMessage(`UC: ${d.description.slice(0, 40)}`);
+				break;
+			}
+			case "subtask_end":
+			case "subtask_failed":
+			case "subtask_reviewing": {
+				const d = data as OrchestratorEvents["subtask_end"] | OrchestratorEvents["subtask_failed"];
+				const task = orchestrator.getTaskState(d.taskId);
+				if (task) {
+					const ps = progressState.get(d.taskId);
+					if (ps) {
+						ps.task = task;
+						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
+					}
+				}
+				break;
+			}
+			case "wave_end": {
+				const d = data as OrchestratorEvents["wave_end"];
+				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
+				break;
+			}
+			case "task_complete": {
+				const d = data as OrchestratorEvents["task_complete"];
+				ctx.ui.setWidget(`uc-${d.taskId}`, undefined);
+				progressState.delete(d.taskId);
+				ctx.ui.setWorkingMessage(undefined);
+				statusRenderer?.setField("active", `UC: ${d.status}`);
+				break;
+			}
+			case "task_paused":
+			case "task_resumed":
+			case "task_cancelled": {
+				statusRenderer?.setField("active", `UC: ${type.replace("task_", "")}`);
+				break;
+			}
+		}
+	}
+
+	function getTaskOrEmpty(taskId: string): TaskState {
+		return orchestrator.getTaskState(taskId) ?? {
+			id: taskId, description: "", status: "planning", controlState: "running",
+			subtasks: [], createdAt: Date.now(),
+		};
+	}
+
+	function updateProgressState(taskId: string, update: Partial<ProgressWidgetState>): void {
+		const ps = progressState.get(taskId);
+		if (ps) Object.assign(ps, update);
+	}
+
+	// ── Keyboard shortcuts ──────────────────────────────────────
+
+	pi.registerShortcut("ctrl+t" as KeyId, {
+		description: "Open UC subtask tree",
+		handler: async (ctx) => {
+			await ctx.ui.custom(
+				createSubtaskTreeOverlay({
+					tasks: () => orchestrator.getAllTaskStates(),
+					onRetry: async (taskId, subtaskId) => {
+						ctx.ui.notify(`Retry requested for ${subtaskId} — use /uc resume ${taskId}`, "info");
+					},
+					onClose: () => {},
+				}),
+				{ overlay: true },
+			);
+		},
+	});
+
+	pi.registerShortcut("ctrl+shift+t" as KeyId, {
+		description: "Open UC task list",
+		handler: async (ctx) => {
+			await ctx.ui.custom(
+				createTaskListOverlay({
+					tasks: () => orchestrator.getAllTaskStates(),
+					onSelect: async (taskId) => {
+						const task = orchestrator.getTaskState(taskId);
+						if (task) {
+							const lines = formatTaskDetail(task, ctx.ui.theme);
+							for (const line of lines) {
+								ctx.ui.notify(line, "info");
+							}
+						}
+					},
+					onClose: () => {},
+				}),
+				{ overlay: true },
+			);
+		},
+	});
+
+	// ── /uc command ─────────────────────────────────────────────
 
 	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "help"];
 
@@ -59,45 +224,61 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				case "status": {
-					await orchestrator.showStatus(rest || undefined, ctx);
+					const taskId = rest.trim() || undefined;
+					if (!taskId) {
+						const tasks = orchestrator.getAllTaskStates();
+						const lines = formatTaskList(tasks, ctx.ui.theme);
+						for (const line of lines) {
+							ctx.ui.notify(line, "info");
+						}
+					} else {
+						const task = orchestrator.getTaskState(taskId);
+						if (!task) {
+							ctx.ui.notify(`Task ${taskId} not found`, "error");
+							return;
+						}
+						const lines = formatTaskDetail(task, ctx.ui.theme);
+						for (const line of lines) {
+							ctx.ui.notify(line, "info");
+						}
+					}
 					return;
 				}
 				case "cancel": {
-					// /uc cancel <task-id> [<subtask-id>]
 					const cancelParts = rest.trim().split(/\s+/);
-					const taskId = cancelParts[0];
+					const tid = cancelParts[0];
 					const subtaskId = cancelParts[1];
-					if (!taskId) {
+					if (!tid) {
 						ctx.ui.notify("Usage: /uc cancel <task-id> [<subtask-id>]", "error");
 						return;
 					}
-					const ok = await orchestrator.cancelTask(taskId, subtaskId, ctx);
+					const ok = await orchestrator.cancelTask(tid, subtaskId, ctx);
 					if (!ok) {
-						ctx.ui.notify(`Cancel failed: task ${taskId} not found`, "error");
+						ctx.ui.notify(`Cancel failed: task ${tid} not found`, "error");
 					}
 					return;
 				}
 				case "pause": {
-					const taskId = rest.trim();
-					if (!taskId) {
+					const tid = rest.trim();
+					if (!tid) {
 						ctx.ui.notify("Usage: /uc pause <task-id>", "error");
 						return;
 					}
-					const ok = await orchestrator.pauseTask(taskId, ctx);
+					const ok = await orchestrator.pauseTask(tid, ctx);
 					if (!ok) {
-						ctx.ui.notify(`Pause failed: task ${taskId} not found or not in progress`, "error");
+						ctx.ui.notify(`Pause failed: task ${tid} not found or not in progress`, "error");
 					}
 					return;
 				}
 				case "resume": {
-					const taskId = rest.trim();
-					if (!taskId) {
+					const tid = rest.trim();
+					if (!tid) {
 						ctx.ui.notify("Usage: /uc resume <task-id>", "error");
 						return;
 					}
-					const ok = await orchestrator.resumeTask(taskId, ctx);
+					const ok = await orchestrator.resumeTask(tid, ctx);
 					if (!ok) {
-						ctx.ui.notify(`Resume failed: task ${taskId} not found or not paused/failed`, "error");
+						ctx.ui.notify(`Resume failed: task ${tid} not found or not paused/failed`, "error");
 					}
 					return;
 				}
@@ -112,6 +293,10 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"  /uc pause <task-id>            Pause after current wave",
 							"  /uc resume <task-id>           Resume a paused or failed task",
 							"  /uc help                       Show this help",
+							"",
+							"Shortcuts:",
+							"  Ctrl+T         Subtask tree overlay",
+							"  Ctrl+Shift+T   Task list overlay",
 						].join("\n"),
 						"info",
 					);

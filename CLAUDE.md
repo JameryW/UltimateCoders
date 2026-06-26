@@ -20,12 +20,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ultimate-coders/
 ├── Cargo.toml              # Workspace root
 ├── pyproject.toml           # Maturin build config
+├── run-omp.sh               # Start OMP with UC extension
 ├── crates/
 │   ├── uc-types/            # Shared types + EngineApi trait
 │   ├── uc-engine/           # Core engine (LocalEngine implementation)
 │   ├── uc-grpc/             # gRPC server/client + proto
 │   ├── uc-grpc-server/      # Standalone gRPC server binary
 │   └── uc-python/           # PyO3 Python binding
+├── packages/
+│   └── uc-orchestrator/     # OMP extension + rich TUI components
+│       ├── src/extension.ts  # Extension entry (commands, shortcuts, renderers)
+│       ├── src/orchestrator/ # Core orchestration logic + events
+│       ├── src/ui/           # pi-tui components (progress, overlays, formatters)
+│       └── src/uc-rpc-server.ts # JSONL stdio bridge for Python
 ├── python/
 │   └── ultimate_coders/     # Python ergonomic layer
 ├── proto/                   # Shared proto definitions
@@ -46,6 +53,9 @@ maturin develop              # Build Rust extension + install in editable mode
 
 # gRPC server
 cargo run -p uc-grpc-server  # Start standalone gRPC server
+
+# UC Orchestrator (OMP extension)
+./run-omp.sh                 # Start OMP with UC extension (primary interface)
 ```
 
 ## Key Types
@@ -68,6 +78,7 @@ cargo run -p uc-grpc-server  # Start standalone gRPC server
 - ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
 - ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
 - ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
+- ✅ PR11: Replace TUI with OMP (rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel)
 
 ## Repository
 
