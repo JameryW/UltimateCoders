@@ -51,23 +51,63 @@ fi
 
 # ── Start gRPC server (default) ───────────────────────────────
 SERVER_PID=""
+LOG_DIR="$SCRIPT_DIR/.logs"
+mkdir -p "$LOG_DIR"
+
+# Reap zombie child processes (Bun/OMP doesn't wait() on children)
+# ponytail: SIGCHLD handler prevents zombie accumulation when gRPC server dies
+reap_children() {
+    while wait -n 2>/dev/null; do :; done
+}
+trap reap_children CHLD
+
 cleanup() {
-    if [ -n "$SERVER_PID" ]; then
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         echo ">>> Stopping gRPC server (PID $SERVER_PID)..."
         kill "$SERVER_PID" 2>/dev/null
-        wait "$SERVER_PID" 2>/dev/null
+        wait "$SERVER_PID" 2>/dev/null || true
     fi
+    # Reap any remaining zombies
+    reap_children
 }
 trap cleanup EXIT INT TERM
+
+# Health monitor: restart gRPC server if it dies
+health_monitor() {
+    while true; do
+        sleep 10
+        if [ -n "$SERVER_PID" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo ">>> gRPC server died (PID $SERVER_PID), restarting..."
+            wait "$SERVER_PID" 2>/dev/null || true
+            echo ">>> Logs: $LOG_DIR/grpc-server.log"
+            echo ">>> Last 10 lines:"
+            tail -10 "$LOG_DIR/grpc-server.log" 2>/dev/null
+            cd "$SCRIPT_DIR"
+            PATH="$SCRIPT_DIR/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
+                cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
+            SERVER_PID=$!
+            echo ">>> Restarted gRPC server (PID $SERVER_PID)"
+            # Wait for port to be ready
+            for i in $(seq 1 20); do
+                if lsof -i :50051 >/dev/null 2>&1; then
+                    echo ">>> Server ready on :50051"
+                    break
+                fi
+                sleep 0.5
+            done
+        fi
+    done
+}
 
 if [ "$START_SERVER" = true ]; then
     if ! lsof -i :50051 >/dev/null 2>&1; then
         echo ">>> Starting gRPC server..."
         cd "$SCRIPT_DIR"
         PATH="$SCRIPT_DIR/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
-            cargo run -p uc-grpc-server &
+            cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
         SERVER_PID=$!
         echo "    Server PID: $SERVER_PID"
+        echo "    Logs: $LOG_DIR/grpc-server.log"
         for i in $(seq 1 20); do
             if lsof -i :50051 >/dev/null 2>&1; then
                 echo "    Server ready on :50051"
@@ -75,6 +115,8 @@ if [ "$START_SERVER" = true ]; then
             fi
             sleep 0.5
         done
+        # Start health monitor in background
+        health_monitor &
     else
         echo ">>> gRPC server already running on :50051"
     fi
