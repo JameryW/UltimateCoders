@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI 与 gRPC 交互规范，WebSocket 端点设计需参考"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dashboard 组件规范，新增 TUI 页面需遵循"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "状态管理规范，WebSocket 连接状态需遵循"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Dashboard 后端规范，WebSocket 端点需遵循现有模式"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS 事件桥接规范，TUI 事件流需参考"}

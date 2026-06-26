@@ -1,4 +1,0 @@
-version: v2
-modules:
-  - path: crates/uc-grpc/proto
-    name: buf.build/ultimatecoders/engine

@@ -41,7 +41,7 @@ services:
         condition: service_healthy
     volumes:
       - tikv_data:/data
-      - ./docker/tikv.toml:/etc/tikv/tikv.toml:ro
+      - ./tikv.toml:/etc/tikv/tikv.toml:ro
     command:
       - --pd-endpoints=pd:2379
       - --addr=0.0.0.0:20160
@@ -93,7 +93,7 @@ services:
       - "8222:8222"   # Management / monitoring
     volumes:
       - nats_data:/data
-      - ./docker/nats.conf:/etc/nats/nats.conf:ro
+      - ./nats.conf:/etc/nats/nats.conf:ro
     command: --config /etc/nats/nats.conf
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
@@ -105,7 +105,9 @@ services:
   # The dashboard is available at http://localhost:8080/dashboard/
   # Use: docker compose --profile app up
   orchestrator:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     profiles: ["app"]
     ports:
       - "8080:8080"   # Dashboard web UI + SSE
@@ -134,7 +136,9 @@ services:
   # real Orchestrator (LLM decomposition + Worker execution).
   # Use: docker compose --profile app up
   nats-worker:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     profiles: ["app"]
     depends_on:
       pd:
