@@ -15,15 +15,47 @@ The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal
 - Rust 1.75+ (stable)
 - Python 3.9+
 - Bun (for OMP runtime)
-- Docker and Docker Compose (for storage backends)
+- Docker and Docker Compose (optional, for storage backends)
 
-### 1. Start Storage Backends
+### 单机模式（推荐）
 
 ```bash
-docker compose up -d
+# 启动 OMP + gRPC server（gRPC server 默认启动，LocalWorker 懒启动）
+./run-omp.sh
+
+# 跳过 gRPC server
+./run-omp.sh --no-server
+
+# 首次运行需构建 Python 包
+./run-omp.sh --build
 ```
 
-This starts TiKV, Qdrant, PostgreSQL, and NATS. Compose files are in `docker/`. See [Configuration](#configuration) for connection details.
+### 分布式集群模式
+
+```bash
+# 一键启动：NATS + gRPC server + N workers + OMP
+./run-cluster.sh
+
+# 自定义 worker 数量（默认 2）
+./run-cluster.sh --workers 4
+
+# 仅后端（不启动 OMP，适合 headless 场景）
+./run-cluster.sh --no-omp
+
+# 用 Docker 提供存储后端（TiKV + Qdrant + PostgreSQL + NATS）
+./run-cluster.sh --docker
+
+# 停止所有集群进程
+./run-cluster.sh --stop
+```
+
+### Docker Compose（存储后端）
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+This starts TiKV, Qdrant, PostgreSQL, and NATS. See [Configuration](#configuration) for connection details.
 
 ### 2. Build the Rust Core
 
@@ -78,16 +110,19 @@ engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 ### 6. Run UC Orchestrator
 
 ```bash
-# Start OMP with UC Orchestrator extension (recommended)
+# Start OMP with UC extension (gRPC server starts by default)
 ./run-omp.sh
 
-# Or with gRPC server for distributed scenarios
-./run-omp.sh --server
+# Skip gRPC server (OMP only)
+./run-omp.sh --no-server
 ```
 
 The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>` to submit tasks, `/uc status` to check progress, and `/uc cancel/pause/resume` for control. Keyboard shortcuts: **Ctrl+T** for subtask tree overlay, **Ctrl+Shift+T** for task list.
 
-The OMP extension also registers LLM-callable memory tools (`uc_memory_read`, `uc_memory_write`, `uc_memory_search`) so the coding agent can access shared layered memory during task execution.
+The OMP extension also registers LLM-callable tools:
+- `uc_task` — Task lifecycle: submit/cancel/pause/resume/status
+- `uc_worker` — Worker status awareness: list workers, check load/capacity/heartbeat
+- `uc_memory_read`, `uc_memory_write`, `uc_memory_search` — Shared layered memory
 
 The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.
 
@@ -185,6 +220,7 @@ ultimate-coders/
 ├── Cargo.toml                # Workspace root
 ├── pyproject.toml            # Maturin build config
 ├── run-omp.sh                # Start OMP with UC extension (primary interface)
+├── run-cluster.sh            # Start local distributed cluster (NATS + workers)
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
 │   ├── uc-engine/            # Core engine (LocalEngine implementation)
@@ -252,14 +288,17 @@ pytest tests/python/ -v        # Run Python tests
 ### UC Orchestrator
 
 ```bash
-# Start OMP with UC extension
+# Start OMP with UC extension (gRPC server starts by default)
 ./run-omp.sh
 
-# With gRPC server
-./run-omp.sh --server
+# Skip gRPC server
+./run-omp.sh --no-server
 
 # Ensure Python package is built first
-./run-omp.sh --build --server
+./run-omp.sh --build
+
+# Start distributed cluster instead
+./run-cluster.sh
 ```
 
 ### Docker Compose
