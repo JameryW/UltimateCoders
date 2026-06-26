@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/prd.md", "reason": "Full requirements, acceptance criteria, implementation order, architecture decisions"}
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/research/omp-extension-ui-api.md", "reason": "OMP extension UI API reference: Component system, overlay, widget, SelectList, shortcuts, patterns"}
+{"file": ".trellis/tasks/06-25-replace-tui-frontend-with-omp/research/omp-event-streaming.md", "reason": "OMP event system, sendMessage, registerMessageRenderer, background task patterns, JSONL bridge gap"}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "uc-rpc-server.ts JSONL protocol contracts — need to extend with event emission"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "TaskService proto and Rust server contracts — connection status, task lifecycle events"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "Current TUI gRPC client spec — reference for what features must be replicated in OMP extension"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "TaskStatus/SubtaskStatus state machines — needed for status icons and progress rendering"}

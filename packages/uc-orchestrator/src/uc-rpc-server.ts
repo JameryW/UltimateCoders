@@ -17,6 +17,7 @@ import * as readline from "node:readline";
 import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import type { OrchestratorEventType } from "./orchestrator/events";
 
 // -- Types -------------------------------------------------------------------
 
@@ -97,6 +98,18 @@ class RpcServer {
 
 	async init(): Promise<void> {
 		await this.orchestrator.restore();
+		// Subscribe orchestrator events → JSONL stdout for Python bridge
+		const eventTypes: OrchestratorEventType[] = [
+			"task_planning", "task_decomposed", "task_complete",
+			"task_paused", "task_resumed", "task_cancelled",
+			"wave_start", "wave_end",
+			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+		];
+		for (const type of eventTypes) {
+			this.orchestrator.events.on(type, (data) => {
+				this.emitEvent(type, data);
+			});
+		}
 	}
 
 	async dispatch(req: JsonRpcRequest): Promise<JsonRpcResponse> {
