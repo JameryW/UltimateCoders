@@ -39,6 +39,9 @@ class DashboardApp:
     POST /dashboard/api/scheduler/jobs/{id}/trigger → JSONResponse (trigger job)
     POST /dashboard/api/tasks/flush-pending       → JSONResponse (flush night-window queue)
 
+    # WebSocket endpoint
+    WS  /ws/tui                                   → WebSocket (PTY bridge to OMP terminal)
+
     # Internal data collectors
     def _get_health_data(self) -> dict
     def _get_workers_data(self) -> dict
@@ -238,6 +241,36 @@ Each SSE event payload is a JSON string with this structure:
 | CB/RL read raises exception | `available = false`, `error` key added to default dict (dict not replaced) |
 | No workers registered | `workers.available = true`, `workers = []` |
 | No tasks | `tasks.available = true`, `tasks = []`, `total = 0` |
+
+#### WebSocket TUI Contract
+
+- **Endpoint**: `WS /ws/tui`
+- **Auth**: `?token=<pwd>` query parameter (same as REST `?token=`). Localhost (127.0.0.1, ::1) bypasses auth — consistent with `_check_auth()`.
+- **Session model**: Single global PTY process. Only one WebSocket client at a time; new connection replaces old (old gets close code 4002).
+- **PTY persistence**: PTY survives WebSocket disconnect. Reconnect resumes where left off.
+- **Data flow**:
+  - Client → Server: text or binary frames → written to PTY stdin
+  - Server → Client: PTY stdout bytes → sent as binary WebSocket frames
+- **PTY management**:
+  - Spawned via `script -q /dev/null <omp-script>` (macOS). **Gotcha**: Linux `script` uses `-c` flag for command (`script -q -c <cmd> /dev/null`).
+  - OMP script path: `UC_OMP_SCRIPT` env var, defaults to `<UC_REPO_ROOT>/run-omp.sh`
+  - Environment: `TERM=xterm-256color`, `COLUMNS=120`, `LINES=40`
+- **Error handling**:
+  - Auth failure → close code 4001
+  - Replaced by new client → close code 4002
+  - PTY start failure → close code 1011, message "PTY start failed"
+  - PTY stdin BrokenPipeError → log warning, exit write loop
+  - PTY process exit → send "[OMP session ended]\r\n", client sees terminal go idle
+- **Vite proxy**: `/ws/tui` → `http://localhost:8080` with `ws: true`
+
+#### Frontend TUI Page Contract
+
+- **Route**: `#/tui` (hash-based, no react-router)
+- **Component**: `TuiPage` → `TuiTerminal` (dynamic import of `@xterm/xterm`)
+- **WebSocket URL**: `ws://<host>/ws/tui?token=<encoded_token>`
+- **Reconnect**: Exponential backoff (1s base, ×2, 10s max) on disconnect/error
+- **Terminal config**: `cursorBlink: true`, `fontSize: 14`, `scrollback: 5000`, `convertEol: true`
+- **Header**: Back button (`href="#/"`), connection state indicator, manual reconnect button
 
 ### 4. Validation & Error Matrix
 
@@ -475,6 +508,7 @@ const fileEntry = {path: mf.path, type: mf.type, _source_subtask: ev.subtask_id}
 Browser ──SSE──> FastAPI (/dashboard/api/stream)
               ──GET──> FastAPI (/dashboard/api/*)
               ──POST─> FastAPI (/dashboard/api/tasks/submit, etc.)
+              ──WS───> FastAPI (/ws/tui → PTY → OMP process)
                           │
                      Orchestrator (embedded)
                           │
@@ -487,6 +521,10 @@ Event flow:
   Worker ──emit()──> TaskEventEmitter ──await──> SSE (task_event)
   Orchestrator ──emit()──> TaskEventEmitter
                                         └──timeout──> SSE (update, 5s full snapshot)
+
+TUI flow:
+  Browser (xterm.js) ──WebSocket──> FastAPI (/ws/tui) ──PTY stdin──> OMP process
+  OMP process ──PTY stdout──> FastAPI ──WebSocket──> Browser (xterm.js)
 ```
 
 - Dashboard runs in a **background thread** via `uvicorn.Server.run()`
