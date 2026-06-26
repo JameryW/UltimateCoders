@@ -6,7 +6,7 @@
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to Dashboard consumers. The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, and custom message rendering.
+Multiple AI coding agents collaborate on software tasks using an Orchestrator-Worker pattern. The Rust core handles indexing, search, memory, and scheduling. The Python agent layer handles LLM interaction for task decomposition and code generation. They communicate via PyO3 FFI (local) or gRPC (distributed), switchable at runtime. A broadcast channel delivers real-time task events to Dashboard consumers. The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools.
 
 ## Quick Start
 
@@ -14,7 +14,7 @@ Multiple AI coding agents collaborate on software tasks using an Orchestrator-Wo
 
 - Rust 1.75+ (stable)
 - Python 3.9+
-- Node.js 18+ (for TUI)
+- Bun (for OMP runtime)
 - Docker and Docker Compose (for storage backends)
 
 ### 1. Start Storage Backends
@@ -87,6 +87,8 @@ engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 
 The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>` to submit tasks, `/uc status` to check progress, and `/uc cancel/pause/resume` for control. Keyboard shortcuts: **Ctrl+T** for subtask tree overlay, **Ctrl+Shift+T** for task list.
 
+The OMP extension also registers LLM-callable memory tools (`uc_memory_read`, `uc_memory_write`, `uc_memory_search`) so the coding agent can access shared layered memory during task execution.
+
 The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.
 
 ## Architecture
@@ -94,26 +96,26 @@ The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cl
 See [docs/architecture.md](docs/architecture.md) for the full architecture document.
 
 ```
-+-------------------+     +-------------------+     +---------------+     +---------------+
-|   Python Agent    |     |   Python Agent    |     |  OMP + UC     |     |  Dashboard    |
-|   Orchestrator    |     |     Worker        |     |  Extension    |     |  (Vite/React) |
-+--------+----------+     +--------+----------+     +-------+-------+     +-------+-------+
-         |                         |                         |                     |
-         |  Engine API (PyO3)      |                         | gRPC                | SSE
-         |                         |                         |                     |
-+--------v-------------------------v----------+     +--------v-------+             |
-|              Rust Core Engine               |     |  uc-grpc-server|             |
-|  +----------+ +--------+ +---------+       |     +--------+-------+             |
-|  | Indexer  | | Search | | Memory  |       |            |                       |
-|  +----------+ +--------+ +---------+       |            | broadcast channel     |
-|  +----------+ +----------+ +---------+     |            | (TaskEvent)            |
-|  |Scheduler | |Checkpoint| |Conflict|      |            |                       |
-|  +----------+ +----------+ +---------+     |            |                       |
-+--------+----------+---------+---------+-----+            |                       |
-         |          |         |         |                  |                       |
-    +----v---+ +----v---+ +--v----+ +--v----+              |                       |
-    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<-------------+-----------------------+
-    +--------+ +--------+ +-------+ +-------+    NATS pub/sub (task events)
++-------------------+     +-------------------+     +-------------------------------+     +---------------+
+|   Python Agent    |     |   Python Agent    |     |  OMP + UC Extension           |     |  Dashboard    |
+|   Orchestrator    |     |     Worker        |     |  +-------------------------+  |     |  (Vite/React) |
++--------+----------+     +--------+----------+     |  │ Orchestrator Core       │  |     +-------+-------+
+         |                         |                |  │  ├─ Scheduler (DAG)     │  |             |
+         |  Engine API (PyO3)      |                |  │  ├─ TaskStore (SQLite)  │  |             | SSE
+         |                         |                |  │  ├─ GrpcBridge          │  |             |
++--------v-------------------------v----------+     |  │  ├─ ControlSignals      │  |             |
+|              Rust Core Engine               |     |  │  └─ MemoryBridge (LLM) │  |             |
+|  +----------+ +--------+ +---------+       |     |  +-------------------------+  |     +-------v-------+
+|  | Indexer  | | Search | | Memory  |       |     |  │ UI Components           │  |     |  uc-grpc-server|
+|  +----------+ +--------+ +---------+       |     |  │  ├─ ProgressWidget      │  |     +-------+-------+
+|  +----------+ +----------+ +---------+     |     |  │  ├─ SubtaskTreeOverlay  │  |             |
+|  |Scheduler | |Checkpoint| |Conflict|      |     |  │  ├─ TaskListOverlay     │  |             | broadcast
+|  +----------+ +----------+ +---------+     |     |  │  ├─ TaskResultRenderer  │  |             | channel
++--------+----------+---------+---------+-----+     |  │  └─ FooterStatus        │  |             | (TaskEvent)
+         |          |         |         |           |  +-------------------------+  |             |
+    +----v---+ +----v---+ +--v----+ +--v----+      +---------------+---------------+             |
+    |  TiKV  | | Qdrant | | PgSQL | | NATS  |<---------------------+-----------------------------+
+    +--------+ +--------+ +-------+ +-------+    NATS pub/sub (task events) + gRPC WatchTask
 ```
 
 ### Real-Time Event Flow
@@ -124,6 +126,23 @@ All task events flow through a unified **broadcast channel** (capacity 256) in t
 2. **LocalWorkerBridge** — Python subprocess sends JSON-RPC notifications; the bridge applies updates and broadcasts
 3. **NATS subscriber** — Receives `uc.task.update` and `uc.task.event` from the Python NATS Worker; applies and broadcasts
 4. **WatchTask stream** — Subscribes to the broadcast channel for instant delivery (replaces polling)
+
+### OMP Extension Internals
+
+The UC Orchestrator extension (`packages/uc-orchestrator`) is the primary user interface. Key components:
+
+| Component | File | Role |
+|-----------|------|------|
+| **Extension entry** | `extension.ts` | Registers `/uc` command, shortcuts, message renderer, wires events → UI |
+| **Orchestrator** | `orchestrator.ts` | Task lifecycle: submit → decompose → DAG waves → review → complete |
+| **Scheduler** | `scheduler.ts` | DAG builder, file-overlap wave splitter, CircuitBreaker |
+| **GrpcBridge** | `grpc-bridge.ts` | gRPC client for TaskService (submit, watch, control signals) |
+| **MemoryBridge** | `memory-bridge.ts` | LLM-callable tools: `uc_memory_read/write/search` |
+| **TaskStore** | `task-store.ts` | SQLite-backed task persistence + restore on startup |
+| **ControlSignals** | `control-signal-subscriber.ts` | gRPC stream for pause/resume/cancel from external sources |
+| **Events** | `events.ts` | Typed event emitter decoupling orchestration ↔ UI |
+
+Agent definition prompts (`agents/decomposer.md`, `supervisor.md`, `worker.md`) configure the LLM roles for task decomposition, subtask review, and code generation.
 
 ### LocalWorkerBridge
 
@@ -161,6 +180,7 @@ Multiple NATS Worker processes can collaborate on a single task:
 ultimate-coders/
 ├── Cargo.toml                # Workspace root
 ├── pyproject.toml            # Maturin build config
+├── run-omp.sh                # Start OMP with UC extension (primary interface)
 ├── docker-compose.yml        # Development storage backends
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
@@ -168,6 +188,28 @@ ultimate-coders/
 │   ├── uc-grpc/              # gRPC server/client + proto + broadcast + LocalWorkerBridge
 │   ├── uc-grpc-server/       # Standalone gRPC server binary
 │   └── uc-python/            # PyO3 Python binding
+├── packages/
+│   └── uc-orchestrator/      # OMP extension — task orchestration + rich TUI
+│       ├── src/
+│       │   ├── extension.ts  # Extension entry (commands, shortcuts, renderers)
+│       │   ├── orchestrator/ # Core orchestration logic
+│       │   │   ├── orchestrator.ts   # Main orchestrator (submit, cancel, pause, resume, DAG waves)
+│       │   │   ├── scheduler.ts      # DAG builder, wave splitter, circuit breaker
+│       │   │   ├── grpc-bridge.ts    # gRPC client for TaskService
+│       │   │   ├── memory-bridge.ts  # LLM-callable memory tools (read/write/search)
+│       │   │   ├── task-store.ts     # SQLite-backed task persistence
+│       │   │   ├── control-signal-subscriber.ts  # gRPC stream control signals
+│       │   │   └── events.ts         # Typed event emitter (orchestration ↔ UI)
+│       │   ├── ui/           # pi-tui components
+│       │   │   ├── progress-widget.ts       # Live subtask progress
+│       │   │   ├── subtask-tree-overlay.ts  # Ctrl+T overlay
+│       │   │   ├── task-list-overlay.ts     # Ctrl+Shift+T overlay
+│       │   │   ├── task-result-renderer.ts  # Custom message renderer
+│       │   │   ├── status-renderer.ts       # Footer connection status
+│       │   │   └── status-formatter.ts      # Task list/detail formatting
+│       │   ├── agents/       # Agent definition prompts (decomposer, supervisor, worker)
+│       │   └── uc-rpc-server.ts  # JSONL stdio bridge for Python
+│       └── uc-rpc-server.test.ts
 ├── python/
 │   └── ultimate_coders/      # Python ergonomic layer
 │       ├── engine.py         # create_engine() factory
@@ -178,15 +220,9 @@ ultimate-coders/
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
-├── packages/
-│   └── uc-orchestrator/        # OMP extension — task orchestration + rich TUI
-│       ├── src/
-│       │   ├── extension.ts    # Extension entry point
-│       │   ├── orchestrator/   # Core orchestration logic
-│       │   └── ui/             # pi-tui components (progress widget, overlays, renderers)
-│       └── uc-rpc-server.ts    # JSONL stdio bridge for Python
 ├── scripts/
-│   └── run_tui.sh              # Start OMP + optional gRPC server + dashboard
+│   ├── run_tui.sh            # Start OMP + optional gRPC server + dashboard
+│   └── run_dashboard.py      # Start Dashboard dev server
 ├── proto/                    # Protobuf definitions
 ├── tests/
 │   ├── rust/                 # Rust integration tests
@@ -290,9 +326,8 @@ Docker Compose default credentials:
 - ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
 - ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
 - ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
-- ✅ PR11-20: TUI 实时监控 (Ink + React, gRPC streaming, CJK/IME input, segment-based StatusBar, 280+ tests)
-- ✅ PR21-30: Broadcast channel + LocalWorkerBridge + Dashboard SSE + NATS Worker + TUI CI
-- ✅ PR31: Replace TUI with OMP — rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel
+- ✅ PR11-30: TUI 实时监控 → Broadcast channel → LocalWorkerBridge → Dashboard SSE → NATS Worker → OMP 替换
+- ✅ PR31: Replace TUI with OMP — rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel, LLM-callable memory tools, SQLite task persistence
 
 ## Development
 
