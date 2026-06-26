@@ -93,8 +93,6 @@ The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cl
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the full architecture document.
-
 ```
 +-------------------+     +-------------------+     +-------------------------------+     +---------------+
 |   Python Agent    |     |   Python Agent    |     |  OMP + UC Extension           |     |  Dashboard    |
@@ -221,14 +219,12 @@ ultimate-coders/
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
 ├── scripts/
-│   ├── run_tui.sh            # Start OMP + optional gRPC server + dashboard
-│   └── run_dashboard.py      # Start Dashboard dev server
+│   └── run_tui.sh            # Start OMP + optional gRPC server
 ├── proto/                    # Protobuf definitions
 ├── tests/
 │   ├── rust/                 # Rust integration tests
 │   └── python/               # Python unit tests
-└── docs/
-    └── architecture.md       # Architecture document
+└── docker/                   # Docker configs (NATS, TiKV)
 ```
 
 ## Building

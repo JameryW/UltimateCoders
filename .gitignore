@@ -78,6 +78,10 @@ uv.lock
 
 # Dashboard dev log
 dashboard/vite-dev.log
+dashboard/dist/
+
+# Playwright MCP logs
+.playwright-mcp/
 
 # uc-orchestrator package
 packages/uc-orchestrator/node_modules/
