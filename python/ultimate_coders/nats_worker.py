@@ -1338,7 +1338,8 @@ class NatsWorker:
         Responds with JSON matching the proto response field names.
         """
         if self._orchestrator is None:
-            await msg.respond(json.dumps({"available": False}).encode())
+            if msg.reply:
+                await msg.respond(json.dumps({"available": False}).encode())
             return
 
         subject = msg.subject
@@ -1352,19 +1353,22 @@ class NatsWorker:
 
         handler = getattr(self, f"_dash_{rpc_name.lower()}", None)
         if handler is None:
-            await msg.respond(
-                json.dumps(
-                    {"available": False, "error": f"unknown RPC: {rpc_name}"}
-                ).encode()
-            )
+            if msg.reply:
+                await msg.respond(
+                    json.dumps(
+                        {"available": False, "error": f"unknown RPC: {rpc_name}"}
+                    ).encode()
+                )
             return
 
         try:
             result = await handler(payload)
-            await msg.respond(json.dumps(result).encode())
+            if msg.reply:
+                await msg.respond(json.dumps(result).encode())
         except Exception as e:
             logger.warning("Dashboard handler %s failed: %s", rpc_name, e, exc_info=True)
-            await msg.respond(json.dumps({"available": False, "error": str(e)}).encode())
+            if msg.reply:
+                await msg.respond(json.dumps({"available": False, "error": str(e)}).encode())
 
     async def _dash_listworkers(self, _payload: dict) -> dict:
         """Return workers list from Orchestrator."""
