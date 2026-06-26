@@ -34,6 +34,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [OMP RPC Server Spec](./omp-rpc-server-spec.md) | JSONL stdio bridge, Python↔TypeScript UCOrchestrator, createTask/runTask split | Filled |
 | [Agent Capability Spec](./agent-capability-spec.md) | Worker self-reflection, adaptive retry, capability matching, scheduling, experience recall | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
+| [OMP Tools Spec](./omp-tools-spec.md) | LLM-callable tool schemas, GrpcBridge contracts, registration conventions | Filled |
 
 ---
 

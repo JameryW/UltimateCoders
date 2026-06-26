@@ -2,10 +2,10 @@
  * Memory Bridge — registers uc_memory and uc_search tools with omp ExtensionAPI.
  *
  * Routes tool calls through GrpcBridge to the UC Rust engine:
- * - uc_memory: read/write/search UC layered memory (TiKV + Qdrant + PostgreSQL)
- * - uc_search: hybrid code search (text + semantic + AST)
+ * - uc_memory: read/write/search/delete UC layered memory (TiKV + Qdrant + PostgreSQL)
+ * - uc_search: hybrid code search (text + semantic + AST) with repo/language/path filtering
  *
- * Extracted from extension.ts for modularity — Phase 3 cleanup.
+ * Extracted from extension.ts for modularity.
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -31,21 +31,25 @@ function mapScope(scope: string): string {
 
 export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 	const memorySchema = pi.zod.object({
-		action: pi.zod.enum(["read", "write", "search"]).describe("Memory operation"),
-		scope: pi.zod.string().describe("Memory scope: short_term, long_term, metadata"),
+		action: pi.zod.enum(["read", "write", "search", "delete"]).describe("Memory operation"),
+		scope: pi.zod.string().describe("Memory scope: short_term, long_term, metadata (or task/project/global)"),
 		key: pi.zod.string().describe("Memory key"),
 		content: pi.zod.string().optional().describe("Content to write (required for write action)"),
+		content_type: pi.zod.string().optional().describe("Content type for write: text, structured, code, diff, reference (default: text)"),
+		importance: pi.zod.number().optional().describe("Importance score 0-1 for write (>= 0.7 writes to long-term memory)"),
+		tags: pi.zod.array(pi.zod.string()).optional().describe("Tags for write (categorization)"),
 	});
 
 	pi.registerTool({
 		name: "uc_memory",
 		label: "UC Memory",
 		description:
-			"Read/write UltimateCoders layered memory. " +
-			"Scopes: short_term=task(TiKV), long_term=global(Qdrant), metadata=project(PostgreSQL). Also accepts task/project/global.",
+			"Read/write/search/delete UltimateCoders layered memory. " +
+			"Scopes: short_term=task(TiKV), long_term=global(Qdrant), metadata=project(PostgreSQL). " +
+			"Also accepts task/project/global.",
 		parameters: memorySchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
-			const p = params as { action: string; scope: string; key: string; content?: string };
+			const p = params as { action: string; scope: string; key: string; content?: string; content_type?: string; importance?: number; tags?: string[] };
 			try {
 				if (p.action === "read") {
 					const result = await bridge.readMemory(mapScope(p.scope), p.key);
@@ -61,7 +65,14 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 							isError: true,
 						};
 					}
-					const ok = await bridge.writeMemory(mapScope(p.scope), p.key, p.content);
+					const ok = await bridge.writeMemory(
+						mapScope(p.scope), p.key, p.content,
+						p.content_type ?? "text",
+						"uc-orchestrator",
+						"", "",
+						p.importance,
+						p.tags,
+					);
 					return { content: [{ type: "text" as const, text: ok ? "Written successfully" : "Write failed" }] };
 				}
 				if (p.action === "search") {
@@ -73,6 +84,15 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 						(r) => `[${r.score.toFixed(2)}] ${r.content.slice(0, 200)}`,
 					);
 					return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+				}
+				if (p.action === "delete") {
+					const ok = await bridge.deleteMemory(mapScope(p.scope), p.key);
+					return {
+						content: [{
+							type: "text" as const,
+							text: ok ? `Deleted key ${p.key} from ${p.scope}` : `Delete failed for key ${p.key}`,
+						}],
+					};
 				}
 				return {
 					content: [{ type: "text" as const, text: `Unknown action: ${p.action}` }],
@@ -94,6 +114,9 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 		query: pi.zod.string().describe("Search query"),
 		modes: pi.zod.array(pi.zod.string()).optional().describe("Search modes: text, semantic, ast, hybrid"),
 		max_results: pi.zod.number().optional().describe("Max results (default 5)"),
+		repo_ids: pi.zod.array(pi.zod.string()).optional().describe("Filter to specific repository IDs"),
+		languages: pi.zod.array(pi.zod.string()).optional().describe("Filter by programming languages (e.g. ['typescript','rust'])"),
+		path_patterns: pi.zod.array(pi.zod.string()).optional().describe("Filter by path patterns (e.g. ['src/**/*.ts'])"),
 	});
 
 	pi.registerTool({
@@ -101,12 +124,16 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 		label: "UC Search",
 		description:
 			"Search UltimateCoders hybrid index (text + semantic + AST). " +
+			"Supports filtering by repo, language, and path patterns. " +
 			"Routes through UC Rust engine via gRPC.",
 		parameters: searchSchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
-			const p = params as { query: string; modes?: string[]; max_results?: number };
+			const p = params as { query: string; modes?: string[]; max_results?: number; repo_ids?: string[]; languages?: string[]; path_patterns?: string[] };
 			try {
-				const results = await bridge.searchCode(p.query, p.modes, p.max_results);
+				const results = await bridge.searchCode(
+					p.query, p.modes, p.max_results,
+					p.repo_ids, p.languages, p.path_patterns,
+				);
 				if (results.length === 0) {
 					return { content: [{ type: "text" as const, text: "(no results)" }], useless: true };
 				}
