@@ -34,7 +34,7 @@ from ultimate_coders.agent.types import (
     Task,
     TaskStatus,
 )
-from ultimate_coders.agent.worker import Worker, WorkerInfo
+from ultimate_coders.agent.worker import WorkerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,8 @@ class Orchestrator:
 
     async def assign_subtask(self, subtask: Subtask, worker_id: str) -> str | None:
         """Assign a subtask to a worker."""
-        if subtask.id not in [st.id for st in self.tasks.get(subtask.parent_id, Task(id="", description="", project_id="", status=TaskStatus.CREATED, subtasks=[])).subtasks]:
+        task = self.tasks.get(subtask.parent_id)
+        if task is None or subtask.id not in {st.id for st in task.subtasks}:
             return None
         subtask.status = SubtaskStatus.ASSIGNED
         subtask.assigned_worker = worker_id
@@ -195,7 +196,8 @@ class Orchestrator:
         if all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
             task.status = TaskStatus.COMPLETED
         elif any(st.status == SubtaskStatus.FAILED for st in task.subtasks):
-            if all(st.status in (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED) for st in task.subtasks):
+            done_statuses = (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED)
+            if all(st.status in done_statuses for st in task.subtasks):
                 task.status = TaskStatus.FAILED
 
     # ── Task queries ───────────────────────────────────────────
