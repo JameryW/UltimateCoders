@@ -177,3 +177,37 @@ uc-rpc-server.ts JSONL bridge, ControlSignalSubscriber NATS+polling, Dashboard c
 ### Next Steps
 
 - None - task complete
+
+
+## Session 61: Add TUI interactive entry in dashboard
+
+**Date**: 2026-06-26
+**Task**: Add TUI interactive entry in dashboard
+**Branch**: `chore/consolidate-repo-structure`
+
+### Summary
+
+Added WebSocket /ws/tui endpoint to FastAPI backend with PTY management (script(1) wrapping OMP), full-screen xterm.js TUI page at #/tui with auth token + exponential backoff reconnect, hash-based routing in main.tsx, terminal icon in Header, Vite WebSocket proxy. Updated dashboard-spec with WebSocket TUI contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `560501ea` | (see git log) |
+| `295b1de0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,7 @@
+{"type":"spec","path":".trellis/tasks/06-26-add-worker-status-awareness-to-omp-orchestrator/prd.md","note":"PRD with goal, requirements, acceptance criteria, decision, technical notes"}
+{"type":"spec","path":"packages/uc-orchestrator/src/orchestrator/grpc-bridge.ts","note":"GrpcBridge class — need to add listWorkers() method and DashboardService to resolveService()"}
+{"type":"spec","path":"packages/uc-orchestrator/src/orchestrator/task-bridge.ts","note":"Reference pattern for registering OMP LLM tools via pi.registerTool()"}
+{"type":"spec","path":"packages/uc-orchestrator/src/orchestrator/memory-bridge.ts","note":"Reference pattern for registerMemoryTools — same bridge+tool pattern"}
+{"type":"spec","path":"packages/uc-orchestrator/src/extension.ts","note":"Extension entry point — need to add registerWorkerTools() call"}
+{"type":"spec","path":"crates/uc-grpc/src/dashboard_service.rs","note":"DashboardService.list_workers() — the RPC that returns WorkerProto list"}
+{"type":"spec","path":"crates/uc-grpc/proto/engine.proto","note":"Proto definition — DashboardService, ListWorkers RPC, WorkerProto message"}
