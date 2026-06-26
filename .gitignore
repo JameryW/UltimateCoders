@@ -56,16 +56,28 @@ data/
 .codegraph/daemon.pid
 
 # Other AI tool configs (local only)
+.agents/
+.codex/
 .gemini/
 .kiro/
 .mcp.json
 opencode.jsonc
+AGENTS.md
 
-# Root-level Node artifacts (TUI has its own tui/package.json)
+# Root-level Node artifacts (dashboard has its own package.json)
 node_modules/
 package.json
 pnpm-lock.yaml
+bun.lock
+uv.lock
 .playwright-mcp/
+
+# Lint/type caches
+.ruff_cache/
+.mypy_cache/
+
+# Dashboard dev log
+dashboard/vite-dev.log
 
 # uc-orchestrator package
 packages/uc-orchestrator/node_modules/
