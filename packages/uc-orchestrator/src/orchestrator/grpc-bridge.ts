@@ -58,15 +58,6 @@ export interface WorkerListResult {
 // ponytail: internal response type to avoid Record<string, unknown> everywhere
 type RpcResp = Record<string, unknown>;
 
-/** Structured error from GrpcBridge operations. */
-export type BridgeError =
-	| { kind: "server_unavailable"; message: string }
-	| { kind: "worker_failed"; message: string }
-	| { kind: "submit_rejected"; message: string };
-
-/** Result of submitTask — either success or structured error. */
-export type SubmitResult = { ok: true; task: TaskSync } | { ok: false; error: BridgeError };
-
 // ── Bridge ─────────────────────────────────────────────────────────
 
 export class GrpcBridge {
@@ -97,33 +88,16 @@ export class GrpcBridge {
 
 	// ── Task Operations ────────────────────────────────────────
 
-	async submitTask(description: string, projectId = ""): Promise<SubmitResult> {
+	async submitTask(description: string, projectId = ""): Promise<TaskSync | null> {
 		try {
 			const resp = await this.rpc("SubmitTask", {
 				description,
 				project_id: projectId,
 			});
-			if (!(resp.success as boolean)) {
-				const errMsg = (resp.error as string) ?? "unknown reason";
-				// Distinguish worker failure from generic rejection
-				const kind = errMsg.toLowerCase().includes("worker")
-					? "worker_failed"
-					: "submit_rejected";
-				return { ok: false, error: { kind, message: errMsg } };
-			}
-			return { ok: true, task: this.parseTaskSync(resp) };
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			// Connection refused / network error → server unavailable
-			return {
-				ok: false,
-				error: {
-					kind: "server_unavailable",
-					message: msg.includes("fetch") || msg.includes("ECONNREFUSED") || msg.includes("Failed to fetch")
-						? "gRPC server unavailable — start with ./run-omp.sh"
-						: msg,
-				},
-			};
+			if (!(resp.success as boolean)) return null;
+			return this.parseTaskSync(resp);
+		} catch {
+			return null;
 		}
 	}
 

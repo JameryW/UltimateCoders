@@ -4,9 +4,9 @@ set -euo pipefail
 # Run OMP with UC Orchestrator extension loaded
 # This is the primary way to interact with UltimateCoders.
 #
-# Usage: ./run-omp.sh [--no-server] [--build]
-#   --no-server   skip gRPC server startup (server starts by default)
-#   --build       ensure Python package is built (maturin develop)
+# Usage: ./run-omp.sh [--server] [--build]
+#   --server   also start gRPC server in background
+#   --build    ensure Python package is built (maturin develop)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -19,17 +19,17 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # ── Parse flags ───────────────────────────────────────────────
-START_SERVER=true
+START_SERVER=false
 DO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
-    --no-server) START_SERVER=false ;;
+    --server) START_SERVER=true ;;
     --build)  DO_BUILD=true ;;
     --help|-h)
-      echo "Usage: $0 [--no-server] [--build]"
+      echo "Usage: $0 [--server] [--build]"
       echo ""
-      echo "  --no-server   skip gRPC server startup (server starts by default)"
-      echo "  --build       ensure Python package is built (maturin develop)"
+      echo "  --server   also start gRPC server in background"
+      echo "  --build    ensure Python package is built (maturin develop)"
       exit 0
       ;;
     *) ;;
@@ -49,17 +49,7 @@ if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
     }
 fi
 
-# ── Start gRPC server (default) ───────────────────────────────
-SERVER_PID=""
-cleanup() {
-    if [ -n "$SERVER_PID" ]; then
-        echo ">>> Stopping gRPC server (PID $SERVER_PID)..."
-        kill "$SERVER_PID" 2>/dev/null
-        wait "$SERVER_PID" 2>/dev/null
-    fi
-}
-trap cleanup EXIT INT TERM
-
+# ── Start gRPC server if requested ───────────────────────────
 if [ "$START_SERVER" = true ]; then
     if ! lsof -i :50051 >/dev/null 2>&1; then
         echo ">>> Starting gRPC server..."
@@ -75,8 +65,6 @@ if [ "$START_SERVER" = true ]; then
             fi
             sleep 0.5
         done
-    else
-        echo ">>> gRPC server already running on :50051"
     fi
 fi
 

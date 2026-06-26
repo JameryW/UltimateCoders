@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { GrpcBridge, type SubmitResult } from "./grpc-bridge";
+import { GrpcBridge } from "./grpc-bridge";
 
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct.
@@ -39,25 +39,20 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 							};
 						}
 						const result = await bridge.submitTask(p.description);
-						if (!result.ok) {
-							const errText = result.error.kind === "server_unavailable"
-								? `Submit failed — ${result.error.message}`
-								: result.error.kind === "worker_failed"
-									? `Worker failed to start: ${result.error.message}`
-									: `Submit rejected: ${result.error.message}`;
+						if (!result) {
 							return {
-								content: [{ type: "text" as const, text: errText }],
+								content: [{ type: "text" as const, text: "Submit failed — gRPC server unavailable" }],
 								isError: true,
 							};
 						}
-						const subtaskLines = result.task.subtasks
+						const subtaskLines = result.subtasks
 							.slice(0, 10)
 							.map((st) => `  ${st.status} ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}`)
 							.join("\n");
 						return {
 							content: [{
 								type: "text" as const,
-								text: `Task submitted: ${result.task.taskId}\nStatus: ${result.task.status}\nSubtasks:\n${subtaskLines || "  (pending decomposition)"}`,
+								text: `Task submitted: ${result.taskId}\nStatus: ${result.status}\nSubtasks:\n${subtaskLines || "  (pending decomposition)"}`,
 							}],
 						};
 					}
