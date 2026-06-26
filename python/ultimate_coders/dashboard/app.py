@@ -26,6 +26,9 @@ import json
 import logging
 import os
 import pathlib
+import select
+import shutil
+import subprocess
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -33,7 +36,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
@@ -112,6 +115,10 @@ class DashboardApp:
         self._metrics = MetricsAggregator()
         # Auth configuration
         self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
+        # TUI PTY state — single global session
+        self._tui_pty: subprocess.Popen | None = None
+        self._tui_lock = threading.Lock()
+        self._tui_ws: WebSocket | None = None  # current connected client
         # Connect to Orchestrator's event emitter if available
         self.event_emitter = getattr(orchestrator, "event_emitter", None) if orchestrator else None
         self._setup_routes()
@@ -174,6 +181,7 @@ class DashboardApp:
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
+        # ponytail: WebSocket upgrade needs ws scheme in allowed origins
 
         # Add X-Task-Version header to task mutation responses for conflict detection.
         # Clients (TUI, Dashboard) should compare this with the version they last saw.
@@ -785,6 +793,156 @@ class DashboardApp:
                 status_code = 404 if "not found" in result["error"].lower() else 400
                 return JSONResponse(result, status_code=status_code)
             return JSONResponse(result)
+
+        # ── TUI WebSocket endpoint ──────────────────────────────────
+
+        @app.websocket("/ws/tui")
+        async def tui_websocket(ws: WebSocket):
+            """WebSocket bridge to a global PTY running OMP.
+
+            Auth: token via query param ``?token=<pwd>`` (same as REST API).
+            Single session: only one client at a time; PTY persists after disconnect.
+            """
+            # Auth check — same logic as _check_auth: localhost bypass, token match
+            if self._dashboard_password:
+                client_host = ws.client.host if ws.client else ""
+                if client_host not in ("127.0.0.1", "::1", "localhost"):
+                    token = ws.query_params.get("token")
+                    if token != self._dashboard_password:
+                        await ws.close(code=4001, reason="Unauthorized")
+                        return
+
+            await ws.accept()
+
+            # Detach previous client if any
+            with self._tui_lock:
+                if self._tui_ws is not None:
+                    try:
+                        await self._tui_ws.close(code=4002, reason="Replaced by new client")
+                    except Exception:
+                        pass
+                self._tui_ws = ws
+
+            pty = self._ensure_tui_pty()
+            if pty is None:
+                await ws.send_text("Error: could not start OMP PTY\r\n")
+                await ws.close(code=1011, reason="PTY start failed")
+                with self._tui_lock:
+                    if self._tui_ws is ws:
+                        self._tui_ws = None
+                return
+
+            # Drain any buffered PTY output from before this client connected
+            try:
+                ready, _, _ = select.select([pty.stdout], [], [], 0)
+                if ready:
+                    buf = os.read(pty.stdout.fileno(), 65536)
+                    if buf:
+                        await ws.send_bytes(buf)
+            except Exception:
+                pass
+
+            # Reader: PTY stdout → WebSocket
+            async def _pty_reader():
+                loop = asyncio.get_running_loop()
+                while pty.poll() is None:
+                    try:
+                        # Read in thread to avoid blocking the event loop
+                        data = await loop.run_in_executor(
+                            None, lambda: os.read(pty.stdout.fileno(), 4096)
+                        )
+                        if not data:
+                            break
+                        await ws.send_bytes(data)
+                    except (OSError, ValueError):
+                        break
+                    except Exception:
+                        break
+                # PTY exited
+                try:
+                    await ws.send_text("\r\n[OMP session ended]\r\n")
+                except Exception:
+                    pass
+
+            reader_task = asyncio.create_task(_pty_reader())
+
+            # Writer: WebSocket → PTY stdin
+            try:
+                while True:
+                    msg = await ws.receive()
+                    if msg["type"] == "websocket.disconnect":
+                        break
+                    try:
+                        if "text" in msg and msg["text"] is not None:
+                            pty.stdin.write(msg["text"].encode())
+                            pty.stdin.flush()
+                        elif "bytes" in msg and msg["bytes"] is not None:
+                            pty.stdin.write(msg["bytes"])
+                            pty.stdin.flush()
+                    except BrokenPipeError:
+                        logger.warning("TUI PTY stdin broken — process may have exited")
+                        break
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+            finally:
+                reader_task.cancel()
+                with self._tui_lock:
+                    if self._tui_ws is ws:
+                        self._tui_ws = None
+                # ponytail: don't kill PTY on disconnect — single session persists
+
+    # ── TUI PTY Management ───────────────────────────────────────
+
+    def _ensure_tui_pty(self) -> subprocess.Popen | None:
+        """Return the global TUI PTY, starting it if needed.
+
+        Spawns OMP via ``run-omp.sh`` inside a PTY (script wrapper).
+        The PTY persists across WebSocket disconnects.
+        """
+        with self._tui_lock:
+            if self._tui_pty is not None and self._tui_pty.poll() is None:
+                return self._tui_pty
+            return self._start_tui_pty()
+
+    def _start_tui_pty(self) -> subprocess.Popen | None:
+        """Spawn OMP in a PTY using the ``script`` wrapper for terminal emulation."""
+        omp_script = os.environ.get("UC_OMP_SCRIPT")
+        if not omp_script:
+            # Default: repo_root/run-omp.sh
+            repo_root = os.environ.get("UC_REPO_ROOT", os.getcwd())
+            omp_script = os.path.join(repo_root, "run-omp.sh")
+        if not os.path.isfile(omp_script):
+            logger.warning("TUI PTY: OMP script not found: %s", omp_script)
+            return None
+
+        script_bin = shutil.which("script")
+        if not script_bin:
+            logger.warning("TUI PTY: 'script' command not found")
+            return None
+
+        try:
+            # script provides a PTY; -q quiet, -c runs command
+            # ponytail: using script(1) as PTY — simpler than ptyprocess, works on Linux/macOS
+            pty_proc = subprocess.Popen(
+                ["script", "-q", "/dev/null", omp_script],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env={
+                    **os.environ,
+                    "TERM": "xterm-256color",
+                    "COLUMNS": "120",
+                    "LINES": "40",
+                },
+            )
+            self._tui_pty = pty_proc
+            logger.info("TUI PTY started: PID=%d cmd=%s", pty_proc.pid, omp_script)
+            return pty_proc
+        except Exception as e:
+            logger.error("TUI PTY start failed: %s", e)
+            return None
 
     # ── Data Collection Methods ──────────────────────────────────
 
