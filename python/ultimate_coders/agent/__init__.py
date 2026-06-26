@@ -1,4 +1,4 @@
-"""Agent module — Orchestrator and Worker implementations."""
+"""Agent module — Worker, Scheduler, and supporting implementations."""
 
 from ultimate_coders.agent.codegraph import CodegraphClient
 from ultimate_coders.agent.conflict import (
@@ -14,7 +14,6 @@ from ultimate_coders.agent.conflict import (
     ResolutionTier,
 )
 from ultimate_coders.agent.llm import LLMClient, LLMResponse, ToolCall, ToolDefinition
-from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.rate_limiter import (
     CircuitBreaker,
     CircuitState,
@@ -61,7 +60,6 @@ from ultimate_coders.agent.types import (
 from ultimate_coders.agent.worker import Worker
 
 __all__ = [
-    "Orchestrator",
     "Worker",
     "CodegraphClient",
     "ChangeType",
