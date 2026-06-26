@@ -211,3 +211,40 @@ Added WebSocket /ws/tui endpoint to FastAPI backend with PTY management (script(
 ### Next Steps
 
 - None - task complete
+
+
+## Session 62: Batch archive 5 completed tasks
+
+**Date**: 2026-06-26
+**Task**: Batch archive 5 completed tasks
+**Branch**: `main`
+
+### Summary
+
+Archived 5 completed tasks: replace-tui-frontend-with-omp (#157), add-tui-interactive-entry-in-dashboard (#164), add-worker-status-awareness-to-omp-orchestrator (#165), consolidate-repo-directory-structure (#163), wrap-distributed-coding-agent-capabilities-as-omp-tools (#160). All PRs merged.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `963eba45` | (see git log) |
+| `05ccb566` | (see git log) |
+| `47f2addc` | (see git log) |
+| `a531fcf0` | (see git log) |
+| `7291cb1e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
