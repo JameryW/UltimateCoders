@@ -4,15 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**UltimateCoders** — 分布式 AI Coding 系统，支持多个 coding agent 以 Orchestrator-Worker 模式协同工作，共享分层 Memory，并集成多 Git 仓库的混合检索能力（Text + Semantic + AST）。
+**UltimateCoders** — 分布式 AI Coding 系统，以 OMP Extension 为编排核心，Rust Engine 为后端，Python Worker/Sandbox 为 gRPC fallback 路径，共享分层 Memory，并集成多 Git 仓库的混合检索能力（Text + Semantic + AST）。
 
 ## Architecture
 
 - **Rust 核心引擎** (5 crates): uc-types, uc-engine, uc-grpc, uc-grpc-server, uc-python
-- **Python Agent 层**: Orchestrator + Worker (LLM 交互)
-- **桥接**: PyO3 FFI (本地) + gRPC (分布式), 运行时切换
+- **OMP Extension** (TypeScript): UC Orchestrator — 任务编排 + UI 组件 + LLM tools + Coding Agent
+- **Python Worker/Sandbox**: gRPC LocalWorkerBridge/NATS fallback 路径 (Worker, SandboxManager, LLMClient)
+- **桥接**: PyO3 FFI (本地) + gRPC-Web (OMP→Rust), 运行时切换
 - **存储**: TiKV (短期 Memory) + Qdrant (长期 Memory + 语义检索) + PostgreSQL (结构化元数据)
-- **通信**: gRPC 同步 + NATS JetStream 异步
 
 ## Repository Structure
 
@@ -65,20 +65,6 @@ cargo run -p uc-grpc-server  # Start standalone gRPC server
 - `SearchQuery/SearchResult` (uc-types/src/search.rs) — hybrid search types
 - `MemoryKey/MemoryEntry` (uc-types/src/memory.rs) — layered memory types
 - `Task/Subtask/AgentEvent` (uc-types/src/agent.rs) — orchestration types
-
-## Development Progress
-
-- ✅ PR1: Rust workspace + uc-types + uc-engine skeleton
-- ✅ PR2: 存储客户端集成 + Memory 读写 (in-memory fallback; TiKV/Qdrant/PostgreSQL clients coded, need infra)
-- ✅ PR3: 文本检索 + AST 索引引擎 (language-aware tokenization, tree-sitter AST, text search)
-- ✅ PR4: 语义检索 + 混合检索 API (BLAKE3 fallback embeddings, hybrid search engine)
-- ✅ PR5: gRPC + PyO3 桥接层 (tonic server/client, proto compilation, PyEngine wired)
-- ✅ PR6: Python Agent 层 (Orchestrator + Worker, LLM tool-calling, memory wrappers)
-- ✅ PR7: 容错机制 (Event Sourcing, Checkpoint/Resume, Conflict Detection, Rate Limiting, Circuit Breaker)
-- ✅ PR8: Docker Compose + CI + 文档 (TiKV/Qdrant/PostgreSQL/NATS, GitHub Actions, architecture docs)
-- ✅ PR9: Sandbox Agent Executor (SubprocessSandbox + DockerSandbox, Claude Code + Codex adapters, Worker sandbox mode)
-- ✅ PR10: 任务调度与夜间编排 (tokio-cron-scheduler, NightWindow Guard, ScheduleStore, Orchestrator 独占模式, YAML 配置)
-- ✅ PR11: Replace TUI with OMP (rich progress widgets, subtask tree overlay, task list overlay, custom message renderer, JSONL event channel)
 
 ## Repository
 
