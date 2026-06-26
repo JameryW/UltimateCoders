@@ -59,10 +59,11 @@ for arg in "$@"; do
   esac
 done
 
-# ponytail: --workers N (separate arg) parsed here
-for i in "$@"; do
-  if [[ "$i" == --workers ]] && [[ "${i+1}" =~ ^[0-9]+$ ]]; then
-    NUM_WORKERS="${i+1}"
+# ponytail: --workers N (separate arg) — iterate with index to peek next arg
+ARGS=("$@")
+for (( i=0; i<${#ARGS[@]}; i++ )); do
+  if [[ "${ARGS[i]}" == --workers ]] && [[ "${ARGS[i+1]}" =~ ^[0-9]+$ ]]; then
+    NUM_WORKERS="${ARGS[i+1]}"
   fi
 done
 
@@ -221,6 +222,7 @@ fi
 }
 
 log "Starting $NUM_WORKERS NATS workers..."
+WORKER_OK=0
 for i in $(seq 1 "$NUM_WORKERS"); do
     UC_WORKER_ID="worker-$i" \
     UC_NATS_URL="$NATS_URL" \
@@ -228,7 +230,20 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     W_PID=$!
     save_pid "$W_PID" "worker-$i"
     info "Worker $i PID: $W_PID"
+    # ponytail: check worker didn't immediately die (import error, etc)
+    sleep 0.5
+    if kill -0 "$W_PID" 2>/dev/null; then
+        WORKER_OK=$((WORKER_OK + 1))
+    else
+        warn "Worker $i exited immediately — check: $PYTHON_BIN -m ultimate_coders.nats_worker"
+    fi
 done
+
+if [ "$WORKER_OK" -eq 0 ]; then
+    err "All workers failed to start. Python NATS worker is broken (nats_worker.py imports removed Orchestrator)."
+    err "Use local worker mode instead: ./run-omp.sh  (LocalWorkerBridge auto-spawns on first submit)"
+    exit 1
+fi
 
 # ponytail: brief wait for workers to connect
 sleep 2
