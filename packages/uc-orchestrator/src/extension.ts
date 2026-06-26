@@ -14,8 +14,11 @@
  * - Ctrl+Shift+T  — Open TaskList overlay
  *
  * LLM-callable tools:
- * - uc_memory  — Read/write/search UC layered memory
+ * - uc_memory  — Read/write/search/delete UC layered memory
  * - uc_search  — Search UC hybrid index (text + semantic + AST)
+ * - uc_task    — Task lifecycle: submit/cancel/pause/resume/status
+ * - uc_index   — Index management: index_repo/list_repos/get_state/remove_index
+ * - uc_file    — File operations: list_dir/get_file
  *
  * UI features:
  * - Rich progress widget above editor (real-time subtask progress)
@@ -30,6 +33,9 @@ import type { KeyId } from "@oh-my-pi/pi-tui";
 import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
 import { registerMemoryTools } from "./orchestrator/memory-bridge";
+import { registerTaskTools } from "./orchestrator/task-bridge";
+import { registerIndexTools } from "./orchestrator/index-bridge";
+import { registerFileTools } from "./orchestrator/file-bridge";
 import { createProgressWidget, type ProgressWidgetState } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
@@ -307,4 +313,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── LLM-callable tools ─────────────────────────────────────
 	registerMemoryTools(pi, bridge);
+	registerTaskTools(pi, bridge);
+	registerIndexTools(pi, bridge);
+	registerFileTools(pi, bridge);
 }

@@ -163,6 +163,18 @@ export class GrpcBridge {
 		}
 	}
 
+	async cancelTask(taskId: string, subtaskId?: string): Promise<boolean> {
+		try {
+			const resp = await this.rpc("CancelTask", {
+				task_id: taskId,
+				subtask_id: subtaskId ?? "",
+			});
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
 	// ── Memory Operations ──────────────────────────────────────
 
 	async readMemory(
@@ -193,9 +205,11 @@ export class GrpcBridge {
 		sourceAgent = "uc-orchestrator",
 		taskId = "",
 		projectId = "",
+		importance?: number,
+		tags?: string[],
 	): Promise<boolean> {
 		try {
-			await this.rpc("WriteMemory", {
+			const payload: Record<string, unknown> = {
 				key_scope: keyScope,
 				key,
 				content,
@@ -203,7 +217,10 @@ export class GrpcBridge {
 				source_agent: sourceAgent,
 				task_id: taskId,
 				project_id: projectId,
-			});
+			};
+			if (importance !== undefined) payload.importance = importance;
+			if (tags?.length) payload.tags = tags;
+			await this.rpc("WriteMemory", payload);
 			return true;
 		} catch {
 			return false;
@@ -232,19 +249,65 @@ export class GrpcBridge {
 		}
 	}
 
+	async deleteMemory(
+		keyScope: string,
+		key: string,
+		taskId = "",
+		projectId = "",
+	): Promise<boolean> {
+		try {
+			const resp = await this.rpc("DeleteMemory", {
+				key_scope: keyScope,
+				key,
+				task_id: taskId,
+				project_id: projectId,
+			});
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
+	async batchWriteMemory(
+		entries: Array<{ keyScope: string; key: string; content: string; contentType?: string }>,
+		sourceAgent = "uc-orchestrator",
+	): Promise<number> {
+		try {
+			const resp = await this.rpc("BatchWriteMemory", {
+				entries: entries.map((e) => ({
+					key_scope: e.keyScope,
+					key: e.key,
+					content: e.content,
+					content_type: e.contentType ?? "text",
+					source_agent: sourceAgent,
+				})),
+			});
+			return (resp.count as number) ?? 0;
+		} catch {
+			return 0;
+		}
+	}
+
 	// ── Search Operations ──────────────────────────────────────
 
 	async searchCode(
 		query: string,
 		modes: string[] = ["hybrid"],
 		maxResults = 5,
+		repoIds?: string[],
+		languages?: string[],
+		pathPatterns?: string[],
 	): Promise<Array<{ filePath: string; snippet: string; score: number }>> {
 		try {
-			const resp = await this.rpc("Search", {
+			const payload: Record<string, unknown> = {
 				query,
 				modes,
 				max_results: maxResults,
-			});
+			};
+			if (repoIds?.length) payload.repo_ids = repoIds;
+			if (languages?.length) payload.languages = languages;
+			if (pathPatterns?.length) payload.path_patterns = pathPatterns;
+			const resp = await this.rpc("Search", payload);
 			return ((resp.items as RpcResp[]) ?? []).map((item) => ({
 				filePath: (item.file_path as string) ?? "",
 				snippet: (item.content_snippet as string) ?? "",
@@ -252,6 +315,92 @@ export class GrpcBridge {
 			}));
 		} catch {
 			return [];
+		}
+	}
+
+	// ── Index Operations ──────────────────────────────────────
+
+	async indexRepo(
+		repoId: string,
+		localPath: string,
+		languages: string[] = [],
+	): Promise<boolean> {
+		try {
+			const resp = await this.rpc("IndexRepo", {
+				repo_id: repoId,
+				local_path: localPath,
+				languages,
+			});
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
+	async getIndexState(repoId: string): Promise<{ status: string; indexedFiles: number; lastIndexed: string } | null> {
+		try {
+			const resp = await this.rpc("GetIndexState", { repo_id: repoId });
+			if (!(resp.available as boolean)) return null;
+			return {
+				status: (resp.status as string) ?? "unknown",
+				indexedFiles: (resp.indexed_files as number) ?? 0,
+				lastIndexed: (resp.last_indexed as string) ?? "",
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	async removeIndex(repoId: string): Promise<boolean> {
+		try {
+			const resp = await this.rpc("RemoveIndex", { repo_id: repoId });
+			return (resp.success as boolean) ?? false;
+		} catch {
+			return false;
+		}
+	}
+
+	async listRepos(): Promise<Array<{ repoId: string; status: string; indexedFiles: number }>> {
+		try {
+			const resp = await this.rpc("ListRepos", {});
+			return ((resp.repos as RpcResp[]) ?? []).map((r) => ({
+				repoId: (r.repo_id as string) ?? "",
+				status: (r.status as string) ?? "",
+				indexedFiles: (r.indexed_files as number) ?? 0,
+			}));
+		} catch {
+			return [];
+		}
+	}
+
+	// ── File Operations ───────────────────────────────────────
+
+	async listDir(
+		path: string,
+		repoId?: string,
+	): Promise<Array<{ name: string; type: string; size: number }>> {
+		try {
+			const payload: Record<string, unknown> = { path };
+			if (repoId) payload.repo_id = repoId;
+			const resp = await this.rpc("ListDir", payload);
+			return ((resp.entries as RpcResp[]) ?? []).map((e) => ({
+				name: (e.name as string) ?? "",
+				type: (e.type as string) ?? "file",
+				size: (e.size as number) ?? 0,
+			}));
+		} catch {
+			return [];
+		}
+	}
+
+	async getFile(path: string, repoId?: string): Promise<string | null> {
+		try {
+			const payload: Record<string, unknown> = { path };
+			if (repoId) payload.repo_id = repoId;
+			const resp = await this.rpc("GetFile", payload);
+			return (resp.content as string) ?? null;
+		} catch {
+			return null;
 		}
 	}
 
