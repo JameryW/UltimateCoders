@@ -248,3 +248,40 @@ Archived 5 completed tasks: replace-tui-frontend-with-omp (#157), add-tui-intera
 ### Next Steps
 
 - None - task complete
+
+
+## Session 63: Default gRPC + run-cluster.sh + MinimalOrchestrator + README
+
+**Date**: 2026-06-26
+**Task**: Default gRPC + run-cluster.sh + MinimalOrchestrator + README
+**Branch**: `main`
+
+### Summary
+
+4 PRs merged: (1) run-omp.sh defaults to START_SERVER=true + structured uc_task errors, (2) run-cluster.sh for local distributed deployment, (3) MinimalOrchestrator fixes broken nats_worker/local_worker imports, (4) README updated for new scripts and architecture. All tested end-to-end: NATS worker connects, local_worker ping works, cluster --stop cleans up.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7291cb1e` | (see git log) |
+| `a531fcf0` | (see git log) |
+| `47f2addc` | (see git log) |
+| `05ccb566` | (see git log) |
+| `963eba45` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
