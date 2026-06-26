@@ -23,7 +23,7 @@ The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal
 docker compose up -d
 ```
 
-This starts TiKV, Qdrant, PostgreSQL, and NATS. See [Configuration](#configuration) for connection details.
+This starts TiKV, Qdrant, PostgreSQL, and NATS. Compose files are in `docker/`. See [Configuration](#configuration) for connection details.
 
 ### 2. Build the Rust Core
 
@@ -82,7 +82,7 @@ engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
 ./run-omp.sh
 
 # Or with gRPC server for distributed scenarios
-./scripts/run_tui.sh --server
+./run-omp.sh --server
 ```
 
 The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>` to submit tasks, `/uc status` to check progress, and `/uc cancel/pause/resume` for control. Keyboard shortcuts: **Ctrl+T** for subtask tree overlay, **Ctrl+Shift+T** for task list.
@@ -185,7 +185,6 @@ ultimate-coders/
 ├── Cargo.toml                # Workspace root
 ├── pyproject.toml            # Maturin build config
 ├── run-omp.sh                # Start OMP with UC extension (primary interface)
-├── docker-compose.yml        # Development storage backends
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
 │   ├── uc-engine/            # Core engine (LocalEngine implementation)
@@ -225,12 +224,8 @@ ultimate-coders/
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
 ├── dashboard/                # Vite + React web dashboard
-├── docker/                   # Docker configs + Dockerfiles + scheduler config
-├── scripts/
-│   └── run_tui.sh            # Start OMP + optional gRPC server
-├── tests/
-│   ├── rust/                 # Rust integration tests
-│   └── python/               # Python unit tests
+├── docker/                   # Docker configs + Dockerfiles + compose + scheduler config
+├── tests/python/             # Python unit tests
 └── vendor/                   # oh-my-pi (OMP runtime)
 ```
 
@@ -261,20 +256,23 @@ pytest tests/python/ -v        # Run Python tests
 ./run-omp.sh
 
 # With gRPC server
-./scripts/run_tui.sh --server
+./run-omp.sh --server
+
+# Ensure Python package is built first
+./run-omp.sh --build --server
 ```
 
 ### Docker Compose
 
 ```bash
 # Start all storage backends
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 
 # Stop everything
-docker compose down
+docker compose -f docker/docker-compose.yml down
 
 # Stop and remove volumes
-docker compose down -v
+docker compose -f docker/docker-compose.yml down -v
 ```
 
 ## CI

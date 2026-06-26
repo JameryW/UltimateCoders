@@ -1,7 +1,7 @@
 version: "3.8"
 
 # Development overrides for UltimateCoders.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up
 #
 # Adds:
 #   - pgAdmin for PostgreSQL inspection
@@ -36,7 +36,7 @@ services:
   # ── Engine gRPC server ────────────────────────────────────────
   grpc-server:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.grpc
     ports:
       - "50051:50051"

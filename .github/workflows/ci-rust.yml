@@ -8,7 +8,7 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "docker-compose.yml"
+      - "docker/docker-compose.yml"
       - ".github/workflows/ci-rust.yml"
   pull_request:
     branches: [main]
@@ -16,7 +16,7 @@ on:
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "docker-compose.yml"
+      - "docker/docker-compose.yml"
       - ".github/workflows/ci-rust.yml"
 
 env:
@@ -102,12 +102,12 @@ jobs:
       - name: Start storage infrastructure
         run: |
           # TiKV can OOM on first start in CI; retry once after a short pause.
-          docker compose up -d --wait || {
+          docker compose -f docker/docker-compose.yml up -d --wait || {
             echo "::warning::First attempt failed, printing logs and retrying..."
-            docker compose logs tikv || true
-            docker compose down -v
+            docker compose -f docker/docker-compose.yml logs tikv || true
+            docker compose -f docker/docker-compose.yml down -v
             sleep 5
-            docker compose up -d --wait
+            docker compose -f docker/docker-compose.yml up -d --wait
           }
       - name: Run storage integration tests
         run: cargo test --features storage -- --ignored
@@ -117,7 +117,7 @@ jobs:
           UC_TIKV_PD_ENDPOINTS: localhost:2379
       - name: Print logs on failure
         if: failure()
-        run: docker compose logs
+        run: docker compose -f docker/docker-compose.yml logs
       - name: Stop storage infrastructure
         if: always()
-        run: docker compose down -v
+        run: docker compose -f docker/docker-compose.yml down -v

@@ -40,9 +40,9 @@ ultimate-coders/
 │   ├── search/              #   SearchQuery builder
 │   └── memory/              #   Memory read/write
 ├── dashboard/               # Vite + React web dashboard
-├── docker/                  # Dockerfiles + configs + scheduler config
-├── scripts/                 # run_tui.sh
-└── tests/                   # Rust + Python tests
+├── docker/                  # Dockerfiles + compose + configs
+├── tests/python/            # Python tests
+└── vendor/oh-my-pi/         # OMP upstream (submodule)
 ```
 
 ## Build & Run
@@ -53,6 +53,8 @@ cargo test -p uc-engine      # Run engine tests (no features)
 maturin develop              # Build Rust extension + install
 cargo run -p uc-grpc-server  # Start gRPC server
 ./run-omp.sh                 # Start OMP with UC extension (primary)
+./run-omp.sh --server        # Also start gRPC server in background
+./run-omp.sh --build         # Ensure Python package is built first
 ```
 
 ## Key Types
