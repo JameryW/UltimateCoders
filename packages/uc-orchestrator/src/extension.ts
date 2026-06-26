@@ -19,6 +19,7 @@
  * - uc_task    — Task lifecycle: submit/cancel/pause/resume/status
  * - uc_index   — Index management: index_repo/list_repos/get_state/remove_index
  * - uc_file    — File operations: list_dir/get_file
+ * - uc_worker  — Worker status: list workers, check capacity/heartbeat
  *
  * UI features:
  * - Rich progress widget above editor (real-time subtask progress)
@@ -36,6 +37,7 @@ import { registerMemoryTools } from "./orchestrator/memory-bridge";
 import { registerTaskTools } from "./orchestrator/task-bridge";
 import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
+import { registerWorkerTools } from "./orchestrator/worker-bridge";
 import { createProgressWidget, type ProgressWidgetState } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
@@ -316,4 +318,5 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	registerTaskTools(pi, bridge);
 	registerIndexTools(pi, bridge);
 	registerFileTools(pi, bridge);
+	registerWorkerTools(pi, bridge);
 }

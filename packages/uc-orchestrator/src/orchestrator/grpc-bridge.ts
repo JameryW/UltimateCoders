@@ -32,6 +32,29 @@ export interface TaskSync {
 	}>;
 }
 
+/** Worker status from ListWorkers RPC (mirrors WorkerProto in engine.proto). */
+export interface WorkerInfo {
+	id: string;
+	capabilities: string[];
+	currentLoad: number;
+	maxCapacity: number;
+	loadPercent: number;
+	lastHeartbeat: string;
+	heartbeatAgeSeconds: number;
+	heartbeatStale: boolean;
+	isAvailable: boolean;
+}
+
+/** Result of listWorkers() — full cluster snapshot with availability flag. */
+export interface WorkerListResult {
+	available: boolean;
+	workers: WorkerInfo[];
+	total: number;
+	availableCount: number;
+	/** True when data comes from Health RPC fallback (approximate, no load/capacity details). */
+	degraded?: boolean;
+}
+
 // ponytail: internal response type to avoid Record<string, unknown> everywhere
 type RpcResp = Record<string, unknown>;
 
@@ -404,6 +427,58 @@ export class GrpcBridge {
 		}
 	}
 
+	// ── Worker Operations ──────────────────────────────────────
+
+	async listWorkers(): Promise<WorkerListResult> {
+		try {
+			const resp = await this.rpc("ListWorkers", {});
+			const workers = ((resp.workers as RpcResp[]) ?? []).map((w): WorkerInfo => ({
+				id: (w.id as string) ?? "",
+				capabilities: (w.capabilities as string[]) ?? [],
+				currentLoad: (w.current_load as number) ?? 0,
+				maxCapacity: (w.max_capacity as number) ?? 0,
+				loadPercent: (w.load_percent as number) ?? 0,
+				lastHeartbeat: (w.last_heartbeat as string) ?? "",
+				heartbeatAgeSeconds: (w.heartbeat_age_seconds as number) ?? 0,
+				heartbeatStale: (w.heartbeat_stale as boolean) ?? false,
+				isAvailable: (w.is_available as boolean) ?? false,
+			}));
+			return {
+				available: (resp.available as boolean) ?? false,
+				workers,
+				total: (resp.total as number) ?? 0,
+				availableCount: (resp.available_count as number) ?? 0,
+			};
+		} catch {
+			// Fallback: try Health RPC for local_worker status
+			// ponytail: degraded mode — no load/capacity data from Health RPC,
+			// set maxCapacity=-1 to signal "unknown capacity" (0 would imply infinite)
+			try {
+				const h = await this.health();
+				const isHealthy = h.status !== "unavailable";
+				return {
+					available: true,
+					workers: [{
+						id: "local_worker",
+						capabilities: [],
+						currentLoad: 0,
+						maxCapacity: -1,
+						loadPercent: 0,
+						lastHeartbeat: "",
+						heartbeatAgeSeconds: 0,
+						heartbeatStale: !isHealthy,
+						isAvailable: isHealthy,
+					}],
+					total: 1,
+					availableCount: isHealthy ? 1 : 0,
+					degraded: true,
+				};
+			} catch {
+				return { available: false, workers: [], total: 0, availableCount: 0 };
+			}
+		}
+	}
+
 	// ── Connection ─────────────────────────────────────────────
 
 	isConnected(): boolean {
@@ -451,9 +526,13 @@ export class GrpcBridge {
 			"ReadMemory", "WriteMemory", "DeleteMemory", "SearchMemory",
 			"Health", "BatchWriteMemory", "ListRepos", "ListDir", "GetFile",
 		]);
+		const dashboardMethods = new Set([
+			"ListWorkers", "GetSchedulerStatus", "GetDashboardData",
+		]);
 
 		if (taskMethods.has(method)) return "TaskService";
 		if (engineMethods.has(method)) return "EngineService";
+		if (dashboardMethods.has(method)) return "DashboardService";
 		return "EngineService";
 	}
 
