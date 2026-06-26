@@ -1,4 +1,4 @@
-"""Agent module — Orchestrator and Worker implementations."""
+"""Agent module — shared types, conflict detection, and scheduling."""
 
 from ultimate_coders.agent.codegraph import CodegraphClient
 from ultimate_coders.agent.conflict import (
@@ -13,8 +13,6 @@ from ultimate_coders.agent.conflict import (
     MergeResult,
     ResolutionTier,
 )
-from ultimate_coders.agent.llm import LLMClient, LLMResponse, ToolCall, ToolDefinition
-from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.rate_limiter import (
     CircuitBreaker,
     CircuitState,
@@ -25,20 +23,6 @@ from ultimate_coders.agent.rate_limiter import (
     RetryPolicy,
     TaskComplexity,
     TokenBucket,
-)
-from ultimate_coders.agent.sandbox import (
-    AgentAdapter,
-    AgentOutput,
-    ClaudeCodeAdapter,
-    CodexAdapter,
-    ExecResult,
-    NetworkMode,
-    SandboxConfig,
-    SandboxHandle,
-    SandboxManager,
-    TokenUsage,
-    available_agents,
-    create_adapter,
 )
 from ultimate_coders.agent.scheduler import Scheduler
 from ultimate_coders.agent.scheduler_config import (
@@ -58,11 +42,8 @@ from ultimate_coders.agent.types import (
     TaskStatus,
     WorkerInfo,
 )
-from ultimate_coders.agent.worker import Worker
 
 __all__ = [
-    "Orchestrator",
-    "Worker",
     "CodegraphClient",
     "ChangeType",
     "FileChange",
@@ -73,10 +54,6 @@ __all__ = [
     "Task",
     "TaskStatus",
     "WorkerInfo",
-    "LLMClient",
-    "LLMResponse",
-    "ToolCall",
-    "ToolDefinition",
     # Rate limiter
     "CircuitBreaker",
     "CircuitState",
@@ -98,19 +75,6 @@ __all__ = [
     "LineRange",
     "MergeResult",
     "ResolutionTier",
-    # Sandbox
-    "AgentAdapter",
-    "AgentOutput",
-    "ClaudeCodeAdapter",
-    "CodexAdapter",
-    "ExecResult",
-    "NetworkMode",
-    "SandboxConfig",
-    "SandboxHandle",
-    "SandboxManager",
-    "TokenUsage",
-    "available_agents",
-    "create_adapter",
     # Scheduler
     "Scheduler",
     "SchedulerConfig",

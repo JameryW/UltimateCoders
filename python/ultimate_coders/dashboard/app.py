@@ -1569,11 +1569,7 @@ class DashboardApp:
                 e,
             )
 
-        # Create NatsPublisher if we have a client and none was provided
-        if nats_client is not None and nats_publisher is None:
-            from ultimate_coders.nats_worker import NatsPublisher
-
-            nats_publisher = NatsPublisher(nats_client)
+        # NatsPublisher removed — NATS bridge no longer exists
 
         return cls(
             orchestrator,
