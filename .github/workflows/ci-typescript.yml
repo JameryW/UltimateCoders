@@ -1,0 +1,69 @@
+name: TypeScript CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/uc-orchestrator/**"
+      - "vendor/oh-my-pi/packages/mnemopi/**"
+      - "vendor/oh-my-pi/packages/coding-agent/**"
+      - ".github/workflows/ci-typescript.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/uc-orchestrator/**"
+      - "vendor/oh-my-pi/packages/mnemopi/**"
+      - "vendor/oh-my-pi/packages/coding-agent/**"
+      - ".github/workflows/ci-typescript.yml"
+
+jobs:
+  bun-test-mnemopi:
+    name: bun test (mnemopi)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vendor/oh-my-pi/packages/mnemopi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+        working-directory: vendor/oh-my-pi
+      - run: bun test --parallel
+
+  bun-test-coding-agent:
+    name: bun test (coding-agent)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vendor/oh-my-pi/packages/coding-agent
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+        working-directory: vendor/oh-my-pi
+      - run: bun test --parallel=4 test src
+
+  bun-test-uc-orchestrator:
+    name: bun test (uc-orchestrator)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/uc-orchestrator
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun test
