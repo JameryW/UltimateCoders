@@ -1,0 +1,4 @@
+{"path": ".trellis/tasks/06-27-omp-ui-display-dispatch-mode/prd.md", "role": "prd", "reason": "Requirements for OMP UI dispatch_mode display"}
+{"path": "packages/uc-orchestrator/src/orchestrator/orchestrator.ts", "role": "spec", "reason": "SubtaskResult interface — need to add dispatchMode field"}
+{"path": "packages/uc-orchestrator/src/ui/subtask-tree-overlay.ts", "role": "spec", "reason": "SubtaskTreeComponent render() — add dispatch mode detail line"}
+{"path": "packages/uc-orchestrator/src/orchestrator/scheduler.ts", "role": "spec", "reason": "SubtaskDef.dispatchMode field definition"}
