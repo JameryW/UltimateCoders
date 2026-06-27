@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/grpc-nats-subtask-execute-protocol.md", "reason": "Verify dispatch protocol is correctly triggered by update_task"}
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/omp-grpc-bridge-remote-dispatch.md", "reason": "Verify OMP remote execution + polling logic"}

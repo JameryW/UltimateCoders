@@ -2698,12 +2698,20 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         };
 
         match result {
-            Ok(task) => Ok(Response::new(UpdateTaskResponse {
-                success: true,
-                task_id: task.id.0,
-                status: task_status_to_proto(&task.status).to_string(),
-                error: None,
-            })),
+            Ok(task) => {
+                // Dispatch ready subtasks to NATS workers after update.
+                // This bridges the gap where upsertTask (from OMP) populates
+                // subtasks but the server never triggers dispatch — the NATS
+                // subscriber path already does this for Python-originated updates.
+                self.publish_ready_subtasks(&task.id.0).await;
+
+                Ok(Response::new(UpdateTaskResponse {
+                    success: true,
+                    task_id: task.id.0,
+                    status: task_status_to_proto(&task.status).to_string(),
+                    error: None,
+                }))
+            }
             Err(e) => Ok(Response::new(UpdateTaskResponse {
                 success: false,
                 task_id: req.task_id,

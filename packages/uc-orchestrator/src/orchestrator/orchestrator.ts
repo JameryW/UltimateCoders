@@ -4,7 +4,7 @@
  * Manages the lifecycle of a task:
  * 1. Decompose task into subtasks via omp decomposer agent
  * 2. Build DAG from subtask dependencies
- * 3. Execute waves of subtasks via omp runSubprocess
+ * 3. Execute waves of subtasks via remote worker cluster (gRPC → NATS)
  * 4. Optionally review subtask results via supervisor agent
  * 5. Collect results and inject summary into conversation
  * 6. Persist state to local JSON + sync to UC gRPC TaskStore
@@ -323,29 +323,21 @@ export class UCOrchestrator {
 	// ── Worker Availability Check ────────────────────────────────────
 
 	/**
-	 * Check if any worker is available via gRPC bridge.
-	 * Returns true if at least one worker is available, false otherwise.
-	 * In degraded mode (gRPC disconnected), assumes local workers are available
-	 * since subtask execution uses local runSubprocess which doesn't need gRPC.
+	 * Check if any remote worker is available via gRPC bridge.
+	 * Returns true if at least one remote worker is available, false otherwise.
+	 * No fallback to local execution — remote workers are required.
 	 */
 	private async checkWorkerAvailability(): Promise<boolean> {
 		try {
-			const result = await this.bridge.listWorkers();
-			if (!result.available) {
-				// gRPC disconnected — assume local workers for degraded mode
-				if (!this.bridge.isConnected()) {
-					this.pi.logger.info("Worker check unavailable (gRPC disconnected) — assuming local workers for degraded mode");
-					return true;
-				}
+			if (!this.bridge.isConnected()) {
+				this.pi.logger.warn("Worker check: gRPC disconnected — remote workers unavailable");
 				return false;
 			}
+			const result = await this.bridge.listWorkers();
+			if (!result.available) return false;
 			return result.availableCount > 0;
 		} catch {
-			// gRPC call threw — assume degraded mode if disconnected
-			if (!this.bridge.isConnected()) {
-				this.pi.logger.info("Worker check failed (gRPC disconnected) — assuming local workers for degraded mode");
-				return true;
-			}
+			this.pi.logger.warn("Worker check failed — remote workers unavailable");
 			return false;
 		}
 	}
@@ -1058,6 +1050,18 @@ export class UCOrchestrator {
 		task: TaskState,
 		ctx: ExtensionCommandContext,
 	): Promise<SubtaskResult> {
+		return this.executeSubtaskRemote(def, task, ctx);
+	}
+
+	/**
+	 * Dispatch a subtask to the remote worker cluster via gRPC server → NATS.
+	 * Polls gRPC for remote subtask status until completion, failure, or timeout.
+	 */
+	private async executeSubtaskRemote(
+		def: SubtaskDef,
+		task: TaskState,
+		ctx: ExtensionCommandContext,
+	): Promise<SubtaskResult> {
 		const result: SubtaskResult = {
 			id: def.id,
 			description: def.description,
@@ -1067,63 +1071,57 @@ export class UCOrchestrator {
 			startedAt: Date.now(),
 		};
 
-		// Inject context from completed prerequisites
-		const contextPrefix = this.buildContextForSubtask(def, task);
-		const taskPrompt = contextPrefix
-			? `${contextPrefix}\n## Your subtask\n${def.description}`
-			: def.description;
+		// 1. Ensure task is synced to gRPC (upsertTask handles create-if-not-exists)
+		await this.bridge.upsertTask(this.toPersisted(task));
+
+		// 2. Poll for remote subtask completion
+		const pollIntervalMs = 2000;
+		const timeoutMs = this.config.subtaskTimeoutMs;
+		const startTime = Date.now();
+		const abortCtrl = this.abortControllers.get(task.id);
 
 		try {
-			const abortCtrl = this.abortControllers.get(task.id);
-			const subResult = await runSubprocess({
-				cwd: ctx.cwd,
-				agent: {
-					name: "worker",
-					description: `Execute subtask: ${def.description}`,
-					systemPrompt: WORKER_PROMPT,
-					source: "project" as const,
-				},
-				task: taskPrompt,
-				id: def.id,
-				index: 0,
-				signal: abortCtrl?.signal ?? AbortSignal.timeout(this.config.subtaskTimeoutMs),
-				modelRegistry: ctx.modelRegistry,
-				settings: this.pi.pi.settings,
-				enableLsp: true,
-			});
-
-			if (subResult.exitCode === 0) {
-				result.result = subResult.output.slice(0, 2000) || "(completed)";
-				// ponytail: extract modified files from patchPath if available, else from output
-				result.modifiedFiles = subResult.patchPath
-					? ["(patch available)"]
-					: extractModifiedFiles(subResult.output);
-				result.recentToolCalls = extractRecentToolCalls(subResult.output, 5);
-
-				if (this.config.enableReview) {
-					result.status = "reviewing";
-						this.events.emit("subtask_reviewing", { taskId: task.id, subtaskId: result.id });
-					try {
-						const review = await this.reviewSubtask(def, result.result, ctx, task.id);
-						result.review = review;
-						if (review.approved) {
-							result.status = "completed";
-						} else {
-							result.status = "failed";
-							result.error = `Review rejected: ${review.issues.join("; ")}`;
-						}
-					} catch (err) {
-						this.pi.logger.warn(`Subtask review failed for ${def.id}, marking completed: ${err}`);
-						result.status = "completed";
-					}
-				} else {
-					result.status = "completed";
+			while (Date.now() - startTime < timeoutMs) {
+				// Check cancel
+				if (abortCtrl?.signal.aborted || task.controlState === "cancelled") {
+					result.status = "cancelled";
+					result.completedAt = Date.now();
+					return result;
 				}
-			} else {
-				result.status = "failed";
-				result.error = (subResult.stderr ?? "").slice(0, 500) || "unknown error";
-				result.stderrTail = (subResult.stderr ?? "").slice(-500) || undefined;
+
+				// Poll gRPC for task state
+				const remoteTask = await this.bridge.getTask(task.id);
+				if (remoteTask) {
+					const remoteSubtask = remoteTask.subtasks.find(st => st.id === def.id);
+					if (remoteSubtask) {
+						const status = remoteSubtask.status.toLowerCase();
+						if (status === "completed") {
+							result.status = "completed";
+							result.result = remoteSubtask.result || "(completed remotely)";
+							result.completedAt = Date.now();
+							this.events.emit("subtask_end", { taskId: task.id, subtaskId: result.id, result: result.result });
+							return result;
+						} else if (status === "failed") {
+							result.status = "failed";
+							result.error = remoteSubtask.result || "Remote execution failed";
+							result.completedAt = Date.now();
+							this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error });
+							return result;
+						}
+						// Still running/pending/assigned — continue polling
+					}
+				}
+
+				// Wait before next poll
+				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
 			}
+
+			// Timeout
+			result.status = "failed";
+			result.error = `Remote subtask timed out after ${timeoutMs / 1000}s`;
+			result.completedAt = Date.now();
+			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error });
+			return result;
 		} catch (err) {
 			if ((err as Error).name === "AbortError") {
 				result.status = "cancelled";
@@ -1131,18 +1129,9 @@ export class UCOrchestrator {
 				result.status = "failed";
 				result.error = err instanceof Error ? err.message : String(err);
 			}
+			result.completedAt = Date.now();
+			return result;
 		}
-
-		result.completedAt = Date.now();
-		// Emit subtask-level events for real-time UI updates
-		if (result.status === "completed") {
-			this.events.emit("subtask_end", { taskId: task.id, subtaskId: result.id, result: result.result });
-		} else if (result.status === "failed") {
-			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error, retryCount: result.retryCount });
-		} else if (result.status === "cancelled") {
-			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: "cancelled" });
-		}
-		return result;
 	}
 
 	// ── Supervisor Review ──────────────────────────────────────────

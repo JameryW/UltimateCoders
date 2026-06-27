@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/grpc-nats-subtask-execute-protocol.md", "reason": "NATS subtask dispatch protocol, subject names, payload structure"}
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/omp-grpc-bridge-remote-dispatch.md", "reason": "Existing GrpcBridge RPCs, gap analysis, upsertTask does not trigger dispatch"}
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/python-nats-worker.md", "reason": "Python NatsWorker lifecycle, heartbeat, subtask execution"}
+{"file": ".trellis/tasks/06-27-omp-orchestrator-dispatch-subtasks-to-distributed-cluster-via-grpc-nats/research/grpc-taskservice-distributed-path.md", "reason": "How gRPC server dispatches subtasks via NATS update path"}
