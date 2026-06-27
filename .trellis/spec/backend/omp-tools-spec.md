@@ -238,12 +238,27 @@ connection error → isConnectionError() → tryReconnect() → reconnect() → 
 
 ### Connection state change notification
 
-`BridgeConfig.onConnectionChange?: (connected: boolean) => void` — optional callback fired on connection state transitions. Orchestrator wires this to `events.emit("connection_state", { connected })`. Extension.ts handles the event to update footer status:
+`BridgeConfig.onConnectionChange?: (connected: boolean) => void` — optional callback fired on connection state transitions. Orchestrator wires this to:
+1. `events.emit("connection_state", { connected })` — for UI updates
+2. **Bulk resync on reconnect**: when `connected` transitions `false → true`, calls `resyncAllTasksToGrpc()` to push all local tasks to the (now-empty) server TaskStore. Fire-and-forget with failure logging.
 
+Extension.ts handles the `connection_state` event to update footer status:
 - `connected=true` → "UC: connected"
 - `connected=false` → "UC: disconnected"
 
 The callback can be set post-construction via `bridge.setOnConnectionChange(cb)` — needed when the bridge is created externally (e.g., in extension.ts).
+
+### Worker availability in degraded mode
+
+When `bridge.listWorkers()` returns `{ available: false }` AND `!bridge.isConnected()`, the orchestrator assumes local workers are available (degraded mode) and returns `true`. This prevents false task failures during gRPC outages — actual subtask execution uses local `runSubprocess` which doesn't need gRPC workers.
+
+### Subprocess abort propagation
+
+Decompose and review subprocesses use `abortWithTimeout(signal, timeoutMs)` instead of `AbortSignal.timeout()` alone. This combines the task's `AbortController.signal` with a timeout — whichever fires first aborts the subprocess. When a task is cancelled, its decompose/review subprocesses are immediately aborted instead of running until timeout.
+
+### uc_task tool local fallback
+
+When `uc_task submit` fails with `server_unavailable` and the orchestrator is available, it falls back to `orchestrator.submitTask()` which works fully offline (local decomposition + execution). This ensures task submission works even when gRPC is down.
 
 ### ControlSignalSubscriber architecture
 
