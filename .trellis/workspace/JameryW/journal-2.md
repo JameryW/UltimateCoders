@@ -358,3 +358,36 @@ Deep analysis of OMP session interruption causes across 6 layers (OMP framework,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 66: Add DispatchMode to Subtask for forced-remote dispatch routing
+
+**Date**: 2026-06-27
+**Task**: Add DispatchMode to Subtask for forced-remote dispatch routing
+**Branch**: `main`
+
+### Summary
+
+Added DispatchMode enum (Local/Remote/PreferRemote) to Subtask across Rust/Python/TypeScript. Remote mode retries NATS dispatch 3 times then marks Failed. PreferRemote is default (backward compat). Updated publish_ready_subtasks and dispatch_ready_subtasks with routing logic. Updated NATS bridge spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `58a83a7f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

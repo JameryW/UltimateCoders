@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 65
+- **Total Sessions**: 66
 - **Last Active**: 2026-06-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~360 | Active |
+| `journal-2.md` | ~393 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 66 | 2026-06-27 | Add DispatchMode to Subtask for forced-remote dispatch routing | `58a83a7f` | `main` |
 | 65 | 2026-06-27 | OMP session resilience: 18 fixes across 6 layers + v0.2.0 release | `84c7f171`, `846bd7f1`, `9c96ef94`, `52494bcb`, `f2b24916`, `5fc79042` | `main` |
 | 64 | 2026-06-27 | Fix OMP task interruption + remove local_worker + resolve PR 171 conflicts | `5def4047`, `a4d25eee`, `1f969098` | `fix/grpc-bridge-grpc-web-protocol` |
 | 63 | 2026-06-26 | Default gRPC + run-cluster.sh + MinimalOrchestrator + README | `7291cb1e`, `a531fcf0`, `47f2addc`, `05ccb566`, `963eba45` | `main` |
