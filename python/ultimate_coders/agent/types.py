@@ -37,6 +37,13 @@ class ChangeType(Enum):
     DELETED = "deleted"
 
 
+class DispatchMode(Enum):
+    """How a subtask should be dispatched to workers."""
+    LOCAL = "local"            # Execute locally (reserved, currently no-op)
+    REMOTE = "remote"          # Must execute on remote worker, fail after 3 retries
+    PREFER_REMOTE = "prefer_remote"  # Prefer remote, fallback to Pending (default)
+
+
 @dataclass
 class FileChange:
     """A file change produced by a worker."""
@@ -86,6 +93,9 @@ class Subtask:
     result: SubtaskResult | None = None
     retry_count: int = 0
     timeout_seconds: int = 0  # 0 = use default
+    dispatch_mode: DispatchMode = DispatchMode.PREFER_REMOTE
+    dispatch_retry_count: int = 0
+    required_capabilities: list[str] = field(default_factory=list)
 
     @property
     def is_ready(self) -> bool:
@@ -141,6 +151,8 @@ class Task:
                     "expected_output": st.expected_output,
                     "retry_count": st.retry_count,
                     "timeout_seconds": st.timeout_seconds,
+                    "dispatch_mode": st.dispatch_mode.value,
+                    "dispatch_retry_count": st.dispatch_retry_count,
                     "result": {
                         "subtask_id": st.result.subtask_id,
                         "worker_id": st.result.worker_id,
@@ -200,6 +212,8 @@ class Task:
                 expected_output=sd.get("expected_output", ""),
                 retry_count=sd.get("retry_count", 0),
                 timeout_seconds=sd.get("timeout_seconds", 0),
+                dispatch_mode=DispatchMode(sd["dispatch_mode"]) if "dispatch_mode" in sd else DispatchMode.PREFER_REMOTE,
+                dispatch_retry_count=sd.get("dispatch_retry_count", 0),
             )
             rd = sd.get("result")
             if rd is not None:

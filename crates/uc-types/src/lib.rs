@@ -13,7 +13,7 @@ pub mod search;
 
 // Re-exports for convenience
 pub use agent::{
-    AgentEvent, AgentEventPayload, ChangeType, FileChange, Subtask, SubtaskResult, SubtaskStatus,
+    AgentEvent, AgentEventPayload, ChangeType, DispatchMode, FileChange, Subtask, SubtaskResult, SubtaskStatus,
     Task, TaskId, TaskStatus, WorkerId, WorkerInfo,
 };
 pub use async_trait::async_trait;

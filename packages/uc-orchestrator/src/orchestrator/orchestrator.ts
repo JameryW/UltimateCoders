@@ -99,6 +99,8 @@ export interface SubtaskResult {
 	stderrTail?: string;
 	/** How many retries this subtask has used (for checkpoint). */
 	retryCount?: number;
+	/** Dispatch mode: "local" | "remote" | "prefer_remote" */
+	dispatchMode?: string;
 }
 
 interface ReviewResult {

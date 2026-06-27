@@ -358,3 +358,70 @@ Deep analysis of OMP session interruption causes across 6 layers (OMP framework,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 66: Add DispatchMode to Subtask for forced-remote dispatch routing
+
+**Date**: 2026-06-27
+**Task**: Add DispatchMode to Subtask for forced-remote dispatch routing
+**Branch**: `main`
+
+### Summary
+
+Added DispatchMode enum (Local/Remote/PreferRemote) to Subtask across Rust/Python/TypeScript. Remote mode retries NATS dispatch 3 times then marks Failed. PreferRemote is default (backward compat). Updated publish_ready_subtasks and dispatch_ready_subtasks with routing logic. Updated NATS bridge spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `58a83a7f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 67: Add worker capability matching + OMP UI dispatch_mode display
+
+**Date**: 2026-06-28
+**Task**: Add worker capability matching + OMP UI dispatch_mode display
+**Branch**: `main`
+
+### Summary
+
+Two features: (1) OMP SubtaskTreeOverlay shows dispatch_mode in expanded details (hidden for default prefer_remote). (2) Subtask.required_capabilities for worker capability matching — workers check ALL caps match before accepting, NACK on mismatch. select_next_subtask supports optional capability filtering. Three-layer type sync (Rust/Python/TypeScript).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bd73f1a3` | (see git log) |
+| `85c9ef57` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
