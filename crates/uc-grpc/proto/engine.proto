@@ -328,6 +328,9 @@ message SubtaskProto {
     optional string dispatch_mode = 10;
     // How many times dispatch has been retried (for Remote mode)
     optional uint32 dispatch_retry_count = 11;
+    // Capabilities required by this subtask (e.g., "rust", "python", "docker").
+    // Worker must possess ALL listed capabilities. Empty = any worker.
+    repeated string required_capabilities = 12;
 }
 
 // ── Batch Memory ────────────────────────────────────────

@@ -206,15 +206,29 @@ class Orchestrator:
         """Get current task state."""
         return self.tasks.get(task_id)
 
-    def select_next_subtask(self, task: Task) -> Subtask | None:
-        """Select the next ready (pending, deps met) subtask."""
+    def select_next_subtask(
+        self,
+        task: Task,
+        worker_capabilities: list[str] | None = None,
+    ) -> Subtask | None:
+        """Select the next ready (pending, deps met) subtask.
+
+        If worker_capabilities is provided, only return subtasks whose
+        required_capabilities are a subset of worker_capabilities (ALL match).
+        """
         completed_ids = {st.id for st in task.subtasks if st.status == SubtaskStatus.COMPLETED}
+        worker_caps = set(worker_capabilities) if worker_capabilities else None
         for st in task.subtasks:
             if st.status != SubtaskStatus.PENDING:
                 continue
             # Check dependencies
-            if all(dep in completed_ids for dep in st.depends_on):
-                return st
+            if not all(dep in completed_ids for dep in st.depends_on):
+                continue
+            # Check capabilities
+            if worker_caps is not None and st.required_capabilities:
+                if not set(st.required_capabilities).issubset(worker_caps):
+                    continue
+            return st
         return None
 
     # ── Task control ───────────────────────────────────────────

@@ -139,6 +139,10 @@ pub struct NatsSubtaskExecute {
     /// Dispatch mode — controls routing behavior.
     #[serde(default)]
     pub dispatch_mode: uc_types::DispatchMode,
+    /// Capabilities required by this subtask (e.g., "rust", "python", "docker").
+    /// Worker must possess ALL listed capabilities to accept this subtask.
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -363,6 +367,7 @@ impl TaskStore {
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
             dispatch_retry_count: 0,
+            required_capabilities: Vec::new(),
         };
 
         let task = uc_types::Task {
@@ -807,6 +812,7 @@ impl TaskStore {
                         }),
                     dispatch_mode: uc_types::DispatchMode::default(),
                     dispatch_retry_count: 0,
+                    required_capabilities: Vec::new(),
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -1427,6 +1433,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     timeout_seconds: 600,
                     retry_count: st.dispatch_retry_count,
                     dispatch_mode: st.dispatch_mode.clone(),
+                    required_capabilities: st.required_capabilities.clone(),
                 };
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
@@ -1807,6 +1814,7 @@ async fn dispatch_ready_subtasks(
             timeout_seconds: 600,
             retry_count: st.dispatch_retry_count,
             dispatch_mode: st.dispatch_mode.clone(),
+            required_capabilities: st.required_capabilities.clone(),
         };
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
@@ -2776,6 +2784,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
                     dispatch_mode: uc_types::DispatchMode::default(),
                     dispatch_retry_count: 0,
+                    required_capabilities: Vec::new(),
                 }
             })
             .collect();
@@ -3442,6 +3451,7 @@ mod tests {
                 result: None,
                 dispatch_mode: uc_types::DispatchMode::default(),
                 dispatch_retry_count: 0,
+                required_capabilities: Vec::new(),
             });
         }
         // Only the first subtask (no deps) should be ready
@@ -3472,6 +3482,7 @@ mod tests {
                 result: None,
                 dispatch_mode: uc_types::DispatchMode::default(),
                 dispatch_retry_count: 0,
+                required_capabilities: Vec::new(),
             });
         }
         // Complete the first subtask

@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"path": ".trellis/tasks/06-27-worker-capability-matching-for-subtask-routing/prd.md", "role": "prd", "reason": "Acceptance criteria for verification"}
+{"path": "crates/uc-types/src/agent.rs", "role": "spec", "reason": "Verify Subtask has required_capabilities field with serde(default)"}
+{"path": "crates/uc-grpc/src/server.rs", "role": "spec", "reason": "Verify NatsSubtaskExecute has required_capabilities and publish_ready_subtasks passes it through"}
+{"path": "python/ultimate_coders/agent/types.py", "role": "spec", "reason": "Verify Python Subtask has required_capabilities with default_factory"}
+{"path": "python/ultimate_coders/nats_worker.py", "role": "spec", "reason": "Verify _handle_subtask_execute checks ALL capabilities match and NACKs on mismatch"}
+{"path": "python/ultimate_coders/agent/orchestrator.py", "role": "spec", "reason": "Verify select_next_subtask filters by capability"}
+{"path": "packages/uc-orchestrator/src/orchestrator/scheduler.ts", "role": "spec", "reason": "Verify SubtaskDef has requiredCapabilities"}

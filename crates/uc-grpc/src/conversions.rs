@@ -803,6 +803,7 @@ impl From<Subtask> for SubtaskProto {
                 uc_types::DispatchMode::PreferRemote => "PreferRemote".to_string(),
             }),
             dispatch_retry_count: Some(st.dispatch_retry_count),
+            required_capabilities: st.required_capabilities,
         }
     }
 }
@@ -1118,6 +1119,7 @@ impl From<SubtaskProto> for Subtask {
                 },
             ),
             dispatch_retry_count: proto.dispatch_retry_count.unwrap_or(0),
+            required_capabilities: proto.required_capabilities,
         }
     }
 }
@@ -1489,6 +1491,7 @@ mod tests {
                 result: None,
                 dispatch_mode: None,
                 dispatch_retry_count: None,
+                required_capabilities: vec![],
             }],
         };
         let task: Task = proto.into();

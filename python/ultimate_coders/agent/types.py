@@ -95,6 +95,7 @@ class Subtask:
     timeout_seconds: int = 0  # 0 = use default
     dispatch_mode: DispatchMode = DispatchMode.PREFER_REMOTE
     dispatch_retry_count: int = 0
+    required_capabilities: list[str] = field(default_factory=list)
 
     @property
     def is_ready(self) -> bool:

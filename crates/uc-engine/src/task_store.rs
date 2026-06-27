@@ -573,6 +573,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
             dispatch_retry_count: 0,
+            required_capabilities: Vec::new(),
         }];
     }
 
@@ -613,6 +614,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
             dispatch_retry_count: 0,
+            required_capabilities: Vec::new(),
         });
 
         prev_id = Some(st_id);

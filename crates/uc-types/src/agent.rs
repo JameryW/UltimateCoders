@@ -95,6 +95,11 @@ pub struct Subtask {
     /// How many times dispatch has been retried (for Remote mode).
     #[serde(default)]
     pub dispatch_retry_count: u32,
+    /// Capabilities required by this subtask (e.g., "rust", "python", "docker").
+    /// Worker must possess ALL listed capabilities to accept this subtask.
+    /// Empty list means any worker can accept (backward compatible).
+    #[serde(default)]
+    pub required_capabilities: Vec<String>,
 }
 
 /// Status of a subtask.

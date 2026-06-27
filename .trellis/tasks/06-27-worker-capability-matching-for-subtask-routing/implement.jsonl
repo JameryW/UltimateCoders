@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"path": ".trellis/tasks/06-27-worker-capability-matching-for-subtask-routing/prd.md", "role": "prd", "reason": "Full requirements, acceptance criteria, and technical notes for worker capability matching"}
+{"path": "crates/uc-types/src/agent.rs", "role": "spec", "reason": "Subtask struct — need to add required_capabilities field"}
+{"path": "crates/uc-grpc/src/server.rs", "role": "spec", "reason": "NatsSubtaskExecute — need to add required_capabilities field and transparent pass-through"}
+{"path": "python/ultimate_coders/agent/types.py", "role": "spec", "reason": "Python Subtask — need to add required_capabilities field"}
+{"path": "python/ultimate_coders/nats_worker.py", "role": "spec", "reason": "Worker _handle_subtask_execute — need capability check + NACK logic"}
+{"path": "python/ultimate_coders/agent/orchestrator.py", "role": "spec", "reason": "select_next_subtask — need capability filtering"}
+{"path": "packages/uc-orchestrator/src/orchestrator/scheduler.ts", "role": "spec", "reason": "SubtaskDef — need to add requiredCapabilities field"}
