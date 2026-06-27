@@ -24,6 +24,18 @@ import type { OrchestratorEvents } from "./events";
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
+function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	if (!signal || signal.aborted) return AbortSignal.timeout(timeoutMs);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	signal.addEventListener("abort", () => {
+		clearTimeout(timeout);
+		controller.abort();
+	}, { once: true });
+	return controller.signal;
+}
+
 type ControlState = "running" | "paused" | "cancelled";
 
 // ponytail: heuristic extractors — parse agent output for checkpoint fields
@@ -116,6 +128,7 @@ export class UCOrchestrator {
 	private bridge: GrpcBridge;
 	private store: TaskStore;
 	private runningCount = 0;
+	private wasConnected = false;
 	private circuitBreaker = new CircuitBreaker();
 	private controlSubscriber: ControlSignalSubscriber;
 	/** Internal event emitter — decouples orchestration from presentation */
@@ -136,6 +149,11 @@ export class UCOrchestrator {
 		// Wire connection state events — works for both external and default bridge
 		this.bridge.setOnConnectionChange((connected: boolean) => {
 			this.events.emit("connection_state", { connected });
+			// On reconnect, bulk resync local tasks to the (now-empty) server
+			if (connected && !this.wasConnected) {
+				this.resyncAllTasksToGrpc();
+			}
+			this.wasConnected = connected;
 		});
 		// ponytail: workspaceRoot may not exist on Settings — fallback to cwd
 		const settings = pi.pi.settings as unknown as Record<string, unknown>;
@@ -198,7 +216,7 @@ export class UCOrchestrator {
 		// ── Step 1: Decompose ──
 		let subtaskDefs: SubtaskDef[];
 		try {
-			subtaskDefs = await this.decompose(description, execCtx);
+			subtaskDefs = await this.decompose(description, execCtx, this.abortControllers.get(taskId)?.signal);
 		} catch (err) {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -269,7 +287,7 @@ export class UCOrchestrator {
 		// Step 1: Decompose
 		let subtaskDefs: SubtaskDef[];
 		try {
-			subtaskDefs = await this.decompose(task.description, execCtx);
+			subtaskDefs = await this.decompose(task.description, execCtx, this.abortControllers.get(taskId)?.signal);
 		} catch (err) {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -652,7 +670,7 @@ export class UCOrchestrator {
 			"\nOutput a JSON object with a 'subtasks' array, each having id, description, depends_on, and files.";
 
 		try {
-			const newDefs = await this.decompose(redecomposePrompt, ctx);
+			const newDefs = await this.decompose(redecomposePrompt, ctx, this.abortControllers.get(task.id)?.signal);
 
 			// Remove failed subtasks, add new ones
 			const completedIds = task.subtasks
@@ -870,6 +888,7 @@ export class UCOrchestrator {
 	private async decompose(
 		description: string,
 		ctx: ExtensionCommandContext,
+		abortSignal?: AbortSignal,
 	): Promise<SubtaskDef[]> {
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
@@ -905,7 +924,7 @@ export class UCOrchestrator {
 			task: description,
 			id: `decompose-${Date.now().toString(36)}`,
 			index: 0,
-			signal: AbortSignal.timeout(120_000),
+			signal: abortWithTimeout(abortSignal, 120_000),
 			modelRegistry: ctx.modelRegistry,
 			settings: this.pi.pi.settings,
 			enableLsp: false,
@@ -1085,7 +1104,7 @@ export class UCOrchestrator {
 					result.status = "reviewing";
 						this.events.emit("subtask_reviewing", { taskId: task.id, subtaskId: result.id });
 					try {
-						const review = await this.reviewSubtask(def, result.result, ctx);
+						const review = await this.reviewSubtask(def, result.result, ctx, task.id);
 						result.review = review;
 						if (review.approved) {
 							result.status = "completed";
@@ -1132,7 +1151,9 @@ export class UCOrchestrator {
 		def: SubtaskDef,
 		workerOutput: string,
 		ctx: ExtensionCommandContext,
+		taskId: string,
 	): Promise<ReviewResult> {
+		const abortCtrl = this.abortControllers.get(taskId);
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
 			agent: {
@@ -1157,7 +1178,7 @@ export class UCOrchestrator {
 			].join("\n"),
 			id: `review-${def.id}`,
 			index: 0,
-			signal: AbortSignal.timeout(this.config.reviewTimeoutMs),
+			signal: abortWithTimeout(abortCtrl?.signal, this.config.reviewTimeoutMs),
 			modelRegistry: ctx.modelRegistry,
 			settings: this.pi.pi.settings,
 			enableLsp: true,
@@ -1266,6 +1287,18 @@ export class UCOrchestrator {
 		this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
 			this.pi.logger.warn(`Failed to sync task to gRPC: ${err}`);
 		});
+	}
+
+	/** Bulk resync all local tasks to gRPC server after reconnect. Fire-and-forget. */
+	private resyncAllTasksToGrpc(): void {
+		const count = this.tasks.size;
+		if (count === 0) return;
+		this.pi.logger.info(`gRPC reconnected — resyncing ${count} local task(s) to server`);
+		for (const task of this.tasks.values()) {
+			this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
+				this.pi.logger.warn(`Resync failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+			});
+		}
 	}
 
 	// ── UI Helpers ─────────────────────────────────────────────────

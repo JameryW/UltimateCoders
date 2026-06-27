@@ -325,7 +325,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── LLM-callable tools ─────────────────────────────────────
 	registerMemoryTools(pi, bridge);
-	registerTaskTools(pi, bridge);
+	registerTaskTools(pi, bridge, orchestrator);
 	registerIndexTools(pi, bridge);
 	registerFileTools(pi, bridge);
 	registerWorkerTools(pi, bridge);

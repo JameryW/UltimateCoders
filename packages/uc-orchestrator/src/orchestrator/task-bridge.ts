@@ -7,11 +7,12 @@
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { GrpcBridge, type SubmitResult } from "./grpc-bridge";
+import type { UCOrchestrator } from "./orchestrator";
 
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct.
 
-export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
+export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestrator?: UCOrchestrator): void {
 	const taskSchema = pi.zod.object({
 		action: pi.zod.enum(["submit", "cancel", "pause", "resume", "status"]).describe("Task action"),
 		task_id: pi.zod.string().optional().describe("Task ID (required for cancel/pause/resume/status)"),
@@ -40,6 +41,17 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 						}
 						const result = await bridge.submitTask(p.description);
 						if (!result.ok) {
+							// Fall back to local orchestrator when gRPC is unavailable
+							if (result.error.kind === "server_unavailable" && orchestrator) {
+								pi.logger.info("uc_task submit: gRPC unavailable, falling back to local orchestrator");
+								const taskId = await orchestrator.submitTask(p.description);
+								return {
+									content: [{
+										type: "text" as const,
+										text: `Task submitted (local): ${taskId}\nStatus: planning\nSubtasks:\n  (pending decomposition)`,
+									}],
+								};
+							}
 							const errText = result.error.kind === "server_unavailable"
 								? `Submit failed — ${result.error.message}`
 								: result.error.kind === "worker_failed"
