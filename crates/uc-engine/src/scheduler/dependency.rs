@@ -93,6 +93,8 @@ mod tests {
             file_constraints: Vec::new(),
             expected_output: String::new(),
             result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
         }
     }
 

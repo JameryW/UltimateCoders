@@ -136,6 +136,9 @@ pub struct NatsSubtaskExecute {
     /// Retry count — incremented on each re-dispatch after worker failure.
     #[serde(default)]
     pub retry_count: u32,
+    /// Dispatch mode — controls routing behavior.
+    #[serde(default)]
+    pub dispatch_mode: uc_types::DispatchMode,
 }
 
 fn default_timeout() -> u64 {
@@ -358,6 +361,8 @@ impl TaskStore {
             file_constraints: Vec::new(),
             expected_output: String::new(),
             result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
         };
 
         let task = uc_types::Task {
@@ -800,6 +805,8 @@ impl TaskStore {
                             completed_at: chrono::Utc::now(),
                             result: Some(r.clone()),
                         }),
+                    dispatch_mode: uc_types::DispatchMode::default(),
+                    dispatch_retry_count: 0,
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -967,6 +974,23 @@ impl TaskStore {
                 task.updated_at = chrono::Utc::now();
             }
         }
+    }
+
+    /// Increment a subtask's dispatch_retry_count within a task.
+    /// Returns the new retry count, or None if task/subtask not found.
+    pub fn increment_dispatch_retry(
+        &mut self,
+        task_id: &str,
+        subtask_id: &str,
+    ) -> Option<u32> {
+        if let Some(task) = self.tasks.get_mut(task_id) {
+            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                st.dispatch_retry_count += 1;
+                task.updated_at = chrono::Utc::now();
+                return Some(st.dispatch_retry_count);
+            }
+        }
+        None
     }
 
     /// Update the status of a task by ID.
@@ -1376,6 +1400,15 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         if let Some(nats_client) = &self.inner.nats_client {
             for st in ready {
+                // Local mode: skip NATS publish entirely
+                if st.dispatch_mode == uc_types::DispatchMode::Local {
+                    tracing::info!(
+                        subtask_id = %st.id.0,
+                        "Subtask dispatch_mode=Local, skipping NATS publish"
+                    );
+                    continue;
+                }
+
                 let execute = NatsSubtaskExecute {
                     message_id: Some(format!(
                         "{}:execute:{}:{}",
@@ -1392,7 +1425,8 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     expected_output: String::new(),
                     file_constraints: Vec::new(),
                     timeout_seconds: 600,
-                    retry_count: 0,
+                    retry_count: st.dispatch_retry_count,
+                    dispatch_mode: st.dispatch_mode.clone(),
                 };
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
@@ -1403,15 +1437,41 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                             tracing::warn!(
                                 error = %e,
                                 subtask_id = %st.id.0,
+                                dispatch_mode = ?st.dispatch_mode,
                                 "Failed to publish subtask execute"
                             );
-                            // Revert to Pending on publish failure
                             let mut store = self.inner.task_store.lock().await;
-                            store.update_subtask_status(
-                                task_id,
-                                &st.id.0,
-                                uc_types::SubtaskStatus::Pending,
-                            );
+                            if st.dispatch_mode == uc_types::DispatchMode::Remote {
+                                // Remote mode: increment retry, fail after 3
+                                let new_retry = store
+                                    .increment_dispatch_retry(task_id, &st.id.0)
+                                    .unwrap_or(st.dispatch_retry_count + 1);
+                                if new_retry >= 3 {
+                                    tracing::error!(
+                                        subtask_id = %st.id.0,
+                                        retry_count = new_retry,
+                                        "Remote dispatch failed after 3 retries, marking Failed"
+                                    );
+                                    store.update_subtask_status(
+                                        task_id,
+                                        &st.id.0,
+                                        uc_types::SubtaskStatus::Failed,
+                                    );
+                                } else {
+                                    store.update_subtask_status(
+                                        task_id,
+                                        &st.id.0,
+                                        uc_types::SubtaskStatus::Pending,
+                                    );
+                                }
+                            } else {
+                                // PreferRemote: revert to Pending (existing behavior)
+                                store.update_subtask_status(
+                                    task_id,
+                                    &st.id.0,
+                                    uc_types::SubtaskStatus::Pending,
+                                );
+                            }
                         }
                     }
                     Err(e) => {
@@ -1720,6 +1780,15 @@ async fn dispatch_ready_subtasks(
     };
 
     for st in ready {
+        // Local mode: skip NATS publish entirely
+        if st.dispatch_mode == uc_types::DispatchMode::Local {
+            tracing::info!(
+                subtask_id = %st.id.0,
+                "Subtask dispatch_mode=Local, skipping NATS publish"
+            );
+            continue;
+        }
+
         let execute = NatsSubtaskExecute {
             message_id: Some(format!(
                 "{}:execute:{}:{}",
@@ -1736,7 +1805,8 @@ async fn dispatch_ready_subtasks(
             expected_output: String::new(),
             file_constraints: Vec::new(),
             timeout_seconds: 600,
-            retry_count: 0,
+            retry_count: st.dispatch_retry_count,
+            dispatch_mode: st.dispatch_mode.clone(),
         };
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
@@ -1747,14 +1817,41 @@ async fn dispatch_ready_subtasks(
                     tracing::warn!(
                         error = %e,
                         subtask_id = %st.id.0,
-                        "Failed to publish subtask execute, reverting to Pending"
+                        dispatch_mode = ?st.dispatch_mode,
+                        "Failed to publish subtask execute"
                     );
                     let mut store = task_store.lock().await;
-                    store.update_subtask_status(
-                        task_id,
-                        &st.id.0,
-                        uc_types::SubtaskStatus::Pending,
-                    );
+                    if st.dispatch_mode == uc_types::DispatchMode::Remote {
+                        // Remote mode: increment retry, fail after 3
+                        let new_retry = store
+                            .increment_dispatch_retry(task_id, &st.id.0)
+                            .unwrap_or(st.dispatch_retry_count + 1);
+                        if new_retry >= 3 {
+                            tracing::error!(
+                                subtask_id = %st.id.0,
+                                retry_count = new_retry,
+                                "Remote dispatch failed after 3 retries, marking Failed"
+                            );
+                            store.update_subtask_status(
+                                task_id,
+                                &st.id.0,
+                                uc_types::SubtaskStatus::Failed,
+                            );
+                        } else {
+                            store.update_subtask_status(
+                                task_id,
+                                &st.id.0,
+                                uc_types::SubtaskStatus::Pending,
+                            );
+                        }
+                    } else {
+                        // PreferRemote: revert to Pending (existing behavior)
+                        store.update_subtask_status(
+                            task_id,
+                            &st.id.0,
+                            uc_types::SubtaskStatus::Pending,
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -2677,6 +2774,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     file_constraints: Vec::new(),
                     expected_output: String::new(),
                     result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
+                    dispatch_mode: uc_types::DispatchMode::default(),
+                    dispatch_retry_count: 0,
                 }
             })
             .collect();
@@ -3341,6 +3440,8 @@ mod tests {
                 file_constraints: Vec::new(),
                 expected_output: String::new(),
                 result: None,
+                dispatch_mode: uc_types::DispatchMode::default(),
+                dispatch_retry_count: 0,
             });
         }
         // Only the first subtask (no deps) should be ready
@@ -3369,6 +3470,8 @@ mod tests {
                 file_constraints: Vec::new(),
                 expected_output: String::new(),
                 result: None,
+                dispatch_mode: uc_types::DispatchMode::default(),
+                dispatch_retry_count: 0,
             });
         }
         // Complete the first subtask

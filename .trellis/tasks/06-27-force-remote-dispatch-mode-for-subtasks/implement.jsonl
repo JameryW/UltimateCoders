@@ -1,0 +1,6 @@
+{"path": ".trellis/tasks/06-27-force-remote-dispatch-mode-for-subtasks/prd.md", "role": "prd", "reason": "Full requirements, acceptance criteria, and technical notes for dispatch_mode implementation"}
+{"path": "crates/uc-types/src/agent.rs", "role": "spec", "reason": "Subtask struct definition — need to add DispatchMode enum and dispatch_mode field"}
+{"path": "crates/uc-grpc/src/server.rs", "role": "spec", "reason": "NatsSubtaskExecute, publish_ready_subtasks, dispatch_ready_subtasks — core dispatch logic to modify"}
+{"path": "python/ultimate_coders/agent/types.py", "role": "spec", "reason": "Python Subtask dataclass — need to add dispatch_mode field"}
+{"path": "packages/uc-orchestrator/src/orchestrator/scheduler.ts", "role": "spec", "reason": "SubtaskDef interface — need to add dispatchMode field"}
+{"path": "crates/uc-types/src/error.rs", "role": "spec", "reason": "EngineError types — may need DispatchFailed variant"}

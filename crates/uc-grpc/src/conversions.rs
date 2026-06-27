@@ -797,6 +797,12 @@ impl From<Subtask> for SubtaskProto {
                     }
                 })
             }),
+            dispatch_mode: Some(match st.dispatch_mode {
+                uc_types::DispatchMode::Local => "Local".to_string(),
+                uc_types::DispatchMode::Remote => "Remote".to_string(),
+                uc_types::DispatchMode::PreferRemote => "PreferRemote".to_string(),
+            }),
+            dispatch_retry_count: Some(st.dispatch_retry_count),
         }
     }
 }
@@ -1103,6 +1109,15 @@ impl From<SubtaskProto> for Subtask {
                 completed_at: chrono::Utc::now(),
                 result: Some(r),
             }),
+            dispatch_mode: proto.dispatch_mode.as_deref().map_or_else(
+                uc_types::DispatchMode::default,
+                |s| match s {
+                    "Local" => uc_types::DispatchMode::Local,
+                    "Remote" => uc_types::DispatchMode::Remote,
+                    _ => uc_types::DispatchMode::PreferRemote,
+                },
+            ),
+            dispatch_retry_count: proto.dispatch_retry_count.unwrap_or(0),
         }
     }
 }
@@ -1472,6 +1487,8 @@ mod tests {
                 file_constraints: vec![],
                 expected_output: String::new(),
                 result: None,
+                dispatch_mode: None,
+                dispatch_retry_count: None,
             }],
         };
         let task: Task = proto.into();

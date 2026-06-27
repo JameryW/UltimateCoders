@@ -15,6 +15,8 @@ export interface SubtaskDef {
 	description: string;
 	dependsOn: string[];
 	files: string[];
+	/** How this subtask should be dispatched: "local" | "remote" | "prefer_remote" (default) */
+	dispatchMode?: string;
 }
 
 /** A wave is a group of subtasks that can execute in parallel. */

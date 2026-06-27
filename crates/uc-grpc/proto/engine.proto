@@ -324,6 +324,10 @@ message SubtaskProto {
     repeated string file_constraints = 7;
     string expected_output = 8;
     optional string result = 9;
+    // Dispatch mode: "Local" | "Remote" | "PreferRemote" (default)
+    optional string dispatch_mode = 10;
+    // How many times dispatch has been retried (for Remote mode)
+    optional uint32 dispatch_retry_count = 11;
 }
 
 // ── Batch Memory ────────────────────────────────────────

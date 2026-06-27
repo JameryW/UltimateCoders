@@ -59,6 +59,19 @@ pub enum TaskStatus {
     Paused,
 }
 
+/// Dispatch mode for a subtask — controls how it is routed to workers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum DispatchMode {
+    /// Execute locally (reserved for future use; currently no-op).
+    Local,
+    /// Must execute on a remote worker via NATS. Revert to Pending on
+    /// NATS failure with retry_count increment; mark Failed after 3 retries.
+    Remote,
+    /// Prefer remote dispatch; fall back to Pending on NATS failure (default).
+    #[default]
+    PreferRemote,
+}
+
 /// A subtask assigned to a worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subtask {
@@ -76,6 +89,12 @@ pub struct Subtask {
     pub expected_output: String,
     /// Result from the worker.
     pub result: Option<SubtaskResult>,
+    /// How this subtask should be dispatched (local / remote / prefer-remote).
+    #[serde(default)]
+    pub dispatch_mode: DispatchMode,
+    /// How many times dispatch has been retried (for Remote mode).
+    #[serde(default)]
+    pub dispatch_retry_count: u32,
 }
 
 /// Status of a subtask.

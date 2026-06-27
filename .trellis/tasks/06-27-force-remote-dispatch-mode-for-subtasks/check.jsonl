@@ -1,0 +1,5 @@
+{"path": ".trellis/tasks/06-27-force-remote-dispatch-mode-for-subtasks/prd.md", "role": "prd", "reason": "Acceptance criteria and requirements for verification"}
+{"path": "crates/uc-types/src/agent.rs", "role": "spec", "reason": "Verify DispatchMode enum exists with Default impl, Subtask has dispatch_mode field"}
+{"path": "crates/uc-grpc/src/server.rs", "role": "spec", "reason": "Verify NatsSubtaskExecute has dispatch_mode, publish_ready_subtasks and dispatch_ready_subtasks handle Remote mode retry logic"}
+{"path": "python/ultimate_coders/agent/types.py", "role": "spec", "reason": "Verify Python Subtask has dispatch_mode field with default PreferRemote"}
+{"path": "packages/uc-orchestrator/src/orchestrator/scheduler.ts", "role": "spec", "reason": "Verify SubtaskDef has dispatchMode field"}

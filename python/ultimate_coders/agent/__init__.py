@@ -48,6 +48,7 @@ from ultimate_coders.agent.scheduler_config import (
 )
 from ultimate_coders.agent.types import (
     ChangeType,
+    DispatchMode,
     FileChange,
     OrchestratorConfig,
     Subtask,
@@ -63,6 +64,7 @@ __all__ = [
     "Worker",
     "CodegraphClient",
     "ChangeType",
+    "DispatchMode",
     "FileChange",
     "OrchestratorConfig",
     "Subtask",
