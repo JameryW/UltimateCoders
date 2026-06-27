@@ -212,8 +212,13 @@ class Task:
                 expected_output=sd.get("expected_output", ""),
                 retry_count=sd.get("retry_count", 0),
                 timeout_seconds=sd.get("timeout_seconds", 0),
-                dispatch_mode=DispatchMode(sd["dispatch_mode"]) if "dispatch_mode" in sd else DispatchMode.PREFER_REMOTE,
+                dispatch_mode=(
+                    DispatchMode(sd["dispatch_mode"])
+                    if "dispatch_mode" in sd
+                    else DispatchMode.PREFER_REMOTE
+                ),
                 dispatch_retry_count=sd.get("dispatch_retry_count", 0),
+                required_capabilities=sd.get("required_capabilities", []),
             )
             rd = sd.get("result")
             if rd is not None:

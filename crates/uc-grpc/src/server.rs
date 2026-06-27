@@ -984,11 +984,7 @@ impl TaskStore {
 
     /// Increment a subtask's dispatch_retry_count within a task.
     /// Returns the new retry count, or None if task/subtask not found.
-    pub fn increment_dispatch_retry(
-        &mut self,
-        task_id: &str,
-        subtask_id: &str,
-    ) -> Option<u32> {
+    pub fn increment_dispatch_retry(&mut self, task_id: &str, subtask_id: &str) -> Option<u32> {
         if let Some(task) = self.tasks.get_mut(task_id) {
             if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
                 st.dispatch_retry_count += 1;
