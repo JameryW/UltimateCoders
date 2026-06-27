@@ -186,7 +186,94 @@ pi.registerTool({
 
 ---
 
-## 6. Common Mistakes
+## 6. GrpcBridge Reconnect & Session Lifecycle
+
+### Reconnect mechanism
+
+GrpcBridge detects stale transport and auto-reconnects:
+
+```
+connection error → isConnectionError() → tryReconnect() → reconnect() → retry once → fallback
+```
+
+**Key methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `reconnect()` | Recreates transport + all 3 service clients, sets `connected=false` |
+| `tryReconnect()` | Reentrant-guarded reconnect (max 1 attempt), validates via `health()`, sets `connected=true` on success |
+| `withReconnect<T>(fn, fallback)` | Wraps RPC call: try → catch connection error → reconnect+retry → return fallback |
+| `isConnectionError(err)` | Detects ECONNREFUSED, ECONNRESET, fetch failed, HTTP2 GoAway, transport errors |
+| `checkRestartMarker()` | Reads `/tmp/uc-grpc-restart-marker` (unix timestamp); triggers reconnect if timestamp increased |
+| `close()` | Sets `connected=false`, no transport teardown (connectrpc manages its own) |
+
+**Restart marker protocol:** `run-omp.sh` writes `date +%s` to `/tmp/uc-grpc-restart-marker` on gRPC server start and on health_monitor restart. `GrpcBridge.health()` calls `checkRestartMarker()` to detect server restarts.
+
+**Connection error patterns** (isConnectionError):
+- ECONNREFUSED, ECONNRESET, EPIPE, ETIMEDOUT, ENOTFOUND
+- "failed to fetch", "fetch failed", "network", "http2", "goaway", "stream reset", "transport", "connect-reset"
+
+### Session lifecycle
+
+**session_start** (extension.ts):
+1. `orchestrator.events.clear()` — remove stale handlers from previous session
+2. Register 12 event handlers (orchestrator events → UI updates)
+3. Set status "UC: ready"
+
+**session_shutdown** (extension.ts):
+1. `orchestrator.destroy()` — full cleanup:
+   - Stop `ControlSignalSubscriber` (NATS connection + polling timer)
+   - Abort all `AbortController`s for running tasks
+   - Clear `tasks` Map
+   - Reset `circuitBreaker`
+   - Call `bridge.close()` (marks disconnected)
+   - Clear event handlers
+2. `progressState.clear()` — remove all widget state
+
+**Task eviction** (`evictCompletedTasks(maxTasks=100)`):
+- Called after each wave completes
+- When tasks Map exceeds maxTasks, evicts oldest completed/failed/cancelled tasks
+- Sorts by `completedAt` timestamp (oldest first)
+- After in-memory eviction, calls `store.removeStale(remainingIds)` to clean up disk files
+
+### Connection state change notification
+
+`BridgeConfig.onConnectionChange?: (connected: boolean) => void` — optional callback fired on connection state transitions. Orchestrator wires this to:
+1. `events.emit("connection_state", { connected })` — for UI updates
+2. **Bulk resync on reconnect**: when `connected` transitions `false → true`, calls `resyncAllTasksToGrpc()` to push all local tasks to the (now-empty) server TaskStore. Fire-and-forget with failure logging.
+
+Extension.ts handles the `connection_state` event to update footer status:
+- `connected=true` → "UC: connected"
+- `connected=false` → "UC: disconnected"
+
+The callback can be set post-construction via `bridge.setOnConnectionChange(cb)` — needed when the bridge is created externally (e.g., in extension.ts).
+
+### Worker availability in degraded mode
+
+When `bridge.listWorkers()` returns `{ available: false }` AND `!bridge.isConnected()`, the orchestrator assumes local workers are available (degraded mode) and returns `true`. This prevents false task failures during gRPC outages — actual subtask execution uses local `runSubprocess` which doesn't need gRPC workers.
+
+### Subprocess abort propagation
+
+Decompose and review subprocesses use `abortWithTimeout(signal, timeoutMs)` instead of `AbortSignal.timeout()` alone. This combines the task's `AbortController.signal` with a timeout — whichever fires first aborts the subprocess. When a task is cancelled, its decompose/review subprocesses are immediately aborted instead of running until timeout.
+
+### uc_task tool local fallback
+
+When `uc_task submit` fails with `server_unavailable` and the orchestrator is available, it falls back to `orchestrator.submitTask()` which works fully offline (local decomposition + execution). This ensures task submission works even when gRPC is down.
+
+### ControlSignalSubscriber architecture
+
+- Shares the main `GrpcBridge` instance (no separate bridge for polling)
+- NATS-first with auto-reconnect: 3 attempts, exponential backoff (1s/2s/4s)
+- Falls back to polling via shared bridge if NATS unavailable after all retries
+- Polling interval: 2s (configurable via `pollIntervalMs`)
+
+### Heartbeat timeout
+
+gRPC server heartbeat timeout: **120s** (was 600s). Worker crash detected in 2 minutes instead of 10. Subtask execution timeout remains 600s (10 min).
+
+---
+
+## 7. Common Mistakes
 
 ### Adding bridge params but not forwarding to RPC payload
 **Symptom**: Schema accepts new parameters but they're silently dropped.
@@ -197,9 +284,21 @@ pi.registerTool({
 **Symptom**: `registerTaskTools(pi, bridge, orchestrator)` where `orchestrator` is never used.
 **Fix**: Only pass what's needed. If all operations go through bridge, don't pass orchestrator.
 
+### Forgetting to check restart marker on connection failure
+**Symptom**: GrpcBridge says `connected=true` but all calls fail after gRPC server restart.
+**Fix**: Always call `checkRestartMarker()` in `health()` — the restart marker is the signal that the server was restarted by `run-omp.sh` health_monitor.
+
+### Not calling events.clear() before session_start handler registration
+**Symptom**: Event handlers accumulate (12 new per session_start) — growing handler count, slower dispatch.
+**Fix**: Always call `orchestrator.events.clear()` at the start of the session_start handler, before registering new handlers.
+
+### Leaking timers/subscribers across sessions
+**Symptom**: ControlSignalSubscriber polling timer continues running after session ends, creating new GrpcBridge instances every 2s.
+**Fix**: `orchestrator.destroy()` calls `subscriber.stop()`. Always call destroy() in session_shutdown, never just events.clear().
+
 ---
 
-## 7. Out of Scope (Phase 3 — not implemented)
+## 8. Out of Scope (Phase 3 — not implemented)
 
 | Tool | Reason |
 |------|--------|

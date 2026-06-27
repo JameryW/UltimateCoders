@@ -80,8 +80,8 @@ export class OrchestratorEventEmitter {
 			for (const handler of set) {
 				try {
 					handler(payload);
-				} catch {
-					// Swallow — UI rendering errors must not crash orchestration
+				} catch (err) {
+					console.warn(`OrchestratorEventEmitter handler error for ${event}: ${err}`);
 				}
 			}
 		}

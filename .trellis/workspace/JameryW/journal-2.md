@@ -285,3 +285,38 @@ Archived 5 completed tasks: replace-tui-frontend-with-omp (#157), add-tui-intera
 ### Next Steps
 
 - None - task complete
+
+
+## Session 64: Fix OMP task interruption + remove local_worker + resolve PR 171 conflicts
+
+**Date**: 2026-06-27
+**Task**: Fix OMP task interruption + remove local_worker + resolve PR 171 conflicts
+**Branch**: `fix/grpc-bridge-grpc-web-protocol`
+
+### Summary
+
+1) Fix OMP task interruption: subtask timeout 5→10min (configurable), worker check retry, wave-level circuit breaker reset. 2) Remove local_worker entirely (LocalWorkerBridge + local_worker.py + tests, -3886 lines), enforce NATS/Docker-deployed workers only. 3) Resolve PR 171 merge conflicts (run-omp.sh). 4) Fix CI: clippy needless_update + cargo fmt.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5def4047` | (see git log) |
+| `a4d25eee` | (see git log) |
+| `1f969098` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

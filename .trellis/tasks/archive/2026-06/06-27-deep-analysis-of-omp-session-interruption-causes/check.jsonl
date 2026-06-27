@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/interruption-causes-catalog.md", "reason": "Master catalog with P0-P2 priorities to verify fixes against"}
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/uc-extension-interruption.md", "reason": "Primary fix targets: GrpcBridge reconnect, session_shutdown cleanup, event handler accumulation"}
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/resource-leaks-and-degradation.md", "reason": "Timer leaks, task map unbounded growth, progressState cleanup gaps"}

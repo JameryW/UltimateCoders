@@ -44,12 +44,35 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
             .await
         {
             Ok(json) => Ok(Response::new(json_to_list_workers_response(&json))),
-            Err(_) => Ok(Response::new(ListWorkersResponse {
-                available: false,
-                workers: vec![],
-                total: 0,
-                available_count: 0,
-            })),
+            Err(_) => {
+                // Fallback: construct response from local worker heartbeat state
+                let store = self.task_store().lock().await;
+                let now = chrono::Utc::now();
+                let mut workers: Vec<WorkerProto> = Vec::new();
+                for (id, ts) in store.worker_heartbeats() {
+                    let age = (now - *ts).num_seconds() as f64;
+                    workers.push(WorkerProto {
+                        id: id.clone(),
+                        capabilities: vec!["code".to_string()],
+                        current_load: 0,
+                        max_capacity: 3,
+                        load_percent: 0,
+                        last_heartbeat: ts.to_rfc3339(),
+                        heartbeat_age_seconds: age,
+                        heartbeat_stale: age > 60.0,
+                        is_available: age <= 60.0,
+                    });
+                }
+                drop(store);
+                let available_count = workers.iter().filter(|w| w.is_available).count() as u32;
+                let total = workers.len() as u32;
+                Ok(Response::new(ListWorkersResponse {
+                    available: true,
+                    workers,
+                    total,
+                    available_count,
+                }))
+            }
         }
     }
 

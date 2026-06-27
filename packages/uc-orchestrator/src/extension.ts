@@ -66,6 +66,9 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── Wire orchestrator events → UI updates ───────────────────
 	pi.on("session_start", async (_event, ctx) => {
+		// Clear stale handlers from a previous session that never got session_shutdown
+		orchestrator.events.clear();
+
 		statusRenderer = new FooterStatusRenderer(ctx.ui);
 		statusRenderer.setField("conn", "UC: ready");
 
@@ -74,6 +77,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			"task_paused", "task_resumed", "task_cancelled",
 			"wave_start", "wave_end",
 			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+			"connection_state",
 		];
 
 		for (const type of progressEvents) {
@@ -84,7 +88,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
-		orchestrator.events.clear();
+		await orchestrator.destroy();
+		progressState.clear();
 	});
 
 	// ── Event handler ───────────────────────────────────────────
@@ -148,6 +153,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "task_resumed":
 			case "task_cancelled": {
 				statusRenderer?.setField("active", `UC: ${type.replace("task_", "")}`);
+				break;
+			}
+			case "connection_state": {
+				const d = data as OrchestratorEvents["connection_state"];
+				statusRenderer?.setField("conn", d.connected ? "UC: connected" : "UC: disconnected");
 				break;
 			}
 		}
@@ -315,7 +325,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── LLM-callable tools ─────────────────────────────────────
 	registerMemoryTools(pi, bridge);
-	registerTaskTools(pi, bridge);
+	registerTaskTools(pi, bridge, orchestrator);
 	registerIndexTools(pi, bridge);
 	registerFileTools(pi, bridge);
 	registerWorkerTools(pi, bridge);

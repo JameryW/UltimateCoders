@@ -24,6 +24,18 @@ import type { OrchestratorEvents } from "./events";
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
+function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	if (!signal || signal.aborted) return AbortSignal.timeout(timeoutMs);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	signal.addEventListener("abort", () => {
+		clearTimeout(timeout);
+		controller.abort();
+	}, { once: true });
+	return controller.signal;
+}
+
 type ControlState = "running" | "paused" | "cancelled";
 
 // ponytail: heuristic extractors — parse agent output for checkpoint fields
@@ -101,6 +113,8 @@ interface OrchestratorConfig {
 	maxConcurrency: number;
 	maxRetries: number;
 	retryBaseDelayMs: number;
+	/** Per-subtask execution timeout (ms). Default: 600000 (10min). */
+	subtaskTimeoutMs: number;
 }
 
 // ── Orchestrator ───────────────────────────────────────────────────
@@ -114,6 +128,7 @@ export class UCOrchestrator {
 	private bridge: GrpcBridge;
 	private store: TaskStore;
 	private runningCount = 0;
+	private wasConnected = false;
 	private circuitBreaker = new CircuitBreaker();
 	private controlSubscriber: ControlSignalSubscriber;
 	/** Internal event emitter — decouples orchestration from presentation */
@@ -127,15 +142,25 @@ export class UCOrchestrator {
 			maxConcurrency: 3,
 			maxRetries: 2,
 			retryBaseDelayMs: 5_000,
+			subtaskTimeoutMs: 600_000,
 			...config,
 		};
 		this.bridge = bridge ?? new GrpcBridge();
+		// Wire connection state events — works for both external and default bridge
+		this.bridge.setOnConnectionChange((connected: boolean) => {
+			this.events.emit("connection_state", { connected });
+			// On reconnect, bulk resync local tasks to the (now-empty) server
+			if (connected && !this.wasConnected) {
+				this.resyncAllTasksToGrpc();
+			}
+			this.wasConnected = connected;
+		});
 		// ponytail: workspaceRoot may not exist on Settings — fallback to cwd
 		const settings = pi.pi.settings as unknown as Record<string, unknown>;
 		const ws = settings.workspaceRoot;
 		this.store = new TaskStore(typeof ws === "string" ? ws : process.cwd());
 		// ponytail: subscribe to NATS control events (pause/resume/cancel from TUI/Dashboard)
-		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler);
+		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler, this.bridge);
 	}
 
 	/** Restore recoverable tasks from disk. Call once at startup. */
@@ -191,7 +216,7 @@ export class UCOrchestrator {
 		// ── Step 1: Decompose ──
 		let subtaskDefs: SubtaskDef[];
 		try {
-			subtaskDefs = await this.decompose(description, execCtx);
+			subtaskDefs = await this.decompose(description, execCtx, this.abortControllers.get(taskId)?.signal);
 		} catch (err) {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -244,7 +269,7 @@ export class UCOrchestrator {
 		};
 		this.tasks.set(taskId, task);
 		this.abortControllers.set(taskId, new AbortController());
-		this.persist(task).catch(() => {});
+		this.persist(task).catch((err) => { this.pi.logger.warn(`Failed to persist task ${taskId}: ${err}`); });
 		return taskId;
 	}
 
@@ -262,7 +287,7 @@ export class UCOrchestrator {
 		// Step 1: Decompose
 		let subtaskDefs: SubtaskDef[];
 		try {
-			subtaskDefs = await this.decompose(task.description, execCtx);
+			subtaskDefs = await this.decompose(task.description, execCtx, this.abortControllers.get(taskId)?.signal);
 		} catch (err) {
 			task.status = "failed";
 			task.error = `Decomposition failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -300,14 +325,27 @@ export class UCOrchestrator {
 	/**
 	 * Check if any worker is available via gRPC bridge.
 	 * Returns true if at least one worker is available, false otherwise.
-	 * In degraded mode (Health RPC fallback), treats local_worker as available.
+	 * In degraded mode (gRPC disconnected), assumes local workers are available
+	 * since subtask execution uses local runSubprocess which doesn't need gRPC.
 	 */
 	private async checkWorkerAvailability(): Promise<boolean> {
 		try {
 			const result = await this.bridge.listWorkers();
-			if (!result.available) return false;
+			if (!result.available) {
+				// gRPC disconnected — assume local workers for degraded mode
+				if (!this.bridge.isConnected()) {
+					this.pi.logger.info("Worker check unavailable (gRPC disconnected) — assuming local workers for degraded mode");
+					return true;
+				}
+				return false;
+			}
 			return result.availableCount > 0;
 		} catch {
+			// gRPC call threw — assume degraded mode if disconnected
+			if (!this.bridge.isConnected()) {
+				this.pi.logger.info("Worker check failed (gRPC disconnected) — assuming local workers for degraded mode");
+				return true;
+			}
 			return false;
 		}
 	}
@@ -343,7 +381,12 @@ export class UCOrchestrator {
 				const wave = waves[waveIdx];
 
 				// Check worker availability before executing wave
-				const workersAvailable = await this.checkWorkerAvailability();
+				let workersAvailable = await this.checkWorkerAvailability();
+				if (!workersAvailable) {
+					// Retry once after 5s — gRPC may have reconnected
+					await new Promise((r) => setTimeout(r, 5000));
+					workersAvailable = await this.checkWorkerAvailability();
+				}
 				if (!workersAvailable) {
 					task.status = "failed";
 					task.error = "No workers available — all workers offline or overloaded";
@@ -376,6 +419,8 @@ export class UCOrchestrator {
 
 				// Auto-checkpoint after wave completes (dual storage)
 				await this.checkpoint(task);
+				// Reset circuit breaker between waves — avoid cascading failure
+				this.circuitBreaker.reset();
 
 				// Subtask results/reviews already written per-subtask in executeWave
 				// (moved to subtask-level for real-time Dashboard visibility)
@@ -446,7 +491,7 @@ export class UCOrchestrator {
 		this.bridge.writeMemory(
 			"task", `task_result_${task.id}`,
 			summary, "structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write task result to memory: ${err}`); });
 
 		this.pi.sendMessage(
 			{
@@ -461,6 +506,9 @@ export class UCOrchestrator {
 			},
 			{ triggerTurn: false },
 		);
+
+		// Evict old terminal tasks to prevent unbounded memory growth
+		this.evictCompletedTasks();
 	}
 
 	private async executeWave(
@@ -553,7 +601,7 @@ export class UCOrchestrator {
 					this.bridge.writeMemory(
 						"task", `subtask_result_${result.id}`,
 						result.result, "text", "uc-orchestrator", task.id,
-					).catch(() => {});
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
 				}
 				if (result.review) {
 					this.bridge.writeMemory(
@@ -564,7 +612,7 @@ export class UCOrchestrator {
 							suggestions: result.review.suggestions,
 						}),
 						"structured", "uc-orchestrator", task.id,
-					).catch(() => {});
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask review: ${err}`); });
 				}
 			}
 		};
@@ -622,7 +670,7 @@ export class UCOrchestrator {
 			"\nOutput a JSON object with a 'subtasks' array, each having id, description, depends_on, and files.";
 
 		try {
-			const newDefs = await this.decompose(redecomposePrompt, ctx);
+			const newDefs = await this.decompose(redecomposePrompt, ctx, this.abortControllers.get(task.id)?.signal);
 
 			// Remove failed subtasks, add new ones
 			const completedIds = task.subtasks
@@ -711,7 +759,7 @@ export class UCOrchestrator {
 		task.controlState = "paused";
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
-		this.bridge.pauseTask(taskId).catch(() => {});
+		this.bridge.pauseTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync pause to gRPC: ${err}`); });
 		ctx?.ui.notify(`Task ${taskId} pausing (will stop after current wave)`, "info");
 		return true;
 	}
@@ -726,7 +774,7 @@ export class UCOrchestrator {
 		task.error = undefined;
 		task.resumeFromWave = undefined;
 		this.abortControllers.set(taskId, new AbortController());
-		this.bridge.resumeTask(taskId).catch(() => {});
+		this.bridge.resumeTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync resume to gRPC: ${err}`); });
 		this.syncTaskToGrpc(task);
 
 		// Reset failed subtasks back to pending (skip completed ones)
@@ -840,6 +888,7 @@ export class UCOrchestrator {
 	private async decompose(
 		description: string,
 		ctx: ExtensionCommandContext,
+		abortSignal?: AbortSignal,
 	): Promise<SubtaskDef[]> {
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
@@ -875,7 +924,7 @@ export class UCOrchestrator {
 			task: description,
 			id: `decompose-${Date.now().toString(36)}`,
 			index: 0,
-			signal: AbortSignal.timeout(120_000),
+			signal: abortWithTimeout(abortSignal, 120_000),
 			modelRegistry: ctx.modelRegistry,
 			settings: this.pi.pi.settings,
 			enableLsp: false,
@@ -999,7 +1048,7 @@ export class UCOrchestrator {
 				stderr_tail: lastResult!.stderrTail,
 			}),
 			"structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write failure record: ${err}`); });
 
 		return lastResult!;
 	}
@@ -1037,7 +1086,7 @@ export class UCOrchestrator {
 				task: taskPrompt,
 				id: def.id,
 				index: 0,
-				signal: abortCtrl?.signal ?? AbortSignal.timeout(300_000),
+				signal: abortCtrl?.signal ?? AbortSignal.timeout(this.config.subtaskTimeoutMs),
 				modelRegistry: ctx.modelRegistry,
 				settings: this.pi.pi.settings,
 				enableLsp: true,
@@ -1055,7 +1104,7 @@ export class UCOrchestrator {
 					result.status = "reviewing";
 						this.events.emit("subtask_reviewing", { taskId: task.id, subtaskId: result.id });
 					try {
-						const review = await this.reviewSubtask(def, result.result, ctx);
+						const review = await this.reviewSubtask(def, result.result, ctx, task.id);
 						result.review = review;
 						if (review.approved) {
 							result.status = "completed";
@@ -1063,7 +1112,8 @@ export class UCOrchestrator {
 							result.status = "failed";
 							result.error = `Review rejected: ${review.issues.join("; ")}`;
 						}
-					} catch {
+					} catch (err) {
+						this.pi.logger.warn(`Subtask review failed for ${def.id}, marking completed: ${err}`);
 						result.status = "completed";
 					}
 				} else {
@@ -1101,7 +1151,9 @@ export class UCOrchestrator {
 		def: SubtaskDef,
 		workerOutput: string,
 		ctx: ExtensionCommandContext,
+		taskId: string,
 	): Promise<ReviewResult> {
+		const abortCtrl = this.abortControllers.get(taskId);
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
 			agent: {
@@ -1126,7 +1178,7 @@ export class UCOrchestrator {
 			].join("\n"),
 			id: `review-${def.id}`,
 			index: 0,
-			signal: AbortSignal.timeout(this.config.reviewTimeoutMs),
+			signal: abortWithTimeout(abortCtrl?.signal, this.config.reviewTimeoutMs),
 			modelRegistry: ctx.modelRegistry,
 			settings: this.pi.pi.settings,
 			enableLsp: true,
@@ -1164,7 +1216,7 @@ export class UCOrchestrator {
 			"task", `checkpoint_snap-${task.id}-${Date.now().toString(36)}`,
 			JSON.stringify({ ...snap, _v: 1 }),
 			"structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write checkpoint to memory: ${err}`); });
 	}
 
 	private toPersisted(task: TaskState): PersistedTask {
@@ -1232,9 +1284,21 @@ export class UCOrchestrator {
 	/** Sync task state to UC gRPC TaskStore. Fire-and-forget. */
 	private syncTaskToGrpc(task: TaskState): void {
 		// ponytail: fire-and-forget — don't await, don't block orchestrator
-		this.bridge.upsertTask(this.toPersisted(task)).catch(() => {
-			// gRPC sync is best-effort; failure is non-fatal
+		this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
+			this.pi.logger.warn(`Failed to sync task to gRPC: ${err}`);
 		});
+	}
+
+	/** Bulk resync all local tasks to gRPC server after reconnect. Fire-and-forget. */
+	private resyncAllTasksToGrpc(): void {
+		const count = this.tasks.size;
+		if (count === 0) return;
+		this.pi.logger.info(`gRPC reconnected — resyncing ${count} local task(s) to server`);
+		for (const task of this.tasks.values()) {
+			this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
+				this.pi.logger.warn(`Resync failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+			});
+		}
 	}
 
 	// ── UI Helpers ─────────────────────────────────────────────────
@@ -1279,6 +1343,56 @@ export class UCOrchestrator {
 		return [...this.tasks.values()]
 			.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed")
 			.map((t) => t.id);
+	}
+
+	// ── Cleanup ──────────────────────────────────────────────────
+
+	/**
+	 * Destroy the orchestrator — stop subscribers, cancel tasks, release resources.
+	 * Call on session_shutdown. After this the orchestrator is unusable.
+	 */
+	async destroy(): Promise<void> {
+		// Stop NATS/polling subscriber
+		await this.controlSubscriber.stop();
+		// Abort all running tasks
+		for (const ctrl of this.abortControllers.values()) {
+			ctrl.abort();
+		}
+		this.abortControllers.clear();
+		// Clear in-memory state
+		this.tasks.clear();
+		this.runningCount = 0;
+		this.circuitBreaker.reset();
+		// Close gRPC bridge
+		this.bridge.close();
+		// Clear event handlers
+		this.events.clear();
+	}
+
+	/**
+	 * Evict completed/failed/cancelled tasks when the map exceeds maxTasks.
+	 * Keeps the most recent terminal tasks up to maxTasks, evicts the rest.
+	 */
+	evictCompletedTasks(maxTasks = 100): void {
+		if (this.tasks.size <= maxTasks) return;
+		const terminalIds: Array<{ id: string; completedAt: number }> = [];
+		for (const [id, t] of this.tasks) {
+			if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
+				terminalIds.push({ id, completedAt: t.completedAt ?? 0 });
+			}
+		}
+		if (terminalIds.length === 0) return;
+		// Sort oldest first
+		terminalIds.sort((a, b) => a.completedAt - b.completedAt);
+		const excess = this.tasks.size - maxTasks;
+		const toEvict = Math.min(excess, terminalIds.length);
+		for (let i = 0; i < toEvict; i++) {
+			this.tasks.delete(terminalIds[i].id);
+			this.abortControllers.delete(terminalIds[i].id);
+		}
+		// Clean up disk files for evicted tasks
+		const remainingIds = new Set(this.tasks.keys());
+		this.store.removeStale(remainingIds).catch((err) => { this.pi.logger.warn(`Failed to clean stale task files: ${err}`); });
 	}
 
 	private buildSummary(task: TaskState): string {

@@ -202,25 +202,40 @@ impl PostgresTaskBackend {
                 subtasks JSONB NOT NULL DEFAULT '[]',
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS agent_events (
-                id BIGSERIAL PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                payload JSONB NOT NULL,
-                offset BIGINT NOT NULL,
-                subject TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
-            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-            CREATE INDEX IF NOT EXISTS idx_agent_events_task_id ON agent_events(task_id);
-            CREATE INDEX IF NOT EXISTS idx_agent_events_subject ON agent_events(subject);
+            )
             "#,
         )
         .execute(pool)
         .await
         .map_err(|e| EngineError::StorageError(format!("Task migration failed: {}", e)))?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id BIGSERIAL PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload JSONB NOT NULL,
+                "offset" BIGINT NOT NULL,
+                subject TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("Task migration failed: {}", e)))?;
+
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_events_task_id ON agent_events(task_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_events_subject ON agent_events(subject)",
+        ] {
+            sqlx::query(idx_sql).execute(pool).await.map_err(|e| {
+                EngineError::StorageError(format!("Task index creation failed: {}", e))
+            })?;
+        }
         Ok(())
     }
 
