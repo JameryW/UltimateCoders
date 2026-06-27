@@ -232,10 +232,9 @@ impl PostgresTaskBackend {
             "CREATE INDEX IF NOT EXISTS idx_agent_events_task_id ON agent_events(task_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_events_subject ON agent_events(subject)",
         ] {
-            sqlx::query(idx_sql)
-                .execute(pool)
-                .await
-                .map_err(|e| EngineError::StorageError(format!("Task index creation failed: {}", e)))?;
+            sqlx::query(idx_sql).execute(pool).await.map_err(|e| {
+                EngineError::StorageError(format!("Task index creation failed: {}", e))
+            })?;
         }
         Ok(())
     }

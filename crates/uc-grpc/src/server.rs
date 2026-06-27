@@ -2340,7 +2340,6 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             subtask_count: 0,
             subtasks: Vec::new(),
             error: Some("No NATS connection available. Connect NATS and start a Python worker to enable task submission.".to_string()),
-            ..Default::default()
         }))
     }
 
@@ -2680,8 +2679,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
     }
 }
 
-impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
-}
+impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}
 
 #[cfg(test)]
 mod tests {

@@ -39,9 +39,9 @@ pub use rate_limiter::{
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
-pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
 #[cfg(feature = "storage")]
 pub use task_store::PostgresTaskBackend;
+pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
 
 // Sandbox module re-exports
 pub use sandbox::agents::claude_code::ClaudeCodeAgent;

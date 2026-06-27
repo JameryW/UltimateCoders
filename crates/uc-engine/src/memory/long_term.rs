@@ -54,8 +54,7 @@ impl LongTermMemory {
     /// Create a new long-term memory store, connecting to Qdrant.
     #[cfg(feature = "storage")]
     pub async fn new(url: &str, api_key: Option<&str>) -> Result<Self, EngineError> {
-        let mut builder = qdrant_client::Qdrant::from_url(url)
-            .skip_compatibility_check();
+        let mut builder = qdrant_client::Qdrant::from_url(url).skip_compatibility_check();
         if let Some(key) = api_key {
             builder = builder.api_key(key);
         }
