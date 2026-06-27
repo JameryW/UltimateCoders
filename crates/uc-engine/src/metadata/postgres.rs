@@ -204,7 +204,7 @@ impl PostgresMetadataStore {
         // Create references table
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS references (
+            CREATE TABLE IF NOT EXISTS "references" (
                 id BIGSERIAL PRIMARY KEY,
                 repo_id TEXT NOT NULL,
                 file_path TEXT NOT NULL,
@@ -231,9 +231,9 @@ impl PostgresMetadataStore {
             "CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)",
             "CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)",
             "CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path)",
-            "CREATE INDEX IF NOT EXISTS idx_references_repo_id ON references(repo_id)",
-            "CREATE INDEX IF NOT EXISTS idx_references_target_name ON references(target_name)",
-            "CREATE INDEX IF NOT EXISTS idx_references_kind ON references(reference_kind)",
+            "CREATE INDEX IF NOT EXISTS idx_references_repo_id ON \"references\"(repo_id)",
+            "CREATE INDEX IF NOT EXISTS idx_references_target_name ON \"references\"(target_name)",
+            "CREATE INDEX IF NOT EXISTS idx_references_kind ON \"references\"(reference_kind)",
             "CREATE INDEX IF NOT EXISTS idx_index_state_repo_id ON index_state(repo_id)",
         ];
 
@@ -407,7 +407,7 @@ impl PostgresMetadataStore {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
             // Delete in order of foreign key dependencies
-            sqlx::query("DELETE FROM references WHERE repo_id = $1")
+            sqlx::query("DELETE FROM \"references\" WHERE repo_id = $1")
                 .bind(repo_id)
                 .execute(pool.as_ref())
                 .await
@@ -719,7 +719,7 @@ impl PostgresMetadataStore {
         if let Some(pool) = &self.pool {
             let rows = if let Some(rid) = repo_id {
                 sqlx::query_as::<_, (String, String, Option<i64>, String, String, i32, i32, String)>(
-                    "SELECT repo_id, file_path, source_symbol_id, target_name, reference_kind, start_line, start_col, language FROM references WHERE target_name = $1 AND repo_id = $2 LIMIT $3",
+                    "SELECT repo_id, file_path, source_symbol_id, target_name, reference_kind, start_line, start_col, language FROM \"references\" WHERE target_name = $1 AND repo_id = $2 LIMIT $3",
                 )
                 .bind(target_name)
                 .bind(rid)
@@ -728,7 +728,7 @@ impl PostgresMetadataStore {
                 .await
             } else {
                 sqlx::query_as::<_, (String, String, Option<i64>, String, String, i32, i32, String)>(
-                    "SELECT repo_id, file_path, source_symbol_id, target_name, reference_kind, start_line, start_col, language FROM references WHERE target_name = $1 LIMIT $2",
+                    "SELECT repo_id, file_path, source_symbol_id, target_name, reference_kind, start_line, start_col, language FROM \"references\" WHERE target_name = $1 LIMIT $2",
                 )
                 .bind(target_name)
                 .bind(limit as i64)
@@ -897,7 +897,7 @@ impl PostgresMetadataStore {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
             // Delete references first (they reference symbols)
-            sqlx::query("DELETE FROM references WHERE repo_id = $1 AND file_path = $2")
+            sqlx::query("DELETE FROM \"references\" WHERE repo_id = $1 AND file_path = $2")
                 .bind(repo_id)
                 .bind(file_path)
                 .execute(pool.as_ref())

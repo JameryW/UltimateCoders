@@ -9,7 +9,7 @@ name = "uc-grpc-server"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["storage"]
 storage = ["uc-engine/storage"]
 
 [dependencies]
