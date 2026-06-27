@@ -37,6 +37,7 @@ import {
 	type SubmitTaskResponse,
 } from "../grpc/engine_pb.js";
 import { create } from "@bufbuild/protobuf";
+import { readFileSync } from "node:fs";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -103,6 +104,10 @@ export class GrpcBridge {
 	private engineClient: ReturnType<typeof createClient<typeof EngineService>>;
 	private taskClient: ReturnType<typeof createClient<typeof TaskService>>;
 	private dashboardClient: ReturnType<typeof createClient<typeof DashboardService>>;
+	/** Monotonic counter bumped by run-omp.sh restart marker. */
+	private lastRestartMarker = 0;
+	/** Guard: only one reconnect attempt at a time. */
+	private reconnecting = false;
 
 	constructor(config?: Partial<BridgeConfig>) {
 		this.config = {
@@ -111,23 +116,131 @@ export class GrpcBridge {
 			...config,
 		};
 
-		// ponytail: single transport, shared across all service clients
-		this.transport = createGrpcWebTransport({
-			baseUrl: this.config.serverUrl,
-		});
+		this.transport = this.createTransport();
 		this.engineClient = createClient(EngineService, this.transport);
 		this.taskClient = createClient(TaskService, this.transport);
 		this.dashboardClient = createClient(DashboardService, this.transport);
 	}
 
+	// ── Transport lifecycle ────────────────────────────────────
+
+	private createTransport(): ReturnType<typeof createGrpcWebTransport> {
+		return createGrpcWebTransport({ baseUrl: this.config.serverUrl });
+	}
+
+	/** Recreate the transport and all service clients. */
+	reconnect(): void {
+		this.transport = this.createTransport();
+		this.engineClient = createClient(EngineService, this.transport);
+		this.taskClient = createClient(TaskService, this.transport);
+		this.dashboardClient = createClient(DashboardService, this.transport);
+		this.connected = false;
+	}
+
+	/** Close the bridge — stamp connected false so callers know it's dead. */
+	close(): void {
+		this.connected = false;
+	}
+
+	/** Check if an error looks like a broken connection. */
+	private isConnectionError(err: unknown): boolean {
+		if (!(err instanceof Error)) return false;
+		const msg = err.message.toLowerCase();
+		return (
+			msg.includes("econnrefused") ||
+			msg.includes("econnreset") ||
+			msg.includes("epipe") ||
+			msg.includes("enetunreach") ||
+			msg.includes("ehostunreach") ||
+			msg.includes("failed to fetch") ||
+			msg.includes("network error") ||
+			msg.includes("transport not connected") ||
+			msg.includes("transport closed") ||
+			msg.includes("goaway") ||
+			msg.includes("refused stream") ||
+			msg.includes("internal http2") ||
+			msg.includes("stream error") ||
+			msg.includes("connection reset")
+		);
+	}
+
+	/**
+	 * Attempt one reconnect on connection errors.
+	 * Returns true if reconnect was attempted (caller should retry the operation).
+	 */
+	private async tryReconnect(err: unknown): Promise<boolean> {
+		if (!this.isConnectionError(err)) return false;
+		if (this.reconnecting) return false;
+		this.reconnecting = true;
+		this.connected = false;
+		try {
+			this.reconnect();
+			// Verify the new transport works
+			const resp = await this.engineClient.health(create(HealthRequestSchema));
+			this.connected = true;
+			return true;
+		} catch {
+			return false;
+		} finally {
+			this.reconnecting = false;
+		}
+	}
+
+	/** Check the run-omp.sh restart marker and reconnect if the server restarted. */
+	async checkRestartMarker(): Promise<void> {
+		try {
+			const raw = readFileSync("/tmp/uc-grpc-restart-marker", "utf-8").trim();
+			const ts = parseInt(raw, 10);
+			if (!isNaN(ts) && ts > this.lastRestartMarker) {
+				this.lastRestartMarker = ts;
+				this.reconnect();
+			}
+		} catch {
+			// Marker file doesn't exist or unreadable — that's fine
+		}
+	}
+
+	/**
+	 * Run an RPC call with automatic reconnect-on-connection-error.
+	 * On connection error, tries one reconnect then retries once.
+	 * Falls back to `fallback` if both attempts fail (or error is not connection-related).
+	 */
+	private async withReconnect<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+		try {
+			return await fn();
+		} catch (err) {
+			this.connected = false;
+			if (await this.tryReconnect(err)) {
+				try {
+					return await fn();
+				} catch {
+					// Reconnect succeeded but call still failed
+				}
+			}
+			return fallback;
+		}
+	}
+
 	// ── Health Check ────────────────────────────────────────────
 
 	async health(): Promise<{ status: string; version: string }> {
+		await this.checkRestartMarker();
 		try {
 			const resp = await this.engineClient.health(create(HealthRequestSchema));
 			this.connected = true;
 			return { status: resp.status, version: resp.version };
-		} catch {
+		} catch (err) {
+			this.connected = false;
+			// Try one reconnect on connection errors
+			if (await this.tryReconnect(err)) {
+				try {
+					const resp = await this.engineClient.health(create(HealthRequestSchema));
+					this.connected = true;
+					return { status: resp.status, version: resp.version };
+				} catch {
+					// Reconnect succeeded but health still fails
+				}
+			}
 			return { status: "unavailable", version: "0.0.0" };
 		}
 	}
@@ -135,7 +248,7 @@ export class GrpcBridge {
 	// ── Task Operations ────────────────────────────────────────
 
 	async submitTask(description: string, projectId = ""): Promise<SubmitResult> {
-		try {
+		const doSubmit = async (): Promise<SubmitResult> => {
 			const resp = await this.taskClient.submitTask(
 				create(SubmitTaskRequestSchema, { description, projectId }),
 			);
@@ -147,13 +260,20 @@ export class GrpcBridge {
 				return { ok: false, error: { kind, message: errMsg } };
 			}
 			return { ok: true, task: this.parseTaskProto(resp) };
+		};
+		try {
+			return await doSubmit();
 		} catch (err) {
+			this.connected = false;
+			if (await this.tryReconnect(err)) {
+				try { return await doSubmit(); } catch { /* retry failed */ }
+			}
 			const msg = err instanceof Error ? err.message : String(err);
 			return {
 				ok: false,
 				error: {
 					kind: "server_unavailable",
-					message: msg.includes("fetch") || msg.includes("ECONNREFUSED") || msg.includes("Failed to fetch")
+					message: this.isConnectionError(err)
 						? "gRPC server unavailable — start with ./run-omp.sh"
 						: msg,
 				},
@@ -162,31 +282,27 @@ export class GrpcBridge {
 	}
 
 	async getTask(taskId: string): Promise<TaskSync | null> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.taskClient.getTask(
 				create(GetTaskRequestSchema, { taskId }),
 			);
 			if (!resp.available) return null;
 			return resp.task ? this.parseTaskFromProto(resp.task) : null;
-		} catch {
-			return null;
-		}
+		}, null);
 	}
 
 	async listTasks(): Promise<TaskSync[]> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.taskClient.listTasks(create(ListTasksRequestSchema));
 			if (!resp.available) return [];
 			return resp.tasks.map((t) => this.parseTaskFromProto(t));
-		} catch {
-			return [];
-		}
+		}, []);
 	}
 
 	// ── Upsert (create or update) ──────────────────────────────
 
 	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			const existing = await this.getTask(task.id);
 			if (existing) {
 				// ponytail: SubtaskProto requires parentId + expectedOutput (non-optional strings)
@@ -219,45 +335,37 @@ export class GrpcBridge {
 				}),
 			);
 			return resp.success;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	// ── Task Control ────────────────────────────────────────────
 
 	async pauseTask(taskId: string): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.taskClient.pauseTask(
 				create(PauseTaskRequestSchema, { taskId }),
 			);
 			return resp.success;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async resumeTask(taskId: string): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.taskClient.resumeTask(
 				create(ResumeTaskRequestSchema, { taskId }),
 			);
 			return resp.success;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async cancelTask(taskId: string, _subtaskId?: string): Promise<boolean> {
 		// ponytail: CancelTaskRequest has no subtaskId field — server ignores it
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.taskClient.cancelTask(
 				create(CancelTaskRequestSchema, { taskId }),
 			);
 			return resp.success;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	// ── Memory Operations ──────────────────────────────────────
@@ -268,14 +376,12 @@ export class GrpcBridge {
 		taskId = "",
 		projectId = "",
 	): Promise<string | null> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.readMemory(
 				create(ReadMemoryRequestSchema, { keyScope, key, taskId, projectId }),
 			);
 			return resp.entry?.content ?? null;
-		} catch {
-			return null;
-		}
+		}, null);
 	}
 
 	async writeMemory(
@@ -289,7 +395,7 @@ export class GrpcBridge {
 		importance?: number,
 		tags?: string[],
 	): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			await this.engineClient.writeMemory(
 				create(WriteMemoryRequestSchema, {
 					keyScope, key, content, contentType, sourceAgent, taskId, projectId,
@@ -298,9 +404,7 @@ export class GrpcBridge {
 				}),
 			);
 			return true;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async searchMemory(
@@ -309,7 +413,7 @@ export class GrpcBridge {
 		projectId = "",
 		maxResults = 5,
 	): Promise<Array<{ content: string; score: number }>> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.searchMemory(
 				create(SearchMemoryRequestSchema, { query, scopeType, projectId, maxResults }),
 			);
@@ -317,9 +421,7 @@ export class GrpcBridge {
 				content: r.entry?.content ?? "",
 				score: r.score,
 			}));
-		} catch {
-			return [];
-		}
+		}, []);
 	}
 
 	async deleteMemory(
@@ -328,22 +430,20 @@ export class GrpcBridge {
 		taskId = "",
 		projectId = "",
 	): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			// ponytail: DeleteMemoryResponse is empty — success = no error
 			await this.engineClient.deleteMemory(
 				create(DeleteMemoryRequestSchema, { keyScope, key, taskId, projectId }),
 			);
 			return true;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async batchWriteMemory(
 		entries: Array<{ keyScope: string; key: string; content: string; contentType?: string }>,
 		sourceAgent = "uc-orchestrator",
 	): Promise<number> {
-		try {
+		return this.withReconnect(async () => {
 			// ponytail: BatchWriteMemoryRequest.requests is WriteMemoryRequest[]
 			const resp = await this.engineClient.batchWriteMemory(
 				create(BatchWriteMemoryRequestSchema, {
@@ -361,9 +461,7 @@ export class GrpcBridge {
 				}),
 			);
 			return resp.entries.length;
-		} catch {
-			return 0;
-		}
+		}, 0);
 	}
 
 	// ── Search Operations ──────────────────────────────────────
@@ -376,7 +474,7 @@ export class GrpcBridge {
 		languages?: string[],
 		pathPatterns?: string[],
 	): Promise<Array<{ filePath: string; snippet: string; score: number }>> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.search(
 				create(SearchRequestSchema, {
 					query, modes, maxResults,
@@ -390,9 +488,7 @@ export class GrpcBridge {
 				snippet: item.contentSnippet,
 				score: item.score,
 			}));
-		} catch {
-			return [];
-		}
+		}, []);
 	}
 
 	// ── Index Operations ──────────────────────────────────────
@@ -402,19 +498,17 @@ export class GrpcBridge {
 		localPath: string,
 		_languages: string[] = [],
 	): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			// ponytail: IndexRepoRequest has no languages field; IndexRepoResponse has no success
 			await this.engineClient.indexRepo(
 				create(IndexRepoRequestSchema, { repoId, localPath }),
 			);
 			return true;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async getIndexState(repoId: string): Promise<{ status: string; indexedFiles: number; lastIndexed: string } | null> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.getIndexState(
 				create(GetIndexStateRequestSchema, { repoId }),
 			);
@@ -424,34 +518,28 @@ export class GrpcBridge {
 				indexedFiles: resp.filesCount,
 				lastIndexed: resp.lastIndexedSha ?? "",
 			};
-		} catch {
-			return null;
-		}
+		}, null);
 	}
 
 	async removeIndex(repoId: string): Promise<boolean> {
-		try {
+		return this.withReconnect(async () => {
 			// ponytail: RemoveIndexResponse is empty — success = no error
 			await this.engineClient.removeIndex(
 				create(RemoveIndexRequestSchema, { repoId }),
 			);
 			return true;
-		} catch {
-			return false;
-		}
+		}, false);
 	}
 
 	async listRepos(): Promise<Array<{ repoId: string; status: string; indexedFiles: number }>> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.listRepos(create(ListReposRequestSchema));
 			return resp.repos.map((r) => ({
 				repoId: r.repoId,
 				status: r.indexed ? "indexed" : "unknown",
 				indexedFiles: r.filesCount,
 			}));
-		} catch {
-			return [];
-		}
+		}, []);
 	}
 
 	// ── File Operations ───────────────────────────────────────
@@ -460,7 +548,7 @@ export class GrpcBridge {
 		path: string,
 		repoId?: string,
 	): Promise<Array<{ name: string; type: string; size: number }>> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.listDir(
 				create(ListDirRequestSchema, { path, repoId: repoId ?? "" }),
 			);
@@ -469,26 +557,22 @@ export class GrpcBridge {
 				type: e.entryType,
 				size: Number(e.size),
 			}));
-		} catch {
-			return [];
-		}
+		}, []);
 	}
 
 	async getFile(path: string, repoId?: string): Promise<string | null> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.engineClient.getFile(
 				create(GetFileRequestSchema, { path, repoId: repoId ?? "" }),
 			);
 			return resp.content ?? null;
-		} catch {
-			return null;
-		}
+		}, null);
 	}
 
 	// ── Worker Operations ──────────────────────────────────────
 
 	async listWorkers(): Promise<WorkerListResult> {
-		try {
+		return this.withReconnect(async () => {
 			const resp = await this.dashboardClient.listWorkers(
 				create(ListWorkersRequestSchema),
 			);
@@ -510,10 +594,7 @@ export class GrpcBridge {
 				total: resp.total,
 				availableCount: resp.availableCount,
 			};
-		} catch {
-			// No DashboardService available — return empty workers list
-			return { available: false, workers: [], total: 0, availableCount: 0 };
-		}
+		}, { available: false, workers: [], total: 0, availableCount: 0 });
 	}
 
 	// ── Connection ─────────────────────────────────────────────

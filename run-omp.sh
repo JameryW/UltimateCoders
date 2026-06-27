@@ -133,6 +133,8 @@ health_monitor() {
                 cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
             SERVER_PID=$!
             echo ">>> Restarted gRPC server (PID $SERVER_PID)"
+            # Write restart marker so UC Orchestrator can detect stale transport
+            date +%s > /tmp/uc-grpc-restart-marker
             # Wait for port to be ready
             for i in $(seq 1 20); do
                 if lsof -i :50051 >/dev/null 2>&1; then
@@ -169,6 +171,8 @@ if [ "$START_SERVER" = true ]; then
         SERVER_PID=$!
         echo "    Server PID: $SERVER_PID"
         echo "    Logs: $LOG_DIR/grpc-server.log"
+        # Write restart marker so UC Orchestrator can detect server start
+        date +%s > /tmp/uc-grpc-restart-marker
         for i in $(seq 1 20); do
             if lsof -i :50051 >/dev/null 2>&1; then
                 echo "    Server ready on :50051"

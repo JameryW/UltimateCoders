@@ -66,6 +66,9 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── Wire orchestrator events → UI updates ───────────────────
 	pi.on("session_start", async (_event, ctx) => {
+		// Clear stale handlers from a previous session that never got session_shutdown
+		orchestrator.events.clear();
+
 		statusRenderer = new FooterStatusRenderer(ctx.ui);
 		statusRenderer.setField("conn", "UC: ready");
 
@@ -84,7 +87,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
-		orchestrator.events.clear();
+		await orchestrator.destroy();
+		progressState.clear();
 	});
 
 	// ── Event handler ───────────────────────────────────────────

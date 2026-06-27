@@ -471,6 +471,9 @@ export class UCOrchestrator {
 			},
 			{ triggerTurn: false },
 		);
+
+		// Evict old terminal tasks to prevent unbounded memory growth
+		this.evictCompletedTasks();
 	}
 
 	private async executeWave(
@@ -1289,6 +1292,53 @@ export class UCOrchestrator {
 		return [...this.tasks.values()]
 			.filter((t) => t.status !== "completed" && t.status !== "cancelled" && t.status !== "failed")
 			.map((t) => t.id);
+	}
+
+	// ── Cleanup ──────────────────────────────────────────────────
+
+	/**
+	 * Destroy the orchestrator — stop subscribers, cancel tasks, release resources.
+	 * Call on session_shutdown. After this the orchestrator is unusable.
+	 */
+	async destroy(): Promise<void> {
+		// Stop NATS/polling subscriber
+		await this.controlSubscriber.stop();
+		// Abort all running tasks
+		for (const ctrl of this.abortControllers.values()) {
+			ctrl.abort();
+		}
+		this.abortControllers.clear();
+		// Clear in-memory state
+		this.tasks.clear();
+		this.runningCount = 0;
+		this.circuitBreaker.reset();
+		// Close gRPC bridge
+		this.bridge.close();
+		// Clear event handlers
+		this.events.clear();
+	}
+
+	/**
+	 * Evict completed/failed/cancelled tasks when the map exceeds maxTasks.
+	 * Keeps the most recent terminal tasks up to maxTasks, evicts the rest.
+	 */
+	evictCompletedTasks(maxTasks = 100): void {
+		if (this.tasks.size <= maxTasks) return;
+		const terminalIds: Array<{ id: string; completedAt: number }> = [];
+		for (const [id, t] of this.tasks) {
+			if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
+				terminalIds.push({ id, completedAt: t.completedAt ?? 0 });
+			}
+		}
+		if (terminalIds.length === 0) return;
+		// Sort oldest first
+		terminalIds.sort((a, b) => a.completedAt - b.completedAt);
+		const excess = this.tasks.size - maxTasks;
+		const toEvict = Math.min(excess, terminalIds.length);
+		for (let i = 0; i < toEvict; i++) {
+			this.tasks.delete(terminalIds[i].id);
+			this.abortControllers.delete(terminalIds[i].id);
+		}
 	}
 
 	private buildSummary(task: TaskState): string {
