@@ -187,7 +187,8 @@ export class GrpcBridge {
 			this.connected = true;
 			this.config.onConnectionChange?.(true);
 			return true;
-		} catch {
+		} catch (err) {
+			console.warn(`GrpcBridge reconnect verification failed: ${err instanceof Error ? err.message : err}`);
 			return false;
 		} finally {
 			this.reconnecting = false;
@@ -203,8 +204,11 @@ export class GrpcBridge {
 				this.lastRestartMarker = ts;
 				this.reconnect();
 			}
-		} catch {
-			// Marker file doesn't exist or unreadable — that's fine
+		} catch (err) {
+			// Marker file doesn't exist — that's expected; log only if it's not ENOENT
+			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+				console.warn(`GrpcBridge checkRestartMarker failed: ${err instanceof Error ? err.message : err}`);
+			}
 		}
 	}
 
@@ -222,8 +226,8 @@ export class GrpcBridge {
 			if (await this.tryReconnect(err)) {
 				try {
 					return await fn();
-				} catch {
-					// Reconnect succeeded but call still failed
+				} catch (retryErr) {
+					console.warn("GrpcBridge retry after reconnect failed");
 				}
 			}
 			return fallback;
@@ -247,7 +251,7 @@ export class GrpcBridge {
 					this.connected = true;
 					return { status: resp.status, version: resp.version };
 				} catch {
-					// Reconnect succeeded but health still fails
+					console.warn("GrpcBridge health check after reconnect failed");
 				}
 			}
 			return { status: "unavailable", version: "0.0.0" };
@@ -275,7 +279,7 @@ export class GrpcBridge {
 		} catch (err) {
 			this.connected = false;
 			if (await this.tryReconnect(err)) {
-				try { return await doSubmit(); } catch { /* retry failed */ }
+				try { return await doSubmit(); } catch { console.warn("GrpcBridge submitTask retry failed"); }
 			}
 			const msg = err instanceof Error ? err.message : String(err);
 			return {

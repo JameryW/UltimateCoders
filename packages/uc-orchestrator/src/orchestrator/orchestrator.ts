@@ -251,7 +251,7 @@ export class UCOrchestrator {
 		};
 		this.tasks.set(taskId, task);
 		this.abortControllers.set(taskId, new AbortController());
-		this.persist(task).catch(() => {});
+		this.persist(task).catch((err) => { this.pi.logger.warn(`Failed to persist task ${taskId}: ${err}`); });
 		return taskId;
 	}
 
@@ -307,14 +307,27 @@ export class UCOrchestrator {
 	/**
 	 * Check if any worker is available via gRPC bridge.
 	 * Returns true if at least one worker is available, false otherwise.
-	 * In degraded mode (Health RPC fallback), assumes workers are available.
+	 * In degraded mode (gRPC disconnected), assumes local workers are available
+	 * since subtask execution uses local runSubprocess which doesn't need gRPC.
 	 */
 	private async checkWorkerAvailability(): Promise<boolean> {
 		try {
 			const result = await this.bridge.listWorkers();
-			if (!result.available) return false;
+			if (!result.available) {
+				// gRPC disconnected — assume local workers for degraded mode
+				if (!this.bridge.isConnected()) {
+					this.pi.logger.info("Worker check unavailable (gRPC disconnected) — assuming local workers for degraded mode");
+					return true;
+				}
+				return false;
+			}
 			return result.availableCount > 0;
 		} catch {
+			// gRPC call threw — assume degraded mode if disconnected
+			if (!this.bridge.isConnected()) {
+				this.pi.logger.info("Worker check failed (gRPC disconnected) — assuming local workers for degraded mode");
+				return true;
+			}
 			return false;
 		}
 	}
@@ -460,7 +473,7 @@ export class UCOrchestrator {
 		this.bridge.writeMemory(
 			"task", `task_result_${task.id}`,
 			summary, "structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write task result to memory: ${err}`); });
 
 		this.pi.sendMessage(
 			{
@@ -570,7 +583,7 @@ export class UCOrchestrator {
 					this.bridge.writeMemory(
 						"task", `subtask_result_${result.id}`,
 						result.result, "text", "uc-orchestrator", task.id,
-					).catch(() => {});
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
 				}
 				if (result.review) {
 					this.bridge.writeMemory(
@@ -581,7 +594,7 @@ export class UCOrchestrator {
 							suggestions: result.review.suggestions,
 						}),
 						"structured", "uc-orchestrator", task.id,
-					).catch(() => {});
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask review: ${err}`); });
 				}
 			}
 		};
@@ -728,7 +741,7 @@ export class UCOrchestrator {
 		task.controlState = "paused";
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
-		this.bridge.pauseTask(taskId).catch(() => {});
+		this.bridge.pauseTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync pause to gRPC: ${err}`); });
 		ctx?.ui.notify(`Task ${taskId} pausing (will stop after current wave)`, "info");
 		return true;
 	}
@@ -743,7 +756,7 @@ export class UCOrchestrator {
 		task.error = undefined;
 		task.resumeFromWave = undefined;
 		this.abortControllers.set(taskId, new AbortController());
-		this.bridge.resumeTask(taskId).catch(() => {});
+		this.bridge.resumeTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync resume to gRPC: ${err}`); });
 		this.syncTaskToGrpc(task);
 
 		// Reset failed subtasks back to pending (skip completed ones)
@@ -1016,7 +1029,7 @@ export class UCOrchestrator {
 				stderr_tail: lastResult!.stderrTail,
 			}),
 			"structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write failure record: ${err}`); });
 
 		return lastResult!;
 	}
@@ -1080,7 +1093,8 @@ export class UCOrchestrator {
 							result.status = "failed";
 							result.error = `Review rejected: ${review.issues.join("; ")}`;
 						}
-					} catch {
+					} catch (err) {
+						this.pi.logger.warn(`Subtask review failed for ${def.id}, marking completed: ${err}`);
 						result.status = "completed";
 					}
 				} else {
@@ -1181,7 +1195,7 @@ export class UCOrchestrator {
 			"task", `checkpoint_snap-${task.id}-${Date.now().toString(36)}`,
 			JSON.stringify({ ...snap, _v: 1 }),
 			"structured", "uc-orchestrator", task.id,
-		).catch(() => {});
+		).catch((err) => { this.pi.logger.warn(`Failed to write checkpoint to memory: ${err}`); });
 	}
 
 	private toPersisted(task: TaskState): PersistedTask {
@@ -1249,8 +1263,8 @@ export class UCOrchestrator {
 	/** Sync task state to UC gRPC TaskStore. Fire-and-forget. */
 	private syncTaskToGrpc(task: TaskState): void {
 		// ponytail: fire-and-forget — don't await, don't block orchestrator
-		this.bridge.upsertTask(this.toPersisted(task)).catch(() => {
-			// gRPC sync is best-effort; failure is non-fatal
+		this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
+			this.pi.logger.warn(`Failed to sync task to gRPC: ${err}`);
 		});
 	}
 
@@ -1345,7 +1359,7 @@ export class UCOrchestrator {
 		}
 		// Clean up disk files for evicted tasks
 		const remainingIds = new Set(this.tasks.keys());
-		this.store.removeStale(remainingIds).catch(() => {});
+		this.store.removeStale(remainingIds).catch((err) => { this.pi.logger.warn(`Failed to clean stale task files: ${err}`); });
 	}
 
 	private buildSummary(task: TaskState): string {

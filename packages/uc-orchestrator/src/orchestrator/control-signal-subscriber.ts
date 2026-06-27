@@ -120,16 +120,16 @@ export class ControlSignalSubscriber {
 				try {
 					const event = JSON.parse(new TextDecoder().decode(msg.data)) as NatsControlEvent;
 					this.handleNatsEvent(event);
-				} catch {
-					// Malformed JSON — skip
+				} catch (err) {
+					console.warn(`[ControlSignalSubscriber] Malformed NATS message: ${err}`);
 				}
 			}
 			// Subscription iterator ended — NATS disconnected, try reconnect
 			this.natsConnected = false;
 			this.eventSub = null;
 			await this.tryNatsReconnect();
-		})().catch(() => {
-			// Subscription ended
+		})().catch((err) => {
+			console.warn(`[ControlSignalSubscriber] NATS subscription ended: ${err}`);
 		});
 	}
 
@@ -141,6 +141,11 @@ export class ControlSignalSubscriber {
 			try {
 				this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
 				this.natsConnected = true;
+				// Stop polling timer before switching to NATS subscription
+				if (this.pollTimer) {
+					clearInterval(this.pollTimer);
+					this.pollTimer = null;
+				}
 				this.startNatsSubscription();
 				console.info(`[ControlSignalSubscriber] Reconnected to NATS (attempt ${attempt + 1})`);
 				return;
@@ -209,8 +214,8 @@ export class ControlSignalSubscriber {
 					const task = await this.bridge.getTask(taskId);
 					if (!task) continue;
 					this.checkControlStateChange(taskId, task);
-				} catch {
-					// gRPC unreachable — skip
+				} catch (err) {
+					console.warn(`[ControlSignalSubscriber] Polling getTask failed for ${taskId}: ${err}`);
 				}
 			}
 		}, this.config.pollIntervalMs);
@@ -239,7 +244,7 @@ export class ControlSignalSubscriber {
 		// Detect transitions
 		if (currentStatus === "Paused" && previous !== "Paused") {
 			console.info(`[ControlSignalSubscriber] Polling detected pause for task ${taskId}`);
-			this.handler.pauseTask(taskId).catch(() => {});
+			this.handler.pauseTask(taskId).catch((err) => { console.warn(`[ControlSignalSubscriber] pauseTask handler failed for ${taskId}: ${err}`); });
 		} else if (currentStatus === "Failed" && previous !== "Failed") {
 			// gRPC cancel_task sets status to Failed. Distinguish from natural
 			// failure by checking whether the Orchestrator still considers the
@@ -247,7 +252,7 @@ export class ControlSignalSubscriber {
 			const activeIds = this.handler.getActiveTaskIds();
 			if (activeIds.includes(taskId)) {
 				console.info(`[ControlSignalSubscriber] Polling detected cancel (Failed) for active task ${taskId}`);
-				this.handler.cancelTask(taskId).catch(() => {});
+				this.handler.cancelTask(taskId).catch((err) => { console.warn(`[ControlSignalSubscriber] cancelTask handler failed for ${taskId}: ${err}`); });
 			} else {
 				console.info(`[ControlSignalSubscriber] Polling detected natural failure for task ${taskId} (already terminal locally)`);
 			}

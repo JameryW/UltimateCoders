@@ -68,7 +68,10 @@ export class TaskStore {
 			const filePath = path.join(this.dir, `${taskId}.json`);
 			const raw = await fs.readFile(filePath, "utf-8");
 			return JSON.parse(raw) as PersistedTask;
-		} catch {
+		} catch (err) {
+			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+				console.warn(`TaskStore load failed for ${taskId}: ${err instanceof Error ? err.message : err}`);
+			}
 			return null;
 		}
 	}
@@ -83,7 +86,10 @@ export class TaskStore {
 				tasks.push(JSON.parse(raw) as PersistedTask);
 			}
 			return tasks;
-		} catch {
+		} catch (err) {
+			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+				console.warn(`TaskStore loadAll failed: ${err instanceof Error ? err.message : err}`);
+			}
 			return [];
 		}
 	}
@@ -91,8 +97,10 @@ export class TaskStore {
 	async remove(taskId: string): Promise<void> {
 		try {
 			await fs.unlink(path.join(this.dir, `${taskId}.json`));
-		} catch {
-			// already removed is fine
+		} catch (err) {
+			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+				console.warn(`TaskStore remove failed for ${taskId}: ${err instanceof Error ? err.message : err}`);
+			}
 		}
 	}
 
@@ -116,7 +124,10 @@ export class TaskStore {
 			const filePath = path.join(this.checkpointDir, `${taskId}.snap.json`);
 			const raw = await fs.readFile(filePath, "utf-8");
 			return JSON.parse(raw) as PersistedTask;
-		} catch {
+		} catch (err) {
+			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+				console.warn(`TaskStore loadCheckpoint failed for ${taskId}: ${err instanceof Error ? err.message : err}`);
+			}
 			return null;
 		}
 	}
@@ -134,13 +145,17 @@ export class TaskStore {
 						try {
 							await fs.unlink(path.join(dir, file));
 							removed++;
-						} catch {
-							// already removed is fine
+						} catch (err) {
+							if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+								console.warn(`TaskStore removeStale unlink failed for ${file}: ${err instanceof Error ? err.message : err}`);
+							}
 						}
 					}
 				}
-			} catch {
-				// directory doesn't exist yet — fine
+			} catch (err) {
+				if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+					console.warn(`TaskStore removeStale readdir failed: ${err instanceof Error ? err.message : err}`);
+				}
 			}
 		}
 		return removed;
