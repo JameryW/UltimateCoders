@@ -320,3 +320,41 @@ Archived 5 completed tasks: replace-tui-frontend-with-omp (#157), add-tui-intera
 ### Next Steps
 
 - None - task complete
+
+
+## Session 65: OMP session resilience: 18 fixes across 6 layers + v0.2.0 release
+
+**Date**: 2026-06-27
+**Task**: OMP session resilience: 18 fixes across 6 layers + v0.2.0 release
+**Branch**: `main`
+
+### Summary
+
+Deep analysis of OMP session interruption causes across 6 layers (OMP framework, UC Extension, gRPC server, run-omp.sh, NATS/Python, resource leaks). Implemented 18 fixes: P0 (GrpcBridge reconnect, session_shutdown cleanup, handler dedup, task eviction, restart marker), P2 (shared bridge, NATS reconnect, connection state events, disk cleanup, heartbeat 600→120s), P3 (worker false gate, NATS polling race, 29 error logging), P4 (bulk resync, abort propagation, uc_task fallback), P5 (proto fix: UpdateTask create-if-not-exists). Also: v0.2.0 release, CI workflow with bun test.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `84c7f171` | (see git log) |
+| `846bd7f1` | (see git log) |
+| `9c96ef94` | (see git log) |
+| `52494bcb` | (see git log) |
+| `f2b24916` | (see git log) |
+| `5fc79042` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
