@@ -511,32 +511,8 @@ export class GrpcBridge {
 				availableCount: resp.availableCount,
 			};
 		} catch {
-			// Fallback: try Health RPC for local_worker status
-			// ponytail: degraded mode — no load/capacity data from Health RPC,
-			// set maxCapacity=-1 to signal "unknown capacity" (0 would imply infinite)
-			try {
-				const h = await this.health();
-				const isHealthy = h.status !== "unavailable";
-				return {
-					available: true,
-					workers: [{
-						id: "local_worker",
-						capabilities: [],
-						currentLoad: 0,
-						maxCapacity: -1,
-						loadPercent: 0,
-						lastHeartbeat: "",
-						heartbeatAgeSeconds: 0,
-						heartbeatStale: !isHealthy,
-						isAvailable: isHealthy,
-					}],
-					total: 1,
-					availableCount: isHealthy ? 1 : 0,
-					degraded: true,
-				};
-			} catch {
-				return { available: false, workers: [], total: 0, availableCount: 0 };
-			}
+			// No DashboardService available — return empty workers list
+			return { available: false, workers: [], total: 0, availableCount: 0 };
 		}
 	}
 

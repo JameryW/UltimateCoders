@@ -222,7 +222,6 @@ NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
 if check_port 50051; then
     log "Starting gRPC server..."
     cd "$SCRIPT_DIR"
-    # ponytail: build env vars for gRPC server — Docker mode adds storage + NATS + CORS
     GRPC_ENV=(
         PATH="$SCRIPT_DIR/.venv/bin:$PATH"
         RUST_LOG="${RUST_LOG:-info}"
@@ -238,14 +237,24 @@ if check_port 50051; then
             UC_TASK_BACKEND="${UC_TASK_BACKEND:-postgres}"
         )
     fi
-    env "${GRPC_ENV[@]}" cargo run -p uc-grpc-server &
+    # Build first, then exec the binary directly so PID is correct
+    log "Building gRPC server..."
+    env "${GRPC_ENV[@]}" cargo build -p uc-grpc-server 2>&1 | tail -1
+    env "${GRPC_ENV[@]}" nohup "$SCRIPT_DIR/target/debug/uc-grpc-server" > /tmp/uc-grpc-server.log 2>&1 &
     GRPC_PID=$!
+    disown "$GRPC_PID"
     save_pid "$GRPC_PID" "grpc-server"
     info "gRPC PID: $GRPC_PID"
-    for i in $(seq 1 20); do
-        if check_port 50051; then sleep 1; else break; fi
+    # Wait for port to become active
+    for i in $(seq 1 30); do
+        if ! lsof -i :50051 >/dev/null 2>&1; then sleep 1; else break; fi
     done
-    log "gRPC server ready on :50051"
+    if lsof -i :50051 >/dev/null 2>&1; then
+        log "gRPC server ready on :50051"
+    else
+        err "gRPC server failed to start — check /tmp/uc-grpc-server.log"
+        exit 1
+    fi
 else
     log "gRPC server already running on :50051"
 fi
@@ -276,8 +285,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
 done
 
 if [ "$WORKER_OK" -eq 0 ]; then
-    err "All workers failed to start. Python NATS worker is broken (nats_worker.py imports removed Orchestrator)."
-    err "Use local worker mode instead: ./run-omp.sh  (LocalWorkerBridge auto-spawns on first submit)"
+    err "All workers failed to start. All workers failed to start. Check NATS connectivity and Python environment."
     exit 1
 fi
 

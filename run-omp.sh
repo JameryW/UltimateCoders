@@ -40,11 +40,6 @@ for arg in "$@"; do
   esac
 done
 
-# Auto-detect .venv Python for the gRPC worker
-if [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
-    export UC_WORKER_PYTHON="$SCRIPT_DIR/.venv/bin/python3"
-fi
-
 # ── Build Python package if requested ────────────────────────
 if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
     "$SCRIPT_DIR/.venv/bin/python3" -c "import ultimate_coders" 2>/dev/null || {

@@ -9,14 +9,13 @@
 pub mod client;
 pub mod conversions;
 pub mod dashboard_service;
-pub mod local_worker;
 pub mod server;
 
 pub use server::TaskStore;
 pub use server::{
-    apply_worker_update_to_store, mark_tasks_failed_on_worker_death, NatsHeartbeat,
-    NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate, NATS_SUBJECT_HEARTBEAT,
-    NATS_SUBJECT_TASK_EVENT, NATS_SUBJECT_TASK_SUBMIT, NATS_SUBJECT_TASK_UPDATE,
+    NatsHeartbeat, NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate,
+    NATS_SUBJECT_HEARTBEAT, NATS_SUBJECT_TASK_EVENT, NATS_SUBJECT_TASK_SUBMIT,
+    NATS_SUBJECT_TASK_UPDATE,
 };
 
 /// Generated protobuf types and service definitions.

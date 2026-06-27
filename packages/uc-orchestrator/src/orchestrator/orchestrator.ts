@@ -303,7 +303,7 @@ export class UCOrchestrator {
 	/**
 	 * Check if any worker is available via gRPC bridge.
 	 * Returns true if at least one worker is available, false otherwise.
-	 * In degraded mode (Health RPC fallback), treats local_worker as available.
+	 * In degraded mode (Health RPC fallback), assumes workers are available.
 	 */
 	private async checkWorkerAvailability(): Promise<boolean> {
 		try {
