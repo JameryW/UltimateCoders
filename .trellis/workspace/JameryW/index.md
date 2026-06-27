@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 63
-- **Last Active**: 2026-06-26
+- **Total Sessions**: 64
+- **Last Active**: 2026-06-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~287 | Active |
+| `journal-2.md` | ~322 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 64 | 2026-06-27 | Fix OMP task interruption + remove local_worker + resolve PR 171 conflicts | `5def4047`, `a4d25eee`, `1f969098` | `fix/grpc-bridge-grpc-web-protocol` |
 | 63 | 2026-06-26 | Default gRPC + run-cluster.sh + MinimalOrchestrator + README | `7291cb1e`, `a531fcf0`, `47f2addc`, `05ccb566`, `963eba45` | `main` |
 | 62 | 2026-06-26 | Batch archive 5 completed tasks | `963eba45`, `05ccb566`, `47f2addc`, `a531fcf0`, `7291cb1e` | `main` |
 | 61 | 2026-06-26 | Add TUI interactive entry in dashboard | `560501ea`, `295b1de0` | `chore/consolidate-repo-structure` |
