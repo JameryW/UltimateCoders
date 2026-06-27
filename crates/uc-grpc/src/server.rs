@@ -1105,7 +1105,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// - A heartbeat monitor marks stale tasks as Failed
     #[cfg(feature = "messaging")]
     pub async fn with_nats(engine: E, nats_url: &str) -> Self {
-        Self::with_nats_and_timeout(engine, nats_url, std::time::Duration::from_secs(600)).await
+        Self::with_nats_and_timeout(engine, nats_url, std::time::Duration::from_secs(120)).await
     }
 
     /// Create a new gRPC server with NATS integration and custom backends.
@@ -1119,7 +1119,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         Self::with_nats_timeout_and_backends(
             engine,
             nats_url,
-            std::time::Duration::from_secs(600),
+            std::time::Duration::from_secs(120),
             task_backend,
             event_store,
         )

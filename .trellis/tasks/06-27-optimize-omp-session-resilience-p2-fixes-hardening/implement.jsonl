@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/interruption-causes-catalog.md", "reason": "Master catalog of all interruption layers — P2 items: heartbeat timeout, NATS reconnect, slow cargo run startup"}
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/grpc-server-and-process-management.md", "reason": "gRPC server TaskStore in-memory gap, slow cargo run restart, stale transport notification gap"}
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/uc-extension-interruption.md", "reason": "ControlSignalSubscriber polling creates new GrpcBridge every 2s, NATS reconnection gap, connected flag staleness"}
+{"file": ".trellis/tasks/06-27-deep-analysis-of-omp-session-interruption-causes/research/resource-leaks-and-degradation.md", "reason": "Timer leaks, progressState not cleaned on task_failed, TaskStore no size limit, no memory monitoring"}

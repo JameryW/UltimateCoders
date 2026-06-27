@@ -120,4 +120,29 @@ export class TaskStore {
 			return null;
 		}
 	}
+
+	/** Remove task files and checkpoint files not in the keep set. */
+	async removeStale(taskIdsToKeep: Set<string>): Promise<number> {
+		let removed = 0;
+		for (const dir of [this.dir, this.checkpointDir]) {
+			try {
+				const files = await fs.readdir(dir);
+				for (const file of files) {
+					if (!file.endsWith(".json")) continue;
+					const taskId = file.replace(/\.snap\.json$|\.json$/, "");
+					if (!taskIdsToKeep.has(taskId)) {
+						try {
+							await fs.unlink(path.join(dir, file));
+							removed++;
+						} catch {
+							// already removed is fine
+						}
+					}
+				}
+			} catch {
+				// directory doesn't exist yet — fine
+			}
+		}
+		return removed;
+	}
 }

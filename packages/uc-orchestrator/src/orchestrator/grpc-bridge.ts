@@ -46,6 +46,8 @@ export interface BridgeConfig {
 	serverUrl: string;
 	/** Request timeout (ms). Default: 10000 */
 	timeoutMs: number;
+	/** Callback when connection state changes. */
+	onConnectionChange?: (connected: boolean) => void;
 }
 
 export interface TaskSync {
@@ -142,6 +144,11 @@ export class GrpcBridge {
 		this.connected = false;
 	}
 
+	/** Set or replace the onConnectionChange callback. Used by UCOrchestrator to wire events. */
+	setOnConnectionChange(callback: (connected: boolean) => void): void {
+		this.config.onConnectionChange = callback;
+	}
+
 	/** Check if an error looks like a broken connection. */
 	private isConnectionError(err: unknown): boolean {
 		if (!(err instanceof Error)) return false;
@@ -178,6 +185,7 @@ export class GrpcBridge {
 			// Verify the new transport works
 			const resp = await this.engineClient.health(create(HealthRequestSchema));
 			this.connected = true;
+			this.config.onConnectionChange?.(true);
 			return true;
 		} catch {
 			return false;
@@ -210,6 +218,7 @@ export class GrpcBridge {
 			return await fn();
 		} catch (err) {
 			this.connected = false;
+			this.config.onConnectionChange?.(false);
 			if (await this.tryReconnect(err)) {
 				try {
 					return await fn();

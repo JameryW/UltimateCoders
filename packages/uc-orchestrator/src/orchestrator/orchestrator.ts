@@ -133,12 +133,16 @@ export class UCOrchestrator {
 			...config,
 		};
 		this.bridge = bridge ?? new GrpcBridge();
+		// Wire connection state events — works for both external and default bridge
+		this.bridge.setOnConnectionChange((connected: boolean) => {
+			this.events.emit("connection_state", { connected });
+		});
 		// ponytail: workspaceRoot may not exist on Settings — fallback to cwd
 		const settings = pi.pi.settings as unknown as Record<string, unknown>;
 		const ws = settings.workspaceRoot;
 		this.store = new TaskStore(typeof ws === "string" ? ws : process.cwd());
 		// ponytail: subscribe to NATS control events (pause/resume/cancel from TUI/Dashboard)
-		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler);
+		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler, this.bridge);
 	}
 
 	/** Restore recoverable tasks from disk. Call once at startup. */
@@ -1339,6 +1343,9 @@ export class UCOrchestrator {
 			this.tasks.delete(terminalIds[i].id);
 			this.abortControllers.delete(terminalIds[i].id);
 		}
+		// Clean up disk files for evicted tasks
+		const remainingIds = new Set(this.tasks.keys());
+		this.store.removeStale(remainingIds).catch(() => {});
 	}
 
 	private buildSummary(task: TaskState): string {

@@ -26,18 +26,16 @@ export interface ControlSignalHandler {
 export interface ControlSignalSubscriberConfig {
 	/** NATS server URL. Default: nats://localhost:4222 */
 	natsUrl: string;
-	/** gRPC server URL for polling fallback. Default: http://localhost:50051 */
-	grpcUrl: string;
 	/** Polling interval (ms) when NATS is unavailable. Default: 2000 */
 	pollIntervalMs: number;
+	/** Max NATS reconnect attempts before falling back to polling. Default: 3 */
+	maxReconnectAttempts: number;
 }
 
 const DEFAULT_CONFIG: ControlSignalSubscriberConfig = {
 	natsUrl: process.env.UC_NATS_URL ?? "nats://localhost:4222",
-	grpcUrl: process.env.GRPC_SERVER_ADDR
-		? `http://${process.env.GRPC_SERVER_ADDR}`
-		: "http://localhost:50051",
 	pollIntervalMs: 2000,
+	maxReconnectAttempts: 3,
 };
 
 // ── NATS Event Payload ─────────────────────────────────────────────
@@ -56,6 +54,7 @@ interface NatsControlEvent {
 export class ControlSignalSubscriber {
 	private handler: ControlSignalHandler;
 	private config: ControlSignalSubscriberConfig;
+	private bridge: GrpcBridge;
 	private natsConn: NatsConnection | null = null;
 	private eventSub: Subscription | null = null;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -65,8 +64,9 @@ export class ControlSignalSubscriber {
 	/** Dedup: seen message IDs to prevent double-processing. */
 	private seenMessageIds: Map<string, number> = new Map();
 
-	constructor(handler: ControlSignalHandler, config?: Partial<ControlSignalSubscriberConfig>) {
+	constructor(handler: ControlSignalHandler, bridge: GrpcBridge, config?: Partial<ControlSignalSubscriberConfig>) {
 		this.handler = handler;
+		this.bridge = bridge;
 		this.config = { ...DEFAULT_CONFIG, ...config };
 	}
 
@@ -124,9 +124,32 @@ export class ControlSignalSubscriber {
 					// Malformed JSON — skip
 				}
 			}
+			// Subscription iterator ended — NATS disconnected, try reconnect
+			this.natsConnected = false;
+			this.eventSub = null;
+			await this.tryNatsReconnect();
 		})().catch(() => {
 			// Subscription ended
 		});
+	}
+
+	/** Attempt to reconnect NATS with exponential backoff before falling back to polling. */
+	private async tryNatsReconnect(): Promise<void> {
+		for (let attempt = 0; attempt < this.config.maxReconnectAttempts; attempt++) {
+			const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+			await new Promise((r) => setTimeout(r, delay));
+			try {
+				this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
+				this.natsConnected = true;
+				this.startNatsSubscription();
+				console.info(`[ControlSignalSubscriber] Reconnected to NATS (attempt ${attempt + 1})`);
+				return;
+			} catch {
+				console.warn(`[ControlSignalSubscriber] NATS reconnect attempt ${attempt + 1} failed`);
+			}
+		}
+		console.warn("[ControlSignalSubscriber] NATS reconnect exhausted, falling back to polling");
+		this.startPolling();
 	}
 
 	private handleNatsEvent(event: NatsControlEvent): void {
@@ -177,15 +200,13 @@ export class ControlSignalSubscriber {
 	// ── Polling Fallback ────────────────────────────────────────
 
 	private startPolling(): void {
-		const bridge = new GrpcBridge({ serverUrl: this.config.grpcUrl });
-
 		this.pollTimer = setInterval(async () => {
 			const activeIds = this.handler.getActiveTaskIds();
 			if (activeIds.length === 0) return;
 
 			for (const taskId of activeIds) {
 				try {
-					const task = await bridge.getTask(taskId);
+					const task = await this.bridge.getTask(taskId);
 					if (!task) continue;
 					this.checkControlStateChange(taskId, task);
 				} catch {
