@@ -391,3 +391,37 @@ Added DispatchMode enum (Local/Remote/PreferRemote) to Subtask across Rust/Pytho
 ### Next Steps
 
 - None - task complete
+
+
+## Session 67: Add worker capability matching + OMP UI dispatch_mode display
+
+**Date**: 2026-06-28
+**Task**: Add worker capability matching + OMP UI dispatch_mode display
+**Branch**: `main`
+
+### Summary
+
+Two features: (1) OMP SubtaskTreeOverlay shows dispatch_mode in expanded details (hidden for default prefer_remote). (2) Subtask.required_capabilities for worker capability matching — workers check ALL caps match before accepting, NACK on mismatch. select_next_subtask supports optional capability filtering. Three-layer type sync (Rust/Python/TypeScript).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bd73f1a3` | (see git log) |
+| `85c9ef57` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
