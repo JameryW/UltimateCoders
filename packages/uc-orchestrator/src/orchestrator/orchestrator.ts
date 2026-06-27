@@ -101,6 +101,8 @@ interface OrchestratorConfig {
 	maxConcurrency: number;
 	maxRetries: number;
 	retryBaseDelayMs: number;
+	/** Per-subtask execution timeout (ms). Default: 600000 (10min). */
+	subtaskTimeoutMs: number;
 }
 
 // ── Orchestrator ───────────────────────────────────────────────────
@@ -127,6 +129,7 @@ export class UCOrchestrator {
 			maxConcurrency: 3,
 			maxRetries: 2,
 			retryBaseDelayMs: 5_000,
+			subtaskTimeoutMs: 600_000,
 			...config,
 		};
 		this.bridge = bridge ?? new GrpcBridge();
@@ -343,7 +346,12 @@ export class UCOrchestrator {
 				const wave = waves[waveIdx];
 
 				// Check worker availability before executing wave
-				const workersAvailable = await this.checkWorkerAvailability();
+				let workersAvailable = await this.checkWorkerAvailability();
+				if (!workersAvailable) {
+					// Retry once after 5s — gRPC may have reconnected
+					await new Promise((r) => setTimeout(r, 5000));
+					workersAvailable = await this.checkWorkerAvailability();
+				}
 				if (!workersAvailable) {
 					task.status = "failed";
 					task.error = "No workers available — all workers offline or overloaded";
@@ -376,6 +384,8 @@ export class UCOrchestrator {
 
 				// Auto-checkpoint after wave completes (dual storage)
 				await this.checkpoint(task);
+				// Reset circuit breaker between waves — avoid cascading failure
+				this.circuitBreaker.reset();
 
 				// Subtask results/reviews already written per-subtask in executeWave
 				// (moved to subtask-level for real-time Dashboard visibility)
@@ -1037,7 +1047,7 @@ export class UCOrchestrator {
 				task: taskPrompt,
 				id: def.id,
 				index: 0,
-				signal: abortCtrl?.signal ?? AbortSignal.timeout(300_000),
+				signal: abortCtrl?.signal ?? AbortSignal.timeout(this.config.subtaskTimeoutMs),
 				modelRegistry: ctx.modelRegistry,
 				settings: this.pi.pi.settings,
 				enableLsp: true,
