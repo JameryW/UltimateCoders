@@ -234,6 +234,27 @@ connection error → isConnectionError() → tryReconnect() → reconnect() → 
 - Called after each wave completes
 - When tasks Map exceeds maxTasks, evicts oldest completed/failed/cancelled tasks
 - Sorts by `completedAt` timestamp (oldest first)
+- After in-memory eviction, calls `store.removeStale(remainingIds)` to clean up disk files
+
+### Connection state change notification
+
+`BridgeConfig.onConnectionChange?: (connected: boolean) => void` — optional callback fired on connection state transitions. Orchestrator wires this to `events.emit("connection_state", { connected })`. Extension.ts handles the event to update footer status:
+
+- `connected=true` → "UC: connected"
+- `connected=false` → "UC: disconnected"
+
+The callback can be set post-construction via `bridge.setOnConnectionChange(cb)` — needed when the bridge is created externally (e.g., in extension.ts).
+
+### ControlSignalSubscriber architecture
+
+- Shares the main `GrpcBridge` instance (no separate bridge for polling)
+- NATS-first with auto-reconnect: 3 attempts, exponential backoff (1s/2s/4s)
+- Falls back to polling via shared bridge if NATS unavailable after all retries
+- Polling interval: 2s (configurable via `pollIntervalMs`)
+
+### Heartbeat timeout
+
+gRPC server heartbeat timeout: **120s** (was 600s). Worker crash detected in 2 minutes instead of 10. Subtask execution timeout remains 600s (10 min).
 
 ---
 
