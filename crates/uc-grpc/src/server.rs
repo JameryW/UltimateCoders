@@ -519,12 +519,45 @@ impl TaskStore {
     ///
     /// Performs full upsert on subtasks: matches by ID, updates status/result,
     /// adds new subtasks. Records a TaskUpdated event for WatchTask stream.
+    ///
+    /// If the task does not exist AND `description` is non-empty, creates a new
+    /// task with the given `task_id`, `description`, `project_id`, `status`, and
+    /// subtasks. This enables the orchestrator to re-create tasks after a server
+    /// restart using a single `updateTask` call (no `submitTask` needed).
     pub fn update_task(
         &mut self,
         task_id: &str,
         status: &str,
         subtasks: Vec<uc_types::Subtask>,
+        description: &str,
+        project_id: &str,
     ) -> Result<(uc_types::Task, Vec<uc_engine::AgentEventType>), String> {
+        // Create-if-not-exists: when description is non-empty and task not found,
+        // insert a new task with the client-provided task_id (preserving the
+        // orchestrator's original ID — no new ID generation).
+        if !self.tasks.contains_key(task_id) && !description.is_empty() {
+            let now = chrono::Utc::now();
+            let task = uc_types::Task {
+                id: uc_types::TaskId(task_id.to_string()),
+                description: description.to_string(),
+                project_id: project_id.to_string(),
+                status: proto_status_to_task_status(status)
+                    .unwrap_or(uc_types::TaskStatus::Created),
+                subtasks: subtasks.clone(),
+                created_at: now,
+                updated_at: now,
+            };
+            self.record_event_with_subject(
+                uc_engine::AgentEventType::TaskCreated {
+                    task_id: task.id.clone(),
+                    description: description.to_string(),
+                },
+                &format!("task.{}", task_id),
+            );
+            let task_id_str = task.id.0.clone();
+            self.tasks.insert(task_id_str, task);
+        }
+
         let task = self
             .tasks
             .get_mut(task_id)
@@ -2624,6 +2657,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         let req = request.into_inner();
         let task_id = req.task_id.clone();
         let status_str = req.status.clone();
+        let description = req.description.clone();
+        let project_id = req.project_id.clone();
 
         // Convert proto subtasks to Rust Subtask type
         let subtasks: Vec<uc_types::Subtask> = req
@@ -2648,7 +2683,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
 
         let result = {
             let mut store = self.inner.task_store.lock().await;
-            match store.update_task(&task_id, &status_str, subtasks) {
+            match store.update_task(&task_id, &status_str, subtasks, &description, &project_id) {
                 Ok((task, events)) => {
                     // Convert all events to proto and broadcast to WatchTask streams
                     let tx = &self.inner.event_tx;

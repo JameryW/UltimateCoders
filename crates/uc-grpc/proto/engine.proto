@@ -280,6 +280,8 @@ message UpdateTaskRequest {
     string task_id = 1;
     string status = 2;
     repeated SubtaskProto subtasks = 3;
+    string description = 4;   // for create-if-not-exists
+    string project_id = 5;    // for create-if-not-exists
 }
 
 message UpdateTaskResponse {

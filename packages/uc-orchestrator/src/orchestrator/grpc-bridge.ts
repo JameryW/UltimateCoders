@@ -316,35 +316,25 @@ export class GrpcBridge {
 
 	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
 		return this.withReconnect(async () => {
-			const existing = await this.getTask(task.id);
-			if (existing) {
-				// ponytail: SubtaskProto requires parentId + expectedOutput (non-optional strings)
-				const resp = await this.taskClient.updateTask(
-					create(UpdateTaskRequestSchema, {
-						taskId: task.id,
-						status: task.status,
-						subtasks: task.subtasks.map((st) => ({
-							id: st.id,
-							description: st.description,
-							status: st.status,
-							dependsOn: st.dependsOn,
-							result: st.result ?? "",
-							parentId: task.id,
-							expectedOutput: "",
-							fileConstraints: [],
-						})),
-					}),
-				);
-				return resp.success;
-			}
-
-			// ponytail: SubmitTaskRequest only has description + projectId;
-			// extra fields (taskId, status, subtasks) were sent via old JSON bridge
-			// but silently ignored by the server
-			const resp = await this.taskClient.submitTask(
-				create(SubmitTaskRequestSchema, {
+			// UpdateTaskRequest now carries description + projectId for
+			// create-if-not-exists on the server. No more getTask+submitTask
+			// dance — the server preserves the orchestrator's original task ID.
+			const resp = await this.taskClient.updateTask(
+				create(UpdateTaskRequestSchema, {
+					taskId: task.id,
+					status: task.status,
 					description: task.description,
 					projectId: "",
+					subtasks: task.subtasks.map((st) => ({
+						id: st.id,
+						description: st.description,
+						status: st.status,
+						dependsOn: st.dependsOn,
+						result: st.result ?? "",
+						parentId: task.id,
+						expectedOutput: "",
+						fileConstraints: [],
+					})),
 				}),
 			);
 			return resp.success;
