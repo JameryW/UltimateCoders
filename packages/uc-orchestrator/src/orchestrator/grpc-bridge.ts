@@ -1,12 +1,42 @@
 /**
  * gRPC Bridge — Connects uc-orchestrator to UC Rust core engine.
  *
- * Uses gRPC-Web (HTTP+JSON) to communicate with the UC gRPC server.
- * This avoids needing native gRPC libraries in the Bun runtime.
+ * Uses gRPC-Web (application/grpc-web+proto) via @connectrpc/connect-web
+ * to communicate with the tonic-web enabled UC gRPC server.
  *
- * ponytail: HTTP fetch + JSON — no @grpc/grpc-js dependency.
- * Upgrade to native gRPC if perf matters.
+ * ponytail: connectrpc client — proper gRPC-Web protocol, no hand-rolled framing.
  */
+
+import { createClient } from "@connectrpc/connect";
+import { createGrpcWebTransport } from "@connectrpc/connect-web";
+import {
+	EngineService,
+	TaskService,
+	DashboardService,
+	HealthRequestSchema,
+	SubmitTaskRequestSchema,
+	GetTaskRequestSchema,
+	ListTasksRequestSchema,
+	UpdateTaskRequestSchema,
+	PauseTaskRequestSchema,
+	ResumeTaskRequestSchema,
+	CancelTaskRequestSchema,
+	ReadMemoryRequestSchema,
+	WriteMemoryRequestSchema,
+	DeleteMemoryRequestSchema,
+	SearchMemoryRequestSchema,
+	BatchWriteMemoryRequestSchema,
+	SearchRequestSchema,
+	IndexRepoRequestSchema,
+	GetIndexStateRequestSchema,
+	RemoveIndexRequestSchema,
+	ListReposRequestSchema,
+	ListDirRequestSchema,
+	GetFileRequestSchema,
+	ListWorkersRequestSchema,
+	type SubmitTaskResponse,
+} from "../grpc/engine_pb.js";
+import { create } from "@bufbuild/protobuf";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -55,9 +85,6 @@ export interface WorkerListResult {
 	degraded?: boolean;
 }
 
-// ponytail: internal response type to avoid Record<string, unknown> everywhere
-type RpcResp = Record<string, unknown>;
-
 /** Structured error from GrpcBridge operations. */
 export type BridgeError =
 	| { kind: "server_unavailable"; message: string }
@@ -72,6 +99,10 @@ export type SubmitResult = { ok: true; task: TaskSync } | { ok: false; error: Br
 export class GrpcBridge {
 	private config: BridgeConfig;
 	private connected = false;
+	private transport: ReturnType<typeof createGrpcWebTransport>;
+	private engineClient: ReturnType<typeof createClient<typeof EngineService>>;
+	private taskClient: ReturnType<typeof createClient<typeof TaskService>>;
+	private dashboardClient: ReturnType<typeof createClient<typeof DashboardService>>;
 
 	constructor(config?: Partial<BridgeConfig>) {
 		this.config = {
@@ -79,17 +110,23 @@ export class GrpcBridge {
 			timeoutMs: 10_000,
 			...config,
 		};
+
+		// ponytail: single transport, shared across all service clients
+		this.transport = createGrpcWebTransport({
+			baseUrl: this.config.serverUrl,
+		});
+		this.engineClient = createClient(EngineService, this.transport);
+		this.taskClient = createClient(TaskService, this.transport);
+		this.dashboardClient = createClient(DashboardService, this.transport);
 	}
 
 	// ── Health Check ────────────────────────────────────────────
 
 	async health(): Promise<{ status: string; version: string }> {
 		try {
-			const resp = await this.rpc("Health", {});
-			return {
-				status: (resp.status as string) ?? "unknown",
-				version: (resp.version as string) ?? "0.0.0",
-			};
+			const resp = await this.engineClient.health(create(HealthRequestSchema));
+			this.connected = true;
+			return { status: resp.status, version: resp.version };
 		} catch {
 			return { status: "unavailable", version: "0.0.0" };
 		}
@@ -99,22 +136,19 @@ export class GrpcBridge {
 
 	async submitTask(description: string, projectId = ""): Promise<SubmitResult> {
 		try {
-			const resp = await this.rpc("SubmitTask", {
-				description,
-				project_id: projectId,
-			});
-			if (!(resp.success as boolean)) {
-				const errMsg = (resp.error as string) ?? "unknown reason";
-				// Distinguish worker failure from generic rejection
+			const resp = await this.taskClient.submitTask(
+				create(SubmitTaskRequestSchema, { description, projectId }),
+			);
+			if (!resp.success) {
+				const errMsg = resp.error ?? "unknown reason";
 				const kind = errMsg.toLowerCase().includes("worker")
 					? "worker_failed"
 					: "submit_rejected";
 				return { ok: false, error: { kind, message: errMsg } };
 			}
-			return { ok: true, task: this.parseTaskSync(resp) };
+			return { ok: true, task: this.parseTaskProto(resp) };
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			// Connection refused / network error → server unavailable
 			return {
 				ok: false,
 				error: {
@@ -129,9 +163,11 @@ export class GrpcBridge {
 
 	async getTask(taskId: string): Promise<TaskSync | null> {
 		try {
-			const resp = await this.rpc("GetTask", { task_id: taskId });
-			if (!(resp.available as boolean)) return null;
-			return this.parseTaskSync(resp.task as RpcResp);
+			const resp = await this.taskClient.getTask(
+				create(GetTaskRequestSchema, { taskId }),
+			);
+			if (!resp.available) return null;
+			return resp.task ? this.parseTaskFromProto(resp.task) : null;
 		} catch {
 			return null;
 		}
@@ -139,9 +175,9 @@ export class GrpcBridge {
 
 	async listTasks(): Promise<TaskSync[]> {
 		try {
-			const resp = await this.rpc("ListTasks", {});
-			if (!(resp.available as boolean)) return [];
-			return ((resp.tasks as RpcResp[]) ?? []).map(this.parseTaskSync);
+			const resp = await this.taskClient.listTasks(create(ListTasksRequestSchema));
+			if (!resp.available) return [];
+			return resp.tasks.map((t) => this.parseTaskFromProto(t));
 		} catch {
 			return [];
 		}
@@ -149,44 +185,40 @@ export class GrpcBridge {
 
 	// ── Upsert (create or update) ──────────────────────────────
 
-	/**
-	 * Upsert task: if task exists on server, call UpdateTask; otherwise SubmitTask.
-	 */
 	async upsertTask(task: import("./task-store").PersistedTask): Promise<boolean> {
 		try {
 			const existing = await this.getTask(task.id);
 			if (existing) {
-				// Task exists — update via UpdateTask RPC
-				const resp = await this.rpc("UpdateTask", {
-					task_id: task.id,
-					status: task.status,
-					subtasks: task.subtasks.map((st) => ({
-						id: st.id,
-						description: st.description,
-						status: st.status,
-						depends_on: st.dependsOn,
-						result: st.result ?? "",
-					})),
-				});
-				return (resp.success as boolean) ?? false;
+				// ponytail: SubtaskProto requires parentId + expectedOutput (non-optional strings)
+				const resp = await this.taskClient.updateTask(
+					create(UpdateTaskRequestSchema, {
+						taskId: task.id,
+						status: task.status,
+						subtasks: task.subtasks.map((st) => ({
+							id: st.id,
+							description: st.description,
+							status: st.status,
+							dependsOn: st.dependsOn,
+							result: st.result ?? "",
+							parentId: task.id,
+							expectedOutput: "",
+							fileConstraints: [],
+						})),
+					}),
+				);
+				return resp.success;
 			}
 
-			const resp = await this.rpc("SubmitTask", {
-				description: task.description,
-				project_id: "",
-				task_id: task.id,
-				status: task.status,
-				control_state: task.controlState,
-				subtasks: task.subtasks.map((st) => ({
-					id: st.id,
-					description: st.description,
-					status: st.status,
-					depends_on: st.dependsOn,
-					result: st.result ?? "",
-					error: st.error ?? "",
-				})),
-			});
-			return (resp.success as boolean) ?? false;
+			// ponytail: SubmitTaskRequest only has description + projectId;
+			// extra fields (taskId, status, subtasks) were sent via old JSON bridge
+			// but silently ignored by the server
+			const resp = await this.taskClient.submitTask(
+				create(SubmitTaskRequestSchema, {
+					description: task.description,
+					projectId: "",
+				}),
+			);
+			return resp.success;
 		} catch {
 			return false;
 		}
@@ -196,8 +228,10 @@ export class GrpcBridge {
 
 	async pauseTask(taskId: string): Promise<boolean> {
 		try {
-			const resp = await this.rpc("PauseTask", { task_id: taskId });
-			return (resp.success as boolean) ?? false;
+			const resp = await this.taskClient.pauseTask(
+				create(PauseTaskRequestSchema, { taskId }),
+			);
+			return resp.success;
 		} catch {
 			return false;
 		}
@@ -205,20 +239,22 @@ export class GrpcBridge {
 
 	async resumeTask(taskId: string): Promise<boolean> {
 		try {
-			const resp = await this.rpc("ResumeTask", { task_id: taskId });
-			return (resp.success as boolean) ?? false;
+			const resp = await this.taskClient.resumeTask(
+				create(ResumeTaskRequestSchema, { taskId }),
+			);
+			return resp.success;
 		} catch {
 			return false;
 		}
 	}
 
-	async cancelTask(taskId: string, subtaskId?: string): Promise<boolean> {
+	async cancelTask(taskId: string, _subtaskId?: string): Promise<boolean> {
+		// ponytail: CancelTaskRequest has no subtaskId field — server ignores it
 		try {
-			const resp = await this.rpc("CancelTask", {
-				task_id: taskId,
-				subtask_id: subtaskId ?? "",
-			});
-			return (resp.success as boolean) ?? false;
+			const resp = await this.taskClient.cancelTask(
+				create(CancelTaskRequestSchema, { taskId }),
+			);
+			return resp.success;
 		} catch {
 			return false;
 		}
@@ -233,14 +269,10 @@ export class GrpcBridge {
 		projectId = "",
 	): Promise<string | null> {
 		try {
-			const resp = await this.rpc("ReadMemory", {
-				key_scope: keyScope,
-				key,
-				task_id: taskId,
-				project_id: projectId,
-			});
-			const entry = resp.entry as RpcResp | undefined;
-			return entry?.content as string ?? null;
+			const resp = await this.engineClient.readMemory(
+				create(ReadMemoryRequestSchema, { keyScope, key, taskId, projectId }),
+			);
+			return resp.entry?.content ?? null;
 		} catch {
 			return null;
 		}
@@ -258,18 +290,13 @@ export class GrpcBridge {
 		tags?: string[],
 	): Promise<boolean> {
 		try {
-			const payload: Record<string, unknown> = {
-				key_scope: keyScope,
-				key,
-				content,
-				content_type: contentType,
-				source_agent: sourceAgent,
-				task_id: taskId,
-				project_id: projectId,
-			};
-			if (importance !== undefined) payload.importance = importance;
-			if (tags?.length) payload.tags = tags;
-			await this.rpc("WriteMemory", payload);
+			await this.engineClient.writeMemory(
+				create(WriteMemoryRequestSchema, {
+					keyScope, key, content, contentType, sourceAgent, taskId, projectId,
+					importance: importance ?? 0,
+					tags: tags ?? [],
+				}),
+			);
 			return true;
 		} catch {
 			return false;
@@ -283,15 +310,12 @@ export class GrpcBridge {
 		maxResults = 5,
 	): Promise<Array<{ content: string; score: number }>> {
 		try {
-			const resp = await this.rpc("SearchMemory", {
-				query,
-				scope_type: scopeType,
-				project_id: projectId,
-				max_results: maxResults,
-			});
-			return ((resp.results as RpcResp[]) ?? []).map((r) => ({
-				content: ((r.entry as RpcResp | undefined)?.content as string) ?? "",
-				score: (r.score as number) ?? 0,
+			const resp = await this.engineClient.searchMemory(
+				create(SearchMemoryRequestSchema, { query, scopeType, projectId, maxResults }),
+			);
+			return resp.results.map((r) => ({
+				content: r.entry?.content ?? "",
+				score: r.score,
 			}));
 		} catch {
 			return [];
@@ -305,13 +329,11 @@ export class GrpcBridge {
 		projectId = "",
 	): Promise<boolean> {
 		try {
-			const resp = await this.rpc("DeleteMemory", {
-				key_scope: keyScope,
-				key,
-				task_id: taskId,
-				project_id: projectId,
-			});
-			return (resp.success as boolean) ?? false;
+			// ponytail: DeleteMemoryResponse is empty — success = no error
+			await this.engineClient.deleteMemory(
+				create(DeleteMemoryRequestSchema, { keyScope, key, taskId, projectId }),
+			);
+			return true;
 		} catch {
 			return false;
 		}
@@ -322,16 +344,23 @@ export class GrpcBridge {
 		sourceAgent = "uc-orchestrator",
 	): Promise<number> {
 		try {
-			const resp = await this.rpc("BatchWriteMemory", {
-				entries: entries.map((e) => ({
-					key_scope: e.keyScope,
-					key: e.key,
-					content: e.content,
-					content_type: e.contentType ?? "text",
-					source_agent: sourceAgent,
-				})),
-			});
-			return (resp.count as number) ?? 0;
+			// ponytail: BatchWriteMemoryRequest.requests is WriteMemoryRequest[]
+			const resp = await this.engineClient.batchWriteMemory(
+				create(BatchWriteMemoryRequestSchema, {
+					requests: entries.map((e) => ({
+						keyScope: e.keyScope,
+						key: e.key,
+						content: e.content,
+						contentType: e.contentType ?? "text",
+						sourceAgent,
+						taskId: "",
+						projectId: "",
+						importance: 0,
+						tags: [],
+					})),
+				}),
+			);
+			return resp.entries.length;
 		} catch {
 			return 0;
 		}
@@ -348,19 +377,18 @@ export class GrpcBridge {
 		pathPatterns?: string[],
 	): Promise<Array<{ filePath: string; snippet: string; score: number }>> {
 		try {
-			const payload: Record<string, unknown> = {
-				query,
-				modes,
-				max_results: maxResults,
-			};
-			if (repoIds?.length) payload.repo_ids = repoIds;
-			if (languages?.length) payload.languages = languages;
-			if (pathPatterns?.length) payload.path_patterns = pathPatterns;
-			const resp = await this.rpc("Search", payload);
-			return ((resp.items as RpcResp[]) ?? []).map((item) => ({
-				filePath: (item.file_path as string) ?? "",
-				snippet: (item.content_snippet as string) ?? "",
-				score: (item.score as number) ?? 0,
+			const resp = await this.engineClient.search(
+				create(SearchRequestSchema, {
+					query, modes, maxResults,
+					repoIds: repoIds ?? [],
+					languages: languages ?? [],
+					pathPatterns: pathPatterns ?? [],
+				}),
+			);
+			return resp.items.map((item) => ({
+				filePath: item.filePath,
+				snippet: item.contentSnippet,
+				score: item.score,
 			}));
 		} catch {
 			return [];
@@ -372,15 +400,14 @@ export class GrpcBridge {
 	async indexRepo(
 		repoId: string,
 		localPath: string,
-		languages: string[] = [],
+		_languages: string[] = [],
 	): Promise<boolean> {
 		try {
-			const resp = await this.rpc("IndexRepo", {
-				repo_id: repoId,
-				local_path: localPath,
-				languages,
-			});
-			return (resp.success as boolean) ?? false;
+			// ponytail: IndexRepoRequest has no languages field; IndexRepoResponse has no success
+			await this.engineClient.indexRepo(
+				create(IndexRepoRequestSchema, { repoId, localPath }),
+			);
+			return true;
 		} catch {
 			return false;
 		}
@@ -388,12 +415,14 @@ export class GrpcBridge {
 
 	async getIndexState(repoId: string): Promise<{ status: string; indexedFiles: number; lastIndexed: string } | null> {
 		try {
-			const resp = await this.rpc("GetIndexState", { repo_id: repoId });
-			if (!(resp.available as boolean)) return null;
+			const resp = await this.engineClient.getIndexState(
+				create(GetIndexStateRequestSchema, { repoId }),
+			);
+			if (!resp.indexed) return null;
 			return {
-				status: (resp.status as string) ?? "unknown",
-				indexedFiles: (resp.indexed_files as number) ?? 0,
-				lastIndexed: (resp.last_indexed as string) ?? "",
+				status: "indexed",
+				indexedFiles: resp.filesCount,
+				lastIndexed: resp.lastIndexedSha ?? "",
 			};
 		} catch {
 			return null;
@@ -402,8 +431,11 @@ export class GrpcBridge {
 
 	async removeIndex(repoId: string): Promise<boolean> {
 		try {
-			const resp = await this.rpc("RemoveIndex", { repo_id: repoId });
-			return (resp.success as boolean) ?? false;
+			// ponytail: RemoveIndexResponse is empty — success = no error
+			await this.engineClient.removeIndex(
+				create(RemoveIndexRequestSchema, { repoId }),
+			);
+			return true;
 		} catch {
 			return false;
 		}
@@ -411,11 +443,11 @@ export class GrpcBridge {
 
 	async listRepos(): Promise<Array<{ repoId: string; status: string; indexedFiles: number }>> {
 		try {
-			const resp = await this.rpc("ListRepos", {});
-			return ((resp.repos as RpcResp[]) ?? []).map((r) => ({
-				repoId: (r.repo_id as string) ?? "",
-				status: (r.status as string) ?? "",
-				indexedFiles: (r.indexed_files as number) ?? 0,
+			const resp = await this.engineClient.listRepos(create(ListReposRequestSchema));
+			return resp.repos.map((r) => ({
+				repoId: r.repoId,
+				status: r.indexed ? "indexed" : "unknown",
+				indexedFiles: r.filesCount,
 			}));
 		} catch {
 			return [];
@@ -429,13 +461,13 @@ export class GrpcBridge {
 		repoId?: string,
 	): Promise<Array<{ name: string; type: string; size: number }>> {
 		try {
-			const payload: Record<string, unknown> = { path };
-			if (repoId) payload.repo_id = repoId;
-			const resp = await this.rpc("ListDir", payload);
-			return ((resp.entries as RpcResp[]) ?? []).map((e) => ({
-				name: (e.name as string) ?? "",
-				type: (e.type as string) ?? "file",
-				size: (e.size as number) ?? 0,
+			const resp = await this.engineClient.listDir(
+				create(ListDirRequestSchema, { path, repoId: repoId ?? "" }),
+			);
+			return resp.entries.map((e) => ({
+				name: e.name,
+				type: e.entryType,
+				size: Number(e.size),
 			}));
 		} catch {
 			return [];
@@ -444,10 +476,10 @@ export class GrpcBridge {
 
 	async getFile(path: string, repoId?: string): Promise<string | null> {
 		try {
-			const payload: Record<string, unknown> = { path };
-			if (repoId) payload.repo_id = repoId;
-			const resp = await this.rpc("GetFile", payload);
-			return (resp.content as string) ?? null;
+			const resp = await this.engineClient.getFile(
+				create(GetFileRequestSchema, { path, repoId: repoId ?? "" }),
+			);
+			return resp.content ?? null;
 		} catch {
 			return null;
 		}
@@ -457,51 +489,30 @@ export class GrpcBridge {
 
 	async listWorkers(): Promise<WorkerListResult> {
 		try {
-			const resp = await this.rpc("ListWorkers", {});
-			const workers = ((resp.workers as RpcResp[]) ?? []).map((w): WorkerInfo => ({
-				id: (w.id as string) ?? "",
-				capabilities: (w.capabilities as string[]) ?? [],
-				currentLoad: (w.current_load as number) ?? 0,
-				maxCapacity: (w.max_capacity as number) ?? 0,
-				loadPercent: (w.load_percent as number) ?? 0,
-				lastHeartbeat: (w.last_heartbeat as string) ?? "",
-				heartbeatAgeSeconds: (w.heartbeat_age_seconds as number) ?? 0,
-				heartbeatStale: (w.heartbeat_stale as boolean) ?? false,
-				isAvailable: (w.is_available as boolean) ?? false,
+			const resp = await this.dashboardClient.listWorkers(
+				create(ListWorkersRequestSchema),
+			);
+			this.connected = true;
+			const workers: WorkerInfo[] = resp.workers.map((w) => ({
+				id: w.id,
+				capabilities: [...w.capabilities],
+				currentLoad: w.currentLoad,
+				maxCapacity: w.maxCapacity,
+				loadPercent: w.loadPercent,
+				lastHeartbeat: w.lastHeartbeat,
+				heartbeatAgeSeconds: w.heartbeatAgeSeconds,
+				heartbeatStale: w.heartbeatStale,
+				isAvailable: w.isAvailable,
 			}));
 			return {
-				available: (resp.available as boolean) ?? false,
+				available: resp.available,
 				workers,
-				total: (resp.total as number) ?? 0,
-				availableCount: (resp.available_count as number) ?? 0,
+				total: resp.total,
+				availableCount: resp.availableCount,
 			};
 		} catch {
-			// Fallback: try Health RPC for local_worker status
-			// ponytail: degraded mode — no load/capacity data from Health RPC,
-			// set maxCapacity=-1 to signal "unknown capacity" (0 would imply infinite)
-			try {
-				const h = await this.health();
-				const isHealthy = h.status !== "unavailable";
-				return {
-					available: true,
-					workers: [{
-						id: "local_worker",
-						capabilities: [],
-						currentLoad: 0,
-						maxCapacity: -1,
-						loadPercent: 0,
-						lastHeartbeat: "",
-						heartbeatAgeSeconds: 0,
-						heartbeatStale: !isHealthy,
-						isAvailable: isHealthy,
-					}],
-					total: 1,
-					availableCount: isHealthy ? 1 : 0,
-					degraded: true,
-				};
-			} catch {
-				return { available: false, workers: [], total: 0, availableCount: 0 };
-			}
+			// No DashboardService available — return empty workers list
+			return { available: false, workers: [], total: 0, availableCount: 0 };
 		}
 	}
 
@@ -513,67 +524,38 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private async rpc(method: string, payload: Record<string, unknown>): Promise<RpcResp> {
-		const service = this.resolveService(method);
-		const url = `${this.config.serverUrl}/ultimate_coders.${service}/${method}`;
-
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
-
-		try {
-			const resp = await fetch(url, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Accept: "application/json",
-				},
-				body: JSON.stringify(payload),
-				signal: controller.signal,
-			});
-
-			if (!resp.ok) {
-				throw new Error(`gRPC ${method} failed: ${resp.status}`);
-			}
-
-			this.connected = true;
-			return (await resp.json()) as RpcResp;
-		} finally {
-			clearTimeout(timer);
-		}
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string }> }): TaskSync {
+		return {
+			taskId: task.id,
+			description: task.description,
+			status: task.status,
+			projectId: task.projectId,
+			subtasks: task.subtasks.map((st) => ({
+				id: st.id,
+				description: st.description,
+				status: st.status,
+				dependsOn: [...st.dependsOn],
+				assignedWorker: st.assignedWorker,
+				result: st.result,
+			})),
+		};
 	}
 
-	private resolveService(method: string): string {
-		const taskMethods = new Set([
-			"SubmitTask", "GetTask", "ListTasks",
-			"WatchTask", "PauseTask", "ResumeTask", "CancelTask", "UpdateTask",
-		]);
-		const engineMethods = new Set([
-			"Search", "IndexRepo", "GetIndexState", "RemoveIndex",
-			"ReadMemory", "WriteMemory", "DeleteMemory", "SearchMemory",
-			"Health", "BatchWriteMemory", "ListRepos", "ListDir", "GetFile",
-		]);
-		const dashboardMethods = new Set([
-			"ListWorkers", "GetSchedulerStatus", "GetDashboardData",
-		]);
-
-		if (taskMethods.has(method)) return "TaskService";
-		if (engineMethods.has(method)) return "EngineService";
-		if (dashboardMethods.has(method)) return "DashboardService";
-		return "EngineService";
+	private parseTaskProto(resp: SubmitTaskResponse): TaskSync {
+		// ponytail: SubmitTaskResponse has inline task fields (id, status, subtasks)
+		return {
+			taskId: resp.taskId,
+			description: "",
+			status: resp.status,
+			projectId: "",
+			subtasks: resp.subtasks.map((st) => ({
+				id: st.id,
+				description: st.description,
+				status: st.status,
+				dependsOn: [...st.dependsOn],
+				assignedWorker: st.assignedWorker,
+				result: st.result,
+			})),
+		};
 	}
-
-	private parseTaskSync = (raw: RpcResp): TaskSync => ({
-		taskId: (raw.id as string) ?? "",
-		description: (raw.description as string) ?? "",
-		status: (raw.status as string) ?? "",
-		projectId: (raw.project_id as string) ?? "",
-		subtasks: ((raw.subtasks as RpcResp[]) ?? []).map((st) => ({
-			id: (st.id as string) ?? "",
-			description: (st.description as string) ?? "",
-			status: (st.status as string) ?? "",
-			dependsOn: (st.depends_on as string[]) ?? [],
-			assignedWorker: st.assigned_worker as string | undefined,
-			result: st.result as string | undefined,
-		})),
-	});
 }

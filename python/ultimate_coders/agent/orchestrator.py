@@ -1,7 +1,7 @@
 """Minimal Orchestrator — lightweight task + worker state management.
 
 Replaces the full Python Orchestrator (removed in PR #161) with just enough
-functionality for local_worker.py and nats_worker.py to operate.
+functionality for nats_worker.py to operate.
 
 Provides:
 - Task CRUD (submit, assign subtask, handle result, get status)
@@ -12,7 +12,7 @@ Provides:
 - Pause/resume/cancel
 
 NOT provided (was in full Orchestrator, now handled by OMP extension):
-- LLM-based task decomposition (local_worker uses newline-split fallback)
+- LLM-based task decomposition
 - Scheduler (cron jobs)
 - Dashboard snapshot (nats_worker builds its own)
 """
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OrchestratorConfig:
-    """Minimal config — matches what nats_worker/local_worker access."""
+    """Minimal config — matches what nats_worker access."""
     max_retries: int = 3
     heartbeat_timeout_seconds: int = 90
     # ponytail: remaining fields are stubs that workers check but don't functionally use
@@ -73,7 +73,7 @@ class WorkerEntry:
 
 
 class Orchestrator:
-    """Lightweight orchestrator for local_worker / nats_worker.
+    """Lightweight orchestrator for nats_worker.
 
     Provides just enough state management to run tasks through Workers
     without the full LLM decomposition / scheduler / dashboard stack.
@@ -132,7 +132,7 @@ class Orchestrator:
         """Submit a task with simple newline-split decomposition.
 
         The full Orchestrator used LLM decomposition; this minimal version
-        splits by newlines (same as local_worker's mock mode).
+        splits by newlines (same as mock mode).
         """
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
         lines = [line.strip() for line in description.split("\n") if line.strip()]

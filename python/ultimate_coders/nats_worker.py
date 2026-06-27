@@ -1320,7 +1320,7 @@ class NatsWorker:
                             task_id=st.parent_id,
                             subtask_id=st.id,
                             data={
-                                "reason": "local_worker_stall",
+                                "reason": "worker_stall",
                                 "worker_id": self._worker.worker_id,
                                 "retry_count": st.retry_count,
                             },

@@ -139,7 +139,7 @@ check_cmd() {
 PIDS=()
 cleanup() {
     log "Shutting down cluster..."
-    for pid in "${PIDS[@]}"; do
+    for pid in "${PIDS[@]:-}"; do
         kill "$pid" 2>/dev/null || true
     done
     wait 2>/dev/null || true
@@ -159,16 +159,39 @@ save_pid() {
 # ── Start Docker storage backends ──────────────────────────────
 if [ "$USE_DOCKER" = true ]; then
     check_cmd docker || exit 1
+    # ponytail: free ports that Docker containers will bind to
+    for port in 4222 6333 6334 2379 5432; do
+        if lsof -i :$port >/dev/null 2>&1; then
+            pid=$(lsof -ti :$port 2>/dev/null || true)
+            if [ -n "$pid" ]; then
+                warn "Port :$port in use (PID $pid) — stopping"
+                kill $pid 2>/dev/null || true
+            fi
+        fi
+    done
+    sleep 1
     log "Starting Docker storage backends (TiKV, Qdrant, PG, NATS)..."
     cd "$SCRIPT_DIR/docker" && docker compose up -d pd tikv qdrant postgres nats
     info "Waiting for backends to be healthy..."
-    for i in $(seq 1 30); do
-        if docker compose ps | grep -q "unhealthy"; then
-            sleep 2
-        else
+    for i in $(seq 1 60); do
+        # ponytail: check each service individually — some take longer
+        unhealthy=$(docker compose ps --format json 2>/dev/null \
+            | grep -c '"Health":"unhealthy"' || true)
+        starting=$(docker compose ps --format json 2>/dev/null \
+            | grep -c '"Health":"starting"' || true)
+        if [ "$unhealthy" -eq 0 ] && [ "$starting" -eq 0 ]; then
             break
         fi
+        sleep 2
     done
+    # ponytail: ensure the database exists (stale volumes may lack it)
+    docker exec docker-postgres-1 psql -U ultimate_coders -d postgres \
+        -c "SELECT 1 FROM pg_database WHERE datname='ultimate_coders'" 2>/dev/null \
+        | grep -q 1 || {
+        info "Creating PostgreSQL database 'ultimate_coders'..."
+        docker exec docker-postgres-1 psql -U ultimate_coders -d postgres \
+            -c "CREATE DATABASE ultimate_coders;" 2>/dev/null
+    }
     NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
     # ponytail: Docker mode → storage env vars point to localhost ports
     export UC_TIKV_PD_ENDPOINTS="${UC_TIKV_PD_ENDPOINTS:-127.0.0.1:2379}"
@@ -199,17 +222,39 @@ NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
 if check_port 50051; then
     log "Starting gRPC server..."
     cd "$SCRIPT_DIR"
-    PATH="$SCRIPT_DIR/.venv/bin:$PATH" \
-    NATS_URL="$NATS_URL" \
-    RUST_LOG="${RUST_LOG:-info}" \
-    cargo run -p uc-grpc-server &
+    GRPC_ENV=(
+        PATH="$SCRIPT_DIR/.venv/bin:$PATH"
+        RUST_LOG="${RUST_LOG:-info}"
+        UC_NATS_URL="$NATS_URL"
+        UC_CORS_MODE="${UC_CORS_MODE:-dev}"
+    )
+    if [ "$USE_DOCKER" = true ]; then
+        GRPC_ENV+=(
+            UC_TIKV_PD_ENDPOINTS="${UC_TIKV_PD_ENDPOINTS:-127.0.0.1:2379}"
+            UC_QDRANT_URL="${UC_QDRANT_URL:-http://127.0.0.1:6334}"
+            UC_PG_URL="${UC_PG_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
+            UC_DATABASE_URL="${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
+            UC_TASK_BACKEND="${UC_TASK_BACKEND:-postgres}"
+        )
+    fi
+    # Build first, then exec the binary directly so PID is correct
+    log "Building gRPC server..."
+    env "${GRPC_ENV[@]}" cargo build -p uc-grpc-server 2>&1 | tail -1
+    env "${GRPC_ENV[@]}" nohup "$SCRIPT_DIR/target/debug/uc-grpc-server" > /tmp/uc-grpc-server.log 2>&1 &
     GRPC_PID=$!
+    disown "$GRPC_PID"
     save_pid "$GRPC_PID" "grpc-server"
     info "gRPC PID: $GRPC_PID"
-    for i in $(seq 1 20); do
-        if check_port 50051; then sleep 1; else break; fi
+    # Wait for port to become active
+    for i in $(seq 1 30); do
+        if ! lsof -i :50051 >/dev/null 2>&1; then sleep 1; else break; fi
     done
-    log "gRPC server ready on :50051"
+    if lsof -i :50051 >/dev/null 2>&1; then
+        log "gRPC server ready on :50051"
+    else
+        err "gRPC server failed to start — check /tmp/uc-grpc-server.log"
+        exit 1
+    fi
 else
     log "gRPC server already running on :50051"
 fi
@@ -240,8 +285,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
 done
 
 if [ "$WORKER_OK" -eq 0 ]; then
-    err "All workers failed to start. Python NATS worker is broken (nats_worker.py imports removed Orchestrator)."
-    err "Use local worker mode instead: ./run-omp.sh  (LocalWorkerBridge auto-spawns on first submit)"
+    err "All workers failed to start. All workers failed to start. Check NATS connectivity and Python environment."
     exit 1
 fi
 

@@ -14,7 +14,7 @@ import { GrpcBridge } from "./grpc-bridge";
 export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 	const workerSchema = pi.zod.object({
 		action: pi.zod.enum(["list", "status"]).describe("Worker action: list all workers, or check a specific worker's status"),
-		// ponytail: worker_id supports prefix matching — e.g. "local" matches "local_worker"
+		// ponytail: worker_id supports prefix matching — e.g. "nats" matches "nats_worker"
 		worker_id: pi.zod.string().optional().describe("Worker ID (required for status action; prefix matching supported)"),
 	});
 
