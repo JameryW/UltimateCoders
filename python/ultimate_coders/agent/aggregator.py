@@ -18,7 +18,6 @@ from enum import Enum
 from typing import Any
 
 from ultimate_coders.agent.conflict import (
-    ConflictInfo,
     ConflictResolver,
     MergeResult,
     ResolutionTier,
@@ -93,7 +92,10 @@ class ResultAggregator:
             AggregatedResult with merged files and status.
         """
         if not subtask_results:
-            return AggregatedResult(status=AggregationStatus.FAILED, summary="No results to aggregate")
+            return AggregatedResult(
+                status=AggregationStatus.FAILED,
+                summary="No results to aggregate",
+            )
 
         # Separate successes and failures
         successes = [r for r in subtask_results if r.success]
@@ -104,7 +106,10 @@ class ResultAggregator:
         if failure_ratio > self._max_failure_ratio:
             return AggregatedResult(
                 status=AggregationStatus.FAILED,
-                summary=f"Too many failures: {len(failures)}/{len(subtask_results)} subtasks failed",
+                summary=(
+                    f"Too many failures: "
+                    f"{len(failures)}/{len(subtask_results)} subtasks failed"
+                ),
                 failed_subtasks=[r.subtask_id for r in failures],
             )
 
@@ -212,7 +217,6 @@ class ResultAggregator:
         if not self._llm_client:
             return ""
 
-        import asyncio
 
         prompt = (
             "You are a result synthesis agent. Combine the following subtask results "

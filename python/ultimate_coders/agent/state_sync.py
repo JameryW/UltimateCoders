@@ -16,7 +16,6 @@ NATS infrastructure. Upgrade to CRDTs if conflict rate is high.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -261,7 +260,12 @@ class WorkspaceStateMachine:
         self._states[workspace_id] = entry
         return entry
 
-    def transition(self, workspace_id: str, new_state: WorkspaceState, **kwargs: Any) -> WorkspaceStateEntry | None:
+    def transition(
+        self,
+        workspace_id: str,
+        new_state: WorkspaceState,
+        **kwargs: Any,
+    ) -> WorkspaceStateEntry | None:
         """Transition a workspace to a new state.
 
         Valid transitions:
@@ -278,7 +282,11 @@ class WorkspaceStateMachine:
             WorkspaceState.CREATED: {WorkspaceState.BRANCHED},
             WorkspaceState.BRANCHED: {WorkspaceState.COMMITTED},
             WorkspaceState.COMMITTED: {WorkspaceState.MERGING},
-            WorkspaceState.MERGING: {WorkspaceState.MERGED, WorkspaceState.CONFLICT, WorkspaceState.ABORTED},
+            WorkspaceState.MERGING: {
+                WorkspaceState.MERGED,
+                WorkspaceState.CONFLICT,
+                WorkspaceState.ABORTED,
+            },
         }
 
         allowed = valid_transitions.get(entry.state, set())

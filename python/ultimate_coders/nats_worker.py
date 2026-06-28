@@ -349,7 +349,10 @@ class NatsWorker:
                 cb=self._handle_file_changed,
             )
             self._subscriptions.append(file_change_sub)
-            logger.info("Subscribed to %s (distributed conflict tracking)", NATS_SUBJECT_FILE_CHANGED)
+            logger.info(
+                "Subscribed to %s (distributed conflict tracking)",
+                NATS_SUBJECT_FILE_CHANGED,
+            )
         else:
             # Default mode: full Orchestrator consumer
             # Subscribe to uc.task.submit

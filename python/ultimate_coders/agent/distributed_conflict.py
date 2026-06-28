@@ -16,21 +16,16 @@ if NATS dedup proves insufficient.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictInfo,
     ConflictResult,
-    ConflictResolver,
     EditIntent,
     EditType,
-    MergeResult,
     ResolutionTier,
 )
 

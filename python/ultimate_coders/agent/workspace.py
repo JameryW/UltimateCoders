@@ -21,8 +21,7 @@ import logging
 import os
 import shutil
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -189,7 +188,11 @@ class WorkspaceManager:
 
         # Remove the worktree
         try:
-            if os.path.exists(os.path.join(self._project_path, f".uc/worktrees/{handle.workspace_id}")):
+            wt_path = os.path.join(
+                self._project_path,
+                f".uc/worktrees/{handle.workspace_id}",
+            )
+            if os.path.exists(wt_path):
                 await self._git(
                     ["worktree", "remove", f".uc/worktrees/{handle.workspace_id}", "--force"],
                     cwd=self._project_path,
