@@ -50,8 +50,22 @@ impl AgentAdapter for ClaudeCodeAgent {
         prompt: &str,
         working_dir: &str,
         config: &SandboxConfig,
+        subtask_config: Option<&serde_json::Value>,
     ) -> ExecRequest {
-        let mut env_vars = config.env_vars.clone();
+        use super::{merge_agent_config, SubtaskAgentConfig};
+
+        // Merge config-level and subtask-level overrides
+        let effective_config = if let Some(sc) = subtask_config {
+            if let Ok(parsed) = serde_json::from_value::<SubtaskAgentConfig>(sc.clone()) {
+                merge_agent_config(config, &parsed)
+            } else {
+                config.clone()
+            }
+        } else {
+            config.clone()
+        };
+
+        let mut env_vars = effective_config.env_vars.clone();
 
         // Ensure ANTHROPIC_API_KEY is available
         if !env_vars.contains_key("ANTHROPIC_API_KEY") {
@@ -71,31 +85,31 @@ impl AgentAdapter for ClaudeCodeAgent {
         ];
 
         // Agent customization flags (mirrors Python ClaudeCodeAdapter)
-        if !config.tools.is_empty() {
+        if !effective_config.tools.is_empty() {
             args.push("--tools".to_string());
-            args.extend(config.tools.iter().cloned());
+            args.extend(effective_config.tools.iter().cloned());
         }
-        if !config.allowed_tools.is_empty() {
+        if !effective_config.allowed_tools.is_empty() {
             args.push("--allowedTools".to_string());
-            args.extend(config.allowed_tools.iter().cloned());
+            args.extend(effective_config.allowed_tools.iter().cloned());
         }
-        if !config.disallowed_tools.is_empty() {
+        if !effective_config.disallowed_tools.is_empty() {
             args.push("--disallowedTools".to_string());
-            args.extend(config.disallowed_tools.iter().cloned());
+            args.extend(effective_config.disallowed_tools.iter().cloned());
         }
-        if !config.mcp_configs.is_empty() {
+        if !effective_config.mcp_configs.is_empty() {
             args.push("--mcp-config".to_string());
-            args.extend(config.mcp_configs.iter().cloned());
+            args.extend(effective_config.mcp_configs.iter().cloned());
         }
-        if let Some(ref prompt) = config.append_system_prompt {
+        if let Some(ref prompt) = effective_config.append_system_prompt {
             args.push("--append-system-prompt".to_string());
             args.push(prompt.clone());
         }
-        if let Some(ref name) = config.agent_name {
+        if let Some(ref name) = effective_config.agent_name {
             args.push("--agent".to_string());
             args.push(name.clone());
         }
-        if let Some(ref json) = config.agents_json {
+        if let Some(ref json) = effective_config.agents_json {
             args.push("--agents".to_string());
             args.push(json.clone());
         }
@@ -104,9 +118,9 @@ impl AgentAdapter for ClaudeCodeAgent {
             command: "claude".to_string(),
             args,
             stdin: None,
-            timeout_secs: config.resource_limits.max_cpu_seconds,
+            timeout_secs: effective_config.resource_limits.max_cpu_seconds,
             working_dir: if working_dir.is_empty() {
-                config.working_dir.clone()
+                effective_config.working_dir.clone()
             } else {
                 working_dir.to_string()
             },
@@ -313,7 +327,7 @@ mod tests {
     fn claude_code_build_request() {
         let adapter = ClaudeCodeAgent::new();
         let config = test_config();
-        let request = adapter.build_request("Fix the bug", "/tmp/test", &config);
+        let request = adapter.build_request("Fix the bug", "/tmp/test", &config, None);
 
         assert_eq!(request.command, "claude");
         assert!(request.args.contains(&"-p".to_string()));
@@ -332,7 +346,7 @@ mod tests {
     fn claude_code_build_request_custom_turns() {
         let adapter = ClaudeCodeAgent::with_max_turns(10);
         let config = test_config();
-        let request = adapter.build_request("Test", "/tmp/test", &config);
+        let request = adapter.build_request("Test", "/tmp/test", &config, None);
         assert!(request.args.contains(&"10".to_string()));
     }
 
@@ -485,7 +499,7 @@ mod tests {
             tools: vec!["default".to_string(), "mcp__codegraph__*".to_string()],
             ..Default::default()
         };
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         let idx = request.args.iter().position(|a| a == "--tools").unwrap();
         assert_eq!(request.args[idx + 1], "default");
         assert_eq!(request.args[idx + 2], "mcp__codegraph__*");
@@ -500,7 +514,7 @@ mod tests {
             mcp_configs: vec!["/etc/mcp/codegraph.json".to_string()],
             ..Default::default()
         };
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         let idx = request
             .args
             .iter()
@@ -518,7 +532,7 @@ mod tests {
             allowed_tools: vec!["Bash(git *)".to_string(), "Edit".to_string()],
             ..Default::default()
         };
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         assert!(request.args.contains(&"--allowedTools".to_string()));
         assert!(request.args.contains(&"Bash(git *)".to_string()));
     }
@@ -532,7 +546,7 @@ mod tests {
             agent_name: Some("reviewer".to_string()),
             ..Default::default()
         };
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         let idx = request.args.iter().position(|a| a == "--agent").unwrap();
         assert_eq!(request.args[idx + 1], "reviewer");
     }
@@ -546,7 +560,7 @@ mod tests {
             append_system_prompt: Some("Focus on Rust".to_string()),
             ..Default::default()
         };
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         let idx = request
             .args
             .iter()
@@ -559,7 +573,7 @@ mod tests {
     fn claude_code_build_request_no_extra_flags_by_default() {
         let adapter = ClaudeCodeAgent::new();
         let config = test_config();
-        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let request = adapter.build_request("Fix", "/tmp/test", &config, None);
         assert!(!request.args.contains(&"--tools".to_string()));
         assert!(!request.args.contains(&"--mcp-config".to_string()));
         assert!(!request.args.contains(&"--allowedTools".to_string()));
@@ -567,5 +581,48 @@ mod tests {
         assert!(!request.args.contains(&"--append-system-prompt".to_string()));
         assert!(!request.args.contains(&"--agent".to_string()));
         assert!(!request.args.contains(&"--agents".to_string()));
+    }
+
+    #[test]
+    fn claude_code_build_request_with_subtask_config_override() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            tools: vec!["default".to_string()],
+            ..Default::default()
+        };
+        let subtask_config = serde_json::json!({
+            "tools": ["mcp__codegraph__*"],
+            "agent_name": "reviewer"
+        });
+        let request = adapter.build_request("Fix", "/tmp/test", &config, Some(&subtask_config));
+
+        // tools overridden by subtask config
+        let idx = request.args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(request.args[idx + 1], "mcp__codegraph__*");
+        // agent_name from subtask config
+        let idx = request.args.iter().position(|a| a == "--agent").unwrap();
+        assert_eq!(request.args[idx + 1], "reviewer");
+    }
+
+    #[test]
+    fn claude_code_build_request_subtask_config_adds_new_key() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            ..Default::default()
+        };
+        let subtask_config = serde_json::json!({
+            "append_system_prompt": "Focus on security"
+        });
+        let request = adapter.build_request("Fix", "/tmp/test", &config, Some(&subtask_config));
+        let idx = request
+            .args
+            .iter()
+            .position(|a| a == "--append-system-prompt")
+            .unwrap();
+        assert_eq!(request.args[idx + 1], "Focus on security");
     }
 }
