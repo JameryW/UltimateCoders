@@ -425,3 +425,36 @@ Two features: (1) OMP SubtaskTreeOverlay shows dispatch_mode in expanded details
 ### Next Steps
 
 - None - task complete
+
+
+## Session 68: Enhance sandbox worker: skill/MCP/tool customization
+
+**Date**: 2026-06-28
+**Task**: Enhance sandbox worker: skill/MCP/tool customization
+**Branch**: `main`
+
+### Summary
+
+Added tool/skill/mcp customization to sandbox workers. SandboxConfig gains 7 new fields. Subtask carries agent_config dict. ClaudeCodeAdapter generates CLI flags. Worker derives capabilities from config. 275 tests pass (27 new). PR #182.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e18f2b36` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
