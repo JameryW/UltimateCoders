@@ -53,6 +53,7 @@ NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
 NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
+NATS_SUBJECT_FILE_CHANGED: str = "uc.file.changed"
 
 # ── Payload types ───────────────────────────────────────────────
 
@@ -281,6 +282,7 @@ class NatsWorker:
         self._orchestrator: Orchestrator | None = None
         self._worker: Worker | None = None
         self._grpc_reg_engine: Engine | None = None  # for WorkerService registration
+        self._distributed_detector: Any | None = None  # set in _init_components
         self._subscriptions: list[Subscription] = []
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -340,6 +342,14 @@ class NatsWorker:
                 "Subscribed to %s (queue group: workers)",
                 NATS_SUBJECT_SUBTASK_EXECUTE,
             )
+
+            # Worker mode: subscribe to file change events for distributed conflict tracking
+            file_change_sub = await self._nc.subscribe(
+                NATS_SUBJECT_FILE_CHANGED,
+                cb=self._handle_file_changed,
+            )
+            self._subscriptions.append(file_change_sub)
+            logger.info("Subscribed to %s (distributed conflict tracking)", NATS_SUBJECT_FILE_CHANGED)
         else:
             # Default mode: full Orchestrator consumer
             # Subscribe to uc.task.submit
@@ -373,6 +383,14 @@ class NatsWorker:
             )
             self._subscriptions.append(event_sub)
             logger.info("Subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+
+            # Subscribe to file change events for distributed state sync
+            file_change_sub = await self._nc.subscribe(
+                NATS_SUBJECT_FILE_CHANGED,
+                cb=self._handle_file_changed,
+            )
+            self._subscriptions.append(file_change_sub)
+            logger.info("Subscribed to %s (distributed state sync)", NATS_SUBJECT_FILE_CHANGED)
 
             # Start dashboard snapshot publisher
             self._snapshot_task = asyncio.create_task(self._snapshot_loop())
@@ -652,12 +670,45 @@ class NatsWorker:
             backend="subprocess",
             project_path=self._project_path or os.getcwd(),
         )
+
+        # Workspace isolation for distributed execution
+        workspace_manager = None
+        try:
+            from ultimate_coders.agent.workspace import WorkspaceManager
+            workspace_manager = WorkspaceManager(
+                project_path=self._project_path or os.getcwd(),
+            )
+            logger.info("WorkspaceManager initialized")
+        except Exception:
+            logger.debug("WorkspaceManager unavailable, no workspace isolation")
+
+        # Distributed conflict detector (replaces local-only detector)
+        distributed_detector = None
+        try:
+            from ultimate_coders.agent.distributed_conflict import DistributedConflictDetector
+            distributed_detector = DistributedConflictDetector(
+                nats_publisher=self._publisher,
+                worker_id="",  # set after worker init
+            )
+            logger.info("DistributedConflictDetector initialized")
+        except Exception:
+            logger.debug("DistributedConflictDetector unavailable, using local-only")
+
         self._worker = Worker(
             engine=self._engine,
             sandbox_config=sandbox_config,
             event_emitter=self._orchestrator.event_emitter,
             nats_publisher=self._publisher,
+            workspace_manager=workspace_manager,
         )
+
+        # Wire distributed detector to worker
+        if distributed_detector is not None:
+            distributed_detector._worker_id = self._worker.worker_id
+            self._worker.conflict_detector = distributed_detector.local_detector
+            self._distributed_detector = distributed_detector
+        else:
+            self._distributed_detector = None
 
         # Register the worker with the Orchestrator (await to ensure
         # registration completes before any tasks arrive)
@@ -1404,6 +1455,40 @@ class NatsWorker:
             worker_id[:8],
             len(self._known_remote_workers),
         )
+
+    async def _handle_file_changed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.file.changed`` messages for distributed state sync.
+
+        Processes file change events from other workers and feeds them
+        into the distributed conflict detector so cross-worker conflicts
+        are detected in real time.
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.debug("Failed to parse file changed message", exc_info=True)
+            return
+
+        worker_id = data.get("worker_id", "")
+        file_path = data.get("file_path", "")
+        change_type = data.get("change_type", "modified")
+
+        if not file_path:
+            return
+
+        logger.debug(
+            "File changed: %s by %s (%s)",
+            file_path, worker_id[:8] if worker_id else "?", change_type,
+        )
+
+        # Feed into distributed conflict detector
+        if self._distributed_detector is not None:
+            self._distributed_detector.receive_remote_intent({
+                "worker_id": worker_id,
+                "file_path": file_path,
+                "edit_type": change_type,
+                "timestamp": data.get("timestamp", 0),
+            })
 
     def _has_remote_workers(self, required_capabilities: list[str] | None = None) -> bool:
         """Whether any remote workers are currently known with matching capabilities.

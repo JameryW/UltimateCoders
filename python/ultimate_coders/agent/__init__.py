@@ -1,50 +1,29 @@
-"""Agent module — Worker, Scheduler, and supporting implementations."""
+"""Agent subsystem — Worker, Sandbox, Scheduler, Conflict Detection, Aggregation."""
 
-from ultimate_coders.agent.codegraph import CodegraphClient
+from ultimate_coders.agent.aggregator import AggregatedResult, AggregationStatus, ResultAggregator
 from ultimate_coders.agent.conflict import (
     ConflictDetector,
     ConflictInfo,
-    ConflictMarker,
     ConflictResolver,
     ConflictResult,
     EditIntent,
     EditType,
-    LineRange,
     MergeResult,
     ResolutionTier,
 )
-from ultimate_coders.agent.llm import LLMClient, LLMResponse, ToolCall, ToolDefinition
-from ultimate_coders.agent.rate_limiter import (
-    CircuitBreaker,
-    CircuitState,
-    ModelFallbackChain,
-    RateLimiter,
-    RateLimiterConfig,
-    RequestPriority,
-    RetryPolicy,
-    TaskComplexity,
-    TokenBucket,
+from ultimate_coders.agent.distributed_conflict import (
+    DistributedConflictDetector,
+    MergeVerifier,
 )
-from ultimate_coders.agent.sandbox import (
-    AgentAdapter,
-    AgentOutput,
-    ClaudeCodeAdapter,
-    CodexAdapter,
-    ExecResult,
-    NetworkMode,
-    SandboxConfig,
-    SandboxHandle,
-    SandboxManager,
-    TokenUsage,
-    available_agents,
-    create_adapter,
-)
+from ultimate_coders.agent.sandbox import AgentOutput, SandboxConfig, SandboxManager
 from ultimate_coders.agent.scheduler import Scheduler
-from ultimate_coders.agent.scheduler_config import (
-    NightWindowConfig,
-    ScheduledTaskConfig,
-    SchedulerConfig,
-    load_scheduler_config,
+from ultimate_coders.agent.state_sync import (
+    ContextInjector,
+    FileChangeEvent,
+    FileChangeEventType,
+    SubtaskContext,
+    WorkspaceState,
+    WorkspaceStateMachine,
 )
 from ultimate_coders.agent.types import (
     ChangeType,
@@ -59,10 +38,39 @@ from ultimate_coders.agent.types import (
     WorkerInfo,
 )
 from ultimate_coders.agent.worker import Worker
+from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
 __all__ = [
-    "Worker",
-    "CodegraphClient",
+    # Aggregation
+    "AggregatedResult",
+    "AggregationStatus",
+    "ResultAggregator",
+    # Conflict
+    "ConflictDetector",
+    "ConflictInfo",
+    "ConflictResolver",
+    "ConflictResult",
+    "EditIntent",
+    "EditType",
+    "MergeResult",
+    "ResolutionTier",
+    # Distributed Conflict
+    "DistributedConflictDetector",
+    "MergeVerifier",
+    # Sandbox
+    "AgentOutput",
+    "SandboxConfig",
+    "SandboxManager",
+    # Scheduler
+    "Scheduler",
+    # State Sync
+    "ContextInjector",
+    "FileChangeEvent",
+    "FileChangeEventType",
+    "SubtaskContext",
+    "WorkspaceState",
+    "WorkspaceStateMachine",
+    # Types
     "ChangeType",
     "DispatchMode",
     "FileChange",
@@ -73,48 +81,9 @@ __all__ = [
     "Task",
     "TaskStatus",
     "WorkerInfo",
-    "LLMClient",
-    "LLMResponse",
-    "ToolCall",
-    "ToolDefinition",
-    # Rate limiter
-    "CircuitBreaker",
-    "CircuitState",
-    "ModelFallbackChain",
-    "RateLimiter",
-    "RateLimiterConfig",
-    "RequestPriority",
-    "RetryPolicy",
-    "TaskComplexity",
-    "TokenBucket",
-    # Conflict detection
-    "ConflictDetector",
-    "ConflictInfo",
-    "ConflictMarker",
-    "ConflictResolver",
-    "ConflictResult",
-    "EditIntent",
-    "EditType",
-    "LineRange",
-    "MergeResult",
-    "ResolutionTier",
-    # Sandbox
-    "AgentAdapter",
-    "AgentOutput",
-    "ClaudeCodeAdapter",
-    "CodexAdapter",
-    "ExecResult",
-    "NetworkMode",
-    "SandboxConfig",
-    "SandboxHandle",
-    "SandboxManager",
-    "TokenUsage",
-    "available_agents",
-    "create_adapter",
-    # Scheduler
-    "Scheduler",
-    "SchedulerConfig",
-    "ScheduledTaskConfig",
-    "NightWindowConfig",
-    "load_scheduler_config",
+    # Worker
+    "Worker",
+    # Workspace
+    "WorkspaceHandle",
+    "WorkspaceManager",
 ]
