@@ -27,12 +27,18 @@ from ultimate_coders.agent.sandbox import (
     SandboxConfig,
     SandboxManager,
 )
+from ultimate_coders.agent.state_sync import (
+    ContextInjector,
+    FileChangeEvent,
+    FileChangeEventType,
+)
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskResult,
     SubtaskStatus,
     WorkerInfo,
 )
+from ultimate_coders.agent.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +168,7 @@ class Worker:
         sandbox_config: SandboxConfig | None = None,
         event_emitter: Any | None = None,
         nats_publisher: Any | None = None,
+        workspace_manager: WorkspaceManager | None = None,
     ):
         self.worker_id = worker_id or str(uuid.uuid4())
         self.engine = engine
@@ -179,6 +186,12 @@ class Worker:
         self.nats_publisher = nats_publisher
         self.event_emitter = event_emitter
 
+        # Workspace isolation for distributed execution
+        self._workspace_manager = workspace_manager
+
+        # Context injection — completed subtask summaries flow to dependents
+        self._context_injector = ContextInjector()
+
         # Self-heartbeat monitoring — track last heartbeat timestamp
         # so stale_worker_cleanup can detect local worker stalls
         self._last_heartbeat_at: datetime = datetime.now(timezone.utc)
@@ -188,7 +201,7 @@ class Worker:
 
         ponytail: simple string matching — upgrade path is tool introspection.
         """
-        caps = ["code", "search", "memory", "test"]
+        caps = ["code", "search", "memory", "test", "decompose", "review"]
         cfg = self._sandbox_config
         if cfg.mcp_configs:
             caps.append("mcp")
@@ -248,9 +261,11 @@ class Worker:
     async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
         """Execute a subtask via sandbox agent.
 
-        Includes checkpoint: saves intermediate result to engine memory
-        before returning, and checks for existing checkpoint to allow
-        resume-skip of already-completed subtasks.
+        Includes workspace isolation, context injection, and checkpoint support:
+        - Acquires a workspace (git worktree) for file-modifying subtasks
+        - Injects completed dependency context into the subtask prompt
+        - Saves intermediate results as checkpoints for resume
+        - Broadcasts file change events for distributed state sync
         """
         self.current_task = subtask
         self._active_count += 1
@@ -284,6 +299,19 @@ class Worker:
                 stderr_tail=checkpoint.get("stderr_tail", ""),
             )
 
+        # Inject context from completed dependencies
+        context_block = self._context_injector.build_context(subtask.depends_on)
+
+        # Acquire workspace if this subtask modifies files
+        workspace_handle = None
+        if self._workspace_manager and subtask.file_constraints:
+            workspace_handle = await self._workspace_manager.acquire(subtask.id)
+            if workspace_handle:
+                logger.info(
+                    "Subtask %s allocated workspace %s",
+                    subtask.id[:8], workspace_handle.workspace_id,
+                )
+
         await self._publish_event(
             "subtask_started",
             task_id=subtask.parent_id,
@@ -295,7 +323,7 @@ class Worker:
             timeout_secs = subtask.timeout_seconds or 600
             try:
                 result = await asyncio.wait_for(
-                    self._execute_in_sandbox(subtask),
+                    self._execute_in_sandbox(subtask, context_block, workspace_handle),
                     timeout=timeout_secs,
                 )
             except asyncio.TimeoutError:
@@ -308,6 +336,29 @@ class Worker:
 
             # Save checkpoint for resume
             self._save_checkpoint(subtask.id, result)
+
+            # Record result in context injector for dependent subtasks
+            self._context_injector.add_result(
+                subtask_id=subtask.id,
+                summary=result.summary,
+                modified_files=[f.file_path for f in (result.modified_files or [])],
+                success=result.success,
+            )
+
+            # Broadcast file change events for distributed state sync
+            if result.success and result.modified_files:
+                await self._broadcast_file_changes(subtask, result)
+
+            # Release workspace (merge if successful)
+            if workspace_handle:
+                merge_result = await self._workspace_manager.release(
+                    workspace_handle, merge=result.success,
+                )
+                if merge_result.get("status") == "conflict":
+                    logger.warning(
+                        "Workspace merge conflict for subtask %s, branch preserved: %s",
+                        subtask.id[:8], merge_result.get("branch_preserved", ""),
+                    )
 
             if result.success:
                 comp_data: dict[str, Any] = {
@@ -348,6 +399,9 @@ class Worker:
 
         except Exception as e:
             logger.error("Subtask %s execution failed: %s", subtask.id, e, exc_info=True)
+            # Release workspace without merge on error
+            if workspace_handle:
+                await self._workspace_manager.release(workspace_handle, merge=False)
             await self._publish_event(
                 "subtask_failed",
                 task_id=subtask.parent_id,
@@ -416,11 +470,19 @@ class Worker:
             logger.debug("Failed to load checkpoint for subtask %s", subtask_id[:8])
         return None
 
-    async def _execute_in_sandbox(self, subtask: Subtask) -> SubtaskResult:
+    async def _execute_in_sandbox(
+        self,
+        subtask: Subtask,
+        context_block: str = "",
+        workspace_handle: Any | None = None,
+    ) -> SubtaskResult:
         """Execute via sandbox (Claude Code / Codex).
 
         Automatically declares and releases EditIntent for file_constraints
         so the conflict detector tracks which files are being modified.
+
+        If context_block is provided, prepends it to the subtask prompt.
+        If workspace_handle is provided, executes in the workspace directory.
         """
         # Declare edit intent for conflict tracking
         declared_files: list[str] = []
@@ -442,11 +504,21 @@ class Worker:
                 declared_files.append(fp)
 
         try:
+            # Build prompt with context injection
+            description = subtask.description
+            if context_block:
+                description = f"{context_block}\n\n{description}"
+
             prompt = _SUBTASK_USER_TEMPLATE.format(
-                description=subtask.description,
+                description=description,
                 expected_output=subtask.expected_output or "Complete the described task",
                 file_constraints=", ".join(subtask.file_constraints) or "none",
             )
+
+            # Determine working directory (workspace isolation)
+            working_dir: str | None = None
+            if workspace_handle and hasattr(workspace_handle, "worktree_path"):
+                working_dir = workspace_handle.worktree_path or None
 
             # Streaming callback: parse each stdout line and emit events
             async def _on_stdout_line(line: str) -> None:
@@ -463,6 +535,7 @@ class Worker:
 
             output: AgentOutput = await self._sandbox_manager.execute(
                 prompt,
+                working_dir=working_dir,
                 on_stdout_line=_on_stdout_line,
                 subtask_config=subtask.agent_config or None,
             )
@@ -483,6 +556,37 @@ class Worker:
             # Release edit intent after execution (success or failure)
             for fp in declared_files:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
+
+    async def _broadcast_file_changes(
+        self, subtask: Subtask, result: SubtaskResult,
+    ) -> None:
+        """Broadcast file change events via NATS for distributed state sync.
+
+        Each modified file gets a FileChangeEvent published to
+        ``uc.file.changed`` so all workers and the orchestrator
+        can track real-time file modifications.
+        """
+        if not result.modified_files or not self.nats_publisher:
+            return
+
+        for fc in result.modified_files:
+            event = FileChangeEvent(
+                task_id=subtask.parent_id,
+                subtask_id=subtask.id,
+                worker_id=self.worker_id,
+                file_path=fc.file_path,
+                change_type=FileChangeEventType(fc.change_type.value),
+                diff_summary=fc.diff[:200] if fc.diff else "",
+            )
+            try:
+                await self.nats_publisher.publish_event(
+                    "file_changed",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data=event.to_dict(),
+                )
+            except Exception:
+                logger.debug("Failed to broadcast file change for %s", fc.file_path)
 
     async def send_heartbeat(self) -> dict[str, Any]:
         self._last_heartbeat_at = datetime.now(timezone.utc)

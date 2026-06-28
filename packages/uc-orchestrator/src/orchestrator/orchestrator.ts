@@ -381,17 +381,18 @@ export class UCOrchestrator {
 				const wave = waves[waveIdx];
 
 				// Check worker availability before executing wave
-				let workersAvailable = await this.checkWorkerAvailability();
+				// ponytail: no longer hard-fail — prefer_remote subtasks fallback to local
+				const workersAvailable = await this.checkWorkerAvailability();
 				if (!workersAvailable) {
-					// Retry once after 5s — gRPC may have reconnected
-					await new Promise((r) => setTimeout(r, 5000));
-					workersAvailable = await this.checkWorkerAvailability();
-				}
-				if (!workersAvailable) {
-					task.status = "failed";
-					task.error = "No workers available — all workers offline or overloaded";
-					ctx.ui.notify(`Task ${task.id}: failed — no workers available`, "error");
-					break;
+					// Check if ALL subtasks in this wave require remote (dispatchMode="remote")
+					const allRequireRemote = wave.every((s) => s.dispatchMode === "remote");
+					if (allRequireRemote) {
+						task.status = "failed";
+						task.error = "No workers available and all subtasks require remote execution";
+						ctx.ui.notify(`Task ${task.id}: failed — no workers for remote-only wave`, "error");
+						break;
+					}
+					this.pi.logger.warn(`Task ${task.id}: no remote workers — local/prefer_remote subtasks will execute locally`);
 				}
 				ctx.ui.notify(
 					`Task ${task.id}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
@@ -894,6 +895,33 @@ export class UCOrchestrator {
 		ctx: ExtensionCommandContext,
 		abortSignal?: AbortSignal,
 	): Promise<SubtaskDef[]> {
+		// Try remote decomposition if workers with "decompose" capability are available
+		const workersAvailable = await this.checkWorkerAvailability();
+		if (workersAvailable) {
+			const workers = await this.bridge.listWorkers();
+			const hasDecomposeWorker = workers.workers.some(
+				(w) => w.isAvailable && w.capabilities.includes("decompose"),
+			);
+			if (hasDecomposeWorker) {
+				try {
+					const remoteResult = await this.decomposeRemote(description, ctx, abortSignal);
+					if (remoteResult.length > 0) return remoteResult;
+				} catch (err) {
+					this.pi.logger.warn(`Remote decomposition failed, falling back to local: ${err instanceof Error ? err.message : String(err)}`);
+				}
+			}
+		}
+
+		// Local fallback via runSubprocess
+		return this.decomposeLocal(description, ctx, abortSignal);
+	}
+
+	/** Local decomposition via runSubprocess (original implementation). */
+	private async decomposeLocal(
+		description: string,
+		ctx: ExtensionCommandContext,
+		abortSignal?: AbortSignal,
+	): Promise<SubtaskDef[]> {
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
 			agent: {
@@ -946,6 +974,82 @@ export class UCOrchestrator {
 		}
 
 		return output;
+	}
+
+	/**
+	 * Remote decomposition — dispatch to a worker with "decompose" capability.
+	 * Creates a pseudo-subtask, syncs to gRPC, and polls for completion.
+	 * ponytail: reuses existing executeSubtaskRemote pipeline — just different prompt and capability.
+	 */
+	private async decomposeRemote(
+		description: string,
+		ctx: ExtensionCommandContext,
+		abortSignal?: AbortSignal,
+	): Promise<SubtaskDef[]> {
+		// Create a temporary task to hold the decompose subtask
+		const pseudoTaskId = `decompose-task-${Date.now().toString(36)}`;
+		const pseudoDef: SubtaskDef = {
+			id: `decompose-${Date.now().toString(36)}`,
+			description: `Decompose task: ${description}`,
+			dependsOn: [],
+			files: [],
+			dispatchMode: "remote",
+			requiredCapabilities: ["decompose"],
+		};
+
+		const pseudoTask: TaskState = {
+			id: pseudoTaskId,
+			description: description,
+			status: "in_progress",
+			controlState: "running",
+			subtasks: [{
+				id: pseudoDef.id,
+				description: pseudoDef.description,
+				status: "running",
+				dependsOn: [],
+				files: [],
+				dispatchMode: "remote",
+				requiredCapabilities: ["decompose"],
+			 startedAt: Date.now(),
+			}],
+			createdAt: Date.now(),
+		};
+
+		this.abortControllers.set(pseudoTaskId, new AbortController());
+		if (abortSignal) {
+			abortSignal.addEventListener("abort", () => this.abortControllers.get(pseudoTaskId)?.abort(), { once: true });
+		}
+
+		try {
+			// Sync pseudo-task to gRPC so workers can pick it up
+			await this.bridge.upsertTask(this.toPersisted(pseudoTask));
+
+			// Poll for result
+			const pollIntervalMs = 2000;
+			const timeoutMs = 120_000; // decompose has 120s timeout
+			const startTime = Date.now();
+
+			while (Date.now() - startTime < timeoutMs) {
+				if (abortSignal?.aborted) throw new Error("Aborted");
+
+				const remoteTask = await this.bridge.getTask(pseudoTaskId);
+				if (remoteTask) {
+					const st = remoteTask.subtasks.find(s => s.id === pseudoDef.id);
+					if (st) {
+						const status = st.status.toLowerCase();
+						if (status === "completed" && st.result) {
+							return this.parseSubtaskOutput(st.result, description);
+						} else if (status === "failed") {
+							throw new Error(st.result || "Remote decomposition failed");
+						}
+					}
+				}
+				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+			}
+			throw new Error("Remote decomposition timed out");
+		} finally {
+			this.abortControllers.delete(pseudoTaskId);
+		}
 	}
 
 	private parseSubtaskOutput(raw: string, _description: string): SubtaskDef[] {
@@ -1062,7 +1166,87 @@ export class UCOrchestrator {
 		task: TaskState,
 		ctx: ExtensionCommandContext,
 	): Promise<SubtaskResult> {
-		return this.executeSubtaskRemote(def, task, ctx);
+		const mode = def.dispatchMode ?? "prefer_remote";
+
+		// "local" → always local
+		if (mode === "local") {
+			return this.executeSubtaskLocal(def, task, ctx);
+		}
+
+		// "remote" → must go remote, fail if no workers
+		if (mode === "remote") {
+			return this.executeSubtaskRemote(def, task, ctx);
+		}
+
+		// "prefer_remote" → try remote, fallback to local if no workers
+		const workersAvailable = await this.checkWorkerAvailability();
+		if (workersAvailable) {
+			return this.executeSubtaskRemote(def, task, ctx);
+		}
+		this.pi.logger.info(`Subtask ${def.id}: no remote workers, falling back to local execution`);
+		return this.executeSubtaskLocal(def, task, ctx);
+	}
+
+	/**
+	 * Execute a subtask locally via runSubprocess (coding agent).
+	 * Used when dispatchMode="local" or as fallback when no remote workers available.
+	 */
+	private async executeSubtaskLocal(
+		def: SubtaskDef,
+		task: TaskState,
+		ctx: ExtensionCommandContext,
+	): Promise<SubtaskResult> {
+		const result: SubtaskResult = {
+			id: def.id,
+			description: def.description,
+			status: "running",
+			dependsOn: def.dependsOn,
+			files: def.files,
+			startedAt: Date.now(),
+		};
+
+		const abortCtrl = this.abortControllers.get(task.id);
+		const contextBlock = this.buildContextForSubtask(def, task);
+
+		try {
+			const agentResult = await runSubprocess({
+				cwd: ctx.cwd,
+				agent: {
+					name: `subtask-${def.id}`,
+					description: def.description,
+					systemPrompt: `You are a coding agent. Complete the assigned subtask. Output a summary of what you did.`,
+					source: "project" as const,
+				},
+				task: contextBlock
+					? `${contextBlock}\n\n## Subtask: ${def.description}\n## Files: ${def.files.join(", ") || "(auto-detected)"}`
+					: `## Subtask: ${def.description}\n## Files: ${def.files.join(", ") || "(auto-detected)"}`,
+				id: def.id,
+				index: 0,
+				signal: abortWithTimeout(abortCtrl?.signal, this.config.subtaskTimeoutMs),
+				modelRegistry: ctx.modelRegistry,
+				settings: this.pi.pi.settings,
+				enableLsp: true,
+			});
+
+			if (agentResult.exitCode !== 0) {
+				result.status = "failed";
+				result.error = agentResult.stderr.slice(0, 500) || "Local execution failed";
+				result.stderrTail = agentResult.stderr.slice(-2000);
+			} else {
+				result.status = "completed";
+				result.result = agentResult.output || "(completed locally)";
+			}
+		} catch (err) {
+			if ((err as Error).name === "AbortError") {
+				result.status = "cancelled";
+			} else {
+				result.status = "failed";
+				result.error = err instanceof Error ? err.message : String(err);
+			}
+		}
+
+		result.completedAt = Date.now();
+		return result;
 	}
 
 	/**
@@ -1154,6 +1338,33 @@ export class UCOrchestrator {
 		ctx: ExtensionCommandContext,
 		taskId: string,
 	): Promise<ReviewResult> {
+		// Try remote review if workers with "review" capability are available
+		const workersAvailable = await this.checkWorkerAvailability();
+		if (workersAvailable) {
+			const workers = await this.bridge.listWorkers();
+			const hasReviewWorker = workers.workers.some(
+				(w) => w.isAvailable && w.capabilities.includes("review"),
+			);
+			if (hasReviewWorker) {
+				try {
+					return await this.reviewSubtaskRemote(def, workerOutput, ctx, taskId);
+				} catch (err) {
+					this.pi.logger.warn(`Remote review failed, falling back to local: ${err instanceof Error ? err.message : String(err)}`);
+				}
+			}
+		}
+
+		// Local fallback via runSubprocess
+		return this.reviewSubtaskLocal(def, workerOutput, ctx, taskId);
+	}
+
+	/** Local review via runSubprocess (original implementation). */
+	private async reviewSubtaskLocal(
+		def: SubtaskDef,
+		workerOutput: string,
+		ctx: ExtensionCommandContext,
+		taskId: string,
+	): Promise<ReviewResult> {
 		const abortCtrl = this.abortControllers.get(taskId);
 		const result = await runSubprocess({
 			cwd: ctx.cwd,
@@ -1198,6 +1409,82 @@ export class UCOrchestrator {
 			};
 		} catch {
 			return { approved: true, issues: [], suggestions: [] };
+		}
+	}
+
+	/**
+	 * Remote review — dispatch to a worker with "review" capability.
+	 * ponytail: reuses existing pipeline — creates pseudo-subtask, polls for result.
+	 */
+	private async reviewSubtaskRemote(
+		def: SubtaskDef,
+		workerOutput: string,
+		ctx: ExtensionCommandContext,
+		taskId: string,
+	): Promise<ReviewResult> {
+		const pseudoTaskId = `review-task-${Date.now().toString(36)}`;
+		const pseudoSubtaskId = `review-${def.id}`;
+		const reviewPrompt = [
+			`## Subtask: ${def.description}`,
+			`## Files: ${def.files.join(", ") || "(auto-detected)"}`,
+			`## Worker Output:`,
+			workerOutput,
+		].join("\n");
+
+		const pseudoTask: TaskState = {
+			id: pseudoTaskId,
+			description: `Review: ${def.description}`,
+			status: "in_progress",
+			controlState: "running",
+			subtasks: [{
+				id: pseudoSubtaskId,
+				description: `Review subtask result: ${def.description}`,
+				status: "running",
+				dependsOn: [],
+				files: def.files,
+				dispatchMode: "remote",
+				requiredCapabilities: ["review"],
+				startedAt: Date.now(),
+			}],
+			createdAt: Date.now(),
+		};
+
+		this.abortControllers.set(pseudoTaskId, new AbortController());
+
+		try {
+			await this.bridge.upsertTask(this.toPersisted(pseudoTask));
+
+			const pollIntervalMs = 2000;
+			const timeoutMs = this.config.reviewTimeoutMs;
+			const startTime = Date.now();
+
+			while (Date.now() - startTime < timeoutMs) {
+				const remoteTask = await this.bridge.getTask(pseudoTaskId);
+				if (remoteTask) {
+					const st = remoteTask.subtasks.find(s => s.id === pseudoSubtaskId);
+					if (st) {
+						const status = st.status.toLowerCase();
+						if (status === "completed" && st.result) {
+							try {
+								const parsed = JSON.parse(st.result);
+								return {
+									approved: parsed.approved ?? true,
+									issues: parsed.issues ?? [],
+									suggestions: parsed.suggestions ?? [],
+								};
+							} catch {
+								return { approved: true, issues: [], suggestions: [] };
+							}
+						} else if (status === "failed") {
+							throw new Error(st.result || "Remote review failed");
+						}
+					}
+				}
+				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+			}
+			throw new Error("Remote review timed out");
+		} finally {
+			this.abortControllers.delete(pseudoTaskId);
 		}
 	}
 

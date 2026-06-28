@@ -19,6 +19,14 @@ export interface SubtaskDef {
 	dispatchMode?: string;
 	/** Capabilities required by this subtask (e.g. "rust", "python", "docker"). Worker must have ALL. */
 	requiredCapabilities?: string[];
+	/** Parent subtask ID — set when this subtask was decomposed from a larger one. */
+	parentSubtaskId?: string;
+	/** Depth of recursive decomposition (0 = original, 1 = decomposed from a subtask, etc.). */
+	decompositionDepth?: number;
+	/** Maximum allowed decomposition depth. Default: 2. */
+	maxDecompositionDepth?: number;
+	/** Estimated complexity: "simple" (single file, <50 lines) | "moderate" (1-3 files) | "complex" (3+ files or cross-cutting). */
+	complexity?: string;
 }
 
 /** A wave is a group of subtasks that can execute in parallel. */
@@ -353,4 +361,192 @@ export class CircuitBreaker {
 		this.failureCount = 0;
 		this.state = "closed";
 	}
+}
+
+// ── Recursive Decomposition ──────────────────────────────────────
+
+/** Check if a subtask should be further decomposed based on its characteristics. */
+export function shouldDecompose(subtask: SubtaskDef): boolean {
+	const depth = subtask.decompositionDepth ?? 0;
+	const maxDepth = subtask.maxDecompositionDepth ?? 2;
+	if (depth >= maxDepth) return false;
+	// Complex subtasks with multiple files benefit from decomposition
+	if (subtask.files.length >= 3) return true;
+	// Long descriptions suggest complex tasks
+	if (subtask.description.length > 200) return true;
+	// Explicitly marked as complex
+	if (subtask.complexity === "complex") return true;
+	return false;
+}
+
+/**
+ * Decompose a single subtask into multiple finer-grained subtasks.
+ *
+ * Splits a complex subtask by file boundaries when possible:
+ * - Each file becomes its own subtask
+ * - Shared setup/context becomes a dependency subtask
+ * - Preserves the original subtask's dependsOn as dependencies for the first decomposed subtask
+ *
+ * ponytail: simple file-based split — upgrade to LLM-driven decomposition
+ * when file-based split produces subtasks that are too fine-grained.
+ */
+export function decomposeSubtask(parent: SubtaskDef): SubtaskDef[] {
+	const depth = (parent.decompositionDepth ?? 0) + 1;
+
+	// If subtask declares specific files, split by file
+	if (parent.files.length > 1) {
+		const results: SubtaskDef[] = [];
+		// Create one subtask per file
+		for (let i = 0; i < parent.files.length; i++) {
+			const depIds = i === 0 ? parent.dependsOn : [results[0].id];
+			results.push({
+				id: `${parent.id}-f${i}`,
+				description: `${parent.description} (file: ${parent.files[i]})`,
+				dependsOn: depIds,
+				files: [parent.files[i]],
+				dispatchMode: parent.dispatchMode,
+				requiredCapabilities: parent.requiredCapabilities,
+				parentSubtaskId: parent.id,
+				decompositionDepth: depth,
+				maxDecompositionDepth: parent.maxDecompositionDepth,
+				complexity: "simple",
+			});
+		}
+		return results;
+	}
+
+	// Single file or no files — split description by logical boundaries
+	// ponytail: newline split as heuristic — LLM decomposition handles the real cases
+	const parts = parent.description
+		.split(/\n+/)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 10);
+
+	if (parts.length <= 1) {
+		// Can't decompose further — return original
+		return [{ ...parent, decompositionDepth: depth }];
+	}
+
+	const results: SubtaskDef[] = [];
+	for (let i = 0; i < parts.length; i++) {
+		const depIds = i === 0 ? parent.dependsOn : [results[i - 1].id];
+		results.push({
+			id: `${parent.id}-p${i}`,
+			description: parts[i],
+			dependsOn: depIds,
+			files: i === 0 ? parent.files : [],
+			dispatchMode: parent.dispatchMode,
+			requiredCapabilities: parent.requiredCapabilities,
+			parentSubtaskId: parent.id,
+			decompositionDepth: depth,
+			maxDecompositionDepth: parent.maxDecompositionDepth,
+			complexity: "simple",
+		});
+	}
+	return results;
+}
+
+/**
+ * Recursively decompose complex subtasks in a wave plan.
+ *
+ * For each subtask that shouldDecompose() returns true, replaces it
+ * with the decomposed children. Preserves wave ordering by inserting
+ * children where the parent was.
+ *
+ * ponytail: single-pass — doesn't re-check if decomposed children
+ * should also be decomposed. Call again if deeper decomposition needed.
+ */
+export function recursiveDecompose(waves: DAGWave[]): DAGWave[] {
+	const result: DAGWave[] = [];
+	for (const wave of waves) {
+		const newWave: SubtaskDef[] = [];
+		for (const subtask of wave) {
+			if (shouldDecompose(subtask)) {
+				const children = decomposeSubtask(subtask);
+				// First child takes parent's position in wave
+				// Remaining children form sequential waves (depends on previous)
+				newWave.push(children[0]);
+				for (let i = 1; i < children.length; i++) {
+					result.push([children[i]]);
+				}
+			} else {
+				newWave.push(subtask);
+			}
+		}
+		if (newWave.length > 0) {
+			result.push(newWave);
+		}
+	}
+	return result;
+}
+
+// ── Dynamic Dispatch ──────────────────────────────────────────────
+
+/** Worker info for dispatch decisions. */
+export interface WorkerAvailability {
+	id: string;
+	capabilities: string[];
+	currentLoad: number;
+	maxCapacity: number;
+	isRemote: boolean;
+}
+
+/**
+ * Resolve dynamic dispatch mode for a subtask based on available workers.
+ *
+ * Rules:
+ * - "local" → always local
+ * - "remote" → must be remote; if no capable remote worker, mark as blocked
+ * - "prefer_remote" → use remote if capable worker available, else local
+ * - "auto" → decide based on subtask characteristics and worker state
+ *
+ * Returns the resolved dispatch mode and optionally the target worker ID.
+ */
+export function resolveDispatchMode(
+	subtask: SubtaskDef,
+	workers: WorkerAvailability[],
+): { mode: "local" | "remote" | "prefer_remote"; workerId?: string; blocked: boolean } {
+	const mode = subtask.dispatchMode ?? "prefer_remote";
+
+	if (mode === "local") {
+		return { mode: "local", blocked: false };
+	}
+
+	const requiredCaps = new Set(subtask.requiredCapabilities ?? []);
+
+	// Find capable workers (ALL required capabilities match)
+	const capableRemote = workers
+		.filter((w) => w.isRemote && (requiredCaps.size === 0 || [...requiredCaps].every((c) => w.capabilities.includes(c))))
+		.filter((w) => w.isRemote && w.currentLoad < w.maxCapacity);
+
+	const capableLocal = workers
+		.filter((w) => !w.isRemote && (requiredCaps.size === 0 || [...requiredCaps].every((c) => w.capabilities.includes(c))))
+		.filter((w) => !w.isRemote && w.currentLoad < w.maxCapacity);
+
+	if (mode === "remote") {
+		if (capableRemote.length === 0) {
+			return { mode: "remote", blocked: true };
+		}
+		const best = pickLeastLoaded(capableRemote);
+		return { mode: "remote", workerId: best.id, blocked: false };
+	}
+
+	// "prefer_remote" or "auto"
+	if (capableRemote.length > 0) {
+		const best = pickLeastLoaded(capableRemote);
+		return { mode: "prefer_remote", workerId: best.id, blocked: false };
+	}
+
+	if (capableLocal.length > 0) {
+		return { mode: "local", blocked: false };
+	}
+
+	// No capable worker at all
+	return { mode, blocked: true };
+}
+
+function pickLeastLoaded(workers: WorkerAvailability[]): WorkerAvailability {
+	return workers.reduce((best, w) =>
+		w.currentLoad < best.currentLoad ? w : best,
+	);
 }
