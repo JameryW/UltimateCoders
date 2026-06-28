@@ -801,6 +801,7 @@ class NatsWorker:
                 description,
                 project_id=project_id,
                 task_id=task_id or None,
+                agent_config=payload.get("agent_config"),
             )
             logger.info(
                 "Task %s submitted to Orchestrator (status=%s, subtasks=%d)",
@@ -1057,6 +1058,7 @@ class NatsWorker:
             "timeout_seconds": subtask.timeout_seconds or 600,
             "dispatch_mode": subtask.dispatch_mode.value,
             "required_capabilities": subtask.required_capabilities,
+            "agent_config": subtask.agent_config,
         }).encode()
 
         await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
@@ -1247,6 +1249,7 @@ class NatsWorker:
             timeout_seconds=timeout_seconds,
             dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
+            agent_config=data.get("agent_config", {}),
         )
 
         try:

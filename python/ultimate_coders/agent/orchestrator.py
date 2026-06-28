@@ -128,11 +128,18 @@ class Orchestrator:
         description: str,
         project_id: str = "",
         task_id: str | None = None,
+        agent_config: dict[str, Any] | None = None,
     ) -> Task:
         """Submit a task with simple newline-split decomposition.
 
         The full Orchestrator used LLM decomposition; this minimal version
         splits by newlines (same as mock mode).
+
+        Args:
+            description: Task description (newline-separated subtasks).
+            project_id: Project identifier.
+            task_id: Optional explicit task ID.
+            agent_config: Per-subtask agent config overrides (applied to all subtasks).
         """
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
         lines = [line.strip() for line in description.split("\n") if line.strip()]
@@ -147,6 +154,7 @@ class Orchestrator:
                 description=line,
                 status=SubtaskStatus.PENDING,
                 depends_on=[] if i == 0 else [],  # ponytail: no deps for simple split
+                agent_config=agent_config or {},
             ))
 
         task = Task(

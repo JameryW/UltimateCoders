@@ -100,6 +100,11 @@ pub struct Subtask {
     /// Empty list means any worker can accept (backward compatible).
     #[serde(default)]
     pub required_capabilities: Vec<String>,
+    /// Per-subtask agent configuration overrides (JSON string).
+    /// Keys: tools, allowed_tools, disallowed_tools, mcp_configs,
+    ///       append_system_prompt, agent_name, agents_json.
+    #[serde(default)]
+    pub agent_config_json: Option<String>,
 }
 
 /// Status of a subtask.

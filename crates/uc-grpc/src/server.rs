@@ -145,6 +145,11 @@ pub struct NatsSubtaskExecute {
     /// Worker must possess ALL listed capabilities to accept this subtask.
     #[serde(default)]
     pub required_capabilities: Vec<String>,
+    /// Per-subtask agent configuration overrides (JSON string).
+    /// Keys: tools, allowed_tools, disallowed_tools, mcp_configs,
+    ///       append_system_prompt, agent_name, agents_json.
+    #[serde(default)]
+    pub agent_config_json: Option<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -370,6 +375,7 @@ impl TaskStore {
             dispatch_mode: uc_types::DispatchMode::default(),
             dispatch_retry_count: 0,
             required_capabilities: Vec::new(),
+            agent_config_json: None,
         };
 
         let task = uc_types::Task {
@@ -815,6 +821,7 @@ impl TaskStore {
                     dispatch_mode: uc_types::DispatchMode::default(),
                     dispatch_retry_count: 0,
                     required_capabilities: Vec::new(),
+                    agent_config_json: None,
                 };
                 task.subtasks.push(new_subtask);
             }
@@ -1469,6 +1476,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     retry_count: st.dispatch_retry_count,
                     dispatch_mode: st.dispatch_mode.clone(),
                     required_capabilities: st.required_capabilities.clone(),
+                    agent_config_json: None,
                 };
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
@@ -1850,6 +1858,7 @@ async fn dispatch_ready_subtasks(
             retry_count: st.dispatch_retry_count,
             dispatch_mode: st.dispatch_mode.clone(),
             required_capabilities: st.required_capabilities.clone(),
+            agent_config_json: None,
         };
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
@@ -2854,6 +2863,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     ),
                     dispatch_retry_count: st.dispatch_retry_count.unwrap_or(0),
                     required_capabilities: st.required_capabilities,
+                    agent_config_json: None,
                 }
             })
             .collect();
@@ -3521,6 +3531,7 @@ mod tests {
                 dispatch_mode: uc_types::DispatchMode::default(),
                 dispatch_retry_count: 0,
                 required_capabilities: Vec::new(),
+                agent_config_json: None,
             });
         }
         // Only the first subtask (no deps) should be ready
@@ -3552,6 +3563,7 @@ mod tests {
                 dispatch_mode: uc_types::DispatchMode::default(),
                 dispatch_retry_count: 0,
                 required_capabilities: Vec::new(),
+                agent_config_json: None,
             });
         }
         // Complete the first subtask

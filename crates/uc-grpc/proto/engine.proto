@@ -339,6 +339,10 @@ message SubtaskProto {
     // Capabilities required by this subtask (e.g., "rust", "python", "docker").
     // Worker must possess ALL listed capabilities. Empty = any worker.
     repeated string required_capabilities = 12;
+    // Per-subtask agent configuration overrides (JSON string).
+    // Keys: tools, allowed_tools, disallowed_tools, mcp_configs,
+    //       append_system_prompt, agent_name, agents_json.
+    optional string agent_config_json = 13;
 }
 
 // ── Batch Memory ────────────────────────────────────────
