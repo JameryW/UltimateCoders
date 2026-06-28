@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use uc_types::EngineApi;
 
@@ -26,7 +26,9 @@ use crate::conversions::{
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
 use crate::ultimate_coders::task_service_server::{TaskService, TaskServiceServer};
+use crate::ultimate_coders::worker_service_server::WorkerServiceServer;
 use crate::ultimate_coders::*;
+use crate::worker_service::WorkerRegistry;
 
 // ── NATS message protocol types ──────────────────────────────
 
@@ -1082,6 +1084,8 @@ where
 struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     engine: E,
     task_store: Arc<Mutex<TaskStore>>,
+    /// Worker registry — source of truth for WorkerService and capability-aware dispatch.
+    worker_registry: Arc<RwLock<WorkerRegistry>>,
     /// NATS client for task submission and status subscriptions.
     /// Present when the `messaging` feature is enabled and NATS connection succeeded.
     #[cfg(feature = "messaging")]
@@ -1116,11 +1120,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let (event_tx, _) = broadcast::channel(256);
 
         let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
@@ -1141,11 +1147,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             task_backend,
             event_store,
         )));
+        let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
@@ -1219,6 +1227,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            worker_registry: Arc::new(RwLock::new(WorkerRegistry::new())),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
@@ -1261,6 +1270,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            worker_registry: Arc::new(RwLock::new(WorkerRegistry::new())),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
@@ -1281,13 +1291,20 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         EngineServiceServer<Self>,
         TaskServiceServer<Self>,
         DashboardServiceServer<Self>,
+        WorkerServiceServer<Self>,
     ) {
         let engine_service = EngineServiceServer::new(Self {
             inner: self.inner.clone(),
         });
         let task_service = TaskServiceServer::new(self.clone());
-        let dashboard_service = DashboardServiceServer::new(self);
-        (engine_service, task_service, dashboard_service)
+        let dashboard_service = DashboardServiceServer::new(self.clone());
+        let worker_service = WorkerServiceServer::new(self);
+        (
+            engine_service,
+            task_service,
+            dashboard_service,
+            worker_service,
+        )
     }
 
     /// Expose the NATS client for DashboardService passthrough.
@@ -1304,6 +1321,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Access the shared TaskStore.
     pub fn task_store(&self) -> &Arc<Mutex<TaskStore>> {
         &self.inner.task_store
+    }
+
+    /// Access the shared WorkerRegistry.
+    pub fn worker_registry(&self) -> &Arc<RwLock<WorkerRegistry>> {
+        &self.inner.worker_registry
     }
 
     /// Access the broadcast sender for TaskEvent stream.
@@ -1389,11 +1411,28 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let ready = {
             let mut store = self.inner.task_store.lock().await;
             let subtasks = store.get_ready_subtasks(task_id);
-            // Mark as Assigned to prevent re-dispatch
+
+            // Check WorkerRegistry for capability-aware dispatch:
+            // Only mark as Assigned if a matching worker exists (or no capabilities required).
+            let registry = self.inner.worker_registry.read().await;
+            let mut dispatchable = Vec::new();
             for st in &subtasks {
+                if !st.required_capabilities.is_empty() {
+                    let matching = registry.workers_with_capabilities(&st.required_capabilities);
+                    if matching.is_empty() {
+                        tracing::info!(
+                            subtask_id = %st.id.0,
+                            required_capabilities = ?st.required_capabilities,
+                            "No worker with matching capabilities, keeping subtask Pending"
+                        );
+                        continue; // skip — don't mark as Assigned
+                    }
+                }
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+                dispatchable.push(st.clone());
             }
-            subtasks
+            drop(registry);
+            dispatchable
         };
 
         if ready.is_empty() {

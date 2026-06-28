@@ -31,6 +31,14 @@ service TaskService {
     rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
 }
 
+// ── Worker Service (Worker registration + lifecycle) ──
+
+service WorkerService {
+    rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+    rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
+    rpc DeregisterWorker(DeregisterWorkerRequest) returns (DeregisterWorkerResponse);
+}
+
 // ── Dashboard Service (NATS passthrough to Python Orchestrator) ──
 
 service DashboardService {
@@ -604,4 +612,38 @@ message SystemMetrics {
     string circuit_breaker_state = 2;
     double rate_limiter_remaining_ratio = 3;
     double cluster_utilization_pct = 4;
+}
+
+// ── Worker Service Messages ───────────────────────────────
+
+message RegisterWorkerRequest {
+    string worker_id = 1;
+    repeated string capabilities = 2;
+    uint32 max_capacity = 3;    // max concurrent subtasks
+    string metadata = 4;        // optional JSON metadata
+}
+
+message RegisterWorkerResponse {
+    bool success = 1;
+    string worker_id = 2;
+    optional string error = 3;
+}
+
+message WorkerHeartbeatRequest {
+    string worker_id = 1;
+    uint32 current_load = 2;    // current number of active subtasks
+}
+
+message WorkerHeartbeatResponse {
+    bool accepted = 1;
+    optional string error = 2;
+}
+
+message DeregisterWorkerRequest {
+    string worker_id = 1;
+}
+
+message DeregisterWorkerResponse {
+    bool success = 1;
+    optional string error = 2;
 }

@@ -107,7 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
-    let (engine_service, task_service, dashboard_service) = grpc_server.into_services();
+    let (engine_service, task_service, dashboard_service, worker_service) =
+        grpc_server.into_services();
 
     // Create health reporter (marks EngineService as serving)
     let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
@@ -184,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(engine_service)
         .add_service(task_service)
         .add_service(dashboard_service)
+        .add_service(worker_service)
         .add_service(health_service)
         .serve(addr)
         .await?;

@@ -265,11 +265,13 @@ class NatsWorker:
         nats_url: str = "nats://localhost:4222",
         project_path: str = "",
         mode: str = "default",
+        grpc_endpoint: str | None = None,
     ) -> None:
         self._nats_url = nats_url
         self._project_path = project_path
         self._consumer_id = str(uuid.uuid4())
         self._mode = mode  # "default" or "worker"
+        self._grpc_endpoint = grpc_endpoint
 
         # Will be initialized in start()
         self._nc: NatsClient | None = None
@@ -277,6 +279,7 @@ class NatsWorker:
         self._engine: Engine | None = None
         self._orchestrator: Orchestrator | None = None
         self._worker: Worker | None = None
+        self._grpc_reg_engine: Engine | None = None  # for WorkerService registration
         self._subscriptions: list[Subscription] = []
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -316,6 +319,9 @@ class NatsWorker:
 
         # Initialize Engine, Orchestrator, Worker
         await self._init_components()
+
+        # Register with gateway via gRPC WorkerService (if endpoint configured)
+        await self._register_with_gateway()
 
         # Replay missed events from JetStream (catch up after restart)
         if self._mode != "worker":
@@ -383,6 +389,9 @@ class NatsWorker:
         """Gracefully shut down the worker."""
         logger.info("Stopping NatsWorker")
         self._running = False
+
+        # Deregister from gateway via gRPC WorkerService
+        await self._deregister_from_gateway()
 
         # Cancel heartbeat
         if self._heartbeat_task is not None:
@@ -1002,6 +1011,12 @@ class NatsWorker:
                     # Refresh own worker heartbeat on Orchestrator side
                     if self._orchestrator is not None and self._worker is not None:
                         self._orchestrator.refresh_heartbeat(self._worker.worker_id)
+                    # Also send gRPC WorkerService heartbeat if registered
+                    if self._grpc_reg_engine is not None and self._worker is not None:
+                        load = self._worker.get_info().current_load if self._worker else 0
+                        await self._grpc_reg_engine.worker_heartbeat_async(
+                            self._worker.worker_id, load
+                        )
                     logger.debug(
                         "Heartbeat sent (consumer_id=%s)", self._consumer_id
                     )
@@ -1009,6 +1024,66 @@ class NatsWorker:
                 logger.warning("Heartbeat publish failed", exc_info=True)
 
             await asyncio.sleep(30.0)
+
+    # ── Gateway registration (WorkerService gRPC) ─────────────────
+
+    async def _register_with_gateway(self) -> None:
+        """Register this worker with the gateway via gRPC WorkerService.
+
+        Only attempts registration if UC_GRPC_ENDPOINT is set (either via
+        constructor arg or environment variable). Non-fatal — worker
+        operates fine without gateway registration (NATS-only mode).
+        """
+        endpoint = self._grpc_endpoint or os.environ.get("UC_GRPC_ENDPOINT", "")
+        if not endpoint:
+            logger.debug("No gRPC endpoint configured, skipping gateway registration")
+            return
+
+        try:
+            self._grpc_reg_engine = Engine(mode="grpc", grpc_endpoint=endpoint)
+            worker_id = self._consumer_id
+            capabilities: list[str] = []
+            max_capacity = 3
+
+            if self._worker is not None:
+                info = self._worker.get_info()
+                worker_id = info.id
+                capabilities = info.capabilities
+                max_capacity = info.max_capacity
+
+            success = await self._grpc_reg_engine.register_worker_async(
+                worker_id, capabilities, max_capacity
+            )
+            if success:
+                logger.info(
+                    "Registered with gateway (worker_id=%s, capabilities=%s)",
+                    worker_id, capabilities,
+                )
+            else:
+                logger.warning("Gateway registration returned failure")
+                self._grpc_reg_engine = None
+        except Exception:
+            logger.warning("Gateway registration failed (non-fatal)", exc_info=True)
+            self._grpc_reg_engine = None
+
+    async def _deregister_from_gateway(self) -> None:
+        """Deregister this worker from the gateway (graceful shutdown).
+
+        Non-fatal — best-effort deregistration.
+        """
+        if self._grpc_reg_engine is None:
+            return
+
+        try:
+            worker_id = self._consumer_id
+            if self._worker is not None:
+                worker_id = self._worker.worker_id
+            await self._grpc_reg_engine.deregister_worker_async(worker_id)
+            logger.info("Deregistered from gateway (worker_id=%s)", worker_id)
+        except Exception:
+            logger.debug("Gateway deregistration failed (non-fatal)", exc_info=True)
+        finally:
+            self._grpc_reg_engine = None
 
     # ── Worker mode: subtask execution handler ────────────────────
 
