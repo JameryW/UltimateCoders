@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 68
+- **Total Sessions**: 69
 - **Last Active**: 2026-06-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~460 | Active |
+| `journal-2.md` | ~493 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 69 | 2026-06-28 | Sync Rust SandboxConfig with Python agent customization | `4ae40848` | `main` |
 | 68 | 2026-06-28 | Enhance sandbox worker: skill/MCP/tool customization | `e18f2b36` | `main` |
 | 67 | 2026-06-28 | Add worker capability matching + OMP UI dispatch_mode display | `bd73f1a3`, `85c9ef57` | `main` |
 | 66 | 2026-06-27 | Add DispatchMode to Subtask for forced-remote dispatch routing | `58a83a7f` | `main` |
