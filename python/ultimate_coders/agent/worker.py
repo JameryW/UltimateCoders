@@ -172,7 +172,9 @@ class Worker:
     ):
         self.worker_id = worker_id or str(uuid.uuid4())
         self.engine = engine
-        self.capabilities = capabilities or ["code", "search", "memory", "test"]
+        self.capabilities = capabilities or [
+            "code", "search", "memory", "test", "decompose", "review",
+        ]
         self.max_capacity = max_capacity
         self.current_task: Subtask | None = None
         self._active_count = 0
