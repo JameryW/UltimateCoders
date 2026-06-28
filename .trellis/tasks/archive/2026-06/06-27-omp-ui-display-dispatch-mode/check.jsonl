@@ -1,0 +1,3 @@
+{"path": ".trellis/tasks/06-27-omp-ui-display-dispatch-mode/prd.md", "role": "prd", "reason": "Acceptance criteria for verification"}
+{"path": "packages/uc-orchestrator/src/orchestrator/orchestrator.ts", "role": "spec", "reason": "Verify SubtaskResult has dispatchMode field"}
+{"path": "packages/uc-orchestrator/src/ui/subtask-tree-overlay.ts", "role": "spec", "reason": "Verify expanded detail shows dispatch mode line"}

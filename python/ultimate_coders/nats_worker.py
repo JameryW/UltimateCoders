@@ -1045,6 +1045,19 @@ class NatsWorker:
             logger.error("No worker initialized, cannot execute subtask")
             return
 
+        # Capability check: worker must have ALL required_capabilities
+        required_caps = data.get("required_capabilities", [])
+        if required_caps:
+            worker_caps = set(self._worker.capabilities)
+            missing = set(required_caps) - worker_caps
+            if missing:
+                logger.info(
+                    "NACK subtask %s: missing capabilities %s (have %s)",
+                    subtask_id[:8], missing, worker_caps,
+                )
+                await msg.nack()
+                return
+
         # Build a Subtask object for Worker.execute_subtask
         from ultimate_coders.agent.types import SubtaskStatus
 
@@ -1058,6 +1071,7 @@ class NatsWorker:
             file_constraints=data.get("file_constraints", []),
             expected_output=data.get("expected_output", ""),
             timeout_seconds=timeout_seconds,
+            required_capabilities=data.get("required_capabilities", []),
         )
 
         try:

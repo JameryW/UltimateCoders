@@ -22,6 +22,7 @@
 | `uc.task.update` | Python → gRPC | Task/subtask status update |
 | `uc.task.event` | Python → gRPC, gRPC → Python | Real-time execution event + pause/resume status change |
 | `uc.heartbeat` | Python → gRPC | Consumer heartbeat |
+| `uc.subtask.execute` | gRPC → Worker | Dispatch ready subtask to remote worker |
 
 ### Rust NATS Protocol Types (`crates/uc-grpc/src/server.rs`)
 
@@ -47,6 +48,18 @@ pub struct NatsSubtaskUpdate {
     pub status: String,
     pub assigned_worker: Option<String>,
     pub depends_on: Vec<String>,
+}
+
+pub struct NatsSubtaskExecute {
+    pub message_id: Option<String>,    // dedup key
+    pub task_id: String,
+    pub subtask_id: String,
+    pub description: String,
+    pub expected_output: String,
+    pub file_constraints: Vec<String>,
+    pub timeout_seconds: u64,          // default 600
+    pub retry_count: u32,
+    pub dispatch_mode: DispatchMode,   // Local / Remote / PreferRemote
 }
 
 pub struct NatsTaskEvent {
@@ -84,6 +97,7 @@ class NatsPublisher:
 | `NATS_SUBJECT_TASK_UPDATE` | `"uc.task.update"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_TASK_EVENT` | `"uc.task.event"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_HEARTBEAT` | `"uc.heartbeat"` | `crates/uc-grpc/src/server.rs` |
+| `NATS_SUBJECT_SUBTASK_EXECUTE` | `"uc.subtask.execute"` | `crates/uc-grpc/src/server.rs` |
 
 ### Environment Keys
 
@@ -130,6 +144,35 @@ class NatsPublisher:
 | `tool_call` | — (stored in event log) | Python → gRPC |
 | `llm_request` | — (stored in event log) | Python → gRPC |
 
+### Dispatch Mode Contract (Subtask Routing)
+
+**Enum values** (three-layer sync: Rust `uc_types::DispatchMode`, Python `DispatchMode`, TypeScript `SubtaskDef.dispatchMode`):
+
+| Rust | Python | TypeScript | Behavior |
+|------|--------|------------|----------|
+| `PreferRemote` (default) | `PREFER_REMOTE` | `"prefer_remote"` / `undefined` | NATS publish on failure → revert to Pending |
+| `Remote` | `REMOTE` | `"remote"` | NATS publish on failure → revert Pending + increment `dispatch_retry_count`; ≥3 retries → mark Failed |
+| `Local` | `LOCAL` | `"local"` | Skip NATS publish entirely (reserved, currently no-op) |
+
+**Subtask fields** (`uc_types::Subtask` / Python `Subtask`):
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `dispatch_mode` | `DispatchMode` | `PreferRemote` | Routing strategy |
+| `dispatch_retry_count` | `u32` / `int` | `0` | Failed NATS dispatch counter (Remote mode only) |
+
+**Failure behavior in `publish_ready_subtasks` / `dispatch_ready_subtasks`**:
+
+```
+dispatch_mode == Local   → skip NATS, log "skipping NATS publish"
+dispatch_mode == Remote  → NATS fail → retry_count += 1
+                            retry_count < 3 → revert to Pending (heartbeat re-dispatches)
+                            retry_count ≥ 3 → mark Failed
+dispatch_mode == PreferRemote → NATS fail → revert to Pending (existing behavior)
+```
+
+**Backward compat**: `#[serde(default)]` on both fields in Rust; Python `dataclass` defaults; TypeScript `dispatchMode?: string` (optional). Existing serialized subtasks deserialize as `PreferRemote` / `0`.
+
 ### Pause/Resume Loop Prevention
 
 When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
@@ -146,6 +189,9 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 |-----------|----------|
 | NATS unavailable at gRPC startup | `GrpcServer::with_nats()` logs warning, server starts without NATS, uses local TaskStore decomposition |
 | NATS publish fails in `submit_task()` | Fallback to local newline-split decomposition, delete Planning placeholder task |
+| NATS publish fails in `publish_ready_subtasks` (PreferRemote) | Revert subtask to Pending, heartbeat monitor re-dispatches later |
+| NATS publish fails in `publish_ready_subtasks` (Remote, retry < 3) | Increment `dispatch_retry_count`, revert to Pending |
+| NATS publish fails in `publish_ready_subtasks` (Remote, retry ≥ 3) | Mark subtask as Failed — max dispatch retries exceeded |
 | NATS subscriber receives malformed JSON | Log warning, skip message, no crash |
 | NATS subscriber receives unknown task_id | Log warning, skip update |
 | NATS subscriber receives unknown status string | Preserve existing status, log warning |

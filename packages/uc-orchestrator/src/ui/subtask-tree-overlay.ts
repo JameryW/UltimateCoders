@@ -115,6 +115,9 @@ class SubtaskTreeComponent {
 				if (item.subtask.retryCount && item.subtask.retryCount > 0) {
 					lines.push(this.theme.fg("dim", `      Retries: ${item.subtask.retryCount}`));
 				}
+				if (item.subtask.dispatchMode && item.subtask.dispatchMode !== "prefer_remote") {
+					lines.push(this.theme.fg("dim", `      Mode: ${item.subtask.dispatchMode}`));
+				}
 			}
 		}
 

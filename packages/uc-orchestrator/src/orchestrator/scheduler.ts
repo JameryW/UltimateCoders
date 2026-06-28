@@ -15,6 +15,10 @@ export interface SubtaskDef {
 	description: string;
 	dependsOn: string[];
 	files: string[];
+	/** How this subtask should be dispatched: "local" | "remote" | "prefer_remote" (default) */
+	dispatchMode?: string;
+	/** Capabilities required by this subtask (e.g. "rust", "python", "docker"). Worker must have ALL. */
+	requiredCapabilities?: string[];
 }
 
 /** A wave is a group of subtasks that can execute in parallel. */

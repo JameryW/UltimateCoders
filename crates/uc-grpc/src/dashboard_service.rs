@@ -626,6 +626,20 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
             .unwrap_or_default(),
         expected_output: json_str(v, "expected_output").to_string(),
         result: json_opt_str(v, "result"),
+        dispatch_mode: json_opt_str(v, "dispatch_mode"),
+        dispatch_retry_count: v
+            .get("dispatch_retry_count")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        required_capabilities: v
+            .get("required_capabilities")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
