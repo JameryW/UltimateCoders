@@ -491,3 +491,36 @@ Synced Rust SandboxConfig with Python-side agent customization fields (tools, al
 ### Next Steps
 
 - None - task complete
+
+
+## Session 70: Thread agent_config through NATS/gRPC dispatch pipeline
+
+**Date**: 2026-06-29
+**Task**: Thread agent_config through NATS/gRPC dispatch pipeline
+**Branch**: `main`
+
+### Summary
+
+Threaded agent_config through the full distributed dispatch pipeline. Python _dispatch_remote/_handle_subtask_execute now include/extract agent_config. Rust NatsSubtaskExecute, uc_types::Subtask, and SubtaskProto all gained agent_config_json field. Python Orchestrator.submit_task accepts agent_config. 83 Python + 329 Rust tests pass. PR #184.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b05f928e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
