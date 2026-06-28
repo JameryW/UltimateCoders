@@ -15,6 +15,8 @@ from ultimate_coders.agent.sandbox import (
     SandboxConfig,
     SandboxManager,
     _merge_agent_config,
+    _resolve_mcp_configs,
+    _codex_mcp_server_toml,
     available_agents,
     create_adapter,
     parse_decomposition_output,
@@ -206,7 +208,8 @@ class TestCodexAdapter:
 
         assert request["command"] == "codex"
         assert "Implement feature" in request["args"]
-        assert "--full-auto" in request["args"]
+        assert "--sandbox" in request["args"]
+        assert "workspace-write" in request["args"]
 
     def test_parse_output_success(self):
         adapter = CodexAdapter()
@@ -906,3 +909,354 @@ class TestOrchestratorAgentConfig:
         orch = Orchestrator()
         task = await orch.submit_task("Fix bug")
         assert task.subtasks[0].agent_config == {}
+
+
+# ── Inline MCP config resolution tests ──────────────────────────
+
+class TestResolveMcpConfigs:
+    """Tests for _resolve_mcp_configs helper."""
+
+    def test_file_paths_pass_through(self):
+        resolved, temps = _resolve_mcp_configs(["/etc/mcp/a.json", "/etc/mcp/b.json"])
+        assert resolved == ["/etc/mcp/a.json", "/etc/mcp/b.json"]
+        assert temps == []
+
+    def test_inline_dict_creates_temp_file(self):
+        server_cfg = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
+        resolved, temps = _resolve_mcp_configs([server_cfg])
+        assert len(resolved) == 1
+        assert len(temps) == 1
+        # Verify temp file content
+        import os
+        with open(temps[0]) as f:
+            data = json.load(f)
+        assert "mcpServers" in data
+        assert "codegraph" in data["mcpServers"]
+        # Cleanup
+        os.unlink(temps[0])
+
+    def test_mixed_paths_and_dicts(self):
+        server_cfg = {"pencil": {"url": "https://example.com/mcp"}}
+        resolved, temps = _resolve_mcp_configs(["/a.json", server_cfg])
+        assert len(resolved) == 2
+        assert resolved[0] == "/a.json"
+        assert len(temps) == 1
+        import os
+        for p in temps:
+            os.unlink(p)
+
+    def test_empty_list(self):
+        resolved, temps = _resolve_mcp_configs([])
+        assert resolved == []
+        assert temps == []
+
+    def test_invalid_entry_skipped(self):
+        resolved, temps = _resolve_mcp_configs([42])
+        assert resolved == []
+        assert temps == []
+
+
+class TestCodexMcpServerToml:
+    """Tests for _codex_mcp_server_toml helper."""
+
+    def test_stdio_transport(self):
+        cfg = {"command": "npx", "args": ["-y", "@mcp/server"], "env": {"KEY": "val"}}
+        toml = _codex_mcp_server_toml("my-server", cfg)
+        assert "[mcp_servers.my-server]" in toml
+        assert 'command = "npx"' in toml
+        assert '"-y"' in toml
+        assert '"@mcp/server"' in toml
+        assert "KEY" in toml
+
+    def test_http_transport(self):
+        cfg = {"url": "https://example.com/mcp", "bearer_token_env_var": "API_KEY"}
+        toml = _codex_mcp_server_toml("remote", cfg)
+        assert 'url = "https://example.com/mcp"' in toml
+        assert "bearer_token_env_var" in toml
+
+    def test_enabled_disabled_tools(self):
+        cfg = {"command": "npx", "enabled_tools": ["tool_a"], "disabled_tools": ["tool_b"]}
+        toml = _codex_mcp_server_toml("srv", cfg)
+        assert "enabled_tools" in toml
+        assert "disabled_tools" in toml
+
+
+class TestCodexAdapterBuildRequest:
+    """Tests for CodexAdapter.build_request with subtask_config."""
+
+    def test_default_no_temp_files(self):
+        adapter = CodexAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Fix bug", "/tmp/project", config)
+        assert request["command"] == "codex"
+        assert "--sandbox" in request["args"]
+        assert "workspace-write" in request["args"]
+        assert request.get("_temp_files", []) == []
+
+    def test_subtask_config_mcp_creates_temp_toml(self):
+        adapter = CodexAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        mcp_inline = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
+        request = adapter.build_request(
+            "Fix bug", "/tmp/project", config,
+            subtask_config={"mcp_configs": [mcp_inline]},
+        )
+        assert "_temp_files" in request
+        temps = request["_temp_files"]
+        assert len(temps) >= 1
+        # Verify the temp toml content
+        import os
+        for p in temps:
+            if p.endswith(".toml"):
+                with open(p) as f:
+                    content = f.read()
+                assert "[mcp_servers.codegraph]" in content
+            os.unlink(p)
+
+    def test_sandbox_workspace_write_replaces_full_auto(self):
+        adapter = CodexAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        assert "--full-auto" not in request["args"]
+        assert "--sandbox" in request["args"]
+
+
+class TestClaudeCodeAdapterInlineMcp:
+    """Tests for ClaudeCodeAdapter with inline MCP configs."""
+
+    def test_inline_mcp_creates_temp_file(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        mcp_inline = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
+        request = adapter.build_request(
+            "Fix bug", "/tmp/project", config,
+            subtask_config={"mcp_configs": [mcp_inline]},
+        )
+        args = request["args"]
+        idx = args.index("--mcp-config")
+        mcp_path = args[idx + 1]
+        # Verify temp file exists and has correct content
+        import os
+        with open(mcp_path) as f:
+            data = json.load(f)
+        assert "mcpServers" in data
+        assert "codegraph" in data["mcpServers"]
+        # Cleanup
+        for p in request.get("_temp_files", []):
+            os.unlink(p)
+
+    def test_mixed_mcp_paths_and_inline(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            mcp_configs=["/existing/config.json"],
+        )
+        mcp_inline = {"pencil": {"url": "https://example.com/mcp"}}
+        request = adapter.build_request(
+            "Fix", "/tmp/project", config,
+            subtask_config={"mcp_configs": ["/existing/config.json", mcp_inline]},
+        )
+        args = request["args"]
+        idx = args.index("--mcp-config")
+        # First is file path, second is temp file
+        assert args[idx + 1] == "/existing/config.json"
+        import os
+        for p in request.get("_temp_files", []):
+            os.unlink(p)
+
+
+# ── Worker agent_config auto-derivation tests ──────────────────
+
+class TestWorkerDeriveCapabilities:
+    """Tests for Worker._derive_capabilities enhancement."""
+
+    def test_base_capabilities(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        caps = w.capabilities
+        assert "code" in caps
+        assert "search" in caps
+        assert "memory" in caps
+
+    def test_mcp_configs_add_per_server_caps(self):
+        from ultimate_coders.agent.worker import Worker
+        mcp_inline = {"codegraph": {"command": "npx"}, "pencil": {"url": "https://x.com"}}
+        cfg = SandboxConfig(mcp_configs=[mcp_inline])
+        w = Worker(sandbox_config=cfg)
+        assert "mcp:codegraph" in w.capabilities
+        assert "mcp:pencil" in w.capabilities
+
+    def test_mcp_file_path_extracts_name(self):
+        from ultimate_coders.agent.worker import Worker
+        cfg = SandboxConfig(mcp_configs=["/etc/mcp/codegraph.json"])
+        w = Worker(sandbox_config=cfg)
+        assert "mcp:codegraph" in w.capabilities
+
+    def test_tools_mcp_prefix_extracts_server(self):
+        from ultimate_coders.agent.worker import Worker
+        cfg = SandboxConfig(tools=["default", "mcp__codegraph__*", "mcp__pencil__*"])
+        w = Worker(sandbox_config=cfg)
+        assert "mcp:codegraph" in w.capabilities
+        assert "mcp:pencil" in w.capabilities
+
+    def test_agents_json_parses_names(self):
+        from ultimate_coders.agent.worker import Worker
+        cfg = SandboxConfig(agents_json='{"reviewer": {"description": "Reviews"}, "writer": {"description": "Writes"}}')
+        w = Worker(sandbox_config=cfg)
+        assert "agent:reviewer" in w.capabilities
+        assert "agent:writer" in w.capabilities
+
+    def test_no_duplicate_caps(self):
+        from ultimate_coders.agent.worker import Worker
+        cfg = SandboxConfig(
+            tools=["default", "mcp__codegraph__*"],
+            mcp_configs=["/etc/mcp/codegraph.json"],
+        )
+        w = Worker(sandbox_config=cfg)
+        # "codegraph" and "mcp:codegraph" are distinct capability tags
+        assert "codegraph" in w.capabilities
+        assert "mcp:codegraph" in w.capabilities
+        # Same tag should not appear twice
+        assert w.capabilities.count("codegraph") == 1
+        assert w.capabilities.count("mcp:codegraph") == 1
+
+
+class TestWorkerResolveAgentConfig:
+    """Tests for Worker._resolve_agent_config."""
+
+    def test_explicit_agent_config_preserved(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Fix bug",
+            agent_config={"tools": ["mcp__codegraph__*"]},
+        )
+        result = w._resolve_agent_config(st)
+        assert result == {"tools": ["mcp__codegraph__*"]}
+
+    def test_capability_match_review(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Check code quality",
+            required_capabilities=["review"],
+        )
+        result = w._resolve_agent_config(st)
+        assert "disallowed_tools" in result
+        assert "Edit" in result["disallowed_tools"]
+
+    def test_description_heuristic_review(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Review the auth module for security issues")
+        result = w._resolve_agent_config(st)
+        assert "disallowed_tools" in result
+
+    def test_description_heuristic_search(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Find all usages of deprecated API")
+        result = w._resolve_agent_config(st)
+        assert "tools" in result
+        assert "mcp__codegraph__*" in result["tools"]
+
+    def test_capability_overrides_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        # "review" capability + "search" in description → capability wins
+        st = Subtask(
+            description="Search and review the codebase",
+            required_capabilities=["review"],
+        )
+        result = w._resolve_agent_config(st)
+        # review profile's disallowed_tools should be there
+        assert "disallowed_tools" in result
+
+    def test_no_match_returns_empty(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Implement the new feature")
+        result = w._resolve_agent_config(st)
+        assert result == {}
+
+    def test_empty_agent_config_treated_as_not_set(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Review code",
+            agent_config={},
+        )
+        # Empty dict is falsy for our check, falls through to template
+        result = w._resolve_agent_config(st)
+        assert "disallowed_tools" in result
+
+
+# ── End-to-end pipeline tests ──────────────────────────────────
+
+class TestAgentConfigPipeline:
+    """End-to-end: required_capabilities → _resolve_agent_config → build_request.
+
+    Verifies that the full chain produces correct CLI flags.
+    """
+
+    def test_review_subtask_produces_disallowed_tools_flag(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Review the auth module",
+            required_capabilities=["review"],
+        )
+        agent_cfg = w._resolve_agent_config(st)
+        # Feed to ClaudeCodeAdapter
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Review", "/tmp/project", config, subtask_config=agent_cfg)
+        args = request["args"]
+        assert "--disallowedTools" in args
+        assert "Edit" in args
+
+    def test_codegraph_search_subtask_produces_tools_flag(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Find all usages of deprecated API",
+            required_capabilities=["codegraph"],
+        )
+        agent_cfg = w._resolve_agent_config(st)
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Search", "/tmp/project", config, subtask_config=agent_cfg)
+        args = request["args"]
+        idx = args.index("--tools")
+        assert "mcp__codegraph__*" in args[idx + 1:]
+
+    def test_codex_adapter_with_review_subtask(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(
+            description="Review code quality",
+            required_capabilities=["review"],
+        )
+        agent_cfg = w._resolve_agent_config(st)
+        adapter = CodexAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Review", "/tmp/project", config, subtask_config=agent_cfg)
+        # Codex uses config.toml, not CLI flags — verify temp file created
+        import os
+        temps = request.get("_temp_files", [])
+        for p in temps:
+            os.unlink(p)
+
+    def test_explicit_config_bypasses_derivation(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        # User explicitly sets tools — should NOT be overridden by review template
+        st = Subtask(
+            description="Review code",
+            agent_config={"tools": ["default", "Edit"]},
+            required_capabilities=["review"],
+        )
+        agent_cfg = w._resolve_agent_config(st)
+        # Explicit config preserved, review template NOT applied
+        assert agent_cfg == {"tools": ["default", "Edit"]}
+        assert "disallowed_tools" not in agent_cfg
