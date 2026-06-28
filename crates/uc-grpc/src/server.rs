@@ -2814,12 +2814,19 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     status: sub_status,
                     assigned_worker: st.assigned_worker.map(uc_types::WorkerId),
                     depends_on: st.depends_on.into_iter().map(uc_types::TaskId).collect(),
-                    file_constraints: Vec::new(),
-                    expected_output: String::new(),
+                    file_constraints: st.file_constraints,
+                    expected_output: st.expected_output,
                     result: None, // ponytail: SubtaskResult is complex struct; result tracked via SubtaskCompleted events
-                    dispatch_mode: uc_types::DispatchMode::default(),
-                    dispatch_retry_count: 0,
-                    required_capabilities: Vec::new(),
+                    dispatch_mode: st.dispatch_mode.as_deref().map_or_else(
+                        uc_types::DispatchMode::default,
+                        |s| match s {
+                            "Local" => uc_types::DispatchMode::Local,
+                            "Remote" => uc_types::DispatchMode::Remote,
+                            _ => uc_types::DispatchMode::PreferRemote,
+                        },
+                    ),
+                    dispatch_retry_count: st.dispatch_retry_count.unwrap_or(0),
+                    required_capabilities: st.required_capabilities,
                 }
             })
             .collect();

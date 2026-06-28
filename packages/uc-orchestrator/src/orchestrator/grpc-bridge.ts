@@ -333,7 +333,9 @@ export class GrpcBridge {
 						result: st.result ?? "",
 						parentId: task.id,
 						expectedOutput: "",
-						fileConstraints: [],
+						fileConstraints: st.files ?? [],
+						dispatchMode: st.dispatchMode,
+						requiredCapabilities: st.requiredCapabilities ?? [],
 					})),
 				}),
 			);
