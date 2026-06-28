@@ -23,6 +23,7 @@ fi
 START_SERVER=true
 DO_BUILD=false
 USE_DOCKER=false
+OMP_ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --no-server) START_SERVER=false ;;
@@ -36,7 +37,7 @@ for arg in "$@"; do
       echo "  --build       ensure Python package is built (maturin develop)"
       exit 0
       ;;
-    *) ;;
+    *) OMP_ARGS+=("$arg") ;;
   esac
 done
 
@@ -54,16 +55,21 @@ if [ "$USE_DOCKER" = true ]; then
         echo ">>> Error: docker not found — install Docker first" >&2
         exit 1
     fi
-    # ponytail: free ports that Docker containers will bind to
-    for port in 4222 6333 6334 2379 5432; do
-        if lsof -i :$port >/dev/null 2>&1; then
-            pid=$(lsof -ti :$port 2>/dev/null || true)
-            if [ -n "$pid" ]; then
-                echo ">>> Port :$port in use (PID $pid) — stopping"
-                kill $pid 2>/dev/null || true
+    # ponytail: skip port cleanup if Docker containers are already running
+    # (killing Docker's port-forward processes crashes the daemon)
+    if cd "$SCRIPT_DIR/docker" && docker compose ps -q 2>/dev/null | grep -q .; then
+        echo ">>> Docker backends already running, skipping port cleanup"
+    else
+        for port in 4222 6333 6334 2379 5432; do
+            if lsof -i :$port >/dev/null 2>&1; then
+                pid=$(lsof -ti :$port 2>/dev/null || true)
+                if [ -n "$pid" ]; then
+                    echo ">>> Port :$port in use (PID $pid) — stopping"
+                    kill $pid 2>/dev/null || true
+                fi
             fi
-        fi
-    done
+        done
+    fi
     sleep 1
     echo ">>> Starting Docker storage backends (TiKV, Qdrant, PG, NATS)..."
     cd "$SCRIPT_DIR/docker" && docker compose up -d pd tikv qdrant postgres nats
@@ -129,8 +135,11 @@ health_monitor() {
             echo ">>> Last 10 lines:"
             tail -10 "$LOG_DIR/grpc-server.log" 2>/dev/null
             cd "$SCRIPT_DIR"
-            PATH="$SCRIPT_DIR/.venv/bin:$PATH" RUST_LOG="${RUST_LOG:-info}" \
-                cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
+            # ponytail: re-source env file so restart inherits same config
+            if [ -f "$UC_ENV_FILE" ]; then
+                set -a; source "$UC_ENV_FILE"; set +a
+            fi
+            PATH="$SCRIPT_DIR/.venv/bin:$PATH" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
             SERVER_PID=$!
             echo ">>> Restarted gRPC server (PID $SERVER_PID)"
             # Write restart marker so UC Orchestrator can detect stale transport
@@ -151,23 +160,25 @@ if [ "$START_SERVER" = true ]; then
     if ! lsof -i :50051 >/dev/null 2>&1; then
         echo ">>> Starting gRPC server..."
         cd "$SCRIPT_DIR"
-        # ponytail: build env vars — Docker mode adds storage + CORS + NATS
-        GRPC_ENV=(
-            PATH="$SCRIPT_DIR/.venv/bin:$PATH"
-            RUST_LOG="${RUST_LOG:-info}"
-            UC_NATS_URL="${UC_NATS_URL:-nats://127.0.0.1:4222}"
-            UC_CORS_MODE="${UC_CORS_MODE:-dev}"
-        )
+        # ponytail: write env file for gRPC server — ensures all subprocesses
+        # (including health_monitor restarts) inherit the same configuration
+        UC_ENV_FILE="$LOG_DIR/grpc-server.env"
+        cat > "$UC_ENV_FILE" <<EOF
+RUST_LOG=${RUST_LOG:-info}
+UC_NATS_URL=${UC_NATS_URL:-nats://127.0.0.1:4222}
+UC_CORS_MODE=${UC_CORS_MODE:-dev}
+EOF
         if [ "$USE_DOCKER" = true ]; then
-            GRPC_ENV+=(
-                UC_TIKV_PD_ENDPOINTS="${UC_TIKV_PD_ENDPOINTS:-127.0.0.1:2379}"
-                UC_QDRANT_URL="${UC_QDRANT_URL:-http://127.0.0.1:6334}"
-                UC_PG_URL="${UC_PG_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
-                UC_DATABASE_URL="${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
-                UC_TASK_BACKEND="${UC_TASK_BACKEND:-postgres}"
-            )
+            cat >> "$UC_ENV_FILE" <<EOF
+UC_TIKV_PD_ENDPOINTS=${UC_TIKV_PD_ENDPOINTS:-127.0.0.1:2379}
+UC_QDRANT_URL=${UC_QDRANT_URL:-http://127.0.0.1:6334}
+UC_PG_URL=${UC_PG_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}
+UC_DATABASE_URL=${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}
+UC_TASK_BACKEND=${UC_TASK_BACKEND:-postgres}
+EOF
         fi
-        env "${GRPC_ENV[@]}" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
+        set -a; source "$UC_ENV_FILE"; set +a
+        PATH="$SCRIPT_DIR/.venv/bin:$PATH" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
         SERVER_PID=$!
         echo "    Server PID: $SERVER_PID"
         echo "    Logs: $LOG_DIR/grpc-server.log"
@@ -191,4 +202,4 @@ fi
 cd "$SCRIPT_DIR/vendor/oh-my-pi"
 exec bun packages/coding-agent/src/cli.ts \
   --extension ../../packages/uc-orchestrator \
-  "$@"
+  ${OMP_ARGS+"${OMP_ARGS[@]}"}
