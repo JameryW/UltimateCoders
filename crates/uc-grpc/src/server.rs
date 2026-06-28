@@ -2504,15 +2504,42 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             }
         }
 
-        // No NATS or NATS publish failed — no Rust-side fallback
-        // All decomposition must go through Python Orchestrator via NATS.
+        // No NATS or NATS publish failed — local fallback
+        // Create the task locally (same as NATS path) but mark it as
+        // locally submitted. The TypeScript orchestrator will decompose
+        // locally and execute subtasks with prefer_remote dispatch.
+        tracing::info!(
+            description = %req.description,
+            "Task submitted locally (NATS unavailable), orchestrator will handle decomposition"
+        );
+        let (task_id_str, new_events) = {
+            let mut store = self.inner.task_store.lock().await;
+            let event_count_before = store.events.len();
+            let task = store.submit_task_pending(req.description.clone(), req.project_id.clone());
+            let events: Vec<TaskEvent> = store.events[event_count_before..]
+                .iter()
+                .cloned()
+                .map(|e| e.into())
+                .collect();
+            (task.id.0.clone(), events)
+        };
+        // Broadcast TaskCreated event to WatchTask streams
+        for event in new_events {
+            let _ = self.inner.event_tx.send(event);
+        }
+
+        let store = self.inner.task_store.lock().await;
+        let task = store.get_task(&task_id_str).expect("task just inserted");
+        let subtask_protos: Vec<SubtaskProto> =
+            task.subtasks.clone().into_iter().map(Into::into).collect();
+
         Ok(Response::new(SubmitTaskResponse {
-            success: false,
-            task_id: String::new(),
-            status: "failed".to_string(),
-            subtask_count: 0,
-            subtasks: Vec::new(),
-            error: Some("No NATS connection available. Connect NATS and start a Python worker to enable task submission.".to_string()),
+            success: true,
+            task_id: task.id.0.clone(),
+            status: task_status_to_proto(&task.status).to_string(),
+            subtask_count: task.subtasks.len() as u32,
+            subtasks: subtask_protos,
+            error: None,
         }))
     }
 
