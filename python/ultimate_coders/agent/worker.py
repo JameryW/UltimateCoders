@@ -228,7 +228,11 @@ class Worker:
         if cfg.agents_json:
             # Parse agent names from agents_json
             try:
-                agents = json.loads(cfg.agents_json) if isinstance(cfg.agents_json, str) else cfg.agents_json
+                agents = (
+                    json.loads(cfg.agents_json)
+                    if isinstance(cfg.agents_json, str)
+                    else cfg.agents_json
+                )
                 for name in (agents if isinstance(agents, dict) else []):
                     caps.append(f"agent:{name}")
             except (json.JSONDecodeError, TypeError):
@@ -242,7 +246,10 @@ class Worker:
     AGENT_PROFILES: dict[str, dict[str, Any]] = {
         "review": {
             "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
-            "append_system_prompt": "Read-only review mode — analyze and report only, do not modify files.",
+            "append_system_prompt": (
+                "Read-only review mode — analyze and report only,"
+                " do not modify files."
+            ),
         },
         "codegraph": {
             "tools": ["default", "mcp__codegraph__*"],
@@ -255,7 +262,10 @@ class Worker:
     SUBTASK_TEMPLATES: dict[str, dict[str, Any]] = {
         "review": {
             "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
-            "append_system_prompt": "Read-only review mode — analyze and report only, do not modify files.",
+            "append_system_prompt": (
+                "Read-only review mode — analyze and report only,"
+                " do not modify files."
+            ),
         },
         "search": {
             "tools": ["default", "mcp__codegraph__*"],

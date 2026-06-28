@@ -14,9 +14,9 @@ from ultimate_coders.agent.sandbox import (
     NetworkMode,
     SandboxConfig,
     SandboxManager,
+    _codex_mcp_server_toml,
     _merge_agent_config,
     _resolve_mcp_configs,
-    _codex_mcp_server_toml,
     available_agents,
     create_adapter,
     parse_decomposition_output,
@@ -474,8 +474,8 @@ class TestWorkerSandboxMode:
 
 # ── Worker capability derivation tests ──────────────────────────────
 
-class TestWorkerDeriveCapabilities:
-    """Tests for Worker._derive_capabilities from SandboxConfig."""
+class TestWorkerDeriveCapabilitiesLegacy:
+    """Tests for Worker._derive_capabilities from SandboxConfig (legacy baseline)."""
 
     def test_default_capabilities(self):
         from ultimate_coders.agent.worker import Worker
@@ -772,7 +772,8 @@ class TestNatsDispatchAgentConfig:
     def test_dispatch_message_includes_agent_config(self):
         """Verify _dispatch_remote includes agent_config in the NATS message."""
         import json
-        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus
 
         subtask = Subtask(
             id="st-1",
@@ -811,6 +812,7 @@ class TestNatsDispatchAgentConfig:
     def test_dispatch_message_empty_agent_config(self):
         """Verify empty agent_config is handled (backward compat)."""
         import json
+
         from ultimate_coders.agent.types import Subtask
 
         subtask = Subtask(description="Fix bug")
@@ -828,7 +830,7 @@ class TestNatsDispatchAgentConfig:
 
     def test_handle_subtask_reconstructs_agent_config(self):
         """Verify _handle_subtask_execute reconstructs Subtask with agent_config."""
-        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+        from ultimate_coders.agent.types import DispatchMode, Subtask, SubtaskStatus
 
         # Simulate the incoming NATS message data
         data = {
@@ -867,7 +869,7 @@ class TestNatsDispatchAgentConfig:
 
     def test_handle_subtask_missing_agent_config_defaults_empty(self):
         """Backward compat: messages without agent_config default to {}."""
-        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus
 
         data = {
             "task_id": "t-1",
@@ -1101,7 +1103,11 @@ class TestWorkerDeriveCapabilities:
 
     def test_agents_json_parses_names(self):
         from ultimate_coders.agent.worker import Worker
-        cfg = SandboxConfig(agents_json='{"reviewer": {"description": "Reviews"}, "writer": {"description": "Writes"}}')
+        agents_json = json.dumps({
+            "reviewer": {"description": "Reviews"},
+            "writer": {"description": "Writes"},
+        })
+        cfg = SandboxConfig(agents_json=agents_json)
         w = Worker(sandbox_config=cfg)
         assert "agent:reviewer" in w.capabilities
         assert "agent:writer" in w.capabilities

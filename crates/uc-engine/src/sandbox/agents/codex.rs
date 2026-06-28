@@ -53,7 +53,11 @@ impl AgentAdapter for CodexAgent {
 
         ExecRequest {
             command: "codex".to_string(),
-            args: vec![prompt.to_string(), "--sandbox".to_string(), "workspace-write".to_string()],
+            args: vec![
+                prompt.to_string(),
+                "--sandbox".to_string(),
+                "workspace-write".to_string(),
+            ],
             stdin: None,
             timeout_secs: config.resource_limits.max_cpu_seconds,
             working_dir: if working_dir.is_empty() {
