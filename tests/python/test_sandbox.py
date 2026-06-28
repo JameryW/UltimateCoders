@@ -14,12 +14,13 @@ from ultimate_coders.agent.sandbox import (
     NetworkMode,
     SandboxConfig,
     SandboxManager,
+    _merge_agent_config,
     available_agents,
     create_adapter,
     parse_decomposition_output,
     truncate_str,
 )
-from ultimate_coders.agent.types import ChangeType, FileChange
+from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, Task
 
 # ── SandboxConfig tests ─────────────────────────────────────────
 
@@ -468,6 +469,61 @@ class TestWorkerSandboxMode:
         assert worker._sandbox_manager is not None
 
 
+# ── Worker capability derivation tests ──────────────────────────────
+
+class TestWorkerDeriveCapabilities:
+    """Tests for Worker._derive_capabilities from SandboxConfig."""
+
+    def test_default_capabilities(self):
+        from ultimate_coders.agent.worker import Worker
+        worker = Worker(worker_id="w-caps-default")
+        assert "code" in worker.capabilities
+        assert "search" in worker.capabilities
+        assert "memory" in worker.capabilities
+        assert "test" in worker.capabilities
+
+    def test_mcp_capability_when_mcp_configs_set(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(mcp_configs=["/etc/mcp/codegraph.json"])
+        worker = Worker(worker_id="w-caps-mcp", sandbox_config=config)
+        assert "mcp" in worker.capabilities
+
+    def test_no_mcp_capability_without_mcp_configs(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig()
+        worker = Worker(worker_id="w-caps-no-mcp", sandbox_config=config)
+        assert "mcp" not in worker.capabilities
+
+    def test_codegraph_capability_when_tool_present(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(tools=["default", "mcp__codegraph__*"])
+        worker = Worker(worker_id="w-caps-cg", sandbox_config=config)
+        assert "codegraph" in worker.capabilities
+
+    def test_no_codegraph_capability_without_tool(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(tools=["default"])
+        worker = Worker(worker_id="w-caps-no-cg", sandbox_config=config)
+        assert "codegraph" not in worker.capabilities
+
+    def test_agent_name_capability(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(agent_name="reviewer")
+        worker = Worker(worker_id="w-caps-agent", sandbox_config=config)
+        assert "agent:reviewer" in worker.capabilities
+
+    def test_explicit_capabilities_override_derived(self):
+        from ultimate_coders.agent.worker import Worker
+        config = SandboxConfig(mcp_configs=["/a.json"])
+        worker = Worker(
+            worker_id="w-caps-override",
+            sandbox_config=config,
+            capabilities=["code"],
+        )
+        # Explicit capabilities list should be used as-is
+        assert worker.capabilities == ["code"]
+
+
 # ── NetworkMode tests ────────────────────────────────────────────
 
 class TestNetworkMode:
@@ -477,3 +533,229 @@ class TestNetworkMode:
         assert NetworkMode.NONE == "none"
         assert NetworkMode.RESTRICTED == "restricted"
         assert NetworkMode.FULL == "full"
+
+
+# ── Agent tool/skill/mcp config tests ──────────────────────────────
+
+class TestSandboxConfigAgentFields:
+    """Tests for SandboxConfig tool/skill/mcp fields."""
+
+    def test_default_agent_fields_are_none(self):
+        config = SandboxConfig()
+        assert config.tools is None
+        assert config.allowed_tools is None
+        assert config.disallowed_tools is None
+        assert config.mcp_configs is None
+        assert config.append_system_prompt is None
+        assert config.agent_name is None
+        assert config.agents_json is None
+
+    def test_custom_agent_fields(self):
+        config = SandboxConfig(
+            tools=["default", "mcp__codegraph__*"],
+            allowed_tools=["Bash(git *)", "Edit"],
+            disallowed_tools=["Bash(rm *)"],
+            mcp_configs=["/etc/mcp/codegraph.json"],
+            append_system_prompt="Focus on Rust code",
+            agent_name="reviewer",
+            agents_json='{"reviewer": {"description": "Reviews code"}}',
+        )
+        assert config.tools == ["default", "mcp__codegraph__*"]
+        assert config.allowed_tools == ["Bash(git *)", "Edit"]
+        assert config.disallowed_tools == ["Bash(rm *)"]
+        assert config.mcp_configs == ["/etc/mcp/codegraph.json"]
+        assert config.append_system_prompt == "Focus on Rust code"
+        assert config.agent_name == "reviewer"
+        assert "reviewer" in config.agents_json
+
+
+class TestMergeAgentConfig:
+    """Tests for _merge_agent_config helper."""
+
+    def test_config_fields_only(self):
+        config = SandboxConfig(tools=["default"], mcp_configs=["/a.json"])
+        result = _merge_agent_config(config)
+        assert result["tools"] == ["default"]
+        assert result["mcp_configs"] == ["/a.json"]
+
+    def test_subtask_overrides(self):
+        config = SandboxConfig(tools=["default"])
+        result = _merge_agent_config(config, {"tools": ["mcp__codegraph__*"]})
+        assert result["tools"] == ["mcp__codegraph__*"]
+
+    def test_subtask_adds_new_key(self):
+        config = SandboxConfig(tools=["default"])
+        result = _merge_agent_config(config, {"agent_name": "reviewer"})
+        assert result["tools"] == ["default"]
+        assert result["agent_name"] == "reviewer"
+
+    def test_empty_subtask_no_override(self):
+        config = SandboxConfig(tools=["default"])
+        result = _merge_agent_config(config, {})
+        assert result["tools"] == ["default"]
+
+    def test_none_subtask_uses_config(self):
+        config = SandboxConfig(tools=["default"])
+        result = _merge_agent_config(config, None)
+        assert result["tools"] == ["default"]
+
+
+class TestClaudeCodeAdapterAgentFlags:
+    """Tests for ClaudeCodeAdapter CLI flag generation."""
+
+    def test_no_extra_flags_by_default(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request("Fix the bug", "/tmp/project", config)
+        args = request["args"]
+        assert "--tools" not in args
+        assert "--mcp-config" not in args
+        assert "--allowedTools" not in args
+        assert "--disallowedTools" not in args
+        assert "--append-system-prompt" not in args
+        assert "--agent" not in args
+        assert "--agents" not in args
+
+    def test_tools_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            tools=["default", "mcp__codegraph__*"],
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--tools")
+        assert args[idx + 1] == "default"
+        assert args[idx + 2] == "mcp__codegraph__*"
+
+    def test_mcp_config_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            mcp_configs=["/etc/mcp/codegraph.json", "/etc/mcp/pencil.json"],
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--mcp-config")
+        assert args[idx + 1] == "/etc/mcp/codegraph.json"
+        assert args[idx + 2] == "/etc/mcp/pencil.json"
+
+    def test_allowed_tools_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            allowed_tools=["Bash(git *)", "Edit"],
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--allowedTools")
+        assert args[idx + 1] == "Bash(git *)"
+        assert args[idx + 2] == "Edit"
+
+    def test_disallowed_tools_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            disallowed_tools=["Bash(rm *)"],
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--disallowedTools")
+        assert args[idx + 1] == "Bash(rm *)"
+
+    def test_append_system_prompt_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            append_system_prompt="Focus on Rust code",
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--append-system-prompt")
+        assert args[idx + 1] == "Focus on Rust code"
+
+    def test_agent_name_flag(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            agent_name="reviewer",
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--agent")
+        assert args[idx + 1] == "reviewer"
+
+    def test_agents_json_flag(self):
+        adapter = ClaudeCodeAdapter()
+        agents = '{"reviewer": {"description": "Reviews code"}}'
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            agents_json=agents,
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        idx = args.index("--agents")
+        assert args[idx + 1] == agents
+
+    def test_subtask_config_overrides(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            tools=["default"],
+        )
+        request = adapter.build_request(
+            "Fix", "/tmp/project", config,
+            subtask_config={"tools": ["mcp__codegraph__*"], "agent_name": "reviewer"},
+        )
+        args = request["args"]
+        # tools overridden by subtask config
+        idx = args.index("--tools")
+        assert args[idx + 1] == "mcp__codegraph__*"
+        # agent_name from subtask config
+        idx = args.index("--agent")
+        assert args[idx + 1] == "reviewer"
+
+    def test_all_flags_together(self):
+        adapter = ClaudeCodeAdapter()
+        config = SandboxConfig(
+            project_path="/tmp/project",
+            tools=["default"],
+            allowed_tools=["Bash(git *)"],
+            mcp_configs=["/a.json"],
+            append_system_prompt="Be thorough",
+            agent_name="reviewer",
+        )
+        request = adapter.build_request("Fix", "/tmp/project", config)
+        args = request["args"]
+        assert "--tools" in args
+        assert "--allowedTools" in args
+        assert "--mcp-config" in args
+        assert "--append-system-prompt" in args
+        assert "--agent" in args
+
+
+class TestSubtaskAgentConfig:
+    """Tests for Subtask.agent_config field."""
+
+    def test_default_agent_config_empty(self):
+        st = Subtask(description="Fix bug")
+        assert st.agent_config == {}
+
+    def test_agent_config_with_tools(self):
+        st = Subtask(
+            description="Fix bug",
+            agent_config={"tools": ["mcp__codegraph__*"], "agent_name": "reviewer"},
+        )
+        assert st.agent_config["tools"] == ["mcp__codegraph__*"]
+        assert st.agent_config["agent_name"] == "reviewer"
+
+    def test_task_round_trip_preserves_agent_config(self):
+        st = Subtask(
+            description="Fix bug",
+            agent_config={"mcp_configs": ["/a.json"], "append_system_prompt": "Be safe"},
+        )
+        task = Task(description="Parent", subtasks=[st])
+        data = task.to_dict()
+        restored = Task.from_dict(data)
+        assert restored.subtasks[0].agent_config["mcp_configs"] == ["/a.json"]
+        assert restored.subtasks[0].agent_config["append_system_prompt"] == "Be safe"

@@ -172,16 +172,14 @@ class Worker:
     ):
         self.worker_id = worker_id or str(uuid.uuid4())
         self.engine = engine
-        self.capabilities = capabilities or [
-            "code", "search", "memory", "test", "decompose", "review",
-        ]
+        self._sandbox_config = sandbox_config or SandboxConfig()
+        self.capabilities = capabilities or self._derive_capabilities()
         self.max_capacity = max_capacity
         self.current_task: Subtask | None = None
         self._active_count = 0
         self.conflict_detector = conflict_detector or ConflictDetector()
 
         # Sandbox execution (always)
-        self._sandbox_config = sandbox_config or SandboxConfig()
         self._sandbox_manager = SandboxManager(self._sandbox_config, engine)
 
         # Event publishing — NATS (preferred) or local event_emitter fallback
@@ -197,6 +195,24 @@ class Worker:
         # Self-heartbeat monitoring — track last heartbeat timestamp
         # so stale_worker_cleanup can detect local worker stalls
         self._last_heartbeat_at: datetime = datetime.now(timezone.utc)
+
+    def _derive_capabilities(self) -> list[str]:
+        """Derive worker capabilities from SandboxConfig tool/mcp settings.
+
+        ponytail: simple string matching — upgrade path is tool introspection.
+        """
+        caps = ["code", "search", "memory", "test", "decompose", "review"]
+        cfg = self._sandbox_config
+        if cfg.mcp_configs:
+            caps.append("mcp")
+        if cfg.tools:
+            for t in cfg.tools:
+                if t.startswith("mcp__codegraph"):
+                    caps.append("codegraph")
+                    break
+        if cfg.agent_name:
+            caps.append(f"agent:{cfg.agent_name}")
+        return caps
 
     def _dynamic_capacity(self, subtask: Subtask | None = None) -> int:
         """Return effective concurrency limit for this worker.
@@ -518,7 +534,10 @@ class Worker:
                     )
 
             output: AgentOutput = await self._sandbox_manager.execute(
-                prompt, working_dir=working_dir, on_stdout_line=_on_stdout_line,
+                prompt,
+                working_dir=working_dir,
+                on_stdout_line=_on_stdout_line,
+                subtask_config=subtask.agent_config or None,
             )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
