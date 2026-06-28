@@ -20,10 +20,7 @@ on:
 jobs:
   bun-test-mnemopi:
     name: bun test (mnemopi)
-    runs-on: ubuntu-latest
-    # pi_natives native addon only has darwin-x64 binary;
-    # tests fail on Linux CI. Continue-on-error until linux binary is provided.
-    continue-on-error: true
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: vendor/oh-my-pi/packages/mnemopi
@@ -40,8 +37,7 @@ jobs:
 
   bun-test-coding-agent:
     name: bun test (coding-agent)
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: vendor/oh-my-pi/packages/coding-agent
@@ -58,8 +54,7 @@ jobs:
 
   bun-test-uc-orchestrator:
     name: bun test (uc-orchestrator)
-    runs-on: ubuntu-latest
-    continue-on-error: true
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: packages/uc-orchestrator
