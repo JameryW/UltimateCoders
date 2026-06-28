@@ -187,6 +187,13 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             network: NetworkMode::Restricted,
             working_dir: "/tmp/test".to_string(),
+            tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_configs: Vec::new(),
+            append_system_prompt: None,
+            agent_name: None,
+            agents_json: None,
         }
     }
 

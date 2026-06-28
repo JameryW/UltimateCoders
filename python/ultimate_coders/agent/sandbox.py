@@ -73,7 +73,7 @@ class SandboxConfig:
 
     def to_engine_config(self) -> dict[str, Any]:
         """Convert to a dict suitable for passing to the Rust engine."""
-        return {
+        result: dict[str, Any] = {
             "project_path": self.project_path,
             "working_dir": self.working_dir or self.project_path,
             "env_vars": self._build_env_vars(),
@@ -85,6 +85,22 @@ class SandboxConfig:
             },
             "network": self.network,
         }
+        # Agent customization fields (flow through to Rust SandboxConfig)
+        if self.tools is not None:
+            result["tools"] = self.tools
+        if self.allowed_tools is not None:
+            result["allowed_tools"] = self.allowed_tools
+        if self.disallowed_tools is not None:
+            result["disallowed_tools"] = self.disallowed_tools
+        if self.mcp_configs is not None:
+            result["mcp_configs"] = self.mcp_configs
+        if self.append_system_prompt is not None:
+            result["append_system_prompt"] = self.append_system_prompt
+        if self.agent_name is not None:
+            result["agent_name"] = self.agent_name
+        if self.agents_json is not None:
+            result["agents_json"] = self.agents_json
+        return result
 
     def _build_env_vars(self) -> dict[str, str]:
         """Build environment variables including API keys."""

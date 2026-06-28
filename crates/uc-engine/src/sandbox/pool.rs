@@ -207,10 +207,8 @@ mod tests {
     fn test_config() -> SandboxConfig {
         SandboxConfig {
             project_path: "/tmp/test-project".to_string(),
-            env_vars: HashMap::new(),
-            resource_limits: crate::sandbox::ResourceLimits::default(),
-            network: NetworkMode::Restricted,
             working_dir: "/tmp/test-project".to_string(),
+            ..Default::default()
         }
     }
 

@@ -60,17 +60,49 @@ impl AgentAdapter for ClaudeCodeAgent {
             }
         }
 
+        let mut args = vec![
+            "-p".to_string(),
+            prompt.to_string(),
+            "--output-format".to_string(),
+            "json".to_string(),
+            "--max-turns".to_string(),
+            self.max_turns.to_string(),
+            "--dangerously-skip-permissions".to_string(),
+        ];
+
+        // Agent customization flags (mirrors Python ClaudeCodeAdapter)
+        if !config.tools.is_empty() {
+            args.push("--tools".to_string());
+            args.extend(config.tools.iter().cloned());
+        }
+        if !config.allowed_tools.is_empty() {
+            args.push("--allowedTools".to_string());
+            args.extend(config.allowed_tools.iter().cloned());
+        }
+        if !config.disallowed_tools.is_empty() {
+            args.push("--disallowedTools".to_string());
+            args.extend(config.disallowed_tools.iter().cloned());
+        }
+        if !config.mcp_configs.is_empty() {
+            args.push("--mcp-config".to_string());
+            args.extend(config.mcp_configs.iter().cloned());
+        }
+        if let Some(ref prompt) = config.append_system_prompt {
+            args.push("--append-system-prompt".to_string());
+            args.push(prompt.clone());
+        }
+        if let Some(ref name) = config.agent_name {
+            args.push("--agent".to_string());
+            args.push(name.clone());
+        }
+        if let Some(ref json) = config.agents_json {
+            args.push("--agents".to_string());
+            args.push(json.clone());
+        }
+
         ExecRequest {
             command: "claude".to_string(),
-            args: vec![
-                "-p".to_string(),
-                prompt.to_string(),
-                "--output-format".to_string(),
-                "json".to_string(),
-                "--max-turns".to_string(),
-                self.max_turns.to_string(),
-                "--dangerously-skip-permissions".to_string(),
-            ],
+            args,
             stdin: None,
             timeout_secs: config.resource_limits.max_cpu_seconds,
             working_dir: if working_dir.is_empty() {
@@ -261,6 +293,13 @@ mod tests {
             resource_limits: ResourceLimits::default(),
             network: NetworkMode::Restricted,
             working_dir: "/tmp/test".to_string(),
+            tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_configs: Vec::new(),
+            append_system_prompt: None,
+            agent_name: None,
+            agents_json: None,
         }
     }
 
@@ -435,5 +474,94 @@ mod tests {
         let long = "a".repeat(200);
         let truncated = truncate_str(&long, 100);
         assert!(truncated.len() <= 100);
+    }
+
+    #[test]
+    fn claude_code_build_request_with_tools() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            tools: vec!["default".to_string(), "mcp__codegraph__*".to_string()],
+            ..Default::default()
+        };
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let idx = request.args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(request.args[idx + 1], "default");
+        assert_eq!(request.args[idx + 2], "mcp__codegraph__*");
+    }
+
+    #[test]
+    fn claude_code_build_request_with_mcp_configs() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            mcp_configs: vec!["/etc/mcp/codegraph.json".to_string()],
+            ..Default::default()
+        };
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let idx = request.args.iter().position(|a| a == "--mcp-config").unwrap();
+        assert_eq!(request.args[idx + 1], "/etc/mcp/codegraph.json");
+    }
+
+    #[test]
+    fn claude_code_build_request_with_allowed_tools() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            allowed_tools: vec!["Bash(git *)".to_string(), "Edit".to_string()],
+            ..Default::default()
+        };
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        assert!(request.args.contains(&"--allowedTools".to_string()));
+        assert!(request.args.contains(&"Bash(git *)".to_string()));
+    }
+
+    #[test]
+    fn claude_code_build_request_with_agent_name() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            agent_name: Some("reviewer".to_string()),
+            ..Default::default()
+        };
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let idx = request.args.iter().position(|a| a == "--agent").unwrap();
+        assert_eq!(request.args[idx + 1], "reviewer");
+    }
+
+    #[test]
+    fn claude_code_build_request_with_append_system_prompt() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = SandboxConfig {
+            project_path: "/tmp/test".to_string(),
+            working_dir: "/tmp/test".to_string(),
+            append_system_prompt: Some("Focus on Rust".to_string()),
+            ..Default::default()
+        };
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        let idx = request
+            .args
+            .iter()
+            .position(|a| a == "--append-system-prompt")
+            .unwrap();
+        assert_eq!(request.args[idx + 1], "Focus on Rust");
+    }
+
+    #[test]
+    fn claude_code_build_request_no_extra_flags_by_default() {
+        let adapter = ClaudeCodeAgent::new();
+        let config = test_config();
+        let request = adapter.build_request("Fix", "/tmp/test", &config);
+        assert!(!request.args.contains(&"--tools".to_string()));
+        assert!(!request.args.contains(&"--mcp-config".to_string()));
+        assert!(!request.args.contains(&"--allowedTools".to_string()));
+        assert!(!request.args.contains(&"--disallowedTools".to_string()));
+        assert!(!request.args.contains(&"--append-system-prompt".to_string()));
+        assert!(!request.args.contains(&"--agent".to_string()));
+        assert!(!request.args.contains(&"--agents".to_string()));
     }
 }

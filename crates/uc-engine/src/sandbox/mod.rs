@@ -80,6 +80,28 @@ pub struct SandboxConfig {
     pub network: NetworkMode,
     /// Working directory inside the sandbox.
     pub working_dir: String,
+    // Agent customization (passed as claude CLI flags)
+    /// Tool list for --tools flag (e.g. ["default", "mcp__codegraph__*"]).
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Allowed tool patterns for --allowedTools.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Disallowed tool patterns for --disallowedTools.
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    /// MCP server config file paths for --mcp-config.
+    #[serde(default)]
+    pub mcp_configs: Vec<String>,
+    /// Extra system prompt for --append-system-prompt.
+    #[serde(default)]
+    pub append_system_prompt: Option<String>,
+    /// Custom agent name for --agent.
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// JSON string defining custom agents for --agents.
+    #[serde(default)]
+    pub agents_json: Option<String>,
 }
 
 impl Default for SandboxConfig {
@@ -90,6 +112,13 @@ impl Default for SandboxConfig {
             resource_limits: ResourceLimits::default(),
             network: NetworkMode::Full,
             working_dir: String::new(),
+            tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            mcp_configs: Vec::new(),
+            append_system_prompt: None,
+            agent_name: None,
+            agents_json: None,
         }
     }
 }
@@ -341,9 +370,9 @@ mod tests {
         let config = SandboxConfig {
             project_path: "/tmp/project".to_string(),
             env_vars: HashMap::from([("KEY".to_string(), "VALUE".to_string())]),
-            resource_limits: ResourceLimits::default(),
             network: NetworkMode::None,
             working_dir: "/workspace".to_string(),
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&config).unwrap();
