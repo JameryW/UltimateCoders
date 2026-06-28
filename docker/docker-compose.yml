@@ -101,6 +101,37 @@ services:
       interval: 10s
       retries: 5
 
+  # ── UltimateCoders gRPC Gateway ──────────────────────────────────
+  # The gateway runs the Rust gRPC server (EngineService, TaskService,
+  # DashboardService, WorkerService). Workers register with it via
+  # gRPC WorkerService and receive subtask dispatch via NATS.
+  # Use: docker compose --profile gateway up
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.grpc
+    profiles: ["gateway", "app"]
+    ports:
+      - "50051:50051"  # gRPC + gRPC-Web
+    depends_on:
+      pd:
+        condition: service_healthy
+      tikv:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      UC_TIKV_PD_ENDPOINTS: "pd:2379"
+      UC_QDRANT_URL: "http://qdrant:6334"
+      UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_NATS_URL: "nats://nats:4222"
+      UC_GRPC_ADDR: "[::]:50051"
+      UC_CORS_MODE: "dev"
+
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.
   # The dashboard is available at http://localhost:8080/dashboard/
@@ -130,11 +161,32 @@ services:
       UC_NATS_URL: "nats://nats:4222"
     command: ["python", "-m", "ultimate_coders.cli", "start", "--dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
-  # ── UltimateCoders NATS Worker ─────────────────────────────────
-  # Independent process that consumes task submissions from NATS
-  # and executes them via the Python Orchestrator + Worker.
-  # Required for gRPC/TUI task submissions to be processed by the
-  # real Orchestrator (LLM decomposition + Worker execution).
+  # ── UltimateCoders Distributed Worker ────────────────────────────
+  # Independent process that registers with the Gateway via gRPC
+  # WorkerService, subscribes to NATS for subtask dispatch, and
+  # executes subtasks via the Python Worker + Sandbox.
+  # Can be scaled: docker compose --profile worker up --scale worker=3
+  # Use: docker compose --profile worker up
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    profiles: ["worker", "app"]
+    depends_on:
+      nats:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    environment:
+      UC_NATS_URL: "nats://nats:4222"
+      UC_GRPC_ENDPOINT: "http://gateway:50051"
+      UC_SANDBOX_MODE: "subprocess"
+      UC_PROJECT_PATH: "/workspace"
+    command: ["python", "-m", "ultimate_coders.nats_worker", "--mode", "worker"]
+
+  # ── UltimateCoders NATS Worker (default mode: Orchestrator) ──────
+  # Full Orchestrator mode — subscribes to uc.task.submit, decomposes
+  # tasks via LLM, and dispatches subtasks to Workers.
   # Use: docker compose --profile app up
   nats-worker:
     build:
@@ -157,6 +209,7 @@ services:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_GRPC_ENDPOINT: "http://gateway:50051"
       UC_SANDBOX_MODE: "subprocess"
       UC_PROJECT_PATH: "/workspace"
     command: ["python", "-m", "ultimate_coders.nats_worker"]

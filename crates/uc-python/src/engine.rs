@@ -1130,4 +1130,93 @@ impl PyEngine {
             Ok(events)
         })
     }
+
+    // ── WorkerService methods (gRPC mode only) ────────────────────
+
+    /// Register this worker with the gateway via WorkerService RPC.
+    ///
+    /// Args:
+    ///     worker_id: Unique worker identifier.
+    ///     capabilities: List of capability strings (e.g., "python", "rust", "docker").
+    ///     max_capacity: Maximum concurrent subtasks this worker can handle.
+    ///
+    /// Returns:
+    ///     True if registration succeeded.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode or registration fails.
+    pub fn register_worker_async<'py>(
+        &self,
+        py: Python<'py>,
+        worker_id: String,
+        capabilities: Vec<String>,
+        max_capacity: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("register_worker requires gRPC mode")
+        })?;
+        future_into_py::<_, bool>(py, async move {
+            client
+                .register_worker(&worker_id, &capabilities, max_capacity)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        })
+    }
+
+    /// Send a heartbeat to the gateway via WorkerService RPC.
+    ///
+    /// Args:
+    ///     worker_id: Unique worker identifier.
+    ///     current_load: Current number of active subtasks.
+    ///
+    /// Returns:
+    ///     True if heartbeat was accepted.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode or heartbeat fails.
+    pub fn worker_heartbeat_async<'py>(
+        &self,
+        py: Python<'py>,
+        worker_id: String,
+        current_load: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("worker_heartbeat requires gRPC mode")
+        })?;
+        future_into_py::<_, bool>(py, async move {
+            client
+                .worker_heartbeat(&worker_id, current_load)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        })
+    }
+
+    /// Deregister this worker from the gateway (graceful shutdown).
+    ///
+    /// Args:
+    ///     worker_id: Unique worker identifier.
+    ///
+    /// Returns:
+    ///     True if deregistration succeeded.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode or deregistration fails.
+    pub fn deregister_worker_async<'py>(
+        &self,
+        py: Python<'py>,
+        worker_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("deregister_worker requires gRPC mode")
+        })?;
+        future_into_py::<_, bool>(py, async move {
+            client
+                .deregister_worker(&worker_id)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        })
+    }
 }

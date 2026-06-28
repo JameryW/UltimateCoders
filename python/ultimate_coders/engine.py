@@ -918,6 +918,76 @@ class Engine:
             "resume_task_async", task_id
         )
 
+    # ── WorkerService methods (gRPC mode only) ─────────────────────
+
+    async def register_worker_async(
+        self,
+        worker_id: str,
+        capabilities: list[str] | None = None,
+        max_capacity: int = 3,
+    ) -> bool:
+        """Register this worker with the gateway via WorkerService RPC.
+
+        Args:
+            worker_id: Unique worker identifier.
+            capabilities: List of capability strings (e.g., "python", "docker").
+            max_capacity: Maximum concurrent subtasks (default: 3).
+
+        Returns:
+            True if registration succeeded.
+        """
+        if self._mode != "grpc" or self._grpc_engine is None:
+            logger.warning("register_worker requires gRPC mode")
+            return False
+        try:
+            return await self._grpc_engine.register_worker_async(
+                worker_id, capabilities or [], max_capacity
+            )
+        except Exception as exc:
+            logger.warning("register_worker failed: %s", exc)
+            return False
+
+    async def worker_heartbeat_async(
+        self,
+        worker_id: str,
+        current_load: int = 0,
+    ) -> bool:
+        """Send a heartbeat to the gateway via WorkerService RPC.
+
+        Args:
+            worker_id: Unique worker identifier.
+            current_load: Current number of active subtasks.
+
+        Returns:
+            True if heartbeat was accepted.
+        """
+        if self._mode != "grpc" or self._grpc_engine is None:
+            return False
+        try:
+            return await self._grpc_engine.worker_heartbeat_async(
+                worker_id, current_load
+            )
+        except Exception as exc:
+            logger.debug("worker_heartbeat failed: %s", exc)
+            return False
+
+    async def deregister_worker_async(self, worker_id: str) -> bool:
+        """Deregister this worker from the gateway (graceful shutdown).
+
+        Args:
+            worker_id: Unique worker identifier.
+
+        Returns:
+            True if deregistration succeeded.
+        """
+        if self._mode != "grpc" or self._grpc_engine is None:
+            return False
+        try:
+            return await self._grpc_engine.deregister_worker_async(worker_id)
+        except Exception as exc:
+            logger.warning("deregister_worker failed: %s", exc)
+            return False
+
 
     # ── Multi-Repo Configuration ─────────────────────────────────
 
