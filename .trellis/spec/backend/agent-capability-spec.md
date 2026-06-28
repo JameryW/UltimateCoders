@@ -414,3 +414,163 @@ class GrpcBridge {
 4. **`runningCount` not decremented on early return** — if a worker exits early (e.g., cancel), must decrement `runningCount` to prevent counter leak.
 
 5. **Context summary exceeding token budget** — `buildContextForSubtask` must cap total at 500 chars to avoid token overflow in worker prompts.
+
+---
+
+## Sandbox Agent Customization (Skill / MCP / Tool)
+
+### Scope / Trigger
+
+Worker sandbox agents (claude-code, codex) can now be customized with tool restrictions, MCP servers, system prompts, and custom agent definitions. Trigger: any change to `SandboxConfig` agent fields, `Subtask.agent_config`, `ClaudeCodeAdapter.build_request`, or `Worker._derive_capabilities`.
+
+### Signatures
+
+#### SandboxConfig — new agent fields
+
+```python
+@dataclass
+class SandboxConfig:
+    # ... existing fields ...
+    tools: list[str] | None = None              # --tools
+    allowed_tools: list[str] | None = None      # --allowedTools
+    disallowed_tools: list[str] | None = None   # --disallowedTools
+    mcp_configs: list[str] | None = None        # --mcp-config
+    append_system_prompt: str | None = None      # --append-system-prompt
+    agent_name: str | None = None                # --agent
+    agents_json: str | None = None               # --agents
+```
+
+#### Subtask.agent_config
+
+```python
+@dataclass
+class Subtask:
+    # ... existing fields ...
+    agent_config: dict[str, Any] = field(default_factory=dict)
+    # Keys: tools, allowed_tools, disallowed_tools, mcp_configs,
+    #       append_system_prompt, agent_name, agents_json
+```
+
+#### _merge_agent_config
+
+```python
+def _merge_agent_config(
+    config: SandboxConfig,
+    subtask_config: dict[str, Any] | None = None,
+) -> dict[str, Any]
+```
+
+Merges SandboxConfig agent fields with per-subtask overrides. Subtask-level values replace (not merge) config-level values for the same key.
+
+#### Worker._derive_capabilities
+
+```python
+def _derive_capabilities(self) -> list[str]
+```
+
+Base: `["code", "search", "memory", "test"]`. Appends `"mcp"` when `mcp_configs` set, `"codegraph"` when tools contains `mcp__codegraph*`, `"agent:<name>"` when `agent_name` set.
+
+### Contracts
+
+#### CLI flag mapping
+
+| Config key | CLI flag | Example |
+|------------|----------|---------|
+| `tools` | `--tools` | `["default", "mcp__codegraph__*"]` |
+| `allowed_tools` | `--allowedTools` | `["Bash(git *)", "Edit"]` |
+| `disallowed_tools` | `--disallowedTools` | `["Bash(rm *)"]` |
+| `mcp_configs` | `--mcp-config` | `["/etc/mcp/codegraph.json"]` |
+| `append_system_prompt` | `--append-system-prompt` | `"Focus on Rust code"` |
+| `agent_name` | `--agent` | `"reviewer"` |
+| `agents_json` | `--agents` | `'{"reviewer": {...}}'` |
+
+#### Override precedence
+
+1. `Subtask.agent_config` keys take precedence over `SandboxConfig` fields
+2. Lists are replaced, not merged — subtask config defines the full set
+3. Empty dict `{}` in `agent_config` means no override (use config-level values)
+4. `None` for `subtask_config` means use config-level values
+
+#### Execution flow
+
+```
+Worker._execute_in_sandbox(subtask)
+  → SandboxManager.execute(prompt, subtask_config=subtask.agent_config)
+    → _merge_agent_config(config, subtask_config)
+    → ClaudeCodeAdapter.build_request(prompt, wd, config, subtask_config)
+      → generates CLI args based on merged config
+```
+
+#### Backward compatibility
+
+All new fields default to `None` / `{}`. When all are unset, `ClaudeCodeAdapter.build_request` generates the same CLI args as before.
+
+### Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| `tools=[]` | `--tools` flag emitted with empty list — claude CLI may reject. Prefer `None` for "no override". |
+| `mcp_configs` path not found | claude CLI fails with error — worker returns `SubtaskResult(success=False)` |
+| `agents_json` invalid JSON | claude CLI fails with error — worker returns `SubtaskResult(success=False)` |
+| Both `SandboxConfig.tools` and `Subtask.agent_config["tools"]` set | Subtask value wins (replace, not merge) |
+| `agent_config={}` (empty) | No override, config-level values used |
+
+### Good / Base / Bad Cases
+
+- **Good**: Subtask with `agent_config={"tools": ["mcp__codegraph__*"], "mcp_configs": ["/mcp/codegraph.json"]}` → worker gets codegraph tools for that subtask only
+- **Base**: No agent_config → default claude-code behavior (all tools, no MCP)
+- **Bad**: `mcp_configs` pointing to missing file → claude CLI error → subtask fails
+
+### Tests Required
+
+| Test | Assertion Point |
+|------|-----------------|
+| `test_default_agent_fields_are_none` | All new SandboxConfig fields default to None |
+| `test_custom_agent_fields` | All fields set correctly |
+| `test_merge_config_fields_only` | Config fields extracted |
+| `test_merge_subtask_overrides` | Subtask value replaces config value |
+| `test_merge_subtask_adds_new_key` | New key from subtask added |
+| `test_no_extra_flags_by_default` | No extra CLI args when all fields None |
+| `test_tools_flag` | `--tools` with correct values in args |
+| `test_mcp_config_flag` | `--mcp-config` with paths in args |
+| `test_allowed_tools_flag` | `--allowedTools` with patterns in args |
+| `test_disallowed_tools_flag` | `--disallowedTools` with patterns in args |
+| `test_append_system_prompt_flag` | `--append-system-prompt` with text in args |
+| `test_agent_name_flag` | `--agent` with name in args |
+| `test_agents_json_flag` | `--agents` with JSON in args |
+| `test_subtask_config_overrides` | Subtask config takes precedence in build_request |
+| `test_all_flags_together` | All flags present in args |
+| `test_default_capabilities` | Base caps: code, search, memory, test |
+| `test_mcp_capability_when_mcp_configs_set` | "mcp" added |
+| `test_codegraph_capability_when_tool_present` | "codegraph" added |
+| `test_agent_name_capability` | "agent:<name>" added |
+| `test_explicit_capabilities_override_derived` | Explicit list overrides derivation |
+| `test_subtask_agent_config_round_trip` | to_dict/from_dict preserves agent_config |
+
+### Wrong vs Correct
+
+#### Wrong: Merging lists instead of replacing
+
+```python
+# If config has ["default"] and subtask has ["mcp__codegraph__*"],
+# you'd get ["default", "mcp__codegraph__*"] — subtask can't narrow tools
+merged_tools = (config.tools or []) + (subtask_config.get("tools") or [])
+```
+
+#### Correct: Subtask replaces config list
+
+```python
+result["tools"] = subtask_config["tools"]  # full replacement
+```
+
+#### Wrong: Hardcoded capabilities ignore config
+
+```python
+self.capabilities = capabilities or ["code", "search", "memory", "test"]
+```
+
+#### Correct: Derive from config
+
+```python
+self.capabilities = capabilities or self._derive_capabilities()
+```

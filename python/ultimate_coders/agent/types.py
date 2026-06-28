@@ -96,6 +96,9 @@ class Subtask:
     dispatch_mode: DispatchMode = DispatchMode.PREFER_REMOTE
     dispatch_retry_count: int = 0
     required_capabilities: list[str] = field(default_factory=list)
+    # Per-subtask agent config overrides (keys: tools, allowed_tools,
+    # disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json)
+    agent_config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_ready(self) -> bool:
@@ -153,6 +156,7 @@ class Task:
                     "timeout_seconds": st.timeout_seconds,
                     "dispatch_mode": st.dispatch_mode.value,
                     "dispatch_retry_count": st.dispatch_retry_count,
+                    "agent_config": st.agent_config,
                     "result": {
                         "subtask_id": st.result.subtask_id,
                         "worker_id": st.result.worker_id,
@@ -219,6 +223,7 @@ class Task:
                 ),
                 dispatch_retry_count=sd.get("dispatch_retry_count", 0),
                 required_capabilities=sd.get("required_capabilities", []),
+                agent_config=sd.get("agent_config", {}),
             )
             rd = sd.get("result")
             if rd is not None:

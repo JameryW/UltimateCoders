@@ -41,6 +41,13 @@ class SandboxConfig:
         max_pool_size: Maximum total sandbox instances.
         working_dir: Working directory inside the sandbox.
         env_vars: Additional environment variables.
+        tools: Tool list for --tools flag (e.g. ["default", "mcp__*"]).
+        allowed_tools: Allowed tool patterns for --allowedTools.
+        disallowed_tools: Disallowed tool patterns for --disallowedTools.
+        mcp_configs: MCP server config file paths for --mcp-config.
+        append_system_prompt: Extra system prompt for --append-system-prompt.
+        agent_name: Custom agent name for --agent.
+        agents_json: JSON string defining custom agents for --agents.
     """
     agent: str = "claude-code"
     backend: str = "subprocess"
@@ -55,6 +62,14 @@ class SandboxConfig:
     max_pool_size: int = 10
     working_dir: str = ""
     env_vars: dict[str, str] = field(default_factory=dict)
+    # Agent customization (passed as claude CLI flags)
+    tools: list[str] | None = None              # --tools (e.g. ["default", "mcp__codegraph__*"])
+    allowed_tools: list[str] | None = None      # --allowedTools
+    disallowed_tools: list[str] | None = None   # --disallowedTools
+    mcp_configs: list[str] | None = None        # --mcp-config file paths
+    append_system_prompt: str | None = None      # --append-system-prompt
+    agent_name: str | None = None                # --agent (custom agent name)
+    agents_json: str | None = None               # --agents JSON string
 
     def to_engine_config(self) -> dict[str, Any]:
         """Convert to a dict suitable for passing to the Rust engine."""
@@ -209,6 +224,7 @@ class SandboxManager:
         prompt: str,
         working_dir: str | None = None,
         on_stdout_line: Any | None = None,
+        subtask_config: dict[str, Any] | None = None,
     ) -> AgentOutput:
         """Execute an agent prompt in a sandbox.
 
@@ -218,6 +234,7 @@ class SandboxManager:
             on_stdout_line: Optional async callback ``async (line: str) -> None``
                 called for each stdout line during execution. Used for real-time
                 streaming of tool_call/file_modified events to TUI/Dashboard.
+            subtask_config: Per-subtask agent config overrides (tools, mcp, etc.)
 
         Returns:
             AgentOutput with summary, file changes, and success status.
@@ -233,6 +250,7 @@ class SandboxManager:
             # Build and execute the agent command
             exec_request = self._adapter.build_request(
                 prompt, wd, self.config,
+                subtask_config=subtask_config,
             )
 
             if self.engine is not None and hasattr(self.engine, "execute_in_sandbox"):
@@ -508,7 +526,11 @@ class AgentAdapter(ABC):
 
     @abstractmethod
     def build_request(
-        self, prompt: str, working_dir: str, config: SandboxConfig
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     @abstractmethod
@@ -525,7 +547,13 @@ class DecomposeAdapter(AgentAdapter):
     def name(self) -> str:
         return "claude-code-decompose"
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         timeout = min(config.max_cpu_seconds, 300)
         logger.info(
             "DecomposeAdapter: building request (timeout=%ds, cwd=%s, prompt_len=%d)",
@@ -657,21 +685,71 @@ def parse_decomposition_output(raw_stdout: str) -> list[dict[str, Any]]:
     return items
 
 
+def _merge_agent_config(
+    config: SandboxConfig,
+    subtask_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge SandboxConfig agent fields with per-subtask overrides.
+
+    Subtask-level values take precedence. Lists (tools, allowed_tools, etc.)
+    are replaced, not merged — subtask config defines the full set.
+    """
+    result: dict[str, Any] = {}
+    for key in (
+        "tools", "allowed_tools", "disallowed_tools",
+        "mcp_configs", "append_system_prompt",
+        "agent_name", "agents_json",
+    ):
+        val = getattr(config, key, None)
+        if val is not None:
+            result[key] = val
+    # Subtask overrides take precedence
+    if subtask_config:
+        result.update(subtask_config)
+    return result
+
+
 class ClaudeCodeAdapter(AgentAdapter):
     """Adapter for Claude Code CLI."""
 
     def name(self) -> str:
         return "claude-code"
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        args = [
+            "-p", prompt,
+            "--output-format", "stream-json",
+            "--max-turns", "20",
+            "--dangerously-skip-permissions",
+        ]
+
+        # Merge config-level and subtask-level agent overrides
+        cfg = _merge_agent_config(config, subtask_config)
+
+        if cfg.get("tools"):
+            args += ["--tools"] + cfg["tools"]
+        if cfg.get("allowed_tools"):
+            args += ["--allowedTools"] + cfg["allowed_tools"]
+        if cfg.get("disallowed_tools"):
+            args += ["--disallowedTools"] + cfg["disallowed_tools"]
+        if cfg.get("mcp_configs"):
+            args += ["--mcp-config"] + cfg["mcp_configs"]
+        if cfg.get("append_system_prompt"):
+            args += ["--append-system-prompt", cfg["append_system_prompt"]]
+        if cfg.get("agent_name"):
+            args += ["--agent", cfg["agent_name"]]
+        if cfg.get("agents_json"):
+            args += ["--agents", cfg["agents_json"]]
+
         return {
             "command": "claude",
-            "args": [
-                "-p", prompt,
-                "--output-format", "stream-json",
-                "--max-turns", "20",
-                "--dangerously-skip-permissions",
-            ],
+            "args": args,
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
             "env_vars": config._build_env_vars(),
@@ -821,7 +899,13 @@ class CodexAdapter(AgentAdapter):
     def name(self) -> str:
         return "codex"
 
-    def build_request(self, prompt: str, working_dir: str, config: SandboxConfig) -> dict[str, Any]:
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {
             "command": "codex",
             "args": [prompt, "--full-auto"],
