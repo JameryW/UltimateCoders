@@ -501,7 +501,11 @@ mod tests {
             ..Default::default()
         };
         let request = adapter.build_request("Fix", "/tmp/test", &config);
-        let idx = request.args.iter().position(|a| a == "--mcp-config").unwrap();
+        let idx = request
+            .args
+            .iter()
+            .position(|a| a == "--mcp-config")
+            .unwrap();
         assert_eq!(request.args[idx + 1], "/etc/mcp/codegraph.json");
     }
 
