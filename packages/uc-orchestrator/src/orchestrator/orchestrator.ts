@@ -103,6 +103,8 @@ export interface SubtaskResult {
 	dispatchMode?: string;
 	/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
 	requiredCapabilities?: string[];
+	/** Per-subtask agent configuration overrides (mirrors SubtaskDef.agentConfig). */
+	agentConfig?: Record<string, unknown>;
 }
 
 interface ReviewResult {
@@ -687,6 +689,9 @@ export class UCOrchestrator {
 				dependsOn: [...completedIds, ...def.dependsOn],
 				files: def.files,
 				retryCount: this.config.maxRetries, // no further retries
+				dispatchMode: def.dispatchMode,
+				requiredCapabilities: def.requiredCapabilities,
+				agentConfig: def.agentConfig,
 			}));
 
 			task.subtasks = [
