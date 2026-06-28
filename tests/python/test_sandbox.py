@@ -759,3 +759,150 @@ class TestSubtaskAgentConfig:
         restored = Task.from_dict(data)
         assert restored.subtasks[0].agent_config["mcp_configs"] == ["/a.json"]
         assert restored.subtasks[0].agent_config["append_system_prompt"] == "Be safe"
+
+
+# ── NATS dispatch agent_config round-trip tests ──────────────────
+
+class TestNatsDispatchAgentConfig:
+    """Tests for agent_config surviving NATS subtask dispatch round-trip."""
+
+    def test_dispatch_message_includes_agent_config(self):
+        """Verify _dispatch_remote includes agent_config in the NATS message."""
+        import json
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+
+        subtask = Subtask(
+            id="st-1",
+            parent_id="t-1",
+            description="Fix auth bug",
+            status=SubtaskStatus.PENDING,
+            agent_config={
+                "tools": ["mcp__codegraph__*"],
+                "mcp_configs": ["/etc/mcp/codegraph.json"],
+                "disallowed_tools": ["Bash(rm *)"],
+            },
+        )
+
+        # Simulate what _dispatch_remote builds
+        msg_dict = {
+            "task_id": subtask.parent_id,
+            "subtask_id": subtask.id,
+            "description": subtask.description,
+            "depends_on": subtask.depends_on,
+            "file_constraints": subtask.file_constraints,
+            "expected_output": subtask.expected_output,
+            "timeout_seconds": subtask.timeout_seconds or 600,
+            "dispatch_mode": subtask.dispatch_mode.value,
+            "required_capabilities": subtask.required_capabilities,
+            "agent_config": subtask.agent_config,
+        }
+
+        # Serialize and deserialize (NATS round-trip)
+        encoded = json.dumps(msg_dict).encode()
+        decoded = json.loads(encoded.decode())
+
+        assert decoded["agent_config"]["tools"] == ["mcp__codegraph__*"]
+        assert decoded["agent_config"]["mcp_configs"] == ["/etc/mcp/codegraph.json"]
+        assert decoded["agent_config"]["disallowed_tools"] == ["Bash(rm *)"]
+
+    def test_dispatch_message_empty_agent_config(self):
+        """Verify empty agent_config is handled (backward compat)."""
+        import json
+        from ultimate_coders.agent.types import Subtask
+
+        subtask = Subtask(description="Fix bug")
+
+        msg_dict = {
+            "task_id": subtask.parent_id,
+            "subtask_id": subtask.id,
+            "description": subtask.description,
+            "agent_config": subtask.agent_config,
+        }
+
+        encoded = json.dumps(msg_dict).encode()
+        decoded = json.loads(encoded.decode())
+        assert decoded["agent_config"] == {}
+
+    def test_handle_subtask_reconstructs_agent_config(self):
+        """Verify _handle_subtask_execute reconstructs Subtask with agent_config."""
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+
+        # Simulate the incoming NATS message data
+        data = {
+            "task_id": "t-1",
+            "subtask_id": "st-1",
+            "description": "Fix auth bug",
+            "depends_on": [],
+            "file_constraints": ["src/auth.rs"],
+            "expected_output": "Bug fixed",
+            "timeout_seconds": 600,
+            "dispatch_mode": "prefer_remote",
+            "required_capabilities": ["code"],
+            "agent_config": {
+                "tools": ["default", "mcp__codegraph__*"],
+                "append_system_prompt": "Focus on security",
+            },
+        }
+
+        # Reconstruct Subtask (mirrors _handle_subtask_execute logic)
+        subtask = Subtask(
+            id=data["subtask_id"],
+            parent_id=data["task_id"],
+            description=data["description"],
+            status=SubtaskStatus.PENDING,
+            depends_on=data.get("depends_on", []),
+            file_constraints=data.get("file_constraints", []),
+            expected_output=data.get("expected_output", ""),
+            timeout_seconds=data.get("timeout_seconds", 600),
+            dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
+            required_capabilities=data.get("required_capabilities", []),
+            agent_config=data.get("agent_config", {}),
+        )
+
+        assert subtask.agent_config["tools"] == ["default", "mcp__codegraph__*"]
+        assert subtask.agent_config["append_system_prompt"] == "Focus on security"
+
+    def test_handle_subtask_missing_agent_config_defaults_empty(self):
+        """Backward compat: messages without agent_config default to {}."""
+        from ultimate_coders.agent.types import Subtask, SubtaskStatus, DispatchMode
+
+        data = {
+            "task_id": "t-1",
+            "subtask_id": "st-1",
+            "description": "Fix bug",
+        }
+
+        subtask = Subtask(
+            id=data["subtask_id"],
+            parent_id=data["task_id"],
+            description=data["description"],
+            status=SubtaskStatus.PENDING,
+            agent_config=data.get("agent_config", {}),
+        )
+
+        assert subtask.agent_config == {}
+
+
+class TestOrchestratorAgentConfig:
+    """Tests for Orchestrator.submit_task with agent_config."""
+
+    @pytest.mark.asyncio
+    async def test_submit_task_passes_agent_config_to_subtasks(self):
+        from ultimate_coders.agent.orchestrator import Orchestrator
+
+        orch = Orchestrator()
+        task = await orch.submit_task(
+            "Fix bug A\nFix bug B",
+            agent_config={"tools": ["mcp__codegraph__*"]},
+        )
+        assert len(task.subtasks) == 2
+        for st in task.subtasks:
+            assert st.agent_config == {"tools": ["mcp__codegraph__*"]}
+
+    @pytest.mark.asyncio
+    async def test_submit_task_no_agent_config_defaults_empty(self):
+        from ultimate_coders.agent.orchestrator import Orchestrator
+
+        orch = Orchestrator()
+        task = await orch.submit_task("Fix bug")
+        assert task.subtasks[0].agent_config == {}

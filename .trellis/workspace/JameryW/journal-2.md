@@ -458,3 +458,36 @@ Added tool/skill/mcp customization to sandbox workers. SandboxConfig gains 7 new
 ### Next Steps
 
 - None - task complete
+
+
+## Session 69: Sync Rust SandboxConfig with Python agent customization
+
+**Date**: 2026-06-28
+**Task**: Sync Rust SandboxConfig with Python agent customization
+**Branch**: `main`
+
+### Summary
+
+Synced Rust SandboxConfig with Python-side agent customization fields (tools, allowed_tools, disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json). Updated ClaudeCodeAgent.build_request to generate CLI flags. Updated Python to_engine_config to serialize new fields. Updated test_config helpers across all sandbox modules. 329 Rust + 77 Python tests pass. PR #183.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4ae40848` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

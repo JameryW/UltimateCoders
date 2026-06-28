@@ -656,6 +656,7 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
                     .collect()
             })
             .unwrap_or_default(),
+        agent_config_json: None,
     }
 }
 

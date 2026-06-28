@@ -804,6 +804,7 @@ impl From<Subtask> for SubtaskProto {
             }),
             dispatch_retry_count: Some(st.dispatch_retry_count),
             required_capabilities: st.required_capabilities,
+            agent_config_json: st.agent_config_json,
         }
     }
 }
@@ -1120,6 +1121,7 @@ impl From<SubtaskProto> for Subtask {
             ),
             dispatch_retry_count: proto.dispatch_retry_count.unwrap_or(0),
             required_capabilities: proto.required_capabilities,
+            agent_config_json: proto.agent_config_json,
         }
     }
 }
@@ -1492,6 +1494,7 @@ mod tests {
                 dispatch_mode: None,
                 dispatch_retry_count: None,
                 required_capabilities: vec![],
+                agent_config_json: None,
             }],
         };
         let task: Task = proto.into();
