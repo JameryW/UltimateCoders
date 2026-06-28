@@ -96,7 +96,10 @@ impl WorkerRegistry {
     /// Process a heartbeat from a worker.
     pub fn heartbeat(&mut self, worker_id: &str, current_load: u32) -> Result<(), String> {
         let worker = self.workers.get_mut(worker_id).ok_or_else(|| {
-            format!("Worker '{}' not registered — call RegisterWorker first", worker_id)
+            format!(
+                "Worker '{}' not registered — call RegisterWorker first",
+                worker_id
+            )
         })?;
         worker.last_heartbeat = chrono::Utc::now();
         worker.current_load = current_load;
@@ -276,14 +279,21 @@ mod tests {
     #[test]
     fn registry_rejects_empty_id() {
         let mut reg = WorkerRegistry::new();
-        assert!(reg.register(String::new(), vec![], 1, String::new()).is_err());
+        assert!(reg
+            .register(String::new(), vec![], 1, String::new())
+            .is_err());
     }
 
     #[test]
     fn registry_heartbeat_updates_load() {
         let mut reg = WorkerRegistry::new();
-        reg.register("w-1".to_string(), vec!["code".to_string()], 3, String::new())
-            .unwrap();
+        reg.register(
+            "w-1".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+        )
+        .unwrap();
         reg.heartbeat("w-1", 2).unwrap();
         assert_eq!(reg.workers()["w-1"].current_load, 2);
     }
@@ -362,8 +372,13 @@ mod tests {
     #[test]
     fn registry_reregister_resets_state() {
         let mut reg = WorkerRegistry::new();
-        reg.register("w-1".to_string(), vec!["python".to_string()], 3, String::new())
-            .unwrap();
+        reg.register(
+            "w-1".to_string(),
+            vec!["python".to_string()],
+            3,
+            String::new(),
+        )
+        .unwrap();
         reg.heartbeat("w-1", 2).unwrap();
         // Re-register with new capabilities
         reg.register(

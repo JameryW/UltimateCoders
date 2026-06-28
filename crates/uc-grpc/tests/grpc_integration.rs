@@ -12,7 +12,8 @@ use tonic::transport::Server;
 async fn start_server() -> String {
     let engine = LocalEngine::new_fallback();
     let grpc_server = GrpcServer::new(engine);
-    let (engine_service, task_service, _dashboard_service, _worker_service) = grpc_server.into_services();
+    let (engine_service, task_service, _dashboard_service, _worker_service) =
+        grpc_server.into_services();
 
     // Use port 0 to let OS pick a free port
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();

@@ -1299,7 +1299,12 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let task_service = TaskServiceServer::new(self.clone());
         let dashboard_service = DashboardServiceServer::new(self.clone());
         let worker_service = WorkerServiceServer::new(self);
-        (engine_service, task_service, dashboard_service, worker_service)
+        (
+            engine_service,
+            task_service,
+            dashboard_service,
+            worker_service,
+        )
     }
 
     /// Expose the NATS client for DashboardService passthrough.
