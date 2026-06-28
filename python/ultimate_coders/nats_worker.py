@@ -878,7 +878,8 @@ class NatsWorker:
                 elif st.dispatch_mode == DispatchMode.REMOTE:
                     # Remote mode: no matching worker → keep Pending, don't execute locally
                     logger.info(
-                        "Subtask %s requires remote dispatch but no capable worker, keeping Pending",
+                        "Subtask %s requires remote but no capable worker,"
+                        " keeping Pending",
                         sid[:8],
                     )
                 else:
