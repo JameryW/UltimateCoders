@@ -20,7 +20,7 @@ on:
 jobs:
   bun-test-mnemopi:
     name: bun test (mnemopi)
-    runs-on: macos-latest
+    runs-on: macos-13
     defaults:
       run:
         working-directory: vendor/oh-my-pi/packages/mnemopi
@@ -37,7 +37,7 @@ jobs:
 
   bun-test-coding-agent:
     name: bun test (coding-agent)
-    runs-on: macos-latest
+    runs-on: macos-13
     defaults:
       run:
         working-directory: vendor/oh-my-pi/packages/coding-agent
@@ -54,7 +54,7 @@ jobs:
 
   bun-test-uc-orchestrator:
     name: bun test (uc-orchestrator)
-    runs-on: macos-latest
+    runs-on: macos-13
     defaults:
       run:
         working-directory: packages/uc-orchestrator
