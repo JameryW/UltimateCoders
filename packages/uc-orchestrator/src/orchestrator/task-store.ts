@@ -37,6 +37,10 @@ export interface PersistedTask {
 		recentToolCalls?: string[];
 		stderrTail?: string;
 		retryCount?: number;
+		/** Dispatch mode: "local" | "remote" | "prefer_remote" */
+		dispatchMode?: string;
+		/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
+		requiredCapabilities?: string[];
 	}>;
 	createdAt: number;
 	completedAt?: number;

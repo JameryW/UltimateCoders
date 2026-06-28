@@ -34,6 +34,7 @@ from nats.aio.subscription import Subscription
 
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
+    DispatchMode,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -850,27 +851,54 @@ class NatsWorker:
                     task = updated_task
                 continue
 
-            # Execute ready subtasks — remote or local depending on worker availability
-            use_remote = self._has_remote_workers()
+            # Execute ready subtasks — remote or local per subtask based on
+            # worker availability + capability matching.
             # ponytail: dynamic capacity — read-only subtasks get higher concurrency
             capacity = self._worker._dynamic_capacity()
             batch_ids = ready_ids[:capacity]
 
-            if use_remote:
-                # Remote dispatch: publish uc.subtask.execute for each ready subtask
-                for sid in batch_ids:
-                    st = None
-                    for s in task.subtasks:
-                        if s.id == sid:
-                            st = s
-                            break
-                    if st is None:
-                        continue
-                    await self._dispatch_remote(st)
+            # Split into remote-dispatchable and local-only subtasks
+            remote_batch: list[str] = []
+            local_batch: list[str] = []
+            for sid in batch_ids:
+                st = None
+                for s in task.subtasks:
+                    if s.id == sid:
+                        st = s
+                        break
+                if st is None:
+                    continue
+                # DispatchMode.Local → always local
+                if st.dispatch_mode == DispatchMode.LOCAL:
+                    local_batch.append(sid)
+                    continue
+                # Check if remote workers with matching capabilities exist
+                if self._has_remote_workers(st.required_capabilities or None):
+                    remote_batch.append(sid)
+                elif st.dispatch_mode == DispatchMode.REMOTE:
+                    # Remote mode: no matching worker → keep Pending, don't execute locally
+                    logger.info(
+                        "Subtask %s requires remote dispatch but no capable worker, keeping Pending",
+                        sid[:8],
+                    )
+                else:
+                    # PreferRemote: no capable remote worker → fallback to local
+                    local_batch.append(sid)
+
+            # Remote dispatch
+            for sid in remote_batch:
+                st = None
+                for s in task.subtasks:
+                    if s.id == sid:
+                        st = s
+                        break
+                if st is None:
+                    continue
+                await self._dispatch_remote(st)
                 # Remote workers will report results via uc.task.event
                 # → _handle_task_event → _dispatch_event.set() → next iteration
-            else:
-                # Local execution: existing _run_one logic
+            # Local execution for local_batch subtasks
+            if local_batch:
                 async def _run_one(subtask_id: str) -> SubtaskResult:
                     """Assign, execute, and report a single subtask locally."""
                     st = None
@@ -920,9 +948,9 @@ class NatsWorker:
                         await self._publisher.publish_update(task)
                     return result
 
-                # Run batch concurrently
+                # Run local batch concurrently
                 results = await asyncio.gather(
-                    *[_run_one(sid) for sid in batch_ids],
+                    *[_run_one(sid) for sid in local_batch],
                     return_exceptions=True,
                 )
 
@@ -972,6 +1000,8 @@ class NatsWorker:
             "file_constraints": subtask.file_constraints,
             "expected_output": subtask.expected_output,
             "timeout_seconds": subtask.timeout_seconds or 600,
+            "dispatch_mode": subtask.dispatch_mode.value,
+            "required_capabilities": subtask.required_capabilities,
         }).encode()
 
         await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
@@ -1130,11 +1160,25 @@ class NatsWorker:
                     "NACK subtask %s: missing capabilities %s (have %s)",
                     subtask_id[:8], missing, worker_caps,
                 )
+                # NACK so NATS redelivers to another worker in queue group.
+                # Also publish event so default-mode NatsWorker can handle
+                # the case where no worker has the required capabilities.
+                if self._publisher is not None:
+                    await self._publisher.publish_event(
+                        "subtask_dispatch_rejected",
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        data={
+                            "reason": "missing_capabilities",
+                            "missing": sorted(missing),
+                            "worker_id": self._worker.worker_id,
+                        },
+                    )
                 await msg.nack()
                 return
 
         # Build a Subtask object for Worker.execute_subtask
-        from ultimate_coders.agent.types import SubtaskStatus
+        from ultimate_coders.agent.types import DispatchMode, SubtaskStatus
 
         subtask = Subtask(
             id=subtask_id,
@@ -1142,10 +1186,11 @@ class NatsWorker:
             description=description,
             status=SubtaskStatus.PENDING,
             assigned_worker=self._worker.worker_id,
-            depends_on=[],
+            depends_on=data.get("depends_on", []),
             file_constraints=data.get("file_constraints", []),
             expected_output=data.get("expected_output", ""),
             timeout_seconds=timeout_seconds,
+            dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
         )
 
@@ -1155,17 +1200,33 @@ class NatsWorker:
             logger.error(
                 "Subtask %s execution failed: %s", subtask_id, e, exc_info=True,
             )
-            # Report failure via uc.task.update
+            # Report failure via uc.task.event (consumed by default mode NatsWorker)
             if self._publisher is not None:
-                await self._publisher.publish_update(
-                    self._make_subtask_result_task(
-                        task_id, subtask_id, "Failed", str(e)[:200],
-                    ),
+                await self._publisher.publish_event(
+                    "subtask_failed",
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    data={"error": str(e)[:200], "worker_id": self._worker.worker_id},
                 )
             return
 
-        # Publish result via uc.task.update
+        # Publish result via uc.task.event (consumed by default mode NatsWorker)
+        # Also publish via uc.task.update for gRPC TaskStore sync
         if self._publisher is not None:
+            event_type = "subtask_completed" if result.success else "subtask_failed"
+            data: dict = {"worker_id": self._worker.worker_id}
+            if result.success:
+                data["summary"] = result.summary[:300]
+                data["success"] = True
+            else:
+                data["error"] = result.summary[:300]
+            await self._publisher.publish_event(
+                event_type,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=data,
+            )
+            # Also sync to gRPC TaskStore via uc.task.update
             status = "Completed" if result.success else "Failed"
             summary = result.summary[:200] if result.summary else ""
             await self._publisher.publish_update(
@@ -1252,6 +1313,17 @@ class NatsWorker:
             # Wake _execute_subtasks loop so newly-unblocked subtasks
             # dispatch immediately
             self._dispatch_event.set()
+        elif event_type == "subtask_dispatch_rejected":
+            # Worker rejected subtask (e.g. missing capabilities).
+            # Keep subtask Pending so it can be dispatched when a capable
+            # worker registers. Don't fail it — just log and wake the loop.
+            subtask_id = data.get("subtask_id", "")
+            reason = data.get("data", {}).get("reason", "unknown")
+            logger.info(
+                "Subtask %s dispatch rejected (%s), keeping Pending",
+                subtask_id[:8] if subtask_id else "?", reason,
+            )
+            self._dispatch_event.set()
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
 
@@ -1332,9 +1404,22 @@ class NatsWorker:
             len(self._known_remote_workers),
         )
 
-    def _has_remote_workers(self) -> bool:
-        """Whether any remote workers are currently known."""
-        return len(self._known_remote_workers) > 0
+    def _has_remote_workers(self, required_capabilities: list[str] | None = None) -> bool:
+        """Whether any remote workers are currently known with matching capabilities.
+
+        ponytail: if required_capabilities is provided, only returns True if
+        at least one remote worker has ALL the required capabilities.
+        """
+        if not self._known_remote_workers:
+            return False
+        if not required_capabilities:
+            return True
+        # Check if any known remote worker has ALL required capabilities
+        required_set = set(required_capabilities)
+        for w in self._known_remote_workers.values():
+            if required_set.issubset(set(w.get("capabilities", []))):
+                return True
+        return False
 
     async def _stale_worker_cleanup_loop(self) -> None:
         """Periodically remove workers with no heartbeat for >90s.
