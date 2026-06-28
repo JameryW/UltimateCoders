@@ -31,6 +31,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [TaskService gRPC Spec](./taskservice-grpc-spec.md) | TaskService proto, Rust server, Node.js client contracts | Filled |
 | [NATS Bridge Spec](./nats-bridge-spec.md) | NATS message protocol, gRPC↔Python bridging, graceful degradation | Filled |
 | [Local Worker Bridge Spec](./local-worker-bridge-spec.md) | JSON-RPC 2.0 over stdin/stdout, Rust↔Python local execution, three-level degradation | Filled |
+| [WorkerService gRPC Spec](./worker-service-spec.md) | Worker registration/heartbeat/deregistration, WorkerRegistry, capability-aware dispatch | Filled |
 | [OMP RPC Server Spec](./omp-rpc-server-spec.md) | JSONL stdio bridge, Python↔TypeScript UCOrchestrator, createTask/runTask split | Filled |
 | [Agent Capability Spec](./agent-capability-spec.md) | Worker self-reflection, adaptive retry, capability matching, scheduling, experience recall | Filled |
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |

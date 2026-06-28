@@ -101,6 +101,8 @@ export interface SubtaskResult {
 	retryCount?: number;
 	/** Dispatch mode: "local" | "remote" | "prefer_remote" */
 	dispatchMode?: string;
+	/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
+	requiredCapabilities?: string[];
 }
 
 interface ReviewResult {
@@ -237,6 +239,8 @@ export class UCOrchestrator {
 			status: "pending",
 			dependsOn: def.dependsOn,
 			files: def.files,
+			dispatchMode: def.dispatchMode,
+			requiredCapabilities: def.requiredCapabilities,
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
@@ -307,6 +311,8 @@ export class UCOrchestrator {
 			status: "pending",
 			dependsOn: def.dependsOn,
 			files: def.files,
+			dispatchMode: def.dispatchMode,
+			requiredCapabilities: def.requiredCapabilities,
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
@@ -445,6 +451,8 @@ export class UCOrchestrator {
 								description: s.description,
 								dependsOn: s.dependsOn,
 								files: s.files,
+								dispatchMode: s.dispatchMode,
+								requiredCapabilities: s.requiredCapabilities,
 							}));
 						const newWaves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 						ctx.ui.notify(
@@ -789,6 +797,8 @@ export class UCOrchestrator {
 				description: s.description,
 				dependsOn: s.dependsOn,
 				files: s.files,
+				dispatchMode: s.dispatchMode,
+				requiredCapabilities: s.requiredCapabilities,
 			}));
 
 		if (pendingDefs.length === 0) {
@@ -1234,6 +1244,8 @@ export class UCOrchestrator {
 				recentToolCalls: s.recentToolCalls,
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
+				dispatchMode: s.dispatchMode,
+				requiredCapabilities: s.requiredCapabilities,
 			})),
 			createdAt: task.createdAt,
 			completedAt: task.completedAt,
@@ -1264,6 +1276,8 @@ export class UCOrchestrator {
 				recentToolCalls: s.recentToolCalls,
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
+				dispatchMode: s.dispatchMode,
+				requiredCapabilities: s.requiredCapabilities,
 			})),
 			createdAt: p.createdAt,
 			completedAt: p.completedAt,

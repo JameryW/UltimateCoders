@@ -19,6 +19,7 @@ use uc_types::{
 use crate::conversions::memory_key_to_parts;
 use crate::ultimate_coders::engine_service_client::EngineServiceClient;
 use crate::ultimate_coders::task_service_client::TaskServiceClient;
+use crate::ultimate_coders::worker_service_client::WorkerServiceClient;
 use crate::ultimate_coders::*;
 
 /// Stream type returned by `watch_task`.
@@ -28,9 +29,13 @@ type TaskEventStream = Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
 ///
 /// Also holds a `TaskServiceClient` for TaskService RPCs (submit_task,
 /// get_task, list_tasks, watch_task, pause_task, resume_task).
+///
+/// And a `WorkerServiceClient` for WorkerService RPCs (register_worker,
+/// worker_heartbeat, deregister_worker).
 pub struct GrpcEngineClient {
     inner: EngineServiceClient<tonic::transport::Channel>,
     task_client: TaskServiceClient<tonic::transport::Channel>,
+    worker_client: WorkerServiceClient<tonic::transport::Channel>,
 }
 
 impl GrpcEngineClient {
@@ -48,7 +53,8 @@ impl GrpcEngineClient {
     pub fn from_channel(channel: tonic::transport::Channel) -> Self {
         Self {
             inner: EngineServiceClient::new(channel.clone()),
-            task_client: TaskServiceClient::new(channel),
+            task_client: TaskServiceClient::new(channel.clone()),
+            worker_client: WorkerServiceClient::new(channel),
         }
     }
 
@@ -171,6 +177,81 @@ fn from_status(status: tonic::Status) -> EngineError {
         PermissionDenied => EngineError::SandboxError(status.message().to_string()),
         FailedPrecondition => EngineError::TaskError(status.message().to_string()),
         _ => EngineError::InternalError(status.message().to_string()),
+    }
+}
+
+// ── WorkerService methods ─────────────────────────────────────
+
+impl GrpcEngineClient {
+    /// Register this worker with the gateway.
+    pub async fn register_worker(
+        &self,
+        worker_id: &str,
+        capabilities: &[String],
+        max_capacity: u32,
+    ) -> Result<bool, EngineError> {
+        let request = tonic::Request::new(RegisterWorkerRequest {
+            worker_id: worker_id.to_string(),
+            capabilities: capabilities.to_vec(),
+            max_capacity,
+            metadata: String::new(),
+        });
+        match self.worker_client.clone().register_worker(request).await {
+            Ok(response) => {
+                let inner = response.into_inner();
+                if inner.success {
+                    tracing::info!(worker_id = %worker_id, "Worker registered with gateway");
+                } else {
+                    tracing::warn!(
+                        worker_id = %worker_id,
+                        error = ?inner.error,
+                        "Worker registration failed"
+                    );
+                }
+                Ok(inner.success)
+            }
+            Err(status) => {
+                tracing::warn!(worker_id = %worker_id, error = %status, "Worker registration RPC failed");
+                Err(from_status(status))
+            }
+        }
+    }
+
+    /// Send a heartbeat to the gateway.
+    pub async fn worker_heartbeat(
+        &self,
+        worker_id: &str,
+        current_load: u32,
+    ) -> Result<bool, EngineError> {
+        let request = tonic::Request::new(WorkerHeartbeatRequest {
+            worker_id: worker_id.to_string(),
+            current_load,
+        });
+        match self.worker_client.clone().worker_heartbeat(request).await {
+            Ok(response) => Ok(response.into_inner().accepted),
+            Err(status) => {
+                tracing::debug!(worker_id = %worker_id, error = %status, "Worker heartbeat failed");
+                Err(from_status(status))
+            }
+        }
+    }
+
+    /// Deregister this worker from the gateway (graceful shutdown).
+    pub async fn deregister_worker(&self, worker_id: &str) -> Result<bool, EngineError> {
+        let request = tonic::Request::new(DeregisterWorkerRequest {
+            worker_id: worker_id.to_string(),
+        });
+        match self.worker_client.clone().deregister_worker(request).await {
+            Ok(response) => {
+                let inner = response.into_inner();
+                tracing::info!(worker_id = %worker_id, success = inner.success, "Worker deregistered");
+                Ok(inner.success)
+            }
+            Err(status) => {
+                tracing::warn!(worker_id = %worker_id, error = %status, "Worker deregistration failed");
+                Err(from_status(status))
+            }
+        }
     }
 }
 
