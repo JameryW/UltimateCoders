@@ -37,6 +37,7 @@ impl AgentAdapter for CodexAgent {
         prompt: &str,
         working_dir: &str,
         config: &SandboxConfig,
+        _subtask_config: Option<&serde_json::Value>,
     ) -> ExecRequest {
         let mut env_vars = config.env_vars.clone();
 
@@ -207,7 +208,7 @@ mod tests {
     fn codex_build_request() {
         let adapter = CodexAgent::new();
         let config = test_config();
-        let request = adapter.build_request("Implement feature X", "/tmp/test", &config);
+        let request = adapter.build_request("Implement feature X", "/tmp/test", &config, None);
 
         assert_eq!(request.command, "codex");
         assert!(request.args.contains(&"Implement feature X".to_string()));

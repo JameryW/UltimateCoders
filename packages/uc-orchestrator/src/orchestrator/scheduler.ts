@@ -27,6 +27,9 @@ export interface SubtaskDef {
 	maxDecompositionDepth?: number;
 	/** Estimated complexity: "simple" (single file, <50 lines) | "moderate" (1-3 files) | "complex" (3+ files or cross-cutting). */
 	complexity?: string;
+	/** Per-subtask agent configuration overrides. Keys: tools, allowed_tools,
+	 *  disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json. */
+	agentConfig?: Record<string, unknown>;
 }
 
 /** A wave is a group of subtasks that can execute in parallel. */
@@ -441,6 +444,7 @@ export function decomposeSubtask(parent: SubtaskDef): SubtaskDef[] {
 			decompositionDepth: depth,
 			maxDecompositionDepth: parent.maxDecompositionDepth,
 			complexity: "simple",
+			agentConfig: parent.agentConfig,
 		});
 	}
 	return results;
