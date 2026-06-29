@@ -964,7 +964,7 @@ class TestCodexMcpServerToml:
     def test_stdio_transport(self):
         cfg = {"command": "npx", "args": ["-y", "@mcp/server"], "env": {"KEY": "val"}}
         toml = _codex_mcp_server_toml("my-server", cfg)
-        assert "[mcp_servers.my-server]" in toml
+        assert '[mcp_servers."my-server"]' in toml
         assert 'command = "npx"' in toml
         assert '"-y"' in toml
         assert '"@mcp/server"' in toml
@@ -1006,13 +1006,21 @@ class TestCodexAdapterBuildRequest:
         assert "_temp_files" in request
         temps = request["_temp_files"]
         assert len(temps) >= 1
-        # Verify the temp toml content
+        # Verify the temp config.toml content and naming
         import os
         for p in temps:
-            if p.endswith(".toml"):
+            if p.endswith(".config.toml"):
+                # Profile file must be named <name>.config.toml
+                basename = os.path.basename(p)
+                assert basename.endswith(".config.toml")
                 with open(p) as f:
                     content = f.read()
-                assert "[mcp_servers.codegraph]" in content
+                assert '[mcp_servers."codegraph"]' in content
+                # --profile arg should be the stem (without .config.toml)
+                profile_name = basename[: -len(".config.toml")]
+                assert "--profile" in request["args"]
+                profile_idx = request["args"].index("--profile")
+                assert request["args"][profile_idx + 1] == profile_name
             os.unlink(p)
 
     def test_sandbox_workspace_write_replaces_full_auto(self):
@@ -1247,7 +1255,8 @@ class TestAgentConfigPipeline:
         adapter = CodexAdapter()
         config = SandboxConfig(project_path="/tmp/project")
         request = adapter.build_request("Review", "/tmp/project", config, subtask_config=agent_cfg)
-        # Codex uses config.toml, not CLI flags — verify temp file created
+        # Codex uses config.profile, not CLI flags for tool restrictions
+        # Review profile has disallowed_tools which Codex logs as unsupported
         import os
         temps = request.get("_temp_files", [])
         for p in temps:

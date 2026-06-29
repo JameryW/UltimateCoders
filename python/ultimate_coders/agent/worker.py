@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -210,9 +211,9 @@ class Worker:
                 if isinstance(entry, dict):
                     for name in entry:
                         caps.append(f"mcp:{name}")
-                elif isinstance(entry, str) and "/" in entry:
+                elif isinstance(entry, str) and (os.sep in entry or "/" in entry):
                     # File path — extract server name from filename
-                    name = entry.rsplit("/", 1)[-1].replace(".json", "")
+                    name = os.path.basename(entry.replace("/", os.sep)).replace(".json", "")
                     caps.append(f"mcp:{name}")
         if cfg.tools:
             for t in cfg.tools:
@@ -239,7 +240,12 @@ class Worker:
                 pass
         # Deduplicate while preserving order
         seen: set[str] = set()
-        return [c for c in caps if not (c in seen or seen.add(c))]  # ponytail: seen-add trick
+        unique: list[str] = []
+        for c in caps:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+        return unique
 
     # ── Agent Config Profiles & Templates ───────────────────────
 

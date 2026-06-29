@@ -768,26 +768,30 @@ def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
     Handles both stdio and streamable-http transports.
     ponytail: minimal toml — only command/args/url, no OAuth or per-tool overrides.
     """
-    lines = [f"[mcp_servers.{name}]"]
+    def _toml_escape(s: str) -> str:
+        """Escape a string for TOML double-quoted value."""
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    lines = [f'[mcp_servers."{_toml_escape(name)}"]']
     if "url" in cfg:
-        lines.append(f'url = "{cfg["url"]}"')
+        lines.append(f'url = "{_toml_escape(cfg["url"])}"')
         if "bearer_token_env_var" in cfg:
-            lines.append(f'bearer_token_env_var = "{cfg["bearer_token_env_var"]}"')
+            lines.append(f'bearer_token_env_var = "{_toml_escape(cfg["bearer_token_env_var"])}"')
     else:
         # stdio transport
         if "command" in cfg:
-            lines.append(f'command = "{cfg["command"]}"')
+            lines.append(f'command = "{_toml_escape(cfg["command"])}"')
         if "args" in cfg:
-            args_str = ", ".join(f'"{a}"' for a in cfg["args"])
+            args_str = ", ".join(f'"{_toml_escape(a)}"' for a in cfg["args"])
             lines.append(f"args = [{args_str}]")
         if "env" in cfg:
-            env_pairs = ", ".join(f'{k} = "{v}"' for k, v in cfg["env"].items())
+            env_pairs = ", ".join(f'{k} = "{_toml_escape(v)}"' for k, v in cfg["env"].items())
             lines.append(f"env = {{{env_pairs}}}")
     if "enabled_tools" in cfg:
-        tools_str = ", ".join(f'"{t}"' for t in cfg["enabled_tools"])
+        tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["enabled_tools"])
         lines.append(f"enabled_tools = [{tools_str}]")
     if "disabled_tools" in cfg:
-        tools_str = ", ".join(f'"{t}"' for t in cfg["disabled_tools"])
+        tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["disabled_tools"])
         lines.append(f"disabled_tools = [{tools_str}]")
     return "\n".join(lines)
 
@@ -1005,28 +1009,30 @@ class CodexAdapter(AgentAdapter):
 
         temp_files: list[str] = []
 
-        # Build temporary config.toml if any agent customization is needed
+        # Build temporary config.profile if any agent customization is needed
+        # Codex --profile flag: layers $CODEX_HOME/<name>.config.toml on top of base config.
+        # We write a temp .config.toml in CODEX_HOME and pass the stem as --profile <name>.
         codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-        config_content = self._build_config_toml(cfg, codex_home)
+        config_content = self._build_config_toml(cfg)
+        profile_name: str | None = None
         if config_content:
+            # Must place the file in CODEX_HOME and name it <name>.config.toml
+            # so that --profile <name> resolves to $CODEX_HOME/<name>.config.toml
+            target_dir = codex_home if os.path.isdir(codex_home) else None
             fd, config_path = tempfile.mkstemp(
-                suffix=".toml", prefix="uc-codex-",
-                dir=os.path.join(codex_home) if os.path.isdir(codex_home) else None,
+                suffix=".config.toml", prefix="uc-codex-",
+                dir=target_dir,
             )
             with os.fdopen(fd, "w") as f:
                 f.write(config_content)
             temp_files.append(config_path)
-
-        # Resolve inline MCP configs to temp files
-        if cfg.get("mcp_configs"):
-            resolved, temps = _resolve_mcp_configs(cfg["mcp_configs"])
-            temp_files.extend(temps)
-            # MCP configs are already embedded in config.toml above,
-            # but keep resolved paths for reference
+            # Extract profile name: filename without .config.toml suffix
+            basename = os.path.basename(config_path)
+            profile_name = basename[: -len(".config.toml")]
 
         args = [prompt, "--sandbox", "workspace-write"]
-        if config_content:
-            args += ["--profile", temp_files[0]]
+        if profile_name:
+            args += ["--profile", profile_name]
 
         return {
             "command": "codex",
@@ -1040,7 +1046,6 @@ class CodexAdapter(AgentAdapter):
     @staticmethod
     def _build_config_toml(
         cfg: dict[str, Any],
-        codex_home: str,
     ) -> str:
         """Build Codex config.toml content from merged agent config.
 
@@ -1072,14 +1077,17 @@ class CodexAdapter(AgentAdapter):
                             _codex_mcp_server_toml(name, server_cfg)
                         )
 
-        # Tool allow/deny lists — applied per MCP server
+        # Tool allow/deny lists — Codex only supports per-MCP-server tool filters,
+        # not global allow/deny. Log a warning if global filters are specified.
         allowed = cfg.get("allowed_tools", [])
         disallowed = cfg.get("disallowed_tools", [])
         if allowed or disallowed:
-            # ponytail: global tool filter — Codex doesn't have a global
-            # enabled_tools, it's per-server. We add to the last MCP server
-            # or create a stub section.
-            pass  # handled per-server in _codex_mcp_server_toml
+            logger.warning(
+                "Codex adapter does not support global allowed/disallowed_tools; "
+                "use per-MCP-server enabled_tools/disabled_tools in mcp_configs instead. "
+                "allowed=%s disallowed=%s",
+                allowed, disallowed,
+            )
 
         if not sections:
             return ""
