@@ -1786,19 +1786,21 @@ class TestCrossRepoSearchAndSharedMemory:
         engine.write_memory.return_value = MagicMock(content="data")
 
         publisher = MagicMock()
-        started = asyncio.Event()
-        release = asyncio.Event()
-
-        async def slow_publish(**kwargs):
-            started.set()
-            await release.wait()  # hold the task open so we can observe it
-
-        publisher.publish_memory_changed = slow_publish
-
         w = self._make_worker(engine=engine, nats_publisher=publisher)
         w.worker_id = "worker-A"
 
         async def _drive():
+            # Events constructed inside the running loop — Py3.9 binds a loop
+            # at asyncio.Event() construction (see py39-asyncio-primitive-construction).
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def slow_publish(**kwargs):
+                started.set()
+                await release.wait()  # hold the task open so we can observe it
+
+            publisher.publish_memory_changed = slow_publish
+
             w.write_shared_memory("k", "v", project_id="proj-1")
             await started.wait()  # task has started and is now suspended
             # While the broadcast is in flight, it must be referenced.
