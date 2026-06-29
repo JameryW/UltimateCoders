@@ -129,7 +129,11 @@ elif self.event_emitter is not None:
 **Example**:
 ```python
 # In __init__:
-self._dispatch_event = asyncio.Event()
+self._dispatch_event: asyncio.Event | None = None
+
+# In start() (inside a running loop):
+if self._dispatch_event is None:
+    self._dispatch_event = asyncio.Event()
 
 # In event listener / NATS handler:
 if event_type in ("subtask_completed", "subtask_failed"):
@@ -142,6 +146,8 @@ try:
 except asyncio.TimeoutError:
     pass  # Safety re-check
 ```
+
+**Python 3.9 constraint**: `asyncio.Event()` (and `asyncio.Queue()`, `Lock()`, `Semaphore()`) binds a loop at construction on Python ≤3.9 and raises `RuntimeError: There is no current event loop in thread 'MainThread'` when constructed outside a running loop. Although `type-safety.md` targets 3.10+, **CI runs Python 3.9**, so constructing these primitives in `__init__` (synchronous, no loop) breaks 3.9. Construct them lazily in `start()` / first async access. This matches the lazy-`asyncio.Queue()` pattern in `dashboard/app.py`. The three `_handle_memory_changed` tests construct `NatsWorker()` bare (no loop) and regressed on 3.9 until this was fixed.
 
 **Consequences**:
 - Subtask dispatch latency: ~2s → <100ms (local), ~0.5s → <100ms (NATS)
