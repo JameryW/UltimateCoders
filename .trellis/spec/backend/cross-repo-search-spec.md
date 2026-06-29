@@ -65,7 +65,13 @@ class Worker:
         content_type: str = "text", importance: float = 0.7,
         tags: list[str] | None = None,
     ) -> object | None:
-        """Write project-scoped memory. importance=0.7 > long-term threshold."""
+        """Write project-scoped memory. importance=0.7 > long-term threshold.
+        Broadcasts uc.memory.changed (action='write') for cross-Worker cache
+        invalidation via NatsPublisher.publish_memory_changed."""
+
+    # NOTE: no delete_shared_memory yet. When added, it MUST broadcast
+    # publish_memory_changed(action='delete') — else other Workers' caches
+    # stay stale until TTL. Engine.delete_memory exists but is not exposed.
 ```
 
 ### Subtask.project_id
