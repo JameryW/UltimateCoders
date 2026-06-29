@@ -559,3 +559,38 @@ Enhanced sandbox worker: auto-retry (3x + backoff), subtask_progress events (pre
 ### Next Steps
 
 - None - task complete
+
+
+## Session 72: Cross-repo search & memory sharing
+
+**Date**: 2026-06-29
+**Task**: Cross-repo search & memory sharing
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Completed cross-repo code retrieval and memory sharing: Worker gRPC Engine routing with fallback, SearchQuery.in_all_repos(), auto search context injection into subtasks, Worker read/write_shared_memory() for project-scoped memory, Subtask.project_id + NatsSubtaskExecute.project_id cross-layer propagation, 9 new unit tests, cross-repo-search-spec.md code-spec
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `32317493` | (see git log) |
+| `ca07b0a0` | (see git log) |
+| `00bf2087` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
