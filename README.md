@@ -312,6 +312,15 @@ docker compose -f docker/docker-compose.yml down
 
 # Stop and remove volumes
 docker compose -f docker/docker-compose.yml down -v
+
+# Gateway-only deployment (storage external)
+# Starts just the gRPC gateway; no TiKV/Qdrant/PG/NATS are launched.
+# With no storage env set, boots in in-memory fallback mode.
+# Inject external storage addresses via env or a .env file:
+#   UC_TIKV_PD_ENDPOINTS=pd.example:2379 UC_QDRANT_URL=http://qdrant.example:6334 \
+#     UC_PG_URL=postgresql://u:p@pg.example:5432/uc UC_NATS_URL=nats://nats.example:4222 \
+#     docker compose -f docker/docker-compose.gateway.yml up -d
+docker compose -f docker/docker-compose.gateway.yml up -d
 ```
 
 ## CI

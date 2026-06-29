@@ -1,0 +1,40 @@
+# Gateway standalone deployment (storage external).
+#
+# Runs ONLY the Rust gRPC gateway container. No storage services are
+# started — TiKV/Qdrant/PostgreSQL/NATS addresses are injected via env
+# (or a sibling .env file). With no storage env set, the gateway boots
+# in pure in-memory fallback mode (LocalEngine::new_fallback).
+#
+# Usage:
+#   docker compose -f docker/docker-compose.gateway.yml up
+#
+# External storage example (.env next to this file, or exported in shell):
+#   UC_TIKV_PD_ENDPOINTS=pd.example:2379
+#   UC_QDRANT_URL=http://qdrant.example:6334
+#   UC_PG_URL=postgresql://user:pass@pg.example:5432/ultimate_coders
+#   UC_NATS_URL=nats://nats.example:4222
+#
+# For the full-stack dev mode (gateway + storage), use docker-compose.yml
+# with --profile gateway instead.
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.grpc
+    ports:
+      - "50051:50051"  # gRPC + gRPC-Web
+    environment:
+      # Storage addresses — empty by default → in-memory fallback.
+      # Override via env / .env to point at external backends.
+      UC_TIKV_PD_ENDPOINTS: "${UC_TIKV_PD_ENDPOINTS:-}"
+      UC_QDRANT_URL: "${UC_QDRANT_URL:-}"
+      UC_PG_URL: "${UC_PG_URL:-}"
+      UC_NATS_URL: "${UC_NATS_URL:-}"
+      UC_TASK_BACKEND: "${UC_TASK_BACKEND:-memory}"
+      UC_DATABASE_URL: "${UC_DATABASE_URL:-}"
+      # Gateway runtime.
+      UC_GRPC_ADDR: "${UC_GRPC_ADDR:-[::]:50051}"
+      UC_CORS_MODE: "${UC_CORS_MODE:-dev}"
+      UC_CORS_ORIGINS: "${UC_CORS_ORIGINS:-}"
+    restart: unless-stopped
