@@ -227,6 +227,27 @@ class NatsPublisher:
         }
         await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
 
+    async def publish_memory_changed(
+        self,
+        project_id: str,
+        key: str,
+        action: str = "write",
+        source_worker: str = "",
+    ) -> None:
+        """Broadcast a memory change to ``uc.memory.changed``.
+
+        Other Workers subscribe and invalidate stale local search-cache
+        entries, so a write on Worker A is visible to Worker B without
+        waiting for the next cache miss.
+        """
+        payload: dict[str, Any] = {
+            "project_id": project_id,
+            "key": key,
+            "action": action,
+            "source_worker": source_worker,
+        }
+        await self._publish(NATS_SUBJECT_MEMORY_CHANGED, payload)
+
     async def publish_heartbeat(
         self, consumer_id: str, worker_info: dict[str, Any] | None = None
     ) -> None:

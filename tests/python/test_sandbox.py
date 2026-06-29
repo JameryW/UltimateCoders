@@ -1670,3 +1670,101 @@ class TestCrossRepoSearchAndMemorySharing:
         sq = SearchQuery("auth").in_all_repos(engine)
         d = sq.to_dict()
         assert d["repo_ids"] == []  # graceful degradation
+
+
+class TestCrossRepoSearchAndSharedMemory:
+    """Forward-path coverage for cross-repo search cache + shared memory.
+
+    The no-engine degradation paths are covered above; these exercise the
+    real Engine-backed paths: search-cache hit/miss, shared-memory read, and
+    the NATS broadcast on shared-memory write.
+    """
+
+    def _make_worker(self, engine=None, nats_publisher=None):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        from ultimate_coders.agent.worker import Worker
+
+        w = Worker(engine=engine, nats_publisher=nats_publisher)
+        # ponytail: default cache is a process singleton — give each test an
+        # isolated instance so cached entries don't leak across tests.
+        w._search_cache = WorkerLocalCache()
+        return w
+
+    def test_build_search_context_caches_on_miss(self):
+        """First search calls engine.search and caches the result."""
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        engine.list_repos.return_value = []
+        item = MagicMock(repo_id="r1", file_path="a.py", content_snippet="x")
+        engine.search.return_value = MagicMock(items=[item])
+
+        w = self._make_worker(engine=engine)
+        st = Subtask(id="s1", description="auth logic", project_id="r1")
+        ctx = w._build_search_context(st)
+
+        assert ctx is not None
+        assert "Related code" in ctx
+        engine.search.assert_called_once()
+
+    def test_build_search_context_hits_cache(self):
+        """Second identical search is served from cache — engine not called again."""
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        engine.list_repos.return_value = []
+        item = MagicMock(repo_id="r1", file_path="a.py", content_snippet="x")
+        engine.search.return_value = MagicMock(items=[item])
+
+        w = self._make_worker(engine=engine)
+        st = Subtask(id="s1", description="auth logic", project_id="r1")
+        w._build_search_context(st)
+        w._build_search_context(st)  # second call
+
+        engine.search.assert_called_once()  # cache hit on 2nd
+
+    def test_read_shared_memory_calls_engine(self):
+        """read_shared_memory routes to engine.read_memory with project scope."""
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        engine.read_memory.return_value = MagicMock(content="Use PostgreSQL")
+        w = self._make_worker(engine=engine)
+
+        result = w.read_shared_memory("decisions", project_id="proj-1")
+
+        assert result is not None
+        assert result.content == "Use PostgreSQL"
+        engine.read_memory.assert_called_once()
+        _, kwargs = engine.read_memory.call_args
+        assert kwargs["key_scope"] == "project"
+        assert kwargs["project_id"] == "proj-1"
+
+    def test_write_shared_memory_broadcasts_via_nats(self):
+        """write_shared_memory publishes uc.memory.changed when a publisher is set."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        engine = MagicMock()
+        engine.write_memory.return_value = MagicMock(content="data")
+
+        publisher = MagicMock()
+        publisher.publish_memory_changed = AsyncMock()
+
+        w = self._make_worker(engine=engine, nats_publisher=publisher)
+        w.worker_id = "worker-A"
+
+        # Run inside an event loop so the fire-and-forget task can schedule.
+        async def _drive():
+            result = w.write_shared_memory("k", "v", project_id="proj-1")
+            # Yield once so the scheduled create_task coroutine runs.
+            await asyncio.sleep(0)
+            return result
+
+        result = asyncio.run(_drive())
+
+        assert result is not None
+        engine.write_memory.assert_called_once()
+        publisher.publish_memory_changed.assert_awaited_once_with(
+            project_id="proj-1", key="k", action="write", source_worker="worker-A",
+        )

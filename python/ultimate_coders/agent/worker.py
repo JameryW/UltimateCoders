@@ -1028,18 +1028,19 @@ class Worker:
             content_type=content_type, source_agent=f"worker:{self.worker_id}",
             importance=importance, tags=tags, project_id=pid or None,
         )
-        # Broadcast memory change via NATS for cross-Worker cache invalidation
+        # Broadcast memory change via NATS for cross-Worker cache invalidation.
+        # write_shared_memory is sync, so fire-and-forget onto the running loop
+        # when one exists; if called outside a loop the broadcast is skipped
+        # (the next cache miss / TTL expiry still converges).
         if result is not None and self.nats_publisher is not None:
             try:
-                payload = json.dumps({
-                    "project_id": pid, "key": key,
-                    "action": "write", "source_worker": self.worker_id,
-                })
-                asyncio.get_event_loop().create_task(
-                    self.nats_publisher._nc.publish(
-                        "uc.memory.changed", payload.encode(),
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self.nats_publisher.publish_memory_changed(
+                        project_id=pid, key=key,
+                        action="write", source_worker=self.worker_id,
                     ),
                 )
-            except Exception:
-                pass  # ponytail: broadcast failure is non-fatal
+            except RuntimeError:
+                pass  # ponytail: no running loop — skip broadcast, TTL converges
         return result

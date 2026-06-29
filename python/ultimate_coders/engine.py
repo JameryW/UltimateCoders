@@ -366,10 +366,13 @@ class Engine:
         Returns:
             IndexResponse with indexing statistics.
         """
-        return self._try_grpc_with_fallback(
+        result = self._try_grpc_with_fallback(
             "index_repo",
             repo_id, local_path, remote_url, default_branch, force_full,
         )
+        # New indexed content changes search results — drop stale cache.
+        self._search_cache.clear()
+        return result
 
     def get_index_state(self, repo_id: str) -> object:
         """Get the current index state for a repository.
@@ -388,7 +391,9 @@ class Engine:
         Args:
             repo_id: Repository identifier.
         """
-        return self._try_grpc_with_fallback("remove_index", repo_id)
+        result = self._try_grpc_with_fallback("remove_index", repo_id)
+        self._search_cache.clear()
+        return result
 
     def read_memory(
         self,
@@ -451,12 +456,16 @@ class Engine:
         Returns:
             MemoryEntry with the written data.
         """
-        return self._try_grpc_with_fallback(
+        result = self._try_grpc_with_fallback(
             "write_memory",
             key_scope, key, content, content_type, source_agent,
             importance, tags, task_id, project_id,
             language, file_path, uri, description,
         )
+        # Memory writes can affect semantic search results — drop stale
+        # search cache so the next search reflects the new data.
+        self._search_cache.clear()
+        return result
 
     def delete_memory(
         self,
@@ -473,9 +482,11 @@ class Engine:
             task_id: Task ID (required if key_scope="task").
             project_id: Project ID (required if key_scope="project").
         """
-        return self._try_grpc_with_fallback(
+        result = self._try_grpc_with_fallback(
             "delete_memory", key_scope, key, task_id, project_id,
         )
+        self._search_cache.clear()
+        return result
 
     def search_memory(
         self,
@@ -675,10 +686,13 @@ class Engine:
         Usage:
             response = await engine.index_repo_async("my-repo", "/path/to/repo")
         """
-        return await self._try_grpc_with_fallback_async(
+        result = await self._try_grpc_with_fallback_async(
             "index_repo_async",
             repo_id, local_path, remote_url, default_branch, force_full,
         )
+        # New indexed content changes search results — drop stale cache.
+        self._search_cache.clear()
+        return result
 
     async def read_memory_async(
         self,
@@ -743,12 +757,16 @@ class Engine:
                 "task", "decisions", "Use PostgreSQL", task_id="t1"
             )
         """
-        return await self._try_grpc_with_fallback_async(
+        result = await self._try_grpc_with_fallback_async(
             "write_memory_async",
             key_scope, key, content, content_type, source_agent,
             importance, tags, task_id, project_id,
             language, file_path, uri, description,
         )
+        # Memory writes can affect semantic search results — drop stale
+        # search cache so the next search reflects the new data.
+        self._search_cache.clear()
+        return result
 
     async def delete_memory_async(
         self,
@@ -768,9 +786,11 @@ class Engine:
         Usage:
             await engine.delete_memory_async("task", "decisions", task_id="t1")
         """
-        await self._try_grpc_with_fallback_async(
+        result = await self._try_grpc_with_fallback_async(
             "delete_memory_async", key_scope, key, task_id, project_id,
         )
+        self._search_cache.clear()
+        return result
 
     async def search_memory_async(
         self,
