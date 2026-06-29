@@ -125,26 +125,24 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Health monitor: restart gRPC server if it dies
+# ponytail: all output to log file — TUI owns the terminal after exec
 health_monitor() {
+    exec >> "$LOG_DIR/grpc-server.log" 2>&1
     while true; do
         sleep 10
         if [ -n "$SERVER_PID" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
             echo ">>> gRPC server died (PID $SERVER_PID), restarting..."
             wait "$SERVER_PID" 2>/dev/null || true
-            echo ">>> Logs: $LOG_DIR/grpc-server.log"
             echo ">>> Last 10 lines:"
             tail -10 "$LOG_DIR/grpc-server.log" 2>/dev/null
             cd "$SCRIPT_DIR"
-            # ponytail: re-source env file so restart inherits same config
             if [ -f "$UC_ENV_FILE" ]; then
                 set -a; source "$UC_ENV_FILE"; set +a
             fi
             PATH="$SCRIPT_DIR/.venv/bin:$PATH" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
             SERVER_PID=$!
             echo ">>> Restarted gRPC server (PID $SERVER_PID)"
-            # Write restart marker so UC Orchestrator can detect stale transport
             date +%s > /tmp/uc-grpc-restart-marker
-            # Wait for port to be ready
             for i in $(seq 1 20); do
                 if lsof -i :50051 >/dev/null 2>&1; then
                     echo ">>> Server ready on :50051"

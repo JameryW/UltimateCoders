@@ -923,8 +923,8 @@ class Worker:
         if self.engine is None or not subtask.description:
             return None
         try:
-            from ultimate_coders.search.query import SearchQuery
             from ultimate_coders.agent.search_cache import WorkerLocalCache
+            from ultimate_coders.search.query import SearchQuery
             sq = SearchQuery(subtask.description).with_modes(["hybrid"]).limit(10)
             if subtask.project_id:
                 sq.in_repos([subtask.project_id])
