@@ -172,6 +172,14 @@ result = w.search_across_repos("auth")  # Returns None — no crash
 | `test_write_shared_memory_no_engine` | Returns `None` when `engine=None` |
 | `test_search_query_in_all_repos` | `repo_ids` populated from `engine.list_repos()` |
 | `test_search_query_in_all_repos_failure` | `repo_ids = []` on engine failure |
+| `test_write_memory_clears_search_cache` | `_search_cache` emptied after `write_memory` |
+| `test_delete_memory_clears_search_cache` | `_search_cache` emptied after `delete_memory` |
+| `test_remove_index_clears_search_cache` | `_search_cache` emptied after `remove_index` |
+| `test_write_memory_async_clears_search_cache` | async variant empties cache |
+| `test_build_search_context_caches_on_miss` | first search calls `engine.search` once |
+| `test_build_search_context_hits_cache` | second identical search served from cache, `engine.search` still called once |
+| `test_read_shared_memory_calls_engine` | routes to `engine.read_memory` with `key_scope="project"` + `project_id` |
+| `test_write_shared_memory_broadcasts_via_nats` | `publish_memory_changed` awaited with `project_id`/`key`/`action`/`source_worker` |
 
 ---
 
@@ -249,3 +257,15 @@ let execute = NatsSubtaskExecute {
 **Context**: `TaskState.projectId` was lost during persistence (toPersisted/fromPersisted) and gRPC sync (upsertTask hardcoded `""`).
 
 **Decision**: `PersistedTask.projectId` field added, `toPersisted()`/`fromPersisted()` propagate it, and `upsertTask` uses `task.projectId ?? ""`. This ensures project scope survives restart and gRPC sync.
+
+### Decision: Search cache invalidation on mutation
+
+**Context**: `Engine.search()` caches results (LRU, max 50, TTL 5 min). Without invalidation, a `write_memory` / `index_repo` followed by `search()` returns stale results for up to the TTL — semantic search depends on memory/embeddings, text/ast depend on the code index.
+
+**Decision**: All mutation methods — `write_memory`, `delete_memory`, `index_repo`, `remove_index` (sync + async) — call `self._search_cache.clear()` after a successful call. Failures (raised exceptions) skip clearing, which is correct: nothing was mutated. Full clear is preferred over per-project invalidation because the cache is small (≤50 entries) and search keys are blake2b hashes with no extractable project prefix. This mirrors `WorkerLocalCache.invalidate()` (full clear) used on the Worker side.
+
+### Decision: NATS memory-changed broadcast via public API
+
+**Context**: When Worker A writes project-scoped memory, Worker B's local `WorkerLocalCache` holds stale search results until TTL. A broadcast lets B invalidate proactively.
+
+**Decision**: `NatsPublisher.publish_memory_changed(project_id, key, action, source_worker)` is the public API (subject `uc.memory.changed`, reuses `_publish` for serialize + degrade). `Worker.write_shared_memory` schedules it fire-and-forget via `asyncio.get_running_loop().create_task(...)` — `get_running_loop()` (not the deprecated `get_event_loop()`) raises `RuntimeError` outside a loop, caught to skip the broadcast (TTL still converges). Subscribers (`_handle_memory_changed`) skip their own broadcasts (`source_worker` match) and call `WorkerLocalCache.invalidate()`. The payload includes `project_id`/`key` but invalidation is currently full-clear; per-key invalidation is a non-goal since search keys are opaque hashes.
