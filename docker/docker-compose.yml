@@ -179,6 +179,15 @@ services:
   # executes subtasks via the Python Worker + Sandbox.
   # Can be scaled: docker compose --profile worker up --scale worker=3
   # Use: docker compose --profile worker up
+  #
+  # Git sync (Phase 1 MVP): when UC_REPO_URL is set, the worker clones
+  # the external repo into /workspace on first start (persisted across
+  # restarts via the worker_workspace volume), fetches before each
+  # worktree acquire, and optionally pushes the subtask branch on
+  # release. With `--scale worker=N`, all replicas on the same host
+  # share the same named volume (one clone) — this is fine because git
+  # worktree isolates each subtask off the shared clone. Cross-host
+  # scaling (Phase 3) gives each host its own volume + clone.
   worker:
     build:
       context: ..
@@ -194,6 +203,21 @@ services:
       UC_GRPC_ENDPOINT: "http://gateway:50051"
       UC_SANDBOX_MODE: "subprocess"
       UC_PROJECT_PATH: "/workspace"
+      # ── External git sync (Phase 1) ───────────────────────────────
+      # Leave UC_REPO_URL empty to keep the legacy local-only behaviour.
+      UC_REPO_URL: "${UC_REPO_URL:-}"
+      UC_REPO_BASE_BRANCH: "${UC_REPO_BASE_BRANCH:-main}"
+      UC_GIT_FETCH_ON_ACQUIRE: "${UC_GIT_FETCH_ON_ACQUIRE:-true}"
+      # Push to external remote is opt-in (off by default for MVP safety).
+      UC_GIT_PUSH_ON_RELEASE: "${UC_GIT_PUSH_ON_RELEASE:-false}"
+      UC_GIT_TOKEN: "${UC_GIT_TOKEN:-}"
+      GIT_USERNAME: "${GIT_USERNAME:-x-access-token}"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: "/usr/local/bin/git-askpass"
+    volumes:
+      # Persist the clone across container restarts. Shared by all
+      # same-host replicas (see note above) — cross-host gets its own.
+      - worker_workspace:/workspace
     command: ["python", "-m", "ultimate_coders.nats_worker", "--mode", "worker"]
 
   # ── UltimateCoders NATS Worker (default mode: Orchestrator) ──────
@@ -224,6 +248,18 @@ services:
       UC_GRPC_ENDPOINT: "http://gateway:50051"
       UC_SANDBOX_MODE: "subprocess"
       UC_PROJECT_PATH: "/workspace"
+      # ── External git sync (Phase 1) ───────────────────────────────
+      # Same env as the worker service; empty UC_REPO_URL = local mode.
+      UC_REPO_URL: "${UC_REPO_URL:-}"
+      UC_REPO_BASE_BRANCH: "${UC_REPO_BASE_BRANCH:-main}"
+      UC_GIT_FETCH_ON_ACQUIRE: "${UC_GIT_FETCH_ON_ACQUIRE:-true}"
+      UC_GIT_PUSH_ON_RELEASE: "${UC_GIT_PUSH_ON_RELEASE:-false}"
+      UC_GIT_TOKEN: "${UC_GIT_TOKEN:-}"
+      GIT_USERNAME: "${GIT_USERNAME:-x-access-token}"
+      GIT_TERMINAL_PROMPT: "0"
+      GIT_ASKPASS: "/usr/local/bin/git-askpass"
+    volumes:
+      - worker_workspace:/workspace
     command: ["python", "-m", "ultimate_coders.nats_worker"]
 
 volumes:
@@ -232,3 +268,5 @@ volumes:
   qdrant_data:
   pg_data:
   nats_data:
+  # Persist worker git clones across container restarts.
+  worker_workspace:

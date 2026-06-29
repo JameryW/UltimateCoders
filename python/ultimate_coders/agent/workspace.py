@@ -58,16 +58,82 @@ class WorkspaceManager:
         project_path: str = "",
         max_worktrees: int = 8,
         base_branch: str = "main",
+        remote_url: str = "",
+        remote_name: str = "origin",
+        fetch_on_acquire: bool = False,
+        push_on_release: bool = False,
     ) -> None:
         self._project_path = project_path or os.getcwd()
         self._max_worktrees = max_worktrees
         self._base_branch = base_branch
+        # Remote-sync config (Phase 1 MVP). When remote_url is empty the
+        # manager behaves exactly as the legacy local-only implementation.
+        self._remote_url = remote_url
+        self._remote_name = remote_name
+        self._fetch_on_acquire = fetch_on_acquire
+        self._push_on_release = push_on_release
         self._active: dict[str, WorkspaceHandle] = {}
         self._pool: list[WorkspaceHandle] = []
 
     @property
     def active_count(self) -> int:
         return len(self._active)
+
+    async def ensure_clone(self) -> None:
+        """Ensure a git checkout exists at ``project_path``.
+
+        When ``remote_url`` is set and the project path is not already a git
+        repo with that remote, clone it. If the repo already exists and the
+        remote differs, update the remote URL. Idempotent.
+
+        When ``remote_url`` is empty this is a no-op (local-only mode, fully
+        backward compatible with the legacy behaviour).
+        """
+        if not self._remote_url:
+            return  # local-only mode
+
+        git_dir = os.path.join(self._project_path, ".git")
+        if not os.path.exists(git_dir):
+            # Path is empty/non-git: clone the remote into it.
+            # NOTE: ``_git`` defaults cwd to ``self._project_path`` which does
+            # not exist yet — run the clone from the parent dir instead.
+            parent = os.path.dirname(self._project_path) or os.getcwd()
+            os.makedirs(parent, exist_ok=True)
+            result = await self._git(
+                ["clone", self._remote_url, self._project_path],
+                cwd=parent,
+            )
+            if result["exit_code"] != 0:
+                logger.error(
+                    "ensure_clone: clone of %s failed: %s",
+                    self._remote_url, result["stderr"][:300],
+                )
+                raise RuntimeError(
+                    f"git clone failed: {result['stderr'][:200]}"
+                )
+            logger.info(
+                "ensure_clone: cloned %s into %s",
+                self._remote_url, self._project_path,
+            )
+            return
+
+        # Repo already exists — ensure origin points at the configured remote.
+        cur = await self._git(["remote", "get-url", self._remote_name])
+        if cur["exit_code"] == 0 and cur["stdout"].strip() == self._remote_url:
+            logger.debug("ensure_clone: remote %s already correct", self._remote_name)
+            return
+        # Remote missing or mismatched: (re)set it.
+        if cur["exit_code"] != 0:
+            add = await self._git(
+                ["remote", "add", self._remote_name, self._remote_url]
+            )
+            if add["exit_code"] != 0:
+                logger.warning("ensure_clone: add remote failed: %s", add["stderr"][:200])
+        else:
+            await self._git(
+                ["remote", "set-url", self._remote_name, self._remote_url]
+            )
+        logger.info("ensure_clone: remote %s set to %s", self._remote_name, self._remote_url)
 
     async def acquire(self, subtask_id: str) -> WorkspaceHandle | None:
         """Create an isolated workspace for a subtask.
@@ -99,9 +165,28 @@ class WorkspaceManager:
         )
 
         try:
+            # Determine the base ref to branch the worktree from.
+            # When remote sync is enabled, fetch first so the worktree is
+            # based on the fresh upstream HEAD (origin/<base_branch>), not a
+            # stale local HEAD. Fall back to the local branch on any failure.
+            base_ref = self._base_branch
+            if self._fetch_on_acquire and self._remote_url:
+                fetch_result = await self._git(
+                    ["fetch", self._remote_name, self._base_branch],
+                    cwd=self._project_path,
+                )
+                if fetch_result["exit_code"] == 0:
+                    base_ref = f"{self._remote_name}/{self._base_branch}"
+                else:
+                    logger.warning(
+                        "fetch %s/%s failed, branching off local %s: %s",
+                        self._remote_name, self._base_branch,
+                        self._base_branch, fetch_result["stderr"][:200],
+                    )
+
             # Create git worktree on a new branch
             result = await self._git(
-                ["worktree", "add", "-b", branch_name, f".uc/worktrees/{ws_id}", self._base_branch],
+                ["worktree", "add", "-b", branch_name, f".uc/worktrees/{ws_id}", base_ref],
                 cwd=self._project_path,
             )
             if result["exit_code"] != 0:
@@ -186,6 +271,32 @@ class WorkspaceManager:
             else:
                 result_info["status"] = "no_changes"
 
+            # Push the subtask branch to the remote (NOT main — merge
+            # arbitration into main is Phase 2 / gateway). Push is opt-in
+            # via push_on_release and only when a remote is configured.
+            if (
+                self._push_on_release
+                and self._remote_url
+                and handle.branch_name
+                and result_info.get("status") in ("merged", "no_changes")
+            ):
+                push_result = await self._git(
+                    [
+                        "push", self._remote_name,
+                        f"{handle.branch_name}:refs/heads/{handle.branch_name}",
+                    ],
+                    cwd=self._project_path,
+                )
+                if push_result["exit_code"] != 0:
+                    logger.warning(
+                        "release: push of branch %s failed (non-fatal): %s",
+                        handle.branch_name, push_result["stderr"][:200],
+                    )
+                    result_info["push_status"] = "failed"
+                    result_info["push_error"] = push_result["stderr"][:200]
+                else:
+                    result_info["push_status"] = "pushed"
+
         # Remove the worktree
         try:
             wt_path = os.path.join(
@@ -197,8 +308,12 @@ class WorkspaceManager:
                     ["worktree", "remove", f".uc/worktrees/{handle.workspace_id}", "--force"],
                     cwd=self._project_path,
                 )
-                # Delete the branch if merge succeeded
-                if result_info.get("status") != "conflict":
+                # Delete the branch if merge succeeded AND push (if any) succeeded.
+                # Preserve the branch on conflict or push failure so it can be retried.
+                if (
+                    result_info.get("status") != "conflict"
+                    and result_info.get("push_status") != "failed"
+                ):
                     await self._git(
                         ["branch", "-D", handle.branch_name],
                         cwd=self._project_path,
