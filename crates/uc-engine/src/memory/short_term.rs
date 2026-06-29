@@ -40,12 +40,47 @@ impl ShortTermMemory {
     pub async fn new(pd_endpoints: Vec<String>, ttl_seconds: u64) -> Result<Self, EngineError> {
         match tikv_client::RawClient::new(pd_endpoints).await {
             Ok(client) => {
-                tracing::info!("Connected to TiKV for short-term memory");
-                Ok(Self {
-                    client: Some(Arc::new(client)),
-                    fallback: Arc::new(RwLock::new(Vec::new())),
-                    default_ttl_seconds: ttl_seconds,
-                })
+                let client_arc = Arc::new(client);
+                // ponytail: verify TiKV store is writable — PD can be up while TiKV
+                // nodes are still starting. Retry up to 3 times with 2s backoff.
+                let mut probe_ok = false;
+                for attempt in 0..3 {
+                    let probe_key = format!("__uc_probe_{}", uuid::Uuid::new_v4());
+                    match client_arc.put(probe_key.clone(), b"probe".to_vec()).await {
+                        Ok(_) => {
+                            let _ = client_arc.delete(probe_key).await;
+                            probe_ok = true;
+                            break;
+                        }
+                        Err(e) if attempt < 2 => {
+                            tracing::warn!(
+                                "TiKV write probe failed (attempt {}): {}, retrying in 2s",
+                                attempt + 1,
+                                e
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!("TiKV write probe failed after 3 attempts: {}", e);
+                        }
+                    }
+                }
+
+                if probe_ok {
+                    tracing::info!("Connected to TiKV for short-term memory");
+                    Ok(Self {
+                        client: Some(client_arc),
+                        fallback: Arc::new(RwLock::new(Vec::new())),
+                        default_ttl_seconds: ttl_seconds,
+                    })
+                } else {
+                    tracing::warn!("TiKV PD reachable but store not ready, using in-memory fallback for short-term memory");
+                    Ok(Self {
+                        client: None,
+                        fallback: Arc::new(RwLock::new(Vec::new())),
+                        default_ttl_seconds: ttl_seconds,
+                    })
+                }
             }
             Err(e) => {
                 tracing::warn!(

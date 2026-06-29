@@ -129,18 +129,33 @@ impl LongTermMemory {
             .any(|c| c.name == COLLECTION_NAME);
 
         if !exists {
-            client
+            match client
                 .create_collection(
                     CreateCollectionBuilder::new(COLLECTION_NAME).vectors_config(
                         VectorParamsBuilder::new(VECTOR_SIZE as u64, Distance::Cosine),
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    EngineError::ConnectionError(format!("Qdrant create collection error: {}", e))
-                })?;
-
-            tracing::info!("Created Qdrant collection: {}", COLLECTION_NAME);
+            {
+                Ok(_) => {
+                    tracing::info!("Created Qdrant collection: {}", COLLECTION_NAME);
+                }
+                Err(e) => {
+                    // ponytail: treat "already exists" as success — parallel tests race on create
+                    let msg = e.to_string();
+                    if msg.contains("already exists") {
+                        tracing::info!(
+                            "Qdrant collection {} already exists (created by concurrent client)",
+                            COLLECTION_NAME
+                        );
+                    } else {
+                        return Err(EngineError::ConnectionError(format!(
+                            "Qdrant create collection error: {}",
+                            e
+                        )));
+                    }
+                }
+            }
         }
 
         Ok(())

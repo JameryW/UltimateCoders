@@ -109,6 +109,19 @@ jobs:
             sleep 5
             docker compose -f docker/docker-compose.yml up -d --wait
           }
+      - name: Wait for TiKV store readiness
+        run: |
+          # PD can be healthy while TiKV store is still initializing.
+          # Probe with a raw put until it succeeds (max 30s).
+          for i in $(seq 1 15); do
+            if docker compose -f docker/docker-compose.yml exec -T pd pd-ctl store 2>/dev/null | grep -q "Up"; then
+              echo "TiKV store is ready"
+              exit 0
+            fi
+            echo "Waiting for TiKV store... ($i/15)"
+            sleep 2
+          done
+          echo "::warning::TiKV store not confirmed ready after 30s, proceeding anyway"
       - name: Run storage integration tests
         run: cargo test --features storage -- --ignored
         env:

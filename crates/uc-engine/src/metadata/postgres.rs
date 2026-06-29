@@ -234,7 +234,7 @@ impl PostgresMetadataStore {
             "CREATE INDEX IF NOT EXISTS idx_references_repo_id ON \"references\"(repo_id)",
             "CREATE INDEX IF NOT EXISTS idx_references_target_name ON \"references\"(target_name)",
             "CREATE INDEX IF NOT EXISTS idx_references_kind ON \"references\"(reference_kind)",
-            "CREATE INDEX IF NOT EXISTS idx_index_state_repo_id ON index_state(repo_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_index_state_repo_id ON index_state(repo_id)",
         ];
 
         for idx_sql in &indexes {
