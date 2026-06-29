@@ -13,6 +13,7 @@ import {
 	EngineService,
 	TaskService,
 	DashboardService,
+	WorkerService,
 	HealthRequestSchema,
 	SubmitTaskRequestSchema,
 	GetTaskRequestSchema,
@@ -34,6 +35,7 @@ import {
 	ListDirRequestSchema,
 	GetFileRequestSchema,
 	ListWorkersRequestSchema,
+	ScaleWorkersRequestSchema,
 	type SubmitTaskResponse,
 } from "../grpc/engine_pb.js";
 import { create } from "@bufbuild/protobuf";
@@ -106,6 +108,7 @@ export class GrpcBridge {
 	private engineClient: ReturnType<typeof createClient<typeof EngineService>>;
 	private taskClient: ReturnType<typeof createClient<typeof TaskService>>;
 	private dashboardClient: ReturnType<typeof createClient<typeof DashboardService>>;
+	private workerClient: ReturnType<typeof createClient<typeof WorkerService>>;
 	/** Monotonic counter bumped by run-omp.sh restart marker. */
 	private lastRestartMarker = 0;
 	/** Guard: only one reconnect attempt at a time. */
@@ -122,6 +125,7 @@ export class GrpcBridge {
 		this.engineClient = createClient(EngineService, this.transport);
 		this.taskClient = createClient(TaskService, this.transport);
 		this.dashboardClient = createClient(DashboardService, this.transport);
+		this.workerClient = createClient(WorkerService, this.transport);
 	}
 
 	// ── Transport lifecycle ────────────────────────────────────
@@ -136,6 +140,7 @@ export class GrpcBridge {
 		this.engineClient = createClient(EngineService, this.transport);
 		this.taskClient = createClient(TaskService, this.transport);
 		this.dashboardClient = createClient(DashboardService, this.transport);
+		this.workerClient = createClient(WorkerService, this.transport);
 		this.connected = false;
 	}
 
@@ -601,6 +606,43 @@ export class GrpcBridge {
 				availableCount: resp.availableCount,
 			};
 		}, { available: false, workers: [], total: 0, availableCount: 0 });
+	}
+
+	/**
+	 * Scale the worker cluster or force-deregister a worker via WorkerService.ScaleWorkers.
+	 *
+	 * - action="scale": gateway shell-outs `docker compose up -d --no-deps --scale worker=<target> worker`.
+	 *   New workers self-register; scaled-down workers self-deregister on SIGTERM.
+	 * - action="deregister": force-removes a worker_id from the in-memory WorkerRegistry
+	 *   WITHOUT stopping its process. Use to evict stale/ghost workers.
+	 *
+	 * On transport unavailable, returns a failure result (consistent with listWorkers).
+	 */
+	async scaleWorkers(
+		action: "scale" | "deregister",
+		opts: { targetCount?: number; workerId?: string },
+	): Promise<{ success: boolean; error?: string; actualCount: number; message: string }> {
+		return this.withReconnect(async () => {
+			const resp = await this.workerClient.scaleWorkers(
+				create(ScaleWorkersRequestSchema, {
+					action,
+					targetCount: opts.targetCount ?? 0,
+					workerId: opts.workerId ?? "",
+				}),
+			);
+			this.connected = true;
+			return {
+				success: resp.success,
+				error: resp.error ?? undefined,
+				actualCount: resp.actualCount,
+				message: resp.message,
+			};
+		}, {
+			success: false,
+			error: "gRPC server unavailable — start with ./run-omp.sh",
+			actualCount: 0,
+			message: "worker service unavailable",
+		});
 	}
 
 	// ── Connection ─────────────────────────────────────────────

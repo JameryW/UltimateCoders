@@ -252,6 +252,171 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
             })),
         }
     }
+
+    async fn scale_workers(
+        &self,
+        request: Request<ScaleWorkersRequest>,
+    ) -> Result<Response<ScaleWorkersResponse>, Status> {
+        let req = request.into_inner();
+        tracing::info!(
+            action = %req.action,
+            target_count = req.target_count,
+            worker_id = %req.worker_id,
+            "ScaleWorkers request received"
+        );
+
+        match req.action.as_str() {
+            "deregister" => {
+                if req.worker_id.is_empty() {
+                    return Ok(Response::new(ScaleWorkersResponse {
+                        success: false,
+                        error: Some("worker_id is required for action='deregister'".to_string()),
+                        actual_count: 0,
+                        message: String::new(),
+                    }));
+                }
+                let mut registry = self.worker_registry().write().await;
+                let worker_id = req.worker_id.clone();
+                match registry.deregister(&worker_id) {
+                    Ok(()) => {
+                        let actual = registry.workers().len() as u32;
+                        tracing::info!(worker_id = %worker_id, actual_count = actual, "Worker force-deregistered via ScaleWorkers");
+                        Ok(Response::new(ScaleWorkersResponse {
+                            success: true,
+                            error: None,
+                            actual_count: actual,
+                            message: format!("Worker '{}' deregistered", worker_id),
+                        }))
+                    }
+                    Err(e) => {
+                        let actual = registry.workers().len() as u32;
+                        tracing::warn!(worker_id = %worker_id, error = %e, "ScaleWorkers deregister failed");
+                        Ok(Response::new(ScaleWorkersResponse {
+                            success: false,
+                            error: Some(e),
+                            actual_count: actual,
+                            message: String::new(),
+                        }))
+                    }
+                }
+            }
+            "scale" => {
+                // Shell out to docker compose to set the worker instance count.
+                // --no-deps is MANDATORY: worker depends_on gateway, and the gateway
+                // itself is issuing this command (would deadlock without --no-deps).
+                let compose_file = std::env::var("UC_COMPOSE_FILE")
+                    .unwrap_or_else(|_| "/app/docker/docker-compose.yml".to_string());
+                let compose_project =
+                    std::env::var("UC_COMPOSE_PROJECT").unwrap_or_else(|_| "docker".to_string());
+
+                // Validate compose file exists before shelling out.
+                let compose_path = std::path::Path::new(&compose_file);
+                if !compose_path.exists() {
+                    tracing::warn!(compose_file = %compose_file, "Compose file not found");
+                    return Ok(Response::new(ScaleWorkersResponse {
+                        success: false,
+                        error: Some(format!(
+                            "Compose file not found: '{}' (set UC_COMPOSE_FILE to the correct path)",
+                            compose_file
+                        )),
+                        actual_count: 0,
+                        message: String::new(),
+                    }));
+                }
+
+                let target = req.target_count;
+                tracing::info!(
+                    compose_file = %compose_file,
+                    compose_project = %compose_project,
+                    target_count = target,
+                    "Scaling workers via docker compose"
+                );
+
+                let output = tokio::process::Command::new("docker")
+                    .arg("compose")
+                    .arg("-p")
+                    .arg(&compose_project)
+                    .arg("-f")
+                    .arg(&compose_file)
+                    .arg("up")
+                    .arg("-d")
+                    .arg("--no-deps")
+                    .arg("--scale")
+                    .arg(format!("worker={}", target))
+                    .arg("worker")
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(output) if output.status.success() => {
+                        // Workers self-register asynchronously on container start;
+                        // the registry reconciles via the existing RegisterWorker path.
+                        // We return the requested target as actual_count without blocking.
+                        tracing::info!(target_count = target, "docker compose scale succeeded");
+                        Ok(Response::new(ScaleWorkersResponse {
+                            success: true,
+                            error: None,
+                            actual_count: target,
+                            message: format!(
+                                "Scaled worker instances to {}; workers self-register asynchronously",
+                                target
+                            ),
+                        }))
+                    }
+                    Ok(output) => {
+                        // Non-zero exit — capture stderr for diagnostics.
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let snippet = if !stderr.trim().is_empty() {
+                            stderr.lines().take(5).collect::<Vec<_>>().join("; ")
+                        } else {
+                            stdout.lines().take(5).collect::<Vec<_>>().join("; ")
+                        };
+                        tracing::warn!(
+                            exit_code = ?output.status.code(),
+                            snippet = %snippet,
+                            "docker compose scale failed"
+                        );
+                        Ok(Response::new(ScaleWorkersResponse {
+                            success: false,
+                            error: Some(format!(
+                                "docker compose scale failed (exit {:?}): {}",
+                                output.status.code(),
+                                snippet
+                            )),
+                            actual_count: 0,
+                            message: String::new(),
+                        }))
+                    }
+                    Err(e) => {
+                        // docker CLI not found or cannot spawn.
+                        tracing::warn!(error = %e, "Failed to invoke docker CLI");
+                        Ok(Response::new(ScaleWorkersResponse {
+                            success: false,
+                            error: Some(format!(
+                                "Failed to invoke docker CLI: {} (ensure docker is installed and docker.sock is mounted)",
+                                e
+                            )),
+                            actual_count: 0,
+                            message: String::new(),
+                        }))
+                    }
+                }
+            }
+            other => {
+                tracing::warn!(action = other, "Unknown ScaleWorkers action");
+                Ok(Response::new(ScaleWorkersResponse {
+                    success: false,
+                    error: Some(format!(
+                        "Unknown action: '{}' (expected 'scale' or 'deregister')",
+                        other
+                    )),
+                    actual_count: 0,
+                    message: String::new(),
+                }))
+            }
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -392,5 +557,168 @@ mod tests {
         assert_eq!(w.capabilities, vec!["rust"]);
         assert_eq!(w.max_capacity, 5);
         assert_eq!(w.current_load, 0); // reset on re-register
+    }
+
+    // ── ScaleWorkers handler tests ──────────────────────────────────
+
+    use crate::server::GrpcServer;
+    use tonic::Request;
+    use uc_engine::LocalEngine;
+
+    fn make_server() -> GrpcServer<LocalEngine> {
+        GrpcServer::new(LocalEngine::new_fallback())
+    }
+
+    #[tokio::test]
+    async fn scale_workers_deregister_removes_worker() {
+        let server = make_server();
+        // Seed the registry with a worker via the register RPC.
+        server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-scale-1".to_string(),
+                capabilities: vec!["python".to_string()],
+                max_capacity: 2,
+                metadata: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // Pre-condition: registry has 1 worker.
+        {
+            let reg = server.worker_registry().read().await;
+            assert_eq!(reg.workers().len(), 1);
+        }
+
+        // Force-deregister via ScaleWorkers action="deregister".
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "deregister".to_string(),
+                target_count: 0,
+                worker_id: "w-scale-1".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(resp.success, "deregister should succeed: {:?}", resp.error);
+        assert_eq!(resp.actual_count, 0);
+        assert!(resp.message.contains("w-scale-1"));
+
+        // Registry no longer contains the worker.
+        let reg = server.worker_registry().read().await;
+        assert!(!reg.workers().contains_key("w-scale-1"));
+    }
+
+    #[tokio::test]
+    async fn scale_workers_deregister_unknown_worker_fails() {
+        let server = make_server();
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "deregister".to_string(),
+                target_count: 0,
+                worker_id: "ghost-worker".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error.as_ref().unwrap().contains("ghost-worker"));
+    }
+
+    #[tokio::test]
+    async fn scale_workers_deregister_empty_id_fails() {
+        let server = make_server();
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "deregister".to_string(),
+                target_count: 0,
+                worker_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error.as_ref().unwrap().contains("worker_id"));
+    }
+
+    #[tokio::test]
+    async fn scale_workers_scale_error_paths() {
+        // These tests exercise the scale action's error handling WITHOUT a real
+        // docker daemon. They are combined into one test to avoid env-var races
+        // (UC_COMPOSE_FILE is process-global; parallel tests would contend).
+
+        let server = make_server();
+
+        // ── Case 1: compose file does not exist ──
+        std::env::set_var("UC_COMPOSE_FILE", "/nonexistent/uc-test-compose-12345.yml");
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "scale".to_string(),
+                target_count: 3,
+                worker_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(
+            !resp.success,
+            "scale should fail without compose file: {:?}",
+            resp.message
+        );
+        let err = resp.error.unwrap();
+        assert!(
+            err.contains("Compose file not found"),
+            "error should mention missing compose file, got: {}",
+            err
+        );
+
+        // ── Case 2: compose file exists but is invalid (/dev/null) ──
+        // Either docker CLI is missing (invoke error) or compose fails parsing.
+        // Both must produce success=false without panicking.
+        std::env::set_var("UC_COMPOSE_FILE", "/dev/null");
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "scale".to_string(),
+                target_count: 1,
+                worker_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(
+            !resp.success,
+            "scale with /dev/null compose should not succeed: {:?}",
+            resp.message
+        );
+        let err = resp.error.unwrap();
+        assert!(
+            err.contains("docker") || err.contains("compose") || err.contains("exit"),
+            "error should reference docker/compose, got: {}",
+            err
+        );
+
+        // Restore default so other tests are unaffected.
+        std::env::remove_var("UC_COMPOSE_FILE");
+    }
+
+    #[tokio::test]
+    async fn scale_workers_unknown_action_fails() {
+        let server = make_server();
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "bogus".to_string(),
+                target_count: 0,
+                worker_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error.as_ref().unwrap().contains("Unknown action"));
     }
 }

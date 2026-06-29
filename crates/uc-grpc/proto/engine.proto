@@ -37,6 +37,7 @@ service WorkerService {
     rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
     rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
     rpc DeregisterWorker(DeregisterWorkerRequest) returns (DeregisterWorkerResponse);
+    rpc ScaleWorkers(ScaleWorkersRequest) returns (ScaleWorkersResponse);
 }
 
 // ── Dashboard Service (NATS passthrough to Python Orchestrator) ──
@@ -650,4 +651,25 @@ message DeregisterWorkerRequest {
 message DeregisterWorkerResponse {
     bool success = 1;
     optional string error = 2;
+}
+
+message ScaleWorkersRequest {
+    // Action discriminator (string-typed, per repo convention):
+    //   "scale"      — set desired worker count to target_count via docker compose.
+    //   "deregister" — force-remove a worker_id from the in-memory WorkerRegistry
+    //                  WITHOUT stopping its process. Use to evict stale/ghost workers.
+    string action = 1;
+    // For action="scale": desired total worker count.
+    uint32 target_count = 2;
+    // For action="deregister": specific worker to force-evict from registry.
+    string worker_id = 3;
+}
+
+message ScaleWorkersResponse {
+    bool success = 1;
+    optional string error = 2;
+    // Post-action registered worker count (registry snapshot).
+    uint32 actual_count = 3;
+    // Human-readable summary of the action result.
+    string message = 4;
 }
