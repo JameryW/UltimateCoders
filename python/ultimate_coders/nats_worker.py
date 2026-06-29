@@ -624,10 +624,22 @@ class NatsWorker:
 
     async def _init_components(self) -> None:
         """Initialize Engine, Orchestrator, and Worker."""
-        # Engine (local mode -- shared with Orchestrator/Worker)
+        # Engine — use gRPC when endpoint is configured (Worker mode shares
+        # Gateway's search index + memory via gRPC), local otherwise.
         try:
-            self._engine = Engine(mode="local")
-            logger.info("Engine initialized (local mode)")
+            if self._grpc_endpoint:
+                self._engine = Engine(
+                    mode="grpc",
+                    grpc_endpoint=self._grpc_endpoint,
+                    fallback_mode="auto",
+                )
+                logger.info(
+                    "Engine initialized (gRPC mode, endpoint=%s, fallback=auto)",
+                    self._grpc_endpoint,
+                )
+            else:
+                self._engine = Engine(mode="local")
+                logger.info("Engine initialized (local mode)")
         except ImportError:
             logger.warning(
                 "Rust extension not built, Engine unavailable. "
@@ -1250,6 +1262,7 @@ class NatsWorker:
             dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
             agent_config=data.get("agent_config", {}),
+            project_id=data.get("project_id", ""),
         )
 
         try:

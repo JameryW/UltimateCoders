@@ -481,6 +481,11 @@ class Worker:
             # Inject context from completed dependencies
             context_block = self._context_injector.build_context(subtask.depends_on)
 
+            # Auto-inject cross-repo search context (when engine is available)
+            search_block = self._build_search_context(subtask)
+            if search_block:
+                context_block = f"{context_block}\n\n{search_block}" if context_block else search_block
+
             # Acquire workspace if this subtask modifies files
             workspace_handle = None
             if self._workspace_manager and subtask.file_constraints:
@@ -892,3 +897,108 @@ class Worker:
 
     def release_edit_intent(self, file_path: str) -> None:
         self.conflict_detector.remove_intent(file_path, self.worker_id)
+
+    def _build_search_context(self, subtask: Subtask) -> str | None:
+        """Search across repos for code relevant to the subtask description.
+
+        Returns a formatted context block with search results, or None.
+        """
+        if self.engine is None or not subtask.description:
+            return None
+        try:
+            from ultimate_coders.search.query import SearchQuery
+            sq = SearchQuery(subtask.description).with_modes(["hybrid"]).limit(10)
+            if subtask.project_id:
+                sq.in_repos([subtask.project_id])
+            else:
+                sq.in_all_repos(self.engine)
+            result = self.engine.search(sq)
+            items = getattr(result, "items", result) if result else []
+            if not items:
+                return None
+            lines = ["## Related code from indexed repositories"]
+            for r in items[:8]:
+                repo = getattr(r, "repo_id", "?")
+                path = getattr(r, "file_path", "?")
+                snippet = getattr(r, "content_snippet", "")
+                if snippet:
+                    lines.append(f"### [{repo}] {path}")
+                    lines.append(f"```\n{snippet[:500]}\n```")
+            return "\n".join(lines) if len(lines) > 1 else None
+        except Exception:
+            # ponytail: search failure is non-fatal — subtask still executes
+            return None
+
+    def search_across_repos(
+        self, query: str, modes: list[str] | None = None, max_results: int = 20,
+    ) -> list | None:
+        """Search across all indexed repositories via the Engine.
+
+        Routes through gRPC Gateway when configured, enabling cross-repo
+        retrieval from the shared search index.
+
+        Args:
+            query: Search text (natural language or code pattern).
+            modes: Search modes — default ["hybrid"].
+            max_results: Max results to return.
+
+        Returns:
+            SearchResult items, or None if engine is unavailable.
+        """
+        if self.engine is None:
+            return None
+        from ultimate_coders.search.query import SearchQuery
+        sq = SearchQuery(query).in_all_repos(self.engine)
+        if modes:
+            sq.with_modes(modes)
+        sq.limit(max_results)
+        result = self.engine.search(sq)
+        return getattr(result, "items", result) if result else None
+
+    def read_shared_memory(
+        self, key: str, project_id: str = "",
+    ) -> object | None:
+        """Read project-scoped memory (shared across Workers via Gateway).
+
+        Args:
+            key: Memory key name.
+            project_id: Project scope (uses subtask's project_id if empty).
+
+        Returns:
+            MemoryEntry or None.
+        """
+        if self.engine is None:
+            return None
+        pid = project_id or getattr(self.current_task, "project_id", "")
+        scope = "project" if pid else "global"
+        return self.engine.read_memory(
+            key_scope=scope, key=key, project_id=pid or None,
+        )
+
+    def write_shared_memory(
+        self, key: str, content: str, project_id: str = "",
+        content_type: str = "text", importance: float = 0.7,
+        tags: list[str] | None = None,
+    ) -> object | None:
+        """Write project-scoped memory (shared across Workers via Gateway).
+
+        Args:
+            key: Memory key name.
+            content: Content to store.
+            project_id: Project scope (uses subtask's project_id if empty).
+            content_type: "text", "structured", "code", "diff", or "reference".
+            importance: Importance score (default 0.7 — above long-term threshold).
+            tags: Tags for categorization.
+
+        Returns:
+            MemoryEntry or None.
+        """
+        if self.engine is None:
+            return None
+        pid = project_id or getattr(self.current_task, "project_id", "")
+        scope = "project" if pid else "global"
+        return self.engine.write_memory(
+            key_scope=scope, key=key, content=content,
+            content_type=content_type, source_agent=f"worker:{self.worker_id}",
+            importance=importance, tags=tags, project_id=pid or None,
+        )

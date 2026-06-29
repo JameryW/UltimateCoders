@@ -99,6 +99,8 @@ class Subtask:
     # Per-subtask agent config overrides (keys: tools, allowed_tools,
     # disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json)
     agent_config: dict[str, Any] = field(default_factory=dict)
+    # Project scope for cross-repo search and memory sharing
+    project_id: str = ""
 
     @property
     def is_ready(self) -> bool:

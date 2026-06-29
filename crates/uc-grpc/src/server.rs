@@ -150,6 +150,9 @@ pub struct NatsSubtaskExecute {
     ///       append_system_prompt, agent_name, agents_json.
     #[serde(default)]
     pub agent_config_json: Option<String>,
+    /// Project scope for cross-repo search and memory sharing.
+    #[serde(default)]
+    pub project_id: String,
 }
 
 fn default_timeout() -> u64 {
@@ -1477,6 +1480,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     dispatch_mode: st.dispatch_mode.clone(),
                     required_capabilities: st.required_capabilities.clone(),
                     agent_config_json: None,
+                    project_id: String::new(), // ponytail: filled when Task has project_id
                 };
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
@@ -1859,6 +1863,7 @@ async fn dispatch_ready_subtasks(
             dispatch_mode: st.dispatch_mode.clone(),
             required_capabilities: st.required_capabilities.clone(),
             agent_config_json: None,
+            project_id: String::new(),
         };
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
