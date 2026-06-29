@@ -54,6 +54,7 @@ NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
 NATS_SUBJECT_FILE_CHANGED: str = "uc.file.changed"
+NATS_SUBJECT_MEMORY_CHANGED: str = "uc.memory.changed"
 
 # ── Payload types ───────────────────────────────────────────────
 
@@ -353,6 +354,17 @@ class NatsWorker:
                 "Subscribed to %s (distributed conflict tracking)",
                 NATS_SUBJECT_FILE_CHANGED,
             )
+
+            # Worker mode: subscribe to memory change events for cache invalidation
+            memory_sub = await self._nc.subscribe(
+                NATS_SUBJECT_MEMORY_CHANGED,
+                cb=self._handle_memory_changed,
+            )
+            self._subscriptions.append(memory_sub)
+            logger.info(
+                "Subscribed to %s (cross-worker cache invalidation)",
+                NATS_SUBJECT_MEMORY_CHANGED,
+            )
         else:
             # Default mode: full Orchestrator consumer
             # Subscribe to uc.task.submit
@@ -624,10 +636,22 @@ class NatsWorker:
 
     async def _init_components(self) -> None:
         """Initialize Engine, Orchestrator, and Worker."""
-        # Engine (local mode -- shared with Orchestrator/Worker)
+        # Engine — use gRPC when endpoint is configured (Worker mode shares
+        # Gateway's search index + memory via gRPC), local otherwise.
         try:
-            self._engine = Engine(mode="local")
-            logger.info("Engine initialized (local mode)")
+            if self._grpc_endpoint:
+                self._engine = Engine(
+                    mode="grpc",
+                    grpc_endpoint=self._grpc_endpoint,
+                    fallback_mode="auto",
+                )
+                logger.info(
+                    "Engine initialized (gRPC mode, endpoint=%s, fallback=auto)",
+                    self._grpc_endpoint,
+                )
+            else:
+                self._engine = Engine(mode="local")
+                logger.info("Engine initialized (local mode)")
         except ImportError:
             logger.warning(
                 "Rust extension not built, Engine unavailable. "
@@ -1059,6 +1083,7 @@ class NatsWorker:
             "dispatch_mode": subtask.dispatch_mode.value,
             "required_capabilities": subtask.required_capabilities,
             "agent_config": subtask.agent_config,
+            "project_id": subtask.project_id,
         }).encode()
 
         await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
@@ -1250,6 +1275,7 @@ class NatsWorker:
             dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
             agent_config=data.get("agent_config", {}),
+            project_id=data.get("project_id", ""),
         )
 
         try:
@@ -1495,6 +1521,33 @@ class NatsWorker:
                 "edit_type": change_type,
                 "timestamp": data.get("timestamp", 0),
             })
+
+    async def _handle_memory_changed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``uc.memory.changed`` messages for cross-Worker cache invalidation.
+
+        When another Worker writes/deletes shared memory, invalidate local
+        search cache entries that might reference stale data.
+        """
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            logger.debug("Failed to parse memory changed message", exc_info=True)
+            return
+
+        project_id = data.get("project_id", "")
+        source_worker = data.get("source_worker", "")
+
+        if source_worker == (self._worker.worker_id if self._worker else ""):
+            return  # Skip own broadcasts
+
+        logger.debug(
+            "Memory changed: project=%s by %s, invalidating cache",
+            project_id, source_worker[:8] if source_worker else "?",
+        )
+
+        # Invalidate search cache — stale memory may affect search results
+        if self._worker is not None:
+            self._worker._search_cache.invalidate()
 
     def _has_remote_workers(self, required_capabilities: list[str] | None = None) -> bool:
         """Whether any remote workers are currently known with matching capabilities.

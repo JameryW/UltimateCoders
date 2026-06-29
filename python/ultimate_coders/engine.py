@@ -8,6 +8,7 @@ is unavailable.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Callable
@@ -79,6 +80,11 @@ class Engine:
         self._on_recovery = on_recovery
         self._last_recovery_check: float = 0.0
         self._recovery_check_interval: float = 30.0  # seconds
+
+        # Search cache — LRU + TTL to reduce repeated gRPC calls
+        self._search_cache: dict[str, tuple[Any, float]] = {}
+        self._search_cache_max: int = 50
+        self._search_cache_ttl: float = 300.0  # 5 minutes
 
         # Always create the local engine (needed for fallback)
         self._local_engine = PyEngine(mode="local", grpc_endpoint=None)
@@ -268,15 +274,36 @@ class Engine:
     def search(self, query) -> object:
         """Search across indexed repositories.
 
-        Args:
-            query: A SearchQuery object (builder), PySearchQuery (Rust type),
-                   or dict with search parameters.
-
-        Returns:
-            SearchResult with matching items.
+        Results are cached for 5 minutes (LRU, max 50 entries).
         """
+        import hashlib
+        import time
+
         py_query = self._convert_search_query(query)
-        return self._try_grpc_with_fallback("search", py_query)
+        # Compute cache key
+        qdict = query.to_dict() if hasattr(query, "to_dict") else {}
+        raw = json.dumps(qdict, sort_keys=True) if qdict else str(py_query)
+        cache_key = hashlib.blake2b(raw.encode(), digest_size=16).hexdigest()
+
+        # Check cache
+        entry = self._search_cache.get(cache_key)
+        if entry is not None:
+            value, ts = entry
+            if time.monotonic() - ts <= self._search_cache_ttl:
+                return value
+            del self._search_cache[cache_key]
+
+        # Cache miss — execute search
+        result = self._try_grpc_with_fallback("search", py_query)
+
+        # Cache result
+        if result is not None:
+            self._search_cache[cache_key] = (result, time.monotonic())
+            if len(self._search_cache) > self._search_cache_max:
+                oldest = next(iter(self._search_cache))
+                del self._search_cache[oldest]
+
+        return result
 
     def _convert_search_query(self, query: Any) -> Any:
         """Convert a SearchQuery builder or dict to a PySearchQuery for the Rust engine.

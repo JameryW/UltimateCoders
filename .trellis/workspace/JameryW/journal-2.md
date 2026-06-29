@@ -524,3 +524,109 @@ Threaded agent_config through the full distributed dispatch pipeline. Python _di
 ### Next Steps
 
 - None - task complete
+
+
+## Session 71: Sandbox worker retry, progress, profiles
+
+**Date**: 2026-06-29
+**Task**: Sandbox worker retry, progress, profiles
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Enhanced sandbox worker: auto-retry (3x + backoff), subtask_progress events (preparing→executing→validating→finalizing), expanded AGENT_PROFILES (8) and SUBTASK_TEMPLATES (7), fixed TiKV integration test flakiness
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `03141773` | (see git log) |
+| `ee77acc1` | (see git log) |
+| `5bd1b624` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 72: Cross-repo search & memory sharing
+
+**Date**: 2026-06-29
+**Task**: Cross-repo search & memory sharing
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Completed cross-repo code retrieval and memory sharing: Worker gRPC Engine routing with fallback, SearchQuery.in_all_repos(), auto search context injection into subtasks, Worker read/write_shared_memory() for project-scoped memory, Subtask.project_id + NatsSubtaskExecute.project_id cross-layer propagation, 9 new unit tests, cross-repo-search-spec.md code-spec
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `32317493` | (see git log) |
+| `ca07b0a0` | (see git log) |
+| `00bf2087` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 73: Cross-repo search deep integration
+
+**Date**: 2026-06-29
+**Task**: Cross-repo search deep integration
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Deep integration: agent_config_json propagation, projectId persistence round-trip, Engine MCP Server, Orchestrator project_id, 3 integration tests, spec updates
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db81fa39` | (see git log) |
+| `4b4df769` | (see git log) |
+| `d742ef2e` | (see git log) |
+| `748f2733` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

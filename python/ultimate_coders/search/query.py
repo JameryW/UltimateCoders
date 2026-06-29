@@ -26,6 +26,26 @@ class SearchQuery:
         self._repo_ids = repo_ids
         return self
 
+    def in_all_repos(self, engine: object) -> SearchQuery:
+        """Set repo scope to all indexed repos discovered via engine.list_repos().
+
+        Args:
+            engine: An Engine instance with list_repos() support.
+
+        Returns:
+            self for chaining.
+        """
+        try:
+            repos = engine.list_repos()
+            self._repo_ids = [
+                r.repo_id if hasattr(r, "repo_id") else str(r)
+                for r in repos
+            ]
+        except Exception:
+            # ponytail: if list_repos fails, leave repo_ids empty (searches all)
+            pass
+        return self
+
     def in_languages(self, languages: list[str]) -> SearchQuery:
         self._languages = languages
         return self

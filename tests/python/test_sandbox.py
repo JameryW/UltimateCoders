@@ -1465,3 +1465,208 @@ class TestNewTemplates:
         st = Subtask(required_capabilities=["docs"])
         result = w._resolve_agent_config(st)
         assert "append_system_prompt" in result
+
+
+class TestProjectIdPropagation:
+    """Integration tests for project_id propagation through dispatch → search → prompt."""
+
+    @pytest.mark.asyncio
+    async def test_subtask_project_id_reaches_orchestrator(self):
+        """Orchestrator passes project_id to created Subtask objects."""
+        from ultimate_coders.agent.orchestrator import Orchestrator
+        orch = Orchestrator()
+        task = await orch.submit_task("fix auth\nadd tests", project_id="my-project")
+        assert task.project_id == "my-project"
+        for st in task.subtasks:
+            assert st.project_id == "my-project"
+
+    @pytest.mark.asyncio
+    async def test_search_context_injection_with_mock_engine(self):
+        """_build_search_context injects search results when engine returns data."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.agent.worker import Worker
+
+        engine = MagicMock()
+        item = MagicMock()
+        item.repo_id = "backend"
+        item.file_path = "src/auth.py"
+        item.content_snippet = "def authenticate(user, pwd):"
+        result = MagicMock()
+        result.items = [item]
+        engine.search.return_value = result
+        repo = MagicMock()
+        repo.repo_id = "backend"
+        engine.list_repos.return_value = [repo]
+
+        w = Worker(engine=engine)
+        st = Subtask(id="s1", description="fix auth", project_id="backend")
+        ctx = w._build_search_context(st)
+        assert ctx is not None
+        assert "backend" in ctx
+        assert "src/auth.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_search_context_enriches_subtask(self):
+        """_build_search_context produces formatted context with search results."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.agent.worker import Worker
+
+        engine = MagicMock()
+        item = MagicMock()
+        item.repo_id = "backend"
+        item.file_path = "src/auth.py"
+        item.content_snippet = "def authenticate():"
+        result = MagicMock()
+        result.items = [item]
+        engine.search.return_value = result
+        repo = MagicMock()
+        repo.repo_id = "backend"
+        engine.list_repos.return_value = [repo]
+
+        w = Worker(engine=engine)
+        st = Subtask(id="s1", parent_id="t1", description="fix auth", project_id="backend")
+
+        # Verify search context is generated
+        ctx = w._build_search_context(st)
+        assert ctx is not None
+        assert "backend" in ctx
+        assert "src/auth.py" in ctx
+        assert "authenticate" in ctx
+
+
+class TestSearchCache:
+    """Tests for WorkerLocalCache LRU + TTL search caching."""
+
+    def test_cache_miss_returns_none(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        assert cache.get_search("nonexistent") is None
+
+    def test_cache_put_and_get(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        cache.put_search("key1", ["result1"])
+        assert cache.get_search("key1") == ["result1"]
+
+    def test_cache_key_deterministic(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        key2 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        assert key1 == key2
+
+    def test_cache_key_different_queries(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        key2 = WorkerLocalCache.search_key("search", ["backend"], ["hybrid"], 10)
+        assert key1 != key2
+
+    def test_repo_cache(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        assert cache.get_repos() is None
+        cache.put_repos([{"repo_id": "backend"}])
+        result = cache.get_repos()
+        assert result is not None
+        assert len(result) == 1
+
+    def test_cache_invalidate(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        cache.put_search("key1", "val1")
+        cache.put_search("key2", "val2")
+        cache.invalidate()
+        assert cache.get_search("key1") is None
+        assert cache.get_search("key2") is None
+
+    def test_cache_lru_eviction(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache(max_search_entries=3)
+        cache.put_search("a", 1)
+        cache.put_search("b", 2)
+        cache.put_search("c", 3)
+        cache.put_search("d", 4)  # evicts "a"
+        assert cache.get_search("a") is None
+        assert cache.get_search("d") == 4
+
+
+class TestCrossRepoSearchAndMemorySharing:
+    """Tests for cross-repo search context injection and memory sharing."""
+
+    def test_subtask_has_project_id(self):
+        """Subtask dataclass includes project_id field."""
+        st = Subtask(id="s1", parent_id="t1", description="fix auth", project_id="my-project")
+        assert st.project_id == "my-project"
+
+    def test_subtask_project_id_default_empty(self):
+        """project_id defaults to empty string (backward compatible)."""
+        st = Subtask(id="s2", parent_id="t2", description="fix bug")
+        assert st.project_id == ""
+
+    def test_search_across_repos_no_engine(self):
+        """search_across_repos returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.search_across_repos("authentication")
+        assert result is None
+
+    def test_build_search_context_no_engine(self):
+        """_build_search_context returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        st = Subtask(id="s1", description="fix auth")
+        result = w._build_search_context(st)
+        assert result is None
+
+    def test_build_search_context_no_description(self):
+        """_build_search_context returns None for empty description."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(id="s1", description="")
+        result = w._build_search_context(st)
+        assert result is None
+
+    def test_read_shared_memory_no_engine(self):
+        """read_shared_memory returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.read_shared_memory("architecture")
+        assert result is None
+
+    def test_write_shared_memory_no_engine(self):
+        """write_shared_memory returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.write_shared_memory("architecture", "Use microservices")
+        assert result is None
+
+    def test_search_query_in_all_repos(self):
+        """SearchQuery.in_all_repos() populates repo_ids from engine."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.search.query import SearchQuery
+
+        engine = MagicMock()
+        repo1 = MagicMock()
+        repo1.repo_id = "backend"
+        repo2 = MagicMock()
+        repo2.repo_id = "frontend"
+        engine.list_repos.return_value = [repo1, repo2]
+
+        sq = SearchQuery("auth").in_all_repos(engine)
+        d = sq.to_dict()
+        assert d["repo_ids"] == ["backend", "frontend"]
+
+    def test_search_query_in_all_repos_failure(self):
+        """SearchQuery.in_all_repos() gracefully handles engine failure."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.search.query import SearchQuery
+
+        engine = MagicMock()
+        engine.list_repos.side_effect = RuntimeError("connection failed")
+
+        sq = SearchQuery("auth").in_all_repos(engine)
+        d = sq.to_dict()
+        assert d["repo_ids"] == []  # graceful degradation

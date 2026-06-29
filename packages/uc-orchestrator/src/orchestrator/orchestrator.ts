@@ -77,6 +77,8 @@ export interface TaskState {
 	resumeFromWave?: number;
 	/** Whether re-decomposition has been attempted (one-shot guard). */
 	redecomposed?: boolean;
+	/** Project scope for cross-repo search and memory sharing. */
+	projectId?: string;
 }
 
 export interface SubtaskResult {
@@ -1521,6 +1523,7 @@ export class UCOrchestrator {
 			controlState: task.controlState,
 			resumeFromWave: task.resumeFromWave,
 			redecomposed: task.redecomposed,
+			projectId: task.projectId,
 			subtasks: task.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,
@@ -1553,6 +1556,7 @@ export class UCOrchestrator {
 			error: p.error,
 			resumeFromWave: p.resumeFromWave,
 			redecomposed: p.redecomposed,
+			projectId: p.projectId,
 			subtasks: p.subtasks.map((s) => ({
 				id: s.id,
 				description: s.description,

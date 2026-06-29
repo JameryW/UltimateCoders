@@ -155,6 +155,7 @@ class Orchestrator:
                 status=SubtaskStatus.PENDING,
                 depends_on=[] if i == 0 else [],  # ponytail: no deps for simple split
                 agent_config=agent_config or {},
+                project_id=project_id,
             ))
 
         task = Task(

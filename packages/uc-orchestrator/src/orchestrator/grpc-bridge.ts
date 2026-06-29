@@ -324,7 +324,7 @@ export class GrpcBridge {
 					taskId: task.id,
 					status: task.status,
 					description: task.description,
-					projectId: "",
+					projectId: task.projectId ?? "",
 					subtasks: task.subtasks.map((st) => ({
 						id: st.id,
 						description: st.description,
@@ -478,7 +478,7 @@ export class GrpcBridge {
 		repoIds?: string[],
 		languages?: string[],
 		pathPatterns?: string[],
-	): Promise<Array<{ filePath: string; snippet: string; score: number }>> {
+	): Promise<Array<{ repoId: string; filePath: string; snippet: string; score: number }>> {
 		return this.withReconnect(async () => {
 			const resp = await this.engineClient.search(
 				create(SearchRequestSchema, {
@@ -489,6 +489,7 @@ export class GrpcBridge {
 				}),
 			);
 			return resp.items.map((item) => ({
+				repoId: item.repoId,
 				filePath: item.filePath,
 				snippet: item.contentSnippet,
 				score: item.score,

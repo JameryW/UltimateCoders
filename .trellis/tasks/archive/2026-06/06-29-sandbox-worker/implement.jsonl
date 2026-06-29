@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Agent capability and profile conventions"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "Worker service gRPC spec for registration/heartbeat"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Local worker bridge patterns"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Event pipeline conventions for subtask events"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Logging patterns for worker events"}
