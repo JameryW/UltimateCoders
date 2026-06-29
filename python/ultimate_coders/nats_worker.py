@@ -309,8 +309,11 @@ class NatsWorker:
         self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._snapshot_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._running = False
-        # Event-driven dispatch: set when a subtask completes/fails, wakes _execute_subtasks
-        self._dispatch_event: asyncio.Event = asyncio.Event()
+        # Event-driven dispatch: set when a subtask completes/fails, wakes _execute_subtasks.
+        # ponytail: constructed lazily in start() — asyncio.Event() binds a loop at
+        # construction on Python 3.9, which raises RuntimeError if NatsWorker() is
+        # instantiated outside a running loop (e.g. in tests). 3.10+ defers binding.
+        self._dispatch_event: asyncio.Event | None = None
         # Remote worker discovery via heartbeat
         self._known_remote_workers: dict[str, dict[str, Any]] = {}
         self._cleanup_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -325,6 +328,10 @@ class NatsWorker:
         Mode "default": subscribe to uc.task.submit + uc.task.event + uc.dashboard.>
         Mode "worker": subscribe to uc.subtask.execute (queue group) only
         """
+        # Bind the dispatch event here (inside a running loop) for Py3.9 safety.
+        if self._dispatch_event is None:
+            self._dispatch_event = asyncio.Event()
+
         logger.info(
             "Starting NatsWorker (consumer_id=%s, nats_url=%s, mode=%s)",
             self._consumer_id,
