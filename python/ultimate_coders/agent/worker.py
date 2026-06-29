@@ -484,7 +484,10 @@ class Worker:
             # Auto-inject cross-repo search context (when engine is available)
             search_block = self._build_search_context(subtask)
             if search_block:
-                context_block = f"{context_block}\n\n{search_block}" if context_block else search_block
+                if context_block:
+                    context_block = f"{context_block}\n\n{search_block}"
+                else:
+                    context_block = search_block
 
             # Acquire workspace if this subtask modifies files
             workspace_handle = None

@@ -1071,6 +1071,7 @@ class NatsWorker:
             "dispatch_mode": subtask.dispatch_mode.value,
             "required_capabilities": subtask.required_capabilities,
             "agent_config": subtask.agent_config,
+            "project_id": subtask.project_id,
         }).encode()
 
         await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)

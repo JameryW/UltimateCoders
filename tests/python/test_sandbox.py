@@ -1465,3 +1465,82 @@ class TestNewTemplates:
         st = Subtask(required_capabilities=["docs"])
         result = w._resolve_agent_config(st)
         assert "append_system_prompt" in result
+
+
+class TestCrossRepoSearchAndMemorySharing:
+    """Tests for cross-repo search context injection and memory sharing."""
+
+    def test_subtask_has_project_id(self):
+        """Subtask dataclass includes project_id field."""
+        st = Subtask(id="s1", parent_id="t1", description="fix auth", project_id="my-project")
+        assert st.project_id == "my-project"
+
+    def test_subtask_project_id_default_empty(self):
+        """project_id defaults to empty string (backward compatible)."""
+        st = Subtask(id="s2", parent_id="t2", description="fix bug")
+        assert st.project_id == ""
+
+    def test_search_across_repos_no_engine(self):
+        """search_across_repos returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.search_across_repos("authentication")
+        assert result is None
+
+    def test_build_search_context_no_engine(self):
+        """_build_search_context returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        st = Subtask(id="s1", description="fix auth")
+        result = w._build_search_context(st)
+        assert result is None
+
+    def test_build_search_context_no_description(self):
+        """_build_search_context returns None for empty description."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(id="s1", description="")
+        result = w._build_search_context(st)
+        assert result is None
+
+    def test_read_shared_memory_no_engine(self):
+        """read_shared_memory returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.read_shared_memory("architecture")
+        assert result is None
+
+    def test_write_shared_memory_no_engine(self):
+        """write_shared_memory returns None when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        result = w.write_shared_memory("architecture", "Use microservices")
+        assert result is None
+
+    def test_search_query_in_all_repos(self):
+        """SearchQuery.in_all_repos() populates repo_ids from engine."""
+        from ultimate_coders.search.query import SearchQuery
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        repo1 = MagicMock()
+        repo1.repo_id = "backend"
+        repo2 = MagicMock()
+        repo2.repo_id = "frontend"
+        engine.list_repos.return_value = [repo1, repo2]
+
+        sq = SearchQuery("auth").in_all_repos(engine)
+        d = sq.to_dict()
+        assert d["repo_ids"] == ["backend", "frontend"]
+
+    def test_search_query_in_all_repos_failure(self):
+        """SearchQuery.in_all_repos() gracefully handles engine failure."""
+        from ultimate_coders.search.query import SearchQuery
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        engine.list_repos.side_effect = RuntimeError("connection failed")
+
+        sq = SearchQuery("auth").in_all_repos(engine)
+        d = sq.to_dict()
+        assert d["repo_ids"] == []  # graceful degradation

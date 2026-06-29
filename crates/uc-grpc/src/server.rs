@@ -1418,9 +1418,13 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// re-dispatched on the next call.
     #[cfg(feature = "messaging")]
     pub async fn publish_ready_subtasks(&self, task_id: &str) {
-        let ready = {
+        let (ready, project_id) = {
             let mut store = self.inner.task_store.lock().await;
             let subtasks = store.get_ready_subtasks(task_id);
+            let project_id = store
+                .get_task(task_id)
+                .map(|t| t.project_id.clone())
+                .unwrap_or_default();
 
             // Check WorkerRegistry for capability-aware dispatch:
             // Only mark as Assigned if a matching worker exists (or no capabilities required).
@@ -1442,7 +1446,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 dispatchable.push(st.clone());
             }
             drop(registry);
-            dispatchable
+            (dispatchable, project_id)
         };
 
         if ready.is_empty() {
@@ -1480,7 +1484,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     dispatch_mode: st.dispatch_mode.clone(),
                     required_capabilities: st.required_capabilities.clone(),
                     agent_config_json: None,
-                    project_id: String::new(), // ponytail: filled when Task has project_id
+                    project_id: project_id.clone(),
                 };
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
@@ -1824,13 +1828,17 @@ async fn dispatch_ready_subtasks(
     nats_client: &async_nats::Client,
     task_id: &str,
 ) {
-    let ready = {
+    let (ready, project_id) = {
         let mut store = task_store.lock().await;
         let subtasks = store.get_ready_subtasks(task_id);
+        let project_id = store
+            .get_task(task_id)
+            .map(|t| t.project_id.clone())
+            .unwrap_or_default();
         for st in &subtasks {
             store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
         }
-        subtasks
+        (subtasks, project_id)
     };
 
     for st in ready {
@@ -1863,7 +1871,7 @@ async fn dispatch_ready_subtasks(
             dispatch_mode: st.dispatch_mode.clone(),
             required_capabilities: st.required_capabilities.clone(),
             agent_config_json: None,
-            project_id: String::new(),
+            project_id: project_id.clone(),
         };
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
