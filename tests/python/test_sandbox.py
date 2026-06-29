@@ -1641,6 +1641,12 @@ class TestCrossRepoSearchAndMemorySharing:
         result = w.write_shared_memory("architecture", "Use microservices")
         assert result is None
 
+    def test_delete_shared_memory_no_engine(self):
+        """delete_shared_memory returns False when engine is unavailable."""
+        from ultimate_coders.agent.worker import Worker
+        w = Worker(engine=None)
+        assert w.delete_shared_memory("architecture") is False
+
     def test_search_query_in_all_repos(self):
         """SearchQuery.in_all_repos() populates repo_ids from engine."""
         from unittest.mock import MagicMock
@@ -1768,6 +1774,57 @@ class TestCrossRepoSearchAndSharedMemory:
         publisher.publish_memory_changed.assert_awaited_once_with(
             project_id="proj-1", key="k", action="write", source_worker="worker-A",
         )
+
+    def test_delete_shared_memory_broadcasts_via_nats(self):
+        """delete_shared_memory publishes uc.memory.changed with action='delete'."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        engine = MagicMock()  # delete_memory returns None, no exception = success
+        publisher = MagicMock()
+        publisher.publish_memory_changed = AsyncMock()
+
+        w = self._make_worker(engine=engine, nats_publisher=publisher)
+        w.worker_id = "worker-A"
+
+        async def _drive():
+            ok = w.delete_shared_memory("k", project_id="proj-1")
+            await asyncio.sleep(0)  # let the fire-and-forget task run
+            return ok
+
+        ok = asyncio.run(_drive())
+
+        assert ok is True
+        engine.delete_memory.assert_called_once_with(
+            key_scope="project", key="k", project_id="proj-1",
+        )
+        publisher.publish_memory_changed.assert_awaited_once_with(
+            project_id="proj-1", key="k", action="delete", source_worker="worker-A",
+        )
+
+    def test_delete_shared_memory_failure_skips_broadcast(self):
+        """If engine.delete_memory raises, no broadcast fires and returns False."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        engine = MagicMock()
+        engine.delete_memory.side_effect = RuntimeError("storage down")
+        publisher = MagicMock()
+        publisher.publish_memory_changed = AsyncMock()
+
+        w = self._make_worker(engine=engine, nats_publisher=publisher)
+        w.worker_id = "worker-A"
+
+        async def _drive():
+            ok = w.delete_shared_memory("k", project_id="proj-1")
+            await asyncio.sleep(0)
+            return ok
+
+        ok = asyncio.run(_drive())
+
+        assert ok is False
+        engine.delete_memory.assert_called_once()
+        publisher.publish_memory_changed.assert_not_awaited()
 
     def test_handle_memory_changed_invalidates_on_other_worker(self):
         """Receiving another Worker's broadcast invalidates the local cache."""

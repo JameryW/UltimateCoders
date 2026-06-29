@@ -1044,3 +1044,39 @@ class Worker:
             except RuntimeError:
                 pass  # ponytail: no running loop — skip broadcast, TTL converges
         return result
+
+    def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
+        """Delete project-scoped memory (shared across Workers via Gateway).
+
+        Mirrors ``write_shared_memory``: routes to ``engine.delete_memory`` and
+        broadcasts ``uc.memory.changed`` (action='delete') so other Workers
+        invalidate stale search-cache entries.
+
+        Returns:
+            True if the delete succeeded (no exception), False if the engine is
+            unavailable or the underlying call raised.
+        """
+        if self.engine is None:
+            return False
+        pid = project_id or getattr(self.current_task, "project_id", "")
+        scope = "project" if pid else "global"
+        try:
+            self.engine.delete_memory(
+                key_scope=scope, key=key, project_id=pid or None,
+            )
+        except Exception:
+            logger.warning("delete_shared_memory failed for key=%s", key, exc_info=True)
+            return False  # ponytail: nothing deleted — skip broadcast, no convergence needed
+        # Broadcast the delete so other Workers drop stale cache entries.
+        if self.nats_publisher is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self.nats_publisher.publish_memory_changed(
+                        project_id=pid, key=key,
+                        action="delete", source_worker=self.worker_id,
+                    ),
+                )
+            except RuntimeError:
+                pass  # ponytail: no running loop — skip broadcast, TTL converges
+        return True

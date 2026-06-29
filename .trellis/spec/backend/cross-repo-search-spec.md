@@ -69,9 +69,17 @@ class Worker:
         Broadcasts uc.memory.changed (action='write') for cross-Worker cache
         invalidation via NatsPublisher.publish_memory_changed."""
 
-    # NOTE: no delete_shared_memory yet. When added, it MUST broadcast
-    # publish_memory_changed(action='delete') — else other Workers' caches
-    # stay stale until TTL. Engine.delete_memory exists but is not exposed.
+    def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
+        """Delete project-scoped memory. Routes to engine.delete_memory (which
+        clears the local _search_cache). On success, broadcasts
+        uc.memory.changed (action='delete') via NatsPublisher.publish_memory_changed
+        so other Workers invalidate stale search-cache entries.
+
+        Returns True on success, False if engine is None or delete_memory raised
+        (nothing was deleted → no broadcast). Engine.delete_memory returns None
+        and raises on failure, so success = no exception. Broadcast uses
+        asyncio.get_running_loop().create_task (fire-and-forget); skipped with no
+        error when called outside a running loop (TTL still converges)."""
 ```
 
 ### Subtask.project_id
@@ -126,12 +134,13 @@ pub struct NatsSubtaskExecute {
 
 | Condition | Error / Behavior |
 |-----------|-----------------|
-| `engine is None` | All search/memory methods return `None` |
+| `engine is None` | Search/read/write methods return `None`; `delete_shared_memory` returns `False` |
 | `engine.list_repos()` fails | `in_all_repos()` leaves `repo_ids = []` (searches all) |
 | `engine.search()` fails | `_build_search_context()` returns `None` (non-fatal) |
 | `SearchResult` has no `.items` | `search_across_repos()` falls back to treating result as list |
-| `project_id` empty | `read/write_shared_memory` uses `key_scope="global"` |
-| `project_id` set | `read/write_shared_memory` uses `key_scope="project"` |
+| `project_id` empty | `read/write/delete_shared_memory` uses `key_scope="global"` |
+| `project_id` set | `read/write/delete_shared_memory` uses `key_scope="project"` |
+| `engine.delete_memory()` raises | `delete_shared_memory` returns `False`, no NATS broadcast (nothing deleted) |
 | gRPC unavailable + `fallback_mode="auto"` | Engine auto-falls back to local mode |
 
 ---
@@ -176,6 +185,7 @@ result = w.search_across_repos("auth")  # Returns None — no crash
 | `test_build_search_context_no_description` | Returns `None` for empty description |
 | `test_read_shared_memory_no_engine` | Returns `None` when `engine=None` |
 | `test_write_shared_memory_no_engine` | Returns `None` when `engine=None` |
+| `test_delete_shared_memory_no_engine` | Returns `False` when `engine=None` |
 | `test_search_query_in_all_repos` | `repo_ids` populated from `engine.list_repos()` |
 | `test_search_query_in_all_repos_failure` | `repo_ids = []` on engine failure |
 | `test_write_memory_clears_search_cache` | `_search_cache` emptied after `write_memory` |
@@ -186,6 +196,8 @@ result = w.search_across_repos("auth")  # Returns None — no crash
 | `test_build_search_context_hits_cache` | second identical search served from cache, `engine.search` still called once |
 | `test_read_shared_memory_calls_engine` | routes to `engine.read_memory` with `key_scope="project"` + `project_id` |
 | `test_write_shared_memory_broadcasts_via_nats` | `publish_memory_changed` awaited with `project_id`/`key`/`action`/`source_worker` |
+| `test_delete_shared_memory_broadcasts_via_nats` | `delete_memory` called + `publish_memory_changed` awaited with `action='delete'`; returns `True` |
+| `test_delete_shared_memory_failure_skips_broadcast` | `delete_memory` raises → returns `False`, `publish_memory_changed` NOT awaited |
 
 ---
 
