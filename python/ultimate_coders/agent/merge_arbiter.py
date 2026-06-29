@@ -38,6 +38,14 @@ from ultimate_coders.agent.conflict import ConflictResolver, ResolutionTier
 logger = logging.getLogger(__name__)
 
 
+# Repo-level git identity used when no global user config exists (e.g. CI
+# runners, fresh worker containers). ``git merge --no-edit`` creates a merge
+# commit which hard-fails without an identity on Linux — set a local
+# (repo-scoped, never global) identity so merges work out of the box.
+_ARBITER_IDENTITY_EMAIL = "uc-merge-arbiter@local"
+_ARBITER_IDENTITY_NAME = "UC Merge Arbiter"
+
+
 class MergeArbiter:
     """Git-level merge arbiter — merges subtask branches into origin/main.
 
@@ -78,6 +86,13 @@ class MergeArbiter:
         Same pattern as ``WorkspaceManager.ensure_clone``: clone if the path
         is not yet a git repo, otherwise ensure the remote URL is correct.
         Idempotent. Raises ``RuntimeError`` on clone failure.
+
+        A repo-level git identity (``user.email`` / ``user.name``) is set on
+        the local clone so ``git merge --no-edit`` can create merge commits
+        without relying on a global git config (CI runners and worker
+        containers typically have none). The config is repo-scoped and
+        overwrites any stale value, so it never touches the host's global
+        config. Failures are non-fatal (logged at debug).
         """
         if not self._remote_url:
             return  # local-only mode (should not happen — arbiter is opt-in)
@@ -102,29 +117,56 @@ class MergeArbiter:
                 "MergeArbiter.ensure_clone: cloned %s into %s",
                 self._remote_url, self._project_path,
             )
+            await self._ensure_local_identity()
             return
 
         # Repo exists — ensure origin points at the configured remote.
         cur = await self._git(["remote", "get-url", self._remote_name])
-        if cur["exit_code"] == 0 and cur["stdout"].strip() == self._remote_url:
-            return
-        if cur["exit_code"] != 0:
-            add = await self._git(
-                ["remote", "add", self._remote_name, self._remote_url]
-            )
-            if add["exit_code"] != 0:
-                logger.warning(
-                    "MergeArbiter.ensure_clone: add remote failed: %s",
-                    add["stderr"][:200],
+        if cur["exit_code"] != 0 or cur["stdout"].strip() != self._remote_url:
+            if cur["exit_code"] != 0:
+                add = await self._git(
+                    ["remote", "add", self._remote_name, self._remote_url]
                 )
-        else:
-            await self._git(
-                ["remote", "set-url", self._remote_name, self._remote_url]
+                if add["exit_code"] != 0:
+                    logger.warning(
+                        "MergeArbiter.ensure_clone: add remote failed: %s",
+                        add["stderr"][:200],
+                    )
+            else:
+                await self._git(
+                    ["remote", "set-url", self._remote_name, self._remote_url]
+                )
+            logger.info(
+                "MergeArbiter.ensure_clone: remote %s set to %s",
+                self._remote_name, self._remote_url,
             )
-        logger.info(
-            "MergeArbiter.ensure_clone: remote %s set to %s",
-            self._remote_name, self._remote_url,
-        )
+
+        # (Re)assert the repo-level identity — idempotent. A pre-existing
+        # clone (e.g. from a prior run) may still lack one.
+        await self._ensure_local_identity()
+
+    async def _ensure_local_identity(self) -> None:
+        """Set a repo-level git identity so merge commits can be authored.
+
+        Uses ``git config`` (repo-scoped by default when run inside the repo)
+        so the host's global config is never touched. Overwrites any prior
+        value, which is safe — the arbiter owns this clone. Non-fatal: a
+        failure is logged at debug and the merge will simply surface the real
+        error if identity was genuinely unavailable.
+        """
+        for key, value in (
+            ("user.email", _ARBITER_IDENTITY_EMAIL),
+            ("user.name", _ARBITER_IDENTITY_NAME),
+        ):
+            res = await self._git(
+                ["config", key, value],
+                cwd=self._project_path,
+            )
+            if res["exit_code"] != 0:
+                logger.debug(
+                    "MergeArbiter: git config %s failed (non-fatal): %s",
+                    key, res["stderr"][:200],
+                )
 
     async def arbitrate(self, subtask_branches: list[str]) -> dict[str, Any]:
         """Merge subtask branches into ``origin/<base_branch>`` and push.

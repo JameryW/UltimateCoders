@@ -26,6 +26,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Repo-level git identity used when no global user config exists (e.g. worker
+# containers, CI runners). ``release()`` runs ``git merge --no-edit`` in the
+# main clone, which creates a merge commit and hard-fails without an identity
+# on Linux whenever the merge is NOT a fast-forward. Setting a repo-scoped
+# identity (never global) after clone makes non-ff merges work out of the box.
+_WORKER_IDENTITY_EMAIL = "uc-worker@local"
+_WORKER_IDENTITY_NAME = "UC Worker"
+
 
 @dataclass
 class WorkspaceHandle:
@@ -88,6 +96,12 @@ class WorkspaceManager:
 
         When ``remote_url`` is empty this is a no-op (local-only mode, fully
         backward compatible with the legacy behaviour).
+
+        A repo-level git identity (``user.email`` / ``user.name``) is set on
+        the clone so ``release()``'s ``git merge --no-edit`` can author merge
+        commits without a global git config (worker containers typically have
+        none). Repo-scoped, overwrites stale values, never touches global
+        config. Non-fatal on failure (logged at debug).
         """
         if not self._remote_url:
             return  # local-only mode
@@ -115,25 +129,51 @@ class WorkspaceManager:
                 "ensure_clone: cloned %s into %s",
                 self._remote_url, self._project_path,
             )
+            await self._ensure_local_identity()
             return
 
         # Repo already exists — ensure origin points at the configured remote.
         cur = await self._git(["remote", "get-url", self._remote_name])
-        if cur["exit_code"] == 0 and cur["stdout"].strip() == self._remote_url:
-            logger.debug("ensure_clone: remote %s already correct", self._remote_name)
-            return
-        # Remote missing or mismatched: (re)set it.
-        if cur["exit_code"] != 0:
-            add = await self._git(
-                ["remote", "add", self._remote_name, self._remote_url]
+        if cur["exit_code"] != 0 or cur["stdout"].strip() != self._remote_url:
+            # Remote missing or mismatched: (re)set it.
+            if cur["exit_code"] != 0:
+                add = await self._git(
+                    ["remote", "add", self._remote_name, self._remote_url]
+                )
+                if add["exit_code"] != 0:
+                    logger.warning("ensure_clone: add remote failed: %s", add["stderr"][:200])
+            else:
+                await self._git(
+                    ["remote", "set-url", self._remote_name, self._remote_url]
+                )
+            logger.info("ensure_clone: remote %s set to %s", self._remote_name, self._remote_url)
+
+        # (Re)assert the repo-level identity — idempotent. A pre-existing
+        # clone may still lack one (e.g. created by an older code path).
+        await self._ensure_local_identity()
+
+    async def _ensure_local_identity(self) -> None:
+        """Set a repo-level git identity so merge commits can be authored.
+
+        Uses ``git config`` (repo-scoped by default when run inside the repo)
+        so the host's global config is never touched. Overwrites any prior
+        value, which is safe — the worker owns this clone. Non-fatal: a
+        failure is logged at debug and the merge will surface the real error
+        if identity was genuinely unavailable.
+        """
+        for key, value in (
+            ("user.email", _WORKER_IDENTITY_EMAIL),
+            ("user.name", _WORKER_IDENTITY_NAME),
+        ):
+            res = await self._git(
+                ["config", key, value],
+                cwd=self._project_path,
             )
-            if add["exit_code"] != 0:
-                logger.warning("ensure_clone: add remote failed: %s", add["stderr"][:200])
-        else:
-            await self._git(
-                ["remote", "set-url", self._remote_name, self._remote_url]
-            )
-        logger.info("ensure_clone: remote %s set to %s", self._remote_name, self._remote_url)
+            if res["exit_code"] != 0:
+                logger.debug(
+                    "ensure_clone: git config %s failed (non-fatal): %s",
+                    key, res["stderr"][:200],
+                )
 
     async def acquire(self, subtask_id: str) -> WorkspaceHandle | None:
         """Create an isolated workspace for a subtask.
