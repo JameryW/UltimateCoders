@@ -1775,6 +1775,46 @@ class TestCrossRepoSearchAndSharedMemory:
             project_id="proj-1", key="k", action="write", source_worker="worker-A",
         )
 
+    def test_broadcast_task_kept_alive_until_complete(self):
+        """The fire-and-forget broadcast task is held in _bg_tasks (asyncio
+        only weakly refs tasks — an unreferenced create_task can be GC'd before
+        it runs) and removed once it completes."""
+        import asyncio
+        from unittest.mock import MagicMock
+
+        engine = MagicMock()
+        engine.write_memory.return_value = MagicMock(content="data")
+
+        publisher = MagicMock()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_publish(**kwargs):
+            started.set()
+            await release.wait()  # hold the task open so we can observe it
+
+        publisher.publish_memory_changed = slow_publish
+
+        w = self._make_worker(engine=engine, nats_publisher=publisher)
+        w.worker_id = "worker-A"
+
+        async def _drive():
+            w.write_shared_memory("k", "v", project_id="proj-1")
+            await started.wait()  # task has started and is now suspended
+            # While the broadcast is in flight, it must be referenced.
+            assert len(w._bg_tasks) == 1, "broadcast task not held in _bg_tasks"
+            release.set()  # let it finish
+            # Yield until the done callback has discarded it.
+            for _ in range(10):
+                await asyncio.sleep(0)
+                if not w._bg_tasks:
+                    break
+            return len(w._bg_tasks)
+
+        remaining = asyncio.run(_drive())
+
+        assert remaining == 0, "broadcast task not discarded after completion"
+
     def test_write_shared_memory_failure_skips_broadcast(self):
         """If engine.write_memory raises, returns None and no broadcast fires."""
         import asyncio

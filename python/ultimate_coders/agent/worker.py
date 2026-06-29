@@ -211,6 +211,11 @@ class Worker:
         from ultimate_coders.agent.search_cache import get_default_cache
         self._search_cache = get_default_cache()
 
+        # Strong refs for fire-and-forget broadcast tasks. asyncio only holds
+        # tasks weakly, so an unreferenced create_task() can be GC'd before it
+        # completes (CPython documented behavior). done callback self-removes.
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
+
     def _derive_capabilities(self) -> list[str]:
         """Derive worker capabilities from SandboxConfig tool/mcp settings.
 
@@ -1038,17 +1043,8 @@ class Worker:
         # write_shared_memory is sync, so fire-and-forget onto the running loop
         # when one exists; if called outside a loop the broadcast is skipped
         # (the next cache miss / TTL expiry still converges).
-        if result is not None and self.nats_publisher is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self.nats_publisher.publish_memory_changed(
-                        project_id=pid, key=key,
-                        action="write", source_worker=self.worker_id,
-                    ),
-                )
-            except RuntimeError:
-                pass  # ponytail: no running loop — skip broadcast, TTL converges
+        if result is not None:
+            self._broadcast_memory_changed(pid, key, "write")
         return result
 
     def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
@@ -1074,15 +1070,30 @@ class Worker:
             logger.warning("delete_shared_memory failed for key=%s", key, exc_info=True)
             return False  # ponytail: nothing deleted — skip broadcast, no convergence needed
         # Broadcast the delete so other Workers drop stale cache entries.
-        if self.nats_publisher is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self.nats_publisher.publish_memory_changed(
-                        project_id=pid, key=key,
-                        action="delete", source_worker=self.worker_id,
-                    ),
-                )
-            except RuntimeError:
-                pass  # ponytail: no running loop — skip broadcast, TTL converges
+        self._broadcast_memory_changed(pid, key, "delete")
         return True
+
+    def _broadcast_memory_changed(
+        self, project_id: str, key: str, action: str,
+    ) -> None:
+        """Fire-and-forget a uc.memory.changed broadcast onto the running loop.
+
+        Best-effort: skipped (no error) when called outside a running loop —
+        the next cache miss / TTL expiry still converges. The scheduled task is
+        kept in ``self._bg_tasks`` so asyncio's weak ref doesn't GC it before it
+        completes (CPython documented trap for unreferenced create_task()).
+        """
+        if self.nats_publisher is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # ponytail: no running loop — skip, TTL converges
+        task = loop.create_task(
+            self.nats_publisher.publish_memory_changed(
+                project_id=project_id, key=key,
+                action=action, source_worker=self.worker_id,
+            ),
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
