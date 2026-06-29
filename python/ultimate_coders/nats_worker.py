@@ -1562,6 +1562,13 @@ class NatsWorker:
             logger.debug("Failed to parse memory changed message", exc_info=True)
             return
 
+        # ponytail: a valid-but-non-dict payload (e.g. "123", "null", "[1,2]")
+        # parses fine but has no .get() — guard before field extraction so the
+        # subscriber never raises on a malformed broadcast.
+        if not isinstance(data, dict):
+            logger.debug("Memory changed payload is not a JSON object: %r", data)
+            return
+
         project_id = data.get("project_id", "")
         source_worker = data.get("source_worker", "")
 

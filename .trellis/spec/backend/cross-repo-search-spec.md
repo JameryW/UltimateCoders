@@ -142,6 +142,8 @@ pub struct NatsSubtaskExecute {
 | `project_id` set | `read/write/delete_shared_memory` uses `key_scope="project"` |
 | `engine.delete_memory()` raises | `delete_shared_memory` returns `False`, no NATS broadcast (nothing deleted) |
 | `engine.write_memory()` raises | `write_shared_memory` returns `None`, no NATS broadcast (nothing written) — non-fatal, mirrors delete path |
+| `_handle_memory_changed` payload not JSON | logged at debug, returns, no invalidation |
+| `_handle_memory_changed` payload valid JSON but non-object (e.g. `123`, `null`) | logged at debug, returns, no invalidation — `isinstance(data, dict)` guard prevents `AttributeError` on `.get()` |
 | gRPC unavailable + `fallback_mode="auto"` | Engine auto-falls back to local mode |
 
 ---
@@ -200,6 +202,10 @@ result = w.search_across_repos("auth")  # Returns None — no crash
 | `test_write_shared_memory_failure_skips_broadcast` | `write_memory` raises → returns `None`, `publish_memory_changed` NOT awaited |
 | `test_delete_shared_memory_broadcasts_via_nats` | `delete_memory` called + `publish_memory_changed` awaited with `action='delete'`; returns `True` |
 | `test_delete_shared_memory_failure_skips_broadcast` | `delete_memory` raises → returns `False`, `publish_memory_changed` NOT awaited |
+| `test_handle_memory_changed_invalidates_on_other_worker` | other Worker's broadcast → `cache.invalidate()` called |
+| `test_handle_memory_changed_skips_own_broadcast` | own `source_worker` → no invalidation |
+| `test_handle_memory_changed_bad_payload_no_crash` | malformed JSON → no raise, no invalidation |
+| `test_handle_memory_changed_non_dict_payload_no_crash` | valid JSON non-object (`123`) → no raise, no invalidation |
 
 ---
 

@@ -1920,3 +1920,25 @@ class TestCrossRepoSearchAndSharedMemory:
         asyncio.run(nw._handle_memory_changed(msg))  # must not raise
 
         cache.invalidate.assert_not_called()
+
+    def test_handle_memory_changed_non_dict_payload_no_crash(self):
+        """A valid-JSON-but-non-object payload (e.g. a bare number) must not
+        raise — json.loads succeeds but the result has no .get()."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        worker = MagicMock()
+        worker.worker_id = "worker-A"
+        cache = MagicMock()
+        worker._search_cache = cache
+        nw._worker = worker
+
+        msg = SimpleNamespace(data=b"123")  # parses to int — no .get()
+
+        asyncio.run(nw._handle_memory_changed(msg))  # must not raise
+
+        cache.invalidate.assert_not_called()
