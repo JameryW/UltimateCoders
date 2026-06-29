@@ -22,7 +22,7 @@ from ultimate_coders.agent.sandbox import (
     parse_decomposition_output,
     truncate_str,
 )
-from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, SubtaskResult, Task
+from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, Task
 
 # ── SandboxConfig tests ─────────────────────────────────────────
 
@@ -1287,6 +1287,7 @@ class TestWorkerRetry:
     async def test_retry_on_failure(self):
         """Failed subtask retries up to MAX_RETRIES times."""
         from unittest.mock import AsyncMock, patch
+
         from ultimate_coders.agent.worker import Worker
 
         w = Worker()
@@ -1311,6 +1312,7 @@ class TestWorkerRetry:
     async def test_retry_succeeds_on_second_attempt(self):
         """Subtask succeeds on retry."""
         from unittest.mock import AsyncMock, patch
+
         from ultimate_coders.agent.worker import Worker
 
         w = Worker()
@@ -1336,6 +1338,7 @@ class TestWorkerRetry:
     async def test_no_retry_on_success(self):
         """Successful subtask is not retried."""
         from unittest.mock import AsyncMock, patch
+
         from ultimate_coders.agent.worker import Worker
 
         w = Worker()
@@ -1361,7 +1364,8 @@ class TestWorkerProgress:
     @pytest.mark.asyncio
     async def test_progress_events_emitted(self):
         """Progress events are emitted at key phases."""
-        from unittest.mock import AsyncMock, patch, call
+        from unittest.mock import patch
+
         from ultimate_coders.agent.worker import Worker
 
         w = Worker()

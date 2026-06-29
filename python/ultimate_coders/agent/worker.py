@@ -586,7 +586,11 @@ class Worker:
                         if attempt < self.MAX_RETRIES - 1:
                             subtask.retry_count += 1
                             result.retry_count = subtask.retry_count
-                            delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else self.RETRY_DELAYS[-1]
+                            delay = (
+                                self.RETRY_DELAYS[attempt]
+                                if attempt < len(self.RETRY_DELAYS)
+                                else self.RETRY_DELAYS[-1]
+                            )
                             failure_data["retry"] = True
                             failure_data["retry_attempt"] = attempt + 1
                             failure_data["retry_delay"] = delay
@@ -634,7 +638,11 @@ class Worker:
                     # Retry on exception too, if attempts remain
                     if attempt < self.MAX_RETRIES - 1:
                         subtask.retry_count += 1
-                        delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else self.RETRY_DELAYS[-1]
+                        delay = (
+                            self.RETRY_DELAYS[attempt]
+                            if attempt < len(self.RETRY_DELAYS)
+                            else self.RETRY_DELAYS[-1]
+                        )
                         await self._publish_event(
                             "subtask_retry",
                             task_id=subtask.parent_id,
