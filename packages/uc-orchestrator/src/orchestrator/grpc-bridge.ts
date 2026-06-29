@@ -324,7 +324,7 @@ export class GrpcBridge {
 					taskId: task.id,
 					status: task.status,
 					description: task.description,
-					projectId: "",
+					projectId: task.projectId ?? "",
 					subtasks: task.subtasks.map((st) => ({
 						id: st.id,
 						description: st.description,
@@ -459,7 +459,7 @@ export class GrpcBridge {
 						contentType: e.contentType ?? "text",
 						sourceAgent,
 						taskId: "",
-						projectId: "",
+						projectId: task.projectId ?? "",
 						importance: 0,
 						tags: [],
 					})),
@@ -633,7 +633,7 @@ export class GrpcBridge {
 			taskId: resp.taskId,
 			description: "",
 			status: resp.status,
-			projectId: "",
+			projectId: task.projectId ?? "",
 			subtasks: resp.subtasks.map((st) => ({
 				id: st.id,
 				description: st.description,

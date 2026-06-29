@@ -1467,6 +1467,73 @@ class TestNewTemplates:
         assert "append_system_prompt" in result
 
 
+class TestProjectIdPropagation:
+    """Integration tests for project_id propagation through dispatch → search → prompt."""
+
+    @pytest.mark.asyncio
+    async def test_subtask_project_id_reaches_orchestrator(self):
+        """Orchestrator passes project_id to created Subtask objects."""
+        from ultimate_coders.agent.orchestrator import Orchestrator
+        orch = Orchestrator()
+        task = await orch.submit_task("fix auth\nadd tests", project_id="my-project")
+        assert task.project_id == "my-project"
+        for st in task.subtasks:
+            assert st.project_id == "my-project"
+
+    @pytest.mark.asyncio
+    async def test_search_context_injection_with_mock_engine(self):
+        """_build_search_context injects search results when engine returns data."""
+        from unittest.mock import MagicMock
+        from ultimate_coders.agent.worker import Worker
+
+        engine = MagicMock()
+        item = MagicMock()
+        item.repo_id = "backend"
+        item.file_path = "src/auth.py"
+        item.content_snippet = "def authenticate(user, pwd):"
+        result = MagicMock()
+        result.items = [item]
+        engine.search.return_value = result
+        repo = MagicMock()
+        repo.repo_id = "backend"
+        engine.list_repos.return_value = [repo]
+
+        w = Worker(engine=engine)
+        st = Subtask(id="s1", description="fix auth", project_id="backend")
+        ctx = w._build_search_context(st)
+        assert ctx is not None
+        assert "backend" in ctx
+        assert "src/auth.py" in ctx
+
+    @pytest.mark.asyncio
+    async def test_search_context_enriches_subtask(self):
+        """_build_search_context produces formatted context with search results."""
+        from unittest.mock import MagicMock
+        from ultimate_coders.agent.worker import Worker
+
+        engine = MagicMock()
+        item = MagicMock()
+        item.repo_id = "backend"
+        item.file_path = "src/auth.py"
+        item.content_snippet = "def authenticate():"
+        result = MagicMock()
+        result.items = [item]
+        engine.search.return_value = result
+        repo = MagicMock()
+        repo.repo_id = "backend"
+        engine.list_repos.return_value = [repo]
+
+        w = Worker(engine=engine)
+        st = Subtask(id="s1", parent_id="t1", description="fix auth", project_id="backend")
+
+        # Verify search context is generated
+        ctx = w._build_search_context(st)
+        assert ctx is not None
+        assert "backend" in ctx
+        assert "src/auth.py" in ctx
+        assert "authenticate" in ctx
+
+
 class TestCrossRepoSearchAndMemorySharing:
     """Tests for cross-repo search context injection and memory sharing."""
 

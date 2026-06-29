@@ -77,6 +77,8 @@ export interface TaskState {
 	resumeFromWave?: number;
 	/** Whether re-decomposition has been attempted (one-shot guard). */
 	redecomposed?: boolean;
+	/** Project scope for cross-repo search and memory sharing. */
+	projectId?: string;
 }
 
 export interface SubtaskResult {

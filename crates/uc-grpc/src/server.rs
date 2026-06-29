@@ -1483,7 +1483,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     retry_count: st.dispatch_retry_count,
                     dispatch_mode: st.dispatch_mode.clone(),
                     required_capabilities: st.required_capabilities.clone(),
-                    agent_config_json: None,
+                    agent_config_json: st.agent_config_json.clone(),
                     project_id: project_id.clone(),
                 };
                 match serde_json::to_vec(&execute) {

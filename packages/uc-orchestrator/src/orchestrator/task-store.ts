@@ -21,6 +21,8 @@ export interface PersistedTask {
 	resumeFromWave?: number;
 	/** Whether re-decomposition has been attempted (one-shot guard, persisted). */
 	redecomposed?: boolean;
+	/** Project scope for cross-repo search and memory sharing. */
+	projectId?: string;
 	subtasks: Array<{
 		id: string;
 		description: string;
