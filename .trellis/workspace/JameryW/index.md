@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 70
+- **Total Sessions**: 71
 - **Last Active**: 2026-06-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~526 | Active |
+| `journal-2.md` | ~561 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 71 | 2026-06-29 | Sandbox worker retry, progress, profiles | `03141773`, `ee77acc1`, `5bd1b624` | `feat/sandbox-worker-retry-progress-profiles` |
 | 70 | 2026-06-29 | Thread agent_config through NATS/gRPC dispatch pipeline | `b05f928e` | `main` |
 | 69 | 2026-06-28 | Sync Rust SandboxConfig with Python agent customization | `4ae40848` | `main` |
 | 68 | 2026-06-28 | Enhance sandbox worker: skill/MCP/tool customization | `e18f2b36` | `main` |

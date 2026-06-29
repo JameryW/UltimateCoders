@@ -524,3 +524,38 @@ Threaded agent_config through the full distributed dispatch pipeline. Python _di
 ### Next Steps
 
 - None - task complete
+
+
+## Session 71: Sandbox worker retry, progress, profiles
+
+**Date**: 2026-06-29
+**Task**: Sandbox worker retry, progress, profiles
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Enhanced sandbox worker: auto-retry (3x + backoff), subtask_progress events (preparing→executing→validating→finalizing), expanded AGENT_PROFILES (8) and SUBTASK_TEMPLATES (7), fixed TiKV integration test flakiness
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `03141773` | (see git log) |
+| `ee77acc1` | (see git log) |
+| `5bd1b624` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
