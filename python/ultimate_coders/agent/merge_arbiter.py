@@ -22,8 +22,9 @@ Conflict handling:
 
 ponytail: git-level merge is authoritative; the in-memory
 ResultAggregator (``aggregator.py``) is a separate concern and stays
-as-is for its own callers. Phase 3 will demote
-DistributedConflictDetector to an advisory scheduling hint.
+as-is for its own callers. ``DistributedConflictDetector`` is demoted
+to an advisory scheduling hint (in-process only, never a distributed
+lock).
 """
 
 from __future__ import annotations

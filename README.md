@@ -323,6 +323,43 @@ docker compose -f docker/docker-compose.yml down -v
 docker compose -f docker/docker-compose.gateway.yml up -d
 ```
 
+### Distributed Worker + External Git Deployment
+
+Workers can run containerized and sync code from an **external git remote**
+(GitHub/GitLab), making the remote the unified source of truth across hosts.
+This is **opt-in**: without `UC_REPO_URL` the legacy local-only workspace
+mode is used.
+
+**Configuration** (set on the `worker` / `nats-worker` services):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UC_REPO_URL` | _(empty)_ | External git remote URL. Empty = local-only workspace. |
+| `UC_REPO_BASE_BRANCH` | `main` | Base branch workers branch off; the arbiter merges into it. |
+| `UC_GIT_TOKEN` | _(empty)_ | PAT, injected via `GIT_ASKPASS` (never on the URL/args). |
+| `UC_GIT_FETCH_ON_ACQUIRE` | `true` | `git fetch` before each worktree acquire. |
+| `UC_GIT_PUSH_ON_RELEASE` | `false` | Push the `uc/subtask/<id>` branch on release. |
+| `UC_GIT_MERGE_ARBITRATE` | _(env)_ | Orchestrator `MergeArbiter` merges subtask branches into `origin/main` and pushes. |
+
+**Flow:**
+
+1. Each worker clones `UC_REPO_URL` into a persistent volume on first start.
+2. Each subtask runs in a git worktree branched off `origin/<base_branch>`.
+3. On release, the worker pushes `uc/subtask/<id>` (workers never touch `main`).
+4. The Orchestrator's `MergeArbiter` merges subtask branches into `origin/main`
+   and pushes `main` (the only writer of `main`).
+
+**Conflict model:** `DistributedConflictDetector` is an advisory in-process
+scheduling hint, NOT a distributed lock. The authoritative cross-worker
+conflict point is git merge-time (`MergeArbiter`).
+
+**Cross-host scaling:** `docker compose --scale worker=N` scales workers on
+the **same host** only (the gateway shells out to the local `docker.sock`).
+True cross-host scaling requires docker swarm / a remote docker context /
+per-host gateways (future work). The external-git design is already
+cross-host-safe at the data level: each host runs its own compose and clones
+from the same remote, and merge arbitration reconciles concurrent edits.
+
 ## CI
 
 Two independent CI workflows run on PRs targeting `main`:

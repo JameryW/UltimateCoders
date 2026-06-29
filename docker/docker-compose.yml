@@ -130,6 +130,11 @@ services:
     # gateway can invoke `docker compose -f <file> up -d --scale worker=N`.
     # `../` resolves to the repo root (the compose context), giving the
     # gateway read access to docker/docker-compose.yml.
+    #
+    # SCOPE: the socket only controls the LOCAL docker daemon, so
+    # ScaleWorkers scales workers on THIS host only — NOT across hosts.
+    # True cross-host scaling requires docker swarm mode, a remote docker
+    # context, or a per-host gateway (future work).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../:/app/docker-compose-root:ro
@@ -180,14 +185,16 @@ services:
   # Can be scaled: docker compose --profile worker up --scale worker=3
   # Use: docker compose --profile worker up
   #
-  # Git sync (Phase 1 MVP): when UC_REPO_URL is set, the worker clones
+  # Git sync (Phase 1): when UC_REPO_URL is set, the worker clones
   # the external repo into /workspace on first start (persisted across
   # restarts via the worker_workspace volume), fetches before each
   # worktree acquire, and optionally pushes the subtask branch on
   # release. With `--scale worker=N`, all replicas on the same host
   # share the same named volume (one clone) — this is fine because git
   # worktree isolates each subtask off the shared clone. Cross-host
-  # scaling (Phase 3) gives each host its own volume + clone.
+  # deployment gives each host its own volume + clone (each host runs
+  # its own docker compose); true cross-host scaling/orchestration is
+  # future work (docker swarm / k8s).
   worker:
     build:
       context: ..
