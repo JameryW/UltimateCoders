@@ -77,6 +77,13 @@ push 回中心仓库，由中心仓库统一管理 + 合并仲裁。使 PR #192 
 - 阶段 2：合并仲裁——Python aggregator/Orchestrator 拉 subtask 分支，用 ConflictResolver merge 进 main 并 push。
 - 阶段 3：ScaleWorkers 分布式端到端验证 + DistributedConflictDetector 降级为 advisory hint + 文档。
 
+## Status (all phases done, PR #193)
+
+- ✅ 阶段 1：worker 容器化 + 外部 git clone/push 基础（WorkspaceManager 远程同步）
+- ✅ 阶段 2：git 级合并仲裁（MergeArbiter，fetch subtask 分支 merge 进 origin/main，冲突用 ConflictResolver，push main）
+- ✅ 阶段 3：DistributedConflictDetector 降级为 advisory hint（docstring 诚实化）+ 跨主机 scale 边界文档化 + README/CLAUDE.md 部署文档
+- CI 全绿（10/10）
+
 ## Technical Notes
 
 - `python/ultimate_coders/agent/workspace.py` — WorkspaceManager git worktree（纯本地，需扩展远程同步）
