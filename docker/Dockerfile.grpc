@@ -17,6 +17,14 @@ RUN apt-get update && apt-get install -y \
     libssl3 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Install docker CLI + compose plugin so the gateway can shell out to
+# `docker compose up -d --no-deps --scale worker=N worker` to scale the
+# worker cluster (requires /var/run/docker.sock mounted at runtime).
+# We copy the static binaries from the official docker:27-cli image rather
+# than adding Docker's APT repo — smaller surface, no dockerd in the image.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker/compose-bin:v2.29.2 /docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+
 COPY --from=builder /app/target/release/uc-grpc-server /usr/local/bin/uc-grpc-server
 
 ENV RUST_LOG=info

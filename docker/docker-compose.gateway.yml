@@ -24,6 +24,21 @@ services:
       dockerfile: docker/Dockerfile.grpc
     ports:
       - "50051:50051"  # gRPC + gRPC-Web
+    # ── ScaleWorkers support (opt-in) ──────────────────────────────────
+    # This standalone gateway profile does NOT mount /var/run/docker.sock by
+    # default (it targets storage-external / production-style deployments
+    # where host-root-equivalent access is a security concern — see PRD Out
+    # of Scope). Without the sock mount the ScaleWorkers "scale" action
+    # returns success=false; the registry-only "deregister" action still works.
+    #
+    # To enable scale for a dev/internal standalone gateway, mount the sock
+    # and compose dir explicitly, e.g. via a compose override file:
+    #   # docker-compose.gateway.override.yml
+    #   services:
+    #     gateway:
+    #       volumes:
+    #         - /var/run/docker.sock:/var/run/docker.sock
+    #         - ../:/app/docker-compose-root:ro
     environment:
       # Storage addresses — empty by default → in-memory fallback.
       # Override via env / .env to point at external backends.
@@ -37,4 +52,8 @@ services:
       UC_GRPC_ADDR: "${UC_GRPC_ADDR:-[::]:50051}"
       UC_CORS_MODE: "${UC_CORS_MODE:-dev}"
       UC_CORS_ORIGINS: "${UC_CORS_ORIGINS:-}"
+      # ScaleWorkers: compose file + project name for `docker compose` shell-out.
+      # Only effective when docker.sock + compose dir are mounted (see above).
+      UC_COMPOSE_FILE: "${UC_COMPOSE_FILE:-/app/docker-compose-root/docker/docker-compose.yml}"
+      UC_COMPOSE_PROJECT: "${UC_COMPOSE_PROJECT:-docker}"
     restart: unless-stopped

@@ -121,7 +121,7 @@ The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>
 
 The OMP extension also registers LLM-callable tools:
 - `uc_task` — Task lifecycle: submit/cancel/pause/resume/status
-- `uc_worker` — Worker status awareness: list workers, check load/capacity/heartbeat
+- `uc_worker` — Worker management: list workers / check load/capacity/heartbeat, `scale` the cluster to a target count (docker compose), or `deregister` a stale worker from the registry
 - `uc_memory_read`, `uc_memory_write`, `uc_memory_search` — Shared layered memory
 
 The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.

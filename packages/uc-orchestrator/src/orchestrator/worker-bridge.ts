@@ -2,7 +2,8 @@
  * Worker Bridge — registers uc_worker tool with omp ExtensionAPI.
  *
  * Lets the LLM agent query worker status (online/offline, load,
- * capabilities, heartbeat freshness) for smarter scheduling decisions.
+ * capabilities, heartbeat) for smarter scheduling decisions, and
+ * dynamically scale the worker cluster or force-deregister stale workers.
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -13,23 +14,86 @@ import { GrpcBridge } from "./grpc-bridge";
 
 export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 	const workerSchema = pi.zod.object({
-		action: pi.zod.enum(["list", "status"]).describe("Worker action: list all workers, or check a specific worker's status"),
+		action: pi.zod.enum(["list", "status", "scale", "deregister"]).describe(
+			"Worker action: list all workers, check a specific worker's status, " +
+			"scale the worker cluster to a target count, or force-deregister a stale worker"
+		),
 		// ponytail: worker_id supports prefix matching — e.g. "nats" matches "nats_worker"
-		worker_id: pi.zod.string().optional().describe("Worker ID (required for status action; prefix matching supported)"),
+		worker_id: pi.zod.string().optional().describe(
+			"Worker ID (required for status and deregister; prefix matching supported for status)"
+		),
+		target_count: pi.zod.number().int().nonnegative().optional().describe(
+			"Desired total worker count (required for scale action)"
+		),
 	});
 
 	pi.registerTool({
 		name: "uc_worker",
 		label: "UC Worker",
 		description:
-			"Query UltimateCoders worker status. " +
+			"Manage UltimateCoders workers. " +
 			"List all connected workers with load/capabilities/heartbeat, " +
-			"or check a specific worker's availability (worker_id supports prefix matching). " +
-			"Use this before submitting tasks to gauge cluster capacity.",
+			"check a specific worker's availability (worker_id supports prefix matching), " +
+			"scale the worker cluster to a target count (docker compose; workers self-register/deregister), " +
+			"or force-deregister a stale/ghost worker from the registry. " +
+			"Use list/status before submitting tasks to gauge cluster capacity.",
 		parameters: workerSchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
-			const p = params as { action: string; worker_id?: string };
+			const p = params as { action: string; worker_id?: string; target_count?: number };
 			try {
+				if (p.action === "scale") {
+					if (p.target_count === undefined) {
+						return {
+							content: [{ type: "text" as const, text: "scale action requires target_count" }],
+							useless: true,
+						};
+					}
+					const target = p.target_count;
+					const result = await bridge.scaleWorkers("scale", { targetCount: target });
+					if (!result.success) {
+						return {
+							content: [{
+								type: "text" as const,
+								text: `Scale failed: ${result.error ?? result.message ?? "unknown error"}`,
+							}],
+							isError: true,
+						};
+					}
+					return {
+						content: [{
+							type: "text" as const,
+							text: `Scaled workers → target ${target} (${result.message}; actual_count=${result.actualCount}). ` +
+								"Workers self-register on start and self-deregister on SIGTERM — use 'list' to verify.",
+						}],
+					};
+				}
+
+				if (p.action === "deregister") {
+					if (!p.worker_id) {
+						return {
+							content: [{ type: "text" as const, text: "deregister action requires worker_id" }],
+							useless: true,
+						};
+					}
+					const wid = p.worker_id;
+					const result = await bridge.scaleWorkers("deregister", { workerId: wid });
+					if (!result.success) {
+						return {
+							content: [{
+								type: "text" as const,
+								text: `Deregister failed: ${result.error ?? result.message ?? "unknown error"}`,
+							}],
+							isError: true,
+						};
+					}
+					return {
+						content: [{
+							type: "text" as const,
+							text: `Deregistered worker ${wid} (actual_count=${result.actualCount}). ${result.message}`.trim(),
+						}],
+					};
+				}
+
 				const result = await bridge.listWorkers();
 
 				if (!result.available) {

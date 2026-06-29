@@ -123,6 +123,16 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+    # ── ScaleWorkers support ──────────────────────────────────────────
+    # Mounting /var/run/docker.sock grants the gateway full host-root
+    # equivalence (dev/internal only — harden with a socket proxy before
+    # exposing to untrusted networks). The compose dir is mounted so the
+    # gateway can invoke `docker compose -f <file> up -d --scale worker=N`.
+    # `../` resolves to the repo root (the compose context), giving the
+    # gateway read access to docker/docker-compose.yml.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../:/app/docker-compose-root:ro
     environment:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
@@ -130,6 +140,9 @@ services:
       UC_NATS_URL: "nats://nats:4222"
       UC_GRPC_ADDR: "[::]:50051"
       UC_CORS_MODE: "dev"
+      # ScaleWorkers: compose file + project name for `docker compose` shell-out.
+      UC_COMPOSE_FILE: "/app/docker-compose-root/docker/docker-compose.yml"
+      UC_COMPOSE_PROJECT: "docker"
 
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.
