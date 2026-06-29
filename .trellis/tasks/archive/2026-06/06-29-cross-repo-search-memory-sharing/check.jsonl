@@ -1,0 +1,2 @@
+{"action": "check", "file": "python/ultimate_coders/engine.py", "description": "Verify list_repos() works in both local and grpc modes", "detail": "Local mode calls PyEngine.list_repos(), gRPC mode calls via _try_grpc_with_fallback"}
+{"action": "check", "file": "python/ultimate_coders/nats_worker.py", "description": "Verify Worker mode Engine creation uses gRPC when endpoint configured", "detail": "Check _init_components() creates Engine with mode='grpc' when self._grpc_endpoint is set"}
