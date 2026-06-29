@@ -67,6 +67,10 @@ cargo run -p uc-grpc-server  # Start gRPC gateway server
 docker compose --profile gateway up   # Start gateway (Rust gRPC server)
 docker compose --profile worker up --scale worker=3  # Start 3 workers
 docker compose --profile app up       # Start all services (gateway + orchestrator + workers)
+
+# Gateway-only standalone (storage external, no TiKV/Qdrant/PG/NATS started)
+# Inject external storage addresses via env/.env; empty = in-memory fallback
+docker compose -f docker/docker-compose.gateway.yml up
 ```
 
 ## Deployment Architecture
