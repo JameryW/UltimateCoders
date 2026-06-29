@@ -1275,3 +1275,193 @@ class TestAgentConfigPipeline:
         # Explicit config preserved, review template NOT applied
         assert agent_cfg == {"tools": ["default", "Edit"]}
         assert "disallowed_tools" not in agent_cfg
+
+
+# ── Retry & Progress tests ──────────────────────────────────────
+
+
+class TestWorkerRetry:
+    """Tests for subtask retry logic."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_failure(self):
+        """Failed subtask retries up to MAX_RETRIES times."""
+        from unittest.mock import AsyncMock, patch
+
+        from ultimate_coders.agent.worker import Worker
+
+        w = Worker()
+
+        call_count = 0
+        async def mock_execute(prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return AgentOutput(summary="fail", success=False)
+
+        with patch.object(w._sandbox_manager, "execute", side_effect=mock_execute):
+            with patch.object(w, "_publish_event", new_callable=AsyncMock):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    subtask = Subtask(id="s1", parent_id="t1", description="fix bug")
+                    result = await w.execute_subtask(subtask)
+
+        assert result.success is False
+        assert call_count == 3  # MAX_RETRIES
+        assert result.retry_count == 2  # retried twice
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_on_second_attempt(self):
+        """Subtask succeeds on retry."""
+        from unittest.mock import AsyncMock, patch
+
+        from ultimate_coders.agent.worker import Worker
+
+        w = Worker()
+        call_count = 0
+        async def mock_execute(prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return AgentOutput(summary="fail", success=False)
+            return AgentOutput(summary="done", success=True)
+
+        with patch.object(w._sandbox_manager, "execute", side_effect=mock_execute):
+            with patch.object(w, "_publish_event", new_callable=AsyncMock):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    subtask = Subtask(id="s2", parent_id="t1", description="fix bug")
+                    result = await w.execute_subtask(subtask)
+
+        assert result.success is True
+        assert call_count == 2
+        assert result.retry_count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_success(self):
+        """Successful subtask is not retried."""
+        from unittest.mock import AsyncMock, patch
+
+        from ultimate_coders.agent.worker import Worker
+
+        w = Worker()
+        call_count = 0
+        async def mock_execute(prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return AgentOutput(summary="done", success=True)
+
+        with patch.object(w._sandbox_manager, "execute", side_effect=mock_execute):
+            with patch.object(w, "_publish_event", new_callable=AsyncMock):
+                subtask = Subtask(id="s3", parent_id="t1", description="fix bug")
+                result = await w.execute_subtask(subtask)
+
+        assert result.success is True
+        assert call_count == 1
+        assert result.retry_count == 0
+
+
+class TestWorkerProgress:
+    """Tests for subtask progress events."""
+
+    @pytest.mark.asyncio
+    async def test_progress_events_emitted(self):
+        """Progress events are emitted at key phases."""
+        from unittest.mock import patch
+
+        from ultimate_coders.agent.worker import Worker
+
+        w = Worker()
+        events = []
+
+        async def mock_publish(event_type, **kwargs):
+            events.append((event_type, kwargs.get("data", {})))
+
+        async def mock_execute(prompt, **kwargs):
+            return AgentOutput(summary="done", success=True)
+
+        with patch.object(w._sandbox_manager, "execute", side_effect=mock_execute):
+            with patch.object(w, "_publish_event", side_effect=mock_publish):
+                subtask = Subtask(id="s4", parent_id="t1", description="fix bug")
+                await w.execute_subtask(subtask)
+
+        progress_events = [(e, d) for e, d in events if e == "subtask_progress"]
+        phases = [d.get("phase") for _, d in progress_events]
+        assert "preparing" in phases
+        assert "executing" in phases
+        assert "validating" in phases
+        assert "finalizing" in phases
+
+
+class TestNewTemplates:
+    """Tests for expanded AGENT_PROFILES and SUBTASK_TEMPLATES."""
+
+    def test_fix_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Fix the null pointer exception in auth")
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+        assert "minimal" in result["append_system_prompt"].lower()
+
+    def test_test_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Write unit tests for the parser")
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+
+    def test_refactor_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Refactor the database connection pool")
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+        assert "tools" in result
+        assert "mcp__codegraph__*" in result["tools"]
+
+    def test_deploy_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Deploy to staging environment")
+        result = w._resolve_agent_config(st)
+        assert "disallowed_tools" in result
+
+    def test_docs_template(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(description="Document the API endpoints")
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+
+    def test_fix_capability_profile(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(required_capabilities=["fix"])
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+
+    def test_test_capability_profile(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(required_capabilities=["test"])
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
+
+    def test_refactor_capability_profile(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(required_capabilities=["refactor"])
+        result = w._resolve_agent_config(st)
+        assert "tools" in result
+
+    def test_deploy_capability_profile(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(required_capabilities=["deploy"])
+        result = w._resolve_agent_config(st)
+        assert "disallowed_tools" in result
+
+    def test_docs_capability_profile(self):
+        from ultimate_coders.agent.worker import Worker
+        w = Worker()
+        st = Subtask(required_capabilities=["docs"])
+        result = w._resolve_agent_config(st)
+        assert "append_system_prompt" in result
