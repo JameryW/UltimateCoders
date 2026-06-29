@@ -274,3 +274,42 @@ class TestSyncAsyncParity:
         result2 = engine.read_memory("global", "parity_test2")
         assert result2 is not None
         assert result2.content == "async written"
+
+
+# ── search cache invalidation ──────────────────────────────────
+
+class TestSearchCacheInvalidation:
+    """Memory/index mutations must drop the stale search cache.
+
+    Without this, a write_memory / index_repo followed by search() would
+    return pre-mutation results for up to the TTL window.
+    """
+
+    def _prime_cache(self, engine: Engine) -> None:
+        """Inject a fake cached entry so we can observe invalidation."""
+        import time
+
+        engine._search_cache["stale"] = ("pretend-result", time.monotonic())
+
+    def test_write_memory_clears_search_cache(self, engine):
+        self._prime_cache(engine)
+        assert engine._search_cache  # primed
+        engine.write_memory("global", "k", "v")
+        assert engine._search_cache == {}
+
+    def test_delete_memory_clears_search_cache(self, engine):
+        engine.write_memory("global", "to_delete", "data")  # clears cache
+        self._prime_cache(engine)
+        engine.delete_memory("global", "to_delete")
+        assert engine._search_cache == {}
+
+    def test_remove_index_clears_search_cache(self, engine):
+        self._prime_cache(engine)
+        engine.remove_index("nonexistent-repo")
+        assert engine._search_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_write_memory_async_clears_search_cache(self, engine):
+        self._prime_cache(engine)
+        await engine.write_memory_async("global", "k", "v")
+        assert engine._search_cache == {}

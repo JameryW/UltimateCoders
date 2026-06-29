@@ -211,6 +211,11 @@ class Worker:
         from ultimate_coders.agent.search_cache import get_default_cache
         self._search_cache = get_default_cache()
 
+        # Strong refs for fire-and-forget broadcast tasks. asyncio only holds
+        # tasks weakly, so an unreferenced create_task() can be GC'd before it
+        # completes (CPython documented behavior). done callback self-removes.
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
+
     def _derive_capabilities(self) -> list[str]:
         """Derive worker capabilities from SandboxConfig tool/mcp settings.
 
@@ -1017,29 +1022,78 @@ class Worker:
             tags: Tags for categorization.
 
         Returns:
-            MemoryEntry or None.
+            MemoryEntry or None — None if the engine is unavailable or the
+            underlying write raised (mirrors delete_shared_memory: a failure is
+            non-fatal and skips the NATS broadcast since nothing was written).
         """
         if self.engine is None:
             return None
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
-        result = self.engine.write_memory(
-            key_scope=scope, key=key, content=content,
-            content_type=content_type, source_agent=f"worker:{self.worker_id}",
-            importance=importance, tags=tags, project_id=pid or None,
-        )
-        # Broadcast memory change via NATS for cross-Worker cache invalidation
-        if result is not None and self.nats_publisher is not None:
-            try:
-                payload = json.dumps({
-                    "project_id": pid, "key": key,
-                    "action": "write", "source_worker": self.worker_id,
-                })
-                asyncio.get_event_loop().create_task(
-                    self.nats_publisher._nc.publish(
-                        "uc.memory.changed", payload.encode(),
-                    ),
-                )
-            except Exception:
-                pass  # ponytail: broadcast failure is non-fatal
+        try:
+            result = self.engine.write_memory(
+                key_scope=scope, key=key, content=content,
+                content_type=content_type, source_agent=f"worker:{self.worker_id}",
+                importance=importance, tags=tags, project_id=pid or None,
+            )
+        except Exception:
+            logger.warning("write_shared_memory failed for key=%s", key, exc_info=True)
+            return None  # ponytail: nothing written — skip broadcast, non-fatal
+        # Broadcast memory change via NATS for cross-Worker cache invalidation.
+        # write_shared_memory is sync, so fire-and-forget onto the running loop
+        # when one exists; if called outside a loop the broadcast is skipped
+        # (the next cache miss / TTL expiry still converges).
+        if result is not None:
+            self._broadcast_memory_changed(pid, key, "write")
         return result
+
+    def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
+        """Delete project-scoped memory (shared across Workers via Gateway).
+
+        Mirrors ``write_shared_memory``: routes to ``engine.delete_memory`` and
+        broadcasts ``uc.memory.changed`` (action='delete') so other Workers
+        invalidate stale search-cache entries.
+
+        Returns:
+            True if the delete succeeded (no exception), False if the engine is
+            unavailable or the underlying call raised.
+        """
+        if self.engine is None:
+            return False
+        pid = project_id or getattr(self.current_task, "project_id", "")
+        scope = "project" if pid else "global"
+        try:
+            self.engine.delete_memory(
+                key_scope=scope, key=key, project_id=pid or None,
+            )
+        except Exception:
+            logger.warning("delete_shared_memory failed for key=%s", key, exc_info=True)
+            return False  # ponytail: nothing deleted — skip broadcast, no convergence needed
+        # Broadcast the delete so other Workers drop stale cache entries.
+        self._broadcast_memory_changed(pid, key, "delete")
+        return True
+
+    def _broadcast_memory_changed(
+        self, project_id: str, key: str, action: str,
+    ) -> None:
+        """Fire-and-forget a uc.memory.changed broadcast onto the running loop.
+
+        Best-effort: skipped (no error) when called outside a running loop —
+        the next cache miss / TTL expiry still converges. The scheduled task is
+        kept in ``self._bg_tasks`` so asyncio's weak ref doesn't GC it before it
+        completes (CPython documented trap for unreferenced create_task()).
+        """
+        if self.nats_publisher is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # ponytail: no running loop — skip, TTL converges
+        task = loop.create_task(
+            self.nats_publisher.publish_memory_changed(
+                project_id=project_id, key=key,
+                action=action, source_worker=self.worker_id,
+            ),
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)

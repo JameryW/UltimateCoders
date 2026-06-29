@@ -316,7 +316,9 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const repo = r.repoId ?? r.repo_id ?? "?";
 								const path = r.filePath ?? r.file_path ?? "?";
 								const score = r.score ? ` (${r.score.toFixed(2)})` : "";
-								return `  [${repo}] ${path}${score}`;
+								const snippet = (r.snippet ?? "").replace(/\s+/g, " ").trim();
+								const snip = snippet ? `\n      ${snippet.slice(0, 120)}` : "";
+								return `  [${repo}] ${path}${score}${snip}`;
 							},
 						);
 						ctx.ui.notify(

@@ -474,7 +474,7 @@ export class GrpcBridge {
 	async searchCode(
 		query: string,
 		modes: string[] = ["hybrid"],
-		maxResults = 5,
+		maxResults = 10,
 		repoIds?: string[],
 		languages?: string[],
 		pathPatterns?: string[],

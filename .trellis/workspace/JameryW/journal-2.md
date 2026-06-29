@@ -630,3 +630,47 @@ Deep integration: agent_config_json propagation, projectId persistence round-tri
 ### Next Steps
 
 - None - task complete
+
+## Session 74: Cross-repo search + shared-memory refinement (PR #190 polish)
+
+**Date**: 2026-06-29
+**Task**: cross-repo-search-perf-tui
+**Branch**: `feat/cross-repo-search-memory-refinement`
+
+### Summary
+
+6-loop automated refinement pass on PR #190. Fixed a Python 3.9 CI regression, exposed `delete_shared_memory`, made write/delete failure semantics symmetric, hardened the receive-side handler against non-dict JSON, and fixed a fire-and-forget task GC trap. Every fix has a test that verified the pre-fix bug.
+
+### Main Changes
+
+- **Py3.9 fix** — `NatsWorker._dispatch_event` lazy-constructed in `start()`; `asyncio.Event()` binds a loop at ctor on ≤3.9 and raised `RuntimeError` in bare-`NatsWorker()` tests. `event-pipeline-spec.md` example corrected.
+- **`delete_shared_memory`** — newly exposed; routes to `engine.delete_memory`, broadcasts `uc.memory.changed` (action='delete'). Receive side already invalidates on any action.
+- **Write/delete symmetry** — `write_shared_memory` now catches engine exceptions → returns None → skips broadcast (was letting them bubble, could crash a subtask).
+- **Receive-side guard** — `_handle_memory_changed` adds `isinstance(data, dict)`; valid-JSON-non-object payloads (`b"123"`) crashed on `data.get()`.
+- **Task GC guard** — broadcast tasks held in `Worker._bg_tasks` with `done_callback`; extracted `_broadcast_memory_changed()` helper. asyncio only weakly refs tasks → unreferenced `create_task()` could be GC'd before running.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `669fc1fd` | fix(worker): construct dispatch Event lazily for Python 3.9 |
+| `ba32428d` | docs(spec): asyncio primitives must be lazy-constructed for Python 3.9 |
+| `f25c4b79` | feat(worker): expose delete_shared_memory with NATS delete broadcast |
+| `5ed8e6f9` | fix(worker): make write_shared_memory non-fatal + skip broadcast on failure |
+| `f7302a89` | fix(worker): guard _handle_memory_changed against non-dict JSON payload |
+| `2d63e0f5` | fix(worker): hold fire-and-forget broadcast tasks to prevent GC |
+| `8a10a525` | test(worker): construct asyncio.Event inside the loop for Py3.9 |
+
+### Testing
+
+- [OK] 184 passed (test_sandbox.py + test_async_engine.py), no regressions
+- [OK] CI: ruff / Python 3.9 / Python 3.12 / dashboard all pass; bun test queued (runner scarcity)
+
+### Status
+
+[OK] **Completed** — PR #190 contract-complete: read/write/delete symmetric, send/receive robust, concurrency-safe. Mergeable. Spec + PR body updated.
+
+### Next Steps
+
+- Merge decision is the user's (4 gates green; bun queue is known infra constraint)
+- Follow-up (separate PR): `nats_worker.py` `_handle_submit` `create_task(_execute_subtasks)` unreferenced — same GC trap, pre-existing, out of scope here
