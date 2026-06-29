@@ -710,12 +710,53 @@ class NatsWorker:
         except Exception:
             logger.debug("CodegraphClient unavailable")
 
-        # Orchestrator with NATS publisher + LLM + Codegraph
+        # Phase 2: git-level merge arbiter. Constructed when UC_REPO_URL is
+        # set AND UC_GIT_MERGE_ARBITRATE is enabled (defaults to enabled when
+        # UC_REPO_URL is set, disabled otherwise). The arbiter fetches
+        # worker-pushed uc/subtask/<id> branches and merges them into
+        # origin/main when a task completes.
+        merge_arbiter = None
+        repo_url = os.environ.get("UC_REPO_URL", "")
+        arbitrate_raw = os.environ.get("UC_GIT_MERGE_ARBITRATE", "")
+        if repo_url:
+            arbitrate_enabled = arbitrate_raw.lower() not in ("0", "false", "no")
+        else:
+            arbitrate_enabled = arbitrate_raw.lower() in ("1", "true", "yes")
+        if arbitrate_enabled and repo_url:
+            try:
+                from ultimate_coders.agent.merge_arbiter import MergeArbiter
+
+                repo_base_branch = os.environ.get("UC_REPO_BASE_BRANCH", "main")
+                merge_arbiter = MergeArbiter(
+                    project_path=self._project_path or os.getcwd(),
+                    remote_url=repo_url,
+                    base_branch=repo_base_branch,
+                    llm_client=llm_client,
+                )
+                logger.info(
+                    "MergeArbiter initialized (remote=%s, base=%s)",
+                    repo_url, repo_base_branch,
+                )
+                # Ensure the clone exists for arbitration. Non-fatal: if
+                # clone fails, arbitration will be skipped at runtime.
+                try:
+                    await merge_arbiter.ensure_clone()
+                except Exception as clone_err:
+                    logger.warning(
+                        "MergeArbiter.ensure_clone failed, arbitration "
+                        "disabled: %s", clone_err,
+                    )
+                    merge_arbiter = None
+            except Exception:
+                logger.debug("MergeArbiter unavailable, no merge arbitration")
+
+        # Orchestrator with NATS publisher + LLM + Codegraph + MergeArbiter
         self._orchestrator = Orchestrator(
             engine=self._engine,
             nats_publisher=self._publisher,
             llm_client=llm_client,
             codegraph_client=codegraph_client,
+            merge_arbiter=merge_arbiter,
         )
 
         # Worker — sandbox-only, always
@@ -730,10 +771,38 @@ class NatsWorker:
         workspace_manager = None
         try:
             from ultimate_coders.agent.workspace import WorkspaceManager
+
+            repo_url = os.environ.get("UC_REPO_URL", "")
+            repo_base_branch = os.environ.get("UC_REPO_BASE_BRANCH", "main")
+            fetch_on_acquire = os.environ.get(
+                "UC_GIT_FETCH_ON_ACQUIRE", ""
+            ).lower() in ("1", "true", "yes")
+            push_on_release = os.environ.get(
+                "UC_GIT_PUSH_ON_RELEASE", ""
+            ).lower() in ("1", "true", "yes")
+
             workspace_manager = WorkspaceManager(
                 project_path=self._project_path or os.getcwd(),
+                base_branch=repo_base_branch,
+                remote_url=repo_url,
+                fetch_on_acquire=fetch_on_acquire,
+                push_on_release=push_on_release,
             )
-            logger.info("WorkspaceManager initialized")
+            logger.info(
+                "WorkspaceManager initialized (remote=%s, fetch=%s, push=%s)",
+                "on" if repo_url else "off",
+                fetch_on_acquire, push_on_release,
+            )
+            # Ensure the remote clone exists (no-op in local-only mode).
+            # Non-fatal: if clone fails, continue in local/fallback mode so
+            # the worker can still serve subtasks against an existing repo.
+            try:
+                await workspace_manager.ensure_clone()
+            except Exception as clone_err:
+                logger.warning(
+                    "ensure_clone failed, falling back to local mode: %s",
+                    clone_err,
+                )
         except Exception:
             logger.debug("WorkspaceManager unavailable, no workspace isolation")
 

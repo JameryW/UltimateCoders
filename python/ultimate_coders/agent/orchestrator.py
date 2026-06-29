@@ -19,6 +19,7 @@ NOT provided (was in full Orchestrator, now handled by OMP extension):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -85,11 +86,20 @@ class Orchestrator:
         nats_publisher: Any = None,
         llm_client: Any = None,
         codegraph_client: Any = None,
+        merge_arbiter: Any = None,
     ) -> None:
         self.engine = engine
         self.nats_publisher = nats_publisher
         self.llm_client = llm_client
         self.codegraph_client = codegraph_client
+        # Phase 2: git-level merge arbitration. Opt-in — only set when an
+        # external remote is configured (UC_REPO_URL). When None, the
+        # Orchestrator behaves exactly as before (local-only, no remote sync).
+        self.merge_arbiter = merge_arbiter
+        # Hold strong refs to fire-and-forget arbitration tasks so the event
+        # loop's weak references don't GC them mid-flight (CPython asyncio
+        # warns/finalizes unreferenced tasks). Cleared as each completes.
+        self._pending_arbitration: set[asyncio.Task[Any]] = set()
         self.config = OrchestratorConfig()
         self.conflict_detector = ConflictDetector()
         self.event_emitter: TaskEventEmitter | Any = TaskEventEmitter()
@@ -204,10 +214,75 @@ class Orchestrator:
         """Update task status based on subtask states."""
         if all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
             task.status = TaskStatus.COMPLETED
+            # Phase 2: fire git-level merge arbitration when all subtasks
+            # complete. Opt-in — only when a MergeArbiter is configured.
+            # Non-fatal: arbitration failures are logged, never crash task
+            # completion. Fire-and-forget via asyncio.create_task so the
+            # sync _update_task_status path is not blocked.
+            if self.merge_arbiter is not None:
+                self._schedule_arbitration(task)
         elif any(st.status == SubtaskStatus.FAILED for st in task.subtasks):
             done_statuses = (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED)
             if all(st.status in done_statuses for st in task.subtasks):
                 task.status = TaskStatus.FAILED
+
+    def _schedule_arbitration(self, task: Task) -> None:
+        """Schedule merge arbitration as a background task (non-blocking).
+
+        Collects the ``uc/subtask/<id>`` branch names from the task's
+        subtasks (branch naming matches ``WorkspaceManager.acquire``:
+        ``uc/subtask/{subtask_id[:12]}``).
+
+        The created task is stored in ``self._pending_arbitration`` (a strong
+        ref) so CPython's event loop cannot garbage-collect it before it
+        completes. The coroutine removes itself from the set on exit.
+        """
+        branches = [
+            f"uc/subtask/{st.id[:12]}" for st in task.subtasks
+        ]
+        try:
+            arb_task = asyncio.create_task(
+                self._arbitrate_task(task.id, branches)
+            )
+        except RuntimeError:
+            # No running event loop — cannot schedule. Log and skip.
+            logger.warning(
+                "Cannot schedule merge arbitration for task %s "
+                "(no running event loop)", task.id,
+            )
+            return
+        # Hold a strong reference so the task is not GC'd mid-flight.
+        self._pending_arbitration.add(arb_task)
+        arb_task.add_done_callback(self._pending_arbitration.discard)
+
+    async def _arbitrate_task(
+        self, task_id: str, branches: list[str],
+    ) -> None:
+        """Run merge arbitration for a completed task (non-fatal).
+
+        Wrapped in try/except so arbitration failures never propagate to
+        the task-completion path.
+        """
+        if self.merge_arbiter is None:
+            return
+        try:
+            logger.info(
+                "Starting merge arbitration for task %s (%d branches)",
+                task_id, len(branches),
+            )
+            result = await self.merge_arbiter.arbitrate(branches)
+            logger.info(
+                "Merge arbitration for task %s: status=%s, merged=%d, "
+                "conflicts=%d, push=%s",
+                task_id, result.get("status"),
+                len(result.get("merged_branches", [])),
+                len(result.get("conflict_branches", [])),
+                result.get("push_status"),
+            )
+        except Exception:
+            logger.exception(
+                "Merge arbitration failed for task %s (non-fatal)", task_id,
+            )
 
     # ── Task queries ───────────────────────────────────────────
 
