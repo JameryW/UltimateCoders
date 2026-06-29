@@ -594,3 +594,39 @@ Completed cross-repo code retrieval and memory sharing: Worker gRPC Engine routi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 73: Cross-repo search deep integration
+
+**Date**: 2026-06-29
+**Task**: Cross-repo search deep integration
+**Branch**: `feat/sandbox-worker-retry-progress-profiles`
+
+### Summary
+
+Deep integration: agent_config_json propagation, projectId persistence round-trip, Engine MCP Server, Orchestrator project_id, 3 integration tests, spec updates
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db81fa39` | (see git log) |
+| `4b4df769` | (see git log) |
+| `d742ef2e` | (see git log) |
+| `748f2733` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
