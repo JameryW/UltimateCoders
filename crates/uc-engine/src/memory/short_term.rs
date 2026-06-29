@@ -46,10 +46,7 @@ impl ShortTermMemory {
                 let mut probe_ok = false;
                 for attempt in 0..3 {
                     let probe_key = format!("__uc_probe_{}", uuid::Uuid::new_v4());
-                    match client_arc
-                        .put(probe_key.clone(), b"probe".to_vec())
-                        .await
-                    {
+                    match client_arc.put(probe_key.clone(), b"probe".to_vec()).await {
                         Ok(_) => {
                             let _ = client_arc.delete(probe_key).await;
                             probe_ok = true;
