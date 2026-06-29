@@ -217,7 +217,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── /uc command ─────────────────────────────────────────────
 
-	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "help"];
+	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "search", "help"];
 
 	pi.registerCommand("uc", {
 		description: "UltimateCoders task orchestration",
@@ -300,7 +300,35 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					return;
 				}
-				default:
+				case "search": {
+						if (!rest) {
+							ctx.ui.notify("Usage: /uc search <query>", "error");
+							return;
+						}
+						try {
+							const results = await bridge.searchCode(rest);
+							if (!results || results.length === 0) {
+								ctx.ui.notify("No results found.", "info");
+								return;
+							}
+							const lines = results.slice(0, 20).map(
+								(r: any) => {
+									const repo = r.repoId ?? r.repo_id ?? "?";
+									const path = r.filePath ?? r.file_path ?? "?";
+									const score = r.score ? ` (${r.score.toFixed(2)})` : "";
+									return `  [${repo}] ${path}${score}`;
+								},
+							);
+							ctx.ui.notify(
+								[`Found ${results.length} result(s):`, ...lines].join("\n"),
+								"info",
+							);
+						} catch (e) {
+							ctx.ui.notify(`Search failed: ${e}`, "error");
+						}
+						return;
+					}
+					default:
 					ctx.ui.notify(
 						[
 							"UC Orchestrator — distributed AI coding orchestration",

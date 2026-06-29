@@ -1536,6 +1536,61 @@ class TestProjectIdPropagation:
         assert "authenticate" in ctx
 
 
+class TestSearchCache:
+    """Tests for WorkerLocalCache LRU + TTL search caching."""
+
+    def test_cache_miss_returns_none(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        assert cache.get_search("nonexistent") is None
+
+    def test_cache_put_and_get(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        cache.put_search("key1", ["result1"])
+        assert cache.get_search("key1") == ["result1"]
+
+    def test_cache_key_deterministic(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        key2 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        assert key1 == key2
+
+    def test_cache_key_different_queries(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        key1 = WorkerLocalCache.search_key("auth", ["backend"], ["hybrid"], 10)
+        key2 = WorkerLocalCache.search_key("search", ["backend"], ["hybrid"], 10)
+        assert key1 != key2
+
+    def test_repo_cache(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        assert cache.get_repos() is None
+        cache.put_repos([{"repo_id": "backend"}])
+        result = cache.get_repos()
+        assert result is not None
+        assert len(result) == 1
+
+    def test_cache_invalidate(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache()
+        cache.put_search("key1", "val1")
+        cache.put_search("key2", "val2")
+        cache.invalidate()
+        assert cache.get_search("key1") is None
+        assert cache.get_search("key2") is None
+
+    def test_cache_lru_eviction(self):
+        from ultimate_coders.agent.search_cache import WorkerLocalCache
+        cache = WorkerLocalCache(max_search_entries=3)
+        cache.put_search("a", 1)
+        cache.put_search("b", 2)
+        cache.put_search("c", 3)
+        cache.put_search("d", 4)  # evicts "a"
+        assert cache.get_search("a") is None
+        assert cache.get_search("d") == 4
+
+
 class TestCrossRepoSearchAndMemorySharing:
     """Tests for cross-repo search context injection and memory sharing."""
 

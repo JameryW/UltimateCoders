@@ -207,6 +207,10 @@ class Worker:
         # so stale_worker_cleanup can detect local worker stalls
         self._last_heartbeat_at: datetime = datetime.now(timezone.utc)
 
+        # Search cache — LRU + TTL to reduce gRPC round-trips
+        from ultimate_coders.agent.search_cache import get_default_cache
+        self._search_cache = get_default_cache()
+
     def _derive_capabilities(self) -> list[str]:
         """Derive worker capabilities from SandboxConfig tool/mcp settings.
 
@@ -920,12 +924,21 @@ class Worker:
             return None
         try:
             from ultimate_coders.search.query import SearchQuery
+            from ultimate_coders.agent.search_cache import WorkerLocalCache
             sq = SearchQuery(subtask.description).with_modes(["hybrid"]).limit(10)
             if subtask.project_id:
                 sq.in_repos([subtask.project_id])
             else:
                 sq.in_all_repos(self.engine)
-            result = self.engine.search(sq)
+            d = sq.to_dict()
+            cache_key = WorkerLocalCache.search_key(
+                d["query"], d["repo_ids"], d["modes"], d["max_results"],
+            )
+            result = self._search_cache.get_search(cache_key)
+            if result is None:
+                result = self.engine.search(sq)
+                if result is not None:
+                    self._search_cache.put_search(cache_key, result)
             items = getattr(result, "items", result) if result else []
             if not items:
                 return None
@@ -1010,8 +1023,23 @@ class Worker:
             return None
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
-        return self.engine.write_memory(
+        result = self.engine.write_memory(
             key_scope=scope, key=key, content=content,
             content_type=content_type, source_agent=f"worker:{self.worker_id}",
             importance=importance, tags=tags, project_id=pid or None,
         )
+        # Broadcast memory change via NATS for cross-Worker cache invalidation
+        if result is not None and self.nats_publisher is not None:
+            try:
+                payload = json.dumps({
+                    "project_id": pid, "key": key,
+                    "action": "write", "source_worker": self.worker_id,
+                })
+                asyncio.get_event_loop().create_task(
+                    self.nats_publisher._nc.publish(
+                        "uc.memory.changed", payload.encode(),
+                    ),
+                )
+            except Exception:
+                pass  # ponytail: broadcast failure is non-fatal
+        return result
