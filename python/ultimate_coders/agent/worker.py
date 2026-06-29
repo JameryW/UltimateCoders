@@ -263,6 +263,41 @@ class Worker:
         "code": {
             "tools": ["default"],
         },
+        "test": {
+            "tools": ["default"],
+            "append_system_prompt": (
+                "Focus on writing and running tests. Verify existing"
+                " behavior, add coverage for edge cases."
+            ),
+        },
+        "fix": {
+            "tools": ["default"],
+            "append_system_prompt": (
+                "Fix the bug with the minimal diff. Do not refactor"
+                " unrelated code."
+            ),
+        },
+        "refactor": {
+            "tools": ["default", "mcp__codegraph__*"],
+            "append_system_prompt": (
+                "Refactor preserving existing behavior. Use codegraph"
+                " to understand callers before changing APIs."
+            ),
+        },
+        "deploy": {
+            "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
+            "append_system_prompt": (
+                "Deploy/check mode — run deployment commands and"
+                " verify status only, do not modify source files."
+            ),
+        },
+        "docs": {
+            "tools": ["default"],
+            "append_system_prompt": (
+                "Focus on writing documentation. Update README,"
+                " docstrings, and inline comments."
+            ),
+        },
     }
 
     SUBTASK_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -275,6 +310,29 @@ class Worker:
         },
         "search": {
             "tools": ["default", "mcp__codegraph__*"],
+        },
+        "test": {
+            "append_system_prompt": (
+                "Write and run tests for the described behavior."
+            ),
+        },
+        "fix": {
+            "append_system_prompt": (
+                "Fix the described bug with minimal changes."
+            ),
+        },
+        "refactor": {
+            "tools": ["default", "mcp__codegraph__*"],
+            "append_system_prompt": (
+                "Refactor the described code preserving behavior."
+            ),
+        },
+        "deploy": {
+            "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
+            "append_system_prompt": "Deploy/check mode only.",
+        },
+        "docs": {
+            "append_system_prompt": "Write documentation for the described topic.",
         },
     }
 
@@ -319,6 +377,16 @@ class Worker:
             return Worker.SUBTASK_TEMPLATES.get("review")
         if any(kw in desc_lower for kw in ("search", "find", "locate", "grep")):
             return Worker.SUBTASK_TEMPLATES.get("search")
+        if any(kw in desc_lower for kw in ("test", "spec", "coverage", "unit test")):
+            return Worker.SUBTASK_TEMPLATES.get("test")
+        if any(kw in desc_lower for kw in ("fix", "bug", "patch", "repair", "resolve error")):
+            return Worker.SUBTASK_TEMPLATES.get("fix")
+        if any(kw in desc_lower for kw in ("refactor", "restructure", "reorganize", "clean up")):
+            return Worker.SUBTASK_TEMPLATES.get("refactor")
+        if any(kw in desc_lower for kw in ("deploy", "release", "publish", "ship")):
+            return Worker.SUBTASK_TEMPLATES.get("deploy")
+        if any(kw in desc_lower for kw in ("document", "docs", "readme", "docstring", "comment")):
+            return Worker.SUBTASK_TEMPLATES.get("docs")
         return None
 
     def _dynamic_capacity(self, subtask: Subtask | None = None) -> int:
@@ -365,162 +433,250 @@ class Worker:
                 event_type, task_id=task_id, subtask_id=subtask_id, data=data,
             )
 
+    MAX_RETRIES: int = 3
+    RETRY_DELAYS: list[float] = [2.0, 4.0]  # delays before retry 1, 2
+
     async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
         """Execute a subtask via sandbox agent.
 
-        Includes workspace isolation, context injection, and checkpoint support:
+        Includes workspace isolation, context injection, checkpoint support,
+        and automatic retry with backoff on failure:
         - Acquires a workspace (git worktree) for file-modifying subtasks
         - Injects completed dependency context into the subtask prompt
         - Saves intermediate results as checkpoints for resume
         - Broadcasts file change events for distributed state sync
+        - Retries up to MAX_RETRIES times with backoff on failure
         """
         self.current_task = subtask
         self._active_count += 1
         subtask.status = SubtaskStatus.IN_PROGRESS
 
-        # Check for existing checkpoint — skip if already completed
-        checkpoint = self._load_checkpoint(subtask.id)
-        if checkpoint is not None and checkpoint.get("success"):
-            logger.info(
-                "Subtask %s has completed checkpoint, skipping execution",
-                subtask.id[:8],
-            )
-            self.current_task = None
-            self._active_count = max(0, self._active_count - 1)
-            # Restore full SubtaskResult from checkpoint
-            from ultimate_coders.agent.types import ChangeType, FileChange
-            mod_files = [
-                FileChange(
-                    file_path=f.get("file_path", ""),
-                    change_type=ChangeType(f.get("change_type", "modified")),
-                )
-                for f in (checkpoint.get("modified_files") or [])
-            ]
-            return SubtaskResult(
-                subtask_id=subtask.id,
-                worker_id=checkpoint.get("worker_id", self.worker_id),
-                summary=checkpoint.get("summary", "Resumed from checkpoint"),
-                success=True,
-                modified_files=mod_files,
-                recent_tool_calls=checkpoint.get("tool_calls", []),
-                stderr_tail=checkpoint.get("stderr_tail", ""),
-            )
-
-        # Inject context from completed dependencies
-        context_block = self._context_injector.build_context(subtask.depends_on)
-
-        # Acquire workspace if this subtask modifies files
-        workspace_handle = None
-        if self._workspace_manager and subtask.file_constraints:
-            workspace_handle = await self._workspace_manager.acquire(subtask.id)
-            if workspace_handle:
-                logger.info(
-                    "Subtask %s allocated workspace %s",
-                    subtask.id[:8], workspace_handle.workspace_id,
-                )
-
-        await self._publish_event(
-            "subtask_started",
-            task_id=subtask.parent_id,
-            subtask_id=subtask.id,
-            data={"description": subtask.description, "worker_id": self.worker_id},
-        )
-
         try:
-            timeout_secs = subtask.timeout_seconds or 600
-            try:
-                result = await asyncio.wait_for(
-                    self._execute_in_sandbox(subtask, context_block, workspace_handle),
-                    timeout=timeout_secs,
+            # Check for existing checkpoint — skip if already completed
+            checkpoint = self._load_checkpoint(subtask.id)
+            if checkpoint is not None and checkpoint.get("success"):
+                logger.info(
+                    "Subtask %s has completed checkpoint, skipping execution",
+                    subtask.id[:8],
                 )
-            except asyncio.TimeoutError:
-                result = SubtaskResult(
+                # Restore full SubtaskResult from checkpoint
+                from ultimate_coders.agent.types import ChangeType, FileChange
+                mod_files = [
+                    FileChange(
+                        file_path=f.get("file_path", ""),
+                        change_type=ChangeType(f.get("change_type", "modified")),
+                    )
+                    for f in (checkpoint.get("modified_files") or [])
+                ]
+                return SubtaskResult(
                     subtask_id=subtask.id,
-                    worker_id=self.worker_id,
-                    summary=f"Subtask timed out after {timeout_secs}s",
-                    success=False,
+                    worker_id=checkpoint.get("worker_id", self.worker_id),
+                    summary=checkpoint.get("summary", "Resumed from checkpoint"),
+                    success=True,
+                    modified_files=mod_files,
+                    recent_tool_calls=checkpoint.get("tool_calls", []),
+                    stderr_tail=checkpoint.get("stderr_tail", ""),
                 )
 
-            # Save checkpoint for resume
-            self._save_checkpoint(subtask.id, result)
+            # Inject context from completed dependencies
+            context_block = self._context_injector.build_context(subtask.depends_on)
 
-            # Record result in context injector for dependent subtasks
-            self._context_injector.add_result(
-                subtask_id=subtask.id,
-                summary=result.summary,
-                modified_files=[f.file_path for f in (result.modified_files or [])],
-                success=result.success,
-            )
-
-            # Broadcast file change events for distributed state sync
-            if result.success and result.modified_files:
-                await self._broadcast_file_changes(subtask, result)
-
-            # Release workspace (merge if successful)
-            if workspace_handle:
-                merge_result = await self._workspace_manager.release(
-                    workspace_handle, merge=result.success,
-                )
-                if merge_result.get("status") == "conflict":
-                    logger.warning(
-                        "Workspace merge conflict for subtask %s, branch preserved: %s",
-                        subtask.id[:8], merge_result.get("branch_preserved", ""),
+            # Acquire workspace if this subtask modifies files
+            workspace_handle = None
+            if self._workspace_manager and subtask.file_constraints:
+                workspace_handle = await self._workspace_manager.acquire(subtask.id)
+                if workspace_handle:
+                    logger.info(
+                        "Subtask %s allocated workspace %s",
+                        subtask.id[:8], workspace_handle.workspace_id,
                     )
 
-            if result.success:
-                comp_data: dict[str, Any] = {
-                    "summary": result.summary[:300],
-                    "success": True,
-                    "modified_files": [
-                        {"path": f.file_path, "type": f.change_type.value}
-                        for f in (result.modified_files or [])
-                    ],
-                    "output": result.summary[:50000],  # ponytail: 50KB cap
-                }
-                await self._publish_event(
-                    "subtask_completed",
-                    task_id=subtask.parent_id,
-                    subtask_id=subtask.id,
-                    data=comp_data,
-                )
-            else:
-                # Build failure context: stderr tail + recent tool calls
-                failure_data: dict[str, Any] = {
-                    "error": result.summary[:300],
-                    "worker_id": self.worker_id,
-                }
-                if result.stderr_tail:
-                    failure_data["stderr_tail"] = result.stderr_tail
-                if result.recent_tool_calls:
-                    # Serialize as JSON string so it works through both
-                    # HashMap<String, String> (local worker) and
-                    # serde_json::Map<String, Value> (NATS) paths
-                    failure_data["recent_tools"] = json.dumps(result.recent_tool_calls)
-                await self._publish_event(
-                    "subtask_failed",
-                    task_id=subtask.parent_id,
-                    subtask_id=subtask.id,
-                    data=failure_data,
-                )
-            return result
-
-        except Exception as e:
-            logger.error("Subtask %s execution failed: %s", subtask.id, e, exc_info=True)
-            # Release workspace without merge on error
-            if workspace_handle:
-                await self._workspace_manager.release(workspace_handle, merge=False)
             await self._publish_event(
-                "subtask_failed",
+                "subtask_started",
                 task_id=subtask.parent_id,
                 subtask_id=subtask.id,
-                data={"error": str(e), "worker_id": self.worker_id},
+                data={"description": subtask.description, "worker_id": self.worker_id},
             )
-            return SubtaskResult(
+
+            # ── Progress helper ─────────────────────────────────────────
+            async def _progress(phase: str, percent: int, **extra: Any) -> None:
+                await self._publish_event(
+                    "subtask_progress",
+                    task_id=subtask.parent_id,
+                    subtask_id=subtask.id,
+                    data={"phase": phase, "percent": percent, "worker_id": self.worker_id, **extra},
+                )
+
+            await _progress("preparing", 10)
+
+            # ── Retry loop with backoff ────────────────────────────────
+            result: SubtaskResult | None = None
+            for attempt in range(self.MAX_RETRIES):
+                try:
+                    timeout_secs = subtask.timeout_seconds or 600
+                    try:
+                        await _progress("executing", 50)
+                        result = await asyncio.wait_for(
+                            self._execute_in_sandbox(subtask, context_block, workspace_handle),
+                            timeout=timeout_secs,
+                        )
+                        await _progress("validating", 80)
+                    except asyncio.TimeoutError:
+                        result = SubtaskResult(
+                            subtask_id=subtask.id,
+                            worker_id=self.worker_id,
+                            summary=f"Subtask timed out after {timeout_secs}s",
+                            success=False,
+                        )
+
+                    # Save checkpoint for resume
+                    self._save_checkpoint(subtask.id, result)
+
+                    # Record result in context injector for dependent subtasks
+                    self._context_injector.add_result(
+                        subtask_id=subtask.id,
+                        summary=result.summary,
+                        modified_files=[f.file_path for f in (result.modified_files or [])],
+                        success=result.success,
+                    )
+
+                    # Broadcast file change events for distributed state sync
+                    if result.success and result.modified_files:
+                        await self._broadcast_file_changes(subtask, result)
+
+                    # Release workspace (merge if successful)
+                    if workspace_handle:
+                        merge_result = await self._workspace_manager.release(
+                            workspace_handle, merge=result.success,
+                        )
+                        if merge_result.get("status") == "conflict":
+                            logger.warning(
+                                "Workspace merge conflict for subtask %s, branch preserved: %s",
+                                subtask.id[:8], merge_result.get("branch_preserved", ""),
+                            )
+
+                    if result.success:
+                        await _progress("finalizing", 95)
+                        comp_data: dict[str, Any] = {
+                            "summary": result.summary[:300],
+                            "success": True,
+                            "modified_files": [
+                                {"path": f.file_path, "type": f.change_type.value}
+                                for f in (result.modified_files or [])
+                            ],
+                            "output": result.summary[:50000],  # ponytail: 50KB cap
+                        }
+                        await self._publish_event(
+                            "subtask_completed",
+                            task_id=subtask.parent_id,
+                            subtask_id=subtask.id,
+                            data=comp_data,
+                        )
+                    else:
+                        failure_data: dict[str, Any] = {
+                            "error": result.summary[:300],
+                            "worker_id": self.worker_id,
+                        }
+                        if result.stderr_tail:
+                            failure_data["stderr_tail"] = result.stderr_tail
+                        if result.recent_tool_calls:
+                            failure_data["recent_tools"] = json.dumps(result.recent_tool_calls)
+
+                        # Retry if attempts remain
+                        if attempt < self.MAX_RETRIES - 1:
+                            subtask.retry_count += 1
+                            result.retry_count = subtask.retry_count
+                            delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else self.RETRY_DELAYS[-1]
+                            failure_data["retry"] = True
+                            failure_data["retry_attempt"] = attempt + 1
+                            failure_data["retry_delay"] = delay
+                            await self._publish_event(
+                                "subtask_failed",
+                                task_id=subtask.parent_id,
+                                subtask_id=subtask.id,
+                                data=failure_data,
+                            )
+                            await self._publish_event(
+                                "subtask_retry",
+                                task_id=subtask.parent_id,
+                                subtask_id=subtask.id,
+                                data={
+                                    "attempt": attempt + 1,
+                                    "max_retries": self.MAX_RETRIES,
+                                    "delay": delay,
+                                    "worker_id": self.worker_id,
+                                },
+                            )
+                            logger.info(
+                                "Retrying subtask %s (attempt %d/%d, delay %.1fs)",
+                                subtask.id[:8], attempt + 1, self.MAX_RETRIES, delay,
+                            )
+                            await asyncio.sleep(delay)
+                            continue  # retry loop
+
+                        # Final failure — no more retries
+                        await self._publish_event(
+                            "subtask_failed",
+                            task_id=subtask.parent_id,
+                            subtask_id=subtask.id,
+                            data=failure_data,
+                        )
+
+                    result.retry_count = subtask.retry_count
+                    return result
+
+                except Exception as e:
+                    logger.error("Subtask %s execution failed: %s", subtask.id, e, exc_info=True)
+                    # Release workspace without merge on error
+                    if workspace_handle:
+                        await self._workspace_manager.release(workspace_handle, merge=False)
+
+                    # Retry on exception too, if attempts remain
+                    if attempt < self.MAX_RETRIES - 1:
+                        subtask.retry_count += 1
+                        delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else self.RETRY_DELAYS[-1]
+                        await self._publish_event(
+                            "subtask_retry",
+                            task_id=subtask.parent_id,
+                            subtask_id=subtask.id,
+                            data={
+                                "attempt": attempt + 1,
+                                "max_retries": self.MAX_RETRIES,
+                                "delay": delay,
+                                "worker_id": self.worker_id,
+                                "error": str(e)[:200],
+                            },
+                        )
+                        logger.info(
+                            "Retrying subtask %s after exception (attempt %d/%d)",
+                            subtask.id[:8], attempt + 1, self.MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    await self._publish_event(
+                        "subtask_failed",
+                        task_id=subtask.parent_id,
+                        subtask_id=subtask.id,
+                        data={"error": str(e), "worker_id": self.worker_id},
+                    )
+                    return SubtaskResult(
+                        subtask_id=subtask.id,
+                        worker_id=self.worker_id,
+                        summary=f"Execution error: {e}",
+                        success=False,
+                        stderr_tail=str(e)[-2000:],
+                        retry_count=subtask.retry_count,
+                    )
+
+            # Should not reach here, but safety net
+            # ponytail: unreachable guard — all branches return or continue
+            return result or SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,
-                summary=f"Execution error: {e}",
+                summary="All retry attempts exhausted",
                 success=False,
-                stderr_tail=str(e)[-2000:],
+                retry_count=subtask.retry_count,
             )
 
         finally:
