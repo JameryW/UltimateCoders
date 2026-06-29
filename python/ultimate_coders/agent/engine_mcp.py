@@ -4,16 +4,24 @@ Run as a stdio MCP server:
     python -m ultimate_coders.agent.engine_mcp
 
 Claude Code integration via mcp_configs:
-    {"uc-engine": {"command": "python", "args": ["-m", "ultimate_coders.agent.engine_mcp"]}}
+    {"uc-engine": {
+        "command": "python",
+        "args": ["-m", "ultimate_coders.agent.engine_mcp"],
+    }}
 
 Or with explicit gRPC endpoint:
-    {"uc-engine": {"command": "python", "args": ["-m", "ultimate_coders.agent.engine_mcp", "--grpc-endpoint", "http://gateway:50051"]}}
+    {"uc-engine": {
+        "command": "python",
+        "args": [
+            "-m", "ultimate_coders.agent.engine_mcp",
+            "--grpc-endpoint", "http://gateway:50051",
+        ],
+    }}
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
 try:
@@ -45,15 +53,32 @@ def _create_server(engine: Engine) -> object:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query (natural language or code pattern)"},
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Search query (natural language or code pattern)"
+                            ),
+                        },
                         "modes": {
                             "type": "array",
-                            "items": {"type": "string", "enum": ["text", "semantic", "ast", "hybrid"]},
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "text", "semantic", "ast", "hybrid",
+                                ],
+                            },
                             "default": ["hybrid"],
                             "description": "Search modes to use",
                         },
-                        "project_id": {"type": "string", "description": "Project scope (optional)"},
-                        "max_results": {"type": "integer", "default": 10, "description": "Max results"},
+                        "project_id": {
+                            "type": "string",
+                            "description": "Project scope (optional)",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Max results",
+                        },
                     },
                     "required": ["query"],
                 },
@@ -65,8 +90,17 @@ def _create_server(engine: Engine) -> object:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string", "description": "Memory key"},
-                        "project_id": {"type": "string", "description": "Project scope (optional, global if empty)"},
+                        "key": {
+                            "type": "string",
+                            "description": "Memory key",
+                        },
+                        "project_id": {
+                            "type": "string",
+                            "description": (
+                                "Project scope (optional,"
+                                " global if empty)"
+                            ),
+                        },
                     },
                     "required": ["key"],
                 },
@@ -78,9 +112,21 @@ def _create_server(engine: Engine) -> object:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "key": {"type": "string", "description": "Memory key"},
-                        "content": {"type": "string", "description": "Content to store"},
-                        "project_id": {"type": "string", "description": "Project scope (optional, global if empty)"},
+                        "key": {
+                            "type": "string",
+                            "description": "Memory key",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to store",
+                        },
+                        "project_id": {
+                            "type": "string",
+                            "description": (
+                                "Project scope (optional,"
+                                " global if empty)"
+                            ),
+                        },
                         "content_type": {
                             "type": "string",
                             "default": "text",

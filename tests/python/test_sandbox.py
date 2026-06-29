@@ -1484,6 +1484,7 @@ class TestProjectIdPropagation:
     async def test_search_context_injection_with_mock_engine(self):
         """_build_search_context injects search results when engine returns data."""
         from unittest.mock import MagicMock
+
         from ultimate_coders.agent.worker import Worker
 
         engine = MagicMock()
@@ -1509,6 +1510,7 @@ class TestProjectIdPropagation:
     async def test_search_context_enriches_subtask(self):
         """_build_search_context produces formatted context with search results."""
         from unittest.mock import MagicMock
+
         from ultimate_coders.agent.worker import Worker
 
         engine = MagicMock()
@@ -1586,8 +1588,9 @@ class TestCrossRepoSearchAndMemorySharing:
 
     def test_search_query_in_all_repos(self):
         """SearchQuery.in_all_repos() populates repo_ids from engine."""
-        from ultimate_coders.search.query import SearchQuery
         from unittest.mock import MagicMock
+
+        from ultimate_coders.search.query import SearchQuery
 
         engine = MagicMock()
         repo1 = MagicMock()
@@ -1602,8 +1605,9 @@ class TestCrossRepoSearchAndMemorySharing:
 
     def test_search_query_in_all_repos_failure(self):
         """SearchQuery.in_all_repos() gracefully handles engine failure."""
-        from ultimate_coders.search.query import SearchQuery
         from unittest.mock import MagicMock
+
+        from ultimate_coders.search.query import SearchQuery
 
         engine = MagicMock()
         engine.list_repos.side_effect = RuntimeError("connection failed")

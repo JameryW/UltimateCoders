@@ -177,7 +177,12 @@ class Worker:
         # Auto-register Engine MCP server for sandbox agent tools (search + memory)
         if engine is not None and self._sandbox_config.mcp_configs is None:
             self._sandbox_config.mcp_configs = [
-                {"uc-engine": {"command": "python", "args": ["-m", "ultimate_coders.agent.engine_mcp"]}},
+                {
+                    "uc-engine": {
+                        "command": "python",
+                        "args": ["-m", "ultimate_coders.agent.engine_mcp"],
+                    },
+                },
             ]
         self.capabilities = capabilities or self._derive_capabilities()
         self.max_capacity = max_capacity

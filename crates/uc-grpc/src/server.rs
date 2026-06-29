@@ -1870,7 +1870,7 @@ async fn dispatch_ready_subtasks(
             retry_count: st.dispatch_retry_count,
             dispatch_mode: st.dispatch_mode.clone(),
             required_capabilities: st.required_capabilities.clone(),
-            agent_config_json: None,
+            agent_config_json: st.agent_config_json.clone(),
             project_id: project_id.clone(),
         };
         match serde_json::to_vec(&execute) {
@@ -1883,7 +1883,7 @@ async fn dispatch_ready_subtasks(
                         error = %e,
                         subtask_id = %st.id.0,
                         dispatch_mode = ?st.dispatch_mode,
-                        "Failed to publish subtask execute"
+                        "Failed to publish subtask execute (dispatch_ready_subtasks)"
                     );
                     let mut store = task_store.lock().await;
                     if st.dispatch_mode == uc_types::DispatchMode::Remote {
