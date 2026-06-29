@@ -1775,6 +1775,30 @@ class TestCrossRepoSearchAndSharedMemory:
             project_id="proj-1", key="k", action="write", source_worker="worker-A",
         )
 
+    def test_write_shared_memory_failure_skips_broadcast(self):
+        """If engine.write_memory raises, returns None and no broadcast fires."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        engine = MagicMock()
+        engine.write_memory.side_effect = RuntimeError("storage down")
+        publisher = MagicMock()
+        publisher.publish_memory_changed = AsyncMock()
+
+        w = self._make_worker(engine=engine, nats_publisher=publisher)
+        w.worker_id = "worker-A"
+
+        async def _drive():
+            result = w.write_shared_memory("k", "v", project_id="proj-1")
+            await asyncio.sleep(0)
+            return result
+
+        result = asyncio.run(_drive())
+
+        assert result is None
+        engine.write_memory.assert_called_once()
+        publisher.publish_memory_changed.assert_not_awaited()
+
     def test_delete_shared_memory_broadcasts_via_nats(self):
         """delete_shared_memory publishes uc.memory.changed with action='delete'."""
         import asyncio

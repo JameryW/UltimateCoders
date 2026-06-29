@@ -141,6 +141,7 @@ pub struct NatsSubtaskExecute {
 | `project_id` empty | `read/write/delete_shared_memory` uses `key_scope="global"` |
 | `project_id` set | `read/write/delete_shared_memory` uses `key_scope="project"` |
 | `engine.delete_memory()` raises | `delete_shared_memory` returns `False`, no NATS broadcast (nothing deleted) |
+| `engine.write_memory()` raises | `write_shared_memory` returns `None`, no NATS broadcast (nothing written) — non-fatal, mirrors delete path |
 | gRPC unavailable + `fallback_mode="auto"` | Engine auto-falls back to local mode |
 
 ---
@@ -196,6 +197,7 @@ result = w.search_across_repos("auth")  # Returns None — no crash
 | `test_build_search_context_hits_cache` | second identical search served from cache, `engine.search` still called once |
 | `test_read_shared_memory_calls_engine` | routes to `engine.read_memory` with `key_scope="project"` + `project_id` |
 | `test_write_shared_memory_broadcasts_via_nats` | `publish_memory_changed` awaited with `project_id`/`key`/`action`/`source_worker` |
+| `test_write_shared_memory_failure_skips_broadcast` | `write_memory` raises → returns `None`, `publish_memory_changed` NOT awaited |
 | `test_delete_shared_memory_broadcasts_via_nats` | `delete_memory` called + `publish_memory_changed` awaited with `action='delete'`; returns `True` |
 | `test_delete_shared_memory_failure_skips_broadcast` | `delete_memory` raises → returns `False`, `publish_memory_changed` NOT awaited |
 

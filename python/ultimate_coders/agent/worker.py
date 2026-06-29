@@ -1017,17 +1017,23 @@ class Worker:
             tags: Tags for categorization.
 
         Returns:
-            MemoryEntry or None.
+            MemoryEntry or None — None if the engine is unavailable or the
+            underlying write raised (mirrors delete_shared_memory: a failure is
+            non-fatal and skips the NATS broadcast since nothing was written).
         """
         if self.engine is None:
             return None
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
-        result = self.engine.write_memory(
-            key_scope=scope, key=key, content=content,
-            content_type=content_type, source_agent=f"worker:{self.worker_id}",
-            importance=importance, tags=tags, project_id=pid or None,
-        )
+        try:
+            result = self.engine.write_memory(
+                key_scope=scope, key=key, content=content,
+                content_type=content_type, source_agent=f"worker:{self.worker_id}",
+                importance=importance, tags=tags, project_id=pid or None,
+            )
+        except Exception:
+            logger.warning("write_shared_memory failed for key=%s", key, exc_info=True)
+            return None  # ponytail: nothing written — skip broadcast, non-fatal
         # Broadcast memory change via NATS for cross-Worker cache invalidation.
         # write_shared_memory is sync, so fire-and-forget onto the running loop
         # when one exists; if called outside a loop the broadcast is skipped
