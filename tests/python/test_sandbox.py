@@ -1768,3 +1768,74 @@ class TestCrossRepoSearchAndSharedMemory:
         publisher.publish_memory_changed.assert_awaited_once_with(
             project_id="proj-1", key="k", action="write", source_worker="worker-A",
         )
+
+    def test_handle_memory_changed_invalidates_on_other_worker(self):
+        """Receiving another Worker's broadcast invalidates the local cache."""
+        import asyncio
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        worker = MagicMock()
+        worker.worker_id = "worker-A"
+        cache = MagicMock()
+        worker._search_cache = cache
+        nw._worker = worker
+
+        msg = SimpleNamespace(data=json.dumps({
+            "project_id": "proj-1", "key": "k",
+            "action": "write", "source_worker": "worker-B",
+        }).encode())
+
+        asyncio.run(nw._handle_memory_changed(msg))
+
+        cache.invalidate.assert_called_once()
+
+    def test_handle_memory_changed_skips_own_broadcast(self):
+        """A Worker must not invalidate on its own broadcast."""
+        import asyncio
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        worker = MagicMock()
+        worker.worker_id = "worker-A"
+        cache = MagicMock()
+        worker._search_cache = cache
+        nw._worker = worker
+
+        msg = SimpleNamespace(data=json.dumps({
+            "project_id": "proj-1", "key": "k",
+            "action": "write", "source_worker": "worker-A",  # same as worker
+        }).encode())
+
+        asyncio.run(nw._handle_memory_changed(msg))
+
+        cache.invalidate.assert_not_called()
+
+    def test_handle_memory_changed_bad_payload_no_crash(self):
+        """Malformed payload must not raise nor invalidate."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        worker = MagicMock()
+        worker.worker_id = "worker-A"
+        cache = MagicMock()
+        worker._search_cache = cache
+        nw._worker = worker
+
+        msg = SimpleNamespace(data=b"not-json")
+
+        asyncio.run(nw._handle_memory_changed(msg))  # must not raise
+
+        cache.invalidate.assert_not_called()
