@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Agent capability spec — defines how worker capabilities and agent profiles are structured"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS bridge spec — subtask dispatch with agent_config propagation"}
+{"file": ".trellis/tasks/06-29-sandbox-worker-custom-skills-mcp-tools/research/codex-cli-capabilities.md", "reason": "Codex CLI tool extension capabilities — config.toml format, MCP servers, skills"}
+{"file": ".trellis/tasks/06-29-sandbox-worker-custom-skills-mcp-tools/research/claude-code-cli-flags.md", "reason": "Claude Code CLI flags reference — --tools, --mcp-config, --agents formats"}
+{"file": ".trellis/tasks/06-29-sandbox-worker-custom-skills-mcp-tools/prd.md", "reason": "PRD — requirements, technical approach, decisions"}

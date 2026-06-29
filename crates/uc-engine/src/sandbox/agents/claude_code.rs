@@ -52,7 +52,7 @@ impl AgentAdapter for ClaudeCodeAgent {
         config: &SandboxConfig,
         subtask_config: Option<&serde_json::Value>,
     ) -> ExecRequest {
-        use super::{SubtaskAgentConfig, merge_agent_config};
+        use super::{merge_agent_config, SubtaskAgentConfig};
 
         // Merge config-level and subtask-level overrides
         let effective_config = if let Some(sc) = subtask_config {
@@ -515,7 +515,11 @@ mod tests {
             ..Default::default()
         };
         let request = adapter.build_request("Fix", "/tmp/test", &config, None);
-        let idx = request.args.iter().position(|a| a == "--mcp-config").unwrap();
+        let idx = request
+            .args
+            .iter()
+            .position(|a| a == "--mcp-config")
+            .unwrap();
         assert_eq!(request.args[idx + 1], "/etc/mcp/codegraph.json");
     }
 

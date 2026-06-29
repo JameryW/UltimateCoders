@@ -2,9 +2,13 @@
 //!
 //! Wraps the OpenAI Codex CLI for sandbox execution.
 //!
-//! Command: `codex "{prompt}" --full-auto`
+//! Command: `codex "{prompt}" --sandbox workspace-write`
 //! Output: stdout text + exit code
 //! API key: `OPENAI_API_KEY` env var
+//!
+//! Tool extension is config-file driven (config.toml), not CLI flags.
+//! For MCP/tools customization, write a temporary config.toml before
+//! execution — see CodexAdapter in Python for the full implementation.
 
 use crate::sandbox::{
     truncate_str, AgentAdapter, AgentOutput, ExecRequest, ExecResult, SandboxConfig,
@@ -50,7 +54,11 @@ impl AgentAdapter for CodexAgent {
 
         ExecRequest {
             command: "codex".to_string(),
-            args: vec![prompt.to_string(), "--full-auto".to_string()],
+            args: vec![
+                prompt.to_string(),
+                "--sandbox".to_string(),
+                "workspace-write".to_string(),
+            ],
             stdin: None,
             timeout_secs: config.resource_limits.max_cpu_seconds,
             working_dir: if working_dir.is_empty() {
@@ -212,7 +220,8 @@ mod tests {
 
         assert_eq!(request.command, "codex");
         assert!(request.args.contains(&"Implement feature X".to_string()));
-        assert!(request.args.contains(&"--full-auto".to_string()));
+        assert!(request.args.contains(&"--sandbox".to_string()));
+        assert!(request.args.contains(&"workspace-write".to_string()));
         assert_eq!(request.working_dir, "/tmp/test");
     }
 

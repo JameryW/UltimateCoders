@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -205,14 +206,120 @@ class Worker:
         cfg = self._sandbox_config
         if cfg.mcp_configs:
             caps.append("mcp")
+            # Derive per-server capabilities from mcp_configs
+            for entry in (cfg.mcp_configs or []):
+                if isinstance(entry, dict):
+                    for name in entry:
+                        caps.append(f"mcp:{name}")
+                elif isinstance(entry, str) and (os.sep in entry or "/" in entry):
+                    # File path — extract server name from filename
+                    name = os.path.basename(entry.replace("/", os.sep)).replace(".json", "")
+                    caps.append(f"mcp:{name}")
         if cfg.tools:
             for t in cfg.tools:
-                if t.startswith("mcp__codegraph"):
+                if t.startswith("mcp__"):
+                    # mcp__<server>__* → mcp:<server>
+                    parts = t.split("__")
+                    if len(parts) >= 2:
+                        caps.append(f"mcp:{parts[1]}")
+                if t.startswith("mcp__codegraph") and "codegraph" not in caps:
                     caps.append("codegraph")
-                    break
         if cfg.agent_name:
             caps.append(f"agent:{cfg.agent_name}")
-        return caps
+        if cfg.agents_json:
+            # Parse agent names from agents_json
+            try:
+                agents = (
+                    json.loads(cfg.agents_json)
+                    if isinstance(cfg.agents_json, str)
+                    else cfg.agents_json
+                )
+                for name in (agents if isinstance(agents, dict) else []):
+                    caps.append(f"agent:{name}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique: list[str] = []
+        for c in caps:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+        return unique
+
+    # ── Agent Config Profiles & Templates ───────────────────────
+
+    AGENT_PROFILES: dict[str, dict[str, Any]] = {
+        "review": {
+            "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
+            "append_system_prompt": (
+                "Read-only review mode — analyze and report only,"
+                " do not modify files."
+            ),
+        },
+        "codegraph": {
+            "tools": ["default", "mcp__codegraph__*"],
+        },
+        "code": {
+            "tools": ["default"],
+        },
+    }
+
+    SUBTASK_TEMPLATES: dict[str, dict[str, Any]] = {
+        "review": {
+            "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
+            "append_system_prompt": (
+                "Read-only review mode — analyze and report only,"
+                " do not modify files."
+            ),
+        },
+        "search": {
+            "tools": ["default", "mcp__codegraph__*"],
+        },
+    }
+
+    def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]:
+        """Derive agent_config for a subtask: explicit > capability match > type template.
+
+        Priority:
+        1. subtask.agent_config — explicit user override, use as-is
+        2. required_capabilities — match against AGENT_PROFILES
+        3. subtask description heuristics — match against SUBTASK_TEMPLATES
+
+        ponytail: simple dict merge — upgrade path is a proper profile resolution system.
+        """
+        # 1. Explicit override
+        if subtask.agent_config:
+            return subtask.agent_config
+
+        config: dict[str, Any] = {}
+
+        # 2. Capability matching (takes precedence)
+        for cap in subtask.required_capabilities:
+            if cap in self.AGENT_PROFILES:
+                config.update(self.AGENT_PROFILES[cap])
+
+        # 3. Type template (applied after, but doesn't override capability matches)
+        template = self._match_subtask_template(subtask)
+        if template:
+            for k, v in template.items():
+                if k not in config:
+                    config[k] = v
+
+        return config
+
+    @staticmethod
+    def _match_subtask_template(subtask: Subtask) -> dict[str, Any] | None:
+        """Match a subtask to a template by description heuristics.
+
+        ponytail: keyword matching — upgrade path is LLM classification.
+        """
+        desc_lower = subtask.description.lower()
+        if any(kw in desc_lower for kw in ("review", "audit", "analyze", "inspect")):
+            return Worker.SUBTASK_TEMPLATES.get("review")
+        if any(kw in desc_lower for kw in ("search", "find", "locate", "grep")):
+            return Worker.SUBTASK_TEMPLATES.get("search")
+        return None
 
     def _dynamic_capacity(self, subtask: Subtask | None = None) -> int:
         """Return effective concurrency limit for this worker.
@@ -537,7 +644,7 @@ class Worker:
                 prompt,
                 working_dir=working_dir,
                 on_stdout_line=_on_stdout_line,
-                subtask_config=subtask.agent_config or None,
+                subtask_config=self._resolve_agent_config(subtask) or None,
             )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail

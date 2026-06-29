@@ -468,37 +468,111 @@ Merges SandboxConfig agent fields with per-subtask overrides. Subtask-level valu
 def _derive_capabilities(self) -> list[str]
 ```
 
-Base: `["code", "search", "memory", "test"]`. Appends `"mcp"` when `mcp_configs` set, `"codegraph"` when tools contains `mcp__codegraph*`, `"agent:<name>"` when `agent_name` set.
+Base: `["code", "search", "memory", "test", "decompose", "review"]`. Enhanced:
+- `mcp_configs` → `"mcp"` + per-server `"mcp:<server>"` (extracted from dict keys or file path basename)
+- `tools` with `"mcp__<server>__*"` pattern → `"mcp:<server>"` per prefix
+- `agent_name` → `"agent:<name>"`
+- `agents_json` → parsed for agent names → `"agent:<name>"` each
+- Deduplicated (preserving order)
+
+#### Worker._resolve_agent_config
+
+```python
+def _resolve_agent_config(self, subtask: Subtask) -> dict[str, Any]
+```
+
+Priority: explicit > capability match > description heuristic.
+1. `subtask.agent_config` non-empty → use as-is (user explicit override)
+2. `subtask.required_capabilities` → match against `AGENT_PROFILES` dict
+3. Description keywords → match against `SUBTASK_TEMPLATES` dict (template fills only keys not already set by capability match)
+
+#### AGENT_PROFILES / SUBTASK_TEMPLATES
+
+```python
+AGENT_PROFILES = {
+    "review": {"disallowed_tools": ["Edit", "Write", "NotebookEdit"], ...},
+    "codegraph": {"tools": ["default", "mcp__codegraph__*"]},
+    "code": {"tools": ["default"]},
+}
+SUBTASK_TEMPLATES = {
+    "review": {"disallowed_tools": [...], ...},
+    "search": {"tools": ["default", "mcp__codegraph__*"]},
+}
+```
+
+#### _resolve_mcp_configs
+
+```python
+def _resolve_mcp_configs(
+    mcp_configs: list[str | dict[str, Any]],
+) -> tuple[list[str], list[str]]
+```
+
+Resolves MCP configs: file paths pass through, inline JSON dicts write to temp `.mcp.json` files. Returns `(resolved_paths, temp_file_paths)` — caller must clean up temp files.
+
+#### _codex_mcp_server_toml
+
+```python
+def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str
+```
+
+Converts a single MCP server config dict to Codex config.toml `[mcp_servers."name"]` section. Handles stdio (command/args/env) and streamable-http (url/bearer_token_env_var) transports. All string values are TOML-escaped via `_toml_escape()` to prevent injection.
 
 ### Contracts
 
 #### CLI flag mapping
+
+**Claude Code adapter** — direct CLI flags:
 
 | Config key | CLI flag | Example |
 |------------|----------|---------|
 | `tools` | `--tools` | `["default", "mcp__codegraph__*"]` |
 | `allowed_tools` | `--allowedTools` | `["Bash(git *)", "Edit"]` |
 | `disallowed_tools` | `--disallowedTools` | `["Bash(rm *)"]` |
-| `mcp_configs` | `--mcp-config` | `["/etc/mcp/codegraph.json"]` |
+| `mcp_configs` | `--mcp-config` | `["/etc/mcp/codegraph.json"]` or inline `{"codegraph": {...}}` |
 | `append_system_prompt` | `--append-system-prompt` | `"Focus on Rust code"` |
 | `agent_name` | `--agent` | `"reviewer"` |
 | `agents_json` | `--agents` | `'{"reviewer": {...}}'` |
 
+**Codex adapter** — config.toml driven (NOT CLI flags):
+
+| Config key | config.toml target | Notes |
+|------------|-------------------|-------|
+| `mcp_configs` | `[mcp_servers."name"]` section | Writes temp `.config.toml` in `$CODEX_HOME/`, uses `--profile <stem>` |
+| `allowed_tools` | Per-server `enabled_tools` | Codex has no global allow/deny; per-server only |
+| `disallowed_tools` | Per-server `disabled_tools` | Same limitation |
+| Other keys | Not supported via config.toml | `--sandbox workspace-write` replaces deprecated `--full-auto` |
+
+> **Key difference**: Claude Code extends tools via CLI flags at invocation time. Codex extends tools via `config.toml` written before execution. The Python `CodexAdapter` bridges this by writing a temporary `.config.toml` and passing `--profile <stem-name>`.
+
+#### Inline MCP config handling
+
+`mcp_configs` entries can be:
+- **File path** (string): passed as-is to `--mcp-config` (Claude) or read + embedded in config.toml (Codex)
+- **Inline dict** (dict): written to temp `.mcp.json` file (Claude) or embedded directly in config.toml `[mcp_servers]` section (Codex)
+
+Temp files are created in `SandboxManager.execute`, tracked in `_temp_files` list, and cleaned up in the `finally` block.
+
 #### Override precedence
 
-1. `Subtask.agent_config` keys take precedence over `SandboxConfig` fields
-2. Lists are replaced, not merged — subtask config defines the full set
-3. Empty dict `{}` in `agent_config` means no override (use config-level values)
-4. `None` for `subtask_config` means use config-level values
+1. `Subtask.agent_config` non-empty → use as-is (user explicit override, bypasses derivation)
+2. `Subtask.required_capabilities` → match `AGENT_PROFILES` (e.g., `"review"` → `disallowed_tools`)
+3. Description heuristics → match `SUBTASK_TEMPLATES` (e.g., "review" keyword → review template)
+4. `SandboxConfig` fields → baseline values when no subtask-level override exists
+
+List semantics: lists are **replaced**, not merged — subtask config defines the full set.
 
 #### Execution flow
 
 ```
 Worker._execute_in_sandbox(subtask)
-  → SandboxManager.execute(prompt, subtask_config=subtask.agent_config)
-    → _merge_agent_config(config, subtask_config)
-    → ClaudeCodeAdapter.build_request(prompt, wd, config, subtask_config)
-      → generates CLI args based on merged config
+  → agent_config = Worker._resolve_agent_config(subtask)  # auto-derive or use explicit
+  → SandboxManager.execute(prompt, subtask_config=agent_config)
+    → Adapter.build_request(prompt, wd, config, subtask_config)
+      → _merge_agent_config(config, subtask_config)  # merge config-level + subtask-level
+      → _resolve_mcp_configs(merged["mcp_configs"])  # inline JSON → temp files
+      → generates CLI args (Claude) or config.toml (Codex)
+    → SandboxManager.execute finally: clean up _temp_files
 ```
 
 #### Backward compatibility
@@ -546,6 +620,19 @@ All new fields default to `None` / `{}`. When all are unset, `ClaudeCodeAdapter.
 | `test_agent_name_capability` | "agent:<name>" added |
 | `test_explicit_capabilities_override_derived` | Explicit list overrides derivation |
 | `test_subtask_agent_config_round_trip` | to_dict/from_dict preserves agent_config |
+| `test_resolve_mcp_configs_file_paths` | File paths pass through unchanged |
+| `test_resolve_mcp_configs_inline_dict` | Inline dict → temp file with correct JSON |
+| `test_codex_mcp_server_toml_stdio` | Stdio transport generates correct TOML |
+| `test_codex_mcp_server_toml_http` | HTTP transport generates correct TOML |
+| `test_codex_adapter_profile_uses_stem` | --profile uses stem name, not full path |
+| `test_claude_code_inline_mcp` | Inline MCP dict → temp .mcp.json file |
+| `test_worker_derive_per_server_caps` | mcp_configs → mcp:<server> capabilities |
+| `test_worker_derive_agents_json` | agents_json → agent:<name> capabilities |
+| `test_worker_resolve_explicit_preserved` | Explicit agent_config bypasses derivation |
+| `test_worker_resolve_capability_match` | required_capabilities → AGENT_PROFILES match |
+| `test_worker_resolve_description_template` | Description keywords → SUBTASK_TEMPLATES match |
+| `test_agent_config_pipeline_review` | End-to-end: review → disallowedTools in CLI args |
+| `test_temp_files_cleaned_up` | SandboxManager.execute cleans _temp_files |
 
 ### Wrong vs Correct
 
@@ -573,4 +660,38 @@ self.capabilities = capabilities or ["code", "search", "memory", "test"]
 
 ```python
 self.capabilities = capabilities or self._derive_capabilities()
+```
+
+#### Wrong: Codex --profile with full file path
+
+```python
+# Codex --profile expects a NAME, not a path.
+# It looks up $CODEX_HOME/<name>.config.toml
+fd, config_path = tempfile.mkstemp(suffix=".toml", prefix="uc-codex-")
+args += ["--profile", config_path]  # WRONG: full path like /tmp/uc-codex-XXXX.toml
+```
+
+#### Correct: Codex --profile with stem name
+
+```python
+# Write to $CODEX_HOME/ with .config.toml suffix (Codex convention)
+# Pass only the stem (filename without .config.toml) to --profile
+fd, config_path = tempfile.mkstemp(suffix=".config.toml", prefix="uc-codex-", dir=codex_home)
+profile_name = os.path.basename(config_path).removesuffix(".config.toml")
+args += ["--profile", profile_name]  # e.g. "uc-codex-XXXX"
+```
+
+#### Wrong: TOML injection via unescaped values
+
+```python
+# MCP server name or config values with special chars break TOML parsing
+lines.append(f"[mcp_servers.{name}]")  # breaks if name contains dots
+lines.append(f'command = "{cfg["command"]}"')  # breaks if value contains quotes
+```
+
+#### Correct: TOML-escape all values and quote table names
+
+```python
+lines.append(f'[mcp_servers."{_toml_escape(name)}"]')
+lines.append(f'command = "{_toml_escape(cfg["command"])}"')
 ```

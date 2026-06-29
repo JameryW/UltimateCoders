@@ -6,7 +6,10 @@ that execute coding agents (Claude Code, Codex) in isolated settings.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -257,6 +260,7 @@ class SandboxManager:
         """
         handle = await self.acquire()
         wd = working_dir or self.config.working_dir or self.config.project_path
+        temp_files: list[str] = []
 
         try:
             # Create baseline for file tracking
@@ -268,6 +272,7 @@ class SandboxManager:
                 prompt, wd, self.config,
                 subtask_config=subtask_config,
             )
+            temp_files = exec_request.pop("_temp_files", [])
 
             if self.engine is not None and hasattr(self.engine, "execute_in_sandbox"):
                 result_dict = await self.engine.execute_in_sandbox(
@@ -311,6 +316,12 @@ class SandboxManager:
             )
 
         finally:
+            # Clean up temp files (inline MCP configs, codex config.toml)
+            for path in temp_files:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
             await self.release(handle)
 
     async def release(self, handle: SandboxHandle) -> None:
@@ -725,6 +736,66 @@ def _merge_agent_config(
     return result
 
 
+def _resolve_mcp_configs(
+    mcp_configs: list[str | dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    """Resolve MCP configs: file paths pass through, inline JSON writes temp files.
+
+    Returns (resolved_paths, temp_file_paths) — caller must clean up temp_file_paths.
+    ponytail: temp files per-execution — upgrade path is a shared cache keyed by content hash.
+    """
+    resolved: list[str] = []
+    temp_paths: list[str] = []
+    for entry in mcp_configs:
+        if isinstance(entry, dict):
+            # Inline MCP config — write to temp file
+            content = json.dumps({"mcpServers": entry}, indent=2)
+            fd, path = tempfile.mkstemp(suffix=".mcp.json", prefix="uc-mcp-")
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+            resolved.append(path)
+            temp_paths.append(path)
+        elif isinstance(entry, str):
+            resolved.append(entry)
+        else:
+            logger.warning("Skipping invalid mcp_config entry: %r", entry)
+    return resolved, temp_paths
+
+
+def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
+    """Convert a single MCP server config dict to Codex config.toml section.
+
+    Handles both stdio and streamable-http transports.
+    ponytail: minimal toml — only command/args/url, no OAuth or per-tool overrides.
+    """
+    def _toml_escape(s: str) -> str:
+        """Escape a string for TOML double-quoted value."""
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    lines = [f'[mcp_servers."{_toml_escape(name)}"]']
+    if "url" in cfg:
+        lines.append(f'url = "{_toml_escape(cfg["url"])}"')
+        if "bearer_token_env_var" in cfg:
+            lines.append(f'bearer_token_env_var = "{_toml_escape(cfg["bearer_token_env_var"])}"')
+    else:
+        # stdio transport
+        if "command" in cfg:
+            lines.append(f'command = "{_toml_escape(cfg["command"])}"')
+        if "args" in cfg:
+            args_str = ", ".join(f'"{_toml_escape(a)}"' for a in cfg["args"])
+            lines.append(f"args = [{args_str}]")
+        if "env" in cfg:
+            env_pairs = ", ".join(f'{k} = "{_toml_escape(v)}"' for k, v in cfg["env"].items())
+            lines.append(f"env = {{{env_pairs}}}")
+    if "enabled_tools" in cfg:
+        tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["enabled_tools"])
+        lines.append(f"enabled_tools = [{tools_str}]")
+    if "disabled_tools" in cfg:
+        tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["disabled_tools"])
+        lines.append(f"disabled_tools = [{tools_str}]")
+    return "\n".join(lines)
+
+
 class ClaudeCodeAdapter(AgentAdapter):
     """Adapter for Claude Code CLI."""
 
@@ -748,6 +819,8 @@ class ClaudeCodeAdapter(AgentAdapter):
         # Merge config-level and subtask-level agent overrides
         cfg = _merge_agent_config(config, subtask_config)
 
+        temp_files: list[str] = []
+
         if cfg.get("tools"):
             args += ["--tools"] + cfg["tools"]
         if cfg.get("allowed_tools"):
@@ -755,7 +828,10 @@ class ClaudeCodeAdapter(AgentAdapter):
         if cfg.get("disallowed_tools"):
             args += ["--disallowedTools"] + cfg["disallowed_tools"]
         if cfg.get("mcp_configs"):
-            args += ["--mcp-config"] + cfg["mcp_configs"]
+            # Resolve inline JSON MCP configs to temp files
+            resolved, temps = _resolve_mcp_configs(cfg["mcp_configs"])
+            temp_files.extend(temps)
+            args += ["--mcp-config"] + resolved
         if cfg.get("append_system_prompt"):
             args += ["--append-system-prompt", cfg["append_system_prompt"]]
         if cfg.get("agent_name"):
@@ -769,6 +845,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
             "env_vars": config._build_env_vars(),
+            "_temp_files": temp_files,
         }
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
@@ -910,7 +987,12 @@ class ClaudeCodeAdapter(AgentAdapter):
 
 
 class CodexAdapter(AgentAdapter):
-    """Adapter for OpenAI Codex CLI."""
+    """Adapter for OpenAI Codex CLI.
+
+    Codex extends tools via config.toml (not CLI flags like Claude Code).
+    This adapter writes a temporary config.toml with MCP servers and tool
+    settings derived from subtask_config, then cleans up after execution.
+    """
 
     def name(self) -> str:
         return "codex"
@@ -922,13 +1004,95 @@ class CodexAdapter(AgentAdapter):
         config: SandboxConfig,
         subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Merge config-level and subtask-level agent overrides
+        cfg = _merge_agent_config(config, subtask_config)
+
+        temp_files: list[str] = []
+
+        # Build temporary config.profile if any agent customization is needed
+        # Codex --profile flag: layers $CODEX_HOME/<name>.config.toml on top of base config.
+        # We write a temp .config.toml in CODEX_HOME and pass the stem as --profile <name>.
+        codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+        config_content = self._build_config_toml(cfg)
+        profile_name: str | None = None
+        if config_content:
+            # Must place the file in CODEX_HOME and name it <name>.config.toml
+            # so that --profile <name> resolves to $CODEX_HOME/<name>.config.toml
+            target_dir = codex_home if os.path.isdir(codex_home) else None
+            fd, config_path = tempfile.mkstemp(
+                suffix=".config.toml", prefix="uc-codex-",
+                dir=target_dir,
+            )
+            with os.fdopen(fd, "w") as f:
+                f.write(config_content)
+            temp_files.append(config_path)
+            # Extract profile name: filename without .config.toml suffix
+            basename = os.path.basename(config_path)
+            profile_name = basename[: -len(".config.toml")]
+
+        args = [prompt, "--sandbox", "workspace-write"]
+        if profile_name:
+            args += ["--profile", profile_name]
+
         return {
             "command": "codex",
-            "args": [prompt, "--full-auto"],
+            "args": args,
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
             "env_vars": config._build_env_vars(),
+            "_temp_files": temp_files,
         }
+
+    @staticmethod
+    def _build_config_toml(
+        cfg: dict[str, Any],
+    ) -> str:
+        """Build Codex config.toml content from merged agent config.
+
+        Returns empty string if no customization is needed.
+        ponytail: minimal toml — only MCP servers and tool settings.
+        """
+        sections: list[str] = []
+
+        # MCP servers from mcp_configs
+        mcp_configs = cfg.get("mcp_configs", [])
+        if mcp_configs:
+            for entry in mcp_configs:
+                if isinstance(entry, str):
+                    # File path — read and merge
+                    if os.path.isfile(entry):
+                        try:
+                            with open(entry) as f:
+                                data = json.load(f)
+                            for name, server_cfg in data.get("mcpServers", {}).items():
+                                sections.append(
+                                    _codex_mcp_server_toml(name, server_cfg)
+                                )
+                        except (json.JSONDecodeError, OSError):
+                            logger.warning("Failed to read MCP config: %s", entry)
+                elif isinstance(entry, dict):
+                    # Inline config — each key is a server name
+                    for name, server_cfg in entry.items():
+                        sections.append(
+                            _codex_mcp_server_toml(name, server_cfg)
+                        )
+
+        # Tool allow/deny lists — Codex only supports per-MCP-server tool filters,
+        # not global allow/deny. Log a warning if global filters are specified.
+        allowed = cfg.get("allowed_tools", [])
+        disallowed = cfg.get("disallowed_tools", [])
+        if allowed or disallowed:
+            logger.warning(
+                "Codex adapter does not support global allowed/disallowed_tools; "
+                "use per-MCP-server enabled_tools/disabled_tools in mcp_configs instead. "
+                "allowed=%s disallowed=%s",
+                allowed, disallowed,
+            )
+
+        if not sections:
+            return ""
+
+        return "\n".join(sections) + "\n"
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
         if result.timed_out:
