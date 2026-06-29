@@ -231,3 +231,21 @@ let execute = NatsSubtaskExecute {
 **Context**: Search injection enriches subtask context but is not required for execution.
 
 **Decision**: Any failure in `_build_search_context()` returns `None` and the subtask proceeds without search context. This prevents search infrastructure issues from blocking task execution.
+
+### Decision: Engine MCP Server for sandbox agents
+
+**Context**: Sandbox agents (Claude Code, Codex) need dynamic access to search and memory during execution, not just the pre-injected static context block.
+
+**Decision**: A lightweight MCP stdio server (`engine_mcp.py`) wraps `Engine.search()`, `read_memory()`, `write_memory()` as MCP tools. Auto-registered in `Worker.__init__` via `SandboxConfig.mcp_configs`. This lets sandbox agents call `search_code`, `read_memory`, `write_memory` during execution.
+
+### Decision: agent_config_json propagation in NATS dispatch
+
+**Context**: Per-subtask agent config (tools, MCP, system prompt) was lost during NATS dispatch — `NatsSubtaskExecute.agent_config_json` was always `None`.
+
+**Decision**: Both `publish_ready_subtasks` and `dispatch_ready_subtasks` now use `st.agent_config_json.clone()` instead of `None`. This ensures remote Workers receive the correct agent configuration.
+
+### Decision: projectId persistence round-trip
+
+**Context**: `TaskState.projectId` was lost during persistence (toPersisted/fromPersisted) and gRPC sync (upsertTask hardcoded `""`).
+
+**Decision**: `PersistedTask.projectId` field added, `toPersisted()`/`fromPersisted()` propagate it, and `upsertTask` uses `task.projectId ?? ""`. This ensures project scope survives restart and gRPC sync.
