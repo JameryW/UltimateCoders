@@ -25,15 +25,43 @@ import type { OrchestratorEvents } from "./events";
 // ── Types ──────────────────────────────────────────────────────────
 
 /** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
-function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	if (!signal || signal.aborted) return AbortSignal.timeout(timeoutMs);
+export function abortWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+	// Already aborted at call time: return an immediately-aborted signal rather
+	// than starting a fresh timeout countdown (which would delay the abort by
+	// timeoutMs — a cancel arriving during shutdown must take effect instantly).
+	if (signal?.aborted) {
+		const immediate = new AbortController();
+		immediate.abort();
+		return immediate.signal;
+	}
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), timeoutMs);
-	signal.addEventListener("abort", () => {
+	const timeout = setTimeout(() => {
+		// Timeout fired first — stop listening to the parent signal.
+		signal?.removeEventListener("abort", onAbort);
+		controller.abort();
+	}, timeoutMs);
+	const onAbort = () => {
 		clearTimeout(timeout);
 		controller.abort();
-	}, { once: true });
+	};
+	signal?.addEventListener("abort", onAbort, { once: true });
 	return controller.signal;
+}
+
+/** Sleep that resolves early (returns true) if the abort signal fires. */
+export function sleepCancellable(ms: number, signal?: AbortSignal): Promise<boolean> {
+	return new Promise((resolve) => {
+		if (signal?.aborted) return resolve(true);
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve(false);
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			resolve(true);
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 type ControlState = "running" | "paused" | "cancelled";
@@ -1144,7 +1172,16 @@ export class UCOrchestrator {
 				this.pi.logger.info(
 					`Retrying subtask ${def.id} (attempt ${attempt + 1}/${this.config.maxRetries}) after ${delay}ms`,
 				);
-				await new Promise((resolve) => setTimeout(resolve, delay));
+				// Cancellable sleep: if the task is aborted/cancelled during the
+				// backoff, stop retrying immediately instead of waiting out the
+				// full delay (cancel responsiveness during shutdown).
+				const abortCtrl = this.abortControllers.get(task.id);
+				const aborted = await sleepCancellable(delay, abortCtrl?.signal);
+				if (aborted) {
+					lastResult.status = "cancelled";
+					lastResult.error = "Aborted during retry backoff";
+					return lastResult;
+				}
 			}
 		}
 

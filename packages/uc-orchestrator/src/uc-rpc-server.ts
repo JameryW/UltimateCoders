@@ -208,15 +208,38 @@ class RpcServer {
 			}
 
 			case "shutdown": {
-				// Schedule exit after response is written
-				setImmediate(() => {
-					process.exit(0);
-				});
+				// Graceful shutdown: stop subscribers/timers/persist state before exit.
+				// Schedule after the response is written so the client receives it.
+				this.scheduleShutdown();
 				return { ok: true };
 			}
 
 			default:
 				throw new Error(`Unknown method: ${method}`);
+		}
+	}
+
+	/** Tear down the orchestrator (NATS subscriber, poll timers, persist state)
+	 * then exit. Called from the `shutdown` RPC and on stdin close (parent
+	 * disconnect). Without destroy(), background timers/connections outlive the
+	 * response and the ControlSignalSubscriber can revive after disconnect. */
+	scheduleShutdown(): void {
+		setImmediate(async () => {
+			try {
+				await this.orchestrator.destroy();
+			} catch (err) {
+				process.stderr.write(`Shutdown destroy failed: ${err}\n`);
+			}
+			process.exit(0);
+		});
+	}
+
+	/** Async shutdown for callers that can await (e.g. stdin close). */
+	async shutdown(): Promise<void> {
+		try {
+			await this.orchestrator.destroy();
+		} catch (err) {
+			process.stderr.write(`Shutdown destroy failed: ${err}\n`);
 		}
 	}
 
@@ -256,7 +279,10 @@ async function main(): Promise<void> {
 	});
 
 	rl.on("close", () => {
-		process.exit(0);
+		// Parent disconnected (crash/SIGKILL). Destroy before exit so the
+		// ControlSignalSubscriber stops cleanly instead of reviving on a
+		// pending NATS reconnect (leaked connection/timer across sessions).
+		void server.shutdown().then(() => process.exit(0));
 	});
 }
 

@@ -349,13 +349,13 @@ class DashboardApp:
                         now = loop.time()
                         if now - last_snapshot >= snapshot_interval:
                             snapshot = self._get_full_snapshot()
-                        last_snapshot = now
-                        event_id += 1
-                        yield {
-                            "id": str(event_id),
-                            "event": "update",
-                            "data": json.dumps(snapshot),
-                        }
+                            last_snapshot = now
+                            event_id += 1
+                            yield {
+                                "id": str(event_id),
+                                "event": "update",
+                                "data": json.dumps(snapshot),
+                            }
 
             return EventSourceResponse(event_generator())
 

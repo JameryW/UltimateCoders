@@ -421,6 +421,71 @@ class TestSandboxManager:
         assert handle2.id == handle1.id
 
 
+class TestSandboxSubprocessCancellation:
+    """Regression: when the outer wait_for (worker.execute_subtask timeout)
+    cancelled _execute_subprocess, CancelledError (BaseException) bypassed the
+    TimeoutError handlers and the OS subprocess (the coding agent) was never
+    killed — orphaned agents consumed CPU/memory until the worker OOM'd
+    (OMP session interruption). The fix kills the proc in a finally block."""
+
+    @pytest.mark.asyncio
+    async def test_cancellation_kills_subprocess(self):
+        import asyncio
+        import subprocess as sp
+
+        config = SandboxConfig(project_path="/tmp")
+        manager = SandboxManager(config)
+        # Unique sleep duration so pgrep won't match unrelated processes.
+        unique_sleep = "299.37"
+        request = {
+            "command": "sleep",
+            "args": [unique_sleep],
+            "timeout_secs": 300,
+            "env_vars": {},
+            "working_dir": "/tmp",
+        }
+
+        # Cancel mid-execution (simulating the outer wait_for timeout cancel).
+        task = asyncio.ensure_future(manager._execute_subprocess(request))
+        # Give the subprocess a moment to spawn and be visible to pgrep.
+        await asyncio.sleep(0.4)
+        # Confirm the subprocess is actually running before we cancel — otherwise
+        # the test would pass trivially without exercising the kill path.
+        pre = sp.run(["pgrep", "-f", f"sleep {unique_sleep}"], capture_output=True, text=True)
+        assert pre.stdout.strip(), "subprocess did not spawn before cancel"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # After cancellation, the subprocess must be gone. Poll briefly (the
+        # kill + wait in the finally block is async; under load it can take a
+        # moment for the OS to reap the SIGKILL'd process).
+        gone = False
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            ps = sp.run(["pgrep", "-f", f"sleep {unique_sleep}"], capture_output=True, text=True)
+            if not ps.stdout.strip():
+                gone = True
+                break
+        assert gone, "orphaned subprocess survived cancellation"
+
+    @pytest.mark.asyncio
+    async def test_normal_completion_still_works(self):
+
+        config = SandboxConfig(project_path="/tmp")
+        manager = SandboxManager(config)
+        request = {
+            "command": "echo",
+            "args": ["hello"],
+            "timeout_secs": 10,
+            "env_vars": {},
+            "working_dir": "/tmp",
+        }
+        result = await manager._execute_subprocess(request)
+        assert result.exit_code == 0
+        assert "hello" in result.stdout
+
+
 # ── create_adapter and available_agents tests ───────────────────
 
 class TestAdapterFactory:
@@ -1984,3 +2049,547 @@ class TestCrossRepoSearchAndSharedMemory:
         asyncio.run(nw._handle_memory_changed(msg))  # must not raise
 
         cache.invalidate.assert_not_called()
+
+
+class TestNatsWorkerBgTaskHolding:
+    """Regression: _handle_submit scheduled _execute_subtasks via a bare
+    asyncio.create_task with no strong reference. asyncio weakly references
+    tasks, so the GC could reap it before it ran — silently abandoning a
+    task's subtasks until the 600s heartbeat timeout marked the task Failed
+    (an OMP session-interruption symptom). _spawn_bg now holds the ref."""
+
+    def test_spawn_bg_holds_and_releases_task(self):
+        import asyncio
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker()
+            done = asyncio.Event()
+
+            async def work():
+                done.set()
+
+            t = nw._spawn_bg(work())
+            # Strong ref held while running
+            assert t in nw._bg_tasks
+            await t
+            # done-callback fires on completion; let it drain
+            await asyncio.sleep(0)
+            assert t not in nw._bg_tasks
+            assert done.is_set()
+
+        asyncio.run(run())
+
+    def test_stop_cancels_in_flight_bg_tasks(self):
+        import asyncio
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker()
+            nw._running = True
+
+            started = asyncio.Event()
+
+            async def hang():
+                started.set()
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    raise
+
+            nw._spawn_bg(hang())
+            await started.wait()
+            assert len(nw._bg_tasks) == 1
+
+            await nw.stop()
+            assert nw._bg_tasks == set()
+
+        asyncio.run(run())
+
+
+class TestNatsWorkerRemoteResults:
+    """Regression: remote subtask completion/failure events were dropped.
+
+    _handle_task_event gated _handle_remote_subtask_result on
+    ``self._current_task_id == task_id``, but _current_task_id was never
+    assigned (dead field, always ""). So EVERY remote subtask result was
+    silently discarded — edit intents leaked (locking files forever) and
+    the result never reached the Orchestrator, stalling tasks until the
+    600s heartbeat timeout (OMP session interruption)."""
+
+    def _make_worker_with_orchestrator(self):
+        import asyncio
+
+        from ultimate_coders.agent.orchestrator import Orchestrator
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        nw._orchestrator = Orchestrator()
+        # _dispatch_event is lazy-constructed in start(); tests skip start(),
+        # so construct it here so _handle_task_event can wake the dispatch loop.
+        nw._dispatch_event = asyncio.Event()
+        return nw
+
+    def test_remote_subtask_completed_feeds_into_orchestrator(self):
+        import asyncio
+        import json
+        from types import SimpleNamespace
+
+        from ultimate_coders.agent.types import SubtaskStatus
+
+        nw = self._make_worker_with_orchestrator()
+        orch = nw._orchestrator
+
+        # Submit a task and assign one subtask to the remote worker.
+        task = asyncio.run(orch.submit_task("do thing", project_id="p"))  # type: ignore[union-attr]
+        st = task.subtasks[0]
+        st.assigned_worker = "remote"
+        st.status = SubtaskStatus.IN_PROGRESS
+
+        event = SimpleNamespace(data=json.dumps({
+            "type": "subtask_completed",
+            "task_id": task.id,
+            "subtask_id": st.id,
+            "summary": "done remotely",
+        }).encode())
+
+        asyncio.run(nw._handle_task_event(event))
+
+        # The subtask result must have reached the Orchestrator — status no
+        # longer IN_PROGRESS (completed or reassigned by _update_task_status).
+        assert st.status != SubtaskStatus.IN_PROGRESS, (
+            f"remote result dropped — subtask still {st.status.name}"
+        )
+
+    def test_remote_result_no_longer_gated_on_current_task_id(self):
+        """_current_task_id was removed; confirm the field is gone and the
+        handler runs regardless of any 'current task' notion."""
+        from ultimate_coders.nats_worker import NatsWorker
+
+        nw = NatsWorker()
+        assert not hasattr(nw, "_current_task_id"), "dead _current_task_id should be removed"
+
+    def test_stale_worker_cleanup_reassigns_across_all_tasks(self):
+        """_stale_worker_cleanup_loop must reassign a dead worker's subtasks
+        across ALL tasks. Previously gated on the always-empty _current_task_id,
+        so reassignment never ran and dead-worker subtasks stuck IN_PROGRESS.
+
+        We exercise the reassignment logic by injecting a stale worker and
+        running one cleanup tick with the 60s sleep patched out."""
+        import asyncio
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+
+        from ultimate_coders.agent.types import SubtaskStatus
+
+        nw = self._make_worker_with_orchestrator()
+        orch = nw._orchestrator
+
+        # Two tasks, each with a subtask assigned to the same remote worker.
+        t1 = asyncio.run(orch.submit_task("task one", project_id="p"))  # type: ignore[union-attr]
+        t2 = asyncio.run(orch.submit_task("task two", project_id="p"))  # type: ignore[union-attr]
+        wid = "remote-worker-1"
+        for t in (t1, t2):
+            st = t.subtasks[0]
+            st.assigned_worker = wid
+            st.status = SubtaskStatus.IN_PROGRESS
+
+        # Register the remote worker as known, with a stale last_seen (>90s).
+        nw._known_remote_workers[wid] = {
+            "last_seen": datetime.now(timezone.utc) - timedelta(seconds=120),
+        }
+        nw._dispatch_event = asyncio.Event()
+        nw._running = True
+
+        async def run():
+            # Patch the 60s sleep to a no-op so the loop processes immediately.
+            slept = {"n": 0}
+
+            async def fake_sleep(_s: float) -> None:
+                slept["n"] += 1
+                # Stop the infinite loop after the first real iteration.
+                if slept["n"] >= 2:
+                    nw._running = False
+
+            with patch("ultimate_coders.nats_worker.asyncio.sleep", fake_sleep):
+                await nw._stale_worker_cleanup_loop()
+
+        asyncio.run(run())
+
+        # Both tasks' subtasks must be reassigned to PENDING — proves the fix
+        # covers all tasks, not just a single "current" task.
+        for t in orch.tasks.values():
+            for st in t.subtasks:
+                assert st.assigned_worker != wid, "subtask still assigned to dead worker"
+                assert st.status == SubtaskStatus.PENDING, f"expected PENDING, got {st.status.name}"
+
+
+class TestNatsWorkerSubtaskCapabilityReject:
+    """Regression: _handle_subtask_execute called msg.nack() on a core NATS
+    subscription message. nats-py has no ``nack`` method (it's ``nak``), and even
+    ``nak`` raises NotJSMessageError on core (non-JetStream) messages. So a
+    worker that received a subtask it lacked capabilities for would raise an
+    unhandled AttributeError out of the message handler. The fix publishes the
+    rejection event and returns without touching the message."""
+
+    def test_capability_reject_publishes_event_without_raising(self):
+        import asyncio
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker()
+            # Worker lacks the required capability.
+            worker = MagicMock()
+            worker.worker_id = "w-underpowered"
+            worker.capabilities = ["python"]
+            nw._worker = worker
+
+            published: list[dict] = []
+            publisher = MagicMock()
+            publisher.publish_event = AsyncMock(
+                side_effect=lambda event_type, **kw: published.append({"type": event_type, **kw})
+            )
+            nw._publisher = publisher
+
+            msg = SimpleNamespace(data=json.dumps({
+                "task_id": "t-1",
+                "subtask_id": "st-1",
+                "description": "do rust thing",
+                "required_capabilities": ["rust"],
+                "timeout_seconds": 60,
+            }).encode())
+            # Crucially, msg has NO nack/nak/ack attribute — a core NATS message
+            # before the fix would AttributeError on msg.nack().
+
+            # Must not raise.
+            await nw._handle_subtask_execute(msg)
+
+            # Rejection event published so the default-mode worker keeps it Pending.
+            assert any(p["type"] == "subtask_dispatch_rejected" for p in published)
+            reject = next(p for p in published if p["type"] == "subtask_dispatch_rejected")
+            assert reject["task_id"] == "t-1"
+            assert reject["subtask_id"] == "st-1"
+
+        asyncio.run(run())
+
+
+class TestNatsWorkerConnectOptions:
+    """Regression: nats.connect() used defaults (max_reconnect_attempts=60,
+    ~2s apart). After a NATS outage longer than ~120s the client closed
+    permanently (ConnectionClosedError), turning the worker into a silent
+    zombie — alive but unable to receive subtasks or publish events. The fix
+    sets max_reconnect_attempts=-1 (unbounded) so the worker never gives up."""
+
+    def test_connect_uses_unbounded_reconnect_with_callbacks(self):
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from ultimate_coders import nats_worker as nw_module
+        from ultimate_coders.nats_worker import NatsWorker
+
+        captured: dict = {}
+
+        async def fake_connect(servers, **kwargs):
+            captured["servers"] = servers
+            captured["kwargs"] = kwargs
+            return MagicMock()
+
+        async def run():
+            nw = NatsWorker()
+            original = nw_module.nats.connect
+            nw_module.nats.connect = fake_connect
+            try:
+                await nw._connect_with_retry()
+            finally:
+                nw_module.nats.connect = original
+
+        asyncio.run(run())
+
+        assert captured["kwargs"].get("max_reconnect_attempts") == -1, (
+            "NATS reconnect must be unbounded (-1) to avoid silent zombie workers"
+        )
+        assert "disconnected_cb" in captured["kwargs"]
+        assert "reconnected_cb" in captured["kwargs"]
+
+
+class TestNatsWorkerExecuteSubtasksLoop:
+    """Regression: _execute_subtasks had a `max_iterations = len(subtasks)*2+1`
+    cap. For slow remote subtasks (each 30s wait cycle while IN_PROGRESS), a
+    small subtask count exhausted the cap and the loop exited while subtasks
+    were still running — leaving the task permanently incomplete. The fix
+    removed the cap; the loop exits only on terminal status or no-ready-and-
+    none-in-progress."""
+
+    def test_loop_runs_until_slow_subtask_completes(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ultimate_coders.agent.types import (
+            Subtask,
+            SubtaskResult,
+            SubtaskStatus,
+            Task,
+            TaskStatus,
+        )
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker()
+            nw._dispatch_event = asyncio.Event()
+
+            st = Subtask(
+                id="st-slow",
+                parent_id="t-1",
+                description="slow task",
+                status=SubtaskStatus.PENDING,
+            )
+            task = Task(
+                id="t-1",
+                description="slow",
+                status=TaskStatus.IN_PROGRESS,
+                subtasks=[st],
+            )
+
+            orch = MagicMock()
+            orch.config.max_retries = 3
+            orch.tasks = {"t-1": task}
+            orch.get_task_status = lambda tid: task
+
+            def select_next(t):
+                for s in t.subtasks:
+                    if s.status == SubtaskStatus.PENDING:
+                        return s
+                return None
+
+            orch.select_next_subtask = select_next
+            orch.assign_subtask = AsyncMock(return_value="w-1")
+
+            async def handle_result(result):
+                for s in task.subtasks:
+                    if s.id == result.subtask_id:
+                        s.status = SubtaskStatus.COMPLETED
+                if all(s.status == SubtaskStatus.COMPLETED for s in task.subtasks):
+                    task.status = TaskStatus.COMPLETED
+
+            orch.handle_subtask_result = handle_result
+
+            worker = MagicMock()
+            worker.worker_id = "w-1"
+            worker._dynamic_capacity = lambda: 1
+
+            async def execute_subtask(subtask):
+                # Simulate a slow subtask: stay IN_PROGRESS across several
+                # dispatch_event wakeups, then complete.
+                subtask.status = SubtaskStatus.IN_PROGRESS
+                for _ in range(3):
+                    nw._dispatch_event.set()
+                    await asyncio.sleep(0.01)
+                    nw._dispatch_event.clear()
+                await handle_result(SubtaskResult(
+                    subtask_id=subtask.id, worker_id="w-1", summary="ok", success=True,
+                ))
+                return SubtaskResult(
+                    subtask_id=subtask.id, worker_id="w-1", summary="ok", success=True,
+                )
+
+            worker.execute_subtask = execute_subtask
+
+            nw._orchestrator = orch
+            nw._worker = worker
+            nw._publisher = None
+            nw._known_remote_workers = {}
+
+            await asyncio.wait_for(nw._execute_subtasks(task), timeout=5.0)
+
+            # The loop must NOT have exited early — the subtask completed and
+            # the task reached COMPLETED. If the old max_iterations cap were in
+            # place, the loop would exit while IN_PROGRESS.
+            assert task.status == TaskStatus.COMPLETED, (
+                f"loop exited early; task stuck at {task.status.name}"
+            )
+
+        asyncio.run(run())
+
+
+
+class TestOrchestratorTaskEviction:
+    """Regression: Python Orchestrator.tasks grew unbounded on a long-running
+    worker (every submitted task retained forever). Terminal tasks now evict
+    when the map exceeds MAX_RETAINED_TASKS, mirroring the TS orchestrator."""
+
+    def test_evict_keeps_map_under_cap(self):
+        import asyncio
+
+        from ultimate_coders.agent.orchestrator import Orchestrator
+        from ultimate_coders.agent.types import SubtaskResult, TaskStatus
+
+        orch = Orchestrator()
+        # Submit MAX_RETAINED_TASKS + 50 tasks; complete each so they're terminal.
+        total = Orchestrator.MAX_RETAINED_TASKS + 50
+
+        async def run():
+            for i in range(total):
+                task = await orch.submit_task(f"task {i}", project_id="p")
+                # Mark the single subtask completed via handle_subtask_result,
+                # which triggers _update_task_status -> COMPLETED -> evict.
+                st = task.subtasks[0]
+                await orch.handle_subtask_result(SubtaskResult(
+                    subtask_id=st.id, worker_id="w-1", summary="ok", success=True,
+                ))
+
+        asyncio.run(run())
+
+        # Map must not exceed the cap.
+        assert len(orch.tasks) <= Orchestrator.MAX_RETAINED_TASKS, (
+            f"task map exceeded cap: {len(orch.tasks)} > {Orchestrator.MAX_RETAINED_TASKS}"
+        )
+        # All retained tasks are terminal (no IN_PROGRESS leaking through).
+        for t in orch.tasks.values():
+            assert t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED), (
+                f"non-terminal task retained: {t.status.name}"
+            )
+
+    def test_evict_noop_under_cap(self):
+        from ultimate_coders.agent.orchestrator import Orchestrator
+
+        orch = Orchestrator()
+        # No tasks — evict is a no-op, returns 0.
+        assert orch.evict_terminal_tasks() == 0
+
+
+class TestNatsWorkerSubtaskConcurrency:
+    """Regression: uc.subtask.execute messages were processed concurrently with
+    no bound — a worker with max_capacity=3 would run 5+ agent subprocesses at
+    once if 5 messages arrived, OOM-ing/CPU-starving the worker (session
+    interruption). The capacity semaphore now caps concurrent executions."""
+
+    def test_concurrent_subtasks_capped_at_max_capacity(self):
+        import asyncio
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ultimate_coders.agent.types import SubtaskResult
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker()
+            nw._dispatch_event = asyncio.Event()
+
+            worker = MagicMock()
+            worker.worker_id = "w-cap"
+            worker.capabilities = []
+            worker.max_capacity = 2
+            nw._worker = worker
+
+            publisher = MagicMock()
+            publisher.publish_event = AsyncMock()
+            publisher.publish_update = AsyncMock()
+            nw._publisher = publisher
+
+            # Build the semaphore the way _init_components would.
+            nw._exec_semaphore = asyncio.Semaphore(worker.max_capacity)
+
+            # Track concurrent executions; execute_subtask sleeps briefly.
+            current = {"n": 0}
+            peak = {"n": 0}
+
+            async def execute_subtask(subtask):
+                current["n"] += 1
+                peak["n"] = max(peak["n"], current["n"])
+                await asyncio.sleep(0.05)
+                current["n"] -= 1
+                return SubtaskResult(
+                    subtask_id=subtask.id, worker_id="w-cap",
+                    summary="ok", success=True,
+                )
+
+            worker.execute_subtask = execute_subtask
+
+            # Dispatch 6 subtasks concurrently (3x capacity).
+            msgs = []
+            for i in range(6):
+                msg = SimpleNamespace(data=json.dumps({
+                    "task_id": "t-1",
+                    "subtask_id": f"st-{i}",
+                    "description": f"task {i}",
+                    "timeout_seconds": 60,
+                }).encode())
+                msgs.append(msg)
+
+            await asyncio.gather(*(nw._handle_subtask_execute(m) for m in msgs))
+
+            # Peak concurrent executions must not exceed max_capacity (2).
+            assert peak["n"] <= worker.max_capacity, (
+                f"concurrency exceeded capacity: peak={peak['n']} > {worker.max_capacity}"
+            )
+            # All 6 should have completed (semaphore queues, doesn't drop).
+            assert peak["n"] >= 2, "expected at least 2 concurrent (capacity used)"
+
+        asyncio.run(run())
+
+
+
+class TestNatsWorkerGatewayRegistrationRetry:
+    """Regression: if gateway registration failed at startup (gRPC unreachable
+    during slow start), _grpc_reg_engine was set to None and NEVER retried —
+    the worker never appeared in the WorkerRegistry, so dispatch_ready_subtasks
+    never matched it and it never received subtasks. The heartbeat loop now
+    retries registration when _grpc_reg_engine is None but an endpoint is
+    configured."""
+
+    def test_heartbeat_retries_registration_when_engine_none(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from ultimate_coders.nats_worker import NatsWorker
+
+        async def run():
+            nw = NatsWorker(grpc_endpoint="http://gateway:50051")
+            nw._running = True
+            nw._dispatch_event = asyncio.Event()
+            nw._publisher = MagicMock()
+            nw._publisher.publish_heartbeat = AsyncMock()
+            nw._orchestrator = MagicMock()
+            nw._orchestrator.tasks = {}
+            worker = MagicMock()
+            worker.worker_id = "w-1"
+            worker.get_info = MagicMock(return_value=MagicMock(
+                id="w-1", capabilities=[], current_load=0, max_capacity=3,
+            ))
+            nw._worker = worker
+
+            # _grpc_reg_engine is None (registration failed at startup).
+            assert nw._grpc_reg_engine is None
+
+            # _register_with_gateway should be called to retry.
+            register_called = {"n": 0}
+
+            async def mock_register():
+                register_called["n"] += 1
+                # Simulate successful registration on retry.
+                nw._grpc_reg_engine = MagicMock()
+                nw._grpc_reg_engine.worker_heartbeat_async = AsyncMock()
+
+            nw._register_with_gateway = mock_register
+
+            # Patch the 30s sleep to stop after the first iteration.
+            sleep_count = {"n": 0}
+
+            async def fast_sleep(seconds):
+                sleep_count["n"] += 1
+                if sleep_count["n"] >= 1:
+                    nw._running = False
+
+            with patch("ultimate_coders.nats_worker.asyncio.sleep", fast_sleep):
+                await nw._heartbeat_loop()
+
+            assert register_called["n"] >= 1, "heartbeat did not retry registration"
+
+        asyncio.run(run())

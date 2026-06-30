@@ -154,25 +154,39 @@ export class GrpcBridge {
 		this.config.onConnectionChange = callback;
 	}
 
-	/** Check if an error looks like a broken connection. */
-	private isConnectionError(err: unknown): boolean {
-		if (!(err instanceof Error)) return false;
-		const msg = err.message.toLowerCase();
+	/** Check if an error looks like a broken connection (transport-level, not a gRPC business error). */
+	static isConnectionError(err: unknown): boolean {
+		// Walk the cause chain — connectrpc wraps the real transport error
+		// (e.g. ConnectionRefused) inside a ConnectError whose own message is a
+		// generic "Unable to connect...". The discriminator lives on the cause.
+		const msgs: string[] = [];
+		let cur: unknown = err;
+		for (let depth = 0; cur instanceof Error && depth < 5; depth++) {
+			msgs.push(cur.message.toLowerCase());
+			// Bun/Node DOMException-style errors carry a `code` (e.g. "ConnectionRefused").
+			const code = (cur as { code?: unknown }).code;
+			if (typeof code === "string") msgs.push(code.toLowerCase());
+			cur = (cur as { cause?: unknown }).cause;
+		}
+		const hay = msgs.join(" \n ");
+		if (msgs.length === 0) return false;
 		return (
-			msg.includes("econnrefused") ||
-			msg.includes("econnreset") ||
-			msg.includes("epipe") ||
-			msg.includes("enetunreach") ||
-			msg.includes("ehostunreach") ||
-			msg.includes("failed to fetch") ||
-			msg.includes("network error") ||
-			msg.includes("transport not connected") ||
-			msg.includes("transport closed") ||
-			msg.includes("goaway") ||
-			msg.includes("refused stream") ||
-			msg.includes("internal http2") ||
-			msg.includes("stream error") ||
-			msg.includes("connection reset")
+			hay.includes("econnrefused") ||
+			hay.includes("connectionrefused") ||
+			hay.includes("econnreset") ||
+			hay.includes("epipe") ||
+			hay.includes("enetunreach") ||
+			hay.includes("ehostunreach") ||
+			hay.includes("unable to connect") ||
+			hay.includes("failed to fetch") ||
+			hay.includes("network error") ||
+			hay.includes("transport not connected") ||
+			hay.includes("transport closed") ||
+			hay.includes("goaway") ||
+			hay.includes("refused stream") ||
+			hay.includes("internal http2") ||
+			hay.includes("stream error") ||
+			hay.includes("connection reset")
 		);
 	}
 
@@ -181,7 +195,7 @@ export class GrpcBridge {
 	 * Returns true if reconnect was attempted (caller should retry the operation).
 	 */
 	private async tryReconnect(err: unknown): Promise<boolean> {
-		if (!this.isConnectionError(err)) return false;
+		if (!GrpcBridge.isConnectionError(err)) return false;
 		if (this.reconnecting) return false;
 		this.reconnecting = true;
 		this.connected = false;
@@ -226,13 +240,19 @@ export class GrpcBridge {
 		try {
 			return await fn();
 		} catch (err) {
-			this.connected = false;
-			this.config.onConnectionChange?.(false);
-			if (await this.tryReconnect(err)) {
-				try {
-					return await fn();
-				} catch (retryErr) {
-					console.warn("GrpcBridge retry after reconnect failed");
+			// Only treat transport-level errors as a connection drop. A business
+			// error (NotFound, InvalidArgument, engine rejection) means the server
+			// is reachable — flipping connected=false here would falsely signal
+			// "UC: disconnected" to the UI on every rejected request.
+			if (GrpcBridge.isConnectionError(err)) {
+				this.connected = false;
+				this.config.onConnectionChange?.(false);
+				if (await this.tryReconnect(err)) {
+					try {
+						return await fn();
+					} catch (retryErr) {
+						console.warn("GrpcBridge retry after reconnect failed");
+					}
 				}
 			}
 			return fallback;
@@ -282,16 +302,21 @@ export class GrpcBridge {
 		try {
 			return await doSubmit();
 		} catch (err) {
-			this.connected = false;
-			if (await this.tryReconnect(err)) {
-				try { return await doSubmit(); } catch { console.warn("GrpcBridge submitTask retry failed"); }
+			// Only connection errors mean the server is down; business errors
+			// (e.g. malformed request) leave the connection intact.
+			if (GrpcBridge.isConnectionError(err)) {
+				this.connected = false;
+				if (await this.tryReconnect(err)) {
+					try { return await doSubmit(); } catch { console.warn("GrpcBridge submitTask retry failed"); }
+				}
 			}
 			const msg = err instanceof Error ? err.message : String(err);
+			const isConn = GrpcBridge.isConnectionError(err);
 			return {
 				ok: false,
 				error: {
-					kind: "server_unavailable",
-					message: this.isConnectionError(err)
+					kind: isConn ? "server_unavailable" : "submit_rejected",
+					message: isConn
 						? "gRPC server unavailable — start with ./run-omp.sh"
 						: msg,
 				},

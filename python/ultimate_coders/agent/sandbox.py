@@ -415,6 +415,7 @@ class SandboxManager:
         env = dict(os.environ)
         env.update(env_vars)
 
+        proc = None
         try:
             start = time.monotonic()
             proc = await asyncio.create_subprocess_exec(
@@ -543,6 +544,22 @@ class SandboxManager:
                 duration_ms=0,
                 timed_out=False,
             )
+        finally:
+            # Cancellation safety: if the outer wait_for (worker.execute_subtask
+            # timeout) cancels this coroutine, CancelledError propagates without
+            # hitting any TimeoutError handler above (it's BaseException, not
+            # Exception). Without this, the OS subprocess (the coding agent)
+            # keeps running as an orphan — consuming CPU/memory and eventually
+            # OOM-killing the worker (an OMP session-interruption cause).
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
 
 
 class AgentAdapter(ABC):
