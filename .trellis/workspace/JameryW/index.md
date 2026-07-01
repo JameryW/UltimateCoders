@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 74
+- **Total Sessions**: 75
 - **Last Active**: 2026-07-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~710 | Active |
+| `journal-2.md` | ~743 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 75 | 2026-07-01 | Friendly LLM error display (transient/permanent classification) | `944a535c` | `main` |
 | 74 | 2026-07-01 | Fix 503 retry + worker fs-mcp capability tags | `8899ec59`, `d3ca50d2` | `main` |
 | 73 | 2026-06-29 | Cross-repo search deep integration | `db81fa39`, `4b4df769`, `d742ef2e`, `748f2733` | `feat/sandbox-worker-retry-progress-profiles` |
 | 72 | 2026-06-29 | Cross-repo search & memory sharing | `32317493`, `ca07b0a0`, `00bf2087` | `feat/sandbox-worker-retry-progress-profiles` |

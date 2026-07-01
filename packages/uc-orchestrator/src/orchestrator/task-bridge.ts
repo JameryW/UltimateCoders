@@ -12,6 +12,15 @@ import type { UCOrchestrator } from "./orchestrator";
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct.
 
+/**
+ * Unified spawn-gating switch. When `UC_NO_SPAWN` env is set, all task
+ * submission entry points (uc_task tool, /uc submit, submit_task RPC)
+ * refuse to dispatch new subtasks. Non-spawning tools are unaffected.
+ */
+export function isSpawnDisabled(): boolean {
+	return Boolean(process.env.UC_NO_SPAWN);
+}
+
 export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestrator?: UCOrchestrator): void {
 	const taskSchema = pi.zod.object({
 		action: pi.zod.enum(["submit", "cancel", "pause", "resume", "status"]).describe("Task action"),
@@ -33,6 +42,12 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 			try {
 				switch (p.action) {
 					case "submit": {
+						if (isSpawnDisabled()) {
+							return {
+								content: [{ type: "text" as const, text: "子任务派发已禁用 (UC_NO_SPAWN)。用 /uc status 查看已有任务。" }],
+								isError: true,
+							};
+						}
 						if (!p.description) {
 							return {
 								content: [{ type: "text" as const, text: "Error: description required for submit" }],

@@ -38,6 +38,7 @@ START_SERVER=true
 DO_BUILD=false
 USE_DOCKER=false
 STANDALONE=false
+NO_SPAWN=false
 OMP_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -45,8 +46,9 @@ for arg in "$@"; do
     --docker)     USE_DOCKER=true ;;
     --standalone) STANDALONE=true ;;
     --build)      DO_BUILD=true ;;
+    --no-spawn)   NO_SPAWN=true ;;
     --help|-h)
-      echo "Usage: $0 [--no-server] [--docker] [--standalone] [--build]"
+      echo "Usage: $0 [--no-server] [--docker] [--standalone] [--build] [--no-spawn]"
       echo ""
       echo "  --no-server   skip gRPC server startup (server starts by default)"
       echo "  --docker      use Docker Compose for storage backends (TiKV/Qdrant/PG/NATS)"
@@ -54,11 +56,23 @@ for arg in "$@"; do
       echo "                Without --docker: gateway in-memory/external-storage fallback."
       echo "                With --docker: gateway + local storage containers."
       echo "  --build       ensure Python package (maturin) + release gRPC binary are built"
+      echo "  --no-spawn    disable subtask spawning (sets UC_NO_SPAWN=1)."
+      echo "                Hard-blocks UC uc_task submit + /uc submit + submit_task RPC."
+      echo "                OMP task tool is a SOFT constraint — to also block it, set"
+      echo "                task.disabledAgents in ~/.omp/agent/config.yml."
       exit 0
       ;;
     *) OMP_ARGS+=("$arg") ;;
   esac
 done
+
+# ── --no-spawn: disable UC subtask dispatch ────────────────────
+if [ "$NO_SPAWN" = true ]; then
+    export UC_NO_SPAWN=1
+    echo ">>> --no-spawn: UC subtask dispatch disabled (UC_NO_SPAWN=1)"
+    echo ">>>   OMP 'task' tool is NOT hard-blocked. To also disable it, set"
+    echo ">>>   task.disabledAgents in ~/.omp/agent/config.yml (OMP soft constraint)."
+fi
 
 # ── Build Python package if requested ────────────────────────
 if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then

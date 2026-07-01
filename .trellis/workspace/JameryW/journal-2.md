@@ -708,3 +708,36 @@ Two PRs merged. #199: llm.py retry path now treats 503/server_error/'system is b
 ### Next Steps
 
 - None - task complete
+
+
+## Session 75: Friendly LLM error display (transient/permanent classification)
+
+**Date**: 2026-07-01
+**Task**: Friendly LLM error display (transient/permanent classification)
+**Branch**: `main`
+
+### Summary
+
+PR #201 merged. Worker LLM errors now display friendly structured messages: llm.py adds _classify_llm_error + LLMRetryExhaustedError (carries kind/retry_count/root-cause); worker.py _build_friendly_error produces 'LLM 瞬时错误（已重试 N 次）: <root>' / 'LLM 永久错误: <root>' and sets SubtaskResult.error (fixes always-empty bug) on all 3 failure paths; TS error-format.ts classifyError+formatErrorForDisplay with smart root-cause truncation applied to 4 UI render sites + progress-widget now shows first failed error. 23 Python + 17 TS tests. 483 Python + 93 TS tests green. Rust/proto schema unchanged (string passthrough).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `944a535c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
