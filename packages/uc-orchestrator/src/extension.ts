@@ -34,7 +34,7 @@ import type { KeyId } from "@oh-my-pi/pi-tui";
 import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
 import { registerMemoryTools } from "./orchestrator/memory-bridge";
-import { registerTaskTools } from "./orchestrator/task-bridge";
+import { registerTaskTools, isSpawnDisabled } from "./orchestrator/task-bridge";
 import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
 import { registerWorkerTools } from "./orchestrator/worker-bridge";
@@ -236,6 +236,10 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				case "submit": {
 					if (!rest) {
 						ctx.ui.notify("Usage: /uc submit <task description>", "error");
+						return;
+					}
+					if (isSpawnDisabled()) {
+						ctx.ui.notify("子任务派发已禁用 (UC_NO_SPAWN)。用 /uc status 查看已有任务。", "error");
 						return;
 					}
 					await orchestrator.submitTask(rest, ctx);

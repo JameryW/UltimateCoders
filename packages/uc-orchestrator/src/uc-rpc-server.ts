@@ -16,6 +16,7 @@
 import * as readline from "node:readline";
 import { UCOrchestrator, type TaskState } from "./orchestrator/orchestrator";
 import { GrpcBridge } from "./orchestrator/grpc-bridge";
+import { isSpawnDisabled } from "./orchestrator/task-bridge";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import type { OrchestratorEventType } from "./orchestrator/events";
 
@@ -138,6 +139,9 @@ export class RpcServer {
 			case "submit_task": {
 				const description = String(params.description ?? "");
 				if (!description) throw new Error("description is required");
+				if (isSpawnDisabled()) {
+					throw new Error("子任务派发已禁用 (UC_NO_SPAWN)");
+				}
 				// Fire-and-forget: submitTask blocks until decomposition + execution
 				// complete, but the RPC protocol requires an immediate task_id response.
 				// Generate the task ID synchronously, return it, then run the
