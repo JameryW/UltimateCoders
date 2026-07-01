@@ -741,3 +741,36 @@ PR #201 merged. Worker LLM errors now display friendly structured messages: llm.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 76: Add --no-spawn flag (UC_NO_SPAWN hard + soft constraint)
+
+**Date**: 2026-07-01
+**Task**: Add --no-spawn flag (UC_NO_SPAWN hard + soft constraint)
+**Branch**: `main`
+
+### Summary
+
+PR #202 merged. --no-spawn flag disables subtask spawning: Path B (UC uc_task tool, /uc submit, submit_task RPC) HARD-blocked via UC_NO_SPAWN env returning friendly errors at all 3 entry points with shared isSpawnDisabled() helper; Path A (OMP task tool, vendor) SOFT-constrained — run-omp.sh --no-spawn sets UC_NO_SPAWN=1 + advises task.disabledAgents in ~/.omp/agent/config.yml (OMP CLI doesn't accept --spawns flag, SDK options live in vendor submodule, can't hard-disable without fork). ADR documents the constraint. 5 new TS tests, 98/98 bun test green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05e6912b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
