@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 _MCP_CAP_ALIASES: dict[str, str] = {
     "mcp:uc-fs": "file-edit",
     "mcp:uc-engine": "search",  # uc-engine already implies search; no-op if present
+    "mcp:uc-lsp": "lsp",  # uc-lsp provides real-time LSP symbol tools
 }
 
 _SUBTASK_USER_TEMPLATE = """\
@@ -235,9 +236,16 @@ class Worker:
                         "args": ["-m", "ultimate_coders.agent.fs_mcp"],
                     },
                 },
+                {
+                    "uc-lsp": {
+                        "command": "python",
+                        "args": ["-m", "ultimate_coders.agent.lsp_mcp"],
+                    },
+                },
             ]
         elif engine is not None and self._sandbox_config.mcp_configs is not None:
-            # ponytail: ensure uc-fs is registered even if caller supplied custom mcp_configs
+            # ponytail: ensure uc-fs + uc-lsp are registered even if caller
+            # supplied custom mcp_configs
             names = {
                 name
                 for entry in self._sandbox_config.mcp_configs or []
@@ -250,6 +258,15 @@ class Worker:
                         "uc-fs": {
                             "command": "python",
                             "args": ["-m", "ultimate_coders.agent.fs_mcp"],
+                        },
+                    }
+                )
+            if "uc-lsp" not in names:
+                self._sandbox_config.mcp_configs.append(
+                    {
+                        "uc-lsp": {
+                            "command": "python",
+                            "args": ["-m", "ultimate_coders.agent.lsp_mcp"],
                         },
                     }
                 )
@@ -314,8 +331,8 @@ class Worker:
                     caps.append("codegraph")
                     # codegraph MCP provides LSP semantics (goToDefinition/findReferences/hover/
                     # documentSymbol) — declare lsp so the scheduler routes symbol-ops subtasks.
-                    # ponytail: ceiling — codegraph is a precomputed SQLite graph lagging writes
-                    # ~1s; for live worktree edits a real-time LSP would be needed (out of scope).
+                    # ponytail: codegraph lags writes ~1s; uc-lsp (multilspy) now provides
+                    # real-time LSP for Python. Both coexist — codegraph for cross-repo/history.
                     caps.append("lsp")
         # Map specific mcp:<server> tags to semantic capability aliases.
         for entry in (cfg.mcp_configs or []):

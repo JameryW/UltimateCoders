@@ -19,6 +19,15 @@ RUN pip install --no-cache-dir \
     "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
     "sse-starlette>=1.6.0" "nats-py>=2.7.0"
 
+# ponytail: multilspy (optional LSP dep) — install jedi-language-server (pure
+# Python, no binary download needed). Verify the import works at build time so
+# a broken dep is caught early; if it fails the image still builds (LSP tools
+# degrade gracefully at runtime). jedi-language-server ships in site-packages
+# which Stage 2 copies to the runtime image.
+RUN pip install --no-cache-dir "multilspy==0.0.15" \
+    && python -c "import jedi_language_server; from multilspy.language_server import LanguageServer; print('multilspy + jedi OK')" \
+    || echo "multilspy install skipped (non-fatal)"
+
 COPY . .
 RUN maturin develop --release
 
