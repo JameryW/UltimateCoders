@@ -840,3 +840,36 @@ PR #203 merged. uc-lsp MCP server replaces codegraph worktree-lag ceiling for re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 79: uc-lsp codegraph fallback
+
+**Date**: 2026-07-01
+**Task**: uc-lsp codegraph fallback
+**Branch**: `main`
+
+### Summary
+
+PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClient) when multilspy absent/language-unsupported/server-fails, with best-effort semantic mapping: workspace_symbol->search, go_to_definition->search first hit, find_references->callers+search union, hover/doc_symbols->explicit not-available+alternative suggestion. Results prefixed [codegraph fallback]. codegraph unavailable too -> plain unavailable msg. 15 new tests, 523 full suite green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5d70aa1f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
