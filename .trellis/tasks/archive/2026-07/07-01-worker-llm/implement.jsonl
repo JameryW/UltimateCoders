@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误分类与展示规范 — 瞬时/永久错误处理契约"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "subtask_failed 事件 payload 契约 — error 字段如何传播"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "worker 错误日志风格对齐"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI 渲染与 gRPC 字段映射 — UI 错误展示契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "status-formatter/progress-widget 等 UI 组件规范"}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验错误分类符合规范"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "校验 subtask_failed payload 契约未破坏"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "UI 改动质量标准"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python 改动质量与测试覆盖"}
