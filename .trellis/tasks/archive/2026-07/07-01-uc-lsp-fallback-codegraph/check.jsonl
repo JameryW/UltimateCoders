@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/codegraph-integration.md", "reason": "校验 codegraph fallback 符合集成契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验降级链错误处理"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "校验测试覆盖"}
