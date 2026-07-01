@@ -2120,8 +2120,6 @@ class TestNatsWorkerRemoteResults:
     600s heartbeat timeout (OMP session interruption)."""
 
     def _make_worker_with_orchestrator(self):
-        import asyncio
-
         from ultimate_coders.agent.orchestrator import Orchestrator
         from ultimate_coders.nats_worker import NatsWorker
 
@@ -2129,7 +2127,9 @@ class TestNatsWorkerRemoteResults:
         nw._orchestrator = Orchestrator()
         # _dispatch_event is lazy-constructed in start(); tests skip start(),
         # so construct it here so _handle_task_event can wake the dispatch loop.
-        nw._dispatch_event = asyncio.Event()
+        # Lazy: don't construct asyncio.Event() here — Py3.9 binds a loop at
+        # construction, and this method is called from a sync test context.
+        # The callers wrap in asyncio.run() and set _dispatch_event there.
         return nw
 
     def test_remote_subtask_completed_feeds_into_orchestrator(self):
@@ -2139,29 +2139,33 @@ class TestNatsWorkerRemoteResults:
 
         from ultimate_coders.agent.types import SubtaskStatus
 
-        nw = self._make_worker_with_orchestrator()
-        orch = nw._orchestrator
+        async def run():
+            nw = self._make_worker_with_orchestrator()
+            nw._dispatch_event = asyncio.Event()
+            orch = nw._orchestrator
 
-        # Submit a task and assign one subtask to the remote worker.
-        task = asyncio.run(orch.submit_task("do thing", project_id="p"))  # type: ignore[union-attr]
-        st = task.subtasks[0]
-        st.assigned_worker = "remote"
-        st.status = SubtaskStatus.IN_PROGRESS
+            # Submit a task and assign one subtask to the remote worker.
+            task = await orch.submit_task("do thing", project_id="p")  # type: ignore[union-attr]
+            st = task.subtasks[0]
+            st.assigned_worker = "remote"
+            st.status = SubtaskStatus.IN_PROGRESS
 
-        event = SimpleNamespace(data=json.dumps({
-            "type": "subtask_completed",
-            "task_id": task.id,
-            "subtask_id": st.id,
-            "summary": "done remotely",
-        }).encode())
+            event = SimpleNamespace(data=json.dumps({
+                "type": "subtask_completed",
+                "task_id": task.id,
+                "subtask_id": st.id,
+                "summary": "done remotely",
+            }).encode())
 
-        asyncio.run(nw._handle_task_event(event))
+            await nw._handle_task_event(event)
 
-        # The subtask result must have reached the Orchestrator — status no
-        # longer IN_PROGRESS (completed or reassigned by _update_task_status).
-        assert st.status != SubtaskStatus.IN_PROGRESS, (
-            f"remote result dropped — subtask still {st.status.name}"
-        )
+            # The subtask result must have reached the Orchestrator — status no
+            # longer IN_PROGRESS (completed or reassigned by _update_task_status).
+            assert st.status != SubtaskStatus.IN_PROGRESS, (
+                f"remote result dropped — subtask still {st.status.name}"
+            )
+
+        asyncio.run(run())
 
     def test_remote_result_no_longer_gated_on_current_task_id(self):
         """_current_task_id was removed; confirm the field is gone and the
@@ -2187,23 +2191,24 @@ class TestNatsWorkerRemoteResults:
         nw = self._make_worker_with_orchestrator()
         orch = nw._orchestrator
 
-        # Two tasks, each with a subtask assigned to the same remote worker.
-        t1 = asyncio.run(orch.submit_task("task one", project_id="p"))  # type: ignore[union-attr]
-        t2 = asyncio.run(orch.submit_task("task two", project_id="p"))  # type: ignore[union-attr]
-        wid = "remote-worker-1"
-        for t in (t1, t2):
-            st = t.subtasks[0]
-            st.assigned_worker = wid
-            st.status = SubtaskStatus.IN_PROGRESS
-
-        # Register the remote worker as known, with a stale last_seen (>90s).
-        nw._known_remote_workers[wid] = {
-            "last_seen": datetime.now(timezone.utc) - timedelta(seconds=120),
-        }
-        nw._dispatch_event = asyncio.Event()
-        nw._running = True
-
         async def run():
+            nw._dispatch_event = asyncio.Event()
+            nw._running = True
+
+            # Two tasks, each with a subtask assigned to the same remote worker.
+            t1 = await orch.submit_task("task one", project_id="p")  # type: ignore[union-attr]
+            t2 = await orch.submit_task("task two", project_id="p")  # type: ignore[union-attr]
+            wid = "remote-worker-1"
+            for t in (t1, t2):
+                st = t.subtasks[0]
+                st.assigned_worker = wid
+                st.status = SubtaskStatus.IN_PROGRESS
+
+            # Register the remote worker as known, with a stale last_seen (>90s).
+            nw._known_remote_workers[wid] = {
+                "last_seen": datetime.now(timezone.utc) - timedelta(seconds=120),
+            }
+
             # Patch the 60s sleep to a no-op so the loop processes immediately.
             slept = {"n": 0}
 
@@ -2216,14 +2221,16 @@ class TestNatsWorkerRemoteResults:
             with patch("ultimate_coders.nats_worker.asyncio.sleep", fake_sleep):
                 await nw._stale_worker_cleanup_loop()
 
-        asyncio.run(run())
+            # Both tasks' subtasks must be reassigned to PENDING — proves the fix
+            # covers all tasks, not just a single "current" task.
+            for t in orch.tasks.values():
+                for st in t.subtasks:
+                    assert st.assigned_worker != wid, "subtask still assigned to dead worker"
+                    assert st.status == SubtaskStatus.PENDING, (
+                        f"expected PENDING, got {st.status.name}"
+                    )
 
-        # Both tasks' subtasks must be reassigned to PENDING — proves the fix
-        # covers all tasks, not just a single "current" task.
-        for t in orch.tasks.values():
-            for st in t.subtasks:
-                assert st.assigned_worker != wid, "subtask still assigned to dead worker"
-                assert st.status == SubtaskStatus.PENDING, f"expected PENDING, got {st.status.name}"
+        asyncio.run(run())
 
 
 class TestNatsWorkerSubtaskCapabilityReject:

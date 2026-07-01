@@ -117,14 +117,13 @@ def test_stream_snapshot_payload_shape() -> None:
     # is hard; instead drive the NATS path with a pre-seeded queue so an event
     # is yielded and we can assert its shape.
     app._nats_client = MagicMock()  # truthy → enters NATS branch
-    q: asyncio.Queue = asyncio.Queue()
-
-    async def seed() -> None:
-        await q.put({"type": "subtask_completed", "data": {"id": "st-1"}})
 
     async def run() -> tuple[list, Exception | None]:
+        # asyncio.Queue must be created inside the running loop (Py3.9 binds
+        # a loop at construction).
+        q: asyncio.Queue = asyncio.Queue()
         app._get_nats_event_queue = lambda: q
-        await seed()
+        await q.put({"type": "subtask_completed", "data": {"id": "st-1"}})
         return await _drive(app, max_iters=3)
 
     out, err = asyncio.run(run())
