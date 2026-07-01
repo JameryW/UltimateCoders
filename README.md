@@ -49,6 +49,37 @@ The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal
 ./run-cluster.sh --stop
 ```
 
+### 独立部署模式（容器化 gateway）
+
+```bash
+# 仅 gateway 容器，存储走内存 fallback（或外部存储，见下方 env）
+./run-gateway.sh up
+
+# gateway + 本地存储容器（TiKV + Qdrant + PostgreSQL + NATS）
+./run-gateway.sh up --docker
+
+# 查看状态 / 日志 / 停止
+./run-gateway.sh status
+./run-gateway.sh logs
+./run-gateway.sh down [--docker]
+
+# 独立 gateway + OMP（OMP 连接容器 gateway）
+./run-omp.sh --standalone
+
+# 独立集群：容器 gateway + 存储 + 本机 workers
+./run-cluster.sh --standalone --workers 2
+```
+
+外部存储部署（默认模式，无 `--docker`）：导出 env 指向远端后端，空值 = 内存 fallback。
+
+```bash
+export UC_TIKV_PD_ENDPOINTS=pd.example:2379
+export UC_QDRANT_URL=http://qdrant.example:6334
+export UC_PG_URL=postgresql://user:pass@pg.example:5432/ultimate_coders
+export UC_NATS_URL=nats://nats.example:4222
+./run-gateway.sh up
+```
+
 ### Docker Compose（存储后端）
 
 ```bash
@@ -221,6 +252,7 @@ ultimate-coders/
 ├── pyproject.toml            # Maturin build config
 ├── run-omp.sh                # Start OMP with UC extension (primary interface)
 ├── run-cluster.sh            # Start local distributed cluster (NATS + workers)
+├── run-gateway.sh            # Manage standalone containerized gateway
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
 │   ├── uc-engine/            # Core engine (LocalEngine implementation)
@@ -297,11 +329,37 @@ pytest tests/python/ -v        # Run Python tests
 # Ensure Python package is built first
 ./run-omp.sh --build
 
+# Standalone: gateway runs in a container (in-memory/external-storage fallback)
+./run-omp.sh --standalone
+# Standalone + local storage containers
+./run-omp.sh --standalone --docker
+
 # Start distributed cluster instead
 ./run-cluster.sh
+# Standalone cluster: container gateway + storage + host workers
+./run-cluster.sh --standalone --workers 2
 ```
 
-### Docker Compose
+### Standalone Gateway (containerized)
+
+```bash
+# Gateway container only — in-memory fallback, or external storage via env
+./run-gateway.sh up
+# Gateway + local storage containers (TiKV/Qdrant/PG/NATS)
+./run-gateway.sh up --docker
+# Status / logs / stop
+./run-gateway.sh status
+./run-gateway.sh logs
+./run-gateway.sh down [--docker]
+
+# External storage (default mode, no --docker): point at remote backends,
+# empty = in-memory fallback.
+#   UC_TIKV_PD_ENDPOINTS=pd.example:2379 UC_QDRANT_URL=http://qdrant.example:6334 \
+#     UC_PG_URL=postgresql://u:p@pg.example:5432/uc UC_NATS_URL=nats://nats.example:4222 \
+#     ./run-gateway.sh up
+```
+
+### Docker Compose (storage backends)
 
 ```bash
 # Start all storage backends
@@ -312,15 +370,6 @@ docker compose -f docker/docker-compose.yml down
 
 # Stop and remove volumes
 docker compose -f docker/docker-compose.yml down -v
-
-# Gateway-only deployment (storage external)
-# Starts just the gRPC gateway; no TiKV/Qdrant/PG/NATS are launched.
-# With no storage env set, boots in in-memory fallback mode.
-# Inject external storage addresses via env or a .env file:
-#   UC_TIKV_PD_ENDPOINTS=pd.example:2379 UC_QDRANT_URL=http://qdrant.example:6334 \
-#     UC_PG_URL=postgresql://u:p@pg.example:5432/uc UC_NATS_URL=nats://nats.example:4222 \
-#     docker compose -f docker/docker-compose.gateway.yml up -d
-docker compose -f docker/docker-compose.gateway.yml up -d
 ```
 
 ### Distributed Worker + External Git Deployment
