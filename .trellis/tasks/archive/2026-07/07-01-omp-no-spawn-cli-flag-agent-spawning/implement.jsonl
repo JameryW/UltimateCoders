@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/omp-tools-spec.md", "reason": "UC LLM 工具注册契约 — uc_task submit 行为规范"}
+{"file": ".trellis/spec/backend/omp-rpc-server-spec.md", "reason": "submit_task RPC 契约 — 非LLM 入口拦截点"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "run-omp.sh 启动参数与 OMP 集成契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "extension.ts slash command 规范"}
