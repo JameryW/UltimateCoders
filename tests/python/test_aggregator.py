@@ -8,8 +8,6 @@ verify_command outcome. The LLM synthesis path is exercised via a stub.
 
 from __future__ import annotations
 
-import asyncio
-
 from ultimate_coders.agent.aggregator import (
     AggregationStatus,
     ResultAggregator,
