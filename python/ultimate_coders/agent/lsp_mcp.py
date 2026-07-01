@@ -87,11 +87,18 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # File extensions → multilspy code_language values.
-# Python is the MVP; other languages return "not supported" (fall back to
-# codegraph / read_file). Add languages as their LSP servers land in the
-# worker container.
+# multilspy's Language enum (str, Enum) has matching values: "python",
+# "rust", "typescript". Adding a mapping here makes _get_language_server
+# construct the right LanguageServer (RustAnalyzer / TypeScriptLanguageServer);
+# multilspy handles binary discovery/startup, and if it fails the existing
+# codegraph fallback still kicks in (PR #204).
 _SUPPORTED_LANGS: dict[str, str] = {
     ".py": "python",
+    ".rs": "rust",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "typescript",
+    ".jsx": "typescript",
 }
 
 # Cache of (workspace, language) → started LanguageServer, kept alive for the

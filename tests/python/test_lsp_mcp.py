@@ -114,13 +114,31 @@ class TestDetectLanguage:
     def test_python_detected(self) -> None:
         assert _detect_language("foo.py") == "python"
 
+    def test_rust_detected(self) -> None:
+        assert _detect_language("foo.rs") == "rust"
+        assert _detect_language("src/main.rs") == "rust"
+
+    def test_typescript_detected(self) -> None:
+        assert _detect_language("foo.ts") == "typescript"
+        assert _detect_language("foo.tsx") == "typescript"
+        assert _detect_language("foo.js") == "typescript"
+        assert _detect_language("foo.jsx") == "typescript"
+
     def test_unsupported_language_returns_none(self) -> None:
-        assert _detect_language("foo.rs") is None
         assert _detect_language("foo.go") is None
-        assert _detect_language("foo.ts") is None
+        assert _detect_language("foo.java") is None
+        assert _detect_language("foo.c") is None
 
     def test_case_insensitive_extension(self) -> None:
         assert _detect_language("FOO.PY") == "python"
+        assert _detect_language("FOO.RS") == "rust"
+        assert _detect_language("FOO.TS") == "typescript"
+        assert _detect_language("FOO.TSX") == "typescript"
+
+    def test_unknown_extension_returns_none(self) -> None:
+        assert _detect_language("README") is None
+        assert _detect_language("foo.unknown") is None
+        assert _detect_language("noext") is None
 
 
 # ── Tool tests with mocked LanguageServer ───────────────────────
@@ -266,6 +284,152 @@ class TestLspTools:
         assert "No symbols matching" in result[0].text
 
 
+# ── Rust / TypeScript multilspy path ─────────────────────────────
+
+
+class TestRustTsMultilspyPath:
+    """Rust (.rs) and TypeScript (.ts/.tsx/.js/.jsx) files should route
+    through the multilspy LanguageServer path (not the codegraph fallback)
+    when multilspy is available. The language string passed to
+    _get_language_server must match multilspy's Language enum values."""
+
+    def test_rust_definition_uses_multilspy(
+        self, mock_ls: MagicMock, tmp_path: object
+    ) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "lib.rs"), "w") as f:
+            f.write("fn foo() {}\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ) as mock_get_ls:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "lib.rs", "line": 1, "character": 4})
+            )
+        # Not a fallback — no [codegraph fallback] prefix
+        assert "[codegraph fallback]" not in result[0].text
+        assert "Definition:" in result[0].text
+        # multilspy request_definition was called (multilspy path)
+        mock_ls.request_definition.assert_called_once()
+        # The language server was requested with language="rust"
+        mock_get_ls.assert_called_once_with(ws, "rust")
+
+    def test_ts_definition_uses_multilspy(
+        self, mock_ls: MagicMock, tmp_path: object
+    ) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "mod.ts"), "w") as f:
+            f.write("function foo() {}\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ) as mock_get_ls:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "mod.ts", "line": 1, "character": 10})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "Definition:" in result[0].text
+        mock_ls.request_definition.assert_called_once()
+        mock_get_ls.assert_called_once_with(ws, "typescript")
+
+    def test_tsx_definition_uses_multilspy(
+        self, mock_ls: MagicMock, tmp_path: object
+    ) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "comp.tsx"), "w") as f:
+            f.write("export const Foo = () => null;\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ) as mock_get_ls:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "comp.tsx", "line": 1, "character": 13})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        mock_ls.request_definition.assert_called_once()
+        mock_get_ls.assert_called_once_with(ws, "typescript")
+
+    def test_rust_find_references_uses_multilspy(
+        self, mock_ls: MagicMock, tmp_path: object
+    ) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "lib.rs"), "w") as f:
+            f.write("foo();\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ) as mock_get_ls:
+            result = asyncio.run(
+                _find_references(ws, {"path": "lib.rs", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "References (2):" in result[0].text
+        mock_ls.request_references.assert_called_once()
+        mock_get_ls.assert_called_once_with(ws, "rust")
+
+    def test_rust_hover_uses_multilspy(self, mock_ls: MagicMock, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "lib.rs"), "w") as f:
+            f.write("let x = foo();\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ):
+            result = asyncio.run(
+                _hover(ws, {"path": "lib.rs", "line": 1, "character": 9})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "def foo(x: int) -> str" in result[0].text
+
+    def test_rust_doc_symbols_uses_multilspy(
+        self, mock_ls: MagicMock, tmp_path: object
+    ) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "lib.rs"), "w") as f:
+            f.write("fn foo() {}\n")
+
+        with patch(
+            "ultimate_coders.agent.lsp_mcp._get_language_server",
+            return_value=mock_ls,
+        ):
+            result = asyncio.run(
+                _document_symbols(ws, {"path": "lib.rs"})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "foo" in result[0].text
+
+    def test_rust_multilspy_unavailable_falls_back(self, tmp_path: object) -> None:
+        """When multilspy fails to start for rust, fall back to codegraph."""
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "lib.rs"), "w") as f:
+            f.write("foo()\n")
+        cg = _make_codegraph_mock(
+            search_results=[
+                {"name": "foo", "kind": "function", "file_path": "def.rs", "start_line": 5}
+            ]
+        )
+        with patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None), \
+             patch("ultimate_coders.agent.lsp_mcp._get_codegraph", return_value=cg):
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "lib.rs", "line": 1, "character": 1})
+            )
+        # Falls back to codegraph (multilspy unavailable)
+        assert "[codegraph fallback]" in result[0].text
+        assert "foo" in result[0].text
+
+
 # ── Graceful degradation ─────────────────────────────────────────
 
 
@@ -330,18 +494,18 @@ class TestGracefulDegradation:
         assert "LSP unavailable" in result[0].text
 
     def test_unsupported_language_returns_hint(self, tmp_path: object) -> None:
-        """Non-Python files return 'language not supported' without crashing."""
+        """Non-supported files return 'language not supported' without crashing."""
         ws = str(tmp_path)
         os.makedirs(ws, exist_ok=True)
-        with open(os.path.join(ws, "f.rs"), "w") as f:
-            f.write("fn main() {}\n")
+        with open(os.path.join(ws, "f.go"), "w") as f:
+            f.write("func main() {}\n")
 
         result = asyncio.run(
-            _go_to_definition(ws, {"path": "f.rs", "line": 1, "character": 1})
+            _go_to_definition(ws, {"path": "f.go", "line": 1, "character": 1})
         )
         assert "LSP unavailable" in result[0].text
         assert "language not supported" in result[0].text
-        assert "f.rs" in result[0].text
+        assert "f.go" in result[0].text
 
 
 # ── Worker integration ──────────────────────────────────────────

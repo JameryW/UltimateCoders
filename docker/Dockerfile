@@ -28,6 +28,16 @@ RUN pip install --no-cache-dir "multilspy==0.0.15" \
     && python -c "import jedi_language_server; from multilspy.language_server import LanguageServer; print('multilspy + jedi OK')" \
     || echo "multilspy install skipped (non-fatal)"
 
+# ponytail: rust-analyzer — builder already has cargo/rustup. Install to a
+# known root so we can COPY the binary to the runtime stage. multilspy's
+# RustAnalyzer downloads its own copy, but having rust-analyzer in PATH is a
+# useful fallback and a build-time smoke check. Ensure the path always exists
+# (touch placeholder on failure) so the Stage 2 COPY never breaks the build.
+RUN cargo install --root /usr/local --locked rust-analyzer \
+    && /usr/local/bin/rust-analyzer --version \
+    || (touch /usr/local/bin/rust-analyzer \
+        && echo "rust-analyzer install skipped (non-fatal)")
+
 COPY . .
 RUN maturin develop --release
 
@@ -36,9 +46,11 @@ FROM python:3.11-slim
 
 # Runtime deps: git is required for WorkspaceManager remote sync
 # (clone/fetch/push). openssh-client is cheap and enables SSH-based
-# remotes as an alternative to HTTPS+PAT.
+# remotes as an alternative to HTTPS+PAT. nodejs + npm are needed by
+# multilspy's TypeScriptLanguageServer (it shells out to node/npm to
+# install typescript-language-server into its static dir).
 RUN apt-get update && apt-get install -y \
-    libssl3 ca-certificates curl git openssh-client \
+    libssl3 ca-certificates curl git openssh-client nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # git-askpass helper: git invokes this only when auth is needed.
@@ -52,6 +64,16 @@ WORKDIR /app
 
 # Copy installed Python packages (includes _uc_core .so + all deps)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+
+# Copy rust-analyzer binary built in Stage 1 (multilspy downloads its own
+# copy, but having it in PATH is a useful fallback). Non-fatal if absent.
+COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
+
+# TypeScript LSP: install globally so multilspy (which needs node/npm in
+# PATH) can bootstrap typescript-language-server. Non-fatal verification.
+RUN npm install -g typescript-language-server typescript \
+    && typescript-language-server --version \
+    || echo "typescript-language-server install skipped (non-fatal)"
 
 # Copy the Python source (maturin develop links to the source tree)
 COPY python/ultimate_coders /app/python/ultimate_coders
