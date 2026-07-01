@@ -17,6 +17,29 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# ponytail: transient upstream errors worth a backoff retry.
+# 503/server_error/"system is busy"/"try again later" are how LLM proxies and
+# gateways signal temporary overload — distinct from 429 (rate limit) and 529
+# (Anthropic overloaded), but equally retriable. Without this, a single 503
+# fails the whole subtask instead of backing off.
+_TRANSIENT_RETRY_MARKERS = (
+    "429",
+    "rate_limit",
+    "529",
+    "overloaded",
+    "503",
+    "server_error",
+    "system is busy",
+    "try again later",
+    "service unavailable",
+)
+
+
+def _is_transient_api_error(error_str: str) -> bool:
+    """Whether an LLM API error string looks transient (retryable with backoff)."""
+    low = error_str.lower()
+    return any(m in low for m in _TRANSIENT_RETRY_MARKERS)
+
 # Provider-specific API key env var mapping
 _PROVIDER_KEY_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -602,10 +625,8 @@ class LLMClient:
                 return await client.messages.create(**params)
             except Exception as e:
                 error_str = str(e)
-                is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
-                is_overloaded = "529" in error_str or "overloaded" in error_str.lower()
 
-                if not (is_rate_limit or is_overloaded):
+                if not _is_transient_api_error(error_str):
                     raise
 
                 if attempt >= self.max_retries - 1:
@@ -616,7 +637,7 @@ class LLMClient:
                 jitter = random.uniform(0, 0.5)  # noqa: S311
                 delay = min(exp_delay + jitter, max_delay)
                 logger.warning(
-                    "LLM API rate limited/overloaded (attempt %d/%d), retrying in %.1fs: %s",
+                    "LLM API transient error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1,
                     self.max_retries,
                     delay,
@@ -640,9 +661,8 @@ class LLMClient:
                 return await litellm_mod.acompletion(**params)
             except Exception as e:
                 error_str = str(e)
-                is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower()
 
-                if not is_rate_limit:
+                if not _is_transient_api_error(error_str):
                     raise
 
                 if attempt >= self.max_retries - 1:
@@ -652,7 +672,7 @@ class LLMClient:
                 jitter = random.uniform(0, 0.5)  # noqa: S311
                 delay = min(exp_delay + jitter, max_delay)
                 logger.warning(
-                    "litellm rate limited (attempt %d/%d), retrying in %.1fs: %s",
+                    "litellm transient error (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1,
                     self.max_retries,
                     delay,
