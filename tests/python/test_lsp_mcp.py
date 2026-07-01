@@ -19,6 +19,7 @@ from ultimate_coders.agent.lsp_mcp import (
     TextContent,
     _detect_language,
     _document_symbols,
+    _extract_symbol_at,
     _find_references,
     _go_to_definition,
     _hover,
@@ -60,10 +61,11 @@ def _make_symbol(name: str, kind: str) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _clear_ls_cache() -> None:
-    """Clear the LanguageServer cache between tests."""
+    """Clear the LanguageServer + CodegraphClient caches between tests."""
     from ultimate_coders.agent import lsp_mcp
 
     lsp_mcp._ls_cache.clear()
+    lsp_mcp._cg_cache.clear()
 
 
 @pytest.fixture
@@ -373,3 +375,225 @@ class TestWorkerLspRegistration:
         assert "uc-lsp" in names
         assert "uc-fs" in names
         assert "my-tool" in names
+
+
+# ── Codegraph fallback ───────────────────────────────────────────
+
+
+def _make_codegraph_mock(
+    *, available: bool = True, search_results=None, callers=None, callees=None
+) -> MagicMock:
+    """Build a mocked CodegraphClient."""
+    cg = MagicMock()
+    cg.is_available.return_value = available
+    cg.search.return_value = search_results or []
+    cg.callers.return_value = callers or []
+    cg.callees.return_value = callees or []
+    return cg
+
+
+def _fallback_patches(cg_mock: MagicMock | None):
+    """Patch _get_language_server→None and _get_codegraph→cg_mock.
+
+    Pass cg_mock=None to simulate codegraph also unavailable.
+    """
+    return (
+        patch("ultimate_coders.agent.lsp_mcp._get_language_server", return_value=None),
+        patch("ultimate_coders.agent.lsp_mcp._get_codegraph", return_value=cg_mock),
+    )
+
+
+class TestCodegraphFallback:
+    """When multilspy is unavailable, tools fall back to codegraph."""
+
+    def test_workspace_symbol_fallback_returns_search_results(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        cg = _make_codegraph_mock(
+            search_results=[
+                {"name": "foo", "kind": "function", "file_path": "a.py", "start_line": 10}
+            ]
+        )
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(_workspace_symbol(ws, {"query": "foo"}))
+        assert "[codegraph fallback]" in result[0].text
+        assert "foo" in result[0].text
+        assert "Symbols (1):" in result[0].text
+        cg.search.assert_called_once_with("foo")
+
+    def test_workspace_symbol_fallback_no_results(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        cg = _make_codegraph_mock(search_results=[])
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(_workspace_symbol(ws, {"query": "bar"}))
+        assert "[codegraph fallback]" in result[0].text
+        assert "No symbols matching" in result[0].text
+
+    def test_go_to_definition_fallback_returns_first_hit(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo()\n")
+        cg = _make_codegraph_mock(
+            search_results=[
+                {"name": "foo", "kind": "function", "file_path": "def.py", "start_line": 5},
+                {"name": "foo", "kind": "function", "file_path": "other.py", "start_line": 20},
+            ]
+        )
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" in result[0].text
+        assert "foo" in result[0].text
+        assert "def.py:5" in result[0].text
+
+    def test_find_references_fallback_unions_callers_and_search(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo()\n")
+        cg = _make_codegraph_mock(
+            search_results=[
+                {"name": "foo", "kind": "function", "file_path": "def.py", "start_line": 5}
+            ],
+            callers=[
+                {"name": "bar", "kind": "function", "file_path": "bar.py", "start_line": 12}
+            ],
+        )
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(
+                _find_references(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" in result[0].text
+        assert "References (2):" in result[0].text
+        assert "bar" in result[0].text
+        assert "foo" in result[0].text
+
+    def test_hover_fallback_returns_not_available_hint(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo()\n")
+        cg = _make_codegraph_mock(
+            search_results=[
+                {"name": "foo", "kind": "function", "file_path": "def.py", "start_line": 5}
+            ]
+        )
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(
+                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" in result[0].text
+        assert "不可用" in result[0].text
+        assert "foo" in result[0].text
+        assert "def.py:5" in result[0].text
+
+    def test_document_symbols_fallback_returns_not_available_hint(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("def foo(): pass\n")
+        cg = _make_codegraph_mock()
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(_document_symbols(ws, {"path": "f.py"}))
+        assert "[codegraph fallback]" in result[0].text
+        assert "不可用" in result[0].text
+
+    def test_go_to_definition_fallback_no_symbol_extracted(self, tmp_path: object) -> None:
+        """When the file line has no identifier, fallback reports it can't map."""
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("123\n")  # no identifier
+        cg = _make_codegraph_mock(search_results=[])
+        p1, p2 = _fallback_patches(cg)
+        with p1, p2:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" in result[0].text
+        assert "Could not extract" in result[0].text
+
+
+class TestCodegraphUnavailableFallback:
+    """When both multilspy AND codegraph are unavailable, return plain hint (no prefix)."""
+
+    def test_workspace_symbol_codegraph_unavailable(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        p1, p2 = _fallback_patches(None)
+        with p1, p2:
+            result = asyncio.run(_workspace_symbol(ws, {"query": "foo"}))
+        assert "[codegraph fallback]" not in result[0].text
+        assert "LSP unavailable" in result[0].text
+
+    def test_go_to_definition_codegraph_unavailable(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo()\n")
+        p1, p2 = _fallback_patches(None)
+        with p1, p2:
+            result = asyncio.run(
+                _go_to_definition(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "LSP unavailable" in result[0].text
+
+    def test_hover_codegraph_unavailable(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo\n")
+        p1, p2 = _fallback_patches(None)
+        with p1, p2:
+            result = asyncio.run(
+                _hover(ws, {"path": "f.py", "line": 1, "character": 1})
+            )
+        assert "[codegraph fallback]" not in result[0].text
+        assert "LSP unavailable" in result[0].text
+
+
+class TestExtractSymbolAt:
+    """Test the best-effort symbol extraction helper."""
+
+    def test_extracts_symbol_at_position(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("result = process_data(input)\n")
+        # "process_data" starts at char 10 (1-based)
+        symbol = _extract_symbol_at(ws, "f.py", 1, 12)
+        assert symbol == "process_data"
+
+    def test_extracts_symbol_containing_position(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo_bar()\n")
+        # char 3 is inside "foo_bar"
+        symbol = _extract_symbol_at(ws, "f.py", 1, 3)
+        assert symbol == "foo_bar"
+
+    def test_returns_none_for_missing_file(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        assert _extract_symbol_at(ws, "nope.py", 1, 1) is None
+
+    def test_returns_none_for_empty_line(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("\n\n")
+        assert _extract_symbol_at(ws, "f.py", 1, 1) is None
+
+    def test_returns_none_for_line_out_of_range(self, tmp_path: object) -> None:
+        ws = str(tmp_path)
+        os.makedirs(ws, exist_ok=True)
+        with open(os.path.join(ws, "f.py"), "w") as f:
+            f.write("foo\n")
+        assert _extract_symbol_at(ws, "f.py", 99, 1) is None
