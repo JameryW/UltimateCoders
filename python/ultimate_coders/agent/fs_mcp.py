@@ -140,7 +140,10 @@ def _create_server(workspace: str) -> object:
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Exact text to replace (must match file including indentation)",
+                            "description": (
+                                "Exact text to replace"
+                                " (must match file including indentation)"
+                            ),
                         },
                         "new_string": {
                             "type": "string",
@@ -149,7 +152,10 @@ def _create_server(workspace: str) -> object:
                         "replace_all": {
                             "type": "boolean",
                             "default": False,
-                            "description": "Replace all occurrences instead of requiring unique match",
+                            "description": (
+                                "Replace all occurrences instead of"
+                                " requiring a unique match"
+                            ),
                         },
                     },
                     "required": ["path", "old_string", "new_string"],
@@ -212,12 +218,11 @@ async def _edit_file(workspace: str, args: dict) -> list[TextContent]:
     if count == 0:
         return [TextContent(type="text", text=f"old_string not found in {args['path']}")]
     if count > 1 and not replace_all:
-        return [
-            TextContent(
-                type="text",
-                text=f"old_string matches {count} times in {args['path']}; set replace_all=true or narrow the match",
-            )
-        ]
+        msg = (
+            f"old_string matches {count} times in {args['path']};"
+            " set replace_all=true or narrow the match"
+        )
+        return [TextContent(type="text", text=msg)]
     if replace_all:
         new_text = text.replace(old, new)
     else:
@@ -235,7 +240,11 @@ async def _edit_file(workspace: str, args: dict) -> list[TextContent]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="UC Filesystem MCP Server")
-    parser.add_argument("--workspace", default="", help="Workspace root (default: UC_WORKSPACE env or cwd)")
+    parser.add_argument(
+        "--workspace",
+        default="",
+        help="Workspace root (default: UC_WORKSPACE env or cwd)",
+    )
     args = parser.parse_args()
 
     workspace = _resolve_workspace(args.workspace)

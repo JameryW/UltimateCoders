@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,6 @@ from ultimate_coders.agent.fs_mcp import (
 )
 from ultimate_coders.agent.sandbox import SandboxConfig
 from ultimate_coders.agent.worker import Worker
-
 
 # ── uc-fs path safety ──────────────────────────────────────────
 
@@ -86,7 +84,10 @@ class TestFsTools:
         ws = str(tmp_path)
         asyncio.run(_write_file(ws, {"path": "f.py", "content": "x\nx\n"}))
         out = asyncio.run(
-            _edit_file(ws, {"path": "f.py", "old_string": "x", "new_string": "y", "replace_all": True})
+            _edit_file(
+                ws,
+                {"path": "f.py", "old_string": "x", "new_string": "y", "replace_all": True},
+            )
         )
         assert "Replaced 2" in out[0].text
         assert (tmp_path / "f.py").read_text() == "y\ny\n"

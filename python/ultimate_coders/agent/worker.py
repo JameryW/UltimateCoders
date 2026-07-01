@@ -43,6 +43,13 @@ from ultimate_coders.agent.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
+# ponytail: map mcp:<server> tags to semantic capability aliases.
+# Add rows as more in-process MCP servers land.
+_MCP_CAP_ALIASES: dict[str, str] = {
+    "mcp:uc-fs": "file-edit",
+    "mcp:uc-engine": "search",  # uc-engine already implies search; no-op if present
+}
+
 _SUBTASK_USER_TEMPLATE = """\
 Subtask: {description}
 
@@ -275,11 +282,6 @@ class Worker:
                     # ~1s; for live worktree edits a real-time LSP would be needed (out of scope).
                     caps.append("lsp")
         # Map specific mcp:<server> tags to semantic capability aliases.
-        # ponytail: simple alias table — add rows as more in-process MCP servers land.
-        _MCP_CAP_ALIASES = {
-            "mcp:uc-fs": "file-edit",
-            "mcp:uc-engine": "search",  # uc-engine already implies search; no-op if present
-        }
         for entry in (cfg.mcp_configs or []):
             server_names: list[str] = []
             if isinstance(entry, dict):
