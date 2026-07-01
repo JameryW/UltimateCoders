@@ -124,7 +124,10 @@ def test_stream_snapshot_payload_shape() -> None:
         q: asyncio.Queue = asyncio.Queue()
         app._get_nats_event_queue = lambda: q
         await q.put({"type": "subtask_completed", "data": {"id": "st-1"}})
-        return await _drive(app, max_iters=3)
+        # max_iters=1: one iteration consumes the queued event and yields it;
+        # a second iteration would block 2s on an empty queue (wait_for
+        # timeout) for no extra shape coverage.
+        return await _drive(app, max_iters=1)
 
     out, err = asyncio.run(run())
     assert err is None
