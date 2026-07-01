@@ -23,6 +23,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 ultimate-coders/
 ├── run-omp.sh               # Start OMP with UC extension (primary entry point)
+├── run-gateway.sh           # Manage standalone containerized gateway
+├── run-cluster.sh           # Start local distributed cluster (NATS + workers)
 ├── Cargo.toml               # Rust workspace root
 ├── pyproject.toml            # Maturin build config
 ├── crates/                   # Rust core engine (Gateway)
@@ -62,15 +64,27 @@ cargo run -p uc-grpc-server  # Start gRPC gateway server
 ./run-omp.sh                 # Start OMP with UC extension (primary)
 ./run-omp.sh --server        # Also start gRPC server in background
 ./run-omp.sh --build         # Ensure Python package is built first
+./run-omp.sh --standalone    # Standalone: gateway in a container (in-memory/external storage)
+./run-omp.sh --standalone --docker  # Standalone gateway + local storage containers
 
-# Distributed deployment (Docker)
+# Standalone gateway container manager (storage external or in-memory fallback)
+./run-gateway.sh up          # Gateway container only (no storage containers)
+./run-gateway.sh up --docker # Gateway + local storage (TiKV/Qdrant/PG/NATS)
+./run-gateway.sh down [--docker]  # Stop (add --docker to also stop storage)
+./run-gateway.sh status|logs
+
+# Distributed cluster (local)
+./run-cluster.sh                          # NATS + gRPC + N workers + OMP
+./run-cluster.sh --standalone --workers 2 # Container gateway + storage + host workers
+
+# Distributed deployment (Docker, raw compose)
 docker compose --profile gateway up   # Start gateway (Rust gRPC server)
 docker compose --profile worker up --scale worker=3  # Start 3 workers (SAME HOST only)
 docker compose --profile app up       # Start all services (gateway + orchestrator + workers)
 
 # Gateway-only standalone (storage external, no TiKV/Qdrant/PG/NATS started)
 # Inject external storage addresses via env/.env; empty = in-memory fallback
-docker compose -f docker/docker-compose.gateway.yml up
+docker compose -f docker/docker-compose.gateway.yml up   # or: ./run-gateway.sh up
 ```
 
 ### Distributed (cross-host) scaling
