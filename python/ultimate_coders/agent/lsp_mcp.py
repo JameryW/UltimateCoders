@@ -22,9 +22,23 @@ full-content didChange notification is sent, so the LSP sees the file as it
 is right now — including edits the agent just made.
 
 Graceful degradation: if multilspy is not installed, the language server
-fails to start, or the language is not supported, every tool returns a
-TextContent with a clear hint (e.g. "LSP unavailable: ...") instead of
-crashing the server. Agents fall back to codegraph or read_file + grep.
+fails to start, or the language is not supported, every tool automatically
+falls back to codegraph (same-process CodegraphClient reading
+.codegraph/codegraph.db) with best-effort semantic mapping. Results are
+prefixed "[codegraph fallback]" so the agent knows precision may differ
+from a real LSP. If codegraph is also unavailable, a plain "LSP
+unavailable" hint is returned (no crash).
+
+Fallback semantic mapping (best-effort, NOT LSP-precision):
+- workspace_symbol(query) → codegraph.search(query) — direct
+- find_references(path,line,char) → extract symbol name from file,
+  then codegraph.callers(symbol) + codegraph.search(symbol) union
+- go_to_definition(path,line,char) → extract symbol name, codegraph.search
+  returns first definition location
+- hover → codegraph has NO equivalent → returns "not available" hint +
+  symbol location if search found one
+- document_symbols → codegraph is a cross-repo call graph, not a per-file
+  tree → returns "not available" hint + alternative suggestion
 """
 
 from __future__ import annotations
@@ -33,7 +47,12 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ultimate_coders.agent.codegraph import CodegraphClient
 
 try:
     from mcp.server import Server
@@ -79,6 +98,11 @@ _SUPPORTED_LANGS: dict[str, str] = {
 # MCP server's lifetime. multilspy startup is ~1s (jedi); reusing avoids
 # per-request latency.
 _ls_cache: dict[tuple[str, str], LanguageServer | None] = {}
+
+# Cache of workspace → CodegraphClient, kept alive for the MCP server's
+# lifetime. CodegraphClient opens a SQLite connection lazily; reusing avoids
+# re-checking .codegraph/codegraph.db on every fallback call.
+_cg_cache: dict[str, CodegraphClient | None] = {}
 
 
 def _resolve_workspace(arg: str) -> str:
@@ -129,6 +153,80 @@ def _get_language_server(workspace: str, language: str) -> LanguageServer | None
         ls = None
     _ls_cache[cache_key] = ls
     return ls
+
+
+def _get_codegraph(workspace: str) -> CodegraphClient | None:
+    """Get or lazily construct a CodegraphClient for the workspace.
+
+    Returns None if codegraph is not available (.codegraph/codegraph.db
+    does not exist). Cached per workspace for the MCP server's lifetime.
+    """
+    if workspace in _cg_cache:
+        return _cg_cache[workspace]
+    cg: CodegraphClient | None = None
+    try:
+        from ultimate_coders.agent.codegraph import CodegraphClient
+
+        client = CodegraphClient(workspace)
+        if client.is_available():
+            cg = client
+        else:
+            cg = None
+    except Exception:  # noqa: BLE001 — codegraph import/construction is best-effort
+        logger.debug("CodegraphClient construction failed for %s", workspace, exc_info=True)
+        cg = None
+    _cg_cache[workspace] = cg
+    return cg
+
+
+# Regex to grab an identifier token at/around a character position.
+# Ponytail: simple regex, no parser/tree-sitter.
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _extract_symbol_at(workspace: str, path: str, line: int, char: int) -> str | None:
+    """Best-effort extract the identifier token at line:char in a file.
+
+    Args:
+        workspace: Workspace root (absolute).
+        path: File path relative to workspace.
+        line: 1-based line number.
+        char: 1-based character offset.
+
+    Returns the identifier string, or None if the file can't be read or no
+    identifier is found at/around the position.
+    """
+    try:
+        abs_path = _safe_path(workspace, path)
+    except ValueError:
+        return None
+    try:
+        with open(abs_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    idx = line - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    text = lines[idx]
+    # 0-based char offset for scanning
+    pos = max(0, char - 1)
+    if pos > len(text):
+        pos = len(text)
+    # Find the identifier token containing or nearest to pos
+    best: str | None = None
+    for m in _IDENT_RE.finditer(text):
+        start, end = m.start(), m.end()
+        if start <= pos < end:
+            return m.group()
+        if pos < start:
+            # Nearest token to the right
+            best = best or m.group()
+    # If pos was past all tokens, take the last one as best-effort
+    if best is not None:
+        return best
+    matches = _IDENT_RE.findall(text)
+    return matches[-1] if matches else None
 
 
 def _sync_file(ls: LanguageServer, abs_path: str) -> None:
@@ -339,7 +437,7 @@ def _create_server(workspace: str) -> object:
 
 
 def _unavailable_msg(reason: str) -> str:
-    """Build a graceful-degradation message."""
+    """Build a graceful-degradation message (used when codegraph is also unavailable)."""
     return f"LSP unavailable: {reason}. Use codegraph or read_file + grep instead."
 
 
@@ -348,7 +446,126 @@ def _unavailable(reason: str) -> list[TextContent]:
     return [TextContent(type="text", text=_unavailable_msg(reason))]
 
 
+def _fallback_text(body: str) -> list[TextContent]:
+    """Wrap a fallback result body with the [codegraph fallback] source prefix."""
+    return [TextContent(type="text", text=f"[codegraph fallback] {body}")]
+
+
 _MULTILSP_DOWN = "multilspy not installed or LSP server failed to start"
+
+
+# ── Codegraph fallback implementations ────────────────────────────
+
+
+def _fmt_cg_row(r: dict) -> str:
+    """Format a codegraph result dict as a single result row."""
+    name = r.get("name", "?")
+    kind = r.get("kind", "?")
+    fp = r.get("file_path", "?")
+    sl = r.get("start_line", "?")
+    return f"  {name} ({kind}) @ {fp}:{sl}"
+
+
+def _fallback_workspace_symbol(
+    workspace: str, query: str, reason: str = _MULTILSP_DOWN
+) -> list[TextContent]:
+    """Fallback workspace_symbol via codegraph.search()."""
+    cg = _get_codegraph(workspace)
+    if cg is None:
+        return _unavailable(reason)
+    results = cg.search(query)
+    if not results:
+        return _fallback_text(f"No symbols matching '{query}' in codegraph.")
+    lines = [_fmt_cg_row(r) for r in results]
+    return _fallback_text(f"Symbols ({len(results)}):\n" + "\n".join(lines))
+
+
+def _fallback_go_to_definition(
+    workspace: str, path: str, line: int, char: int, reason: str = _MULTILSP_DOWN
+) -> list[TextContent]:
+    """Fallback go_to_definition: extract symbol, return first codegraph.search hit."""
+    cg = _get_codegraph(workspace)
+    if cg is None:
+        return _unavailable(reason)
+    symbol = _extract_symbol_at(workspace, path, line, char)
+    if symbol is None:
+        return _fallback_text(
+            f"Could not extract symbol at {path}:{line}:{char}"
+            " — cannot map to codegraph. Use read_file to inspect."
+        )
+    results = cg.search(symbol)
+    if not results:
+        return _fallback_text(f"No definition found for '{symbol}' in codegraph.")
+    r = results[0]
+    loc = f"{r.get('file_path', '?')}:{r.get('start_line', '?')}"
+    return _fallback_text(f"Definition of '{symbol}': {loc}")
+
+
+def _fallback_find_references(
+    workspace: str, path: str, line: int, char: int, reason: str = _MULTILSP_DOWN
+) -> list[TextContent]:
+    """Fallback find_references: extract symbol, union callers + search results."""
+    cg = _get_codegraph(workspace)
+    if cg is None:
+        return _unavailable(reason)
+    symbol = _extract_symbol_at(workspace, path, line, char)
+    if symbol is None:
+        return _fallback_text(
+            f"Could not extract symbol at {path}:{line}:{char}"
+            " — cannot map to codegraph. Use read_file to inspect."
+        )
+    callers = cg.callers(symbol)
+    search_hits = cg.search(symbol)
+    # Union: callers give call-sites, search gives definition + references
+    seen: set[tuple[str, int]] = set()
+    refs: list[str] = []
+    for c in callers:
+        key = (c.get("file_path", ""), c.get("start_line", 0))
+        if key not in seen:
+            seen.add(key)
+            refs.append(_fmt_cg_row(c))
+    for r in search_hits:
+        key = (r.get("file_path", ""), r.get("start_line", 0))
+        if key not in seen:
+            seen.add(key)
+            refs.append(_fmt_cg_row(r))
+    if not refs:
+        return _fallback_text(f"No references found for '{symbol}' in codegraph.")
+    return _fallback_text(f"References ({len(refs)}):\n" + "\n".join(refs))
+
+
+def _fallback_hover(
+    workspace: str, path: str, line: int, char: int, reason: str = _MULTILSP_DOWN
+) -> list[TextContent]:
+    """Fallback hover: codegraph has no hover/type equivalent — return a hint."""
+    cg = _get_codegraph(workspace)
+    if cg is None:
+        return _unavailable(reason)
+    symbol = _extract_symbol_at(workspace, path, line, char)
+    location_hint = ""
+    if symbol is not None:
+        results = cg.search(symbol)
+        if results:
+            r = results[0]
+            loc = f"{r.get('file_path', '?')}:{r.get('start_line', '?')}"
+            location_hint = f" Symbol '{symbol}' found at {loc}."
+    return _fallback_text(
+        "hover 语义不可用（codegraph 无类型/文档信息），"
+        f"建议 read_file 查看上下文。{location_hint}"
+    )
+
+
+def _fallback_document_symbols(
+    workspace: str, path: str, reason: str = _MULTILSP_DOWN
+) -> list[TextContent]:
+    """Fallback document_symbols: codegraph is a cross-repo graph, not a per-file tree."""
+    cg = _get_codegraph(workspace)
+    if cg is None:
+        return _unavailable(reason)
+    return _fallback_text(
+        "document_symbols 不可用（codegraph 是跨仓库调用图非 per-file 树），"
+        "建议 read_file 或 workspace_symbol 按文件路径过滤。"
+    )
 
 
 def _resolve_ls(workspace: str, path: str) -> tuple[LanguageServer | None, str | None, str | None]:
@@ -373,7 +590,9 @@ def _resolve_ls(workspace: str, path: str) -> tuple[LanguageServer | None, str |
 async def _go_to_definition(workspace: str, args: dict) -> list[TextContent]:
     ls, rel, reason = _resolve_ls(workspace, args["path"])
     if reason is not None:
-        return _unavailable(reason)
+        return _fallback_go_to_definition(
+            workspace, args["path"], int(args["line"]), int(args["character"]), reason
+        )
     assert ls is not None and rel is not None
     # 1-based → 0-based
     line = int(args["line"]) - 1
@@ -389,7 +608,9 @@ async def _go_to_definition(workspace: str, args: dict) -> list[TextContent]:
 async def _find_references(workspace: str, args: dict) -> list[TextContent]:
     ls, rel, reason = _resolve_ls(workspace, args["path"])
     if reason is not None:
-        return _unavailable(reason)
+        return _fallback_find_references(
+            workspace, args["path"], int(args["line"]), int(args["character"]), reason
+        )
     assert ls is not None and rel is not None
     line = int(args["line"]) - 1
     char = int(args["character"]) - 1
@@ -405,7 +626,9 @@ async def _find_references(workspace: str, args: dict) -> list[TextContent]:
 async def _hover(workspace: str, args: dict) -> list[TextContent]:
     ls, rel, reason = _resolve_ls(workspace, args["path"])
     if reason is not None:
-        return _unavailable(reason)
+        return _fallback_hover(
+            workspace, args["path"], int(args["line"]), int(args["character"]), reason
+        )
     assert ls is not None and rel is not None
     line = int(args["line"]) - 1
     char = int(args["character"]) - 1
@@ -425,7 +648,7 @@ async def _hover(workspace: str, args: dict) -> list[TextContent]:
 async def _document_symbols(workspace: str, args: dict) -> list[TextContent]:
     ls, rel, reason = _resolve_ls(workspace, args["path"])
     if reason is not None:
-        return _unavailable(reason)
+        return _fallback_document_symbols(workspace, args["path"], reason)
     assert ls is not None and rel is not None
     _sync_file(ls, os.path.join(workspace, rel))
     symbols, tree_repr = await asyncio.to_thread(ls.request_document_symbols, rel)
@@ -446,7 +669,7 @@ async def _workspace_symbol(workspace: str, args: dict) -> list[TextContent]:
     # workspace_symbol needs a language server — use python as default
     ls = _get_language_server(workspace, "python")
     if ls is None:
-        return _unavailable(_MULTILSP_DOWN)
+        return _fallback_workspace_symbol(workspace, query)
     result = await asyncio.to_thread(ls.request_workspace_symbol, query)
     if not result:
         return [TextContent(type="text", text=f"No symbols matching '{query}'.")]

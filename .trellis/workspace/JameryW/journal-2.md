@@ -807,3 +807,36 @@ B phase: verified+archived 4 deploy tasks that were implemented but never archiv
 ### Next Steps
 
 - None - task complete
+
+
+## Session 78: uc-lsp real-time LSP MCP server (multilspy)
+
+**Date**: 2026-07-01
+**Task**: uc-lsp real-time LSP MCP server (multilspy)
+**Branch**: `main`
+
+### Summary
+
+PR #203 merged. uc-lsp MCP server replaces codegraph worktree-lag ceiling for real-time symbol ops: lsp_mcp.py exposes 5 LSP tools (go_to_definition/find_references/hover/document_symbols/workspace_symbol) via multilspy, force-closes stale open_file_buffers so each query reads fresh disk content (real-time guarantee), 1-based->0-based conversion, workspace path isolation, graceful degradation when multilspy absent. Python-only MVP (jedi), other langs hint to codegraph/read_file. Optional [lsp] dep extra, Dockerfile precache. Coexists with codegraph (cross-repo/historical). 25 tests, 508 full suite green. trellis-check caught+fixed 2 real bugs (Dockerfile precache no-op, _sync_file dead code).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0a20d579` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

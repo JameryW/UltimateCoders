@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-01-worker-lsp-codegraph-worktree/research/realtime-lsp-options.md", "reason": "研究结论：multilspy Approach A，5 方法，降级策略，Docker 预缓存"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "能力标签声明契约 — lsp 标签派生规范"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新 lsp_mcp.py 文件放置约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Python 改动质量与测试覆盖标准"}
