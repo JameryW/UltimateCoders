@@ -26,6 +26,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Repo-level git identity used when no global user config exists (e.g. worker
+# containers, CI runners). ``release()`` runs ``git merge --no-edit`` in the
+# main clone, which creates a merge commit and hard-fails without an identity
+# on Linux whenever the merge is NOT a fast-forward. Setting a repo-scoped
+# identity (never global) after clone makes non-ff merges work out of the box.
+_WORKER_IDENTITY_EMAIL = "uc-worker@local"
+_WORKER_IDENTITY_NAME = "UC Worker"
+
 
 @dataclass
 class WorkspaceHandle:
@@ -58,16 +66,114 @@ class WorkspaceManager:
         project_path: str = "",
         max_worktrees: int = 8,
         base_branch: str = "main",
+        remote_url: str = "",
+        remote_name: str = "origin",
+        fetch_on_acquire: bool = False,
+        push_on_release: bool = False,
     ) -> None:
         self._project_path = project_path or os.getcwd()
         self._max_worktrees = max_worktrees
         self._base_branch = base_branch
+        # Remote-sync config (Phase 1 MVP). When remote_url is empty the
+        # manager behaves exactly as the legacy local-only implementation.
+        self._remote_url = remote_url
+        self._remote_name = remote_name
+        self._fetch_on_acquire = fetch_on_acquire
+        self._push_on_release = push_on_release
         self._active: dict[str, WorkspaceHandle] = {}
         self._pool: list[WorkspaceHandle] = []
 
     @property
     def active_count(self) -> int:
         return len(self._active)
+
+    async def ensure_clone(self) -> None:
+        """Ensure a git checkout exists at ``project_path``.
+
+        When ``remote_url`` is set and the project path is not already a git
+        repo with that remote, clone it. If the repo already exists and the
+        remote differs, update the remote URL. Idempotent.
+
+        When ``remote_url`` is empty this is a no-op (local-only mode, fully
+        backward compatible with the legacy behaviour).
+
+        A repo-level git identity (``user.email`` / ``user.name``) is set on
+        the clone so ``release()``'s ``git merge --no-edit`` can author merge
+        commits without a global git config (worker containers typically have
+        none). Repo-scoped, overwrites stale values, never touches global
+        config. Non-fatal on failure (logged at debug).
+        """
+        if not self._remote_url:
+            return  # local-only mode
+
+        git_dir = os.path.join(self._project_path, ".git")
+        if not os.path.exists(git_dir):
+            # Path is empty/non-git: clone the remote into it.
+            # NOTE: ``_git`` defaults cwd to ``self._project_path`` which does
+            # not exist yet — run the clone from the parent dir instead.
+            parent = os.path.dirname(self._project_path) or os.getcwd()
+            os.makedirs(parent, exist_ok=True)
+            result = await self._git(
+                ["clone", self._remote_url, self._project_path],
+                cwd=parent,
+            )
+            if result["exit_code"] != 0:
+                logger.error(
+                    "ensure_clone: clone of %s failed: %s",
+                    self._remote_url, result["stderr"][:300],
+                )
+                raise RuntimeError(
+                    f"git clone failed: {result['stderr'][:200]}"
+                )
+            logger.info(
+                "ensure_clone: cloned %s into %s",
+                self._remote_url, self._project_path,
+            )
+            await self._ensure_local_identity()
+            return
+
+        # Repo already exists — ensure origin points at the configured remote.
+        cur = await self._git(["remote", "get-url", self._remote_name])
+        if cur["exit_code"] != 0 or cur["stdout"].strip() != self._remote_url:
+            # Remote missing or mismatched: (re)set it.
+            if cur["exit_code"] != 0:
+                add = await self._git(
+                    ["remote", "add", self._remote_name, self._remote_url]
+                )
+                if add["exit_code"] != 0:
+                    logger.warning("ensure_clone: add remote failed: %s", add["stderr"][:200])
+            else:
+                await self._git(
+                    ["remote", "set-url", self._remote_name, self._remote_url]
+                )
+            logger.info("ensure_clone: remote %s set to %s", self._remote_name, self._remote_url)
+
+        # (Re)assert the repo-level identity — idempotent. A pre-existing
+        # clone may still lack one (e.g. created by an older code path).
+        await self._ensure_local_identity()
+
+    async def _ensure_local_identity(self) -> None:
+        """Set a repo-level git identity so merge commits can be authored.
+
+        Uses ``git config`` (repo-scoped by default when run inside the repo)
+        so the host's global config is never touched. Overwrites any prior
+        value, which is safe — the worker owns this clone. Non-fatal: a
+        failure is logged at debug and the merge will surface the real error
+        if identity was genuinely unavailable.
+        """
+        for key, value in (
+            ("user.email", _WORKER_IDENTITY_EMAIL),
+            ("user.name", _WORKER_IDENTITY_NAME),
+        ):
+            res = await self._git(
+                ["config", key, value],
+                cwd=self._project_path,
+            )
+            if res["exit_code"] != 0:
+                logger.debug(
+                    "ensure_clone: git config %s failed (non-fatal): %s",
+                    key, res["stderr"][:200],
+                )
 
     async def acquire(self, subtask_id: str) -> WorkspaceHandle | None:
         """Create an isolated workspace for a subtask.
@@ -99,9 +205,28 @@ class WorkspaceManager:
         )
 
         try:
+            # Determine the base ref to branch the worktree from.
+            # When remote sync is enabled, fetch first so the worktree is
+            # based on the fresh upstream HEAD (origin/<base_branch>), not a
+            # stale local HEAD. Fall back to the local branch on any failure.
+            base_ref = self._base_branch
+            if self._fetch_on_acquire and self._remote_url:
+                fetch_result = await self._git(
+                    ["fetch", self._remote_name, self._base_branch],
+                    cwd=self._project_path,
+                )
+                if fetch_result["exit_code"] == 0:
+                    base_ref = f"{self._remote_name}/{self._base_branch}"
+                else:
+                    logger.warning(
+                        "fetch %s/%s failed, branching off local %s: %s",
+                        self._remote_name, self._base_branch,
+                        self._base_branch, fetch_result["stderr"][:200],
+                    )
+
             # Create git worktree on a new branch
             result = await self._git(
-                ["worktree", "add", "-b", branch_name, f".uc/worktrees/{ws_id}", self._base_branch],
+                ["worktree", "add", "-b", branch_name, f".uc/worktrees/{ws_id}", base_ref],
                 cwd=self._project_path,
             )
             if result["exit_code"] != 0:
@@ -186,6 +311,32 @@ class WorkspaceManager:
             else:
                 result_info["status"] = "no_changes"
 
+            # Push the subtask branch to the remote (NOT main — merge
+            # arbitration into main is Phase 2 / gateway). Push is opt-in
+            # via push_on_release and only when a remote is configured.
+            if (
+                self._push_on_release
+                and self._remote_url
+                and handle.branch_name
+                and result_info.get("status") in ("merged", "no_changes")
+            ):
+                push_result = await self._git(
+                    [
+                        "push", self._remote_name,
+                        f"{handle.branch_name}:refs/heads/{handle.branch_name}",
+                    ],
+                    cwd=self._project_path,
+                )
+                if push_result["exit_code"] != 0:
+                    logger.warning(
+                        "release: push of branch %s failed (non-fatal): %s",
+                        handle.branch_name, push_result["stderr"][:200],
+                    )
+                    result_info["push_status"] = "failed"
+                    result_info["push_error"] = push_result["stderr"][:200]
+                else:
+                    result_info["push_status"] = "pushed"
+
         # Remove the worktree
         try:
             wt_path = os.path.join(
@@ -197,8 +348,12 @@ class WorkspaceManager:
                     ["worktree", "remove", f".uc/worktrees/{handle.workspace_id}", "--force"],
                     cwd=self._project_path,
                 )
-                # Delete the branch if merge succeeded
-                if result_info.get("status") != "conflict":
+                # Delete the branch if merge succeeded AND push (if any) succeeded.
+                # Preserve the branch on conflict or push failure so it can be retried.
+                if (
+                    result_info.get("status") != "conflict"
+                    and result_info.get("push_status") != "failed"
+                ):
                     await self._git(
                         ["branch", "-D", handle.branch_name],
                         cwd=self._project_path,

@@ -1,16 +1,27 @@
-"""Distributed conflict resolution for multi-worker code editing.
+"""Distributed conflict coordination for multi-worker code editing.
 
-Extends the local ConflictDetector with:
-1. Distributed EditIntent — broadcast intents via NATS so all workers see them
-2. Distributed file locks — per-file mutex over NATS for write exclusivity
-3. Merge verification — auto-compile/test after three-way merge
+Extends the local ConflictDetector with an advisory visibility layer:
 
-The local ConflictDetector is the primary mechanism. This module adds
-the distributed coordination layer on top.
+1. **Edit-intent broadcast** — declares intents locally and, when a NATS
+   publisher is wired in, publishes them so other workers *can see* what
+   files are being edited. This is advisory visibility, not a guarantee.
+2. **In-process file lock (advisory hint)** — a per-file mutex held in this
+   process's memory. It prevents the *same* process from double-claiming a
+   file, but it does NOT provide cross-process or cross-host mutual
+   exclusion (it never touches NATS for locking despite the legacy subject
+   names). Treat it as a scheduling hint only.
+3. **Merge verification** — auto-compile/test after a three-way merge.
 
-ponytail: NATS-based coordination — simple, leverages existing
-infrastructure. Upgrade to etcd/consul for stronger consistency
-if NATS dedup proves insufficient.
+The authoritative conflict resolution point is **git merge-time**
+(``MergeArbiter``, Phase 2): workers push ``uc/subtask/<id>`` branches and
+the arbiter merges them into ``origin/main``. The in-process lock here only
+reduces the *probability* of two workers in the same process touching the
+same file concurrently; it does not prevent cross-worker conflicts.
+
+ponytail: in-process advisory locking — honest about its ceiling
+(same-process only). Upgrade to a real distributed lock (NATS KV, etcd, or
+consul) only if same-process scheduling proves insufficient; until then git
+merge-time arbitration is the source of truth.
 """
 
 from __future__ import annotations
@@ -42,12 +53,17 @@ NATS_SUBJECT_FILE_UNLOCK = "uc.file.unlock"
 # ── Distributed EditIntent ────────────────────────────────────────
 
 class DistributedConflictDetector:
-    """Conflict detector that broadcasts edit intents via NATS.
+    """Advisory conflict detector that broadcasts edit intents via NATS.
 
-    Combines local ConflictDetector with NATS-based intent broadcasting:
-    - declare_intent() checks locally first, then broadcasts
-    - Receives remote intents from other workers via NATS subscription
-    - File locking ensures exclusive write access across workers
+    Combines the local ConflictDetector with NATS-based intent broadcasting:
+    - ``declare_intent()`` checks locally first, then acquires an in-process
+      advisory lock, then (optionally) broadcasts the intent for visibility.
+    - Receives remote intents from other workers via NATS subscription so
+      later local checks can surface *potential* cross-worker overlap.
+    - The per-file lock is an **in-process hint only** — it is NOT a
+      distributed lock and provides no cross-process/cross-host mutual
+      exclusion. The authoritative cross-worker conflict point is git
+      merge-time (``MergeArbiter``, Phase 2), not this lock.
 
     Usage:
         detector = DistributedConflictDetector(
@@ -72,7 +88,8 @@ class DistributedConflictDetector:
         self._worker_id = worker_id
         self._lock_timeout = lock_timeout_seconds
 
-        # Distributed lock state: file_path → (owner_id, timestamp)
+        # In-process advisory lock state: file_path → (owner_id, timestamp).
+        # Same-process only — NOT a distributed lock (see _acquire_lock).
         self._file_locks: dict[str, tuple[str, float]] = {}
         # Remote intents received from other workers
         self._remote_intents: dict[str, list[EditIntent]] = {}
@@ -89,8 +106,8 @@ class DistributedConflictDetector:
 
         Steps:
         1. Check local ConflictDetector (fast path)
-        2. Try to acquire distributed file lock
-        3. Broadcast intent to other workers via NATS
+        2. Acquire the in-process advisory file lock (same-process only)
+        3. Broadcast intent to other workers via NATS (advisory visibility)
         4. Return conflict result
         """
         # Step 1: Local check
@@ -98,11 +115,12 @@ class DistributedConflictDetector:
         if result == ConflictResult.CONFLICTING:
             return result, info
 
-        # Step 2: Distributed file lock (always — even without NATS for local locking)
+        # Step 2: In-process advisory file lock (NOT a distributed lock;
+        # same-process scheduling hint only — see _acquire_lock docstring).
         if intent.file_path:
             lock_acquired = await self._acquire_lock(intent.file_path)
             if not lock_acquired:
-                # Another worker has this file locked — conflict
+                # Another worker in THIS process has this file locked — conflict
                 return ConflictResult.CONFLICTING, ConflictInfo(
                     file_path=intent.file_path,
                     conflicting_workers=[self._file_locks.get(intent.file_path, ("unknown", 0))[0]],
@@ -129,7 +147,7 @@ class DistributedConflictDetector:
         return result, info
 
     async def release_intent(self, file_path: str, worker_id: str | None = None) -> None:
-        """Release an edit intent and distributed file lock.
+        """Release an edit intent and the in-process advisory file lock.
 
         Args:
             file_path: The file to release.
@@ -138,7 +156,7 @@ class DistributedConflictDetector:
         wid = worker_id or self._worker_id
         self._local.remove_intent(file_path, wid)
 
-        # Release distributed lock (always, even without NATS)
+        # Release in-process advisory lock (same-process only).
         if file_path in self._file_locks:
             owner, _ = self._file_locks[file_path]
             if owner == wid:
@@ -208,15 +226,24 @@ class DistributedConflictDetector:
                 ]
 
     async def _acquire_lock(self, file_path: str) -> bool:
-        """Try to acquire a distributed file lock via NATS.
+        """Try to acquire an **in-process** advisory file lock.
 
-        Uses a simple request-reply pattern: publish lock request,
-        wait for acknowledgment. If no ack within timeout, assume
-        lock is available (optimistic).
+        Despite the legacy ``NATS_SUBJECT_FILE_LOCK`` subject name, this
+        method does NOT touch NATS — it only mutates ``self._file_locks``,
+        an in-process dict. It provides same-process scheduling hints
+        only: it prevents two concurrent subtasks *within this process*
+        from claiming the same file, and surfaces stale local claims.
 
-        ponytail: optimistic locking — if NATS is unavailable, allow
-        the edit (local detector still catches same-process conflicts).
-        Upgrade to distributed lock service (etcd) if needed.
+        Cross-process / cross-host mutual exclusion is **NOT** provided
+        here. The authoritative cross-worker conflict point is git
+        merge-time (``MergeArbiter``, Phase 2): if two workers on
+        different hosts edit the same file, that is resolved when their
+        ``uc/subtask/<id>`` branches are merged into ``origin/main``.
+
+        ponytail: in-process advisory locking — honest about the ceiling
+        (same-process only, never touches the network). Upgrade path: a
+        real distributed lock via NATS KV / etcd / consul if and when
+        same-process scheduling proves insufficient.
         """
         now = time.time()
 
