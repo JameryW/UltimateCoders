@@ -28,7 +28,7 @@ interface JsonRpcRequest {
 	id?: number;
 }
 
-interface JsonRpcResponse {
+export interface JsonRpcResponse {
 	id: number;
 	result?: unknown;
 	error?: { code: number; message: string };
@@ -87,7 +87,9 @@ function serializeTask(task: TaskState): Record<string, unknown> {
 
 // -- Server ------------------------------------------------------------------
 
-class RpcServer {
+// ponytail: exported so the bun:test suite can exercise real dispatch logic
+// instead of a mirrored copy (mirrors drift when the server changes).
+export class RpcServer {
 	private orchestrator: UCOrchestrator;
 	private nextId = 0;
 
@@ -290,7 +292,11 @@ function writeLine(s: string): void {
 	process.stdout.write(s + "\n");
 }
 
-main().catch((err) => {
-	process.stderr.write(`Fatal: ${err}\n`);
-	process.exit(1);
-});
+// ponytail: guard the entry-point call so importing RpcServer in tests
+// doesn't start the stdin readline loop / write a ready event.
+if (import.meta.main) {
+	main().catch((err) => {
+		process.stderr.write(`Fatal: ${err}\n`);
+		process.exit(1);
+	});
+}
