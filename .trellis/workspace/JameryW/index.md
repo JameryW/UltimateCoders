@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 76
+- **Total Sessions**: 77
 - **Last Active**: 2026-07-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~776 | Active |
+| `journal-2.md` | ~809 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 77 | 2026-07-01 | Archive 4 completed deploy tasks (B phase) | `05e6912b` | `main` |
 | 76 | 2026-07-01 | Add --no-spawn flag (UC_NO_SPAWN hard + soft constraint) | `05e6912b` | `main` |
 | 75 | 2026-07-01 | Friendly LLM error display (transient/permanent classification) | `944a535c` | `main` |
 | 74 | 2026-07-01 | Fix 503 retry + worker fs-mcp capability tags | `8899ec59`, `d3ca50d2` | `main` |

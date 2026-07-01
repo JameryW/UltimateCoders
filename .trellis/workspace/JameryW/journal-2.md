@@ -774,3 +774,36 @@ PR #202 merged. --no-spawn flag disables subtask spawning: Path B (UC uc_task to
 ### Next Steps
 
 - None - task complete
+
+
+## Session 77: Archive 4 completed deploy tasks (B phase)
+
+**Date**: 2026-07-01
+**Task**: Archive 4 completed deploy tasks (B phase)
+**Branch**: `main`
+
+### Summary
+
+B phase: verified+archived 4 deploy tasks that were implemented but never archived. separate-deploy-scripts (PR#197/#198), gateway (compose.gateway.yml standalone+in-memory fallback+env injection, compose config valid), worker (PR#193 3 phases: external git clone/push + MergeArbiter + DistributedConflictDetector advisory, 131 tests pass), worker-omp (ScaleWorkers proto RPC+Rust handler+TS client+uc_worker scale/deregister, 5 tests pass). All AC met, no new code — done-but-unarchived remnants. main synced via rebase.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05e6912b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
