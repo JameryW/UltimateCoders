@@ -29,6 +29,9 @@ test = [
     "anthropic>=0.30.0",
     "litellm>=1.0.0",
 ]
+lsp = [
+    "multilspy==0.0.15",
+]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
