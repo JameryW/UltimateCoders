@@ -37,17 +37,22 @@ fi
 START_SERVER=true
 DO_BUILD=false
 USE_DOCKER=false
+STANDALONE=false
 OMP_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    --no-server) START_SERVER=false ;;
-    --docker)    USE_DOCKER=true ;;
-    --build)     DO_BUILD=true ;;
+    --no-server)  START_SERVER=false ;;
+    --docker)     USE_DOCKER=true ;;
+    --standalone) STANDALONE=true ;;
+    --build)      DO_BUILD=true ;;
     --help|-h)
-      echo "Usage: $0 [--no-server] [--docker] [--build]"
+      echo "Usage: $0 [--no-server] [--docker] [--standalone] [--build]"
       echo ""
       echo "  --no-server   skip gRPC server startup (server starts by default)"
       echo "  --docker      use Docker Compose for storage backends (TiKV/Qdrant/PG/NATS)"
+      echo "  --standalone  run gRPC server as a container (standalone deploy)."
+      echo "                Without --docker: gateway in-memory/external-storage fallback."
+      echo "                With --docker: gateway + local storage containers."
       echo "  --build       ensure Python package (maturin) + release gRPC binary are built"
       exit 0
       ;;
@@ -64,6 +69,26 @@ if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
 fi
 # Ensure the release gRPC binary exists (build once, reuse across launches)
 ensure_server_bin
+
+# ── Standalone mode: gateway runs in a container, skip local binary path ──
+# ponytail: delegate to run-gateway.sh instead of duplicating compose logic.
+# --docker here means "container gateway + local storage containers".
+if [ "$STANDALONE" = true ]; then
+    if [ "$START_SERVER" = true ]; then
+        GW_ARGS=(up)
+        [ "$USE_DOCKER" = true ] && GW_ARGS+=(--docker)
+        [ "$DO_BUILD" = true ] && GW_ARGS+=(--build)
+        "$SCRIPT_DIR/run-gateway.sh" "${GW_ARGS[@]}"
+    else
+        echo ">>> --standalone --no-server: gateway not started (use run-gateway.sh up)"
+    fi
+    # Gateway container is managed by run-gateway.sh — do NOT down it on exit.
+    # Jump straight to OMP, skipping the local server/docker-storage sections.
+    cd "$SCRIPT_DIR/vendor/oh-my-pi"
+    exec bun packages/coding-agent/src/cli.ts \
+      --extension ../../packages/uc-orchestrator \
+      ${OMP_ARGS+"${OMP_ARGS[@]}"}
+fi
 
 # ── Start Docker storage backends ──────────────────────────────
 if [ "$USE_DOCKER" = true ]; then

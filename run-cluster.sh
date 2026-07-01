@@ -33,6 +33,7 @@ info() { echo -e "${CYAN}   ${RESET} $1"; }
 NUM_WORKERS=2
 NO_OMP=false
 USE_DOCKER=false
+STANDALONE=false
 DO_BUILD=false
 DO_STOP=false
 
@@ -42,6 +43,7 @@ for arg in "$@"; do
     --workers=*) NUM_WORKERS="${arg#*=}" ;;
     --no-omp)   NO_OMP=true ;;
     --docker)   USE_DOCKER=true ;;
+    --standalone) STANDALONE=true ;;
     --build)    DO_BUILD=true ;;
     --stop)     DO_STOP=true ;;
     --help|-h)
@@ -50,6 +52,9 @@ for arg in "$@"; do
       echo "  --workers N     start N workers (default: 2)"
       echo "  --no-omp        skip OMP startup (just backend + workers)"
       echo "  --docker        use Docker Compose for storage backends"
+      echo "  --standalone    run gRPC gateway in a container (standalone deploy)."
+      echo "                  Implies local storage containers (incl. NATS) so workers"
+      echo "                  have something to connect to. Workers still run on host."
       echo "  --build         ensure ultimate_coders Python package is built"
       echo "  --stop          stop all previously started processes"
       echo "  --help          show this help"
@@ -144,7 +149,10 @@ cleanup() {
     done
     wait 2>/dev/null || true
     rm -f "$PIDS_FILE"
-    if [ "$USE_DOCKER" = true ]; then
+    if [ "$STANDALONE" = true ]; then
+        # gateway + storage containers were started by run-gateway.sh --docker
+        "$SCRIPT_DIR/run-gateway.sh" down --docker 2>/dev/null || true
+    elif [ "$USE_DOCKER" = true ]; then
         cd "$SCRIPT_DIR/docker" && docker compose down 2>/dev/null || true
     fi
     log "Done."
@@ -156,8 +164,22 @@ save_pid() {
     echo "$1 $2" >> "$PIDS_FILE"
 }
 
+# ── Standalone mode: gateway + storage in containers, workers on host ────────
+# ponytail: delegate gateway+storage to run-gateway.sh; workers still run on
+# host and reach container NATS via the host-mapped port 4222.
+if [ "$STANDALONE" = true ]; then
+    GW_ARGS=(up --docker)
+    [ "$DO_BUILD" = true ] && GW_ARGS+=(--build)
+    "$SCRIPT_DIR/run-gateway.sh" "${GW_ARGS[@]}"
+    NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
+    # Jump to workers — skip local NATS + local gRPC server sections below.
+    goto_workers=true
+else
+    goto_workers=false
+fi
+
 # ── Start Docker storage backends ──────────────────────────────
-if [ "$USE_DOCKER" = true ]; then
+if [ "$USE_DOCKER" = true ] && [ "$goto_workers" = false ]; then
     check_cmd docker || exit 1
     # ponytail: free ports that Docker containers will bind to
     for port in 4222 6333 6334 2379 5432; do
@@ -200,7 +222,7 @@ if [ "$USE_DOCKER" = true ]; then
 fi
 
 # ── Start NATS server (if not using Docker) ────────────────────
-if [ "$USE_DOCKER" = false ]; then
+if [ "$USE_DOCKER" = false ] && [ "$goto_workers" = false ]; then
     check_cmd nats-server || { warn "nats-server not found — install: brew install nats-server"; exit 1; }
     if check_port 4222; then
         log "Starting NATS server..."
@@ -219,7 +241,10 @@ fi
 NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
 
 # ── Start gRPC server ──────────────────────────────────────────
-if check_port 50051; then
+# ponytail: standalone mode runs the gateway in a container via run-gateway.sh
+# above; skip the local binary server entirely (its check_port warn would
+# false-fire because the container already holds 50051).
+if [ "$goto_workers" = false ] && check_port 50051; then
     log "Starting gRPC server..."
     cd "$SCRIPT_DIR"
     GRPC_ENV=(
