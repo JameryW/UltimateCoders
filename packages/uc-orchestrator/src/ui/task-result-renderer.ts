@@ -9,6 +9,7 @@
 import type { Component } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState } from "../orchestrator/orchestrator";
+import { formatErrorForDisplay } from "./error-format";
 
 // ── Status Icons ─────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ export function createTaskResultRenderer(): (message: any, options: { expanded: 
 				const desc = st.description.slice(0, 80);
 				lines.push(`  ${icon} ${st.id}: ${desc}`);
 				if (st.error) {
-					lines.push(theme.fg("error", `    ⚠ ${st.error.slice(0, 70)}`));
+					lines.push(`    ${formatErrorForDisplay(st.error, 70, (c, t) => theme.fg(c, t))}`);
 				}
 			}
 		}

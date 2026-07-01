@@ -11,6 +11,7 @@
 import type { TaskState } from "../orchestrator/orchestrator";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
+import { formatErrorForDisplay } from "./error-format";
 
 // ── Status Icons ─────────────────────────────────────────────────
 
@@ -102,10 +103,15 @@ class ProgressWidgetComponent {
 			}
 		}
 
-		// Failed subtasks summary
+		// Failed subtasks summary — show IDs plus first error for quick diagnosis
 		const failed = task.subtasks.filter((s) => s.status === "failed");
 		if (failed.length > 0) {
 			lines.push(`  ${this.theme.fg("error", `⚠ ${failed.length} failed:`)} ${failed.map((s) => s.id).join(", ")}`);
+			// Show first failed subtask's error (truncated root cause, friendly label)
+			const firstErr = failed.find((s) => s.error);
+			if (firstErr && firstErr.error) {
+				lines.push(`  ${formatErrorForDisplay(firstErr.error, width - 6, (c, t) => this.theme.fg(c, t))}`);
+			}
 		}
 
 		this.lastRender = lines;

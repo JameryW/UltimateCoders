@@ -1497,7 +1497,9 @@ class NatsWorker:
                 data["summary"] = result.summary[:300]
                 data["success"] = True
             else:
-                data["error"] = result.summary[:300]
+                # Prefer the structured error field; fall back to summary for compat.
+                # Both are now friendly messages (summary = "LLM 瞬时错误...", error = root cause).
+                data["error"] = (result.error or result.summary)[:300]
             await self._publisher.publish_event(
                 event_type,
                 task_id=task_id,

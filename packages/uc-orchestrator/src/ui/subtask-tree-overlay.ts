@@ -10,6 +10,7 @@
 import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
+import { formatErrorForDisplay } from "./error-format";
 
 // ── Status Icons ─────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ class SubtaskTreeComponent {
 					}
 				}
 				if (item.subtask.error) {
-					lines.push(this.theme.fg("error", `      ⚠ ${item.subtask.error.slice(0, width - 12)}`));
+					lines.push(`      ${formatErrorForDisplay(item.subtask.error, width - 12, (c, t) => this.theme.fg(c, t))}`);
 				}
 				if (item.subtask.review) {
 					const approved = item.subtask.review.approved ? "approved" : "rejected";
