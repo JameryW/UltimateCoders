@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "校验标签声明符合规范"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "校验调度匹配语义未回归"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量与测试覆盖标准"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验路径逃逸与 IO 错误处理"}

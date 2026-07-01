@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "能力标签声明规范 — _derive_capabilities 与 AGENT_PROFILES 的契约"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "WorkerRegistry workers_with_capabilities 匹配语义，新标签 lsp/file-edit 需符合"}
+{"file": ".trellis/spec/backend/codegraph-integration.md", "reason": "codegraph 作为 LSP 后端的集成模式 — 复用为 lsp 标签的依据"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新 fs_mcp.py 文件放置约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "uc-fs 路径逃逸/IO 错误处理规范"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "uc-fs MCP 日志风格对齐 engine_mcp"}
