@@ -674,3 +674,37 @@ Deep integration: agent_config_json propagation, projectId persistence round-tri
 
 - Merge decision is the user's (4 gates green; bun queue is known infra constraint)
 - Follow-up (separate PR): `nats_worker.py` `_handle_submit` `create_task(_execute_subtasks)` unreferenced — same GC trap, pre-existing, out of scope here
+
+
+## Session 74: Fix 503 retry + worker fs-mcp capability tags
+
+**Date**: 2026-07-01
+**Task**: Fix 503 retry + worker fs-mcp capability tags
+**Branch**: `main`
+
+### Summary
+
+Two PRs merged. #199: llm.py retry path now treats 503/server_error/'system is busy'/'try again later' as transient (was only 429/529), via shared _is_transient_api_error() on both Anthropic + litellm paths — a single transient 503 no longer fails a subtask. #200: worker tool capabilities completed — new fs_mcp.py (uc-fs MCP: read_file/write_file/edit_file, workspace path-isolated), _derive_capabilities() now emits lsp (reusing codegraph as LSP backend, not a new uc-lsp server), file-edit (from uc-fs), opt-in browser/debug env flags; new file-edit AGENT_PROFILE; Rust WorkerRegistry unchanged (string-passed AND-subset). 20 new tests, 460 Python + 17 Rust worker tests green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8899ec59` | (see git log) |
+| `d3ca50d2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
