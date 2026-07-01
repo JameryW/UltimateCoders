@@ -43,6 +43,13 @@ from ultimate_coders.agent.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
+# ponytail: map mcp:<server> tags to semantic capability aliases.
+# Add rows as more in-process MCP servers land.
+_MCP_CAP_ALIASES: dict[str, str] = {
+    "mcp:uc-fs": "file-edit",
+    "mcp:uc-engine": "search",  # uc-engine already implies search; no-op if present
+}
+
 _SUBTASK_USER_TEMPLATE = """\
 Subtask: {description}
 
@@ -174,7 +181,10 @@ class Worker:
         self.worker_id = worker_id or str(uuid.uuid4())
         self.engine = engine
         self._sandbox_config = sandbox_config or SandboxConfig()
-        # Auto-register Engine MCP server for sandbox agent tools (search + memory)
+        # Auto-register in-process MCP servers for sandbox agent tools.
+        # uc-engine: search + memory (needs engine). uc-fs: file edit (workspace-scoped).
+        # Guarded on engine != None so test stubs (SandboxConfig() + no engine) stay
+        # MCP-free, preserving the legacy "no mcp_configs ⇒ no mcp capability" contract.
         if engine is not None and self._sandbox_config.mcp_configs is None:
             self._sandbox_config.mcp_configs = [
                 {
@@ -183,7 +193,30 @@ class Worker:
                         "args": ["-m", "ultimate_coders.agent.engine_mcp"],
                     },
                 },
+                {
+                    "uc-fs": {
+                        "command": "python",
+                        "args": ["-m", "ultimate_coders.agent.fs_mcp"],
+                    },
+                },
             ]
+        elif engine is not None and self._sandbox_config.mcp_configs is not None:
+            # ponytail: ensure uc-fs is registered even if caller supplied custom mcp_configs
+            names = {
+                name
+                for entry in self._sandbox_config.mcp_configs or []
+                if isinstance(entry, dict)
+                for name in entry
+            }
+            if "uc-fs" not in names:
+                self._sandbox_config.mcp_configs.append(
+                    {
+                        "uc-fs": {
+                            "command": "python",
+                            "args": ["-m", "ultimate_coders.agent.fs_mcp"],
+                        },
+                    }
+                )
         self.capabilities = capabilities or self._derive_capabilities()
         self.max_capacity = max_capacity
         self.current_task: Subtask | None = None
@@ -243,6 +276,29 @@ class Worker:
                         caps.append(f"mcp:{parts[1]}")
                 if t.startswith("mcp__codegraph") and "codegraph" not in caps:
                     caps.append("codegraph")
+                    # codegraph MCP provides LSP semantics (goToDefinition/findReferences/hover/
+                    # documentSymbol) — declare lsp so the scheduler routes symbol-ops subtasks.
+                    # ponytail: ceiling — codegraph is a precomputed SQLite graph lagging writes
+                    # ~1s; for live worktree edits a real-time LSP would be needed (out of scope).
+                    caps.append("lsp")
+        # Map specific mcp:<server> tags to semantic capability aliases.
+        for entry in (cfg.mcp_configs or []):
+            server_names: list[str] = []
+            if isinstance(entry, dict):
+                server_names = list(entry.keys())
+            elif isinstance(entry, str) and ("/" in entry or os.sep in entry):
+                server_names = [os.path.basename(entry.replace("/", os.sep)).replace(".json", "")]
+            for sn in server_names:
+                tag = f"mcp:{sn}"
+                alias = _MCP_CAP_ALIASES.get(tag)
+                if alias and alias not in caps:
+                    caps.append(alias)
+        # Opt-in capability flags for tools whose server bodies aren't implemented here.
+        # ponytail: declare-only extension point — set UC_CAP_BROWSER/UC_CAP_DEBUG to advertise
+        # the capability when an external MCP server provides it.
+        for flag, cap in (("UC_CAP_BROWSER", "browser"), ("UC_CAP_DEBUG", "debug")):
+            if os.environ.get(flag):
+                caps.append(cap)
         if cfg.agent_name:
             caps.append(f"agent:{cfg.agent_name}")
         if cfg.agents_json:
@@ -315,6 +371,16 @@ class Worker:
             "append_system_prompt": (
                 "Focus on writing documentation. Update README,"
                 " docstrings, and inline comments."
+            ),
+        },
+        # Explicit file-edit profile: opt into the in-process uc-fs MCP for precise
+        # str_replace / write_file ops. Distinct from the default code profile which
+        # relies on the spawned agent's built-in Edit/Write tools.
+        "file-edit": {
+            "tools": ["default", "mcp__uc-fs__*"],
+            "append_system_prompt": (
+                "Precise file editing mode — use uc-fs tools"
+                " (read_file/write_file/edit_file) for surgical edits."
             ),
         },
     }
