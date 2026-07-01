@@ -59,6 +59,10 @@ export class ControlSignalSubscriber {
 	private eventSub: Subscription | null = null;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private natsConnected = false;
+	/** Set by stop() so the post-disconnect reconnect loop doesn't revive a
+	 * stopped subscriber (which would leak a NATS connection + poll timer
+	 * across session switches). */
+	private stopped = false;
 	/** Track last known controlState per task to detect changes via polling. */
 	private lastKnownControlState: Map<string, string> = new Map();
 	/** Dedup: seen message IDs to prevent double-processing. */
@@ -72,6 +76,7 @@ export class ControlSignalSubscriber {
 
 	/** Start the subscriber. Tries NATS first; falls back to polling. */
 	async start(): Promise<void> {
+		this.stopped = false;
 		try {
 			this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
 			this.natsConnected = true;
@@ -88,6 +93,7 @@ export class ControlSignalSubscriber {
 
 	/** Stop the subscriber and clean up resources. */
 	async stop(): Promise<void> {
+		this.stopped = true;
 		if (this.pollTimer) {
 			clearInterval(this.pollTimer);
 			this.pollTimer = null;
@@ -127,6 +133,9 @@ export class ControlSignalSubscriber {
 			// Subscription iterator ended — NATS disconnected, try reconnect
 			this.natsConnected = false;
 			this.eventSub = null;
+			// Don't revive a stopped subscriber (session_shutdown) — that would
+			// leak a fresh NATS connection + poll timer.
+			if (this.stopped) return;
 			await this.tryNatsReconnect();
 		})().catch((err) => {
 			console.warn(`[ControlSignalSubscriber] NATS subscription ended: ${err}`);
@@ -136,8 +145,10 @@ export class ControlSignalSubscriber {
 	/** Attempt to reconnect NATS with exponential backoff before falling back to polling. */
 	private async tryNatsReconnect(): Promise<void> {
 		for (let attempt = 0; attempt < this.config.maxReconnectAttempts; attempt++) {
+			if (this.stopped) return; // shutdown raced with reconnect
 			const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
 			await new Promise((r) => setTimeout(r, delay));
+			if (this.stopped) return; // shutdown during backoff sleep
 			try {
 				this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
 				this.natsConnected = true;
@@ -205,6 +216,12 @@ export class ControlSignalSubscriber {
 	// ── Polling Fallback ────────────────────────────────────────
 
 	private startPolling(): void {
+		// Clear any existing poll timer so a second startPolling (e.g. NATS
+		// reconnect exhaustion while already polling) doesn't leak a duplicate.
+		if (this.pollTimer) {
+			clearInterval(this.pollTimer);
+			this.pollTimer = null;
+		}
 		this.pollTimer = setInterval(async () => {
 			const activeIds = this.handler.getActiveTaskIds();
 			if (activeIds.length === 0) return;

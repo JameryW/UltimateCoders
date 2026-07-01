@@ -317,8 +317,15 @@ class NatsWorker:
         # Remote worker discovery via heartbeat
         self._known_remote_workers: dict[str, dict[str, Any]] = {}
         self._cleanup_task: asyncio.Task | None = None  # type: ignore[type-arg]
-        # Track current task ID for remote result collection
-        self._current_task_id: str = ""
+        # Hold fire-and-forget subtask execution tasks so asyncio's weak-ref GC
+        # can't reap them before they run — a reaped _execute_subtasks task
+        # silently abandons a task's subtasks until the 600s heartbeat timeout
+        # marks the task Failed (the "OMP session interruption" symptom).
+        # Set is safe to construct in __init__ (does not bind an event loop).
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
+        # Capacity semaphore — lazy-constructed in _init_components (Semaphore
+        # binds a loop on Py3.9). Caps concurrent subtask executions.
+        self._exec_semaphore: asyncio.Semaphore | None = None
         # JetStream Event Sourcing: last acked sequence for replay
         self._js_last_seq: int = 0
 
@@ -482,6 +489,16 @@ class NatsWorker:
                 pass
             self._cleanup_task = None
 
+        # Cancel in-flight subtask execution tasks
+        for bg in list(self._bg_tasks):
+            bg.cancel()
+        for bg in list(self._bg_tasks):
+            try:
+                await bg
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._bg_tasks.clear()
+
         # Unsubscribe
         for sub in self._subscriptions:
             try:
@@ -490,10 +507,18 @@ class NatsWorker:
                 logger.debug("Failed to unsubscribe", exc_info=True)
         self._subscriptions.clear()
 
-        # Drain and close NATS connection
+        # Drain and close NATS connection.
+        # Bounded drain: nats-py's drain() waits for all in-flight message
+        # callbacks to finish — a long-running _handle_subtask_execute (up to
+        # 600s subtask timeout) would block stop() for the full duration. Cap
+        # at 10s so graceful shutdown doesn't hang; in-flight subtasks are
+        # abandoned (the sandbox subprocess kill-on-cancel from execute_subtask
+        # handles cleanup).
         if self._nc is not None:
             try:
-                await self._nc.drain()
+                await asyncio.wait_for(self._nc.drain(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("NATS drain timed out after 10s, forcing close")
             except Exception:
                 logger.debug("NATS drain failed", exc_info=True)
             self._nc = None
@@ -825,6 +850,16 @@ class NatsWorker:
             nats_publisher=self._publisher,
             workspace_manager=workspace_manager,
         )
+        # Capacity semaphore: uc.subtask.execute messages are dispatched by NATS
+        # to queue-group workers and processed concurrently by the cb. Without a
+        # bound, a worker accepted every concurrent message and spawned that many
+        # coding-agent subprocesses at once — exceeding max_capacity and
+        # OOM-ing/CPU-starving the worker (session interruption). The semaphore
+        # caps concurrent executions to max_capacity; excess messages wait.
+        # Lazy-constructed (Semaphore binds a loop on Py3.9).
+        self._exec_semaphore: asyncio.Semaphore = asyncio.Semaphore(
+            self._worker.max_capacity,
+        )
 
         # Wire distributed detector to worker
         if distributed_detector is not None:
@@ -850,11 +885,35 @@ class NatsWorker:
         max_retries: int = 5,
         retry_delay: float = 2.0,
     ) -> NatsClient:
-        """Connect to NATS with exponential backoff retry."""
+        """Connect to NATS with exponential backoff retry.
+
+        Runtime reconnect is unbounded (max_reconnect_attempts=-1) so a NATS
+        outage doesn't permanently close the client and turn this worker into a
+        silent zombie that still looks alive. disconnected/reconnected callbacks
+        log state transitions at INFO (once per transition) for observability
+        without flooding like async_nats's per-attempt errors.
+        """
+
+        async def _on_disconnected() -> None:
+            logger.warning("NATS disconnected — will reconnect automatically")
+
+        async def _on_reconnected() -> None:
+            logger.info("NATS reconnected")
+
+        async def _on_error(e: Exception) -> None:
+            logger.debug("NATS client error: %s", e)
+
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
-                nc = await nats.connect(self._nats_url)
+                nc = await nats.connect(
+                    self._nats_url,
+                    max_reconnect_attempts=-1,  # unbounded — never give up
+                    reconnect_time_wait=2,
+                    disconnected_cb=_on_disconnected,
+                    reconnected_cb=_on_reconnected,
+                    error_cb=_on_error,
+                )
                 logger.info(
                     "Connected to NATS at %s (attempt %d)",
                     self._nats_url,
@@ -880,6 +939,18 @@ class NatsWorker:
         )
 
     # ── Message handlers ─────────────────────────────────────────
+
+    def _spawn_bg(self, coro: Any) -> asyncio.Task[Any]:
+        """Schedule a background task and hold a strong ref so the GC can't reap it.
+
+        asyncio only keeps a weak reference to tasks created via create_task — an
+        unreferenced task can be collected before it runs. We add it to
+        ``_bg_tasks`` and drop it via a done-callback once complete.
+        """
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     async def _handle_submit(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle a ``uc.task.submit`` message.
@@ -954,7 +1025,7 @@ class NatsWorker:
                 )
 
             # Assign and execute subtasks in background
-            asyncio.create_task(self._execute_subtasks(task))
+            self._spawn_bg(self._execute_subtasks(task))
 
         except Exception:
             logger.error(
@@ -975,8 +1046,13 @@ class NatsWorker:
         if self._orchestrator is None or self._worker is None:
             return
 
-        max_iterations = len(task.subtasks) * 2 + 1  # safety limit
-        for _ in range(max_iterations):
+        # No fixed iteration cap: remote subtasks run for up to 600s and signal
+        # completion via _dispatch_event. A cap of `len(subtasks)*2+1` would
+        # exhaust after ~3.5min of 30s waits (for small N) and exit while remote
+        # subtasks were still running — leaving the task permanently incomplete.
+        # The loop's real exit conditions are: task terminal (Paused/Completed/
+        # Failed) at the top, or no ready subtasks AND none in-progress (break).
+        while True:
             # Refresh task state -- a pause/resume NATS event may have
             # changed the status between iterations.
             updated = self._orchestrator.get_task_status(task.id)
@@ -1220,7 +1296,16 @@ class NatsWorker:
                     # Refresh own worker heartbeat on Orchestrator side
                     if self._orchestrator is not None and self._worker is not None:
                         self._orchestrator.refresh_heartbeat(self._worker.worker_id)
-                    # Also send gRPC WorkerService heartbeat if registered
+                    # Retry gateway registration if it failed at startup (gRPC
+                    # may have been temporarily unreachable during a slow start).
+                    # Without this, a worker that missed registration never
+                    # appears in the WorkerRegistry → dispatch_ready_subtasks
+                    # never matches it → it never receives subtasks.
+                    if self._grpc_reg_engine is None:
+                        endpoint = self._grpc_endpoint or os.environ.get("UC_GRPC_ENDPOINT", "")
+                        if endpoint:
+                            await self._register_with_gateway()
+                    # Send gRPC WorkerService heartbeat if registered
                     if self._grpc_reg_engine is not None and self._worker is not None:
                         load = self._worker.get_info().current_load if self._worker else 0
                         await self._grpc_reg_engine.worker_heartbeat_async(
@@ -1353,7 +1438,12 @@ class NatsWorker:
                             "worker_id": self._worker.worker_id,
                         },
                     )
-                await msg.nack()
+                # Note: uc.subtask.execute is a core NATS subscription (not
+                # JetStream), so there is no redelivery via NAK — msg.nack() does
+                # not exist in nats-py (it's `nak`) and even `nak` raises
+                # NotJSMessageError on core messages. The published
+                # subtask_dispatch_rejected event is the actual signal that lets
+                # the default-mode NatsWorker keep the subtask Pending or retry.
                 return
 
         # Build a Subtask object for Worker.execute_subtask
@@ -1376,7 +1466,14 @@ class NatsWorker:
         )
 
         try:
-            result = await self._worker.execute_subtask(subtask)
+            # Bound concurrent executions to max_capacity so a flood of
+            # uc.subtask.execute messages doesn't spawn that many agent
+            # subprocesses at once (OOM/CPU starvation → worker death).
+            if self._exec_semaphore is not None:
+                async with self._exec_semaphore:
+                    result = await self._worker.execute_subtask(subtask)
+            else:
+                result = await self._worker.execute_subtask(subtask)
         except Exception as e:
             logger.error(
                 "Subtask %s execution failed: %s", subtask_id, e, exc_info=True,
@@ -1487,10 +1584,15 @@ class NatsWorker:
         elif event_type == "task_resumed":
             self._orchestrator.resume_task_local(task_id)
         elif event_type in ("subtask_completed", "subtask_failed"):
-            # For remote dispatch: feed the result back into the Orchestrator
+            # For remote dispatch: feed the result back into the Orchestrator.
+            # The handler scopes by task_id (looked up in the Orchestrator), so it
+            # is safe for concurrent tasks — no global "current task" guard.
+            # (A prior guard compared against self._current_task_id, which was
+            # never assigned and stayed "" — silently dropping EVERY remote
+            # subtask result, leaking edit intents, and stalling tasks.)
             subtask_id = data.get("subtask_id", "")
-            if subtask_id and self._current_task_id == task_id:
-                self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
+            if subtask_id:
+                await self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
             # Wake _execute_subtasks loop so newly-unblocked subtasks
             # dispatch immediately
             self._dispatch_event.set()
@@ -1508,7 +1610,7 @@ class NatsWorker:
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
 
-    def _handle_remote_subtask_result(
+    async def _handle_remote_subtask_result(
         self,
         event_type: str,
         task_id: str,
@@ -1533,7 +1635,9 @@ class NatsWorker:
                             )
                         break
 
-        # Feed result into Orchestrator
+        # Feed result into Orchestrator.
+        # handle_subtask_result is async — must be awaited, otherwise the
+        # result never lands and the task status never advances (stall).
         if event_type == "subtask_completed" and self._orchestrator:
             result = SubtaskResult(
                 subtask_id=subtask_id,
@@ -1541,7 +1645,7 @@ class NatsWorker:
                 summary=data.get("summary", ""),
                 success=True,
             )
-            self._orchestrator.handle_subtask_result(result)
+            await self._orchestrator.handle_subtask_result(result)
         elif event_type == "subtask_failed" and self._orchestrator:
             result = SubtaskResult(
                 subtask_id=subtask_id,
@@ -1549,7 +1653,7 @@ class NatsWorker:
                 summary=data.get("error", "Remote subtask failed"),
                 success=False,
             )
-            self._orchestrator.handle_subtask_result(result)
+            await self._orchestrator.handle_subtask_result(result)
 
     # ── Remote worker discovery ─────────────────────────────────────
 
@@ -1689,10 +1793,12 @@ class NatsWorker:
             for wid in stale_ids:
                 del self._known_remote_workers[wid]
                 logger.info("Removed stale remote worker: %s", wid[:8])
-                # Reassign this worker's subtasks back to Pending
-                if self._orchestrator and self._current_task_id:
-                    task = self._orchestrator.get_task_status(self._current_task_id)
-                    if task:
+                # Reassign this worker's subtasks back to Pending across ALL
+                # active tasks (not just a single "current" task — the prior
+                # self._current_task_id guard was always "" so this never ran,
+                # leaving dead-worker subtasks stuck IN_PROGRESS forever).
+                if self._orchestrator is not None:
+                    for task in self._orchestrator.tasks.values():
                         for st in task.subtasks:
                             if (
                                 st.assigned_worker == wid
@@ -1718,8 +1824,8 @@ class NatsWorker:
                                             "retry_count": st.retry_count,
                                         },
                                     )
-                        # Wake dispatch loop to pick up reassigned subtasks
-                        self._dispatch_event.set()
+                    # Wake dispatch loop to pick up reassigned subtasks
+                    self._dispatch_event.set()
 
             # Self-heartbeat stall detection: if local Worker hasn't
             # sent a heartbeat in >90s, release its current subtask

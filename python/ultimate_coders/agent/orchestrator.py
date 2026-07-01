@@ -208,6 +208,8 @@ class Orchestrator:
                         entry.current_load -= 1
                     # Check if all subtasks done
                     self._update_task_status(task)
+                    # Evict terminal tasks to bound memory on long-running workers.
+                    self.evict_terminal_tasks()
                     return
 
     def _update_task_status(self, task: Task) -> None:
@@ -225,6 +227,34 @@ class Orchestrator:
             done_statuses = (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED)
             if all(st.status in done_statuses for st in task.subtasks):
                 task.status = TaskStatus.FAILED
+
+    # Cap on retained tasks. Terminal tasks (Completed/Failed/Cancelled) beyond
+    # this count are evicted to prevent unbounded growth on a long-running
+    # worker. Mirrors the TypeScript orchestrator's evictCompletedTasks.
+    MAX_RETAINED_TASKS: int = 200
+
+    def evict_terminal_tasks(self) -> int:
+        """Evict oldest terminal tasks when the map exceeds MAX_RETAINED_TASKS.
+
+        Returns the number of tasks evicted.
+        """
+        if len(self.tasks) <= self.MAX_RETAINED_TASKS:
+            return 0
+        # Task has no completed_at; use created_at as the eviction ordering key.
+        terminal = [
+            (tid, t.created_at)
+            for tid, t in self.tasks.items()
+            if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+        ]
+        if not terminal:
+            return 0
+        # Evict oldest terminal tasks first (smallest created_at).
+        terminal.sort(key=lambda item: item[1])
+        excess = len(self.tasks) - self.MAX_RETAINED_TASKS
+        to_evict = min(excess, len(terminal))
+        for tid, _ in terminal[:to_evict]:
+            del self.tasks[tid]
+        return to_evict
 
     def _schedule_arbitration(self, task: Task) -> None:
         """Schedule merge arbitration as a background task (non-blocking).

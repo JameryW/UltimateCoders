@@ -249,6 +249,12 @@ pub struct TaskStore {
     /// Per-Worker heartbeat timestamps (worker_id -> last seen).
     /// Used for distributed Worker failure detection.
     worker_heartbeats: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Per-subtask "Assigned at" timestamps (subtask_id -> when marked Assigned).
+    /// Used to revert Assigned subtasks that no worker ever picked up (e.g.
+    /// queue group had no subscribers, or all workers were too busy) back to
+    /// Pending so they can be re-dispatched. Without this they stuck Assigned
+    /// forever (get_ready_subtasks only returns Pending).
+    assigned_subtask_times: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Deduplication map for NATS at-least-once delivery.
     /// Keys are message_id strings; values are insertion timestamps.
     /// Entries older than 5 minutes are purged on each check.
@@ -270,6 +276,7 @@ impl TaskStore {
             task_backend: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
+            assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -283,6 +290,7 @@ impl TaskStore {
             task_backend: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
+            assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -299,6 +307,7 @@ impl TaskStore {
             task_backend: Some(task_backend),
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
+            assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
         }
     }
@@ -308,6 +317,61 @@ impl TaskStore {
 
     /// Maximum seen_messages entries before triggering a purge.
     const DEDUP_MAX_ENTRIES: usize = 10_000;
+
+    /// Cap on the inline event log (`self.events`). Without this, a long-running
+    /// server accumulates events unbounded → OOM → crash → session interruption.
+    /// The persistent EventStore remains the source of truth for full history;
+    /// the inline log only serves recent replay + broadcast diffs, so capping
+    /// the tail is safe.
+    const INLINE_EVENTS_MAX: usize = 5_000;
+
+    /// Cap on retained tasks in the in-memory HashMap. Terminal tasks beyond
+    /// this count are evicted to prevent unbounded growth on a long-running
+    /// server (OOM → crash → session interruption). Larger than the Python
+    /// worker's cap because this is the shared server-side store queried by the
+    /// Dashboard for recent history; older tasks live in the persistent backend.
+    const MAX_RETAINED_TASKS: usize = 1_000;
+
+    /// Evict the oldest terminal (Completed/Failed/Cancelled) tasks when the
+    /// in-memory map exceeds MAX_RETAINED_TASKS. Non-terminal tasks are never
+    /// evicted (they may still be executing). Returns the count evicted.
+    pub fn evict_completed_tasks(&mut self) -> usize {
+        if self.tasks.len() <= Self::MAX_RETAINED_TASKS {
+            return 0;
+        }
+        // Collect terminal tasks with their updated_at as the eviction ordering.
+        let mut terminal: Vec<(String, chrono::DateTime<chrono::Utc>)> = self
+            .tasks
+            .iter()
+            .filter(|(_, t)| {
+                matches!(
+                    t.status,
+                    uc_types::TaskStatus::Completed | uc_types::TaskStatus::Failed
+                )
+            })
+            .map(|(id, t)| (id.clone(), t.updated_at))
+            .collect();
+        if terminal.is_empty() {
+            return 0;
+        }
+        // Evict oldest terminal tasks first (smallest updated_at).
+        terminal.sort_by_key(|(_, ts)| *ts);
+        let excess = self.tasks.len() - Self::MAX_RETAINED_TASKS;
+        let to_evict = std::cmp::min(excess, terminal.len());
+        for (id, _) in terminal.iter().take(to_evict) {
+            // Defensive: clear any residual assigned-at tracking for this task's
+            // subtasks. Terminal tasks' subtasks should already be non-Assigned
+            // (hence cleared on transition), but this guards against future paths
+            // that remove a task without going through update_subtask_status.
+            if let Some(task) = self.tasks.get(id) {
+                for st in &task.subtasks {
+                    self.assigned_subtask_times.remove(&st.id.0);
+                }
+            }
+            self.tasks.remove(id);
+        }
+        to_evict
+    }
 
     /// Check if a message_id has already been processed.
     /// Returns `true` if the message is a duplicate (already seen).
@@ -342,9 +406,23 @@ impl TaskStore {
     }
 
     /// Record an event: push to inline log AND append to EventStore.
-    fn record_event_with_subject(&mut self, event: uc_engine::AgentEventType, subject: &str) {
+    /// Returns the proto TaskEvent for callers to broadcast (avoids re-reading
+    /// from self.events, which is unreliable when the log is at capacity —
+    /// record_event drains oldest entries, shifting indices).
+    fn record_event_with_subject(
+        &mut self,
+        event: uc_engine::AgentEventType,
+        subject: &str,
+    ) -> TaskEvent {
+        let proto: TaskEvent = event.clone().into();
         // Inline log (legacy, for tests and immediate reads)
         self.events.push(event.clone());
+        // Cap the inline log to prevent unbounded growth (OOM on long runs).
+        // Keep the most recent events; full history lives in the EventStore.
+        if self.events.len() > Self::INLINE_EVENTS_MAX {
+            let drop_n = self.events.len() - Self::INLINE_EVENTS_MAX;
+            self.events.drain(0..drop_n);
+        }
         // EventStore (unified, persistent source of truth)
         // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -354,6 +432,7 @@ impl TaskStore {
                 let _ = es.append(&subj, &event).await;
             });
         }
+        proto
     }
 
     /// Submit a new task: create it with a single subtask (InProgress status), store, and return.
@@ -426,7 +505,7 @@ impl TaskStore {
         &mut self,
         description: String,
         project_id: String,
-    ) -> uc_types::Task {
+    ) -> (uc_types::Task, Vec<TaskEvent>) {
         let task_id = uc_types::TaskId::new();
         let now = chrono::Utc::now();
 
@@ -441,7 +520,7 @@ impl TaskStore {
         };
 
         // Record TaskCreated event
-        self.record_event_with_subject(
+        let proto = self.record_event_with_subject(
             uc_engine::AgentEventType::TaskCreated {
                 task_id: task_id.clone(),
                 description,
@@ -451,7 +530,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
-        task
+        (task, vec![proto])
     }
 
     /// Get a task by ID.
@@ -523,6 +602,12 @@ impl TaskStore {
                             | uc_types::SubtaskStatus::Pending
                             | uc_types::SubtaskStatus::Assigned
                     ) {
+                        // Drop assigned-at tracking so the entry doesn't leak
+                        // (we bypass update_subtask_status here, which would
+                        // otherwise clear it on the Assigned→Failed transition).
+                        if st.status == uc_types::SubtaskStatus::Assigned {
+                            self.assigned_subtask_times.remove(&st.id.0);
+                        }
                         st.status = uc_types::SubtaskStatus::Failed;
                     }
                 }
@@ -756,6 +841,20 @@ impl TaskStore {
             {
                 // Existing subtask — update all provided fields
                 if let Some(status) = subtask_status_from_str(&subtask_update.status) {
+                    // Clear assigned-at tracking on any transition out of Assigned
+                    // (we bypass update_subtask_status here, which would otherwise
+                    // clear it). This is the highest-frequency path (worker pick-up
+                    // sends Assigned→InProgress), so a leak here accumulates fast.
+                    if subtask.status == uc_types::SubtaskStatus::Assigned
+                        && status != uc_types::SubtaskStatus::Assigned
+                    {
+                        self.assigned_subtask_times.remove(&subtask.id.0);
+                    } else if status == uc_types::SubtaskStatus::Assigned
+                        && subtask.status != uc_types::SubtaskStatus::Assigned
+                    {
+                        self.assigned_subtask_times
+                            .insert(subtask.id.0.clone(), chrono::Utc::now());
+                    }
                     subtask.status = status;
                 } else {
                     tracing::warn!(
@@ -774,8 +873,13 @@ impl TaskStore {
                     subtask.depends_on = deps.iter().map(|d| uc_types::TaskId(d.clone())).collect();
                 }
                 if let Some(result_str) = &subtask_update.result {
-                    // ponytail: derive success from subtask status, not hardcoded true
-                    let success = subtask_update.status != "failed";
+                    // ponytail: derive success from parsed subtask status — the raw
+                    // string is CamelCase ("Failed"), so a naive `!= "failed"` check
+                    // would always be true and record failed subtasks as successful.
+                    let success = !matches!(
+                        subtask_status_from_str(&subtask_update.status),
+                        Some(uc_types::SubtaskStatus::Failed)
+                    );
                     subtask.result = Some(uc_types::SubtaskResult {
                         subtask_id: subtask.id.clone(),
                         worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
@@ -817,7 +921,13 @@ impl TaskStore {
                                 .unwrap_or_default(),
                             modified_files: Vec::new(),
                             summary: r.clone(),
-                            success: true,
+                            // ponytail: derive success from parsed status, matching the
+                            // existing-subtask path. The raw string is CamelCase ("Failed"),
+                            // so a naive `!= "failed"` would always be true.
+                            success: !matches!(
+                                subtask_status_from_str(&subtask_update.status),
+                                Some(uc_types::SubtaskStatus::Failed)
+                            ),
                             completed_at: chrono::Utc::now(),
                             result: Some(r.clone()),
                         }),
@@ -827,10 +937,23 @@ impl TaskStore {
                     agent_config_json: None,
                 };
                 task.subtasks.push(new_subtask);
+                // If a brand-new subtask arrives already Assigned (rare — usually
+                // Pending until dispatch_ready_subtasks marks it), track assigned-at
+                // so reassign_stale_assigned_subtasks can revert it if stuck.
+                if task
+                    .subtasks
+                    .last()
+                    .is_some_and(|st| st.status == uc_types::SubtaskStatus::Assigned)
+                {
+                    self.assigned_subtask_times
+                        .insert(subtask_update.subtask_id.clone(), chrono::Utc::now());
+                }
             }
         }
 
         task.updated_at = chrono::Utc::now();
+        // Bound the in-memory task map (terminal tasks may have just appeared).
+        self.evict_completed_tasks();
     }
 
     /// Record an event from NATS (`uc.task.event`).
@@ -867,6 +990,11 @@ impl TaskStore {
             _ => "events".to_string(),
         };
         self.events.push(event.clone());
+        // Cap the inline log to prevent unbounded growth (OOM on long runs).
+        if self.events.len() > Self::INLINE_EVENTS_MAX {
+            let drop_n = self.events.len() - Self::INLINE_EVENTS_MAX;
+            self.events.drain(0..drop_n);
+        }
         // ponytail: spawn is fire-and-forget; if no runtime, skip (tests)
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let es = self.event_store.clone();
@@ -925,6 +1053,12 @@ impl TaskStore {
                 ) {
                     if let Some(ref w) = st.assigned_worker {
                         if stale_worker_ids.contains(&w.0) {
+                            // Clear assigned-at tracking (we bypass
+                            // update_subtask_status here, which would otherwise
+                            // clear it on the Assigned→Pending transition).
+                            if st.status == uc_types::SubtaskStatus::Assigned {
+                                self.assigned_subtask_times.remove(&st.id.0);
+                            }
                             st.status = uc_types::SubtaskStatus::Pending;
                             st.assigned_worker = None;
                             reassigned.push(st.id.0.clone());
@@ -988,10 +1122,66 @@ impl TaskStore {
     ) {
         if let Some(task) = self.tasks.get_mut(task_id) {
             if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                // Track Assigned-at so stale Assigned subtasks (no worker ever
+                // picked them up) can be reverted to Pending by the heartbeat
+                // monitor. Clear on any transition out of Assigned.
+                if new_status == uc_types::SubtaskStatus::Assigned {
+                    self.assigned_subtask_times
+                        .insert(subtask_id.to_string(), chrono::Utc::now());
+                } else if st.status == uc_types::SubtaskStatus::Assigned {
+                    self.assigned_subtask_times.remove(subtask_id);
+                }
                 st.status = new_status;
                 task.updated_at = chrono::Utc::now();
             }
         }
+    }
+
+    /// Revert Assigned subtasks that have been stuck (no worker picked them up)
+    /// for longer than `timeout` back to Pending so they can be re-dispatched.
+    /// Returns the task IDs whose subtasks were reverted.
+    /// Distinct from reassign_stale_subtasks (which handles Assigned-to-a-dead-
+    /// worker); this handles Assigned-with-no-worker-at-all (queue group had no
+    /// subscriber, or all workers were too busy to ack).
+    pub fn reassign_stale_assigned_subtasks(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Vec<String> {
+        if self.assigned_subtask_times.is_empty() {
+            return Vec::new();
+        }
+        let now = chrono::Utc::now();
+        let stale_ids: Vec<String> = self
+            .assigned_subtask_times
+            .iter()
+            .filter(|(_, ts)| (now - **ts).to_std().unwrap_or_default() > timeout)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if stale_ids.is_empty() {
+            return Vec::new();
+        }
+        let mut affected = Vec::new();
+        for task in self.tasks.values_mut() {
+            for st in &mut task.subtasks {
+                if stale_ids.contains(&st.id.0) && st.status == uc_types::SubtaskStatus::Assigned {
+                    st.status = uc_types::SubtaskStatus::Pending;
+                    st.assigned_worker = None;
+                    st.dispatch_retry_count = st.dispatch_retry_count.saturating_add(1);
+                    if !affected.contains(&task.id.0) {
+                        affected.push(task.id.0.clone());
+                    }
+                    tracing::warn!(
+                        subtask_id = %st.id.0,
+                        retry_count = st.dispatch_retry_count,
+                        "Reverting stale Assigned subtask to Pending (no worker picked it up)"
+                    );
+                }
+            }
+        }
+        for id in &stale_ids {
+            self.assigned_subtask_times.remove(id);
+        }
+        affected
     }
 
     /// Increment a subtask's dispatch_retry_count within a task.
@@ -1212,7 +1402,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
         event_store: Arc<dyn uc_engine::EventStore>,
     ) -> Self {
-        let nats_client = match async_nats::connect(nats_url).await {
+        let nats_client = match nats_connect_options().connect(nats_url).await {
             Ok(client) => {
                 tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
                 Some(client)
@@ -1234,18 +1424,29 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let (event_tx, _) = broadcast::channel(256);
 
+        let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
-            worker_registry: Arc::new(RwLock::new(WorkerRegistry::new())),
+            worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
         if let Some(client) = nats_client {
-            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx);
-            spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
+            spawn_nats_subscriber(
+                client.clone(),
+                task_store.clone(),
+                worker_registry.clone(),
+                event_tx,
+            );
+            spawn_heartbeat_monitor(
+                client,
+                task_store.clone(),
+                worker_registry.clone(),
+                heartbeat_timeout,
+            );
         }
 
         Self { inner }
@@ -1258,7 +1459,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         nats_url: &str,
         heartbeat_timeout: std::time::Duration,
     ) -> Self {
-        let nats_client = match async_nats::connect(nats_url).await {
+        let nats_client = match nats_connect_options().connect(nats_url).await {
             Ok(client) => {
                 tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
                 Some(client)
@@ -1277,18 +1478,29 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let (event_tx, _) = broadcast::channel(256);
 
+        let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
-            worker_registry: Arc::new(RwLock::new(WorkerRegistry::new())),
+            worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
 
         // Spawn background subscriber and heartbeat monitor if NATS is connected
         if let Some(client) = nats_client {
-            spawn_nats_subscriber(client.clone(), task_store.clone(), event_tx);
-            spawn_heartbeat_monitor(client, task_store.clone(), heartbeat_timeout);
+            spawn_nats_subscriber(
+                client.clone(),
+                task_store.clone(),
+                worker_registry.clone(),
+                event_tx,
+            );
+            spawn_heartbeat_monitor(
+                client,
+                task_store.clone(),
+                worker_registry.clone(),
+                heartbeat_timeout,
+            );
         }
 
         Self { inner }
@@ -1431,6 +1643,19 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             let registry = self.inner.worker_registry.read().await;
             let mut dispatchable = Vec::new();
             for st in &subtasks {
+                // Cap dispatch retries (mirrors dispatch_ready_subtasks): if a
+                // subtask has been reverted to Pending this many times with no
+                // worker picking it up, mark Failed to stop an infinite
+                // dispatch storm.
+                if st.dispatch_retry_count >= 3 {
+                    tracing::error!(
+                        subtask_id = %st.id.0,
+                        retry_count = st.dispatch_retry_count,
+                        "Subtask exceeded max dispatch retries (no worker picked it up), marking Failed"
+                    );
+                    store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
+                    continue;
+                }
                 if !st.required_capabilities.is_empty() {
                     let matching = registry.workers_with_capabilities(&st.required_capabilities);
                     if matching.is_empty() {
@@ -1557,216 +1782,268 @@ impl<E: EngineApi + Send + Sync + 'static> Clone for GrpcServer<E> {
 
 // ── NATS subscriber (feature-gated) ─────────────────────────
 
+/// Build NATS connect options that suppress the per-reconnect-attempt log flood.
+///
+/// Without an `event_callback`, async_nats logs every `Event::ClientError` at
+/// INFO — when NATS is down, that's one line every ~4s for hours (observed:
+/// 4+ hours of `client error: nats: IO error` drowning out real events). We
+/// downgrade the chatty disconnect/error events to DEBUG and keep Connected at
+/// INFO, plus cap reconnect backoff at 10s with jitter.
+#[cfg(feature = "messaging")]
+fn nats_connect_options() -> async_nats::ConnectOptions {
+    async_nats::ConnectOptions::new()
+        .event_callback(|event| async move {
+            match event {
+                async_nats::Event::Connected => {
+                    tracing::info!("NATS reconnected");
+                }
+                async_nats::Event::Disconnected
+                | async_nats::Event::ClientError(_)
+                | async_nats::Event::ServerError(_) => {
+                    // Chatty during outages — debug only to avoid log flooding.
+                    tracing::debug!(event = %event, "NATS connection event");
+                }
+                other => {
+                    tracing::info!(event = %other, "NATS connection event");
+                }
+            }
+        })
+        .reconnect_delay_callback(|attempts| {
+            // Exponential backoff capped at 10s: 0.1s, 0.2s, 0.4s, ... 10s.
+            let base = 100_u64.saturating_mul(2_u64.saturating_pow(attempts.min(20) as u32));
+            std::time::Duration::from_millis(base.min(10_000))
+        })
+}
+
 /// Spawn a background task that subscribes to `uc.task.update`,
 /// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly.
 #[cfg(feature = "messaging")]
 fn spawn_nats_subscriber(
     nats_client: async_nats::Client,
     task_store: Arc<Mutex<TaskStore>>,
+    worker_registry: Arc<RwLock<WorkerRegistry>>,
     event_tx: broadcast::Sender<TaskEvent>,
 ) {
     use futures::StreamExt;
 
     tokio::spawn(async move {
-        // Subscribe to task updates
-        let mut update_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_UPDATE).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to subscribe to NATS task updates, subscriber not running"
-                );
-                return;
-            }
-        };
-
-        // Subscribe to task events
-        let mut event_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_EVENT).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to subscribe to NATS task events, event subscriber not running"
-                );
-                return;
-            }
-        };
-
-        // Subscribe to heartbeats
-        let mut heartbeat_sub = match nats_client.subscribe(NATS_SUBJECT_HEARTBEAT).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to subscribe to NATS heartbeats, heartbeat monitoring not active"
-                );
-                return;
-            }
-        };
-
-        tracing::info!("NATS subscriber started for TaskService");
-
+        // Resubscribe loop: if NATS drops (server restart, network blip), the
+        // subscription streams end. Without this loop the subscriber task would
+        // exit permanently — no more task updates/events/heartbeats would reach
+        // the gRPC server, so heartbeat timeouts would mark InProgress tasks
+        // Failed (600s) and WatchTask streams would go stale (OMP session
+        // interruption). We re-subscribe instead of giving up.
         loop {
-            tokio::select! {
-                Some(message) = update_sub.next() => {
-                    match serde_json::from_slice::<NatsTaskUpdate>(&message.payload) {
-                        Ok(update) => {
-                            tracing::debug!(
-                                task_id = %update.task_id,
-                                status = %update.status,
-                                "Received NATS task update"
-                            );
-                            // Dedup: skip if this message_id was already processed
-                            {
-                                let mut store = task_store.lock().await;
-                                if store.check_and_record_message_id(&update.message_id) {
-                                    continue;
-                                }
-                            }
-                            let event_count_before;
-                            {
-                                let mut store = task_store.lock().await;
-                                event_count_before = store.events.len();
-                                store.apply_update(&update);
-                            }
+            // Subscribe to task updates
+            let mut update_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_UPDATE).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to subscribe to NATS task updates, retrying in 2s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
 
-                            // Record events for subtask status transitions so
-                            // WatchTask can broadcast them.
-                            // We collect event data first, then record, to avoid
-                            // borrow conflicts between immutable read and mutable write.
-                            let events_to_record: Vec<uc_engine::AgentEventType> = {
-                                let store = task_store.lock().await;
-                                let mut events = Vec::new();
-                                if let Some(task) = store.tasks.get(&update.task_id) {
-                                    for subtask_update in &update.subtasks {
-                                        if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_update.subtask_id) {
-                                            let event = match subtask.status {
-                                                uc_types::SubtaskStatus::Assigned => {
-                                                    Some(uc_engine::AgentEventType::SubtaskAssigned {
-                                                        task_id: task.id.clone(),
-                                                        subtask_id: subtask.id.clone(),
-                                                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
-                                                    })
+            // Subscribe to task events
+            let mut event_sub = match nats_client.subscribe(NATS_SUBJECT_TASK_EVENT).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to subscribe to NATS task events, retrying in 2s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
+
+            // Subscribe to heartbeats
+            let mut heartbeat_sub = match nats_client.subscribe(NATS_SUBJECT_HEARTBEAT).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to subscribe to NATS heartbeats, retrying in 2s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
+
+            tracing::info!("NATS subscriber started for TaskService");
+
+            loop {
+                tokio::select! {
+                        Some(message) = update_sub.next() => {
+                        match serde_json::from_slice::<NatsTaskUpdate>(&message.payload) {
+                            Ok(update) => {
+                                tracing::debug!(
+                                    task_id = %update.task_id,
+                                    status = %update.status,
+                                    "Received NATS task update"
+                                );
+                                // Dedup: skip if this message_id was already processed
+                                {
+                                    let mut store = task_store.lock().await;
+                                    if store.check_and_record_message_id(&update.message_id) {
+                                        continue;
+                                    }
+                                }
+                                {
+                                    let mut store = task_store.lock().await;
+                                    store.apply_update(&update);
+                                }
+
+                                // Record events for subtask status transitions so
+                                // WatchTask can broadcast them.
+                                // We collect event data first, then record, to avoid
+                                // borrow conflicts between immutable read and mutable write.
+                                let events_to_record: Vec<uc_engine::AgentEventType> = {
+                                    let store = task_store.lock().await;
+                                    let mut events = Vec::new();
+                                    if let Some(task) = store.tasks.get(&update.task_id) {
+                                        for subtask_update in &update.subtasks {
+                                            if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_update.subtask_id) {
+                                                let event = match subtask.status {
+                                                    uc_types::SubtaskStatus::Assigned => {
+                                                        Some(uc_engine::AgentEventType::SubtaskAssigned {
+                                                            task_id: task.id.clone(),
+                                                            subtask_id: subtask.id.clone(),
+                                                            worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
+                                                        })
+                                                    }
+                                                    uc_types::SubtaskStatus::InProgress => {
+                                                        Some(uc_engine::AgentEventType::SubtaskStarted {
+                                                            task_id: task.id.clone(),
+                                                            subtask_id: subtask.id.clone(),
+                                                            worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
+                                                        })
+                                                    }
+                                                    uc_types::SubtaskStatus::Completed => {
+                                                        Some(uc_engine::AgentEventType::SubtaskCompleted {
+                                                            task_id: task.id.clone(),
+                                                            subtask_id: subtask.id.clone(),
+                                                            summary: String::new(),
+                                                            success: true,
+                                                            modified_files: Vec::new(),
+                                                            output: String::new(),
+                                                            simulated: false,
+                                                        })
+                                                    }
+                                                    uc_types::SubtaskStatus::Failed => {
+                                                        Some(uc_engine::AgentEventType::SubtaskFailed {
+                                                            task_id: task.id.clone(),
+                                                            subtask_id: subtask.id.clone(),
+                                                            error: String::new(),
+                                                            recoverable: false,
+                                                            stderr_tail: String::new(),
+                                                            recent_tools: String::new(),
+                                                        })
+                                                    }
+                                                    _ => None,
+                                                };
+                                                if let Some(e) = event {
+                                                    events.push(e);
                                                 }
-                                                uc_types::SubtaskStatus::InProgress => {
-                                                    Some(uc_engine::AgentEventType::SubtaskStarted {
-                                                        task_id: task.id.clone(),
-                                                        subtask_id: subtask.id.clone(),
-                                                        worker_id: subtask.assigned_worker.clone().unwrap_or_default(),
-                                                    })
-                                                }
-                                                uc_types::SubtaskStatus::Completed => {
-                                                    Some(uc_engine::AgentEventType::SubtaskCompleted {
-                                                        task_id: task.id.clone(),
-                                                        subtask_id: subtask.id.clone(),
-                                                        summary: String::new(),
-                                                        success: true,
-                                                        modified_files: Vec::new(),
-                                                        output: String::new(),
-                                                        simulated: false,
-                                                    })
-                                                }
-                                                uc_types::SubtaskStatus::Failed => {
-                                                    Some(uc_engine::AgentEventType::SubtaskFailed {
-                                                        task_id: task.id.clone(),
-                                                        subtask_id: subtask.id.clone(),
-                                                        error: String::new(),
-                                                        recoverable: false,
-                                                        stderr_tail: String::new(),
-                                                        recent_tools: String::new(),
-                                                    })
-                                                }
-                                                _ => None,
-                                            };
-                                            if let Some(e) = event {
-                                                events.push(e);
                                             }
                                         }
                                     }
-                                }
-                                events
-                            };
+                                    events
+                                };
 
-                            // Record the collected events
-                            {
-                                let mut store = task_store.lock().await;
-                                for e in events_to_record {
-                                    store.record_event(e);
-                                }
-                            }
-
-                            // Broadcast newly recorded events to all WatchTask streams
-                            let new_events: Vec<TaskEvent> = {
-                                let store = task_store.lock().await;
-                                store.events[event_count_before..]
+                                // Build the proto events to broadcast directly from the
+                                // collected events (not a slice of self.events): when the
+                                // inline log is at capacity, record_event drains oldest
+                                // entries, shifting newly-pushed events to lower indices —
+                                // so events[event_count_before..] would return an empty
+                                // slice and silently drop the broadcast.
+                                let new_events: Vec<TaskEvent> = events_to_record
                                     .iter()
                                     .cloned()
                                     .map(|e| e.into())
-                                    .collect()
-                            };
-                            for event in new_events {
-                                let _ = event_tx.send(event);
-                            }
+                                    .collect();
 
-                            // Dispatch ready subtasks for this task
-                            dispatch_ready_subtasks(
-                                &task_store,
-                                &nats_client,
-                                &update.task_id,
-                            ).await;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "Failed to parse NATS task update message"
-                            );
+                                // Record the collected events (consumes events_to_record)
+                                {
+                                    let mut store = task_store.lock().await;
+                                    for e in events_to_record {
+                                        store.record_event(e);
+                                    }
+                                }
+
+                                // Broadcast to all WatchTask streams
+                                for event in new_events {
+                                    let _ = event_tx.send(event);
+                                }
+
+                                // Dispatch ready subtasks for this task
+                                dispatch_ready_subtasks(
+                                    &task_store,
+                                    &worker_registry,
+                                    &nats_client,
+                                    &update.task_id,
+                                ).await;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Failed to parse NATS task update message"
+                                );
+                            }
                         }
                     }
-                }
-                Some(message) = event_sub.next() => {
-                    match serde_json::from_slice::<NatsTaskEvent>(&message.payload) {
-                        Ok(nats_event) => {
-                            tracing::debug!(
-                                event_type = %nats_event.r#type,
-                                task_id = %nats_event.task_id,
-                                "Received NATS task event"
-                            );
-                            // Dedup: skip if this message_id was already processed
-                            {
-                                let mut store = task_store.lock().await;
-                                if store.check_and_record_message_id(&nats_event.message_id) {
-                                    continue;
+                    Some(message) = event_sub.next() => {
+                        match serde_json::from_slice::<NatsTaskEvent>(&message.payload) {
+                            Ok(nats_event) => {
+                                tracing::debug!(
+                                    event_type = %nats_event.r#type,
+                                    task_id = %nats_event.task_id,
+                                    "Received NATS task event"
+                                );
+                                // Dedup: skip if this message_id was already processed
+                                {
+                                    let mut store = task_store.lock().await;
+                                    if store.check_and_record_message_id(&nats_event.message_id) {
+                                        continue;
+                                    }
+                                }
+                                // Convert NATS event to AgentEventType and record it
+                                if let Some(agent_event) = nats_event_to_agent_event(&nats_event) {
+                                    let proto_event: TaskEvent = agent_event.clone().into();
+                                    let mut store = task_store.lock().await;
+                                    store.record_event(agent_event);
+                                    drop(store);
+                                    // Broadcast to all WatchTask streams
+                                    let _ = event_tx.send(proto_event);
                                 }
                             }
-                            // Convert NATS event to AgentEventType and record it
-                            if let Some(agent_event) = nats_event_to_agent_event(&nats_event) {
-                                let proto_event: TaskEvent = agent_event.clone().into();
-                                let mut store = task_store.lock().await;
-                                store.record_event(agent_event);
-                                drop(store);
-                                // Broadcast to all WatchTask streams
-                                let _ = event_tx.send(proto_event);
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Failed to parse NATS task event message"
+                                );
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "Failed to parse NATS task event message"
-                            );
+                    }
+                    Some(message) = heartbeat_sub.next() => {
+                        let mut store = task_store.lock().await;
+                        store.update_last_heartbeat();
+                        // Also track per-worker heartbeat for failover detection.
+                        if let Ok(hb) = serde_json::from_slice::<NatsHeartbeat>(&message.payload) {
+                            store.update_worker_heartbeat(&hb.consumer_id);
                         }
                     }
-                }
-                Some(message) = heartbeat_sub.next() => {
-                    let mut store = task_store.lock().await;
-                    store.update_last_heartbeat();
-                    // Also track per-worker heartbeat for failover detection.
-                    if let Ok(hb) = serde_json::from_slice::<NatsHeartbeat>(&message.payload) {
-                        store.update_worker_heartbeat(&hb.consumer_id);
+                    else => {
+                        // A subscription stream ended (NATS disconnect/reconnect).
+                        // Break the inner loop to re-subscribe rather than dying —
+                        // a dead subscriber means heartbeat timeouts kill live tasks.
+                        tracing::warn!("NATS subscription ended, re-subscribing in 2s");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        break;
                     }
-                }
-                else => {
-                    tracing::warn!("NATS subscription ended, subscriber exiting");
-                    break;
                 }
             }
         }
@@ -1779,6 +2056,7 @@ fn spawn_nats_subscriber(
 fn spawn_heartbeat_monitor(
     nats_client: async_nats::Client,
     task_store: Arc<Mutex<TaskStore>>,
+    worker_registry: Arc<RwLock<WorkerRegistry>>,
     heartbeat_timeout: std::time::Duration,
 ) {
     tokio::spawn(async move {
@@ -1801,17 +2079,60 @@ fn spawn_heartbeat_monitor(
             let stale_workers = store.mark_stale_workers(heartbeat_timeout);
             if !stale_workers.is_empty() {
                 let (affected_tasks, reassigned) = store.reassign_stale_subtasks(&stale_workers);
-                tracing::warn!(
-                    worker_ids = ?stale_workers,
-                    tasks_affected = affected_tasks.len(),
-                    subtasks_reassigned = reassigned.len(),
-                    "Reassigned subtasks from stale workers back to Pending"
-                );
-                // Drop the lock before dispatching (dispatch acquires it again)
+                // Remove stale workers from the registry so listWorkers stops
+                // reporting them (is_available=false). Without this, a worker
+                // that went silent stays in the registry forever, polluting the
+                // dashboard and polluting capability queries.
                 drop(store);
-                // Re-dispatch reassigned subtasks so live workers pick them up
-                for task_id in &affected_tasks {
-                    dispatch_ready_subtasks(&task_store, &nats_client, task_id).await;
+                {
+                    let mut registry = worker_registry.write().await;
+                    for wid in &stale_workers {
+                        let _ = registry.deregister(wid);
+                    }
+                }
+                if !reassigned.is_empty() {
+                    tracing::warn!(
+                        worker_ids = ?stale_workers,
+                        tasks_affected = affected_tasks.len(),
+                        subtasks_reassigned = reassigned.len(),
+                        "Reassigned subtasks from stale workers back to Pending"
+                    );
+                    // Re-dispatch reassigned subtasks so live workers pick them up
+                    for task_id in &affected_tasks {
+                        dispatch_ready_subtasks(
+                            &task_store,
+                            &worker_registry,
+                            &nats_client,
+                            task_id,
+                        )
+                        .await;
+                    }
+                } else {
+                    tracing::info!(
+                        worker_ids = ?stale_workers,
+                        "Removed stale workers from registry (no active subtasks to reassign)"
+                    );
+                }
+            }
+
+            // Revert Assigned subtasks no worker ever picked up (queue group had
+            // no subscriber, or all workers too busy). These have no assigned
+            // worker, so reassign_stale_subtasks (dead-worker path) never touches
+            // them — they'd stay Assigned forever. Re-dispatch after revert.
+            //
+            // Use a longer window than heartbeat_timeout: a worker can be alive
+            // (heartbeating) but temporarily saturated, so a 120s revert would
+            // churn a subtask through Pending→Assigned→Pending while it's simply
+            // queued behind other work. 5 min gives busy workers room to drain
+            // before we treat "no pickup" as a dispatch failure.
+            let mut store = task_store.lock().await;
+            let stale_assigned =
+                store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(300));
+            if !stale_assigned.is_empty() {
+                drop(store);
+                for task_id in &stale_assigned {
+                    dispatch_ready_subtasks(&task_store, &worker_registry, &nats_client, task_id)
+                        .await;
                 }
             }
         }
@@ -1825,6 +2146,7 @@ fn spawn_heartbeat_monitor(
 #[cfg(feature = "messaging")]
 async fn dispatch_ready_subtasks(
     task_store: &Arc<Mutex<TaskStore>>,
+    worker_registry: &Arc<RwLock<WorkerRegistry>>,
     nats_client: &async_nats::Client,
     task_id: &str,
 ) {
@@ -1835,10 +2157,43 @@ async fn dispatch_ready_subtasks(
             .get_task(task_id)
             .map(|t| t.project_id.clone())
             .unwrap_or_default();
+        // Capability-aware dispatch (mirrors publish_ready_subtasks): only mark
+        // as Assigned if a matching worker exists. Without this, a subtask with
+        // unmet required_capabilities was marked Assigned and published, then the
+        // worker rejected it — but it stayed Assigned forever (get_ready_subtasks
+        // only returns Pending), stalling the task.
+        let registry = worker_registry.read().await;
+        let mut dispatchable = Vec::new();
         for st in &subtasks {
+            // Cap dispatch retries: if a subtask has been reverted to Pending
+            // this many times (no worker ever picked it up — see
+            // reassign_stale_assigned_subtasks), mark Failed to stop an
+            // infinite dispatch storm (publish → Assigned → revert → publish,
+            // every 30s). Mirrors the Remote-mode publish-failure cap of 3.
+            if st.dispatch_retry_count >= 3 {
+                tracing::error!(
+                    subtask_id = %st.id.0,
+                    retry_count = st.dispatch_retry_count,
+                    "Subtask exceeded max dispatch retries (no worker picked it up), marking Failed"
+                );
+                store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
+                continue;
+            }
+            if !st.required_capabilities.is_empty() {
+                let matching = registry.workers_with_capabilities(&st.required_capabilities);
+                if matching.is_empty() {
+                    tracing::info!(
+                        subtask_id = %st.id.0,
+                        required_capabilities = ?st.required_capabilities,
+                        "No worker with matching capabilities, keeping subtask Pending"
+                    );
+                    continue; // skip — don't mark as Assigned
+                }
+            }
             store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
+            dispatchable.push(st.clone());
         }
-        (subtasks, project_id)
+        (dispatchable, project_id)
     };
 
     for st in ready {
@@ -1864,8 +2219,14 @@ async fn dispatch_ready_subtasks(
             task_id: task_id.to_string(),
             subtask_id: st.id.0.clone(),
             description: st.description.clone(),
-            expected_output: String::new(),
-            file_constraints: Vec::new(),
+            // Propagate expected_output so the worker's prompt includes the
+            // actual success criteria (not the generic fallback). Matches the
+            // gRPC upsert path.
+            expected_output: st.expected_output.clone(),
+            // Propagate file_constraints so the worker can do conflict detection
+            // and workspace isolation. Empty here used to defeat both — concurrent
+            // subtasks sharing files would race and corrupt/merge-conflict.
+            file_constraints: st.file_constraints.clone(),
             timeout_seconds: 600,
             retry_count: st.dispatch_retry_count,
             dispatch_mode: st.dispatch_mode.clone(),
@@ -2436,8 +2797,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 // other TaskStore operations (get_task, list_tasks, etc.).
                 let (task_id_str, submit_payload, new_events) = {
                     let mut store = self.inner.task_store.lock().await;
-                    let event_count_before = store.events.len();
-                    let task =
+                    let (task, events) =
                         store.submit_task_pending(req.description.clone(), req.project_id.clone());
 
                     let payload = NatsTaskSubmit {
@@ -2445,11 +2805,6 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
                     };
-                    let events: Vec<TaskEvent> = store.events[event_count_before..]
-                        .iter()
-                        .cloned()
-                        .map(|e| e.into())
-                        .collect();
                     (task.id.0.clone(), payload, events)
                 };
                 // Broadcast TaskCreated event to WatchTask streams
@@ -2536,13 +2891,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         );
         let (task_id_str, new_events) = {
             let mut store = self.inner.task_store.lock().await;
-            let event_count_before = store.events.len();
-            let task = store.submit_task_pending(req.description.clone(), req.project_id.clone());
-            let events: Vec<TaskEvent> = store.events[event_count_before..]
-                .iter()
-                .cloned()
-                .map(|e| e.into())
-                .collect();
+            let (task, events) =
+                store.submit_task_pending(req.description.clone(), req.project_id.clone());
             (task.id.0.clone(), events)
         };
         // Broadcast TaskCreated event to WatchTask streams
@@ -2630,51 +2980,47 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             // Utc::now()), so they'd appear as "new" and pollute a fresh TUI
             // session with stale messages. For targeted watches, replay is kept
             // so clients can catch up on a specific task's history.
-            let last_replayed_idx = {
+            let replayed_count = {
                 let s = task_store.lock().await;
                 if task_id.is_empty() {
                     // Skip replay for "watch all" — TUI doesn't need history
-                    None
+                    0u64
                 } else {
                     let events = s.read_events_from(0);
-                    let mut last_idx: Option<u64> = None;
-                    for (i, event) in events.iter().enumerate() {
+                    let mut count: u64 = 0;
+                    for event in events.iter() {
                         let proto_event: TaskEvent = event.clone().into();
                         if proto_event.task_id != task_id {
                             continue;
                         }
                         yield Ok(proto_event);
-                        last_idx = Some(i as u64);
+                        count += 1;
                     }
-                    last_idx
+                    count
                 }
             };
 
             // Phase 2: listen for new events via broadcast.
             // The receiver was created before Phase 1, so there is no gap.
-            // Skip events that were already replayed in Phase 1 (identified by
-            // "event_idx" in data map, set by the task store on each event).
+            // Dedup: the broadcast buffer holds events from the subscribe point,
+            // so Phase 2 may re-deliver events we just replayed in Phase 1. Skip
+            // the first `replayed_count` matching events (the replayed ones were
+            // the oldest in the buffer at subscribe time).
+            // (The original event_idx-based dedup was dead code — event_idx was
+            // never set on events — so Phase 2 re-sent every replayed event,
+            // causing duplicate dashboard updates.)
             let mut rx = event_rx;
-            // ponytail: dedup by counting — skip first N events that overlap
-            // with the replay. The broadcast buffer holds events from the
-            // subscribe point, so Phase 2 may re-deliver events we just replayed.
+            let mut skip_remaining = replayed_count;
             loop {
                 match rx.recv().await {
                     Ok(proto_event) => {
                         if !task_id.is_empty() && proto_event.task_id != task_id {
                             continue;
                         }
-                        // Dedup: skip events that were already yielded in Phase 1.
-                        // We check the event_idx field if present, otherwise
-                        // skip the first N events matching the replay count.
-                        if let Some(idx_str) = proto_event.data.get("event_idx") {
-                            if let Ok(idx) = idx_str.parse::<u64>() {
-                                if let Some(last) = last_replayed_idx {
-                                    if idx <= last {
-                                        continue; // already replayed
-                                    }
-                                }
-                            }
+                        // Skip replayed events that overlap with Phase 1.
+                        if skip_remaining > 0 {
+                            skip_remaining -= 1;
+                            continue;
                         }
                         yield Ok(proto_event);
                     }
@@ -2683,6 +3029,13 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             skipped = n,
                             "WatchTask broadcast receiver lagged, some events dropped"
                         );
+                        // After a lag, the skip_remaining dedup counter is no
+                        // longer accurate (the receiver skipped N events, whose
+                        // task_ids are unknown). Stop deduping to avoid wrongly
+                        // skipping new events — the sync_required event below
+                        // prompts the client to re-sync, which is the correct
+                        // recovery path.
+                        skip_remaining = 0;
                         // Notify client that it missed events and should re-sync
                         let sync_event = TaskEvent {
                             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -2998,7 +3351,7 @@ mod tests {
     #[test]
     fn task_store_submit_pending() {
         let mut store = TaskStore::new();
-        let task =
+        let (task, _) =
             store.submit_task_pending("Fix the login bug".to_string(), "project-1".to_string());
 
         assert_eq!(task.status, uc_types::TaskStatus::Planning);
@@ -3673,6 +4026,115 @@ mod tests {
         );
     }
 
+    // ── Stale worker registry eviction ──────────────────────
+
+    #[test]
+    fn reassign_stale_assigned_subtasks_reverts_to_pending() {
+        // Regression: a subtask marked Assigned (dispatch_ready_subtasks) but
+        // never picked up by any worker (queue group had no subscriber, or all
+        // workers busy) stayed Assigned forever — get_ready_subtasks only
+        // returns Pending, and reassign_stale_subtasks (dead-worker path) only
+        // touches subtasks with an assigned_worker. The assigned-at tracker now
+        // reverts these to Pending after a timeout.
+        let mut store = TaskStore::new();
+        // submit_task (not submit_task_pending) creates a task with one subtask.
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        // Mark Assigned (records assigned-at) and backdate it.
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
+        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
+
+        // A 30s timeout should revert a 600s-old Assigned subtask.
+        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        assert_eq!(affected, vec![task_id.clone()]);
+        let task = store.get_task(&task_id).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Pending);
+        assert!(task.subtasks[0].assigned_worker.is_none());
+        // Tracking entry cleaned up.
+        assert!(!store.assigned_subtask_times.contains_key(&st_id));
+    }
+
+    #[test]
+    fn reassign_stale_assigned_skips_fresh_assigned() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        // Just assigned — should NOT be reverted with a 30s timeout.
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        assert!(affected.is_empty());
+        let task = store.get_task(&task_id).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Assigned);
+    }
+
+    #[test]
+    fn cancel_task_clears_assigned_subtask_tracking() {
+        // Regression: cancel_task set subtask status directly (Failed) without
+        // going through update_subtask_status, so assigned_subtask_times entries
+        // for Assigned subtasks leaked. Over many cancels the map grew unbounded.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        // Mark Assigned (records tracking entry), then cancel the task.
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        assert!(store.assigned_subtask_times.contains_key(&st_id));
+
+        store.cancel_task(&task_id).unwrap();
+
+        // Subtask is now Failed; tracking entry must be gone (not leaked).
+        let task = store.get_task(&task_id).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Failed);
+        assert!(
+            !store.assigned_subtask_times.contains_key(&st_id),
+            "assigned_subtask_times entry leaked after cancel_task"
+        );
+    }
+
+    #[test]
+    fn stale_worker_must_be_deregistered_from_registry() {
+        // Regression: mark_stale_workers only removed workers from the TaskStore
+        // heartbeat map, never from the WorkerRegistry. A worker that went silent
+        // stayed in the registry forever (listWorkers reported it as
+        // is_available=false indefinitely), and the heartbeat monitor logged a
+        // misleading "Reassigned subtasks" WARN every cycle even when nothing
+        // was reassigned. The monitor now deregisters stale workers.
+        let mut store = TaskStore::new();
+        let mut registry = WorkerRegistry::new();
+
+        // Worker registers and heartbeats.
+        registry
+            .register(
+                "worker-stale".to_string(),
+                vec!["rust".to_string()],
+                2,
+                String::new(),
+            )
+            .unwrap();
+        store.update_worker_heartbeat("worker-stale");
+        assert!(registry.workers().contains_key("worker-stale"));
+
+        // Backdate heartbeat so the worker is stale.
+        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(60);
+        store
+            .worker_heartbeats
+            .insert("worker-stale".to_string(), old_ts);
+
+        let stale = store.mark_stale_workers(std::time::Duration::from_secs(30));
+        assert_eq!(stale, vec!["worker-stale".to_string()]);
+
+        // Monitor now deregisters each stale worker from the registry.
+        for wid in &stale {
+            let _ = registry.deregister(wid);
+        }
+        assert!(!registry.workers().contains_key("worker-stale"));
+    }
+
     // ── NATS event conversion tests ──────────────────────────
 
     #[cfg(feature = "messaging")]
@@ -3995,10 +4457,8 @@ mod tests {
         }
 
         // Simulate what the NATS subscriber does: apply_update + record events + broadcast
-        let event_count_before;
         {
             let mut store = task_store.lock().await;
-            event_count_before = store.events.len();
             let update = NatsTaskUpdate {
                 message_id: None,
                 task_id: task_id.clone(),
@@ -4016,9 +4476,10 @@ mod tests {
             store.apply_update(&update);
         }
 
-        // Record subtask event (mirrors subscriber logic)
-        // Clone needed data first to avoid borrow conflict
-        {
+        // Record subtask event (mirrors subscriber logic) and capture it for
+        // broadcast (decoupled from the inline log index, which is unreliable
+        // at capacity — the production fix builds proto from the collected event).
+        let agent_event_to_broadcast: Option<uc_engine::AgentEventType> = {
             let mut store = task_store.lock().await;
             let event_data: Option<(uc_types::TaskId, uc_types::TaskId, uc_types::WorkerId)> =
                 if let Some(task) = store.tasks.get(&task_id) {
@@ -4039,26 +4500,22 @@ mod tests {
                     None
                 };
 
-            if let Some((tid, sid, wid)) = event_data {
-                store.record_event(uc_engine::AgentEventType::SubtaskAssigned {
+            event_data.map(|(tid, sid, wid)| {
+                let ev = uc_engine::AgentEventType::SubtaskAssigned {
                     task_id: tid,
                     subtask_id: sid,
                     worker_id: wid,
-                });
-            }
-        }
-
-        // Broadcast new events
-        let new_events: Vec<TaskEvent> = {
-            let store = task_store.lock().await;
-            store.events[event_count_before..]
-                .iter()
-                .cloned()
-                .map(|e| e.into())
-                .collect()
+                };
+                store.record_event(ev.clone());
+                ev
+            })
         };
-        for event in new_events {
-            let _ = event_tx.send(event);
+
+        // Broadcast the captured event (mirrors production: build proto directly
+        // from the collected event, not from self.events[index..]).
+        if let Some(ev) = agent_event_to_broadcast {
+            let proto: TaskEvent = ev.into();
+            let _ = event_tx.send(proto);
         }
 
         // Verify broadcast
@@ -4126,6 +4583,143 @@ mod tests {
     }
 
     #[test]
+    fn inline_event_log_is_capped() {
+        // Regression: the inline event log (self.events) grew unbounded on a
+        // long-running server, eventually OOM-ing and crashing the gRPC server
+        // (session interruption). record_event now caps it at INLINE_EVENTS_MAX,
+        // keeping the most recent events (full history is in the EventStore).
+        let mut store = TaskStore::new();
+        // Record well beyond the cap.
+        for i in 0..(TaskStore::INLINE_EVENTS_MAX + 500) {
+            store.record_event(uc_engine::AgentEventType::TaskCreated {
+                task_id: uc_types::TaskId(format!("t-{i}")),
+                description: format!("task {i}"),
+            });
+        }
+        assert!(
+            store.events.len() <= TaskStore::INLINE_EVENTS_MAX,
+            "inline event log exceeded cap: {} > {}",
+            store.events.len(),
+            TaskStore::INLINE_EVENTS_MAX,
+        );
+        // The most recent event must be retained (not the oldest).
+        match store.events.last() {
+            Some(uc_engine::AgentEventType::TaskCreated { task_id, .. }) => {
+                assert!(task_id.0.starts_with("t-"));
+            }
+            other => panic!("expected last event to be TaskCreated, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn record_event_with_subject_returns_proto_even_at_capacity() {
+        // Regression: the broadcast used events[event_count_before..] to extract
+        // newly-recorded events. When the inline log was at capacity, record_event
+        // drained oldest entries (keeping len == cap), so the slice was empty and
+        // the broadcast silently dropped. The fix: record_event_with_subject
+        // returns the proto TaskEvent directly, decoupling broadcast from the
+        // unreliable index.
+        let mut store = TaskStore::new();
+        // Fill the log to capacity.
+        for i in 0..TaskStore::INLINE_EVENTS_MAX {
+            store.record_event_with_subject(
+                uc_engine::AgentEventType::TaskCreated {
+                    task_id: uc_types::TaskId(format!("fill-{i}")),
+                    description: String::new(),
+                },
+                "task.fill",
+            );
+        }
+        assert_eq!(store.events.len(), TaskStore::INLINE_EVENTS_MAX);
+
+        // Record one more — triggers drain, but the returned proto must still
+        // represent the new event (not be empty/dropped).
+        let proto = store.record_event_with_subject(
+            uc_engine::AgentEventType::TaskCreated {
+                task_id: uc_types::TaskId("new-after-cap".to_string()),
+                description: String::new(),
+            },
+            "task.new",
+        );
+        // The returned proto is broadcastable — non-default type.
+        assert!(
+            !proto.r#type.is_empty(),
+            "record_event_with_subject returned empty proto — broadcast would be dropped at cap"
+        );
+        // The inline log stays capped.
+        assert_eq!(store.events.len(), TaskStore::INLINE_EVENTS_MAX);
+    }
+
+    #[test]
+    fn task_map_evicts_terminal_tasks_beyond_cap() {
+        // Regression: the in-memory tasks HashMap grew unbounded on a long-
+        // running gRPC server (OOM → crash → session interruption). Terminal
+        // tasks now evict when the map exceeds MAX_RETAINED_TASKS.
+        let mut store = TaskStore::new();
+        // Submit well beyond the cap, marking each Completed.
+        for _ in 0..(TaskStore::MAX_RETAINED_TASKS + 50) {
+            let (task, _) = store.submit_task_pending("t".to_string(), "p".to_string());
+            store.set_task_status(&task.id.0, uc_types::TaskStatus::Completed);
+            // apply_update's evict path also runs here for completeness.
+            store.evict_completed_tasks();
+        }
+        assert!(
+            store.tasks.len() <= TaskStore::MAX_RETAINED_TASKS,
+            "task map exceeded cap: {} > {}",
+            store.tasks.len(),
+            TaskStore::MAX_RETAINED_TASKS,
+        );
+        // Non-terminal tasks must never be evicted.
+        for t in store.tasks.values() {
+            assert!(
+                !matches!(
+                    t.status,
+                    uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning
+                ),
+                "non-terminal task evicted: {:?}",
+                t.status,
+            );
+        }
+    }
+
+    #[test]
+    fn task_map_evict_noop_under_cap() {
+        let mut store = TaskStore::new();
+        store.submit_task_pending("t".to_string(), "p".to_string());
+        assert_eq!(store.evict_completed_tasks(), 0);
+    }
+
+    #[test]
+    fn evict_completed_tasks_clears_assigned_subtask_tracking() {
+        // Defensive: evict_completed_tasks clears residual assigned_subtask_times
+        // entries for evicted tasks' subtasks, so a future path that removes a
+        // task without going through update_subtask_status can't leak tracking.
+        let mut store = TaskStore::new();
+        // Force eviction by exceeding MAX_RETAINED_TASKS with terminal tasks,
+        // one of which has a residual assigned_subtask_times entry.
+        for i in 0..(TaskStore::MAX_RETAINED_TASKS + 5) {
+            let task = store.submit_task(format!("t{i}"), "p".to_string());
+            store.set_task_status(&task.id.0, uc_types::TaskStatus::Completed);
+            // Simulate a residual tracking entry on the first task's subtask.
+            if i == 0 {
+                let st_id = task.subtasks[0].id.0.clone();
+                store
+                    .assigned_subtask_times
+                    .insert(st_id, chrono::Utc::now());
+            }
+        }
+        let evicted = store.evict_completed_tasks();
+        assert!(evicted > 0);
+        // All assigned_subtask_times entries for evicted tasks' subtasks cleared.
+        // (Residual entries can only belong to evicted tasks here since terminal
+        // tasks' subtasks are non-Assigned by construction.)
+        assert!(
+            store.assigned_subtask_times.len() < TaskStore::MAX_RETAINED_TASKS,
+            "assigned_subtask_times not cleared on eviction"
+        );
+    }
+
+    #[test]
     fn nats_task_update_backward_compat_no_message_id() {
         // Verify that NatsTaskUpdate JSON without message_id deserializes correctly
         let json = r#"{"task_id":"t-1","status":"InProgress","subtasks":[],"result":null}"#;
@@ -4188,7 +4782,7 @@ mod tests {
         // Verify that apply_update creates a new subtask with description,
         // depends_on, and result from the update payload.
         let mut store = TaskStore::new();
-        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "proj".to_string());
         let task_id = task.id.0.clone();
 
         let update = NatsTaskUpdate {
@@ -4220,11 +4814,91 @@ mod tests {
     }
 
     #[test]
+    fn apply_update_new_failed_subtask_derives_success_false() {
+        // Regression: the new-subtask path hardcoded success: true on the
+        // SubtaskResult, so a failed subtask arriving via NATS update (with a
+        // result) was recorded as successful — diverging from the existing-
+        // subtask path which derives success from status. Success must be
+        // derived from status in both paths.
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let task_id = task.id.0.clone();
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-failed-new".to_string(),
+                status: "Failed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: Some("Failed new subtask".to_string()),
+                depends_on: None,
+                result: Some("error: something broke".to_string()),
+            }],
+            result: None,
+        };
+
+        store.apply_update(&update);
+
+        let updated = store.get_task(&task_id).unwrap();
+        let st = &updated.subtasks[0];
+        let result = st.result.as_ref().expect("result should be set");
+        assert!(
+            !result.success,
+            "failed new subtask must record success=false, not hardcoded true"
+        );
+        assert_eq!(result.summary, "error: something broke");
+    }
+
+    #[test]
+    fn apply_update_clears_assigned_tracking_on_transition_out() {
+        // Regression: apply_update set subtask.status directly (bypassing
+        // update_subtask_status), so the assigned_subtask_times entry leaked on
+        // every Assigned→InProgress transition — the highest-frequency path
+        // (worker pick-up). Now apply_update clears/records tracking to mirror
+        // update_subtask_status.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        // Mark Assigned via update_subtask_status (records tracking).
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        assert!(store.assigned_subtask_times.contains_key(&st_id));
+
+        // Simulate worker pick-up: NATS update Assigned → InProgress.
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "InProgress".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+            }],
+            result: None,
+        };
+        store.apply_update(&update);
+
+        // Tracking entry must be cleared (not leaked) on Assigned→InProgress.
+        assert!(
+            !store.assigned_subtask_times.contains_key(&st_id),
+            "assigned_subtask_times entry leaked on Assigned→InProgress via apply_update"
+        );
+        let task = store.get_task(&task_id).unwrap();
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::InProgress);
+    }
+
+    #[test]
     fn apply_update_backward_compat_old_format() {
         // Verify that old-format updates (without description/depends_on)
         // still work — description defaults to empty, depends_on defaults to empty vec.
         let mut store = TaskStore::new();
-        let task = store.submit_task_pending("Test task".to_string(), "proj".to_string());
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "proj".to_string());
         let task_id = task.id.0.clone();
 
         let update = NatsTaskUpdate {
