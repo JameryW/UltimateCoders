@@ -7,6 +7,7 @@
 
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
+import { formatErrorForDisplay } from "./error-format";
 
 // ── Status Icons ─────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ export function formatTaskDetail(task: TaskState, theme: Theme): string[] {
 			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${st.description.slice(0, 50)}${deps}`);
 
 			if (st.error) {
-				lines.push(theme.fg("error", `${indent}  ⚠ ${st.error.slice(0, 60)}`));
+				lines.push(`${indent}  ${formatErrorForDisplay(st.error, 60, (c, t) => theme.fg(c, t))}`);
 			}
 			if (st.retryCount && st.retryCount > 0) {
 				lines.push(theme.fg("dim", `${indent}  Retries: ${st.retryCount}`));

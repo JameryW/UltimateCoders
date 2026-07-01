@@ -23,6 +23,10 @@ from ultimate_coders.agent.conflict import (
     EditType,
     LineRange,
 )
+from ultimate_coders.agent.llm import (
+    LLMRetryExhaustedError,
+    _classify_llm_error,
+)
 from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
@@ -156,6 +160,38 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
         return ("thinking", {"snippet": line[:200]})
 
     return None
+
+
+def _build_friendly_error(e: Exception) -> tuple[str, str]:
+    """Build a friendly error summary and error field from an exception.
+
+    Detects LLMRetryExhaustedError to extract the classification (transient/
+    permanent, retry count). Falls back to generic classification for other
+    exceptions.
+
+    Returns:
+        (summary, error) tuple — summary is the user-facing friendly message,
+        error is the root-cause string for the SubtaskResult.error field.
+    """
+    if isinstance(e, LLMRetryExhaustedError):
+        cls = e.classification
+        root = cls.message.strip()
+        if cls.kind == "transient":
+            summary = f"LLM 瞬时错误（已重试 {cls.retry_count} 次）: {root[:200]}"
+        elif cls.kind == "permanent":
+            summary = f"LLM 永久错误: {root[:200]}"
+        else:
+            summary = f"LLM 错误（已重试 {cls.retry_count} 次）: {root[:200]}"
+        return summary, root[:2000]
+
+    # Non-LLM exception — try classification anyway (string-based, no harm)
+    cls = _classify_llm_error(e, 0)
+    root = str(e).strip()
+    if cls.kind == "transient":
+        return f"瞬时错误: {root[:200]}", root[:2000]
+    if cls.kind == "permanent":
+        return f"永久错误: {root[:200]}", root[:2000]
+    return f"Execution error: {root[:200]}", root[:2000]
 
 
 class Worker:
@@ -620,6 +656,7 @@ class Worker:
                             worker_id=self.worker_id,
                             summary=f"Subtask timed out after {timeout_secs}s",
                             success=False,
+                            error=f"Subtask timed out after {timeout_secs}s",
                         )
 
                     # Save checkpoint for resume
@@ -761,11 +798,13 @@ class Worker:
                         subtask_id=subtask.id,
                         data={"error": str(e), "worker_id": self.worker_id},
                     )
+                    friendly_summary, error_field = _build_friendly_error(e)
                     return SubtaskResult(
                         subtask_id=subtask.id,
                         worker_id=self.worker_id,
-                        summary=f"Execution error: {e}",
+                        summary=friendly_summary,
                         success=False,
+                        error=error_field,
                         stderr_tail=str(e)[-2000:],
                         retry_count=subtask.retry_count,
                     )
@@ -913,6 +952,7 @@ class Worker:
                 modified_files=output.file_changes,
                 summary=output.summary,
                 success=output.success,
+                error="" if output.success else output.summary[:2000],
                 stderr_tail=stderr_tail,
                 recent_tool_calls=output.tool_calls[-5:],
             )

@@ -40,6 +40,75 @@ def _is_transient_api_error(error_str: str) -> bool:
     low = error_str.lower()
     return any(m in low for m in _TRANSIENT_RETRY_MARKERS)
 
+
+# ponytail: permanent error markers — 400/401/403/404 etc. are NOT retryable.
+# Kept as a separate tuple from _TRANSIENT_RETRY_MARKERS so callers can classify
+# an error as transient, permanent, or unknown without calling the LLM provider.
+_PERMANENT_ERROR_MARKERS = (
+    "400",
+    "401",
+    "403",
+    "404",
+    "invalid_api_key",
+    "invalid key",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "not found",
+    "bad request",
+    "invalid request",
+)
+
+
+@dataclass
+class LLMErrorClassification:
+    """Structured classification of an LLM API error.
+
+    kind: "transient" (retryable), "permanent" (not retryable), or "unknown".
+    retry_count: how many retries were attempted before this error surfaced.
+    message: the original error string (root cause).
+    """
+
+    kind: str  # "transient" | "permanent" | "unknown"
+    retry_count: int
+    message: str
+
+
+def _classify_llm_error(error: Any, retry_count: int = 0) -> LLMErrorClassification:
+    """Classify an LLM API error as transient, permanent, or unknown.
+
+    Reuses _is_transient_api_error for transient detection, then checks
+    _PERMANENT_ERROR_MARKERS for permanent errors. Falls back to "unknown".
+
+    Args:
+        error: The exception object (or string) raised by the LLM provider.
+        retry_count: How many retries were already attempted.
+
+    Returns:
+        LLMErrorClassification with kind, retry_count, and the root-cause message.
+    """
+    error_str = str(error)
+    if _is_transient_api_error(error_str):
+        kind = "transient"
+    elif any(m in error_str.lower() for m in _PERMANENT_ERROR_MARKERS):
+        kind = "permanent"
+    else:
+        kind = "unknown"
+    return LLMErrorClassification(kind=kind, retry_count=retry_count, message=error_str)
+
+
+class LLMRetryExhaustedError(RuntimeError):
+    """Raised when an LLM API call exhausts all retries.
+
+    Carries the original exception and the classification so the Worker can
+    build a friendly error message without re-parsing the provider string.
+    """
+
+    def __init__(self, original: Exception, classification: LLMErrorClassification) -> None:
+        self.original = original
+        self.classification = classification
+        super().__init__(str(original))
+
 # Provider-specific API key env var mapping
 _PROVIDER_KEY_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -627,10 +696,16 @@ class LLMClient:
                 error_str = str(e)
 
                 if not _is_transient_api_error(error_str):
-                    raise
+                    # Permanent error — classify and wrap so Worker can read kind.
+                    raise LLMRetryExhaustedError(
+                        e, _classify_llm_error(e, 0),
+                    ) from e
 
                 if attempt >= self.max_retries - 1:
-                    raise
+                    # Transient error, retries exhausted — wrap with retry count.
+                    raise LLMRetryExhaustedError(
+                        e, _classify_llm_error(e, self.max_retries),
+                    ) from e
 
                 # Exponential backoff with jitter
                 exp_delay = base_delay * (2**attempt)
@@ -663,10 +738,14 @@ class LLMClient:
                 error_str = str(e)
 
                 if not _is_transient_api_error(error_str):
-                    raise
+                    raise LLMRetryExhaustedError(
+                        e, _classify_llm_error(e, 0),
+                    ) from e
 
                 if attempt >= self.max_retries - 1:
-                    raise
+                    raise LLMRetryExhaustedError(
+                        e, _classify_llm_error(e, self.max_retries),
+                    ) from e
 
                 exp_delay = base_delay * (2**attempt)
                 jitter = random.uniform(0, 0.5)  # noqa: S311
