@@ -1,14 +1,37 @@
 # ── Stage 1: Build the Rust gRPC server ────────────────────────────
-FROM rust:1.82-slim AS builder
+FROM rust:1.88-slim AS builder
 
 RUN apt-get update && apt-get install -y \
     protobuf-compiler libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . .
 
-RUN cargo build --release -p uc-grpc-server
+# ponytail: copy manifests + lock first so dependency build caches even when
+# source changes. Vendor the local path-crates with stub src so cargo can
+# resolve the workspace graph, fetch all deps, then compile them once.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/uc-types/Cargo.toml      crates/uc-types/Cargo.toml
+COPY crates/uc-engine/Cargo.toml     crates/uc-engine/Cargo.toml
+COPY crates/uc-grpc/Cargo.toml       crates/uc-grpc/Cargo.toml
+COPY crates/uc-grpc-server/Cargo.toml crates/uc-grpc-server/Cargo.toml
+COPY crates/uc-python/Cargo.toml     crates/uc-python/Cargo.toml
+
+RUN set -e; \
+    for d in uc-types uc-engine uc-grpc uc-grpc-server uc-python; do \
+      mkdir -p crates/$d/src; \
+      case $d in \
+        uc-grpc-server) echo 'fn main() {}' > crates/$d/src/main.rs ;; \
+        uc-python) ;; \
+        *) echo '' > crates/$d/src/lib.rs ;; \
+      esac; \
+    done && \
+    cargo build --release -p uc-grpc-server || true
+
+# Now overlay the real source and build for real. Dependency artifacts are
+# already cached from the stub build above.
+COPY crates/ ./crates/
+RUN touch crates/*/src/*.rs && cargo build --release -p uc-grpc-server
 
 # ── Stage 2: Runtime image ────────────────────────────────────────
 FROM debian:bookworm-slim

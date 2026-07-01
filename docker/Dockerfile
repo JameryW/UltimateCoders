@@ -8,10 +8,19 @@ RUN apt-get update && apt-get install -y \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-WORKDIR /app
-COPY . .
+RUN pip install maturin
 
-RUN pip install maturin && maturin develop --release
+WORKDIR /app
+
+# ponytail: copy pyproject first + install pure-Python deps so they cache
+# separately from Rust/Python source. Source changes won't reinstall fastapi etc.
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir \
+    "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
+    "sse-starlette>=1.6.0" "nats-py>=2.7.0"
+
+COPY . .
+RUN maturin develop --release
 
 # ── Stage 2: Runtime image ─────────────────────────────────────────
 FROM python:3.11-slim
