@@ -7,9 +7,23 @@ set -euo pipefail
 # Usage: ./run-omp.sh [options]
 #   --no-server   skip gRPC server startup (server starts by default)
 #   --docker      use Docker Compose for storage backends (TiKV/Qdrant/PG/NATS)
-#   --build       ensure Python package is built (maturin develop)
+#   --build       ensure Python package (maturin) + release gRPC binary are built
 #   --help        show this help
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER_BIN="$SCRIPT_DIR/target/release/uc-grpc-server"
+
+# ponytail: run the prebuilt release binary instead of `cargo run` each launch.
+# cargo run re-checks/relinks every start (~3-10s even when fresh); the binary
+# is ~instant. Build it once via --build (or lazily if missing/stale vs source).
+ensure_server_bin() {
+    if [ -x "$SERVER_BIN" ] && \
+       ! find "$SCRIPT_DIR/Cargo.toml" "$SCRIPT_DIR/Cargo.lock" "$SCRIPT_DIR/crates" \
+            -newer "$SERVER_BIN" -print -quit 2>/dev/null | grep -q .; then
+        return 0  # binary exists and is newer than all source/manifests/lock
+    fi
+    echo ">>> Building release gRPC server binary (one-time)..."
+    cd "$SCRIPT_DIR" && cargo build --release -p uc-grpc-server
+}
 
 # Load local environment (API keys, base URLs, model overrides)
 # ponytail: .env is gitignored, safe for secrets
@@ -34,7 +48,7 @@ for arg in "$@"; do
       echo ""
       echo "  --no-server   skip gRPC server startup (server starts by default)"
       echo "  --docker      use Docker Compose for storage backends (TiKV/Qdrant/PG/NATS)"
-      echo "  --build       ensure Python package is built (maturin develop)"
+      echo "  --build       ensure Python package (maturin) + release gRPC binary are built"
       exit 0
       ;;
     *) OMP_ARGS+=("$arg") ;;
@@ -48,6 +62,8 @@ if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
         cd "$SCRIPT_DIR" && maturin develop --manifest-path crates/uc-python/Cargo.toml
     }
 fi
+# Ensure the release gRPC binary exists (build once, reuse across launches)
+ensure_server_bin
 
 # ── Start Docker storage backends ──────────────────────────────
 if [ "$USE_DOCKER" = true ]; then
@@ -75,10 +91,11 @@ if [ "$USE_DOCKER" = true ]; then
     cd "$SCRIPT_DIR/docker" && docker compose up -d pd tikv qdrant postgres nats
     echo "    Waiting for backends to be healthy..."
     for i in $(seq 1 60); do
-        unhealthy=$(docker compose ps --format json 2>/dev/null \
-            | grep -c '"Health":"unhealthy"' || true)
-        starting=$(docker compose ps --format json 2>/dev/null \
-            | grep -c '"Health":"starting"' || true)
+        # ponytail: one `compose ps` call per tick (was two) — fork + dockerd
+        # round-trip per call; halved across up to 60 ticks.
+        ps_json=$(docker compose ps --format json 2>/dev/null || true)
+        unhealthy=$(printf '%s' "$ps_json" | grep -c '"Health":"unhealthy"' || true)
+        starting=$(printf '%s' "$ps_json" | grep -c '"Health":"starting"' || true)
         if [ "$unhealthy" -eq 0 ] && [ "$starting" -eq 0 ]; then
             break
         fi
@@ -139,7 +156,7 @@ health_monitor() {
             if [ -f "$UC_ENV_FILE" ]; then
                 set -a; source "$UC_ENV_FILE"; set +a
             fi
-            PATH="$SCRIPT_DIR/.venv/bin:$PATH" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
+            "$SERVER_BIN" >> "$LOG_DIR/grpc-server.log" 2>&1 &
             SERVER_PID=$!
             echo ">>> Restarted gRPC server (PID $SERVER_PID)"
             date +%s > /tmp/uc-grpc-restart-marker
@@ -176,7 +193,7 @@ UC_TASK_BACKEND=${UC_TASK_BACKEND:-postgres}
 EOF
         fi
         set -a; source "$UC_ENV_FILE"; set +a
-        PATH="$SCRIPT_DIR/.venv/bin:$PATH" cargo run -p uc-grpc-server >> "$LOG_DIR/grpc-server.log" 2>&1 &
+        "$SERVER_BIN" >> "$LOG_DIR/grpc-server.log" 2>&1 &
         SERVER_PID=$!
         echo "    Server PID: $SERVER_PID"
         echo "    Logs: $LOG_DIR/grpc-server.log"
