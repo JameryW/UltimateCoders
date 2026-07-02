@@ -37,6 +37,7 @@ The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contra
 | [Event Pipeline Spec](./event-pipeline-spec.md) | Unified NATS event pipeline, sandbox-only Worker, dedup/idempotency, decomposition simplification | Filled |
 | [OMP Tools Spec](./omp-tools-spec.md) | LLM-callable tool schemas, GrpcBridge contracts, registration conventions | Filled |
 | [Cross-Repo Search & Memory Spec](./cross-repo-search-spec.md) | Worker gRPC Engine routing, search context injection, project-scoped memory sharing, NATS dispatch project_id | Filled |
+| [Workspace Config Spec](./workspace-config-spec.md) | `uc.repos.yaml` loading contract — Rust gateway + Python worker both load it, resolution order, scan_dirs semantics, workspace_id threading | Filled |
 
 ---
 
