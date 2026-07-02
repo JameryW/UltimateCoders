@@ -533,11 +533,12 @@ export class GrpcBridge {
 		repoId: string,
 		localPath: string,
 		_languages: string[] = [],
+		workspaceId: string = "default",
 	): Promise<boolean> {
 		return this.withReconnect(async () => {
 			// ponytail: IndexRepoRequest has no languages field; IndexRepoResponse has no success
 			await this.engineClient.indexRepo(
-				create(IndexRepoRequestSchema, { repoId, localPath }),
+				create(IndexRepoRequestSchema, { repoId, localPath, workspaceId }),
 			);
 			return true;
 		}, false);
@@ -567,11 +568,14 @@ export class GrpcBridge {
 		}, false);
 	}
 
-	async listRepos(): Promise<Array<{ repoId: string; status: string; indexedFiles: number }>> {
+	async listRepos(workspaceId?: string): Promise<Array<{ repoId: string; workspaceId: string; status: string; indexedFiles: number }>> {
 		return this.withReconnect(async () => {
-			const resp = await this.engineClient.listRepos(create(ListReposRequestSchema));
+			const resp = await this.engineClient.listRepos(
+				create(ListReposRequestSchema, workspaceId ? { workspaceId } : {}),
+			);
 			return resp.repos.map((r) => ({
 				repoId: r.repoId,
+				workspaceId: r.workspaceId,
 				status: r.indexed ? "indexed" : "unknown",
 				indexedFiles: r.filesCount,
 			}));
