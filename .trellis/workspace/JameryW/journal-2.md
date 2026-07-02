@@ -873,3 +873,38 @@ PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClien
 ### Next Steps
 
 - None - task complete
+
+
+## Session 80: Rust gateway loads uc.repos.yaml workspace; OMP list_repos threads workspace_id
+
+**Date**: 2026-07-03
+**Task**: Rust gateway loads uc.repos.yaml workspace; OMP list_repos threads workspace_id
+**Branch**: `feat/grpc-server-load-workspace`
+
+### Summary
+
+Fixed 'OMP sees wrong workspace'. Root cause (2nd-round recon): uc.repos.yaml was loaded ONLY by Python nats_worker; run-omp.sh defaults to Rust gRPC server whose main.rs never loaded it -> gateway engine empty, list_repos returned 0. PR #210 (merged) was the front-end half (regenerated engine_pb.ts + listRepos/indexRepo thread workspace_id). PR #211 (open, CI green) adds the Rust half: new crates/uc-engine/src/repos_config.rs (Rust port of repo_config.py: yaml parse via serde_yaml, scan_dirs discovery, build_index_requests, 10 unit tests) + main.rs index_workspace_repos on startup. Verified e2e: local server indexed 7 repos under workspace_id=aiworks, list_repos + workspace filter both correct. Captured contract in backend/workspace-config-spec.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4d493e5` | (see git log) |
+| `dc80dc61` | (see git log) |
+| `052cd927` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
