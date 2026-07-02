@@ -14,6 +14,7 @@ export function registerIndexTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 		repo_id: pi.zod.string().optional().describe("Repository ID (for index_repo/get_state/remove_index)"),
 		local_path: pi.zod.string().optional().describe("Local path to repo (for index_repo)"),
 		languages: pi.zod.array(pi.zod.string()).optional().describe("Languages to index (for index_repo, e.g. ['typescript','rust'])"),
+		workspace_id: pi.zod.string().optional().describe("Workspace ID to scope list_repos to, or to assign the repo to for index_repo (default: 'default')"),
 	});
 
 	pi.registerTool({
@@ -25,7 +26,7 @@ export function registerIndexTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 			"check index state, or remove an index.",
 		parameters: indexSchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
-			const p = params as { action: string; repo_id?: string; local_path?: string; languages?: string[] };
+			const p = params as { action: string; repo_id?: string; local_path?: string; languages?: string[]; workspace_id?: string };
 			try {
 				switch (p.action) {
 					case "index_repo": {
@@ -35,7 +36,7 @@ export function registerIndexTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 								isError: true,
 							};
 						}
-						const ok = await bridge.indexRepo(p.repo_id, p.local_path, p.languages);
+						const ok = await bridge.indexRepo(p.repo_id, p.local_path, p.languages, p.workspace_id ?? "default");
 						return {
 							content: [{
 								type: "text" as const,
@@ -44,11 +45,11 @@ export function registerIndexTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 						};
 					}
 					case "list_repos": {
-						const repos = await bridge.listRepos();
+						const repos = await bridge.listRepos(p.workspace_id);
 						if (repos.length === 0) {
 							return { content: [{ type: "text" as const, text: "(no indexed repos)" }], useless: true };
 						}
-						const lines = repos.map((r) => `${r.repoId} [${r.status}] ${r.indexedFiles} files`);
+						const lines = repos.map((r) => `${r.repoId} [${r.status}] ${r.indexedFiles} files (workspace: ${r.workspaceId})`);
 						return { content: [{ type: "text" as const, text: lines.join("\n") }] };
 					}
 					case "get_state": {

@@ -86,3 +86,7 @@ packages/uc-orchestrator/bun.lock
 .logs/
 .nats-data/
 .cluster-pids
+
+# Local runtime workspace config (machine-specific paths); template is tracked as uc.repos.yaml.example
+uc.repos.yaml
+uc.repos.yml
