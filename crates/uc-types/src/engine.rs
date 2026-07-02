@@ -116,7 +116,13 @@ pub trait EngineApi: Send + Sync {
     ) -> Result<Vec<MemoryEntry>, EngineError>;
 
     /// List all indexed repositories.
-    async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError>;
+    ///
+    /// If `workspace_id` is `Some`, only repos in that workspace are returned.
+    /// If `None`, all repos are returned (backward compatible).
+    async fn list_repos(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<RepoIndexState>, EngineError>;
 
     /// List directory contents in a repo (File Browser).
     async fn list_dir(&self, repo_id: &str, path: &str) -> Result<DirListing, EngineError>;
@@ -164,6 +170,13 @@ pub struct RepoIndexState {
     pub chunks_count: u32,
     /// Local filesystem path to the repo (for File Browser).
     pub local_path: Option<String>,
+    /// 工作目录 ID — 该 repo 所属的仓库集合。缺省 "default"。
+    #[serde(default = "default_workspace_id")]
+    pub workspace_id: String,
+}
+
+fn default_workspace_id() -> String {
+    "default".to_string()
 }
 
 /// Engine health status.

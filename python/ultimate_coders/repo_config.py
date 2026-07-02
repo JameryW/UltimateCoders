@@ -33,11 +33,17 @@ class RepoEntry:
 
 @dataclass
 class RepoConfig:
-    """Full repos.yaml configuration."""
+    """Full repos.yaml configuration.
+
+    A workspace is a collection of repos. ``workspace_id`` groups all
+    repos in this config under one working directory. Workers load
+    this on startup and index all repos under the workspace.
+    """
 
     repos: list[RepoEntry] = field(default_factory=list)
     scan_dirs: list[str] = field(default_factory=list)
     scan_depth: int = 3
+    workspace_id: str = "default"
 
 
 def load_repos_config(path: str | Path | None = None) -> RepoConfig:
@@ -104,13 +110,23 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
             tags=r.get("tags", []),
         ))
 
-    # Validate: repo_id and local_path are required
-    repos = [r for r in repos if r.repo_id and r.local_path]
+    # Validate: repo_id required; at least one of local_path/remote_url required.
+    # Remote-only entries (no local_path) are cloned on demand by RepoScanner.
+    repos = [
+        r for r in repos
+        if r.repo_id and (r.local_path or r.remote_url)
+    ]
 
     scan_dirs = data.get("scan_dirs", [])
     scan_depth = data.get("scan_depth", 3)
+    workspace_id = data.get("workspace_id", "default")
 
-    return RepoConfig(repos=repos, scan_dirs=scan_dirs, scan_depth=scan_depth)
+    return RepoConfig(
+        repos=repos,
+        scan_dirs=scan_dirs,
+        scan_depth=scan_depth,
+        workspace_id=workspace_id,
+    )
 
 
 class RepoScanner:
@@ -194,6 +210,7 @@ class RepoScanner:
                         entry.local_path,
                         entry.remote_url or None,
                         entry.default_branch,
+                        workspace_id=config.workspace_id,
                     )
                     indexed_repo_ids.add(entry.repo_id)
                     indexed.append(entry)
@@ -208,6 +225,56 @@ class RepoScanner:
                 indexed_repo_ids.add(entry.repo_id)
 
         return indexed
+
+    @staticmethod
+    def clone_remote_entry(
+        entry: RepoEntry,
+        workspace_id: str,
+    ) -> str | None:
+        """Clone a remote-only entry to the cache dir, return local path.
+
+        For entries with ``remote_url`` but no ``local_path``, clone to
+        ``~/.uc-cache/repos/<workspace_id>/<repo_id>`` using a shallow clone.
+
+        Args:
+            entry: RepoEntry with remote_url and no local_path.
+            workspace_id: Workspace ID for the cache subdirectory.
+
+        Returns:
+            Local path to the cloned repo, or None on failure.
+        """
+        cache_root = Path.home() / ".uc-cache" / "repos" / workspace_id / entry.repo_id
+        if cache_root.exists() and (cache_root / ".git").is_dir():
+            logger.info(
+                "Reusing cached clone for repo %s at %s",
+                entry.repo_id, cache_root,
+            )
+            return str(cache_root)
+
+        cache_root.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                [
+                    "git", "clone", "--depth", "1",
+                    "-b", entry.default_branch,
+                    entry.remote_url, str(cache_root),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=True,
+            )
+            logger.info(
+                "Cloned remote repo %s to %s",
+                entry.repo_id, cache_root,
+            )
+            return str(cache_root)
+        except Exception:
+            logger.warning(
+                "Failed to clone remote repo %s from %s",
+                entry.repo_id, entry.remote_url, exc_info=True,
+            )
+            return None
 
     def _scan_dir(self, dir_path: str, max_depth: int) -> list[RepoEntry]:
         """Recursively scan a directory for git repos."""

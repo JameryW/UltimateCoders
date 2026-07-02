@@ -550,6 +550,8 @@ pub struct PyRepoIndexState {
     pub symbols_count: u32,
     #[pyo3(get)]
     pub chunks_count: u32,
+    #[pyo3(get)]
+    pub workspace_id: String,
 }
 
 impl From<uc_types::RepoIndexState> for PyRepoIndexState {
@@ -561,6 +563,7 @@ impl From<uc_types::RepoIndexState> for PyRepoIndexState {
             files_count: s.files_count,
             symbols_count: s.symbols_count,
             chunks_count: s.chunks_count,
+            workspace_id: s.workspace_id,
         }
     }
 }

@@ -89,6 +89,11 @@ impl From<IndexRepoRequest> for IndexRequest {
                 remote_url: req.remote_url,
                 default_branch: req.default_branch,
                 local_path: req.local_path,
+                workspace_id: if req.workspace_id.is_empty() {
+                    "default".to_string()
+                } else {
+                    req.workspace_id
+                },
             },
             force_full: req.force_full,
         }
@@ -123,6 +128,7 @@ impl From<RepoIndexState> for GetIndexStateResponse {
             symbols_count: state.symbols_count,
             chunks_count: state.chunks_count,
             local_path: state.local_path,
+            workspace_id: state.workspace_id,
         }
     }
 }
@@ -507,6 +513,11 @@ impl From<GetIndexStateResponse> for RepoIndexState {
             symbols_count: resp.symbols_count,
             chunks_count: resp.chunks_count,
             local_path: resp.local_path,
+            workspace_id: if resp.workspace_id.is_empty() {
+                "default".to_string()
+            } else {
+                resp.workspace_id
+            },
         }
     }
 }
@@ -656,6 +667,7 @@ impl From<RepoIndexState> for RepoIndexStateProto {
             symbols_count: state.symbols_count,
             chunks_count: state.chunks_count,
             local_path: state.local_path,
+            workspace_id: state.workspace_id,
         }
     }
 }
@@ -670,6 +682,11 @@ impl From<RepoIndexStateProto> for RepoIndexState {
             symbols_count: proto.symbols_count,
             chunks_count: proto.chunks_count,
             local_path: proto.local_path,
+            workspace_id: if proto.workspace_id.is_empty() {
+                "default".to_string()
+            } else {
+                proto.workspace_id
+            },
         }
     }
 }

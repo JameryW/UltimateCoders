@@ -2841,9 +2841,15 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
 
     async fn list_repos(
         &self,
-        _request: Request<ListReposRequest>,
+        request: Request<ListReposRequest>,
     ) -> Result<Response<ListReposResponse>, Status> {
-        let repos = self.inner.engine.list_repos().await.map_err(to_status)?;
+        let req = request.into_inner();
+        let repos = self
+            .inner
+            .engine
+            .list_repos(req.workspace_id.as_deref())
+            .await
+            .map_err(to_status)?;
         let response = ListReposResponse {
             repos: repos.into_iter().map(Into::into).collect(),
         };

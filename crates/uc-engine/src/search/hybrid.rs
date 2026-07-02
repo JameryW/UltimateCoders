@@ -359,6 +359,7 @@ impl Config {
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };

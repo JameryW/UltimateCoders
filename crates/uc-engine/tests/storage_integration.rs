@@ -184,6 +184,7 @@ mod postgres_tests {
             remote_url: "https://github.com/test/integration".to_string(),
             default_branch: "main".to_string(),
             local_path: Some("/tmp/test-repo".to_string()),
+            workspace_id: "default".to_string(),
         };
         store
             .register_repo(&spec)
@@ -205,6 +206,7 @@ mod postgres_tests {
             remote_url: "https://github.com/test/integration-v2".to_string(),
             default_branch: "develop".to_string(),
             local_path: Some("/tmp/test-repo-v2".to_string()),
+            workspace_id: "default".to_string(),
         };
         store
             .register_repo(&updated_spec)
@@ -223,7 +225,10 @@ mod postgres_tests {
         assert_eq!(after_update.default_branch, "develop");
 
         // List (should contain our repo)
-        let repos = store.list_repos().await.expect("list_repos should succeed");
+        let repos = store
+            .list_repos(None)
+            .await
+            .expect("list_repos should succeed");
         assert!(
             repos
                 .iter()
@@ -260,6 +265,7 @@ mod postgres_tests {
             remote_url: "https://github.com/test/symbols".to_string(),
             default_branch: "main".to_string(),
             local_path: None,
+            workspace_id: "default".to_string(),
         };
         store
             .register_repo(&spec)
@@ -353,6 +359,7 @@ mod postgres_tests {
             remote_url: "https://github.com/test/index-state".to_string(),
             default_branch: "main".to_string(),
             local_path: None,
+            workspace_id: "default".to_string(),
         };
         store
             .register_repo(&spec)
@@ -370,6 +377,7 @@ mod postgres_tests {
             files_count: 0,
             symbols_count: 0,
             chunks_count: 0,
+            workspace_id: "default".to_string(),
         };
         store
             .update_index_state(&state)
@@ -398,6 +406,7 @@ mod postgres_tests {
             files_count: 42,
             symbols_count: 150,
             chunks_count: 75,
+            workspace_id: "default".to_string(),
         };
         store
             .update_index_state(&updated_state)

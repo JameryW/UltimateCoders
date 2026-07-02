@@ -46,6 +46,30 @@ class SearchQuery:
             pass
         return self
 
+    def in_workspace(self, engine: object, workspace_id: str) -> SearchQuery:
+        """Scope search to all repos in a workspace.
+
+        Looks up all repos belonging to ``workspace_id`` via the engine and
+        restricts the search to those repo IDs.
+
+        Args:
+            engine: An Engine instance with list_repos(workspace_id=...) support.
+            workspace_id: Workspace ID to scope the search to.
+
+        Returns:
+            self for chaining.
+        """
+        try:
+            repos = engine.list_repos(workspace_id=workspace_id)
+            self._repo_ids = [
+                r.repo_id if hasattr(r, "repo_id") else str(r)
+                for r in repos
+            ]
+        except Exception:
+            # If list_repos fails, leave repo_ids empty (searches all)
+            pass
+        return self
+
     def in_languages(self, languages: list[str]) -> SearchQuery:
         self._languages = languages
         return self

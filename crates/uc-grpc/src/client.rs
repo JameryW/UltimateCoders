@@ -288,6 +288,7 @@ impl EngineApi for GrpcEngineClient {
             default_branch: request.repo.default_branch,
             local_path: request.repo.local_path,
             force_full: request.force_full,
+            workspace_id: request.repo.workspace_id,
         };
         let response = client.index_repo(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
@@ -615,9 +616,14 @@ impl EngineApi for GrpcEngineClient {
             .collect())
     }
 
-    async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError> {
+    async fn list_repos(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<RepoIndexState>, EngineError> {
         let mut client = self.inner.clone();
-        let req = ListReposRequest {};
+        let req = ListReposRequest {
+            workspace_id: workspace_id.map(|s| s.to_string()),
+        };
         let response = client.list_repos(req).await.map_err(from_status)?;
         Ok(response
             .into_inner()

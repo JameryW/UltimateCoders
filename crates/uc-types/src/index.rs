@@ -12,6 +12,14 @@ pub struct RepoSpec {
     pub default_branch: String,
     /// Local clone path (if already cloned).
     pub local_path: Option<String>,
+    /// 工作目录 ID — 该 repo 所属的仓库集合。缺省 "default"。
+    /// 用于把多个 repo 分组到一个"工作目录"（本地集合或远程集合）。
+    #[serde(default = "default_workspace_id")]
+    pub workspace_id: String,
+}
+
+fn default_workspace_id() -> String {
+    "default".to_string()
 }
 
 /// Current state of a repository's index.
@@ -34,6 +42,10 @@ pub struct IndexState {
     pub symbols_count: u64,
     /// Number of code chunks embedded.
     pub chunks_count: u64,
+    /// 工作目录 ID — 该 repo 所属的仓库集合。缺省 "default"。
+    /// 从 RepoSpec.workspace_id 透传，写入 index_state 表。
+    #[serde(default = "default_workspace_id")]
+    pub workspace_id: String,
 }
 
 /// Health status of a repository's index.

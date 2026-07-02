@@ -362,6 +362,19 @@ class NatsWorker:
         # Register with gateway via gRPC WorkerService (if endpoint configured)
         await self._register_with_gateway()
 
+        # Load workspace repos config (uc.repos.yaml) if present — indexes all
+        # repos in the workspace on startup.
+        try:
+            config_path = os.environ.get("UC_REPOS_CONFIG")
+            if config_path or os.path.exists("uc.repos.yaml") or os.path.exists("uc.repos.yml"):
+                cfg = self._engine.load_repos_config(config_path)
+                logger.info(
+                    "Loaded workspace repos: %d repos (workspace_id=%s)",
+                    len(cfg.repos), cfg.workspace_id,
+                )
+        except Exception:
+            logger.warning("Failed to load repos config", exc_info=True)
+
         # Replay missed events from JetStream (catch up after restart)
         if self._mode != "worker":
             await self._replay_missed_events()
@@ -2134,11 +2147,13 @@ async def main() -> None:
 
     nats_url = os.environ.get("UC_NATS_URL", "nats://localhost:4222")
     project_path = os.environ.get("UC_PROJECT_PATH", os.getcwd())
+    grpc_endpoint = os.environ.get("UC_GRPC_ENDPOINT") or None
 
     worker = NatsWorker(
         nats_url=nats_url,
         project_path=project_path,
         mode=args.mode,
+        grpc_endpoint=grpc_endpoint,
     )
 
     # Graceful shutdown on SIGINT/SIGTERM

@@ -147,6 +147,7 @@ impl PostgresMetadataStore {
                 remote_url TEXT NOT NULL,
                 default_branch TEXT NOT NULL DEFAULT 'main',
                 local_path TEXT,
+                workspace_id TEXT NOT NULL DEFAULT 'default',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
@@ -167,6 +168,7 @@ impl PostgresMetadataStore {
                 last_full_reindex TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 index_version INT NOT NULL DEFAULT 1,
                 health TEXT NOT NULL DEFAULT 'healthy',
+                workspace_id TEXT NOT NULL DEFAULT 'default',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             "#,
@@ -264,6 +266,43 @@ impl PostgresMetadataStore {
                 })?;
         }
 
+        // Additive migration: add workspace_id column to repos if it doesn't exist
+        sqlx::query(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'default'",
+        )
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| {
+            EngineError::ConnectionError(format!(
+                "Migration error (repos workspace_id): {}",
+                e
+            ))
+        })?;
+
+        // Additive migration: add index for workspace_id filtering
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_repos_workspace_id ON repos(workspace_id)")
+            .execute(pool.as_ref())
+            .await
+            .map_err(|e| {
+                EngineError::ConnectionError(format!(
+                    "Migration error (repos workspace_id index): {}",
+                    e
+                ))
+            })?;
+
+        // Additive migration: add workspace_id column to index_state if it doesn't exist
+        sqlx::query(
+            "ALTER TABLE index_state ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'default'",
+        )
+        .execute(pool.as_ref())
+        .await
+        .map_err(|e| {
+            EngineError::ConnectionError(format!(
+                "Migration error (index_state workspace_id): {}",
+                e
+            ))
+        })?;
+
         tracing::info!("PostgreSQL migrations completed");
         Ok(())
     }
@@ -282,12 +321,13 @@ impl PostgresMetadataStore {
         if let Some(pool) = &self.pool {
             sqlx::query(
                 r#"
-                INSERT INTO repos (repo_id, remote_url, default_branch, local_path)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO repos (repo_id, remote_url, default_branch, local_path, workspace_id)
+                VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (repo_id) DO UPDATE SET
                     remote_url = EXCLUDED.remote_url,
                     default_branch = EXCLUDED.default_branch,
                     local_path = EXCLUDED.local_path,
+                    workspace_id = EXCLUDED.workspace_id,
                     updated_at = NOW()
                 "#,
             )
@@ -295,6 +335,7 @@ impl PostgresMetadataStore {
             .bind(&spec.remote_url)
             .bind(&spec.default_branch)
             .bind(&spec.local_path)
+            .bind(&spec.workspace_id)
             .execute(pool.as_ref())
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Repo insert error: {}", e)))?;
@@ -332,8 +373,8 @@ impl PostgresMetadataStore {
     pub async fn get_repo(&self, repo_id: &str) -> Result<Option<RepoSpec>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
-            let row = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-                "SELECT repo_id, remote_url, default_branch, local_path FROM repos WHERE repo_id = $1",
+            let row = sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
+                "SELECT repo_id, remote_url, default_branch, local_path, workspace_id FROM repos WHERE repo_id = $1",
             )
             .bind(repo_id)
             .fetch_optional(pool.as_ref())
@@ -341,11 +382,12 @@ impl PostgresMetadataStore {
             .map_err(|e| EngineError::ConnectionError(format!("Repo fetch error: {}", e)))?;
 
             Ok(row.map(
-                |(repo_id, remote_url, default_branch, local_path)| RepoSpec {
+                |(repo_id, remote_url, default_branch, local_path, workspace_id)| RepoSpec {
                     repo_id,
                     remote_url,
                     default_branch,
                     local_path,
+                    workspace_id,
                 },
             ))
         } else {
@@ -369,36 +411,63 @@ impl PostgresMetadataStore {
     }
 
     /// List all registered repositories.
-    pub async fn list_repos(&self) -> Result<Vec<RepoSpec>, EngineError> {
+    ///
+    /// If `workspace_id` is `Some`, only repos in that workspace are returned.
+    /// If `None`, all repos are returned.
+    pub async fn list_repos(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<RepoSpec>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
-            let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-                "SELECT repo_id, remote_url, default_branch, local_path FROM repos ORDER BY repo_id",
-            )
-            .fetch_all(pool.as_ref())
-            .await
-            .map_err(|e| EngineError::ConnectionError(format!("Repo list error: {}", e)))?;
+            let rows = if let Some(ws_id) = workspace_id {
+                sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
+                    "SELECT repo_id, remote_url, default_branch, local_path, workspace_id FROM repos WHERE workspace_id = $1 ORDER BY repo_id",
+                )
+                .bind(ws_id)
+                .fetch_all(pool.as_ref())
+                .await
+                .map_err(|e| EngineError::ConnectionError(format!("Repo list error: {}", e)))?
+            } else {
+                sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
+                    "SELECT repo_id, remote_url, default_branch, local_path, workspace_id FROM repos ORDER BY repo_id",
+                )
+                .fetch_all(pool.as_ref())
+                .await
+                .map_err(|e| EngineError::ConnectionError(format!("Repo list error: {}", e)))?
+            };
 
             Ok(rows
                 .into_iter()
                 .map(
-                    |(repo_id, remote_url, default_branch, local_path)| RepoSpec {
+                    |(repo_id, remote_url, default_branch, local_path, workspace_id)| RepoSpec {
                         repo_id,
                         remote_url,
                         default_branch,
                         local_path,
+                        workspace_id,
                     },
                 )
                 .collect())
         } else {
             let fallback = self.fallback.read().await;
-            Ok(fallback.repos.clone())
+            Ok(fallback
+                .repos
+                .iter()
+                .filter(|r| workspace_id.is_none_or(|ws| r.workspace_id == ws))
+                .cloned()
+                .collect())
         }
 
         #[cfg(not(feature = "storage"))]
         {
             let fallback = self.fallback.read().await;
-            Ok(fallback.repos.clone())
+            Ok(fallback
+                .repos
+                .iter()
+                .filter(|r| workspace_id.is_none_or(|ws| r.workspace_id == ws))
+                .cloned()
+                .collect())
         }
     }
 
@@ -462,8 +531,8 @@ impl PostgresMetadataStore {
     pub async fn get_index_state(&self, repo_id: &str) -> Result<Option<IndexState>, EngineError> {
         #[cfg(feature = "storage")]
         if let Some(pool) = &self.pool {
-            let row = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i32, String, i64, i64, i64)>(
-                "SELECT repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count FROM index_state WHERE repo_id = $1",
+            let row = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i32, String, i64, i64, i64, String)>(
+                "SELECT repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count, workspace_id FROM index_state WHERE repo_id = $1",
             )
             .bind(repo_id)
             .fetch_optional(pool.as_ref())
@@ -481,6 +550,7 @@ impl PostgresMetadataStore {
                     files_count,
                     symbols_count,
                     chunks_count,
+                    workspace_id,
                 )| IndexState {
                     repo_id,
                     last_indexed_sha,
@@ -491,6 +561,7 @@ impl PostgresMetadataStore {
                     files_count: files_count as u64,
                     symbols_count: symbols_count as u64,
                     chunks_count: chunks_count as u64,
+                    workspace_id,
                 },
             ))
         } else {
@@ -521,8 +592,8 @@ impl PostgresMetadataStore {
         if let Some(pool) = &self.pool {
             sqlx::query(
                 r#"
-                INSERT INTO index_state (repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                INSERT INTO index_state (repo_id, last_indexed_sha, last_indexed_at, last_full_reindex, index_version, health, files_count, symbols_count, chunks_count, workspace_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (repo_id) DO UPDATE SET
                     last_indexed_sha = EXCLUDED.last_indexed_sha,
                     last_indexed_at = EXCLUDED.last_indexed_at,
@@ -531,7 +602,8 @@ impl PostgresMetadataStore {
                     health = EXCLUDED.health,
                     files_count = EXCLUDED.files_count,
                     symbols_count = EXCLUDED.symbols_count,
-                    chunks_count = EXCLUDED.chunks_count
+                    chunks_count = EXCLUDED.chunks_count,
+                    workspace_id = EXCLUDED.workspace_id
                 "#,
             )
             .bind(&state.repo_id)
@@ -543,6 +615,7 @@ impl PostgresMetadataStore {
             .bind(state.files_count as i64)
             .bind(state.symbols_count as i64)
             .bind(state.chunks_count as i64)
+            .bind(&state.workspace_id)
             .execute(pool.as_ref())
             .await
             .map_err(|e| EngineError::ConnectionError(format!("Index state upsert error: {}", e)))?;
@@ -1126,6 +1199,7 @@ mod tests {
             remote_url: "https://github.com/test/repo".to_string(),
             default_branch: "main".to_string(),
             local_path: Some("/tmp/repo".to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Register
@@ -1139,7 +1213,7 @@ mod tests {
         assert_eq!(fetched.remote_url, "https://github.com/test/repo");
 
         // List
-        let repos = store.list_repos().await.unwrap();
+        let repos = store.list_repos(None).await.unwrap();
         assert_eq!(repos.len(), 1);
 
         // Delete
@@ -1162,6 +1236,7 @@ mod tests {
             files_count: 0,
             symbols_count: 0,
             chunks_count: 0,
+            workspace_id: "default".to_string(),
         };
 
         store.update_index_state(&state).await.unwrap();
@@ -1185,6 +1260,7 @@ mod tests {
             files_count: 42,
             symbols_count: 100,
             chunks_count: 75,
+            workspace_id: "default".to_string(),
         };
 
         store.update_index_state(&state).await.unwrap();
