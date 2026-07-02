@@ -215,7 +215,7 @@ class Worker:
         nats_publisher: Any | None = None,
         workspace_manager: WorkspaceManager | None = None,
     ):
-        self.worker_id = worker_id or str(uuid.uuid4())
+        self.worker_id = worker_id or os.environ.get("UC_WORKER_ID") or str(uuid.uuid4())
         self.engine = engine
         self._sandbox_config = sandbox_config or SandboxConfig()
         # Auto-register in-process MCP servers for sandbox agent tools.

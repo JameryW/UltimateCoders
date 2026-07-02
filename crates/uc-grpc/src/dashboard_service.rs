@@ -39,28 +39,33 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<ListWorkersRequest>,
     ) -> Result<Response<ListWorkersResponse>, Status> {
-        match self
-            .nats_dashboard_request("ListWorkers", serde_json::json!({}))
-            .await
-        {
-            Ok(json) => Ok(Response::new(json_to_list_workers_response(&json))),
-            Err(_) => {
-                // Fallback: use WorkerRegistry first, then NATS heartbeat state
-                let registry = self.worker_registry().read().await;
-                if !registry.workers().is_empty() {
-                    let protos = registry.to_worker_protos();
-                    let available_count = protos.iter().filter(|w| w.is_available).count() as u32;
-                    let total = protos.len() as u32;
-                    drop(registry);
-                    Ok(Response::new(ListWorkersResponse {
-                        available: true,
-                        workers: protos,
-                        total,
-                        available_count,
-                    }))
-                } else {
+        // WorkerRegistry is the authoritative source — it tracks gRPC-registered
+        // workers in-process, with no NATS load-balancing dilution (NATS
+        // request-reply fans out to only one subscriber when multiple workers
+        // listen on uc.dashboard.> without a queue group, so the NATS path only
+        // ever sees a single worker's self-view).
+        let registry = self.worker_registry().read().await;
+        if !registry.workers().is_empty() {
+            let protos = registry.to_worker_protos();
+            let available_count = protos.iter().filter(|w| w.is_available).count() as u32;
+            let total = protos.len() as u32;
+            drop(registry);
+            Ok(Response::new(ListWorkersResponse {
+                available: true,
+                workers: protos,
+                total,
+                available_count,
+            }))
+        } else {
+            // Fallback: NATS request-reply to Python Orchestrator (single-worker view)
+            drop(registry);
+            match self
+                .nats_dashboard_request("ListWorkers", serde_json::json!({}))
+                .await
+            {
+                Ok(json) => Ok(Response::new(json_to_list_workers_response(&json))),
+                Err(_) => {
                     // Legacy fallback: NATS heartbeat tracking in TaskStore
-                    drop(registry);
                     let store = self.task_store().lock().await;
                     let now = chrono::Utc::now();
                     let mut workers: Vec<WorkerProto> = Vec::new();

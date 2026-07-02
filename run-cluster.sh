@@ -15,6 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PIDS_FILE="$SCRIPT_DIR/.cluster-pids"
+LOG_DIR="$SCRIPT_DIR/.logs"
+mkdir -p "$LOG_DIR"
 
 # ── Colors ─────────────────────────────────────────────────────
 GREEN="\033[32m"
@@ -226,7 +228,7 @@ if [ "$USE_DOCKER" = false ] && [ "$goto_workers" = false ]; then
     check_cmd nats-server || { warn "nats-server not found — install: brew install nats-server"; exit 1; }
     if check_port 4222; then
         log "Starting NATS server..."
-        nats-server -js -sd "$SCRIPT_DIR/.nats-data" &
+        nats-server -js -sd "$SCRIPT_DIR/.nats-data" > "$LOG_DIR/nats-server.log" 2>&1 &
         NATS_PID=$!
         save_pid "$NATS_PID" "nats-server"
         info "NATS PID: $NATS_PID"
@@ -265,7 +267,7 @@ if [ "$goto_workers" = false ] && check_port 50051; then
     # Build first, then exec the binary directly so PID is correct
     log "Building gRPC server..."
     env "${GRPC_ENV[@]}" cargo build -p uc-grpc-server 2>&1 | tail -1
-    env "${GRPC_ENV[@]}" nohup "$SCRIPT_DIR/target/debug/uc-grpc-server" > /tmp/uc-grpc-server.log 2>&1 &
+    env "${GRPC_ENV[@]}" nohup "$SCRIPT_DIR/target/debug/uc-grpc-server" > "$LOG_DIR/grpc-server.log" 2>&1 &
     GRPC_PID=$!
     disown "$GRPC_PID"
     save_pid "$GRPC_PID" "grpc-server"
@@ -277,7 +279,7 @@ if [ "$goto_workers" = false ] && check_port 50051; then
     if lsof -i :50051 >/dev/null 2>&1; then
         log "gRPC server ready on :50051"
     else
-        err "gRPC server failed to start — check /tmp/uc-grpc-server.log"
+        err "gRPC server failed to start — check $LOG_DIR/grpc-server.log"
         exit 1
     fi
 else
@@ -296,7 +298,8 @@ WORKER_OK=0
 for i in $(seq 1 "$NUM_WORKERS"); do
     UC_WORKER_ID="worker-$i" \
     UC_NATS_URL="$NATS_URL" \
-    "$PYTHON_BIN" -m ultimate_coders.nats_worker &
+    UC_GRPC_ENDPOINT="http://127.0.0.1:50051" \
+    "$PYTHON_BIN" -m ultimate_coders.nats_worker > "$LOG_DIR/worker-$i.log" 2>&1 &
     W_PID=$!
     save_pid "$W_PID" "worker-$i"
     info "Worker $i PID: $W_PID"
@@ -305,7 +308,7 @@ for i in $(seq 1 "$NUM_WORKERS"); do
     if kill -0 "$W_PID" 2>/dev/null; then
         WORKER_OK=$((WORKER_OK + 1))
     else
-        warn "Worker $i exited immediately — check: $PYTHON_BIN -m ultimate_coders.nats_worker"
+        warn "Worker $i exited immediately — check $LOG_DIR/worker-$i.log"
     fi
 done
 
