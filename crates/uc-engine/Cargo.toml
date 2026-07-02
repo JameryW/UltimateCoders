@@ -21,6 +21,7 @@ tokio-stream = "0.1"
 dashmap = { workspace = true }
 blake3 = { workspace = true }
 toml = "0.8"
+serde_yaml = { workspace = true }
 
 # Storage clients (feature-gated)
 tikv-client = { workspace = true, optional = true }
