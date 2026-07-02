@@ -1,12 +1,21 @@
 # OMP 感知工作目录：list_repos 透传 workspace_id
 
+> **根因修正（07-02，二轮勘察）**：PR #210 的前端透传（listRepos 传 workspace_id）是必要但不
+> 充分的一半。真正根因是：**`uc.repos.yaml` 只在 `nats_worker.py`（Python worker 模式）里被
+> 加载**，但 `run-omp.sh` 默认启动的是 **Rust gRPC server**（`uc-grpc-server`），其 `main.rs`
+> 创建 `LocalEngine` 后**从不加载 `uc.repos.yaml`**。所以 gateway 的 engine 是空的——OMP 查
+> `listRepos()` 返回空/旧数据，自然"不是配置的"。
+>
+> **决策（已与用户对齐）**：由 **Rust gateway 直接加载** `uc.repos.yaml`。在 `uc-grpc-server`
+> 启动时用 Rust 解析 yaml + scan_dirs + 调 `LocalEngine::index_repo` 索引工作目录内 repo。
+> `load_repos_config` 目前只有 Python 实现（`engine.py:1154` + `repo_config.py` 的
+> `RepoScanner`），Rust 侧需新写 yaml 解析 + scan_dirs + 远程 clone 逻辑。
+
 ## Goal
 
-OMP 前端（uc-orchestrator）通过 `listRepos()` 看到的 repo 列表是**全表扁平列表**，不按
-工作目录分组，也不回传 `workspace_id`。原因是 PR #208 给 proto 源（`engine.proto`）和
-Rust gRPC（server/client）加了 `workspace_id` 支持，但**没重新生成 OMP 的 TS proto 绑定
-`engine_pb.ts`**，且前端 `listRepos()` 没传 workspace_id、丢弃响应里的 workspace_id。
-让 OMP 能按配置的 `workspace_id` 查询并展示 repo 的工作目录归属。
+让 OMP 通过 gateway 感知到**配置的工作目录**（`uc.repos.yaml` 定义的 repo 集合 + workspace_id）。
+两半：(1) 前端透传 workspace_id（PR #210，已完成）；(2) Rust gateway 启动时加载
+`uc.repos.yaml` 并索引 repo（本任务新增范围）。
 
 ## What I already know（已勘察）
 
@@ -46,14 +55,30 @@ plugin=`protoc-gen-es`，out=`src/grpc`。无 npm script 暴露，需手动 `buf
 - `list_repos` 之外的 RPC（list_dir/get_file 等）加 workspace_id（它们已按 repo_id 定位，
   repo_id 在工作目录内唯一，无需）
 - 修改 proto 源（源已正确，只重生 TS 绑定）
+- 远程-only repo 的 clone（Rust 侧 MVP 只支持 local_path 的 repo + scan_dirs 自动发现；
+  远程 clone 留给 Python worker 模式，gateway 默认本地场景）
+- 工作目录热重载（MVP 只在启动时全量加载）
 
 ## Acceptance Criteria
 
+### 前端透传（PR #210，已完成）
 - [x] `engine_pb.ts` 的 `ListReposRequest` 含 `workspace_id?`，`RepoIndexStateProto` 含 `workspaceId`
 - [x] `grpc-bridge.ts` `listRepos(workspaceId?)` 传参 + 返回 `workspaceId`
 - [x] `index-bridge.ts` `list_repos` 工具返回含 workspace_id；`index_repo` 可选传 workspace_id
 - [x] `tsc --noEmit` 通过（改动文件零错误；预存 vendor/测试错误不变，19→19）
-- [x] 重启 OMP 后 `list_repos` 返回的 repo 带正确 workspace_id（如 `aiworks`）
+
+### Rust gateway 加载（本任务新增）
+- [x] `uc-grpc-server/main.rs` 启动时读取 `UC_REPOS_CONFIG` env > `./uc.repos.yaml` > 跳过
+- [x] Rust 侧解析 yaml（workspace_id + repos[local_path] + scan_dirs/scan_depth）
+- [x] 对每个 local repo + scan_dirs 发现的 git repo 调 `LocalEngine::index_repo`（带 workspace_id）
+- [x] `cargo test -p uc-engine` / `cargo check` 通过（344 passed，含 10 新单测）
+- [x] `run-omp.sh` 启动后，OMP `list_repos` 返回配置工作目录内的 repo（带正确 workspace_id）
+
+> Verified end-to-end: local `uc-grpc-server` (port 50099) loaded `uc.repos.yaml`
+> → indexed 7 repos under `workspace_id=aiworks`; `Engine(mode='grpc').list_repos()`
+> returned all 7 with `workspace_id=aiworks`; `list_repos(workspace_id='aiworks')`
+> filtered to 7. Server log: `Workspace repo indexing complete workspace_id=aiworks
+> indexed=7 total=7`.
 
 > Verified: runtime smoke `create(ListReposRequestSchema,{workspaceId:'aiworks'})`
 > → workspaceId='aiworks'. PR #210 open; gateway-side e2e already verified in
