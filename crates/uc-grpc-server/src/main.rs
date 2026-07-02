@@ -15,8 +15,10 @@
 //! CORS is configured to allow dashboard origins.
 
 use std::sync::Arc;
+use uc_engine::repos_config::{build_index_requests, load_repos_config};
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
+use uc_types::EngineApi;
 
 use tonic::transport::Server;
 use tonic_web::GrpcWebLayer;
@@ -69,6 +71,61 @@ async fn create_task_backend() -> (
     }
 }
 
+/// Load `uc.repos.yaml` and index all configured workspace repos into the engine.
+///
+/// Resolution order: `UC_REPOS_CONFIG` env, then `./uc.repos.yaml`, then
+/// `./uc.repos.yml`, then skip (no error). Indexes explicit `repos` entries
+/// (local_path only) and `scan_dirs` auto-discoveries, all tagged with the
+/// config's `workspace_id`. Per-repo failures log a warning but do not abort
+/// startup (tolerant, mirrors Python worker behavior).
+async fn index_workspace_repos(engine: &LocalEngine) {
+    let cfg = match load_repos_config(None) {
+        Some(c) => c,
+        None => {
+            tracing::info!("No uc.repos.yaml found; skipping workspace repo indexing");
+            return;
+        }
+    };
+    let workspace_id = cfg.workspace_id.clone();
+    let requests = build_index_requests(&cfg);
+    if requests.is_empty() {
+        tracing::info!(
+            workspace_id = %workspace_id,
+            "uc.repos.yaml loaded but no indexable repos (all remote-only or empty)"
+        );
+        return;
+    }
+    let total = requests.len();
+    tracing::info!(
+        workspace_id = %workspace_id,
+        total = total,
+        "Indexing workspace repos from uc.repos.yaml"
+    );
+    let mut ok = 0usize;
+    for req in requests {
+        let repo_id = req.repo.repo_id.clone();
+        match engine.index_repo(req).await {
+            Ok(resp) => {
+                ok += 1;
+                tracing::info!(
+                    repo_id = %repo_id,
+                    files = resp.files_indexed,
+                    "Indexed workspace repo"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(repo_id = %repo_id, error = %e, "Failed to index workspace repo");
+            }
+        }
+    }
+    tracing::info!(
+        workspace_id = %workspace_id,
+        indexed = ok,
+        total = total,
+        "Workspace repo indexing complete"
+    );
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -92,6 +149,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             LocalEngine::new_fallback()
         }
     };
+
+    // Load uc.repos.yaml and index configured workspace repos at startup.
+    // Mirrors Python worker's load_repos_config + RepoScanner.discover_and_index.
+    // ponytail: local-path repos only (remote-only entries are skipped — handled
+    // by Python worker mode). Failures per-repo log a warning but don't abort.
+    index_workspace_repos(&engine).await;
 
     // Create task store backend (in-memory or PostgreSQL)
     let (task_backend, event_store) = create_task_backend().await;

@@ -14,6 +14,7 @@ pub mod local;
 pub mod memory;
 pub mod metadata;
 pub mod rate_limiter;
+pub mod repos_config;
 pub mod sandbox;
 pub mod scheduler;
 pub mod search;
@@ -36,6 +37,10 @@ pub use local::LocalEngine;
 pub use rate_limiter::{
     LlmRateLimiter, LlmRateLimiterConfig, ModelFallbackChain, RequestPriority, TaskComplexity,
     TokenBucket,
+};
+pub use repos_config::{
+    build_index_requests, discover_scan_dirs, load_repos_config, parse_repos_yaml,
+    resolve_config_path, RepoConfig, RepoEntry,
 };
 pub use search::HybridSearchEngine;
 pub use search::SemanticSearchEngine;
