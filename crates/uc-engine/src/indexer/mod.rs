@@ -122,6 +122,7 @@ impl IndexPipeline {
                 files_count: 0,
                 symbols_count: 0,
                 chunks_count: 0,
+                workspace_id: repo_spec.workspace_id.clone(),
             })
             .await?;
 
@@ -166,6 +167,7 @@ impl IndexPipeline {
                 files_count: files_indexed as u64,
                 symbols_count: symbols_extracted as u64,
                 chunks_count: chunks_embedded as u64,
+                workspace_id: repo_spec.workspace_id.clone(),
             })
             .await?;
 
@@ -242,6 +244,7 @@ impl IndexPipeline {
                 files_count: existing_state.files_count,
                 symbols_count: existing_state.symbols_count,
                 chunks_count: existing_state.chunks_count,
+                workspace_id: repo_spec.workspace_id.clone(),
             })
             .await?;
 
@@ -292,6 +295,7 @@ impl IndexPipeline {
                 files_count: existing_state.files_count + files_indexed as u64,
                 symbols_count: existing_state.symbols_count + symbols_extracted as u64,
                 chunks_count: existing_state.chunks_count + chunks_embedded as u64,
+                workspace_id: repo_spec.workspace_id.clone(),
             })
             .await?;
 
@@ -561,7 +565,7 @@ impl IndexPipeline {
     /// new storage schema, the source is the truth. Upgrade to Postgres-backed
     /// text_postings table (Approach C) if startup latency becomes a problem.
     pub async fn restore_text_index(&self) -> Result<u64, EngineError> {
-        let repos = self.metadata.list_repos().await.unwrap_or_else(|e| {
+        let repos = self.metadata.list_repos(None).await.unwrap_or_else(|e| {
             tracing::warn!("Failed to list repos for text index restore: {}", e);
             vec![]
         });
@@ -830,6 +834,7 @@ mod tests {
                 remote_url: "https://github.com/test/repo".to_string(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -872,6 +877,7 @@ mod tests {
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -932,6 +938,7 @@ impl Database {
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1036,6 +1043,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index first
@@ -1086,6 +1094,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index first
@@ -1149,6 +1158,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index first
@@ -1232,6 +1242,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index first
@@ -1301,6 +1312,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index
@@ -1397,6 +1409,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         pipeline
@@ -1436,6 +1449,7 @@ impl Database {
             remote_url: String::new(),
             default_branch: "main".to_string(),
             local_path: Some(temp_dir.to_string_lossy().to_string()),
+            workspace_id: "default".to_string(),
         };
 
         // Full index first
@@ -1510,6 +1524,7 @@ impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &s
                 remote_url: "https://github.com/test/repo".to_string(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1564,6 +1579,7 @@ impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &s
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1618,6 +1634,7 @@ impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &s
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };

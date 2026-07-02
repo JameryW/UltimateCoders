@@ -90,6 +90,7 @@ message IndexRepoRequest {
     string default_branch = 3;
     optional string local_path = 4;
     bool force_full = 5;
+    string workspace_id = 6;
 }
 
 message IndexRepoResponse {
@@ -112,6 +113,7 @@ message GetIndexStateResponse {
     uint32 symbols_count = 5;
     uint32 chunks_count = 6;
     optional string local_path = 7;
+    string workspace_id = 8;
 }
 
 message RemoveIndexRequest {
@@ -387,7 +389,9 @@ message BatchWriteMemoryResponse {
 
 // ── Repos ───────────────────────────────────────────────
 
-message ListReposRequest {}
+message ListReposRequest {
+    optional string workspace_id = 1;
+}
 
 message ListReposResponse {
     repeated RepoIndexStateProto repos = 1;
@@ -401,6 +405,7 @@ message RepoIndexStateProto {
     uint32 symbols_count = 5;
     uint32 chunks_count = 6;
     optional string local_path = 7;
+    string workspace_id = 8;
 }
 
 // ── File Browser ─────────────────────────────────────────

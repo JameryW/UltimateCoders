@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 uc-types = { path = "../uc-types" }
-uc-engine = { path = "../uc-engine", default-features = false }
+uc-engine = { path = "../uc-engine", default-features = false, features = ["storage", "indexing"] }
 uc-grpc = { path = "../uc-grpc" }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }

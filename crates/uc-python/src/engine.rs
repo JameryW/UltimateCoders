@@ -234,7 +234,9 @@ impl PyEngine {
     ///     remote_url: Git remote URL (optional)
     ///     default_branch: Default branch name (default: "main")
     ///     force_full: Force full reindex (default: False)
-    #[pyo3(signature = (repo_id, local_path, remote_url=None, default_branch="main".to_string(), force_full=false))]
+    ///     workspace_id: Workspace ID to group this repo under (default: "default")
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (repo_id, local_path, remote_url=None, default_branch="main".to_string(), force_full=false, workspace_id="default".to_string()))]
     pub fn index_repo(
         &self,
         py: Python<'_>,
@@ -243,6 +245,7 @@ impl PyEngine {
         remote_url: Option<String>,
         default_branch: String,
         force_full: bool,
+        workspace_id: String,
     ) -> PyResult<PyIndexResponse> {
         let inner = self.inner.clone();
         let request = uc_types::IndexRequest {
@@ -251,6 +254,7 @@ impl PyEngine {
                 remote_url: remote_url.unwrap_or_default(),
                 default_branch,
                 local_path: Some(local_path),
+                workspace_id,
             },
             force_full,
         };
@@ -582,11 +586,17 @@ impl PyEngine {
 
     /// List all indexed repositories.
     ///
-    /// Returns list of RepoIndexState objects.
-    pub fn list_repos(&self, py: Python<'_>) -> PyResult<Vec<PyRepoIndexState>> {
+    /// Args:
+    ///     workspace_id: Optional workspace ID to filter by. If None, all repos are returned.
+    #[pyo3(signature = (workspace_id=None))]
+    pub fn list_repos(
+        &self,
+        py: Python<'_>,
+        workspace_id: Option<String>,
+    ) -> PyResult<Vec<PyRepoIndexState>> {
         let inner = self.inner.clone();
         let result = py
-            .allow_threads(|| async_support::block_on(inner.list_repos()))
+            .allow_threads(|| async_support::block_on(inner.list_repos(workspace_id.as_deref())))
             .map_err(engine_error_to_pyerr)?;
         Ok(result.into_iter().map(Into::into).collect())
     }
@@ -750,7 +760,8 @@ impl PyEngine {
     }
 
     /// Async version of index_repo().
-    #[pyo3(signature = (repo_id, local_path, remote_url=None, default_branch="main".to_string(), force_full=false))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (repo_id, local_path, remote_url=None, default_branch="main".to_string(), force_full=false, workspace_id="default".to_string()))]
     pub fn index_repo_async<'py>(
         &self,
         py: Python<'py>,
@@ -759,6 +770,7 @@ impl PyEngine {
         remote_url: Option<String>,
         default_branch: String,
         force_full: bool,
+        workspace_id: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
@@ -768,6 +780,7 @@ impl PyEngine {
                     remote_url: remote_url.unwrap_or_default(),
                     default_branch,
                     local_path: Some(local_path),
+                    workspace_id,
                 },
                 force_full,
             };
@@ -1039,10 +1052,18 @@ impl PyEngine {
     }
 
     /// Async version of list_repos().
-    pub fn list_repos_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (workspace_id=None))]
+    pub fn list_repos_async<'py>(
+        &self,
+        py: Python<'py>,
+        workspace_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
-            let result = inner.list_repos().await.map_err(engine_error_to_pyerr)?;
+            let result = inner
+                .list_repos(workspace_id.as_deref())
+                .await
+                .map_err(engine_error_to_pyerr)?;
             Ok(result
                 .into_iter()
                 .map(PyRepoIndexState::from)

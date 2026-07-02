@@ -474,6 +474,7 @@ impl EngineApi for LocalEngine {
                 symbols_count: state.symbols_count as u32,
                 chunks_count: state.chunks_count as u32,
                 local_path: None,
+                workspace_id: state.workspace_id,
             }),
             None => Ok(RepoIndexState {
                 repo_id: repo_id.to_string(),
@@ -483,6 +484,7 @@ impl EngineApi for LocalEngine {
                 symbols_count: 0,
                 chunks_count: 0,
                 local_path: None,
+                workspace_id: "default".to_string(),
             }),
         }
     }
@@ -682,8 +684,15 @@ impl EngineApi for LocalEngine {
         Ok(results)
     }
 
-    async fn list_repos(&self) -> Result<Vec<RepoIndexState>, EngineError> {
-        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+    async fn list_repos(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<RepoIndexState>, EngineError> {
+        let repos = self
+            .index_pipeline
+            .metadata_store()
+            .list_repos(workspace_id)
+            .await?;
         let mut states = Vec::with_capacity(repos.len());
         for repo in repos {
             let state = self.get_index_state(&repo.repo_id).await?;
@@ -694,7 +703,11 @@ impl EngineApi for LocalEngine {
 
     async fn list_dir(&self, repo_id: &str, path: &str) -> Result<DirListing, EngineError> {
         // ponytail: resolve local repo path from metadata or config
-        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+        let repos = self
+            .index_pipeline
+            .metadata_store()
+            .list_repos(None)
+            .await?;
         let repo = repos
             .into_iter()
             .find(|r| r.repo_id == repo_id)
@@ -758,7 +771,11 @@ impl EngineApi for LocalEngine {
     }
 
     async fn get_file(&self, repo_id: &str, path: &str) -> Result<FileContent, EngineError> {
-        let repos = self.index_pipeline.metadata_store().list_repos().await?;
+        let repos = self
+            .index_pipeline
+            .metadata_store()
+            .list_repos(None)
+            .await?;
         let repo = repos
             .into_iter()
             .find(|r| r.repo_id == repo_id)
@@ -1037,6 +1054,7 @@ mod tests {
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1107,6 +1125,7 @@ fn load_index() -> Index { Index::new() }"#,
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1340,6 +1359,7 @@ fn load_index() -> Index { Index::new() }"#,
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
@@ -1557,7 +1577,7 @@ fn load_index() -> Index { Index::new() }"#,
     async fn local_engine_list_repos_empty() {
         let engine = LocalEngine::new_fallback();
 
-        let repos = engine.list_repos().await.unwrap();
+        let repos = engine.list_repos(None).await.unwrap();
         assert!(repos.is_empty());
     }
 
@@ -1582,13 +1602,14 @@ fn load_index() -> Index { Index::new() }"#,
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };
 
         engine.index_repo(request).await.unwrap();
 
-        let repos = engine.list_repos().await.unwrap();
+        let repos = engine.list_repos(None).await.unwrap();
         assert!(
             !repos.is_empty(),
             "list_repos should return at least one repo after indexing"
@@ -1648,6 +1669,7 @@ fn load_index() -> Index { Index::new() }"#,
                 remote_url: String::new(),
                 default_branch: "main".to_string(),
                 local_path: Some(temp_dir.to_string_lossy().to_string()),
+                workspace_id: "default".to_string(),
             },
             force_full: true,
         };

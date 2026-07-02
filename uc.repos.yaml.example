@@ -1,0 +1,28 @@
+# UltimateCoders workspace config — a working directory is a collection of repos.
+# A repo can be local (local_path set) or remote-only (only remote_url —
+# worker clones it to ~/.uc-cache/repos/<workspace_id>/<repo_id> on startup).
+#
+# Usage: copy to uc.repos.yaml, or set UC_REPOS_CONFIG=/path/to/this.yaml.
+# Loaded by workers on startup (nats_worker.py) -> indexes all repos into the
+# gateway under workspace_id.
+
+workspace_id: my-workspace
+
+repos:
+  # Local repo — already checked out
+  - repo_id: my-backend
+    local_path: /home/me/projects/my-backend
+    remote_url: https://github.com/me/my-backend.git
+    default_branch: main
+    tags: [backend, python]
+
+  # Remote-only — cloned to cache on startup
+  - repo_id: my-frontend
+    remote_url: https://github.com/me/my-frontend.git
+    default_branch: main
+    tags: [frontend, ts]
+
+# Auto-discover repos under these dirs (optional)
+scan_dirs:
+  - /home/me/projects
+scan_depth: 2

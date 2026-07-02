@@ -9,8 +9,10 @@ name = "uc-grpc-server"
 path = "src/main.rs"
 
 [features]
-default = ["storage"]
+default = ["storage", "indexing", "messaging"]
 storage = ["uc-engine/storage"]
+indexing = ["uc-engine/indexing"]
+messaging = ["uc-grpc/messaging"]
 
 [dependencies]
 uc-types = { path = "../uc-types" }

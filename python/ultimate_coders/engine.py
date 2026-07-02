@@ -370,6 +370,7 @@ class Engine:
         remote_url: str | None = None,
         default_branch: str = "main",
         force_full: bool = False,
+        workspace_id: str = "default",
     ) -> object:
         """Index a repository for search.
 
@@ -379,6 +380,7 @@ class Engine:
             remote_url: Git remote URL (optional).
             default_branch: Default branch name (default: "main").
             force_full: Force full reindex (default: False).
+            workspace_id: Workspace ID to group this repo under (default: "default").
 
         Returns:
             IndexResponse with indexing statistics.
@@ -386,6 +388,7 @@ class Engine:
         result = self._try_grpc_with_fallback(
             "index_repo",
             repo_id, local_path, remote_url, default_branch, force_full,
+            workspace_id,
         )
         # New indexed content changes search results — drop stale cache.
         self._search_cache.clear()
@@ -663,13 +666,17 @@ class Engine:
         """
         return self._try_grpc_with_fallback("batch_write_memory", requests)
 
-    def list_repos(self) -> list:
+    def list_repos(self, workspace_id: str | None = None) -> list:
         """List all indexed repositories.
+
+        Args:
+            workspace_id: Optional workspace ID to filter by. If None,
+                all repos across all workspaces are returned.
 
         Returns:
             List of RepoIndexState objects.
         """
-        return self._try_grpc_with_fallback("list_repos")
+        return self._try_grpc_with_fallback("list_repos", workspace_id=workspace_id)
 
     def search_stream(self, query) -> list:
         """Stream search results, collected into a list.
@@ -770,6 +777,7 @@ class Engine:
         remote_url: str | None = None,
         default_branch: str = "main",
         force_full: bool = False,
+        workspace_id: str = "default",
     ) -> object:
         """Async version of index_repo().
 
@@ -779,6 +787,7 @@ class Engine:
             remote_url: Git remote URL (optional).
             default_branch: Default branch name (default: "main").
             force_full: Force full reindex (default: False).
+            workspace_id: Workspace ID to group this repo under (default: "default").
 
         Usage:
             response = await engine.index_repo_async("my-repo", "/path/to/repo")
@@ -786,6 +795,7 @@ class Engine:
         result = await self._try_grpc_with_fallback_async(
             "index_repo_async",
             repo_id, local_path, remote_url, default_branch, force_full,
+            workspace_id,
         )
         # New indexed content changes search results — drop stale cache.
         self._search_cache.clear()
@@ -991,13 +1001,19 @@ class Engine:
             "batch_write_memory_async", requests
         )
 
-    async def list_repos_async(self) -> list:
+    async def list_repos_async(self, workspace_id: str | None = None) -> list:
         """Async version of list_repos().
+
+        Args:
+            workspace_id: Optional workspace ID to filter by. If None,
+                all repos across all workspaces are returned.
 
         Returns:
             List of RepoIndexState objects.
         """
-        return await self._try_grpc_with_fallback_async("list_repos_async")
+        return await self._try_grpc_with_fallback_async(
+            "list_repos_async", workspace_id=workspace_id,
+        )
 
     async def search_stream_async(self, query) -> list:
         """Async version of search_stream().
@@ -1171,11 +1187,24 @@ class Engine:
         for entry in config.repos:
             if entry.repo_id not in indexed_ids:
                 try:
+                    local_path = entry.local_path
+                    if not local_path and entry.remote_url:
+                        # Remote-only entry — clone to cache first.
+                        local_path = RepoScanner.clone_remote_entry(
+                            entry, config.workspace_id,
+                        ) or ""
+                    if not local_path:
+                        logger.warning(
+                            "Skipping repo %s: no local_path and clone failed",
+                            entry.repo_id,
+                        )
+                        continue
                     self.index_repo(
                         entry.repo_id,
-                        entry.local_path,
+                        local_path,
                         entry.remote_url or None,
                         entry.default_branch,
+                        workspace_id=config.workspace_id,
                     )
                     indexed_ids.add(entry.repo_id)
                 except Exception:
@@ -1224,7 +1253,7 @@ class Engine:
 
     def _on_repos_config_changed(self, config: object) -> None:
         """Callback when repos.yaml changes — re-index new repos."""
-        from ultimate_coders.repo_config import RepoConfig
+        from ultimate_coders.repo_config import RepoConfig, RepoScanner
 
         if not isinstance(config, RepoConfig):
             return
@@ -1242,11 +1271,23 @@ class Engine:
         for entry in config.repos:
             if entry.repo_id not in indexed_ids:
                 try:
+                    local_path = entry.local_path
+                    if not local_path and entry.remote_url:
+                        local_path = RepoScanner.clone_remote_entry(
+                            entry, config.workspace_id,
+                        ) or ""
+                    if not local_path:
+                        logger.warning(
+                            "Skipping repo %s: no local_path and clone failed",
+                            entry.repo_id,
+                        )
+                        continue
                     self.index_repo(
                         entry.repo_id,
-                        entry.local_path,
+                        local_path,
                         entry.remote_url or None,
                         entry.default_branch,
+                        workspace_id=config.workspace_id,
                     )
                     indexed_ids.add(entry.repo_id)
                     logger.info("Hot-loaded new repo: %s", entry.repo_id)
@@ -1258,8 +1299,6 @@ class Engine:
 
         # Re-scan for newly discovered repos
         if config.scan_dirs:
-            from ultimate_coders.repo_config import RepoScanner  # noqa: I001
-
             scanner = RepoScanner(engine=self)
             new = scanner.discover_and_index(config, indexed_repo_ids=indexed_ids)
             for entry in new:
