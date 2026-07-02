@@ -73,11 +73,11 @@ async fn create_task_backend() -> (
 
 /// Load `uc.repos.yaml` and index all configured workspace repos into the engine.
 ///
-/// Resolution order: `UC_REPOS_CONFIG` env > `./uc.repos.yaml` > `./uc.repos.yml`
-/// > skip (no error). Indexes explicit `repos` entries (local_path only) +
-/// `scan_dirs` auto-discoveries, all tagged with the config's `workspace_id`.
-/// Per-repo failures log a warning but do not abort startup (tolerant, mirrors
-/// Python worker behavior).
+/// Resolution order: `UC_REPOS_CONFIG` env, then `./uc.repos.yaml`, then
+/// `./uc.repos.yml`, then skip (no error). Indexes explicit `repos` entries
+/// (local_path only) and `scan_dirs` auto-discoveries, all tagged with the
+/// config's `workspace_id`. Per-repo failures log a warning but do not abort
+/// startup (tolerant, mirrors Python worker behavior).
 async fn index_workspace_repos(engine: &LocalEngine) {
     let cfg = match load_repos_config(None) {
         Some(c) => c,
