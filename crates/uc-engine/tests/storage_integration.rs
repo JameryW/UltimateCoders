@@ -71,6 +71,7 @@ fn make_entry(key: MemoryKey, importance: f32, content: &str) -> MemoryEntry {
         },
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        version: 0,
     }
 }
 
@@ -92,6 +93,7 @@ fn make_entry_with_embedding(
         },
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
+        version: 0,
     }
 }
 
@@ -820,6 +822,7 @@ mod memory_e2e_tests {
                 tags: vec!["architecture".to_string()],
                 embedding: None, // write() will auto-generate BLAKE3 embedding
             },
+            version: None,
         };
 
         store
@@ -884,6 +887,7 @@ mod memory_e2e_tests {
                 tags: vec!["architecture".to_string()],
                 embedding: None,
             },
+            version: None,
         };
 
         store.write(request).await.expect("write should succeed");

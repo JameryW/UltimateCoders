@@ -25,6 +25,7 @@ fn _uc_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Memory types
     m.add_class::<types::PyMemoryEntry>()?;
     m.add_class::<types::PyMemorySearchResult>()?;
+    m.add_class::<types::PyMemoryReplayResult>()?;
     // Index types
     m.add_class::<types::PyIndexResponse>()?;
     m.add_class::<types::PyRepoIndexState>()?;

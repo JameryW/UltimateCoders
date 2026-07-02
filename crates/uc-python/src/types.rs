@@ -360,6 +360,29 @@ pub struct PyMemoryEntry {
     pub created_at: i64,
     #[pyo3(get)]
     pub updated_at: i64,
+    /// Last-writer-wins version (wall-clock millis).
+    #[pyo3(get)]
+    pub version: u64,
+}
+
+/// Python wrapper for a replay-write result: the entry plus whether it
+/// was applied or skipped as stale during last-writer-wins reconciliation.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyMemoryReplayResult {
+    #[pyo3(get)]
+    pub entry: PyMemoryEntry,
+    #[pyo3(get)]
+    pub applied: bool,
+}
+
+impl From<uc_types::memory::MemoryReplayResult> for PyMemoryReplayResult {
+    fn from(result: uc_types::memory::MemoryReplayResult) -> Self {
+        Self {
+            entry: PyMemoryEntry::from(result.entry),
+            applied: result.applied,
+        }
+    }
 }
 
 #[pymethods]
@@ -457,6 +480,7 @@ impl From<uc_types::MemoryEntry> for PyMemoryEntry {
             tags: entry.metadata.tags,
             created_at: entry.created_at.timestamp(),
             updated_at: entry.updated_at.timestamp(),
+            version: entry.version,
         }
     }
 }

@@ -502,6 +502,7 @@ fn payload_to_entry(
         },
         created_at,
         updated_at,
+        version: uc_types::memory::MemoryEntry::version_from_timestamp(updated_at),
     })
 }
 
@@ -676,6 +677,7 @@ mod tests {
             },
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            version: 0,
         }
     }
 

@@ -22,6 +22,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _now_version_ms() -> int:
+    """Current wall-clock time in milliseconds — used as the LWW version
+    for replay writes. Upgradable to HLC without changing callers."""
+    import time as _time
+    return int(_time.time() * 1000)
+
+
 class Engine:
     """Unified engine interface for UltimateCoders.
 
@@ -85,6 +92,13 @@ class Engine:
         self._search_cache: dict[str, tuple[Any, float]] = {}
         self._search_cache_max: int = 50
         self._search_cache_ttl: float = 300.0  # 5 minutes
+
+        # Write-ahead log of memory writes that happen during gRPC fallback.
+        # Drained to the gateway via replay_memory_write on recovery. Each
+        # entry: (args_tuple, version_ms). ponytail: in-memory only — if the
+        # worker process crashes mid-fallback, these writes are lost. Persist
+        # to disk if that durability becomes a requirement.
+        self._fallback_write_log: list[tuple[tuple, int]] = []
 
         # Always create the local engine (needed for fallback)
         self._local_engine = PyEngine(mode="local", grpc_endpoint=None)
@@ -256,6 +270,9 @@ class Engine:
             self._fallback_active = False
             self._engine = self._grpc_engine
             logger.info("Recovered from fallback to gRPC engine")
+            # Drain any writes that landed in the local fallback engine —
+            # replay them to the gateway with last-writer-wins by version.
+            self._drain_fallback_writes()
             if self._on_recovery is not None:
                 try:
                     self._on_recovery()
@@ -462,6 +479,15 @@ class Engine:
             importance, tags, task_id, project_id,
             language, file_path, uri, description,
         )
+        # If the write landed in the local fallback engine, record it in the
+        # WAL so it can be replayed to the gateway on recovery.
+        if self._fallback_active:
+            self._fallback_write_log.append(
+                ((key_scope, key, content, content_type, source_agent,
+                  importance, tags, task_id, project_id,
+                  language, file_path, uri, description),
+                 _now_version_ms())
+            )
         # Memory writes can affect semantic search results — drop stale
         # search cache so the next search reflects the new data.
         self._search_cache.clear()
@@ -485,8 +511,79 @@ class Engine:
         result = self._try_grpc_with_fallback(
             "delete_memory", key_scope, key, task_id, project_id,
         )
+        # ponytail: deletes during fallback are NOT replayed — replay_write
+        # only handles writes (LWW). A delete-then-recover window can resurrect
+        # a gateway-side value. Add a delete replay RPC if this matters.
         self._search_cache.clear()
         return result
+
+    def replay_memory_write(
+        self,
+        key_scope: str,
+        key: str,
+        content: str,
+        content_type: str,
+        source_agent: str,
+        importance: float,
+        version: int,
+        tags: list | None = None,
+        task_id: str | None = None,
+        project_id: str | None = None,
+        language: str | None = None,
+        file_path: str | None = None,
+        uri: str | None = None,
+        description: str | None = None,
+    ) -> object:
+        """Replay a memory write with last-writer-wins by ``version``.
+
+        Used to reconcile writes that happened during a gRPC fallback
+        window. The gateway compares ``version`` against the stored entry's
+        version and only applies the write if it is newer or equal.
+        Returns an object with ``.entry`` and ``.applied`` attributes.
+
+        This call always goes through gRPC (never fallback) — it's only
+        meaningful once the engine has recovered.
+        """
+        return self._engine.replay_memory_write(
+            key_scope, key, content, content_type, source_agent,
+            importance, version, tags, task_id, project_id,
+            language, file_path, uri, description,
+        )
+
+    def _drain_fallback_writes(self) -> None:
+        """Replay buffered fallback writes to the gateway.
+
+        Called after gRPC recovery. Each pending write is sent via
+        ``replay_memory_write`` with its recorded version (wall-clock ms at
+        write time). Best-effort: failures are logged but don't block
+        recovery, and successfully-applied writes are removed from the log.
+        """
+        if not self._fallback_write_log:
+            return
+        log = self._fallback_write_log
+        self._fallback_write_log = []
+        applied = 0
+        skipped = 0
+        for args, version in log:
+            try:
+                result = self.replay_memory_write(*args, version=version)
+                if getattr(result, "applied", True):
+                    applied += 1
+                else:
+                    skipped += 1
+            except Exception:
+                logger.warning(
+                    "Failed to replay fallback memory write (key=%s), "
+                    "re-queuing",
+                    args[1] if len(args) > 1 else "?",
+                    exc_info=True,
+                )
+                # Re-queue for the next recovery tick — don't drop writes.
+                self._fallback_write_log.append((args, version))
+        logger.info(
+            "Drained fallback writes: %d applied, %d skipped, %d re-queued",
+            applied, skipped, len(self._fallback_write_log),
+        )
 
     def search_memory(
         self,

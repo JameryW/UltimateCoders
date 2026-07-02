@@ -130,6 +130,15 @@ impl LocalEngine {
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
         let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
 
+        // Restore the in-memory text index from source (AST/semantic already
+        // persist in Postgres/Qdrant; text index is rebuilt on startup).
+        if let Err(e) = index_pipeline.restore_text_index().await {
+            tracing::warn!(
+                "Text index restore failed (search will be incomplete until next reindex): {}",
+                e
+            );
+        }
+
         Ok(Self {
             memory_store,
             metadata_store,
@@ -482,6 +491,17 @@ impl EngineApi for LocalEngine {
         self.index_pipeline.remove_index(repo_id).await
     }
 
+    async fn reindex_file(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+        content: &str,
+    ) -> Result<IndexResponse, EngineError> {
+        self.index_pipeline
+            .reindex_file_content(repo_id, file_path, content)
+            .await
+    }
+
     async fn read_memory(
         &self,
         request: MemoryReadRequest,
@@ -491,6 +511,13 @@ impl EngineApi for LocalEngine {
 
     async fn write_memory(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
         self.memory_store.write(request).await
+    }
+
+    async fn replay_memory_write(
+        &self,
+        request: MemoryWriteRequest,
+    ) -> Result<uc_types::memory::MemoryReplayResult, EngineError> {
+        self.memory_store.replay_write(request).await
     }
 
     async fn delete_memory(&self, key: &MemoryKey) -> Result<(), EngineError> {
@@ -929,6 +956,7 @@ mod tests {
                     tags: vec!["test".to_string()],
                     embedding: None,
                 },
+                version: None,
             })
             .await
             .unwrap();
@@ -966,6 +994,7 @@ mod tests {
                     tags: vec!["test".to_string()],
                     embedding: None,
                 },
+                version: None,
             })
             .await
             .unwrap();
@@ -1439,6 +1468,7 @@ fn load_index() -> Index { Index::new() }"#,
                     tags: vec!["batch".to_string()],
                     embedding: None,
                 },
+                version: None,
             },
             MemoryWriteRequest {
                 key: MemoryKey::Global {
@@ -1451,6 +1481,7 @@ fn load_index() -> Index { Index::new() }"#,
                     tags: vec!["batch".to_string()],
                     embedding: None,
                 },
+                version: None,
             },
             MemoryWriteRequest {
                 key: MemoryKey::Task {
@@ -1464,6 +1495,7 @@ fn load_index() -> Index { Index::new() }"#,
                     tags: vec![],
                     embedding: None,
                 },
+                version: None,
             },
         ];
 

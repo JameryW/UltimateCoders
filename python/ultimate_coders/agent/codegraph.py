@@ -33,17 +33,29 @@ class CodegraphClient:
             context = client.explore("how does subtask execution work?")
     """
 
-    def __init__(self, project_path: str) -> None:
+    def __init__(
+        self,
+        project_path: str,
+        engine: Any | None = None,
+        repo_id: str = "",
+    ) -> None:
         """Initialize with project path. Auto-detect .codegraph/codegraph.db.
 
         Args:
             project_path: Absolute or relative path to the project root
                 containing the .codegraph/ directory. Empty string disables
                 codegraph integration.
+            engine: Optional gateway Engine for unified (Postgres-first)
+                symbol search. When provided, ``search`` queries the gateway's
+                AST index first so cross-worker symbols are visible, falling
+                back to the local SQLite on miss/unavailable.
+            repo_id: Repo scope for gateway queries (the subtask's project_id).
         """
         self._db_path: str = ""
         self._conn: sqlite3.Connection | None = None
         self._available: bool = False
+        self._engine = engine
+        self._repo_id = repo_id
 
         if project_path:
             self._db_path = os.path.join(project_path, ".codegraph", "codegraph.db")
@@ -97,8 +109,14 @@ class CodegraphClient:
     ) -> list[dict[str, Any]]:
         """FTS5 search across symbol names, qualified names, docstrings, signatures.
 
+        When a gateway engine is configured, queries it first (AST symbol
+        search across the shared Postgres-backed index) so symbols defined in
+        other workers' edits are visible. Falls back to the local SQLite
+        codegraph on miss or when no engine is set.
+
         Args:
-            query: Search term (FTS5 MATCH syntax supported).
+            query: Search term (FTS5 MATCH syntax supported for local; plain
+                text for gateway).
             kind: Optional node kind filter (function, method, class, struct, etc.).
             limit: Maximum number of results.
 
@@ -106,6 +124,53 @@ class CodegraphClient:
             List of dicts with keys: id, name, qualified_name, kind, file_path,
             language, start_line, end_line, signature, docstring.
         """
+        # Gateway-first: query the shared AST index so cross-worker symbols
+        # are visible. ponytail: in-process engine not wired into the stdio
+        # lsp_mcp server yet — callers that construct CodegraphClient with an
+        # engine get unified search for free.
+        if self._engine is not None:
+            try:
+                from ultimate_coders.search.query import SearchQuery
+
+                sq = (
+                    SearchQuery(query)
+                    .with_modes(["ast"])
+                    .limit(limit)
+                )
+                if self._repo_id:
+                    sq = sq.in_repos([self._repo_id])
+                result = self._engine.search(sq)
+                items = getattr(result, "items", None) or []
+                out: list[dict[str, Any]] = []
+                for it in items:
+                    name = getattr(it, "symbol_name", None) or ""
+                    if not name:
+                        continue
+                    if kind and getattr(it, "symbol_kind", None) != kind:
+                        continue
+                    out.append(
+                        {
+                            "id": "",
+                            "name": name,
+                            "qualified_name": name,
+                            "kind": getattr(it, "symbol_kind", None) or "symbol",
+                            "file_path": getattr(it, "file_path", ""),
+                            "language": "",
+                            "start_line": getattr(it, "start_line", 0),
+                            "end_line": getattr(it, "end_line", 0),
+                            "signature": "",
+                            "docstring": getattr(it, "content_snippet", ""),
+                        }
+                    )
+                if out:
+                    return out[:limit]
+            except Exception:
+                logger.debug(
+                    "Gateway AST search failed, falling back to local codegraph: %s",
+                    query,
+                    exc_info=True,
+                )
+
         conn = self._get_connection()
         if conn is None:
             return []

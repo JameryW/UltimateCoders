@@ -21,6 +21,9 @@ use crate::memory::short_term::ShortTermMemory;
 
 use std::sync::Arc;
 
+use dashmap::DashMap;
+use tokio::sync::Mutex;
+
 /// Unified memory store that coordinates short-term and long-term storage.
 ///
 /// Short-term memory (TiKV): fast KV access for task-scoped context.
@@ -30,6 +33,11 @@ pub struct MemoryStore {
     long_term: Arc<LongTermMemory>,
     embedding_service: Arc<EmbeddingService>,
     config: MemoryConfig,
+    /// Per-key locks for replay reconciliation (last-writer-wins by version).
+    /// ponytail: in-process mutex is safe because there's a single gateway
+    /// instance; upgrade to TiKV-native CAS (`with_atomic_for_cas`) if we
+    /// ever go multi-gateway.
+    replay_locks: DashMap<String, Arc<Mutex<()>>>,
 }
 
 impl MemoryStore {
@@ -45,6 +53,7 @@ impl MemoryStore {
             long_term,
             embedding_service,
             config,
+            replay_locks: DashMap::new(),
         }
     }
 
@@ -59,6 +68,7 @@ impl MemoryStore {
             long_term,
             embedding_service,
             config: MemoryConfig::default(),
+            replay_locks: DashMap::new(),
         }
     }
 
@@ -122,6 +132,9 @@ impl MemoryStore {
     /// an embedding if one is not already provided).
     pub async fn write(&self, request: MemoryWriteRequest) -> Result<MemoryEntry, EngineError> {
         let now = chrono::Utc::now();
+        let version = request
+            .version
+            .unwrap_or_else(|| MemoryEntry::version_from_timestamp(now));
         let mut entry = MemoryEntry {
             id: uc_types::memory::MemoryId::new(),
             key: request.key,
@@ -129,6 +142,7 @@ impl MemoryStore {
             metadata: request.metadata,
             created_at: now,
             updated_at: now,
+            version,
         };
 
         // Always write to short-term
@@ -169,6 +183,56 @@ impl MemoryStore {
         }
 
         Ok(entry)
+    }
+
+    /// Replay a memory write that happened during a gRPC fallback window.
+    ///
+    /// Last-writer-wins by `version`: reads the currently-stored entry under
+    /// a per-key lock, and only writes if `request.version` is >= the stored
+    /// version. This is the authoritative cross-worker reconciliation point
+    /// for memory writes that bypassed the gateway while it was unreachable.
+    pub async fn replay_write(
+        &self,
+        request: MemoryWriteRequest,
+    ) -> Result<uc_types::memory::MemoryReplayResult, EngineError> {
+        let encoded_key = crate::memory::short_term::encode_key(&request.key);
+        // ponytail: per-key in-process lock — single gateway makes this safe.
+        let lock = self
+            .replay_locks
+            .entry(encoded_key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        let stored = self.short_term.read(&request.key).await?;
+        let pending_version = request
+            .version
+            .unwrap_or_else(|| MemoryEntry::version_from_timestamp(chrono::Utc::now()));
+
+        if let Some(existing) = &stored {
+            if existing.version > pending_version {
+                tracing::info!(
+                    "replay_write skipped stale entry (key={:?} stored_v={} pending_v={})",
+                    request.key,
+                    existing.version,
+                    pending_version
+                );
+                return Ok(uc_types::memory::MemoryReplayResult {
+                    entry: existing.clone(),
+                    applied: false,
+                });
+            }
+        }
+
+        let req = MemoryWriteRequest {
+            version: Some(pending_version),
+            ..request
+        };
+        let entry = self.write(req).await?;
+        Ok(uc_types::memory::MemoryReplayResult {
+            entry,
+            applied: true,
+        })
     }
 
     /// Delete a memory entry.
@@ -363,7 +427,66 @@ mod tests {
                 tags: vec!["test".to_string()],
                 embedding: None,
             },
+            version: None,
         }
+    }
+
+    fn make_replay_request(key: MemoryKey, content: &str, version: u64) -> MemoryWriteRequest {
+        MemoryWriteRequest {
+            key,
+            content: MemoryContent::Text(content.to_string()),
+            metadata: MemoryMetadata {
+                source_agent: "test".to_string(),
+                importance: 0.5,
+                tags: vec!["test".to_string()],
+                embedding: None,
+            },
+            version: Some(version),
+        }
+    }
+
+    /// AC1: a replay write with a newer version is applied and readable.
+    #[tokio::test]
+    async fn test_replay_write_applies_newer_version() {
+        let store = make_store().await;
+        let key = MemoryKey::Global {
+            key: "shared".to_string(),
+        };
+
+        // Worker B writes v100 first (the "current" gateway value).
+        store
+            .replay_write(make_replay_request(key.clone(), "B-wins", 100))
+            .await
+            .unwrap();
+
+        // Worker A replays its fallback write at v50 (older) — must be skipped.
+        let result = store
+            .replay_write(make_replay_request(key.clone(), "A-stale", 50))
+            .await
+            .unwrap();
+        assert!(!result.applied, "stale replay must be skipped");
+
+        // Worker A replays a newer write at v200 — must be applied.
+        let result = store
+            .replay_write(make_replay_request(key.clone(), "A-fresh", 200))
+            .await
+            .unwrap();
+        assert!(result.applied, "fresh replay must be applied");
+
+        // The readable value is the freshest write.
+        let read = store
+            .read(MemoryReadRequest {
+                key: key.clone(),
+                include_semantic: false,
+            })
+            .await
+            .unwrap()
+            .expect("entry should exist");
+        match read.content {
+            MemoryContent::Text(t) => assert_eq!(t, "A-fresh"),
+            _ => panic!("expected text content"),
+        }
+        assert_eq!(read.version, 200);
     }
 
     async fn make_store() -> MemoryStore {
@@ -510,6 +633,7 @@ mod tests {
                 tags: vec!["architecture".to_string()],
                 embedding: Some(vec![1.0, 0.0, 0.0, 0.0]),
             },
+            version: None,
         };
         store.write(request).await.unwrap();
 
@@ -552,6 +676,7 @@ mod tests {
                 tags: vec!["architecture".to_string()],
                 embedding: None, // write() will auto-generate BLAKE3 embedding
             },
+            version: None,
         };
         store.write(request).await.unwrap();
 
@@ -604,6 +729,7 @@ mod tests {
             },
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            version: 0,
         };
         store.long_term().write(&entry).await.unwrap();
 
@@ -652,6 +778,7 @@ mod tests {
             },
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            version: 0,
         };
         store.long_term().write(&entry).await.unwrap();
 

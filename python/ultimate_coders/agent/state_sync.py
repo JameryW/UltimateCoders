@@ -52,6 +52,14 @@ class FileChangeEvent:
     timestamp: float = 0.0
     # For NATS dedup
     message_id: str = ""
+    # Repo the file belongs to (gateway's repo_id). Workers use the
+    # subtask's project_id as the repo_id. Used by the gateway's
+    # uc.file.changed subscriber to scope the incremental reindex.
+    repo_id: str = ""
+    # New full file content (UTF-8). The gateway re-indexes from this so the
+    # shared index reflects live edits without filesystem access to the
+    # worker's worktree. Empty for deletes.
+    content: str = ""
 
     def __post_init__(self) -> None:
         if self.timestamp == 0.0:
@@ -70,6 +78,8 @@ class FileChangeEvent:
             "change_type": self.change_type.value,
             "diff_summary": self.diff_summary[:200],
             "timestamp": self.timestamp,
+            "repo_id": self.repo_id,
+            "content": self.content,
         }
 
     @classmethod
@@ -83,6 +93,8 @@ class FileChangeEvent:
             diff_summary=data.get("diff_summary", ""),
             timestamp=data.get("timestamp", 0.0),
             message_id=data.get("message_id", ""),
+            repo_id=data.get("repo_id", ""),
+            content=data.get("content", ""),
         )
 
 
