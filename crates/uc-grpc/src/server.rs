@@ -2094,18 +2094,17 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
 
     tokio::spawn(async move {
         loop {
-            let mut sub =
-                match nats_client.subscribe(NATS_SUBJECT_FILE_CHANGED).await {
-                    Ok(sub) => sub,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to subscribe to uc.file.changed, retrying in 2s"
-                        );
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                };
+            let mut sub = match nats_client.subscribe(NATS_SUBJECT_FILE_CHANGED).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to subscribe to uc.file.changed, retrying in 2s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
 
             tracing::info!("NATS subscriber started for uc.file.changed (index sync)");
 

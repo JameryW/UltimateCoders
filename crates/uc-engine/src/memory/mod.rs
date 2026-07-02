@@ -431,11 +431,7 @@ mod tests {
         }
     }
 
-    fn make_replay_request(
-        key: MemoryKey,
-        content: &str,
-        version: u64,
-    ) -> MemoryWriteRequest {
+    fn make_replay_request(key: MemoryKey, content: &str, version: u64) -> MemoryWriteRequest {
         MemoryWriteRequest {
             key,
             content: MemoryContent::Text(content.to_string()),

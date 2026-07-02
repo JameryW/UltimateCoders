@@ -581,12 +581,7 @@ impl IndexPipeline {
             let entries = match walk_directory(path) {
                 Ok(e) => e,
                 Err(err) => {
-                    tracing::warn!(
-                        "Failed to walk {} at {}: {}",
-                        repo.repo_id,
-                        local_path,
-                        err
-                    );
+                    tracing::warn!("Failed to walk {} at {}: {}", repo.repo_id, local_path, err);
                     continue;
                 }
             };
@@ -607,11 +602,7 @@ impl IndexPipeline {
                     count += 1;
                 }
             }
-            tracing::info!(
-                "Restored text index for {}: {} files",
-                repo.repo_id,
-                count
-            );
+            tracing::info!("Restored text index for {}: {} files", repo.repo_id, count);
             total += count;
         }
         Ok(total)
@@ -661,8 +652,7 @@ impl IndexPipeline {
                 .await?;
             symbols_extracted += result.symbols.len() as u32;
 
-            if let (Some(semantic), Some(ltm)) = (&self.semantic_indexer, &self.long_term_memory)
-            {
+            if let (Some(semantic), Some(ltm)) = (&self.semantic_indexer, &self.long_term_memory) {
                 let chunks = semantic::create_chunks_from_ast(
                     repo_id,
                     file_path,
@@ -1636,11 +1626,7 @@ impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &s
         // Simulate a worker edit: the file content changes (no filesystem
         // access needed — content comes from the file_changed event).
         pipeline
-            .reindex_file_content(
-                "edit-repo",
-                "edit.rs",
-                "fn updated_marker_from_worker() {}",
-            )
+            .reindex_file_content("edit-repo", "edit.rs", "fn updated_marker_from_worker() {}")
             .await
             .unwrap();
 

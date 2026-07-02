@@ -43,7 +43,7 @@ from ultimate_coders.agent.types import (
     SubtaskStatus,
     WorkerInfo,
 )
-from ultimate_coders.agent.workspace import WorkspaceManager
+from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -984,7 +984,7 @@ class Worker:
         self,
         subtask: Subtask,
         result: SubtaskResult,
-        workspace_handle: "WorkspaceHandle | None" = None,
+        workspace_handle: WorkspaceHandle | None = None,
     ) -> None:
         """Broadcast file change events via NATS for distributed state sync.
 
@@ -1014,7 +1014,7 @@ class Worker:
             if base_path and fc.change_type.value != "deleted":
                 full = os.path.join(base_path, fc.file_path)
                 try:
-                    with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                    with open(full, encoding="utf-8", errors="replace") as fh:
                         content = fh.read()
                 except OSError:
                     logger.debug(

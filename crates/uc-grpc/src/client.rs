@@ -467,10 +467,7 @@ impl EngineApi for GrpcEngineClient {
             description,
             version: request.version.unwrap_or(0),
         };
-        let response = client
-            .replay_memory_write(req)
-            .await
-            .map_err(from_status)?;
+        let response = client.replay_memory_write(req).await.map_err(from_status)?;
         let inner = response.into_inner();
         Ok(uc_types::memory::MemoryReplayResult {
             entry: inner.entry.map(Into::into).unwrap_or_else(|| {

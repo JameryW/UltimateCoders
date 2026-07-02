@@ -426,11 +426,7 @@ impl PyEngine {
                 tags: tags.unwrap_or_default(),
                 embedding: None,
             },
-            version: if version == 0 {
-                None
-            } else {
-                Some(version)
-            },
+            version: if version == 0 { None } else { Some(version) },
         };
         let result = py
             .allow_threads(|| async_support::block_on(inner.replay_memory_write(request)))

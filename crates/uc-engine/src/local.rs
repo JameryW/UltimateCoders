@@ -133,7 +133,10 @@ impl LocalEngine {
         // Restore the in-memory text index from source (AST/semantic already
         // persist in Postgres/Qdrant; text index is rebuilt on startup).
         if let Err(e) = index_pipeline.restore_text_index().await {
-            tracing::warn!("Text index restore failed (search will be incomplete until next reindex): {}", e);
+            tracing::warn!(
+                "Text index restore failed (search will be incomplete until next reindex): {}",
+                e
+            );
         }
 
         Ok(Self {
