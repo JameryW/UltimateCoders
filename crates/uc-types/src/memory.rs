@@ -42,6 +42,30 @@ pub struct MemoryEntry {
     pub metadata: MemoryMetadata,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Monotonic version used for last-writer-wins reconciliation during
+    /// gRPC-fallback replay. Defaults to the wall-clock millis of
+    /// `created_at` so existing writes (which don't set it explicitly) get
+    /// a sensible ordering. Upgradable to HLC without changing this field's
+    /// "totally-ordered timestamp" semantics.
+    #[serde(default = "default_version")]
+    pub version: u64,
+}
+
+/// Default version: current wall-clock millis. Used when deserializing
+/// entries written before the `version` field existed (backward compat).
+fn default_version() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+impl MemoryEntry {
+    /// Version derived from a timestamp (wall-clock millis).
+    pub fn version_from_timestamp(ts: chrono::DateTime<chrono::Utc>) -> u64 {
+        ts.timestamp_millis().max(0) as u64
+    }
 }
 
 /// The content of a memory entry — different representations for different use cases.
@@ -86,6 +110,18 @@ pub struct MemoryWriteRequest {
     pub key: MemoryKey,
     pub content: MemoryContent,
     pub metadata: MemoryMetadata,
+    /// Optional explicit version for replay (last-writer-wins). If `None`,
+    /// the store assigns one from the current wall-clock time.
+    #[serde(default)]
+    pub version: Option<u64>,
+}
+
+/// Result of a replay write — the entry plus whether it was applied or
+/// skipped as stale (last-writer-wins reconciliation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryReplayResult {
+    pub entry: MemoryEntry,
+    pub applied: bool,
 }
 
 /// Search request within memory (semantic search over long-term memory).

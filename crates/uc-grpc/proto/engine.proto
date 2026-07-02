@@ -8,6 +8,7 @@ service EngineService {
     rpc RemoveIndex(RemoveIndexRequest) returns (RemoveIndexResponse);
     rpc ReadMemory(ReadMemoryRequest) returns (ReadMemoryResponse);
     rpc WriteMemory(WriteMemoryRequest) returns (WriteMemoryResponse);
+    rpc ReplayMemoryWrite(ReplayMemoryWriteRequest) returns (ReplayMemoryWriteResponse);
     rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
     rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse);
     rpc Health(HealthRequest) returns (HealthResponse);
@@ -148,10 +149,37 @@ message WriteMemoryRequest {
     optional string file_path = 11;    // For content_type="diff"
     optional string uri = 12;          // For content_type="reference"
     optional string description = 13;  // For content_type="reference"
+    // Optional explicit version for replay (last-writer-wins). 0 = auto.
+    optional uint64 version = 14;
 }
 
 message WriteMemoryResponse {
     MemoryEntryProto entry = 1;
+}
+
+// Replay a memory write that happened during a gRPC fallback window.
+// Same shape as WriteMemoryRequest, but the gateway reconciles by version
+// (last-writer-wins) instead of unconditionally writing.
+message ReplayMemoryWriteRequest {
+    string key_scope = 1;
+    string task_id = 2;
+    string project_id = 3;
+    string key = 4;
+    string content_type = 5;
+    string content = 6;
+    string source_agent = 7;
+    float importance = 8;
+    repeated string tags = 9;
+    optional string language = 10;
+    optional string file_path = 11;
+    optional string uri = 12;
+    optional string description = 13;
+    uint64 version = 14;  // wall-clock millis at write time (required)
+}
+
+message ReplayMemoryWriteResponse {
+    MemoryEntryProto entry = 1;
+    bool applied = 2;  // false = skipped as stale
 }
 
 message DeleteMemoryRequest {
@@ -194,6 +222,7 @@ message MemoryEntryProto {
     optional string file_path = 14;    // For content_type="diff"
     optional string uri = 15;          // For content_type="reference"
     optional string description = 16;  // For content_type="reference"
+    uint64 version = 17;  // last-writer-wins version (wall-clock millis)
 }
 
 message MemorySearchResultProto {

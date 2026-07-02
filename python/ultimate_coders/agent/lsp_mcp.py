@@ -167,6 +167,11 @@ def _get_codegraph(workspace: str) -> CodegraphClient | None:
 
     Returns None if codegraph is not available (.codegraph/codegraph.db
     does not exist). Cached per workspace for the MCP server's lifetime.
+
+    When ``UC_GRPC_ENDPOINT`` is set, the client is constructed with a
+    gateway Engine so ``search`` queries the shared Postgres-backed AST
+    index first (unified cross-worker symbol view), falling back to the
+    local SQLite on miss.
     """
     if workspace in _cg_cache:
         return _cg_cache[workspace]
@@ -174,8 +179,13 @@ def _get_codegraph(workspace: str) -> CodegraphClient | None:
     try:
         from ultimate_coders.agent.codegraph import CodegraphClient
 
-        client = CodegraphClient(workspace)
-        if client.is_available():
+        engine = _maybe_gateway_engine()
+        repo_id = os.environ.get("UC_REPO_ID", "")
+        client = CodegraphClient(workspace, engine=engine, repo_id=repo_id)
+        # Keep the client even if the local DB is missing — when an engine is
+        # configured, search can still hit the gateway. Only return None when
+        # there's neither a local DB nor a gateway engine.
+        if client.is_available() or engine is not None:
             cg = client
         else:
             cg = None
@@ -184,6 +194,40 @@ def _get_codegraph(workspace: str) -> CodegraphClient | None:
         cg = None
     _cg_cache[workspace] = cg
     return cg
+
+
+# Cached gateway Engine for unified codegraph search. Lazily constructed from
+# UC_GRPC_ENDPOINT; None when unset or construction fails.
+_gateway_engine_cache: object | None = None
+_gateway_engine_tried: bool = False
+
+
+def _maybe_gateway_engine() -> object | None:
+    """Construct a gateway gRPC Engine from UC_GRPC_ENDPOINT, cached.
+
+    Returns None if the env var is unset or construction fails. Best-effort —
+    codegraph falls back to local SQLite when this is None.
+    """
+    global _gateway_engine_cache, _gateway_engine_tried
+    if _gateway_engine_tried:
+        return _gateway_engine_cache
+    _gateway_engine_tried = True
+    endpoint = os.environ.get("UC_GRPC_ENDPOINT", "")
+    if not endpoint:
+        return None
+    try:
+        from ultimate_coders.engine import Engine
+
+        _gateway_engine_cache = Engine(mode="grpc", grpc_endpoint=endpoint)
+        logger.info("codegraph unified search enabled via gateway: %s", endpoint)
+    except Exception:  # noqa: BLE001
+        logger.debug(
+            "Failed to construct gateway engine for codegraph: %s",
+            endpoint,
+            exc_info=True,
+        )
+        _gateway_engine_cache = None
+    return _gateway_engine_cache
 
 
 # Regex to grab an identifier token at/around a character position.

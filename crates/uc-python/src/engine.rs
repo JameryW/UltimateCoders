@@ -374,9 +374,66 @@ impl PyEngine {
                 tags: tags.unwrap_or_default(),
                 embedding: None,
             },
+            version: None,
         };
         let result = py
             .allow_threads(|| async_support::block_on(inner.write_memory(request)))
+            .map_err(engine_error_to_pyerr)?;
+        Ok(result.into())
+    }
+
+    /// Replay a memory write that happened during a gRPC fallback window.
+    ///
+    /// Last-writer-wins reconciliation by `version` (wall-clock millis at
+    /// write time). Returns `{entry, applied}`; `applied=False` means the
+    /// stored entry was newer and this write was skipped as stale.
+    #[pyo3(signature = (key_scope, key, content, content_type, source_agent, importance, version, tags=None, task_id=None, project_id=None, language=None, file_path=None, uri=None, description=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn replay_memory_write(
+        &self,
+        py: Python<'_>,
+        key_scope: String,
+        key: String,
+        content: String,
+        content_type: String,
+        source_agent: String,
+        importance: f32,
+        version: u64,
+        tags: Option<Vec<String>>,
+        task_id: Option<String>,
+        project_id: Option<String>,
+        language: Option<String>,
+        file_path: Option<String>,
+        uri: Option<String>,
+        description: Option<String>,
+    ) -> PyResult<PyMemoryReplayResult> {
+        let inner = self.inner.clone();
+        let mem_key = build_memory_key(&key_scope, key, task_id, project_id)?;
+        let mem_content = build_memory_content(
+            &content_type,
+            content,
+            language,
+            file_path,
+            uri,
+            description,
+        );
+        let request = uc_types::MemoryWriteRequest {
+            key: mem_key,
+            content: mem_content,
+            metadata: uc_types::MemoryMetadata {
+                source_agent,
+                importance,
+                tags: tags.unwrap_or_default(),
+                embedding: None,
+            },
+            version: if version == 0 {
+                None
+            } else {
+                Some(version)
+            },
+        };
+        let result = py
+            .allow_threads(|| async_support::block_on(inner.replay_memory_write(request)))
             .map_err(engine_error_to_pyerr)?;
         Ok(result.into())
     }
@@ -518,6 +575,7 @@ impl PyEngine {
                     tags: tags.unwrap_or_default(),
                     embedding: None,
                 },
+                version: None,
             });
         }
         let result = py
@@ -790,6 +848,7 @@ impl PyEngine {
                 tags: tags.unwrap_or_default(),
                 embedding: None,
             },
+            version: None,
         };
         future_into_py(py, async move {
             let result = inner
@@ -968,6 +1027,7 @@ impl PyEngine {
                     tags: tags.unwrap_or_default(),
                     embedding: None,
                 },
+                version: None,
             });
         }
         future_into_py(py, async move {

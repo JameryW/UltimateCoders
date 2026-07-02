@@ -19,6 +19,14 @@ struct StoredEntry {
     metadata: MemoryMetadata,
     created_at: String,
     updated_at: String,
+    #[serde(default = "default_stored_version")]
+    version: u64,
+}
+
+/// Default version for entries serialized before the `version` field
+/// existed. Falls back to 0 (treated as oldest-possible).
+fn default_stored_version() -> u64 {
+    0
 }
 
 /// Short-term memory store backed by TiKV (raw KV mode).
@@ -357,6 +365,7 @@ impl StoredEntry {
             metadata: entry.metadata.clone(),
             created_at: entry.created_at.to_rfc3339(),
             updated_at: entry.updated_at.to_rfc3339(),
+            version: entry.version,
         }
     }
 
@@ -368,6 +377,7 @@ impl StoredEntry {
             metadata: self.metadata.clone(),
             created_at: self.created_at.parse().unwrap_or(chrono::Utc::now()),
             updated_at: self.updated_at.parse().unwrap_or(chrono::Utc::now()),
+            version: self.version,
         }
     }
 }
@@ -390,6 +400,7 @@ mod tests {
             },
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            version: 0,
         }
     }
 

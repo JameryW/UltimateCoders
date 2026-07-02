@@ -392,9 +392,101 @@ impl EngineApi for GrpcEngineClient {
             file_path,
             uri,
             description,
+            version: None,
         };
         let response = client.write_memory(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
+    }
+
+    async fn replay_memory_write(
+        &self,
+        request: MemoryWriteRequest,
+    ) -> Result<uc_types::memory::MemoryReplayResult, EngineError> {
+        let mut client = self.inner.clone();
+        let (key_scope, task_id, project_id, key) = memory_key_to_parts(&request.key);
+        let (content_type, content, language, file_path, uri, description) = match &request.content
+        {
+            uc_types::MemoryContent::Text(s) => {
+                ("text".to_string(), s.clone(), None, None, None, None)
+            }
+            uc_types::MemoryContent::Structured(v) => (
+                "structured".to_string(),
+                v.to_string(),
+                None,
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Code {
+                language: lang,
+                code,
+            } => (
+                "code".to_string(),
+                code.clone(),
+                Some(lang.clone()),
+                None,
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Diff {
+                file_path: fp,
+                diff,
+            } => (
+                "diff".to_string(),
+                diff.clone(),
+                None,
+                Some(fp.clone()),
+                None,
+                None,
+            ),
+            uc_types::MemoryContent::Reference {
+                uri: u,
+                description: d,
+            } => (
+                "reference".to_string(),
+                String::new(),
+                None,
+                None,
+                Some(u.clone()),
+                Some(d.clone()),
+            ),
+        };
+        let req = ReplayMemoryWriteRequest {
+            key_scope: key_scope.to_string(),
+            task_id: task_id.to_string(),
+            project_id: project_id.to_string(),
+            key: key.to_string(),
+            content_type,
+            content,
+            source_agent: request.metadata.source_agent.clone(),
+            importance: request.metadata.importance,
+            tags: request.metadata.tags.clone(),
+            language,
+            file_path,
+            uri,
+            description,
+            version: request.version.unwrap_or(0),
+        };
+        let response = client
+            .replay_memory_write(req)
+            .await
+            .map_err(from_status)?;
+        let inner = response.into_inner();
+        Ok(uc_types::memory::MemoryReplayResult {
+            entry: inner.entry.map(Into::into).unwrap_or_else(|| {
+                // Should not happen — server always returns an entry.
+                uc_types::MemoryEntry {
+                    id: uc_types::MemoryId::new(),
+                    key: request.key,
+                    content: uc_types::MemoryContent::Text(String::new()),
+                    metadata: request.metadata,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    version: 0,
+                }
+            }),
+            applied: inner.applied,
+        })
     }
 
     async fn delete_memory(&self, key: &MemoryKey) -> Result<(), EngineError> {
@@ -510,6 +602,7 @@ impl EngineApi for GrpcEngineClient {
                     file_path,
                     uri,
                     description,
+                    version: r.version,
                 }
             })
             .collect();

@@ -19,10 +19,10 @@ use crate::ultimate_coders::{
     GetIndexStateRequest, GetIndexStateResponse, GetTaskResponse, HealthResponse, IndexRepoRequest,
     IndexRepoResponse, ListDirResponse, MemoryEntryProto, MemorySearchResultProto,
     PauseTaskResponse, ReadMemoryRequest, ReadMemoryResponse, RemoveIndexRequest,
-    RepoIndexStateProto, ResumeTaskResponse, SearchMemoryRequest, SearchMemoryResponse,
-    SearchRequest, SearchResponse, SearchResultItem as ProtoSearchResultItem, SearchStreamRequest,
-    SubmitTaskResponse, SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest,
-    WriteMemoryResponse,
+    ReplayMemoryWriteRequest, ReplayMemoryWriteResponse, RepoIndexStateProto, ResumeTaskResponse,
+    SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
+    SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubmitTaskResponse,
+    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -252,6 +252,66 @@ impl From<WriteMemoryRequest> for MemoryWriteRequest {
                 tags: req.tags,
                 embedding: None,
             },
+            version: req.version.filter(|&v| v != 0),
+        }
+    }
+}
+
+impl From<ReplayMemoryWriteRequest> for MemoryWriteRequest {
+    fn from(req: ReplayMemoryWriteRequest) -> Self {
+        let key = match req.key_scope.as_str() {
+            "task" => MemoryKey::Task {
+                task_id: req.task_id,
+                key: req.key,
+            },
+            "project" => MemoryKey::Project {
+                project_id: req.project_id,
+                key: req.key,
+            },
+            _ => MemoryKey::Global { key: req.key },
+        };
+        let content = match req.content_type.as_str() {
+            "structured" => MemoryContent::Structured(
+                serde_json::from_str(&req.content)
+                    .unwrap_or(serde_json::Value::String(req.content)),
+            ),
+            "code" => MemoryContent::Code {
+                language: req.language.unwrap_or_default(),
+                code: req.content,
+            },
+            "diff" => MemoryContent::Diff {
+                file_path: req.file_path.unwrap_or_default(),
+                diff: req.content,
+            },
+            "reference" => MemoryContent::Reference {
+                uri: req.uri.unwrap_or_default(),
+                description: req.description.unwrap_or_default(),
+            },
+            _ => MemoryContent::Text(req.content),
+        };
+        Self {
+            key,
+            content,
+            metadata: MemoryMetadata {
+                source_agent: req.source_agent,
+                importance: req.importance,
+                tags: req.tags,
+                embedding: None,
+            },
+            version: if req.version == 0 {
+                None
+            } else {
+                Some(req.version)
+            },
+        }
+    }
+}
+
+impl From<uc_types::memory::MemoryReplayResult> for ReplayMemoryWriteResponse {
+    fn from(result: uc_types::memory::MemoryReplayResult) -> Self {
+        Self {
+            entry: Some(MemoryEntryProto::from(result.entry)),
+            applied: result.applied,
         }
     }
 }
@@ -306,6 +366,7 @@ impl From<MemoryEntry> for MemoryEntryProto {
             file_path,
             uri,
             description,
+            version: entry.version,
         }
     }
 }
@@ -503,6 +564,7 @@ impl From<MemoryEntryProto> for MemoryEntry {
                 .unwrap_or_else(chrono::Utc::now),
             updated_at: chrono::DateTime::from_timestamp(proto.updated_at, 0)
                 .unwrap_or_else(chrono::Utc::now),
+            version: proto.version,
         }
     }
 }
@@ -523,6 +585,7 @@ impl From<WriteMemoryResponse> for MemoryEntry {
                 },
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
+                version: 0,
             })
     }
 }
@@ -553,6 +616,7 @@ impl From<MemorySearchResultProto> for MemorySearchResult {
                     },
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
+                    version: 0,
                 }),
             score: proto.score,
         }

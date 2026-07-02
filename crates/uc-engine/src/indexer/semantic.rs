@@ -461,6 +461,7 @@ impl SemanticIndexer {
                 },
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
+                version: uc_types::memory::MemoryEntry::version_from_timestamp(chrono::Utc::now()),
             };
 
             match long_term_memory.write(&entry).await {

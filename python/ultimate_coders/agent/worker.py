@@ -689,7 +689,9 @@ class Worker:
 
                     # Broadcast file change events for distributed state sync
                     if result.success and result.modified_files:
-                        await self._broadcast_file_changes(subtask, result)
+                        await self._broadcast_file_changes(
+                            subtask, result, workspace_handle
+                        )
 
                     # Release workspace (merge if successful)
                     if workspace_handle:
@@ -979,18 +981,45 @@ class Worker:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
 
     async def _broadcast_file_changes(
-        self, subtask: Subtask, result: SubtaskResult,
+        self,
+        subtask: Subtask,
+        result: SubtaskResult,
+        workspace_handle: "WorkspaceHandle | None" = None,
     ) -> None:
         """Broadcast file change events via NATS for distributed state sync.
 
         Each modified file gets a FileChangeEvent published to
         ``uc.file.changed`` so all workers and the orchestrator
-        can track real-time file modifications.
+        can track real-time file modifications. The event carries the
+        new file content so the gateway can incrementally re-index
+        without filesystem access to this worker's worktree.
         """
         if not result.modified_files or not self.nats_publisher:
             return
 
+        # Workers use the subtask's project_id as the gateway repo_id.
+        repo_id = subtask.project_id or getattr(
+            getattr(self, "current_task", None), "project_id", ""
+        )
+        # Base path for reading the post-edit file content. Only available
+        # while the workspace (worktree) is still active.
+        base_path = ""
+        if workspace_handle and workspace_handle.worktree_path:
+            base_path = workspace_handle.worktree_path
+        elif workspace_handle and workspace_handle.project_path:
+            base_path = workspace_handle.project_path
+
         for fc in result.modified_files:
+            content = ""
+            if base_path and fc.change_type.value != "deleted":
+                full = os.path.join(base_path, fc.file_path)
+                try:
+                    with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                except OSError:
+                    logger.debug(
+                        "Could not read post-edit content for %s", fc.file_path
+                    )
             event = FileChangeEvent(
                 task_id=subtask.parent_id,
                 subtask_id=subtask.id,
@@ -998,6 +1027,8 @@ class Worker:
                 file_path=fc.file_path,
                 change_type=FileChangeEventType(fc.change_type.value),
                 diff_summary=fc.diff[:200] if fc.diff else "",
+                repo_id=repo_id,
+                content=content,
             )
             try:
                 await self.nats_publisher.publish_event(

@@ -549,6 +549,144 @@ impl IndexPipeline {
         text_idx.search(query)
     }
 
+    /// Restore the in-memory text index from source after a gateway restart.
+    ///
+    /// The text index is a pure function of source files (AST is in Postgres,
+    /// semantic in Qdrant — both persist across restarts; text does not). This
+    /// walks each registered repo's local_path and re-indexes file contents
+    /// into the in-memory inverted index. Best-effort: missing paths or read
+    /// errors are logged and skipped. Returns the number of files re-indexed.
+    ///
+    /// ponytail: rebuild-from-source is the laziest-correct persistence — no
+    /// new storage schema, the source is the truth. Upgrade to Postgres-backed
+    /// text_postings table (Approach C) if startup latency becomes a problem.
+    pub async fn restore_text_index(&self) -> Result<u64, EngineError> {
+        let repos = self.metadata.list_repos().await.unwrap_or_else(|e| {
+            tracing::warn!("Failed to list repos for text index restore: {}", e);
+            vec![]
+        });
+        let mut total: u64 = 0;
+        for repo in repos {
+            let Some(local_path) = &repo.local_path else {
+                continue;
+            };
+            let path = std::path::Path::new(local_path);
+            if !path.exists() {
+                tracing::debug!(
+                    "Skipping text restore for {}: local path missing",
+                    repo.repo_id
+                );
+                continue;
+            }
+            let entries = match walk_directory(path) {
+                Ok(e) => e,
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to walk {} at {}: {}",
+                        repo.repo_id,
+                        local_path,
+                        err
+                    );
+                    continue;
+                }
+            };
+            let mut count: u64 = 0;
+            for entry in entries {
+                let full_path = path.join(&entry.path);
+                let content = match std::fs::read_to_string(&full_path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let language = crate::git::detect_language(&entry.path);
+                let lang = language.unwrap_or("unknown");
+                let mut text_idx = self.text_index.write().await;
+                if text_idx
+                    .index_file(&repo.repo_id, &entry.path, lang, &content)
+                    .is_ok()
+                {
+                    count += 1;
+                }
+            }
+            tracing::info!(
+                "Restored text index for {}: {} files",
+                repo.repo_id,
+                count
+            );
+            total += count;
+        }
+        Ok(total)
+    }
+
+    /// Incrementally re-index a single file from its (possibly remote) content.
+    ///
+    /// Used by the `uc.file.changed` NATS subscriber: when a worker edits a
+    /// file, it broadcasts the new content, and the gateway re-indexes text +
+    /// AST + semantic for that file without needing filesystem access to the
+    /// worker's worktree. This is what makes the shared index reflect live
+    /// edits across the cluster.
+    pub async fn reindex_file_content(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+        content: &str,
+    ) -> Result<IndexResponse, EngineError> {
+        let mut symbols_extracted: u32 = 0;
+        let mut chunks_embedded: u32 = 0;
+
+        let language = crate::git::detect_language(file_path);
+        let lang = language.unwrap_or("unknown");
+
+        // Remove old data for this file first (text + AST + semantic).
+        self.remove_file_from_index(repo_id, file_path).await?;
+
+        // Text index
+        {
+            let mut text_idx = self.text_index.write().await;
+            text_idx.index_file(repo_id, file_path, lang, content)?;
+        }
+
+        // AST + semantic (only for supported languages)
+        if ast::should_parse(file_path) {
+            let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+            let result = self
+                .ast_indexer
+                .index_file(
+                    &self.metadata,
+                    repo_id,
+                    file_path,
+                    content,
+                    lang,
+                    &content_hash,
+                )
+                .await?;
+            symbols_extracted += result.symbols.len() as u32;
+
+            if let (Some(semantic), Some(ltm)) = (&self.semantic_indexer, &self.long_term_memory)
+            {
+                let chunks = semantic::create_chunks_from_ast(
+                    repo_id,
+                    file_path,
+                    lang,
+                    content,
+                    &content_hash,
+                    &result.symbols,
+                );
+                if !chunks.is_empty() {
+                    let count = semantic.index_chunks(&chunks, ltm).await?;
+                    chunks_embedded += count;
+                }
+            }
+        }
+
+        Ok(IndexResponse {
+            repo_id: repo_id.to_string(),
+            files_indexed: 1,
+            symbols_extracted,
+            chunks_embedded,
+            duration_ms: 0,
+        })
+    }
+
     /// Remove a repository's index.
     pub async fn remove_index(&self, repo_id: &str) -> Result<(), EngineError> {
         // Remove from text index
@@ -1406,6 +1544,135 @@ impl Database { fn connect(&self) -> Self { self.clone() } fn query(&self, q: &s
             state.files_count >= 2,
             "files_count should be >= 2 (indexed at least 2 files), got {}",
             state.files_count
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// AC: gateway restart does not lose text search — restore_text_index
+    /// rebuilds the in-memory inverted index from source files.
+    #[tokio::test]
+    async fn test_restore_text_index_after_restart() {
+        let temp_dir = std::env::temp_dir().join("uc-test-restore-text");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(
+            temp_dir.join("restore.rs"),
+            "fn special_restore_marker() {}",
+        )
+        .unwrap();
+
+        // metadata is shared across the "restart" — Postgres persists, the
+        // text index (in RAM) does not.
+        let metadata = Arc::new(PostgresMetadataStore::new_fallback());
+
+        // First "process": index the repo so it's registered + in metadata.
+        let pipeline1 = IndexPipeline::new(metadata.clone());
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "restore-repo".to_string(),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+        pipeline1.index_repo(&request).await.unwrap();
+        drop(pipeline1); // simulate process restart — text index lost
+
+        // Second "process": fresh pipeline (empty text index), same metadata.
+        let pipeline2 = IndexPipeline::new(metadata);
+        let query = SearchQuery {
+            query: "special_restore_marker".to_string(),
+            modes: vec![uc_types::search::SearchMode::Text],
+            repo_ids: vec![],
+            languages: vec![],
+            path_patterns: vec![],
+            max_results: 10,
+        };
+        // Before restore: text index is empty, search finds nothing.
+        let before = pipeline2.search_text(&query).await.unwrap();
+        assert!(
+            before.items.is_empty(),
+            "fresh pipeline should have empty text index"
+        );
+
+        // Restore from source.
+        let count = pipeline2.restore_text_index().await.unwrap();
+        assert!(count >= 1, "restore should re-index >= 1 file");
+
+        // After restore: search hits the marker.
+        let after = pipeline2.search_text(&query).await.unwrap();
+        assert!(
+            !after.items.is_empty(),
+            "text search should find results after restore"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// AC: a worker edit (reindex_file_content with new content) is reflected
+    /// in text search without a full reindex.
+    #[tokio::test]
+    async fn test_reindex_file_content_reflects_edit() {
+        let temp_dir = std::env::temp_dir().join("uc-test-reindex-file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("edit.rs"), "fn original_marker() {}").unwrap();
+
+        let metadata = Arc::new(PostgresMetadataStore::new_fallback());
+        let pipeline = IndexPipeline::new(metadata);
+        let request = IndexRequest {
+            repo: RepoSpec {
+                repo_id: "edit-repo".to_string(),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                local_path: Some(temp_dir.to_string_lossy().to_string()),
+            },
+            force_full: true,
+        };
+        pipeline.index_repo(&request).await.unwrap();
+
+        // Simulate a worker edit: the file content changes (no filesystem
+        // access needed — content comes from the file_changed event).
+        pipeline
+            .reindex_file_content(
+                "edit-repo",
+                "edit.rs",
+                "fn updated_marker_from_worker() {}",
+            )
+            .await
+            .unwrap();
+
+        // Search for the new content's unique token ("updated") — should hit.
+        let q_new = SearchQuery {
+            query: "updated".to_string(),
+            modes: vec![uc_types::search::SearchMode::Text],
+            repo_ids: vec![],
+            languages: vec![],
+            path_patterns: vec![],
+            max_results: 10,
+        };
+        let after = pipeline.search_text(&q_new).await.unwrap();
+        assert!(
+            !after.items.is_empty(),
+            "text search should find the worker-updated content"
+        );
+
+        // The old content's unique token ("original") should no longer be
+        // in the text index (the new content uses "updated", not "original").
+        let q_old = SearchQuery {
+            query: "original".to_string(),
+            modes: vec![uc_types::search::SearchMode::Text],
+            repo_ids: vec![],
+            languages: vec![],
+            path_patterns: vec![],
+            max_results: 10,
+        };
+        let stale = pipeline.search_text(&q_old).await.unwrap();
+        assert!(
+            stale.items.is_empty(),
+            "old content should be removed from the text index after reindex"
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);

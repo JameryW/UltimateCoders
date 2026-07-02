@@ -44,6 +44,24 @@ pub trait EngineApi: Send + Sync {
     /// Remove a repository's index.
     async fn remove_index(&self, repo_id: &str) -> Result<(), EngineError>;
 
+    /// Incrementally re-index a single file from its content.
+    ///
+    /// Used by the `uc.file.changed` subscriber to keep the shared index fresh
+    /// with worker edits without filesystem access to the worker's worktree.
+    /// Default impl returns an error — only the gateway-side LocalEngine
+    /// implements this; the gRPC client does not (workers don't reindex).
+    async fn reindex_file(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+        content: &str,
+    ) -> Result<IndexResponse, EngineError> {
+        let _ = (repo_id, file_path, content);
+        Err(EngineError::IndexingError(
+            "reindex_file not supported by this engine".into(),
+        ))
+    }
+
     // ── Memory ──────────────────────────────────────────────
 
     /// Read a memory entry.
@@ -63,6 +81,23 @@ pub trait EngineApi: Send + Sync {
         &self,
         request: MemorySearchRequest,
     ) -> Result<MemorySearchResponse, EngineError>;
+
+    /// Replay a memory write that happened during a gRPC fallback window.
+    ///
+    /// Last-writer-wins reconciliation by `MemoryWriteRequest.version`.
+    /// Returns the entry and whether it was applied (`true`) or skipped
+    /// as stale (`false`). Default impl delegates to `write_memory` for
+    /// engines that don't need reconciliation.
+    async fn replay_memory_write(
+        &self,
+        request: MemoryWriteRequest,
+    ) -> Result<crate::memory::MemoryReplayResult, EngineError> {
+        let entry = self.write_memory(request).await?;
+        Ok(crate::memory::MemoryReplayResult {
+            entry,
+            applied: true,
+        })
+    }
 
     // ── Health ──────────────────────────────────────────────
 

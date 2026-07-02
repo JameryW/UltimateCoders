@@ -47,6 +47,11 @@ pub const NATS_SUBJECT_HEARTBEAT: &str = "uc.heartbeat";
 /// NATS subject for subtask execution dispatch (Rust -> Worker queue group).
 pub const NATS_SUBJECT_SUBTASK_EXECUTE: &str = "uc.subtask.execute";
 
+/// NATS subject for file change events (Worker -> gateway + other workers).
+/// The gateway subscribes to incrementally re-index changed files into the
+/// shared codebase index.
+pub const NATS_SUBJECT_FILE_CHANGED: &str = "uc.file.changed";
+
 /// Payload for `uc.task.submit` messages.
 ///
 /// Published by gRPC server when a task is submitted. The Python NATS
@@ -168,6 +173,24 @@ fn default_timeout() -> u64 {
 pub struct NatsHeartbeat {
     pub consumer_id: String,
     pub timestamp: String,
+}
+
+/// Payload for `uc.file.changed` messages.
+///
+/// Workers broadcast this when they modify a file. The gateway uses the
+/// embedded `content` to incrementally re-index the file into the shared
+/// codebase index (text + AST + semantic) without needing filesystem access
+/// to the worker's worktree.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct NatsFileChanged {
+    pub repo_id: String,
+    pub file_path: String,
+    /// New full file content (UTF-8). Empty for deletes.
+    #[serde(default)]
+    pub content: String,
+    /// "created" | "modified" | "deleted" | "renamed"
+    #[serde(default)]
+    pub change_type: String,
 }
 
 // ── Helper: parse status from NATS message strings ───────────
@@ -1441,6 +1464,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 worker_registry.clone(),
                 event_tx,
             );
+            spawn_file_changed_subscriber(client.clone(), inner.clone());
             spawn_heartbeat_monitor(
                 client,
                 task_store.clone(),
@@ -1495,6 +1519,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 worker_registry.clone(),
                 event_tx,
             );
+            spawn_file_changed_subscriber(client.clone(), inner.clone());
             spawn_heartbeat_monitor(
                 client,
                 task_store.clone(),
@@ -2041,6 +2066,103 @@ fn spawn_nats_subscriber(
                         // Break the inner loop to re-subscribe rather than dying —
                         // a dead subscriber means heartbeat timeouts kill live tasks.
                         tracing::warn!("NATS subscription ended, re-subscribing in 2s");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Spawn a background subscriber for `uc.file.changed` that incrementally
+/// re-indexes changed files into the shared codebase index.
+///
+/// When a worker edits a file, it broadcasts the new content on
+/// `uc.file.changed`. This subscriber calls `engine.reindex_file` so the
+/// gateway's text/AST/semantic index reflects live edits across the cluster
+/// without needing filesystem access to the worker's worktree.
+///
+/// Re-subscribes on NATS disconnect (same resilient pattern as
+/// `spawn_nats_subscriber`).
+#[cfg(feature = "messaging")]
+fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
+    nats_client: async_nats::Client,
+    inner: Arc<GrpcServerInner<E>>,
+) {
+    use futures::StreamExt;
+
+    tokio::spawn(async move {
+        loop {
+            let mut sub =
+                match nats_client.subscribe(NATS_SUBJECT_FILE_CHANGED).await {
+                    Ok(sub) => sub,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to subscribe to uc.file.changed, retrying in 2s"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+            tracing::info!("NATS subscriber started for uc.file.changed (index sync)");
+
+            loop {
+                tokio::select! {
+                    Some(message) = sub.next() => {
+                        match serde_json::from_slice::<NatsFileChanged>(&message.payload) {
+                            Ok(fc) => {
+                                if fc.content.is_empty()
+                                    || fc.change_type == "deleted"
+                                {
+                                    // ponytail: delete reindex not wired —
+                                    // reindex_file only handles content. Stale
+                                    // entries are cleaned on next full reindex.
+                                    tracing::debug!(
+                                        repo_id = %fc.repo_id,
+                                        file_path = %fc.file_path,
+                                        "Skipping file-changed (empty/delete)"
+                                    );
+                                    continue;
+                                }
+                                match inner.engine.reindex_file(
+                                    &fc.repo_id,
+                                    &fc.file_path,
+                                    &fc.content,
+                                ).await {
+                                    Ok(resp) => {
+                                        tracing::info!(
+                                            repo_id = %fc.repo_id,
+                                            file_path = %fc.file_path,
+                                            symbols = resp.symbols_extracted,
+                                            chunks = resp.chunks_embedded,
+                                            "Re-indexed changed file"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            repo_id = %fc.repo_id,
+                                            file_path = %fc.file_path,
+                                            "Failed to re-index changed file"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Failed to parse uc.file.changed message"
+                                );
+                            }
+                        }
+                    }
+                    else => {
+                        tracing::warn!(
+                            "uc.file.changed subscription ended, re-subscribing in 2s"
+                        );
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         break;
                     }
@@ -2610,11 +2732,27 @@ impl<E: EngineApi + Send + Sync + 'static> EngineService for GrpcServer<E> {
                 tags: req.tags,
                 embedding: None,
             },
+            version: req.version.filter(|&v| v != 0),
         };
         let result = self
             .inner
             .engine
             .write_memory(write_req)
+            .await
+            .map_err(to_status)?;
+        Ok(Response::new(result.into()))
+    }
+
+    async fn replay_memory_write(
+        &self,
+        request: Request<ReplayMemoryWriteRequest>,
+    ) -> Result<Response<ReplayMemoryWriteResponse>, Status> {
+        let req = request.into_inner();
+        let write_req: uc_types::MemoryWriteRequest = req.into();
+        let result = self
+            .inner
+            .engine
+            .replay_memory_write(write_req)
             .await
             .map_err(to_status)?;
         Ok(Response::new(result.into()))
