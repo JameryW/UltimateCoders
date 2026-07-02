@@ -69,6 +69,7 @@ async fn grpc_memory_write_read_delete() {
                 tags: vec!["test".to_string()],
                 embedding: None,
             },
+            version: None,
         })
         .await
         .unwrap();
@@ -122,6 +123,7 @@ async fn grpc_memory_global_key() {
                 tags: vec![],
                 embedding: None,
             },
+            version: None,
         })
         .await
         .unwrap();
@@ -160,6 +162,7 @@ async fn grpc_memory_project_key() {
                 tags: vec!["architecture".to_string()],
                 embedding: None,
             },
+            version: None,
         })
         .await
         .unwrap();
@@ -205,6 +208,7 @@ async fn grpc_search_memory() {
                 tags: vec!["decision".to_string()],
                 embedding: None,
             },
+            version: None,
         })
         .await
         .unwrap();
