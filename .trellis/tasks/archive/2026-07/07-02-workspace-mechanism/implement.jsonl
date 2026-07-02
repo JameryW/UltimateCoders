@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/cross-repo-search-spec.md", "reason": "workspace_id scoping extends the cross-repo search contract; SearchQuery.in_workspace builds on in_all_repos/in_repos pattern"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "additive ALTER TABLE IF NOT EXISTS migration for workspace_id column + index follows the no-destructive-migration convention"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "repo_config.py / nats_worker.py / engine.py placement and the Rust crate layering for the workspace_id threading"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "nats_worker startup loads uc.repos.yaml and indexes the workspace — worker bootstrap contract"}

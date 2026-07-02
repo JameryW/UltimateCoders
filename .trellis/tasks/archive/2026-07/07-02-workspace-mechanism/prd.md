@@ -42,12 +42,16 @@
 
 ## Acceptance Criteria
 
-- [ ] `uc.repos.yaml` 含 `workspace_id` 字段；example 文件存在
-- [ ] `nats_worker.py` 启动调 `load_repos_config`，日志显示工作目录内 repo 被索引
-- [ ] `repos` 表有 `workspace_id` 列；`list_repos(workspace_id=...)` 过滤生效
-- [ ] `SearchQuery.in_workspace(engine, ws_id)` 返回该工作目录内 repo 的搜索结果
-- [ ] 远程-only entry 被 clone 到缓存目录并索引成功
-- [ ] 现有测试不破；新增工作目录加载的单元测试
+- [x] `uc.repos.yaml` 含 `workspace_id` 字段；example 文件存在
+- [x] `nats_worker.py` 启动调 `load_repos_config`，日志显示工作目录内 repo 被索引
+- [x] `repos` 表有 `workspace_id` 列；`list_repos(workspace_id=...)` 过滤生效
+- [x] `SearchQuery.in_workspace(engine, ws_id)` 返回该工作目录内 repo 的搜索结果
+- [x] 远程-only entry 被 clone 到缓存目录并索引成功
+- [x] 现有测试不破；新增工作目录加载的单元测试
+
+> Verified: PR #208 MERGED (2026-07-02). Rust `cargo test -p uc-engine --lib`
+> 334 passed; Python `test_repo_config.py` + `test_workspace.py` 28 passed.
+> End-to-end (2 workers, workspace_id=e2e-test-ws) confirmed per commit 3e3144f0.
 
 ## Technical Approach
 
