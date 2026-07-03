@@ -1004,6 +1004,24 @@ class Worker:
             for fp in declared_files:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
 
+    async def _emit_step_event(
+        self, subtask: Subtask, event_type: str, **data: Any
+    ) -> None:
+        """Publish a workflow step event, best-effort.
+
+        Wraps _publish_event so a NATS/event-emitter failure never aborts
+        the step chain — observability is non-fatal.
+        """
+        try:
+            await self._publish_event(
+                event_type,
+                task_id=subtask.parent_id,
+                subtask_id=subtask.id,
+                data={"worker_id": self.worker_id, **data},
+            )
+        except Exception:
+            logger.debug("step event publish failed", exc_info=True)
+
     async def _execute_steps(
         self,
         subtask: Subtask,
@@ -1053,6 +1071,20 @@ class Worker:
                 subtask.id[:8],
                 step.agent,
             )
+            # ponytail: emit step boundary events so TUI/dashboard can show
+            # which step of the chain is running. Best-effort — a publish
+            # failure must never abort the workflow.
+            total = len(subtask.steps)
+            percent = int(100 * idx / total) if total else 0
+            await self._emit_step_event(
+                subtask, "subtask_progress",
+                phase=f"step {idx + 1}/{total}: {step.agent}",
+                percent=percent,
+                step_index=idx,
+                step_total=total,
+                step_agent=step.agent,
+                step_status="started",
+            )
             output = await self._sandbox_manager.execute(
                 rendered,
                 working_dir=working_dir,
@@ -1062,6 +1094,16 @@ class Worker:
             )
             step_outputs.append(output)
             all_file_changes.extend(output.file_changes)
+            await self._emit_step_event(
+                subtask, "subtask_progress",
+                phase=f"step {idx + 1}/{total}: {step.agent}",
+                percent=int(100 * (idx + 1) / total) if total else 0,
+                step_index=idx,
+                step_total=total,
+                step_agent=step.agent,
+                step_status="completed" if output.success else "failed",
+                step_summary=output.summary[:200],
+            )
             last_output = output
 
             if not output.success:

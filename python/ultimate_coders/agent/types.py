@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -122,6 +123,37 @@ class Subtask:
         return self.status == SubtaskStatus.FAILED
 
 
+def _resolve_agent_config_field(data: dict[str, Any]) -> dict[str, Any]:
+    """Extract an agent_config dict from a payload dict.
+
+    Handles two sources of mismatch in the wire format:
+    1. Key name: Rust (NatsSubtaskExecute, WorkflowStepProto) serializes the
+       field as ``agent_config_json``; the OMP/Python path uses
+       ``agent_config``. Accept either.
+    2. Value type: Rust sends a JSON *string*; Python/OMP send a dict.
+       Parse the string when present.
+
+    ponytail: best-effort — returns {} on any parse failure so a malformed
+    override never crashes the worker; the step still runs with defaults.
+    """
+    raw = data.get("agent_config")
+    if raw is None:
+        raw = data.get("agent_config_json")
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        if not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
 @dataclass
 class WorkflowStep:
     """A single step in a subtask's multi-agent workflow.
@@ -155,7 +187,7 @@ class WorkflowStep:
         return cls(
             agent=data.get("agent", ""),
             prompt=data.get("prompt", ""),
-            agent_config=data.get("agent_config", {}),
+            agent_config=_resolve_agent_config_field(data),
             abort_on_failure=data.get("abort_on_failure", True),
         )
 
@@ -268,7 +300,7 @@ class Task:
                 ),
                 dispatch_retry_count=sd.get("dispatch_retry_count", 0),
                 required_capabilities=sd.get("required_capabilities", []),
-                agent_config=sd.get("agent_config", {}),
+                agent_config=_resolve_agent_config_field(sd),
                 steps=[WorkflowStep.from_dict(s) for s in sd.get("steps", [])],
             )
             rd = sd.get("result")
