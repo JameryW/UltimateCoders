@@ -64,6 +64,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
+		steps?: Array<{ agent: string; prompt: string }>;
 	}>;
 }
 
@@ -682,7 +683,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -695,6 +696,7 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				steps: st.steps?.map((s) => ({ agent: s.agent, prompt: s.prompt })),
 			})),
 		};
 	}
@@ -713,6 +715,7 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				steps: st.steps?.map((s) => ({ agent: s.agent, prompt: s.prompt })),
 			})),
 		};
 	}

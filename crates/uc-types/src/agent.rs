@@ -296,3 +296,97 @@ pub struct FileContent {
     pub truncated: bool,
     pub lines: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subtask_without_steps_field_deserializes_empty() {
+        // Backward compat: a Subtask serialized before `steps` existed has no
+        // `steps` key. `#[serde(default)]` must yield an empty vec.
+        let json = r#"{
+            "id": "T1",
+            "parent_id": "T0",
+            "description": "legacy subtask",
+            "status": "Pending",
+            "assigned_worker": null,
+            "depends_on": [],
+            "file_constraints": [],
+            "expected_output": "",
+            "result": null
+        }"#;
+        let st: Subtask = serde_json::from_str(json).unwrap();
+        assert!(st.steps.is_empty());
+        assert_eq!(st.dispatch_mode, DispatchMode::PreferRemote);
+    }
+
+    #[test]
+    fn workflow_step_round_trips() {
+        let step = WorkflowStep {
+            agent: "codex".to_string(),
+            prompt: "CR: {{prev_summary}}".to_string(),
+            agent_config_json: Some(r#"{"agent_name":"reviewer"}"#.to_string()),
+            abort_on_failure: false,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.agent, "codex");
+        assert_eq!(back.prompt, "CR: {{prev_summary}}");
+        assert_eq!(
+            back.agent_config_json.as_deref(),
+            Some(r#"{"agent_name":"reviewer"}"#)
+        );
+        assert!(!back.abort_on_failure);
+    }
+
+    #[test]
+    fn workflow_step_default_abort_on_failure_true() {
+        // When abort_on_failure is absent, default_true kicks in.
+        let json = r#"{"agent":"claude-code","prompt":"write"}"#;
+        let step: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert!(step.abort_on_failure);
+    }
+
+    #[test]
+    fn subtask_with_steps_serializes_and_round_trips() {
+        let subtask = Subtask {
+            id: TaskId("st-1".to_string()),
+            parent_id: TaskId("t-1".to_string()),
+            description: "implement X".to_string(),
+            status: SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: DispatchMode::PreferRemote,
+            dispatch_retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: vec![
+                WorkflowStep {
+                    agent: "claude-code".to_string(),
+                    prompt: "write".to_string(),
+                    agent_config_json: None,
+                    abort_on_failure: true,
+                },
+                WorkflowStep {
+                    agent: "codex".to_string(),
+                    prompt: "CR {{prev_summary}}".to_string(),
+                    agent_config_json: None,
+                    abort_on_failure: true,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&subtask).unwrap();
+        // steps appear in the serialized form (proves the field is emitted).
+        assert!(json.contains("\"steps\""));
+        assert!(json.contains("claude-code"));
+        assert!(json.contains("codex"));
+        let back: Subtask = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.steps.len(), 2);
+        assert_eq!(back.steps[0].agent, "claude-code");
+        assert_eq!(back.steps[1].agent, "codex");
+    }
+}

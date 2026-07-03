@@ -79,7 +79,11 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 						}
 						const subtaskLines = result.task.subtasks
 							.slice(0, 10)
-							.map((st) => `  ${st.status} ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}`)
+							.map((st) => {
+								const stepCount = st.steps?.length ?? 0;
+								const stepTag = stepCount > 0 ? ` [→${stepCount} steps]` : "";
+								return `  ${st.status} ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}${stepTag}`;
+							})
 							.join("\n");
 						return {
 							content: [{
@@ -145,7 +149,11 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								};
 							}
 							const subtaskLines = task.subtasks
-								.map((st) => `  [${st.status}] ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}`)
+								.map((st) => {
+									const stepCount = st.steps?.length ?? 0;
+									const stepTag = stepCount > 0 ? ` [→${stepCount} steps]` : "";
+									return `  [${st.status}] ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}${stepTag}`;
+								})
 								.join("\n");
 							return {
 								content: [{
