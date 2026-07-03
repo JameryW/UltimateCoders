@@ -18,6 +18,11 @@ PIDS_FILE="$SCRIPT_DIR/.cluster-pids"
 LOG_DIR="$SCRIPT_DIR/.logs"
 mkdir -p "$LOG_DIR"
 
+# OMP workspace setup (cwd + symlink nested configs) — shared with run-omp.sh.
+# ponytail: sourced so both launchers stay in sync; see scripts/omp-workspace.sh.
+# shellcheck source=scripts/omp-workspace.sh
+source "$SCRIPT_DIR/scripts/omp-workspace.sh"
+
 # ── Colors ─────────────────────────────────────────────────────
 GREEN="\033[32m"
 YELLOW="\033[33m"
@@ -323,9 +328,10 @@ sleep 2
 # ── Start OMP ──────────────────────────────────────────────────
 if [ "$NO_OMP" = false ]; then
     log "Starting OMP..."
-    cd "$SCRIPT_DIR/vendor/oh-my-pi"
-    exec bun packages/coding-agent/src/cli.ts \
-      --extension ../../packages/uc-orchestrator
+    setup_omp_workspace
+    cd "$OMP_WORKSPACE"
+    exec bun "$OMP_ENTRY" \
+      --extension "$UC_EXT"
 else
     log "Cluster running (--no-omp mode). Ctrl+C to stop."
     # Keep script alive so trap can cleanup on Ctrl+C
