@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use uc_types::error::EngineError;
-use uc_types::{Subtask, SubtaskStatus, Task, TaskId, TaskStatus};
+use uc_types::{Subtask, SubtaskStatus, Task, TaskId, TaskStatus, WorkflowStep};
 
 #[cfg(feature = "storage")]
 use std::sync::Arc;
@@ -575,7 +575,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
             dispatch_retry_count: 0,
             required_capabilities: Vec::new(),
             agent_config_json: None,
-            steps: Vec::new(),
+            steps: steps_for_description(description),
         }];
     }
 
@@ -607,7 +607,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
         subtasks.push(Subtask {
             id: st_id.clone(),
             parent_id: parent_id.clone(),
-            description: desc,
+            description: desc.clone(),
             status: SubtaskStatus::Pending,
             assigned_worker: None,
             depends_on,
@@ -618,13 +618,45 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
             dispatch_retry_count: 0,
             required_capabilities: Vec::new(),
             agent_config_json: None,
-            steps: Vec::new(),
+            steps: steps_for_description(&desc),
         });
 
         prev_id = Some(st_id);
     }
 
     subtasks
+}
+
+/// Derive workflow steps for a decomposed subtask from a description marker.
+///
+/// ponytail: marker-based heuristic, no LLM. A subtask whose description
+/// ends with `>>cr` (or `>>review`) gets a 2-step chain: claude-code
+/// implements the description, then codex code-reviews the result (with
+/// the implementer's summary threaded in). No marker = empty steps =
+/// legacy single-agent path.
+///
+/// Upgrade path: replace this with an LLM decomposer that emits steps
+/// per subtask based on task semantics.
+fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
+    let trimmed = desc.trim_end();
+    let marker = trimmed.rsplit_once(">>").map(|(_, m)| m.trim());
+    match marker {
+        Some("cr") | Some("review") => vec![
+            WorkflowStep {
+                agent: "claude-code".to_string(),
+                prompt: format!("Implement: {}", trimmed.trim_end_matches(">>cr").trim_end_matches(">>review").trim()),
+                agent_config_json: None,
+                abort_on_failure: true,
+            },
+            WorkflowStep {
+                agent: "codex".to_string(),
+                prompt: "Code review the changes from the previous step. Report concrete issues (bugs, missing tests, style) in the summary; if clean, say so. {{prev_summary}}".to_string(),
+                agent_config_json: None,
+                abort_on_failure: false,
+            },
+        ],
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -752,5 +784,49 @@ mod tests {
         // Delete
         backend.delete_task(&task_id).await.unwrap();
         assert!(backend.get_task(&task_id).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn decompose_no_marker_yields_no_steps() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement feature X");
+        assert_eq!(subs.len(), 1);
+        assert!(subs[0].steps.is_empty(), "no marker = single-agent path");
+    }
+
+    #[test]
+    fn decompose_cr_marker_yields_two_step_chain() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement feature X >>cr");
+        assert_eq!(subs.len(), 1);
+        let steps = &subs[0].steps;
+        assert_eq!(steps.len(), 2, ">>cr produces write + CR chain");
+        assert_eq!(steps[0].agent, "claude-code");
+        assert_eq!(steps[1].agent, "codex");
+        // Step 0 prompt carries the cleaned description (marker stripped).
+        assert!(steps[0].prompt.contains("implement feature X"));
+        assert!(!steps[0].prompt.contains(">>cr"));
+        // Step 1 (CR) threads step 0's summary and does not abort on failure
+        // (a CR finding is still useful signal even if codex exits non-zero).
+        assert!(steps[1].prompt.contains("{{prev_summary}}"));
+        assert!(!steps[1].abort_on_failure);
+    }
+
+    #[test]
+    fn decompose_review_marker_also_yields_chain() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "refactor module >>review");
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].steps.len(), 2);
+        assert_eq!(subs[0].steps[1].agent, "codex");
+    }
+
+    #[test]
+    fn decompose_multiline_with_marker_only_affects_marked_line() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement A\nwrite docs >>cr");
+        assert_eq!(subs.len(), 2);
+        assert!(subs[0].steps.is_empty(), "unmarked line stays single-agent");
+        assert_eq!(subs[1].steps.len(), 2, "marked line gets the chain");
     }
 }
