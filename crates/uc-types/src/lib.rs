@@ -14,7 +14,7 @@ pub mod search;
 // Re-exports for convenience
 pub use agent::{
     AgentEvent, AgentEventPayload, ChangeType, DispatchMode, FileChange, Subtask, SubtaskResult,
-    SubtaskStatus, Task, TaskId, TaskStatus, WorkerId, WorkerInfo,
+    SubtaskStatus, Task, TaskId, TaskStatus, WorkerId, WorkerInfo, WorkflowStep,
 };
 pub use async_trait::async_trait;
 pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState, SearchStream};

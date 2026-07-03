@@ -99,6 +99,10 @@ class Subtask:
     # Per-subtask agent config overrides (keys: tools, allowed_tools,
     # disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json)
     agent_config: dict[str, Any] = field(default_factory=dict)
+    # Ordered multi-agent workflow steps. Empty = single-agent execution via
+    # agent_config (backward compatible). When non-empty, the worker runs steps
+    # in order, threading each step's AgentOutput into the next step's prompt.
+    steps: list[WorkflowStep] = field(default_factory=list)
     # Project scope for cross-repo search and memory sharing
     project_id: str = ""
 
@@ -116,6 +120,44 @@ class Subtask:
     def is_failed(self) -> bool:
         """Whether this subtask has failed."""
         return self.status == SubtaskStatus.FAILED
+
+
+@dataclass
+class WorkflowStep:
+    """A single step in a subtask's multi-agent workflow.
+
+    Each step runs one coding agent (claude-code / codex) with a prompt
+    template. Steps run sequentially; the previous step's AgentOutput is
+    available to the next step's prompt via template variables:
+      {{prev_summary}} — previous step's AgentOutput.summary
+      {{prev_files}}   — previous step's modified file paths (one per line)
+      {{step0.summary}}, {{step0.files}} — any prior step by index
+    """
+
+    agent: str = ""
+    prompt: str = ""
+    # Per-step agent config overrides (same shape as Subtask.agent_config).
+    agent_config: dict[str, Any] = field(default_factory=dict)
+    # If True (default), a failed step aborts the whole chain and the
+    # subtask fails. If False, the chain continues to the next step.
+    abort_on_failure: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "prompt": self.prompt,
+            "agent_config": self.agent_config,
+            "abort_on_failure": self.abort_on_failure,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> WorkflowStep:
+        return cls(
+            agent=data.get("agent", ""),
+            prompt=data.get("prompt", ""),
+            agent_config=data.get("agent_config", {}),
+            abort_on_failure=data.get("abort_on_failure", True),
+        )
 
 
 @dataclass
@@ -159,6 +201,7 @@ class Task:
                     "dispatch_mode": st.dispatch_mode.value,
                     "dispatch_retry_count": st.dispatch_retry_count,
                     "agent_config": st.agent_config,
+                    "steps": [s.to_dict() for s in st.steps],
                     "result": {
                         "subtask_id": st.result.subtask_id,
                         "worker_id": st.result.worker_id,
@@ -226,6 +269,7 @@ class Task:
                 dispatch_retry_count=sd.get("dispatch_retry_count", 0),
                 required_capabilities=sd.get("required_capabilities", []),
                 agent_config=sd.get("agent_config", {}),
+                steps=[WorkflowStep.from_dict(s) for s in sd.get("steps", [])],
             )
             rd = sd.get("result")
             if rd is not None:

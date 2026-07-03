@@ -22,7 +22,8 @@ use crate::ultimate_coders::{
     ReplayMemoryWriteRequest, ReplayMemoryWriteResponse, RepoIndexStateProto, ResumeTaskResponse,
     SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
     SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubmitTaskResponse,
-    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WriteMemoryRequest, WriteMemoryResponse,
+    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WorkflowStepProto, WriteMemoryRequest,
+    WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -886,7 +887,28 @@ impl From<Subtask> for SubtaskProto {
             dispatch_retry_count: Some(st.dispatch_retry_count),
             required_capabilities: st.required_capabilities,
             agent_config_json: st.agent_config_json,
+            steps: st.steps.iter().map(step_to_proto).collect(),
         }
+    }
+}
+
+/// Map a `WorkflowStep` to its proto form.
+fn step_to_proto(s: &uc_types::WorkflowStep) -> WorkflowStepProto {
+    WorkflowStepProto {
+        agent: s.agent.clone(),
+        prompt: s.prompt.clone(),
+        agent_config_json: s.agent_config_json.clone(),
+        abort_on_failure: Some(s.abort_on_failure),
+    }
+}
+
+/// Map a proto `WorkflowStepProto` back to the domain type.
+fn step_from_proto(s: &WorkflowStepProto) -> uc_types::WorkflowStep {
+    uc_types::WorkflowStep {
+        agent: s.agent.clone(),
+        prompt: s.prompt.clone(),
+        agent_config_json: s.agent_config_json.clone(),
+        abort_on_failure: s.abort_on_failure.unwrap_or(true),
     }
 }
 
@@ -1203,6 +1225,7 @@ impl From<SubtaskProto> for Subtask {
             dispatch_retry_count: proto.dispatch_retry_count.unwrap_or(0),
             required_capabilities: proto.required_capabilities,
             agent_config_json: proto.agent_config_json,
+            steps: proto.steps.iter().map(step_from_proto).collect(),
         }
     }
 }
@@ -1576,6 +1599,7 @@ mod tests {
                 dispatch_retry_count: None,
                 required_capabilities: vec![],
                 agent_config_json: None,
+                steps: vec![],
             }],
         };
         let task: Task = proto.into();
