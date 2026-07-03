@@ -234,6 +234,60 @@ async def test_execute_steps_accumulates_file_changes_across_chain():
     assert paths == {"a.rs", "b.rs"}
 
 
+@pytest.mark.asyncio
+async def test_execute_steps_emits_progress_events_per_step():
+    """Each step emits a start + end subtask_progress event with step metadata."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="s0", success=True),
+            AgentOutput(summary="s1", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0"),
+            WorkflowStep(agent="codex", prompt="s1"),
+        ],
+    )
+    await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # 2 steps × (start + end) = 4 progress events.
+    assert w._publish_event.await_count == 4
+    calls = w._publish_event.await_args_list
+    # First call: step 1 started.
+    assert calls[0].args[0] == "subtask_progress"
+    assert calls[0].kwargs["task_id"] == "t-1"
+    assert calls[0].kwargs["subtask_id"] == "st-1"
+    assert calls[0].kwargs["data"]["step_index"] == 0
+    assert calls[0].kwargs["data"]["step_total"] == 2
+    assert calls[0].kwargs["data"]["step_agent"] == "claude-code"
+    assert calls[0].kwargs["data"]["step_status"] == "started"
+    # Second call: step 1 completed.
+    assert calls[1].kwargs["data"]["step_status"] == "completed"
+    assert calls[1].kwargs["data"]["step_summary"] == "s0"
+    # Third call: step 2 started (codex).
+    assert calls[2].kwargs["data"]["step_agent"] == "codex"
+    assert calls[2].kwargs["data"]["step_index"] == 1
+    # Fourth call: step 2 completed.
+    assert calls[3].kwargs["data"]["step_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_emit_step_event_swallows_publish_failures():
+    """A NATS publish failure must not propagate out of _emit_step_event."""
+    w = _make_worker()
+    w._publish_event = AsyncMock(side_effect=RuntimeError("nats down"))
+    subtask = Subtask(id="st", parent_id="t", description="d", status=SubtaskStatus.PENDING)
+    # Should not raise.
+    await w._emit_step_event(subtask, "subtask_progress", phase="x", step_index=0)
+
+
 # ── WorkflowStep serialization ───────────────────────────────────
 
 
