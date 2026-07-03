@@ -375,6 +375,24 @@ message SubtaskProto {
     // Keys: tools, allowed_tools, disallowed_tools, mcp_configs,
     //       append_system_prompt, agent_name, agents_json.
     optional string agent_config_json = 13;
+    // Ordered multi-agent workflow steps. Empty = single-agent execution
+    // via agent_config_json (backward compatible). When non-empty, the worker
+    // runs steps in order, threading each step's output into the next.
+    repeated WorkflowStepProto steps = 14;
+}
+
+// A single step in a subtask's multi-agent workflow.
+message WorkflowStepProto {
+    // Agent adapter name: "claude-code" | "codex"
+    string agent = 1;
+    // Prompt template. Supports {{prev_summary}}, {{prev_files}},
+    // {{step<N>.summary}}, {{step<N>.files}}.
+    string prompt = 2;
+    // Per-step agent config overrides (JSON string, same shape as
+    // SubtaskProto.agent_config_json).
+    optional string agent_config_json = 3;
+    // If true (default), a failed step aborts the whole chain.
+    optional bool abort_on_failure = 4;
 }
 
 // ── Batch Memory ────────────────────────────────────────

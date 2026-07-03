@@ -40,6 +40,7 @@ from ultimate_coders.agent.types import (
     SubtaskStatus,
     Task,
     TaskStatus,
+    WorkflowStep,
 )
 from ultimate_coders.agent.worker import Worker
 from ultimate_coders.engine import Engine
@@ -1475,6 +1476,7 @@ class NatsWorker:
             dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
             agent_config=data.get("agent_config", {}),
+            steps=[WorkflowStep.from_dict(s) for s in data.get("steps", [])],
             project_id=data.get("project_id", ""),
         )
 

@@ -244,6 +244,7 @@ class SandboxManager:
         working_dir: str | None = None,
         on_stdout_line: Any | None = None,
         subtask_config: dict[str, Any] | None = None,
+        agent: str | None = None,
     ) -> AgentOutput:
         """Execute an agent prompt in a sandbox.
 
@@ -254,6 +255,10 @@ class SandboxManager:
                 called for each stdout line during execution. Used for real-time
                 streaming of tool_call/file_modified events to TUI/Dashboard.
             subtask_config: Per-subtask agent config overrides (tools, mcp, etc.)
+            agent: Override the agent adapter for this call (e.g. "codex" while
+                the manager's default is "claude-code"). Used by multi-step
+                workflows where each step may run a different agent. None = use
+                the manager's configured adapter (default behavior).
 
         Returns:
             AgentOutput with summary, file changes, and success status.
@@ -262,13 +267,17 @@ class SandboxManager:
         wd = working_dir or self.config.working_dir or self.config.project_path
         temp_files: list[str] = []
 
+        # ponytail: per-call adapter override for multi-step workflows; falls
+        # back to the manager's default adapter when not specified.
+        adapter = self._create_adapter(agent) if agent else self._adapter
+
         try:
             # Create baseline for file tracking
             if self.engine is not None and hasattr(self.engine, "create_baseline"):
                 await self.engine.create_baseline(wd)
 
             # Build and execute the agent command
-            exec_request = self._adapter.build_request(
+            exec_request = adapter.build_request(
                 prompt, wd, self.config,
                 subtask_config=subtask_config,
             )
@@ -293,7 +302,7 @@ class SandboxManager:
                 )
 
             # Parse output
-            output = self._adapter.parse_output(result)
+            output = adapter.parse_output(result)
 
             # Attach stderr tail for failure diagnostics
             if result.stderr and not output.success:

@@ -105,6 +105,42 @@ pub struct Subtask {
     ///       append_system_prompt, agent_name, agents_json.
     #[serde(default)]
     pub agent_config_json: Option<String>,
+    /// Ordered multi-agent workflow steps. Empty (default) = single-agent
+    /// execution via `agent_config_json` (backward compatible). When non-empty,
+    /// the worker runs steps in order, threading each step's output into the
+    /// next step's prompt template (`{{prev_summary}}`, `{{prev_files}}`,
+    /// `{{step<N>.summary}}`). Typical chain: claude-code write → codex CR →
+    /// claude-code revise.
+    #[serde(default)]
+    pub steps: Vec<WorkflowStep>,
+}
+
+/// A single step in a subtask's multi-agent workflow.
+///
+/// Each step runs one coding agent (claude-code / codex) with a prompt
+/// template. Steps run sequentially; the previous step's AgentOutput is
+/// available to the next step's prompt via template variables.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowStep {
+    /// Agent adapter name ("claude-code" | "codex").
+    pub agent: String,
+    /// Prompt template. Supports:
+    ///   {{prev_summary}} — previous step's AgentOutput.summary
+    ///   {{prev_files}}   — previous step's modified file paths (one per line)
+    ///   {{step0.summary}}, {{step0.files}} ... — any prior step by index
+    /// Step 0 has no prev; {{prev_*}} resolves to empty for it.
+    pub prompt: String,
+    /// Per-step agent config overrides (same JSON shape as Subtask::agent_config_json).
+    #[serde(default)]
+    pub agent_config_json: Option<String>,
+    /// If true (default), a failed step aborts the whole chain and the
+    /// subtask fails. If false, the chain continues to the next step.
+    #[serde(default = "default_true")]
+    pub abort_on_failure: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Status of a subtask.

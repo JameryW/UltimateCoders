@@ -155,6 +155,11 @@ pub struct NatsSubtaskExecute {
     ///       append_system_prompt, agent_name, agents_json.
     #[serde(default)]
     pub agent_config_json: Option<String>,
+    /// Ordered multi-agent workflow steps. Empty = single-agent execution
+    /// via agent_config_json (backward compatible). When non-empty, the
+    /// worker runs steps in order, threading outputs into next step's prompt.
+    #[serde(default)]
+    pub steps: Vec<uc_types::WorkflowStep>,
     /// Project scope for cross-repo search and memory sharing.
     #[serde(default)]
     pub project_id: String,
@@ -481,6 +486,7 @@ impl TaskStore {
             dispatch_retry_count: 0,
             required_capabilities: Vec::new(),
             agent_config_json: None,
+            steps: Vec::new(),
         };
 
         let task = uc_types::Task {
@@ -958,6 +964,7 @@ impl TaskStore {
                     dispatch_retry_count: 0,
                     required_capabilities: Vec::new(),
                     agent_config_json: None,
+                    steps: Vec::new(),
                 };
                 task.subtasks.push(new_subtask);
                 // If a brand-new subtask arrives already Assigned (rare — usually
@@ -1734,6 +1741,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     dispatch_mode: st.dispatch_mode.clone(),
                     required_capabilities: st.required_capabilities.clone(),
                     agent_config_json: st.agent_config_json.clone(),
+                    steps: st.steps.clone(),
                     project_id: project_id.clone(),
                 };
                 match serde_json::to_vec(&execute) {
@@ -2353,6 +2361,7 @@ async fn dispatch_ready_subtasks(
             dispatch_mode: st.dispatch_mode.clone(),
             required_capabilities: st.required_capabilities.clone(),
             agent_config_json: st.agent_config_json.clone(),
+            steps: st.steps.clone(),
             project_id: project_id.clone(),
         };
         match serde_json::to_vec(&execute) {
@@ -3373,6 +3382,16 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     dispatch_retry_count: st.dispatch_retry_count.unwrap_or(0),
                     required_capabilities: st.required_capabilities,
                     agent_config_json: None,
+                    steps: st
+                        .steps
+                        .iter()
+                        .map(|s| uc_types::WorkflowStep {
+                            agent: s.agent.clone(),
+                            prompt: s.prompt.clone(),
+                            agent_config_json: s.agent_config_json.clone(),
+                            abort_on_failure: s.abort_on_failure.unwrap_or(true),
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -4041,6 +4060,7 @@ mod tests {
                 dispatch_retry_count: 0,
                 required_capabilities: Vec::new(),
                 agent_config_json: None,
+                steps: Vec::new(),
             });
         }
         // Only the first subtask (no deps) should be ready
@@ -4073,6 +4093,7 @@ mod tests {
                 dispatch_retry_count: 0,
                 required_capabilities: Vec::new(),
                 agent_config_json: None,
+                steps: Vec::new(),
             });
         }
         // Complete the first subtask

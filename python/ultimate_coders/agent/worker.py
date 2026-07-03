@@ -38,6 +38,7 @@ from ultimate_coders.agent.state_sync import (
     FileChangeEventType,
 )
 from ultimate_coders.agent.types import (
+    FileChange,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -105,11 +106,14 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
             obj = json.loads(stripped)
             evt_type = obj.get("type", "")
             if evt_type == "tool_use":
-                return ("tool_call", {
-                    "tool_name": obj.get("name", "unknown"),
-                    "tool_id": obj.get("id", ""),
-                    "input_summary": json.dumps(obj.get("input", {}), ensure_ascii=False)[:300],
-                })
+                return (
+                    "tool_call",
+                    {
+                        "tool_name": obj.get("name", "unknown"),
+                        "tool_id": obj.get("id", ""),
+                        "input_summary": json.dumps(obj.get("input", {}), ensure_ascii=False)[:300],
+                    },
+                )
             if evt_type == "tool_result":
                 content = obj.get("content", "")
                 if isinstance(content, list):
@@ -123,11 +127,14 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
                     content = content[:300]
                 else:
                     content = str(content)[:300]
-                return ("tool_result", {
-                    "tool_id": obj.get("tool_use_id", ""),
-                    "is_error": obj.get("is_error", False),
-                    "content_summary": content,
-                })
+                return (
+                    "tool_result",
+                    {
+                        "tool_id": obj.get("tool_use_id", ""),
+                        "is_error": obj.get("is_error", False),
+                        "content_summary": content,
+                    },
+                )
             # Other stream-json event types (assistant, result, etc.) — skip
             return None
         except (json.JSONDecodeError, TypeError):
@@ -140,10 +147,13 @@ def _parse_sandbox_line(line: str) -> tuple[str, dict[str, Any]] | None:
     if m:
         tool_name = m.group(1).strip()
         tool_args = m.group(2).strip() if m.group(2) else ""
-        return ("tool_call", {
-            "tool_name": tool_name,
-            "args": tool_args[:200],
-        })
+        return (
+            "tool_call",
+            {
+                "tool_name": tool_name,
+                "args": tool_args[:200],
+            },
+        )
 
     # File modification
     m = _FILE_MODIFIED_RE.match(line)
@@ -295,6 +305,7 @@ class Worker:
 
         # Search cache — LRU + TTL to reduce gRPC round-trips
         from ultimate_coders.agent.search_cache import get_default_cache
+
         self._search_cache = get_default_cache()
 
         # Strong refs for fire-and-forget broadcast tasks. asyncio only holds
@@ -312,7 +323,7 @@ class Worker:
         if cfg.mcp_configs:
             caps.append("mcp")
             # Derive per-server capabilities from mcp_configs
-            for entry in (cfg.mcp_configs or []):
+            for entry in cfg.mcp_configs or []:
                 if isinstance(entry, dict):
                     for name in entry:
                         caps.append(f"mcp:{name}")
@@ -335,7 +346,7 @@ class Worker:
                     # real-time LSP for Python. Both coexist — codegraph for cross-repo/history.
                     caps.append("lsp")
         # Map specific mcp:<server> tags to semantic capability aliases.
-        for entry in (cfg.mcp_configs or []):
+        for entry in cfg.mcp_configs or []:
             server_names: list[str] = []
             if isinstance(entry, dict):
                 server_names = list(entry.keys())
@@ -362,7 +373,7 @@ class Worker:
                     if isinstance(cfg.agents_json, str)
                     else cfg.agents_json
                 )
-                for name in (agents if isinstance(agents, dict) else []):
+                for name in agents if isinstance(agents, dict) else []:
                     caps.append(f"agent:{name}")
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -381,8 +392,7 @@ class Worker:
         "review": {
             "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
             "append_system_prompt": (
-                "Read-only review mode — analyze and report only,"
-                " do not modify files."
+                "Read-only review mode — analyze and report only, do not modify files."
             ),
         },
         "codegraph": {
@@ -401,8 +411,7 @@ class Worker:
         "fix": {
             "tools": ["default"],
             "append_system_prompt": (
-                "Fix the bug with the minimal diff. Do not refactor"
-                " unrelated code."
+                "Fix the bug with the minimal diff. Do not refactor unrelated code."
             ),
         },
         "refactor": {
@@ -422,8 +431,7 @@ class Worker:
         "docs": {
             "tools": ["default"],
             "append_system_prompt": (
-                "Focus on writing documentation. Update README,"
-                " docstrings, and inline comments."
+                "Focus on writing documentation. Update README, docstrings, and inline comments."
             ),
         },
         # Explicit file-edit profile: opt into the in-process uc-fs MCP for precise
@@ -442,28 +450,21 @@ class Worker:
         "review": {
             "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
             "append_system_prompt": (
-                "Read-only review mode — analyze and report only,"
-                " do not modify files."
+                "Read-only review mode — analyze and report only, do not modify files."
             ),
         },
         "search": {
             "tools": ["default", "mcp__codegraph__*"],
         },
         "test": {
-            "append_system_prompt": (
-                "Write and run tests for the described behavior."
-            ),
+            "append_system_prompt": ("Write and run tests for the described behavior."),
         },
         "fix": {
-            "append_system_prompt": (
-                "Fix the described bug with minimal changes."
-            ),
+            "append_system_prompt": ("Fix the described bug with minimal changes."),
         },
         "refactor": {
             "tools": ["default", "mcp__codegraph__*"],
-            "append_system_prompt": (
-                "Refactor the described code preserving behavior."
-            ),
+            "append_system_prompt": ("Refactor the described code preserving behavior."),
         },
         "deploy": {
             "disallowed_tools": ["Edit", "Write", "NotebookEdit"],
@@ -564,11 +565,17 @@ class Worker:
         """Publish event via NATS (preferred) or local event_emitter fallback."""
         if self.nats_publisher is not None:
             await self.nats_publisher.publish_event(
-                event_type, task_id=task_id, subtask_id=subtask_id, data=data,
+                event_type,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=data,
             )
         elif self.event_emitter is not None:
             await self.event_emitter.emit(
-                event_type, task_id=task_id, subtask_id=subtask_id, data=data,
+                event_type,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=data,
             )
 
     MAX_RETRIES: int = 3
@@ -599,6 +606,7 @@ class Worker:
                 )
                 # Restore full SubtaskResult from checkpoint
                 from ultimate_coders.agent.types import ChangeType, FileChange
+
                 mod_files = [
                     FileChange(
                         file_path=f.get("file_path", ""),
@@ -634,7 +642,8 @@ class Worker:
                 if workspace_handle:
                     logger.info(
                         "Subtask %s allocated workspace %s",
-                        subtask.id[:8], workspace_handle.workspace_id,
+                        subtask.id[:8],
+                        workspace_handle.workspace_id,
                     )
 
             await self._publish_event(
@@ -689,19 +698,19 @@ class Worker:
 
                     # Broadcast file change events for distributed state sync
                     if result.success and result.modified_files:
-                        await self._broadcast_file_changes(
-                            subtask, result, workspace_handle
-                        )
+                        await self._broadcast_file_changes(subtask, result, workspace_handle)
 
                     # Release workspace (merge if successful)
                     if workspace_handle:
                         merge_result = await self._workspace_manager.release(
-                            workspace_handle, merge=result.success,
+                            workspace_handle,
+                            merge=result.success,
                         )
                         if merge_result.get("status") == "conflict":
                             logger.warning(
                                 "Workspace merge conflict for subtask %s, branch preserved: %s",
-                                subtask.id[:8], merge_result.get("branch_preserved", ""),
+                                subtask.id[:8],
+                                merge_result.get("branch_preserved", ""),
                             )
 
                     if result.success:
@@ -762,7 +771,10 @@ class Worker:
                             )
                             logger.info(
                                 "Retrying subtask %s (attempt %d/%d, delay %.1fs)",
-                                subtask.id[:8], attempt + 1, self.MAX_RETRIES, delay,
+                                subtask.id[:8],
+                                attempt + 1,
+                                self.MAX_RETRIES,
+                                delay,
                             )
                             await asyncio.sleep(delay)
                             continue  # retry loop
@@ -806,7 +818,9 @@ class Worker:
                         )
                         logger.info(
                             "Retrying subtask %s after exception (attempt %d/%d)",
-                            subtask.id[:8], attempt + 1, self.MAX_RETRIES,
+                            subtask.id[:8],
+                            attempt + 1,
+                            self.MAX_RETRIES,
                         )
                         await asyncio.sleep(delay)
                         continue
@@ -910,6 +924,7 @@ class Worker:
         declared_files: list[str] = []
         if subtask.file_constraints:
             from ultimate_coders.agent.conflict import EditIntent, EditType
+
             for fp in subtask.file_constraints:
                 result, _ = self.conflict_detector.declare_intent(
                     EditIntent(
@@ -921,22 +936,12 @@ class Worker:
                 if result.value != "no_conflict":
                     logger.warning(
                         "Conflict detected for %s: %s (proceeding anyway)",
-                        fp, result.value,
+                        fp,
+                        result.value,
                     )
                 declared_files.append(fp)
 
         try:
-            # Build prompt with context injection
-            description = subtask.description
-            if context_block:
-                description = f"{context_block}\n\n{description}"
-
-            prompt = _SUBTASK_USER_TEMPLATE.format(
-                description=description,
-                expected_output=subtask.expected_output or "Complete the described task",
-                file_constraints=", ".join(subtask.file_constraints) or "none",
-            )
-
             # Determine working directory (workspace isolation)
             working_dir: str | None = None
             if workspace_handle and hasattr(workspace_handle, "worktree_path"):
@@ -955,15 +960,34 @@ class Worker:
                         data=data,
                     )
 
-            output: AgentOutput = await self._sandbox_manager.execute(
-                prompt,
-                working_dir=working_dir,
-                on_stdout_line=_on_stdout_line,
-                subtask_config=self._resolve_agent_config(subtask) or None,
-            )
+            # Multi-agent workflow: run ordered steps, threading each step's
+            # output into the next step's prompt template. Empty steps = the
+            # legacy single-agent path (backward compatible).
+            if subtask.steps:
+                output = await self._execute_steps(
+                    subtask, working_dir, _on_stdout_line, context_block
+                )
+            else:
+                # Build prompt with context injection
+                description = subtask.description
+                if context_block:
+                    description = f"{context_block}\n\n{description}"
+
+                prompt = _SUBTASK_USER_TEMPLATE.format(
+                    description=description,
+                    expected_output=subtask.expected_output or "Complete the described task",
+                    file_constraints=", ".join(subtask.file_constraints) or "none",
+                )
+
+                output: AgentOutput = await self._sandbox_manager.execute(
+                    prompt,
+                    working_dir=working_dir,
+                    on_stdout_line=_on_stdout_line,
+                    subtask_config=self._resolve_agent_config(subtask) or None,
+                )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
-            if not stderr_tail and hasattr(output, 'raw_stderr') and output.raw_stderr:
+            if not stderr_tail and hasattr(output, "raw_stderr") and output.raw_stderr:
                 stderr_tail = "\n".join(output.raw_stderr.strip().splitlines()[-10:])
             return SubtaskResult(
                 subtask_id=subtask.id,
@@ -979,6 +1003,156 @@ class Worker:
             # Release edit intent after execution (success or failure)
             for fp in declared_files:
                 self.conflict_detector.remove_intent(fp, self.worker_id)
+
+    async def _execute_steps(
+        self,
+        subtask: Subtask,
+        working_dir: str | None,
+        on_stdout_line: Any,
+        context_block: str,
+    ) -> AgentOutput:
+        """Run a subtask's ordered multi-agent workflow steps.
+
+        Each step runs its configured agent (claude-code / codex) with a
+        prompt template. Templates support:
+          {{prev_summary}} — previous step's AgentOutput.summary
+          {{prev_files}}   — previous step's modified file paths (one/line)
+          {{step<N>.summary}} / {{step<N>.files}} — any prior step by index
+
+        Step 0 has no prev; {{prev_*}} resolves to empty for it. A failed
+        step aborts the chain (unless abort_on_failure=False) and the
+        subtask fails. The returned AgentOutput is the LAST step's output;
+        file_changes are accumulated across all steps so the SubtaskResult
+        reflects every file touched in the workflow.
+        """
+        step_outputs: list[AgentOutput] = []
+        all_file_changes: list[FileChange] = []
+        last_output: AgentOutput | None = None
+        file_constraints_str = ", ".join(subtask.file_constraints) or "none"
+
+        for idx, step in enumerate(subtask.steps):
+            prev = step_outputs[-1] if step_outputs else None
+            rendered = self._render_step_prompt(
+                step.prompt,
+                idx,
+                step_outputs,
+                prev,
+                context_block,
+                file_constraints_str,
+            )
+
+            # ponytail: per-step agent_config override — merge step config over
+            # the subtask-level resolved config (step wins on conflict).
+            base_cfg = self._resolve_agent_config(subtask) or {}
+            merged_cfg = {**base_cfg, **step.agent_config} or None
+
+            logger.info(
+                "Workflow step %d/%d (subtask %s): agent=%s",
+                idx + 1,
+                len(subtask.steps),
+                subtask.id[:8],
+                step.agent,
+            )
+            output = await self._sandbox_manager.execute(
+                rendered,
+                working_dir=working_dir,
+                on_stdout_line=on_stdout_line,
+                subtask_config=merged_cfg,
+                agent=step.agent,
+            )
+            step_outputs.append(output)
+            all_file_changes.extend(output.file_changes)
+            last_output = output
+
+            if not output.success:
+                if step.abort_on_failure:
+                    logger.warning(
+                        "Workflow step %d failed (agent=%s), aborting chain for subtask %s",
+                        idx + 1,
+                        step.agent,
+                        subtask.id[:8],
+                    )
+                    # Surface the failed step's output as the subtask result.
+                    return AgentOutput(
+                        summary=f"[step {idx + 1} ({step.agent}) failed] {output.summary}",
+                        file_changes=all_file_changes,
+                        token_usage=output.token_usage,
+                        success=False,
+                        stderr_tail=output.stderr_tail,
+                        tool_calls=output.tool_calls,
+                    )
+                # abort_on_failure=False: log and continue to next step.
+                logger.warning(
+                    "Workflow step %d failed but abort_on_failure=False; continuing chain",
+                    idx + 1,
+                )
+
+        # All steps completed (or non-aborting failures). Return the last
+        # step's output, with file_changes merged across the whole chain.
+        if last_output is None:
+            # ponytail: empty steps list shouldn't reach here (caller guards),
+            # but fail safely rather than crash.
+            return AgentOutput(
+                summary="Workflow had no steps",
+                file_changes=[],
+                success=False,
+            )
+        return AgentOutput(
+            summary=last_output.summary,
+            file_changes=all_file_changes,
+            token_usage=last_output.token_usage,
+            success=last_output.success,
+            stderr_tail=last_output.stderr_tail,
+            tool_calls=last_output.tool_calls,
+        )
+
+    def _render_step_prompt(
+        self,
+        template: str,
+        idx: int,
+        step_outputs: list[AgentOutput],
+        prev: AgentOutput | None,
+        context_block: str,
+        file_constraints_str: str,
+    ) -> str:
+        """Render a step prompt template, injecting prior-step outputs.
+
+        Supported variables:
+          {{prev_summary}} — previous step's summary (empty for step 0)
+          {{prev_files}}   — previous step's modified file paths, one/line
+          {{stepN.summary}} / {{stepN.files}} — step N's output (N < idx)
+          {{context}}      — the subtask-level context_block
+          {{file_constraints}} — comma-joined file_constraints
+        """
+
+        def _files(out: AgentOutput) -> str:
+            return "\n".join(fc.file_path for fc in out.file_changes)
+
+        prev_summary = prev.summary if prev else ""
+        prev_files = _files(prev) if prev else ""
+
+        rendered = template
+        rendered = rendered.replace("{{prev_summary}}", prev_summary)
+        rendered = rendered.replace("{{prev_files}}", prev_files)
+        rendered = rendered.replace("{{context}}", context_block or "")
+        rendered = rendered.replace("{{file_constraints}}", file_constraints_str)
+
+        # {{stepN.summary}} / {{stepN.files}} for any prior step.
+        # ponytail: f-string {{ → literal {, so "{{{{...}}}}" yields the
+        # double-brace token "{{stepN.summary}}" that templates use.
+        for n in range(idx):
+            if n < len(step_outputs):
+                so = step_outputs[n]
+                rendered = rendered.replace(
+                    f"{{{{step{n}.summary}}}}",
+                    so.summary,
+                )
+                rendered = rendered.replace(
+                    f"{{{{step{n}.files}}}}",
+                    _files(so),
+                )
+
+        return rendered
 
     async def _broadcast_file_changes(
         self,
@@ -1017,9 +1191,7 @@ class Worker:
                     with open(full, encoding="utf-8", errors="replace") as fh:
                         content = fh.read()
                 except OSError:
-                    logger.debug(
-                        "Could not read post-edit content for %s", fc.file_path
-                    )
+                    logger.debug("Could not read post-edit content for %s", fc.file_path)
             event = FileChangeEvent(
                 task_id=subtask.parent_id,
                 subtask_id=subtask.id,
@@ -1066,7 +1238,8 @@ class Worker:
         if result != ConflictResult.NO_CONFLICT:
             logger.warning(
                 "Conflict detected for %s: %s (workers: %s)",
-                file_path, result.value,
+                file_path,
+                result.value,
                 info.conflicting_workers if info else [],
             )
         return result, info
@@ -1084,6 +1257,7 @@ class Worker:
         try:
             from ultimate_coders.agent.search_cache import WorkerLocalCache
             from ultimate_coders.search.query import SearchQuery
+
             sq = SearchQuery(subtask.description).with_modes(["hybrid"]).limit(10)
             if subtask.project_id:
                 sq.in_repos([subtask.project_id])
@@ -1091,7 +1265,10 @@ class Worker:
                 sq.in_all_repos(self.engine)
             d = sq.to_dict()
             cache_key = WorkerLocalCache.search_key(
-                d["query"], d["repo_ids"], d["modes"], d["max_results"],
+                d["query"],
+                d["repo_ids"],
+                d["modes"],
+                d["max_results"],
             )
             result = self._search_cache.get_search(cache_key)
             if result is None:
@@ -1115,7 +1292,10 @@ class Worker:
             return None
 
     def search_across_repos(
-        self, query: str, modes: list[str] | None = None, max_results: int = 20,
+        self,
+        query: str,
+        modes: list[str] | None = None,
+        max_results: int = 20,
     ) -> list | None:
         """Search across all indexed repositories via the Engine.
 
@@ -1133,6 +1313,7 @@ class Worker:
         if self.engine is None:
             return None
         from ultimate_coders.search.query import SearchQuery
+
         sq = SearchQuery(query).in_all_repos(self.engine)
         if modes:
             sq.with_modes(modes)
@@ -1141,7 +1322,9 @@ class Worker:
         return getattr(result, "items", result) if result else None
 
     def read_shared_memory(
-        self, key: str, project_id: str = "",
+        self,
+        key: str,
+        project_id: str = "",
     ) -> object | None:
         """Read project-scoped memory (shared across Workers via Gateway).
 
@@ -1157,12 +1340,18 @@ class Worker:
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
         return self.engine.read_memory(
-            key_scope=scope, key=key, project_id=pid or None,
+            key_scope=scope,
+            key=key,
+            project_id=pid or None,
         )
 
     def write_shared_memory(
-        self, key: str, content: str, project_id: str = "",
-        content_type: str = "text", importance: float = 0.7,
+        self,
+        key: str,
+        content: str,
+        project_id: str = "",
+        content_type: str = "text",
+        importance: float = 0.7,
         tags: list[str] | None = None,
     ) -> object | None:
         """Write project-scoped memory (shared across Workers via Gateway).
@@ -1186,9 +1375,14 @@ class Worker:
         scope = "project" if pid else "global"
         try:
             result = self.engine.write_memory(
-                key_scope=scope, key=key, content=content,
-                content_type=content_type, source_agent=f"worker:{self.worker_id}",
-                importance=importance, tags=tags, project_id=pid or None,
+                key_scope=scope,
+                key=key,
+                content=content,
+                content_type=content_type,
+                source_agent=f"worker:{self.worker_id}",
+                importance=importance,
+                tags=tags,
+                project_id=pid or None,
             )
         except Exception:
             logger.warning("write_shared_memory failed for key=%s", key, exc_info=True)
@@ -1218,7 +1412,9 @@ class Worker:
         scope = "project" if pid else "global"
         try:
             self.engine.delete_memory(
-                key_scope=scope, key=key, project_id=pid or None,
+                key_scope=scope,
+                key=key,
+                project_id=pid or None,
             )
         except Exception:
             logger.warning("delete_shared_memory failed for key=%s", key, exc_info=True)
@@ -1228,7 +1424,10 @@ class Worker:
         return True
 
     def _broadcast_memory_changed(
-        self, project_id: str, key: str, action: str,
+        self,
+        project_id: str,
+        key: str,
+        action: str,
     ) -> None:
         """Fire-and-forget a uc.memory.changed broadcast onto the running loop.
 
@@ -1245,8 +1444,10 @@ class Worker:
             return  # ponytail: no running loop — skip, TTL converges
         task = loop.create_task(
             self.nats_publisher.publish_memory_changed(
-                project_id=project_id, key=key,
-                action=action, source_worker=self.worker_id,
+                project_id=project_id,
+                key=key,
+                action=action,
+                source_worker=self.worker_id,
             ),
         )
         self._bg_tasks.add(task)
