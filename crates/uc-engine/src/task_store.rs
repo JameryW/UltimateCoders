@@ -630,29 +630,61 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
 /// Derive workflow steps for a decomposed subtask from a description marker.
 ///
 /// ponytail: marker-based heuristic, no LLM. A subtask whose description
-/// ends with `>>cr` (or `>>review`) gets a 2-step chain: claude-code
-/// implements the description, then codex code-reviews the result (with
-/// the implementer's summary threaded in). No marker = empty steps =
-/// legacy single-agent path.
+/// ends with `>>cr` (or `>>review`) gets a 2-step chain (write + CR), and
+/// `>>crv` (or `>>cr-revise`) gets the full 3-step chain matching the
+/// original goal: claude-code writes → codex code-reviews → claude-code
+/// revises per the CR feedback (each step threads the prior summary via
+/// `{{prev_summary}}`). No marker = empty steps = legacy single-agent path.
 ///
 /// Upgrade path: replace this with an LLM decomposer that emits steps
 /// per subtask based on task semantics.
 fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
     let trimmed = desc.trim_end();
-    let marker = trimmed.rsplit_once(">>").map(|(_, m)| m.trim());
+    let (marker, stripped) = match trimmed.rsplit_once(">>") {
+        Some((head, m)) => {
+            let marker = m.trim();
+            // Strip the `>>marker` suffix from the description for step 0.
+            let strip_suffix = format!(">>{}", marker);
+            let head = head.trim_end_matches(&strip_suffix).trim();
+            (Some(marker), head.to_string())
+        }
+        None => (None, trimmed.to_string()),
+    };
+    let implement_prompt = format!("Implement: {}", stripped);
+    let cr_prompt = "Code review the changes from the previous step. Report concrete issues (bugs, missing tests, style) in the summary; if clean, say so. {{prev_summary}}".to_string();
     match marker {
         Some("cr") | Some("review") => vec![
             WorkflowStep {
                 agent: "claude-code".to_string(),
-                prompt: format!("Implement: {}", trimmed.trim_end_matches(">>cr").trim_end_matches(">>review").trim()),
+                prompt: implement_prompt,
                 agent_config_json: None,
                 abort_on_failure: true,
             },
             WorkflowStep {
                 agent: "codex".to_string(),
-                prompt: "Code review the changes from the previous step. Report concrete issues (bugs, missing tests, style) in the summary; if clean, say so. {{prev_summary}}".to_string(),
+                prompt: cr_prompt,
                 agent_config_json: None,
                 abort_on_failure: false,
+            },
+        ],
+        Some("crv") | Some("cr-revise") => vec![
+            WorkflowStep {
+                agent: "claude-code".to_string(),
+                prompt: implement_prompt,
+                agent_config_json: None,
+                abort_on_failure: true,
+            },
+            WorkflowStep {
+                agent: "codex".to_string(),
+                prompt: cr_prompt,
+                agent_config_json: None,
+                abort_on_failure: false,
+            },
+            WorkflowStep {
+                agent: "claude-code".to_string(),
+                prompt: "Revise the implementation per the code review feedback from the previous step. Address each concrete issue; skip nitpicks. {{prev_summary}}".to_string(),
+                agent_config_json: None,
+                abort_on_failure: true,
             },
         ],
         _ => Vec::new(),
@@ -819,6 +851,37 @@ mod tests {
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].steps.len(), 2);
         assert_eq!(subs[0].steps[1].agent, "codex");
+    }
+
+    #[test]
+    fn decompose_crv_marker_yields_three_step_write_cr_revise_chain() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement feature X >>crv");
+        assert_eq!(subs.len(), 1);
+        let steps = &subs[0].steps;
+        assert_eq!(steps.len(), 3, ">>crv produces write + CR + revise");
+        // write → CR → revise, matching the original goal end-to-end.
+        assert_eq!(steps[0].agent, "claude-code");
+        assert_eq!(steps[1].agent, "codex");
+        assert_eq!(steps[2].agent, "claude-code");
+        // Step 0 prompt carries the cleaned description (marker stripped).
+        assert!(steps[0].prompt.contains("implement feature X"));
+        assert!(!steps[0].prompt.contains(">>crv"));
+        // CR and revise both thread the prior summary.
+        assert!(steps[1].prompt.contains("{{prev_summary}}"));
+        assert!(steps[2].prompt.contains("{{prev_summary}}"));
+        // CR is non-aborting (signal even on non-zero exit); revise aborts
+        // (a failure to revise is a real failure).
+        assert!(!steps[1].abort_on_failure);
+        assert!(steps[2].abort_on_failure);
+    }
+
+    #[test]
+    fn decompose_cr_revise_marker_alias_yields_three_step_chain() {
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "fix bug >>cr-revise");
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].steps.len(), 3);
     }
 
     #[test]
