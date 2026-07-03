@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/workspace-config-spec.md", "reason": "verify resolution order + tolerant error matrix still hold in container mode"}
+{"file": ".trellis/tasks/07-03-gateway-uc-repos-yaml/prd.md", "reason": "acceptance criteria checklist — 6 items, all verify-able via container log + list_repos query"}
