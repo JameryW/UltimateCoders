@@ -138,6 +138,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../:/app/docker-compose-root:ro
+      # Mount the host workspace (uc.repos.yaml scan_dirs) so the gateway can
+      # index ~/aiworks repos at startup. Read-only — the gateway never writes here.
+      # ponytail: host path hardcoded (machine-specific), same path in/out so
+      # uc.repos.yaml scan_dirs need no remapping.
+      - /Users/jameryw/aiworks:/Users/jameryw/aiworks:ro
     environment:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
@@ -145,6 +150,9 @@ services:
       UC_NATS_URL: "nats://nats:4222"
       UC_GRPC_ADDR: "[::]:50051"
       UC_CORS_MODE: "dev"
+      # Point the gateway at the workspace config (mounted via docker-compose-root).
+      # The binary's CWD is /app, so the relative ./uc.repos.yaml lookup would miss it.
+      UC_REPOS_CONFIG: "/app/docker-compose-root/uc.repos.yaml"
       # ScaleWorkers: compose file + project name for `docker compose` shell-out.
       UC_COMPOSE_FILE: "/app/docker-compose-root/docker/docker-compose.yml"
       UC_COMPOSE_PROJECT: "docker"

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/workspace-config-spec.md", "reason": "loading contract + resolution order (UC_REPOS_CONFIG > ./uc.repos.yaml > skip) — the env var is the lever for the container CWD mismatch"}
+{"file": ".trellis/tasks/07-03-gateway-uc-repos-yaml/prd.md", "reason": "deployment diagnosis: old image + missing volume mount + missing UC_REPOS_CONFIG; MVP scope"}
