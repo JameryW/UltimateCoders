@@ -171,6 +171,29 @@ def _subtask_status_to_nats(status: SubtaskStatus) -> str:
     return mapping.get(status, status.value)
 
 
+def _dispatch_mode_from_payload(raw: Any) -> DispatchMode:
+    """Parse a dispatch_mode from a NATS payload into a DispatchMode.
+
+    Rust serializes the DispatchMode enum as its variant NAME
+    (``"PreferRemote"`` / ``"Remote"`` / ``"Local"`` — PascalCase), while
+    Python's enum values are lowercase (``"prefer_remote"``). Accept either
+    form, case-insensitively, and fall back to PreferRemote (the default)
+    on anything unrecognized so a bad value never crashes the worker.
+
+    ponytail: case-insensitive match over a small map; upgrade path is
+    making DispatchMode itself tolerant via _missing_.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return DispatchMode.PREFER_REMOTE
+    key = raw.strip().lower()
+    return {
+        "preferremote": DispatchMode.PREFER_REMOTE,
+        "prefer_remote": DispatchMode.PREFER_REMOTE,
+        "remote": DispatchMode.REMOTE,
+        "local": DispatchMode.LOCAL,
+    }.get(key, DispatchMode.PREFER_REMOTE)
+
+
 # ── NatsPublisher ───────────────────────────────────────────────
 
 
@@ -1462,7 +1485,7 @@ class NatsWorker:
                 return
 
         # Build a Subtask object for Worker.execute_subtask
-        from ultimate_coders.agent.types import DispatchMode, SubtaskStatus
+        from ultimate_coders.agent.types import SubtaskStatus
 
         subtask = Subtask(
             id=subtask_id,
@@ -1474,7 +1497,7 @@ class NatsWorker:
             file_constraints=data.get("file_constraints", []),
             expected_output=data.get("expected_output", ""),
             timeout_seconds=timeout_seconds,
-            dispatch_mode=DispatchMode(data.get("dispatch_mode", "prefer_remote")),
+            dispatch_mode=_dispatch_mode_from_payload(data.get("dispatch_mode", "prefer_remote")),
             required_capabilities=data.get("required_capabilities", []),
             agent_config=_resolve_agent_config_field(data),
             steps=[WorkflowStep.from_dict(s) for s in data.get("steps", [])],

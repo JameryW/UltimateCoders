@@ -12,8 +12,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from ultimate_coders.agent.sandbox import AgentOutput
-from ultimate_coders.agent.types import Subtask, SubtaskStatus, Task, WorkflowStep
+from ultimate_coders.agent.types import (
+    Subtask,
+    SubtaskStatus,
+    Task,
+    WorkflowStep,
+    _resolve_agent_config_field,
+)
 from ultimate_coders.agent.worker import Worker
+from ultimate_coders.nats_worker import _dispatch_mode_from_payload
 
 
 def _make_worker() -> Worker:
@@ -317,3 +324,115 @@ def test_subtask_from_dict_accepts_agent_config_json_string():
         }
     )
     assert task.subtasks[0].agent_config == {"agent_name": "coder"}
+
+
+# ── End-to-end wire: Rust NatsSubtaskExecute payload → Python Subtask ──
+
+
+def test_nats_payload_with_steps_round_trips_to_subtask():
+    """Simulate the exact JSON shape Rust's NatsSubtaskExecute serializes.
+
+    Rust sends (serde, snake_case):
+      agent_config_json: Option<String>   (JSON string)
+      steps: Vec<WorkflowStep>            (each with agent_config_json: Option<String>)
+
+    Python's _handle_subtask_execute builds a Subtask from this dict. We
+    replicate that field extraction (same code path) to prove the full
+    wire format round-trips: steps survive, and step-level agent_config
+    parses from the JSON string.
+    """
+    import json
+
+    # What Rust would emit over NATS for a claude-code→codex→claude-code chain.
+    payload = {
+        "task_id": "t-1",
+        "subtask_id": "st-1",
+        "description": "implement feature X",
+        "expected_output": "working code",
+        "file_constraints": [],
+        "timeout_seconds": 600,
+        "dispatch_mode": "PreferRemote",  # Rust serializes enum variant NAME (PascalCase)
+        "required_capabilities": [],
+        "agent_config_json": json.dumps({"agent_name": "coder"}),
+        "steps": [
+            {"agent": "claude-code", "prompt": "write X", "agent_config_json": None},
+            {
+                "agent": "codex",
+                "prompt": "CR: {{prev_summary}}",
+                "agent_config_json": json.dumps({"agent_name": "reviewer"}),
+            },
+            {"agent": "claude-code", "prompt": "revise per {{prev_summary}}"},
+        ],
+        "project_id": "proj-1",
+    }
+
+    # Mirror _handle_subtask_execute's Subtask construction (same field reads).
+    subtask = Subtask(
+        id=payload["subtask_id"],
+        parent_id=payload["task_id"],
+        description=payload["description"],
+        status=SubtaskStatus.PENDING,
+        assigned_worker="w-1",
+        depends_on=payload.get("depends_on", []),
+        file_constraints=payload.get("file_constraints", []),
+        expected_output=payload.get("expected_output", ""),
+        timeout_seconds=payload.get("timeout_seconds", 600),
+        dispatch_mode=_dispatch_mode_from_payload(payload.get("dispatch_mode", "prefer_remote")),
+        required_capabilities=payload.get("required_capabilities", []),
+        agent_config=_resolve_agent_config_field(payload),
+        steps=[WorkflowStep.from_dict(s) for s in payload.get("steps", [])],
+        project_id=payload.get("project_id", ""),
+    )
+
+    # Subtask-level config parsed from JSON string.
+    assert subtask.agent_config == {"agent_name": "coder"}
+    # All three steps survived, in order, with right agents.
+    assert [s.agent for s in subtask.steps] == ["claude-code", "codex", "claude-code"]
+    # Step 0: no agent_config_json (None) → {}.
+    assert subtask.steps[0].agent_config == {}
+    # Step 1: agent_config_json string parsed into dict.
+    assert subtask.steps[1].agent_config == {"agent_name": "reviewer"}
+    # Step 2: key absent entirely → {}.
+    assert subtask.steps[2].agent_config == {}
+    # Prompt templates preserved verbatim (rendering happens at execute time).
+    assert subtask.steps[1].prompt == "CR: {{prev_summary}}"
+
+
+def test_nats_payload_empty_steps_yields_empty_list():
+    """Backward compat: a legacy single-agent subtask sends no `steps` key."""
+    payload = {"task_id": "t", "subtask_id": "st", "description": "d"}
+    subtask = Subtask(
+        id=payload["subtask_id"],
+        parent_id=payload["task_id"],
+        description=payload["description"],
+        status=SubtaskStatus.PENDING,
+        steps=[WorkflowStep.from_dict(s) for s in payload.get("steps", [])],
+    )
+    assert subtask.steps == []
+
+
+# ── dispatch_mode wire mismatch (Rust PascalCase vs Python lowercase) ──
+
+
+def test_dispatch_mode_from_payload_accepts_rust_pascalcase():
+    from ultimate_coders.agent.types import DispatchMode
+
+    assert _dispatch_mode_from_payload("PreferRemote") is DispatchMode.PREFER_REMOTE
+    assert _dispatch_mode_from_payload("Remote") is DispatchMode.REMOTE
+    assert _dispatch_mode_from_payload("Local") is DispatchMode.LOCAL
+
+
+def test_dispatch_mode_from_payload_accepts_python_lowercase():
+    from ultimate_coders.agent.types import DispatchMode
+
+    assert _dispatch_mode_from_payload("prefer_remote") is DispatchMode.PREFER_REMOTE
+    assert _dispatch_mode_from_payload("remote") is DispatchMode.REMOTE
+
+
+def test_dispatch_mode_from_payload_defaults_on_bad_or_missing():
+    from ultimate_coders.agent.types import DispatchMode
+
+    assert _dispatch_mode_from_payload(None) is DispatchMode.PREFER_REMOTE
+    assert _dispatch_mode_from_payload("") is DispatchMode.PREFER_REMOTE
+    assert _dispatch_mode_from_payload("garbage") is DispatchMode.PREFER_REMOTE
+    assert _dispatch_mode_from_payload(123) is DispatchMode.PREFER_REMOTE
