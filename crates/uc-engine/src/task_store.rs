@@ -640,14 +640,10 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
 /// per subtask based on task semantics.
 fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
     let trimmed = desc.trim_end();
+    // rsplit_once already separates the marker; the head is the description
+    // for step 0, trimmed clean of trailing whitespace left by the split.
     let (marker, stripped) = match trimmed.rsplit_once(">>") {
-        Some((head, m)) => {
-            let marker = m.trim();
-            // Strip the `>>marker` suffix from the description for step 0.
-            let strip_suffix = format!(">>{}", marker);
-            let head = head.trim_end_matches(&strip_suffix).trim();
-            (Some(marker), head.to_string())
-        }
+        Some((head, m)) => (Some(m.trim()), head.trim().to_string()),
         None => (None, trimmed.to_string()),
     };
     let implement_prompt = format!("Implement: {}", stripped);
@@ -882,6 +878,17 @@ mod tests {
         let subs = decompose_task(&pid, "fix bug >>cr-revise");
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].steps.len(), 3);
+    }
+
+    #[test]
+    fn decompose_marker_strips_suffix_from_step0_prompt() {
+        // No space before >> — the marker must not leak into the implement prompt.
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement X>>crv");
+        assert_eq!(subs.len(), 1);
+        let prompt = &subs[0].steps[0].prompt;
+        assert!(prompt.contains("implement X"));
+        assert!(!prompt.contains(">>"), "marker suffix must be stripped");
     }
 
     #[test]
