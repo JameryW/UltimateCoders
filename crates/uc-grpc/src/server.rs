@@ -5098,4 +5098,73 @@ mod tests {
         assert_eq!(parsed.r#type, "tool_call");
         assert_eq!(parsed.message_id, None);
     }
+
+    #[test]
+    fn nats_subtask_execute_serializes_steps_and_agent_config_json() {
+        // Wire contract: the JSON the Python worker consumes must use
+        // snake_case keys, `agent_config_json` (string), and a `steps` array
+        // whose items themselves use `agent_config_json`. Any rename here
+        // silently breaks _resolve_agent_config_field / WorkflowStep.from_dict
+        // on the Python side (covered by test_workflow_orchestration.py).
+        let payload = NatsSubtaskExecute {
+            message_id: Some("m1".to_string()),
+            task_id: "t-1".to_string(),
+            subtask_id: "st-1".to_string(),
+            description: "implement X".to_string(),
+            expected_output: "code".to_string(),
+            file_constraints: Vec::new(),
+            timeout_seconds: 600,
+            retry_count: 0,
+            dispatch_mode: uc_types::DispatchMode::PreferRemote,
+            required_capabilities: Vec::new(),
+            agent_config_json: Some(r#"{"agent_name":"coder"}"#.to_string()),
+            steps: vec![uc_types::WorkflowStep {
+                agent: "codex".to_string(),
+                prompt: "CR {{prev_summary}}".to_string(),
+                agent_config_json: Some(r#"{"agent_name":"reviewer"}"#.to_string()),
+                abort_on_failure: false,
+            }],
+            project_id: "proj-1".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        // Subtask-level override key is agent_config_json (not agent_config).
+        assert!(json.contains("\"agent_config_json\""));
+        // steps array is emitted.
+        assert!(json.contains("\"steps\""));
+        // DispatchMode serializes as the variant name (PascalCase) — the Python
+        // side's _dispatch_mode_from_payload handles this case-insensitively.
+        assert!(json.contains("\"PreferRemote\""));
+        // Round-trips back losslessly.
+        let back: NatsSubtaskExecute = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.task_id, "t-1");
+        assert_eq!(back.steps.len(), 1);
+        assert_eq!(back.steps[0].agent, "codex");
+        assert!(!back.steps[0].abort_on_failure);
+        assert_eq!(
+            back.agent_config_json.as_deref(),
+            Some(r#"{"agent_name":"coder"}"#)
+        );
+    }
+
+    #[test]
+    fn nats_subtask_execute_backward_compat_no_steps_no_agent_config() {
+        // A legacy payload (pre-workflow) has neither steps nor agent_config_json.
+        // Both must deserialize to empty/None without error.
+        let json = r#"{
+            "task_id": "t-1",
+            "subtask_id": "st-1",
+            "description": "legacy",
+            "expected_output": "",
+            "file_constraints": [],
+            "timeout_seconds": 600,
+            "retry_count": 0,
+            "dispatch_mode": "PreferRemote",
+            "required_capabilities": [],
+            "project_id": ""
+        }"#;
+        let parsed: NatsSubtaskExecute = serde_json::from_str(json).unwrap();
+        assert!(parsed.steps.is_empty());
+        assert_eq!(parsed.agent_config_json, None);
+        assert_eq!(parsed.message_id, None);
+    }
 }
