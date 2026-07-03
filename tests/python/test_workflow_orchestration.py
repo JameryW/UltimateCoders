@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from ultimate_coders.agent.sandbox import AgentOutput
-from ultimate_coders.agent.types import Subtask, SubtaskStatus, WorkflowStep
+from ultimate_coders.agent.types import Subtask, SubtaskStatus, Task, WorkflowStep
 from ultimate_coders.agent.worker import Worker
 
 
@@ -248,3 +248,72 @@ def test_workflow_step_default_abort_on_failure_true():
 def test_subtask_steps_default_empty():
     s = Subtask(id="x", parent_id="p")
     assert s.steps == []
+
+
+# ── agent_config wire-format mismatch (Rust agent_config_json vs Python agent_config) ──
+
+
+def test_workflow_step_from_dict_accepts_agent_config_json_string():
+    """Rust serializes step agent_config as `agent_config_json` (JSON string).
+
+    Python must parse it into the dict the adapter expects.
+    """
+    import json
+
+    s = WorkflowStep.from_dict(
+        {
+            "agent": "codex",
+            "prompt": "CR",
+            "agent_config_json": json.dumps({"agent_name": "reviewer", "tools": ["read"]}),
+        }
+    )
+    assert s.agent_config == {"agent_name": "reviewer", "tools": ["read"]}
+
+
+def test_workflow_step_from_dict_accepts_agent_config_dict():
+    """OMP/Python path sends agent_config as a dict — still works."""
+    s = WorkflowStep.from_dict(
+        {"agent": "codex", "prompt": "CR", "agent_config": {"agent_name": "reviewer"}}
+    )
+    assert s.agent_config == {"agent_name": "reviewer"}
+
+
+def test_workflow_step_from_dict_agent_config_json_empty_or_garbage_safe():
+    # Empty string → {}
+    assert (
+        WorkflowStep.from_dict({"agent": "x", "prompt": "p", "agent_config_json": ""}).agent_config
+        == {}
+    )
+    # Malformed JSON → {} (best-effort, never crash)
+    assert (
+        WorkflowStep.from_dict(
+            {"agent": "x", "prompt": "p", "agent_config_json": "{bad"}
+        ).agent_config
+        == {}
+    )
+    # Missing entirely → {}
+    assert WorkflowStep.from_dict({"agent": "x", "prompt": "p"}).agent_config == {}
+
+
+def test_subtask_from_dict_accepts_agent_config_json_string():
+    """Subtask-level override also arrives as agent_config_json from Rust."""
+    import json
+
+    task = Task.from_dict(
+        {
+            "id": "t1",
+            "description": "d",
+            "project_id": "p",
+            "status": "in_progress",
+            "subtasks": [
+                {
+                    "id": "st1",
+                    "parent_id": "t1",
+                    "description": "do thing",
+                    "status": "pending",
+                    "agent_config_json": json.dumps({"agent_name": "coder"}),
+                }
+            ],
+        }
+    )
+    assert task.subtasks[0].agent_config == {"agent_name": "coder"}
