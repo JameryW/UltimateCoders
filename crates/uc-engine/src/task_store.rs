@@ -564,7 +564,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
         return vec![Subtask {
             id: TaskId::new(),
             parent_id: parent_id.clone(),
-            description: description.to_string(),
+            description: strip_workflow_marker(description).to_string(),
             status: SubtaskStatus::Pending,
             assigned_worker: None,
             depends_on: Vec::new(),
@@ -607,7 +607,7 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
         subtasks.push(Subtask {
             id: st_id.clone(),
             parent_id: parent_id.clone(),
-            description: desc.clone(),
+            description: strip_workflow_marker(&desc).to_string(),
             status: SubtaskStatus::Pending,
             assigned_worker: None,
             depends_on,
@@ -627,6 +627,26 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
     subtasks
 }
 
+/// Strip a trailing `>>marker` workflow marker from a description.
+///
+/// Returns the cleaned description (marker removed, trimmed). Used for the
+/// subtask's own `description` field so the marker (a workflow directive,
+/// not task content) doesn't leak into display, template matching, or
+/// prompt construction. If no marker is present, returns the trimmed input.
+fn strip_workflow_marker(desc: &str) -> &str {
+    let trimmed = desc.trim_end();
+    match trimmed.rsplit_once(">>") {
+        // Only strip when the suffix is a recognized marker; otherwise a
+        // legitimate ">>" in a description is preserved.
+        Some((head, m)) if matches_marker(m.trim()) => head.trim(),
+        _ => trimmed,
+    }
+}
+
+fn matches_marker(m: &str) -> bool {
+    matches!(m, "cr" | "review" | "crv" | "cr-revise")
+}
+
 /// Derive workflow steps for a decomposed subtask from a description marker.
 ///
 /// ponytail: marker-based heuristic, no LLM. A subtask whose description
@@ -640,10 +660,15 @@ fn decompose_task(parent_id: &TaskId, description: &str) -> Vec<Subtask> {
 /// per subtask based on task semantics.
 fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
     let trimmed = desc.trim_end();
-    // rsplit_once already separates the marker; the head is the description
-    // for step 0, trimmed clean of trailing whitespace left by the split.
     let (marker, stripped) = match trimmed.rsplit_once(">>") {
-        Some((head, m)) => (Some(m.trim()), head.trim().to_string()),
+        Some((head, m)) => {
+            let marker = m.trim();
+            if matches_marker(marker) {
+                (Some(marker), head.trim().to_string())
+            } else {
+                (None, trimmed.to_string())
+            }
+        }
         None => (None, trimmed.to_string()),
     };
     let implement_prompt = format!("Implement: {}", stripped);
@@ -889,6 +914,39 @@ mod tests {
         let prompt = &subs[0].steps[0].prompt;
         assert!(prompt.contains("implement X"));
         assert!(!prompt.contains(">>"), "marker suffix must be stripped");
+    }
+
+    #[test]
+    fn decompose_marker_strips_suffix_from_subtask_description() {
+        // The marker is a workflow directive, not task content — it must not
+        // leak into the subtask's own description (which feeds display,
+        // template matching, and prompt construction).
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "implement feature X >>review");
+        assert_eq!(subs.len(), 1);
+        let desc = &subs[0].description;
+        assert!(desc.contains("implement feature X"));
+        assert!(
+            !desc.contains(">>"),
+            "marker must not leak into subtask description"
+        );
+        // The review marker still produced the 2-step chain (steps derive
+        // from the original description, not the stripped one).
+        assert_eq!(subs[0].steps.len(), 2);
+    }
+
+    #[test]
+    fn decompose_preserves_legitimate_double_arrow_in_description() {
+        // A ">>" that isn't a recognized marker is legitimate description
+        // content and must be preserved.
+        let pid = TaskId::new();
+        let subs = decompose_task(&pid, "redirect stdout >> /dev/null");
+        assert_eq!(subs.len(), 1);
+        assert!(subs[0].description.contains(">>"));
+        assert!(
+            subs[0].steps.is_empty(),
+            "unrecognized marker = single-agent"
+        );
     }
 
     #[test]
