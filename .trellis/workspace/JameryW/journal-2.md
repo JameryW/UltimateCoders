@@ -873,3 +873,36 @@ PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClien
 ### Next Steps
 
 - None - task complete
+
+
+## Session 80: Containerized gateway loads uc.repos.yaml; Colima replaced Docker Desktop
+
+**Date**: 2026-07-03
+**Task**: Containerized gateway loads uc.repos.yaml; Colima replaced Docker Desktop
+**Branch**: `fix/gateway-compose-workspace-mount`
+
+### Summary
+
+Final fix for OMP perceiving wrong workspace. PR #211 (Rust gateway loads uc.repos.yaml) was correct code but never reached the user's containerized runtime: the docker-compose.yml gateway service had no UC_REPOS_CONFIG env (binary CWD=/app missed ./uc.repos.yaml) and no mount of ~/aiworks (scan_dirs resolved to nothing in-container). PR #212 adds the mount (~/aiworks:ro, same path in/out) + UC_REPOS_CONFIG pointing at the already-mounted repo root. Env side: Docker Desktop crashed on disk-full (metadata_v2.db I/O error); freed 14.8G via cargo clean target/, replaced Docker Desktop with Colima (Intel Mac, docker compose zero-change), rebuilt docker-gateway image with PR #211, started full stack. Verified: container log 'Indexing workspace repos workspace_id=aiworks total=7' -> 'complete indexed=7'; gRPC list_repos() returned 7 repos all workspace_id=aiworks; filter works; 5 storage containers healthy. PRs: #210 (front-end, merged), #211 (Rust load, merged), #212 (compose mount, open CI green). Spec: backend/workspace-config-spec.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c55954de` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

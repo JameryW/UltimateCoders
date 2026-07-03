@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 79
-- **Last Active**: 2026-07-01
+- **Total Sessions**: 80
+- **Last Active**: 2026-07-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~875 | Active |
+| `journal-2.md` | ~908 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 80 | 2026-07-03 | Containerized gateway loads uc.repos.yaml; Colima replaced Docker Desktop | `c55954de` | `fix/gateway-compose-workspace-mount` |
 | 79 | 2026-07-01 | uc-lsp codegraph fallback | `5d70aa1f` | `main` |
 | 78 | 2026-07-01 | uc-lsp real-time LSP MCP server (multilspy) | `0a20d579` | `main` |
 | 77 | 2026-07-01 | Archive 4 completed deploy tasks (B phase) | `05e6912b` | `main` |
