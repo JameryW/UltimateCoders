@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-03-omp-workspaceroot-reflects-uc-repos-yaml-workspace/prd.md", "reason": "acceptance criteria: UI 展示 ~/aiworks + symlink 正确 + idempotent + 不覆盖已有 .claude/.omp"}
+{"file": ".trellis/tasks/07-03-omp-workspaceroot-reflects-uc-repos-yaml-workspace/research/omp-config-dir-injection.md", "reason": "验证 symlink 经 fs.realpathSync 被发现 + 确认无其他注入点可替代"}
