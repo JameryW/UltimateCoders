@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-03-omp-workspaceroot-reflects-uc-repos-yaml-workspace/research/omp-config-dir-injection.md", "reason": "OMP 单一 getProjectDir() 配置发现机制 + symlink 可行性 + 各注入点不可用证据 — 实现 symlink 方案的依据"}
+{"file": ".trellis/tasks/07-03-omp-workspaceroot-reflects-uc-repos-yaml-workspace/prd.md", "reason": "最终方案 ADR + symlink 清单 + cwd/路径改动 + acceptance criteria"}
