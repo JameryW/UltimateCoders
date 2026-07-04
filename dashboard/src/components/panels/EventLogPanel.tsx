@@ -15,6 +15,7 @@ function eventTypeColor(type: string): string {
   if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "text-blue-400";
   if (type.startsWith("subtask_completed")) return "text-green-400";
   if (type.startsWith("subtask_failed")) return "text-red-400";
+  if (type.startsWith("subtask_progress")) return "text-cyan-400";
   if (type.startsWith("circuit_breaker_reset")) return "text-yellow-500";
   if (type.startsWith("scheduler_trigger")) return "text-green-500";
   return "text-[var(--text-secondary)]";
@@ -29,6 +30,7 @@ function eventTypeBg(type: string): string {
   if (type.startsWith("subtask_started") || type.startsWith("subtask_assigned")) return "evt-started";
   if (type.startsWith("subtask_completed")) return "evt-completed";
   if (type.startsWith("subtask_failed")) return "evt-failed";
+  if (type.startsWith("subtask_progress")) return "evt-started";
   if (type.startsWith("circuit_breaker_reset")) return "evt-cb-reset";
   if (type.startsWith("scheduler_trigger")) return "evt-trigger";
   return "evt-default";
@@ -50,6 +52,20 @@ function eventSummary(details: Record<string, unknown>): string {
   const val = details[first];
   if (typeof val === "string") return `${first}: ${val}`;
   return `${first}: ${JSON.stringify(val)}`;
+}
+
+/** Compact summary for subtask_progress events: "agent · phase · NN%".
+ *  Highlights the coding agent, phase, and percent — the three fields users
+ *  care about for real-time execution telemetry. */
+function progressSummary(details: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const agent = details.step_agent;
+  if (typeof agent === "string" && agent) parts.push(agent);
+  const phase = details.phase;
+  if (typeof phase === "string" && phase) parts.push(phase);
+  const percent = details.percent;
+  if (typeof percent === "number") parts.push(`${Math.round(percent)}%`);
+  return parts.join(" · ");
 }
 
 /** ponytail: stable key — timestamp+type is unique per event in practice */
@@ -279,11 +295,18 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
                         </pre>
                       ) : (
                         <span
-                          className="text-[var(--text-muted)] truncate cursor-pointer hover:text-[var(--text-secondary)]"
+                          className={cn(
+                            "truncate cursor-pointer hover:text-[var(--text-secondary)]",
+                            evt.type === "subtask_progress"
+                              ? "text-cyan-400 font-medium"
+                              : "text-[var(--text-muted)]"
+                          )}
                           onClick={() => setExpandedIdx(item.index)}
                           title="Click to expand"
                         >
-                          {eventSummary(evt.details)}
+                          {evt.type === "subtask_progress"
+                            ? progressSummary(evt.details) || eventSummary(evt.details)
+                            : eventSummary(evt.details)}
                         </span>
                       )
                     )}

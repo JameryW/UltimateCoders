@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/07-04-worker-exec-observability-progress-coding-agent-gateway-conn/prd.md", "reason": "acceptance criteria: Rust subtask_progress 进 broadcast + dashboard 卡片/TUI widget 渲染 phase/percent/agent + gateway 退避重连/状态 UI"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "验证 subtask_progress 转发符合 NATS 统一事件管道契约（dedup/payload 约束）"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "验证 dashboard SSE 事件源 exclusivity + REST/SSE 契约不破"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验证 SubtaskSummary/OrchestratorEvents 字段扩展类型安全"}
+{"file": ".trellis/tasks/07-04-worker-exec-observability-progress-coding-agent-gateway-conn/research/grpc-to-tui-event-pipe.md", "reason": "验证 Rust match arm 加对位置 + GrpcBridge watchTask 抄对 pattern + 无回归（dashboard 现有 WatchTask 不破）"}

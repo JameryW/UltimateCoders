@@ -148,6 +148,46 @@ function SubtaskProgressBar({ subtasks }: { subtasks: SubtaskSummary[] }) {
   );
 }
 
+/** Inline real-time progress for an in-progress subtask.
+ *  Renders phase label + percent bar + agent badge when phase/percent/step_agent
+ *  are present (absent for pending/completed subtasks). */
+function SubtaskProgress({ st }: { st: SubtaskSummary }) {
+  if (st.phase == null && st.percent == null && st.step_agent == null) return null;
+  const pct = st.percent != null ? Math.max(0, Math.min(100, Math.round(st.percent))) : null;
+  return (
+    <div className="mt-0.5 ml-2 flex items-center gap-2">
+      {st.step_agent && (
+        <span
+          className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono"
+          title={`Coding agent: ${st.step_agent}`}
+        >
+          {st.step_agent}
+        </span>
+      )}
+      {st.phase && (
+        <span className="text-[10px] text-blue-400 font-medium truncate" title={st.phase}>
+          {st.phase}
+        </span>
+      )}
+      {pct != null && (
+        <div className="flex items-center gap-1 shrink-0">
+          <div className="w-20 h-1 bg-[var(--bg-surface-alt)] rounded-full overflow-hidden">
+            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-[10px] text-[var(--text-muted)] tabular-nums">{pct}%</span>
+        </div>
+      )}
+      {st.step_total != null && st.step_index != null && (
+        // worker.py sends 0-based step_index (enumerate); display 1-based to
+        // match the phase label "step N/total: agent" and the type comment.
+        <span className="text-[10px] text-[var(--text-muted)]" title={`Workflow step ${st.step_index + 1}/${st.step_total}`}>
+          [{st.step_index + 1}/{st.step_total}]
+        </span>
+      )}
+    </div>
+  );
+}
+
 function EventTimeline({ events }: { events: TaskEvent[] }) {
   const [showAll, setShowAll] = useState(false);
   if (events.length === 0) return null;
@@ -156,7 +196,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
   const typeIcon: Record<string, string> = {
     task_submitted: "📤", subtask_started: "▶️", subtask_assigned: "👤",
     subtask_completed: "✅", subtask_failed: "❌", tool_call: "🔧",
-    tool_result: "📋", task_completed: "🏁",
+    tool_result: "📋", task_completed: "🏁", subtask_progress: "⏳",
   };
   return (
     <div className="mb-2">
@@ -256,6 +296,7 @@ export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: Tas
                     </span>
                   </div>
                 </div>
+                <SubtaskProgress st={st} />
                 {st.result && (
                   <div className="mt-0.5 ml-2">
                     {st.result.length > 120 && !expandedResults[st.id] ? (

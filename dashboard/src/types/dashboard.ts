@@ -53,6 +53,20 @@ export interface SubtaskSummary {
   retry_count?: number;
   /** Last error message if subtask failed. */
   error?: string;
+  /** Real-time execution phase (e.g. "executing", "step 2/3: codex"). From subtask_progress. */
+  phase?: string;
+  /** Real-time percent 0-100. From subtask_progress. */
+  percent?: number;
+  /** Coding agent running this step (claude-code | codex). Workflow steps only. */
+  step_agent?: string;
+  /** Step status (started | completed | failed). Workflow steps only. */
+  step_status?: string;
+  /** 0-based step index from worker.py enumerate (display as index+1). */
+  step_index?: number;
+  /** Total steps in the workflow chain. */
+  step_total?: number;
+  /** Short summary of the current/last step. */
+  step_summary?: string;
 }
 
 export interface TaskSummary {

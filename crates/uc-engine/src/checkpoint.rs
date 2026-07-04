@@ -333,6 +333,7 @@ fn extract_task_id(event: &AgentEventType) -> Option<String> {
         AgentEventType::TaskCreated { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::SubtaskAssigned { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::SubtaskStarted { task_id, .. } => Some(task_id.0.clone()),
+        AgentEventType::SubtaskProgress { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::ToolInvoked { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::ToolResult { task_id, .. } => Some(task_id.0.clone()),
         AgentEventType::FileModified { task_id, .. } => Some(task_id.0.clone()),
@@ -441,6 +442,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
         | AgentEventType::FileModified { .. }
         | AgentEventType::EditIntent { .. }
         | AgentEventType::CheckpointCreated { .. }
+        | AgentEventType::SubtaskProgress { .. }
         | AgentEventType::TaskCompleted { .. }
         | AgentEventType::TaskFailed { .. } => {}
     }
