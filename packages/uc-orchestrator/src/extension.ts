@@ -38,7 +38,7 @@ import { registerTaskTools, isSpawnDisabled } from "./orchestrator/task-bridge";
 import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
 import { registerWorkerTools } from "./orchestrator/worker-bridge";
-import { createProgressWidget, type ProgressWidgetState } from "./ui/progress-widget";
+import { createProgressWidget, type ProgressWidgetState, type SubtaskProgressInfo } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
 import { createTaskResultRenderer } from "./ui/task-result-renderer";
@@ -77,6 +77,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			"task_paused", "task_resumed", "task_cancelled",
 			"wave_start", "wave_end",
 			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+			"subtask_progress",
 			"connection_state",
 		];
 
@@ -131,9 +132,34 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					const ps = progressState.get(d.taskId);
 					if (ps) {
 						ps.task = task;
+						// Clear progress entry for terminal subtasks (completed/failed)
+						ps.progressBySubtask?.delete(d.subtaskId);
 						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
 					}
 				}
+				break;
+			}
+			case "subtask_progress": {
+				const d = data as OrchestratorEvents["subtask_progress"];
+				let ps = progressState.get(d.taskId);
+				if (!ps) {
+					ps = { task: getTaskOrEmpty(d.taskId) };
+					progressState.set(d.taskId, ps);
+				}
+				if (!ps.progressBySubtask) {
+					ps.progressBySubtask = new Map<string, SubtaskProgressInfo>();
+				}
+				const info: SubtaskProgressInfo = {
+					phase: d.phase,
+					percent: d.percent,
+				};
+				if (d.stepIndex !== undefined) info.stepIndex = d.stepIndex;
+				if (d.stepTotal !== undefined) info.stepTotal = d.stepTotal;
+				if (d.stepAgent !== undefined) info.stepAgent = d.stepAgent;
+				if (d.stepStatus !== undefined) info.stepStatus = d.stepStatus;
+				if (d.stepSummary !== undefined) info.stepSummary = d.stepSummary;
+				ps.progressBySubtask.set(d.subtaskId, info);
+				ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				break;
 			}
 			case "wave_end": {

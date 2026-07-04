@@ -36,6 +36,20 @@ export interface OrchestratorEvents {
 	/** A subtask is being reviewed */
 	subtask_reviewing: { taskId: string; subtaskId: string };
 
+	/** Real-time subtask execution progress (phase/percent/agent) */
+	subtask_progress: {
+		taskId: string;
+		subtaskId: string;
+		workerId: string;
+		phase: string;
+		percent: number;
+		stepIndex?: number;
+		stepTotal?: number;
+		stepAgent?: string;
+		stepStatus?: string;
+		stepSummary?: string;
+	};
+
 	/** Task reached terminal state */
 	task_complete: { taskId: string; status: TaskState["status"]; summary: string };
 
