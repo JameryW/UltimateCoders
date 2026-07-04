@@ -1797,14 +1797,26 @@ mod tests {
         assert_eq!(proto.subtask_id, Some("st-1".to_string()));
         // Core fields always present
         assert_eq!(proto.data.get("worker_id").map(String::as_str), Some("w-1"));
-        assert_eq!(proto.data.get("phase").map(String::as_str), Some("step 2/3: codex"));
+        assert_eq!(
+            proto.data.get("phase").map(String::as_str),
+            Some("step 2/3: codex")
+        );
         assert_eq!(proto.data.get("percent").map(String::as_str), Some("50"));
         // Optional workflow-step fields
         assert_eq!(proto.data.get("step_index").map(String::as_str), Some("2"));
         assert_eq!(proto.data.get("step_total").map(String::as_str), Some("3"));
-        assert_eq!(proto.data.get("step_agent").map(String::as_str), Some("codex"));
-        assert_eq!(proto.data.get("step_status").map(String::as_str), Some("running"));
-        assert_eq!(proto.data.get("step_summary").map(String::as_str), Some("editing main.rs"));
+        assert_eq!(
+            proto.data.get("step_agent").map(String::as_str),
+            Some("codex")
+        );
+        assert_eq!(
+            proto.data.get("step_status").map(String::as_str),
+            Some("running")
+        );
+        assert_eq!(
+            proto.data.get("step_summary").map(String::as_str),
+            Some("editing main.rs")
+        );
     }
 
     #[test]
@@ -1826,7 +1838,10 @@ mod tests {
         let proto: TaskEventProto = event.into();
         assert_eq!(proto.r#type, "subtask_progress");
         assert_eq!(proto.data.get("worker_id").map(String::as_str), Some("w-1"));
-        assert_eq!(proto.data.get("phase").map(String::as_str), Some("executing"));
+        assert_eq!(
+            proto.data.get("phase").map(String::as_str),
+            Some("executing")
+        );
         assert_eq!(proto.data.get("percent").map(String::as_str), Some("50"));
         // Optional keys absent for single-agent progress
         assert!(proto.data.get("step_index").is_none());

@@ -4476,10 +4476,7 @@ mod tests {
             serde_json::Value::String("step 2/3: codex".to_string()),
         );
         // percent as a JSON number
-        data.insert(
-            "percent".to_string(),
-            serde_json::Value::Number(50.into()),
-        );
+        data.insert("percent".to_string(), serde_json::Value::Number(50.into()));
         // step_index/step_total as numbers
         data.insert(
             "step_index".to_string(),
@@ -4512,7 +4509,10 @@ mod tests {
         };
 
         let result = nats_event_to_agent_event(&event);
-        assert!(result.is_some(), "subtask_progress should not hit catch-all");
+        assert!(
+            result.is_some(),
+            "subtask_progress should not hit catch-all"
+        );
         match result.unwrap() {
             uc_engine::AgentEventType::SubtaskProgress {
                 task_id,
