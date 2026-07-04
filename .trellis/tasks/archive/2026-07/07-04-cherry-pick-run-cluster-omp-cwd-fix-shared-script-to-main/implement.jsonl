@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/archive/2026-07/07-03-omp-workspaceroot-reflects-uc-repos-yaml-workspace/research/omp-config-dir-injection.md", "reason": "OMP 单一 getProjectDir + symlink 暴露嵌套 config 的设计依据 — run-cluster.sh 同样需要这套 symlink 方案"}
+{"file": ".trellis/tasks/07-04-cherry-pick-run-cluster-omp-cwd-fix-shared-script-to-main/prd.md", "reason": "cherry-pick e5ff79c9 的冲突预期 + acceptance"}

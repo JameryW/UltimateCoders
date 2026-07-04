@@ -1,0 +1,1 @@
+{"file": ".trellis/tasks/07-04-cherry-pick-run-cluster-omp-cwd-fix-shared-script-to-main/prd.md", "reason": "acceptance: run-cluster 用 setup_omp_workspace + 共享脚本被两 script source + bash -n 过"}
