@@ -45,6 +45,23 @@ export interface ProgressWidgetState {
 	task: TaskState;
 	waveIdx?: number;
 	totalWaves?: number;
+	/**
+	 * Live subtask progress keyed by subtaskId (from subtask_progress events via
+	 * WatchTask). Used by the widget to show phase/percent/agent for running
+	 * subtasks. PR4 renders this; PR3 just stores it.
+	 */
+	progressBySubtask?: Map<string, SubtaskProgressInfo>;
+}
+
+/** Real-time progress for a single subtask (phase/percent/agent). */
+export interface SubtaskProgressInfo {
+	phase: string;
+	percent: number;
+	stepIndex?: number;
+	stepTotal?: number;
+	stepAgent?: string;
+	stepStatus?: string;
+	stepSummary?: string;
 }
 
 export function createProgressWidget(state: () => ProgressWidgetState | null) {
