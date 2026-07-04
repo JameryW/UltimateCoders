@@ -81,6 +81,24 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
               >
                 <span className={cn("px-1 rounded text-[10px]", statusBadgeClass(st.status))}>{st.status}</span>
                 <span className="text-[var(--text-primary)]">{shortId(st.id)} {truncate(st.description, 30)}</span>
+                {st.step_agent && (
+                  <span
+                    className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-mono shrink-0"
+                    title={`Coding agent: ${st.step_agent}`}
+                  >
+                    {st.step_agent}
+                  </span>
+                )}
+                {st.phase && (
+                  <span className="text-[10px] text-blue-400 truncate shrink-0" title={st.phase}>
+                    {st.phase}
+                  </span>
+                )}
+                {st.percent != null && (
+                  <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0">
+                    {Math.round(st.percent)}%
+                  </span>
+                )}
               </div>
             ))}
           </div>
