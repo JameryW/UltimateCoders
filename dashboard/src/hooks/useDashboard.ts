@@ -292,6 +292,19 @@ export function useDashboard() {
         }));
         break;
       }
+      case "subtask_progress": {
+        // Progress events must NOT change subtask status — only refresh
+        // phase/percent/step_* fields on the existing (in_progress) subtask.
+        setTasks((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => {
+            if (t.id !== tid) return t;
+            const subtasks = mergeProgressEvent(t.subtasks ?? [], ev);
+            return subtasks === t.subtasks ? t : { ...t, subtasks };
+          }),
+        }));
+        break;
+      }
     }
   }, []);
 
@@ -500,5 +513,38 @@ function mergeSubtaskEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSu
       error: evError,
     },
   ];
+}
+
+/** Merge a subtask_progress event into existing subtask list, upserting by subtask_id.
+ *  Unlike mergeSubtaskEvent, this does NOT change subtask status — it only
+ *  refreshes the real-time phase/percent/step_* fields. If the subtask is
+ *  unknown, it is ignored (progress only makes sense for an existing subtask). */
+function mergeProgressEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskSummary[] {
+  const sid = ev.subtask_id;
+  if (!sid) return subtasks;
+
+  const phase = ev.data.phase != null ? String(ev.data.phase) : undefined;
+  const percent = ev.data.percent != null ? Number(ev.data.percent) : undefined;
+  const step_agent = ev.data.step_agent != null ? String(ev.data.step_agent) : undefined;
+  const step_status = ev.data.step_status != null ? String(ev.data.step_status) : undefined;
+  const step_index = ev.data.step_index != null ? Number(ev.data.step_index) : undefined;
+  const step_total = ev.data.step_total != null ? Number(ev.data.step_total) : undefined;
+  const step_summary = ev.data.step_summary != null ? String(ev.data.step_summary) : undefined;
+
+  const existing = subtasks.find((s) => s.id === sid);
+  if (!existing) return subtasks; // progress for an unknown subtask — ignore
+
+  return subtasks.map((s) =>
+    s.id === sid ? {
+      ...s,
+      phase: phase ?? s.phase,
+      percent: percent ?? s.percent,
+      step_agent: step_agent ?? s.step_agent,
+      step_status: step_status ?? s.step_status,
+      step_index: step_index ?? s.step_index,
+      step_total: step_total ?? s.step_total,
+      step_summary: step_summary ?? s.step_summary,
+    } : s,
+  );
 }
 
