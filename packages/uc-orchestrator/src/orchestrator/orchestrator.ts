@@ -22,6 +22,7 @@ import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
 import { OrchestratorEventEmitter } from "./events";
 import type { OrchestratorEvents } from "./events";
+import { sleepBackoff } from "./backoff";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -170,6 +171,8 @@ export class UCOrchestrator {
 	private controlSubscriber: ControlSignalSubscriber;
 	/** WatchTask stream controller — live task/subtask events from the gRPC server. */
 	private watchTaskController?: AbortController;
+	/** Reconnect attempt counter for the WatchTask stream (resets on success). */
+	private watchTaskReconnectAttempt = 0;
 	/** Internal event emitter — decouples orchestration from presentation */
 	readonly events = new OrchestratorEventEmitter();
 
@@ -237,21 +240,43 @@ export class UCOrchestrator {
 
 	/**
 	 * Start (or restart) the WatchTask gRPC stream. On stream end/error,
-	 * schedules a reconnect after a short delay so transient drops recover
-	 * without manual intervention.
+	 * schedules a reconnect with exponential backoff so transient drops
+	 * recover without manual intervention. Backoff resets to the initial
+	 * delay once the stream delivers an event (success signal).
 	 */
 	private startWatchTaskStream(): void {
 		if (this.watchTaskController) {
 			this.watchTaskController.abort();
 		}
 		this.watchTaskController = this.bridge.startWatchTask(
-			(ev: TaskEvent) => this.handleWatchTaskEvent(ev),
+			(ev: TaskEvent) => {
+				// First event on a fresh stream = reconnect succeeded.
+				if (this.watchTaskReconnectAttempt > 0) {
+					this.watchTaskReconnectAttempt = 0;
+				}
+				this.handleWatchTaskEvent(ev);
+			},
 			() => {
-				// Stream ended or errored — attempt reconnect after 2s
-				setTimeout(() => {
-					if (!this.bridge.isConnected()) return; // server down; will retry on next health check cycle
+				// Stream ended or errored — reconnect with exponential backoff.
+				// Keep the bridge.isConnected() guard: if the server is fully
+				// down, the GrpcBridge reconnect sequence owns recovery; we only
+				// re-open the stream when the bridge thinks it's connected.
+				const attempt = this.watchTaskReconnectAttempt++;
+				void (async () => {
+					const slept = await sleepBackoff(attempt, {
+						initialMs: 500,
+						maxMs: 30_000,
+						maxAttempts: 8,
+					});
+					if (!slept) {
+						// Exhausted backoff — reset so a later trigger (e.g. next
+						// health-check cycle) can start a fresh sequence.
+						this.watchTaskReconnectAttempt = 0;
+						return;
+					}
+					if (!this.bridge.isConnected()) return;
 					this.startWatchTaskStream();
-				}, 2000);
+				})();
 			},
 		);
 	}
@@ -1755,6 +1780,7 @@ export class UCOrchestrator {
 		// Stop WatchTask stream (live event subscription)
 		this.watchTaskController?.abort();
 		this.watchTaskController = undefined;
+		this.watchTaskReconnectAttempt = 0;
 		// Stop NATS/polling subscriber
 		await this.controlSubscriber.stop();
 		// Abort all running tasks

@@ -57,3 +57,12 @@ services:
       UC_COMPOSE_FILE: "${UC_COMPOSE_FILE:-/app/docker-compose-root/docker/docker-compose.yml}"
       UC_COMPOSE_PROJECT: "${UC_COMPOSE_PROJECT:-docker}"
     restart: unless-stopped
+    # Lightweight liveness check: probe the gRPC TCP port (50051) via bash
+    # /dev/tcp (bookworm-slim ships bash). See docker-compose.yml gateway
+    # service for rationale. start_period gives the server time to bind.
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50051' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

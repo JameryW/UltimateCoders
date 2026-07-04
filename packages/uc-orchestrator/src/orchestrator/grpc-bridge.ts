@@ -42,6 +42,7 @@ import {
 } from "../grpc/engine_pb.js";
 import { create } from "@bufbuild/protobuf";
 import { readFileSync } from "node:fs";
+import { sleepBackoff, type BackoffOptions } from "./backoff";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -52,6 +53,8 @@ export interface BridgeConfig {
 	timeoutMs: number;
 	/** Callback when connection state changes. */
 	onConnectionChange?: (connected: boolean) => void;
+	/** Backoff config for connection-error reconnects. See backoff.ts. */
+	reconnectBackoff?: BackoffOptions;
 }
 
 export interface TaskSync {
@@ -194,24 +197,51 @@ export class GrpcBridge {
 	}
 
 	/**
-	 * Attempt one reconnect on connection errors.
-	 * Returns true if reconnect was attempted (caller should retry the operation).
+	 * Attempt to reconnect with exponential backoff across multiple attempts.
+	 *
+	 * Connection errors only (caller / isConnectionError guard). Holds the
+	 * `reconnecting` mutex so concurrent callers don't each drive their own
+	 * backoff sequence — the first caller does the reconnect, others wait on
+	 * the mutex and then re-check connectivity.
+	 *
+	 * Emits onConnectionChange(false) at the start of the sequence and
+	 * onConnectionChange(true) on success.
+	 *
+	 * Returns true if the bridge is connected after this call (either this
+	 * caller reconnected, or a concurrent caller already did).
 	 */
 	private async tryReconnect(err: unknown): Promise<boolean> {
 		if (!GrpcBridge.isConnectionError(err)) return false;
-		if (this.reconnecting) return false;
+		// If another caller is already mid-reconnect, wait for it then re-check.
+		if (this.reconnecting) {
+			// Spin-wait on the mutex with a microtask yield. The reconnecting
+			// caller either succeeds (connected=true) or exhausts backoff
+			// (connected stays false). We don't drive our own sequence.
+			while (this.reconnecting) {
+				await new Promise<void>((r) => setTimeout(r, 50));
+			}
+			return this.connected;
+		}
 		this.reconnecting = true;
 		this.connected = false;
+		this.config.onConnectionChange?.(false);
+		const backoff = this.config.reconnectBackoff ?? {};
 		try {
-			this.reconnect();
-			// Verify the new transport works
-			const resp = await this.engineClient.health(create(HealthRequestSchema));
-			this.connected = true;
-			this.config.onConnectionChange?.(true);
-			return true;
-		} catch (err) {
-			console.warn(`GrpcBridge reconnect verification failed: ${err instanceof Error ? err.message : err}`);
-			return false;
+			for (let attempt = 0; ; attempt++) {
+				this.reconnect();
+				try {
+					await this.engineClient.health(create(HealthRequestSchema));
+					this.connected = true;
+					this.config.onConnectionChange?.(true);
+					return true;
+				} catch (verifyErr) {
+					console.warn(
+						`GrpcBridge reconnect attempt ${attempt + 1} failed: ${verifyErr instanceof Error ? verifyErr.message : verifyErr}`,
+					);
+				}
+				const slept = await sleepBackoff(attempt, backoff);
+				if (!slept) return false; // exhausted maxAttempts
+			}
 		} finally {
 			this.reconnecting = false;
 		}
@@ -236,8 +266,10 @@ export class GrpcBridge {
 
 	/**
 	 * Run an RPC call with automatic reconnect-on-connection-error.
-	 * On connection error, tries one reconnect then retries once.
-	 * Falls back to `fallback` if both attempts fail (or error is not connection-related).
+	 * On connection error, drives an exponential-backoff reconnect sequence
+	 * (see tryReconnect) then retries the operation once. Falls back to
+	 * `fallback` if the reconnect sequence exhausts its attempts, the retry
+	 * fails, or the error is not connection-related (business errors fail fast).
 	 */
 	private async withReconnect<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
 		try {
@@ -272,7 +304,7 @@ export class GrpcBridge {
 			return { status: resp.status, version: resp.version };
 		} catch (err) {
 			this.connected = false;
-			// Try one reconnect on connection errors
+			// Reconnect with exponential backoff on connection errors
 			if (await this.tryReconnect(err)) {
 				try {
 					const resp = await this.engineClient.health(create(HealthRequestSchema));

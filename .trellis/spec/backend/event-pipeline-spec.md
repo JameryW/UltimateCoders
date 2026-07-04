@@ -293,6 +293,23 @@ async def _publish_event(self, event_type, **kwargs):
 
 ---
 
+## Contract: gateway connection_state + reconnect backoff
+
+**What**: GrpcBridge (OMP TUI) and the dashboard gRPC-Web client both maintain a connection to the Rust gRPC server. Connection lifecycle is surfaced via the `connection_state` orchestrator event (`{ connected: boolean; error?: string }`) and the dashboard's `connectionState` state (`connected | connecting | disconnected | error | reconnecting`).
+
+**Reconnect strategy (exponential backoff)**: connection errors (network refused, stream reset) trigger exponential backoff via the shared `backoff.ts` helper (`backoffDelay(attempt, {initialMs, maxMs, maxAttempts})`):
+- GrpcBridge `tryReconnect`: 5 attempts, 500ms → 1s → 2s → 4s → 8s, `reconnecting` mutex (only one caller drives the sequence; concurrent callers spin-wait 50ms + re-check). `onConnectionChange(false)` fires at sequence start, `(true)` on success.
+- WatchTask stream reconnect (`startWatchTaskStream`): 8 attempts, 500ms → … → 30s cap. Resets attempt counter on first delivered event (stable stream doesn't carry forward accumulated backoff). `bridge.isConnected()` guard prevents tight-loop when server is down.
+- **Business errors fail fast** — `isConnectionError` guard (string-match on "refused stream"/"stream error"/"unavailable") scopes backoff to connection errors only; NotFound/InvalidArgument/engine rejections never enter backoff.
+
+**Compose auto-recovery**: gateway container has `restart: unless-stopped` + a TCP healthcheck (`/dev/tcp/localhost:50051`, 10s interval / 5s timeout / 5 retries / 15s start_period). `depends_on: condition: service_healthy` gates dependents. The healthcheck uses bash `/dev/tcp` (bookworm-slim ships bash) — `grpc_health_probe` isn't in the runtime image; TCP liveness is sufficient.
+
+> **Gotcha: WatchTask stream exhaustion**. After `maxAttempts` (8) failed reconnects (~91s cumulative), `sleepBackoff` returns false and the stream stays down until the next RPC-level reconnect (any RPC call triggers `tryReconnect`, which recovers the connection, but the WatchTask stream only resumes on orchestrator restart or a later `onError`). Edge case (gateway down >91s). If permanent stream recovery is needed, add a periodic health-check cycle that calls `startWatchTaskStream` — not implemented in PR5.
+
+> **Gotcha: `maxAttempts` semantics**. `maxAttempts` counts *sleeps between tries*, not total attempts. `maxAttempts: 5` → 6 reconnect attempts with 5 sleeps. Tests use `maxAttempts: 1` (2 attempts, 1 short sleep) to avoid waiting the production curve.
+
+---
+
 ## Pattern: NATS Message Dedup
 
 **Problem**: NATS at-least-once delivery can produce duplicate messages, causing duplicate state transitions in Rust TaskStore and duplicate renders in TUI.

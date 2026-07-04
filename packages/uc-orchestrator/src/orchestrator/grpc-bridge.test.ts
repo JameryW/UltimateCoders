@@ -58,9 +58,12 @@ describe("GrpcBridge.isConnectionError", () => {
 describe("GrpcBridge against a dead server", () => {
 	// Port 1: nothing listens → every call is a transport error.
 	const deadUrl = "http://127.0.0.1:1";
+	// Fast backoff so the dead-server tests don't wait out the production
+	// 5-attempt exponential curve. Production callers use the default curve.
+	const fastBackoff = { maxAttempts: 1, initialMs: 10, maxMs: 10 };
 
 	it("classifies a dead server as server_unavailable (not submit_rejected)", async () => {
-		const bridge = new GrpcBridge({ serverUrl: deadUrl });
+		const bridge = new GrpcBridge({ serverUrl: deadUrl, reconnectBackoff: fastBackoff });
 		const result = await bridge.submitTask("test task");
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -71,7 +74,7 @@ describe("GrpcBridge against a dead server", () => {
 
 	it("fires onConnectionChange(false) for a dead server", async () => {
 		const seen: boolean[] = [];
-		const bridge = new GrpcBridge({ serverUrl: deadUrl });
+		const bridge = new GrpcBridge({ serverUrl: deadUrl, reconnectBackoff: fastBackoff });
 		bridge.setOnConnectionChange((c) => seen.push(c));
 		await bridge.readMemory("scope", "key");
 		expect(seen).toContain(false);
@@ -79,7 +82,7 @@ describe("GrpcBridge against a dead server", () => {
 	});
 
 	it("health() reports unavailable for a dead server", async () => {
-		const bridge = new GrpcBridge({ serverUrl: deadUrl });
+		const bridge = new GrpcBridge({ serverUrl: deadUrl, reconnectBackoff: fastBackoff });
 		const h = await bridge.health();
 		expect(h.status).toBe("unavailable");
 		bridge.close();
