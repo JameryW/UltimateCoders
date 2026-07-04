@@ -156,6 +156,20 @@ services:
       # ScaleWorkers: compose file + project name for `docker compose` shell-out.
       UC_COMPOSE_FILE: "/app/docker-compose-root/docker/docker-compose.yml"
       UC_COMPOSE_PROJECT: "docker"
+    # Auto-restart on crash/host reboot. Matches the standalone gateway compose.
+    restart: unless-stopped
+    # Lightweight liveness check: the gRPC server listens on 50051. We probe
+    # the TCP port via bash /dev/tcp (bookworm-slim ships bash). The standard
+    # tonic_health service is registered for EngineService, but
+    # grpc_health_probe isn't in the image — a TCP connect is sufficient for
+    # liveness (the process is up and bound). start_period gives the server
+    # time to bind before the first probe.
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50051' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.
