@@ -999,6 +999,9 @@ impl TaskStore {
             uc_engine::AgentEventType::SubtaskStarted { task_id, .. } => {
                 format!("task.{}", task_id.0)
             }
+            uc_engine::AgentEventType::SubtaskProgress { task_id, .. } => {
+                format!("task.{}", task_id.0)
+            }
             uc_engine::AgentEventType::SubtaskCompleted { task_id, .. } => {
                 format!("task.{}", task_id.0)
             }
@@ -2580,6 +2583,75 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 recoverable,
                 stderr_tail,
                 recent_tools,
+            })
+        }
+        "subtask_progress" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            let subtask_id = uc_types::TaskId(event.subtask_id.clone().unwrap_or_default());
+            let worker_id = event
+                .data
+                .get("worker_id")
+                .and_then(|v| v.as_str())
+                .map(|s| uc_types::WorkerId(s.to_string()))
+                .unwrap_or_default();
+            let phase = event
+                .data
+                .get("phase")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // percent may arrive as a number or a stringified number.
+            let percent = event
+                .data
+                .get("percent")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_i64().map(|i| i as u64))
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
+                .unwrap_or(0) as u32;
+            let step_index = event
+                .data
+                .get("step_index")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
+                .map(|n| n as u32);
+            let step_total = event
+                .data
+                .get("step_total")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
+                .map(|n| n as u32);
+            let step_agent = event
+                .data
+                .get("step_agent")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let step_status = event
+                .data
+                .get("step_status")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let step_summary = event
+                .data
+                .get("step_summary")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            Some(uc_engine::AgentEventType::SubtaskProgress {
+                task_id,
+                subtask_id,
+                worker_id,
+                phase,
+                percent,
+                step_index,
+                step_total,
+                step_agent,
+                step_status,
+                step_summary,
             })
         }
         "task_paused" => {
@@ -4388,6 +4460,130 @@ mod tests {
                 assert_eq!(tool_input, "pattern");
             }
             _ => panic!("Expected ToolInvoked"),
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_event_to_agent_event_subtask_progress() {
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "worker_id".to_string(),
+            serde_json::Value::String("w-1".to_string()),
+        );
+        data.insert(
+            "phase".to_string(),
+            serde_json::Value::String("step 2/3: codex".to_string()),
+        );
+        // percent as a JSON number
+        data.insert(
+            "percent".to_string(),
+            serde_json::Value::Number(50.into()),
+        );
+        // step_index/step_total as numbers
+        data.insert(
+            "step_index".to_string(),
+            serde_json::Value::Number(2.into()),
+        );
+        data.insert(
+            "step_total".to_string(),
+            serde_json::Value::Number(3.into()),
+        );
+        data.insert(
+            "step_agent".to_string(),
+            serde_json::Value::String("codex".to_string()),
+        );
+        data.insert(
+            "step_status".to_string(),
+            serde_json::Value::String("running".to_string()),
+        );
+        data.insert(
+            "step_summary".to_string(),
+            serde_json::Value::String("editing main.rs".to_string()),
+        );
+
+        let event = NatsTaskEvent {
+            v: default_event_version(),
+            message_id: None,
+            r#type: "subtask_progress".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data,
+        };
+
+        let result = nats_event_to_agent_event(&event);
+        assert!(result.is_some(), "subtask_progress should not hit catch-all");
+        match result.unwrap() {
+            uc_engine::AgentEventType::SubtaskProgress {
+                task_id,
+                subtask_id,
+                worker_id,
+                phase,
+                percent,
+                step_index,
+                step_total,
+                step_agent,
+                step_status,
+                step_summary,
+            } => {
+                assert_eq!(task_id.0, "t-1");
+                assert_eq!(subtask_id.0, "st-1");
+                assert_eq!(worker_id.0, "w-1");
+                assert_eq!(phase, "step 2/3: codex");
+                assert_eq!(percent, 50);
+                assert_eq!(step_index, Some(2));
+                assert_eq!(step_total, Some(3));
+                assert_eq!(step_agent.as_deref(), Some("codex"));
+                assert_eq!(step_status.as_deref(), Some("running"));
+                assert_eq!(step_summary.as_deref(), Some("editing main.rs"));
+            }
+            _ => panic!("Expected SubtaskProgress"),
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_event_to_agent_event_subtask_progress_stringified_percent() {
+        // percent may arrive as a stringified number (gRPC data map is map<string,string>)
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "worker_id".to_string(),
+            serde_json::Value::String("w-1".to_string()),
+        );
+        data.insert(
+            "phase".to_string(),
+            serde_json::Value::String("executing".to_string()),
+        );
+        data.insert(
+            "percent".to_string(),
+            serde_json::Value::String("50".to_string()),
+        );
+
+        let event = NatsTaskEvent {
+            v: default_event_version(),
+            message_id: None,
+            r#type: "subtask_progress".to_string(),
+            task_id: "t-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data,
+        };
+
+        let result = nats_event_to_agent_event(&event);
+        assert!(result.is_some());
+        match result.unwrap() {
+            uc_engine::AgentEventType::SubtaskProgress {
+                percent,
+                step_index,
+                step_total,
+                step_agent,
+                ..
+            } => {
+                assert_eq!(percent, 50, "stringified percent should parse to 50");
+                assert!(step_index.is_none(), "missing step_index should be None");
+                assert!(step_total.is_none());
+                assert!(step_agent.is_none());
+            }
+            _ => panic!("Expected SubtaskProgress"),
         }
     }
 

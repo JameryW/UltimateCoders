@@ -952,6 +952,47 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                     .into_iter()
                     .collect(),
             ),
+            uc_engine::AgentEventType::SubtaskProgress {
+                task_id,
+                subtask_id,
+                worker_id,
+                phase,
+                percent,
+                step_index,
+                step_total,
+                step_agent,
+                step_status,
+                step_summary,
+            } => {
+                let mut data_map: std::collections::HashMap<String, String> = vec![
+                    ("worker_id".to_string(), worker_id.0),
+                    ("phase".to_string(), phase),
+                    ("percent".to_string(), percent.to_string()),
+                ]
+                .into_iter()
+                .collect();
+                if let Some(si) = step_index {
+                    data_map.insert("step_index".to_string(), si.to_string());
+                }
+                if let Some(st) = step_total {
+                    data_map.insert("step_total".to_string(), st.to_string());
+                }
+                if let Some(sa) = step_agent {
+                    data_map.insert("step_agent".to_string(), sa);
+                }
+                if let Some(ss) = step_status {
+                    data_map.insert("step_status".to_string(), ss);
+                }
+                if let Some(ssum) = step_summary {
+                    data_map.insert("step_summary".to_string(), ssum);
+                }
+                (
+                    "subtask_progress".to_string(),
+                    task_id.0,
+                    subtask_id.0,
+                    data_map,
+                )
+            }
             uc_engine::AgentEventType::ToolInvoked {
                 task_id,
                 subtask_id,
@@ -1733,6 +1774,66 @@ mod tests {
             event.payload,
             AgentEventPayload::TaskCreated { .. }
         ));
+    }
+
+    #[test]
+    fn agent_event_to_proto_subtask_progress() {
+        let event = uc_engine::AgentEventType::SubtaskProgress {
+            task_id: uc_types::TaskId("t-1".to_string()),
+            subtask_id: uc_types::TaskId("st-1".to_string()),
+            worker_id: uc_types::WorkerId("w-1".to_string()),
+            phase: "step 2/3: codex".to_string(),
+            percent: 50,
+            step_index: Some(2),
+            step_total: Some(3),
+            step_agent: Some("codex".to_string()),
+            step_status: Some("running".to_string()),
+            step_summary: Some("editing main.rs".to_string()),
+        };
+
+        let proto: TaskEventProto = event.into();
+        assert_eq!(proto.r#type, "subtask_progress");
+        assert_eq!(proto.task_id, "t-1");
+        assert_eq!(proto.subtask_id, Some("st-1".to_string()));
+        // Core fields always present
+        assert_eq!(proto.data.get("worker_id").map(String::as_str), Some("w-1"));
+        assert_eq!(proto.data.get("phase").map(String::as_str), Some("step 2/3: codex"));
+        assert_eq!(proto.data.get("percent").map(String::as_str), Some("50"));
+        // Optional workflow-step fields
+        assert_eq!(proto.data.get("step_index").map(String::as_str), Some("2"));
+        assert_eq!(proto.data.get("step_total").map(String::as_str), Some("3"));
+        assert_eq!(proto.data.get("step_agent").map(String::as_str), Some("codex"));
+        assert_eq!(proto.data.get("step_status").map(String::as_str), Some("running"));
+        assert_eq!(proto.data.get("step_summary").map(String::as_str), Some("editing main.rs"));
+    }
+
+    #[test]
+    fn agent_event_to_proto_subtask_progress_minimal() {
+        // Single-agent progress (no step_* fields) — optional keys must be absent
+        let event = uc_engine::AgentEventType::SubtaskProgress {
+            task_id: uc_types::TaskId("t-1".to_string()),
+            subtask_id: uc_types::TaskId("st-1".to_string()),
+            worker_id: uc_types::WorkerId("w-1".to_string()),
+            phase: "executing".to_string(),
+            percent: 50,
+            step_index: None,
+            step_total: None,
+            step_agent: None,
+            step_status: None,
+            step_summary: None,
+        };
+
+        let proto: TaskEventProto = event.into();
+        assert_eq!(proto.r#type, "subtask_progress");
+        assert_eq!(proto.data.get("worker_id").map(String::as_str), Some("w-1"));
+        assert_eq!(proto.data.get("phase").map(String::as_str), Some("executing"));
+        assert_eq!(proto.data.get("percent").map(String::as_str), Some("50"));
+        // Optional keys absent for single-agent progress
+        assert!(proto.data.get("step_index").is_none());
+        assert!(proto.data.get("step_total").is_none());
+        assert!(proto.data.get("step_agent").is_none());
+        assert!(proto.data.get("step_status").is_none());
+        assert!(proto.data.get("step_summary").is_none());
     }
 
     #[test]

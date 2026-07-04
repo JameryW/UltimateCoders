@@ -47,6 +47,29 @@ pub enum AgentEventType {
         subtask_id: TaskId,
         worker_id: WorkerId,
     },
+    /// Real-time progress update from a worker during subtask execution.
+    ///
+    /// Emitted by the Python worker at phase transitions (preparing/executing/
+    /// validating/finalizing) and per workflow-step. Carries `phase`, `percent`,
+    /// and optional workflow-step metadata (step_index/step_total/step_agent/
+    /// step_status/step_summary).
+    SubtaskProgress {
+        task_id: TaskId,
+        subtask_id: TaskId,
+        worker_id: WorkerId,
+        phase: String,
+        percent: u32,
+        /// 1-based index of the current workflow step (None for single-agent).
+        step_index: Option<u32>,
+        /// Total number of workflow steps (None for single-agent).
+        step_total: Option<u32>,
+        /// Agent running the current step (e.g. "claude-code", "codex").
+        step_agent: Option<String>,
+        /// Status of the current step (e.g. "running", "completed", "failed").
+        step_status: Option<String>,
+        /// Short summary of the current step's activity.
+        step_summary: Option<String>,
+    },
     ToolInvoked {
         task_id: TaskId,
         subtask_id: TaskId,

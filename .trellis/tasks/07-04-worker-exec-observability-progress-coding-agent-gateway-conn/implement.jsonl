@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "PR1 Rust: NATS uc.task.event 统一事件管道契约 — subtask_progress 转发到 broadcast 的签名与约束"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "PR2 dashboard: DashboardApp REST/SSE 契约 + 事件源 exclusivity from NATS"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "PR3 TUI: watchTask streaming 客户端模式参考（虽是 React/Ink TUI，streaming 模式可借）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "PR2 dashboard + PR3 TUI: React/TS 状态管理（SubtaskSummary 字段 + progressState 更新）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "PR2/3: 类型安全（SubtaskSummary/OrchestratorEvents 加字段）"}
+{"file": ".trellis/tasks/07-04-worker-exec-observability-progress-coding-agent-gateway-conn/research/grpc-to-tui-event-pipe.md", "reason": "PR1/3: Rust broadcast channel + WatchTask 现状 + subtask_progress 被丢弃的根因 + 最小路径三步"}
+{"file": ".trellis/tasks/07-04-worker-exec-observability-progress-coding-agent-gateway-conn/prd.md", "reason": "全 PR: ADR + 需求 + acceptance + 5 PR 分解"}

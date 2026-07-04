@@ -47,6 +47,9 @@ const DEDUP_STATUS_EVENTS = new Set([
 ]);
 // Key: `${event.type}:${event.subtaskId ?? ''}:${event.taskId}`
 // Max 500 entries in seenEvents
+// NOTE: subtask_progress is intentionally NOT deduped — it is transient,
+// high-frequency, and each emission carries a distinct phase/percent. Deduping
+// would drop intermediate progress updates.
 ```
 
 ### 3. Contracts
@@ -65,7 +68,7 @@ const DEDUP_STATUS_EVENTS = new Set([
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
 | message_id | string | yes | Format: `{subject}:{timestamp_ms}:{random}` |
-| type | string | yes | One of: task_submitted, subtask_assigned, subtask_started, subtask_completed, subtask_failed |
+| type | string | yes | One of: task_submitted, subtask_assigned, subtask_started, subtask_progress, subtask_completed, subtask_failed |
 | task_id | string | yes | UUID |
 | subtask_id | string | no | UUID, empty for task-level events |
 | data | object | no | Event-specific payload |
@@ -255,6 +258,38 @@ async def _publish_event(self, event_type, **kwargs):
 ```
 
 **Related**: nats-bridge-spec.md
+
+---
+
+## Contract: subtask_progress event (transient telemetry)
+
+**What**: `subtask_progress` carries real-time execution telemetry — phase, percent, and (for multi-agent workflows) which coding agent is running which step. Unlike lifecycle events (started/completed/failed), it is transient and high-frequency.
+
+**Payload (Python `_progress` helper, worker.py)**:
+```json
+{
+  "type": "subtask_progress",
+  "task_id": "task-uuid",
+  "subtask_id": "st-uuid",
+  "data": {
+    "phase": "executing",            // or "step 2/3: codex" for workflow steps
+    "percent": 50,
+    "worker_id": "worker-1",
+    "step_index": 1,                 // optional, workflow only
+    "step_total": 3,                 // optional, workflow only
+    "step_agent": "codex",           // optional, workflow only (claude-code | codex)
+    "step_status": "started",        // optional (started | completed | failed)
+    "step_summary": "..."            // optional, truncated
+  }
+}
+```
+
+**Phases** (single-agent path): `preparing(10)` → `executing(50)` → `validating(80)` → `finalizing(95)`.
+**Phases** (workflow path): per-step `step N/total: <agent>`, percent = `100 * idx/total`.
+
+**Rust routing**: `nats_event_to_agent_event` (uc-grpc server.rs) must have a `"subtask_progress" =>` match arm returning `Some(AgentEventType::SubtaskProgress{...})`. The `From<AgentEventType> for TaskEventProto` impl (conversions.rs) must serialize it to the proto `data` map with snake_case keys matching the Python payload. `apply_event_to_snapshot` (checkpoint.rs) treats it as a no-op (transient — does not mutate subtask lifecycle state).
+
+> **Warning (Gotcha): Rust match-arm silent drop.** `nats_event_to_agent_event` has a catch-all `_ => None` arm that **silently drops** any event type without an explicit match arm — no log, no error. A new event type published by the Python worker but unhandled in Rust will vanish at the Rust boundary: never enters the broadcast channel, never reaches WatchTask/dashboard/TUI. This is how `subtask_progress` was originally lost (dashboard couldn't show progress despite the worker publishing it). **When adding any new event type: add the match arm in `nats_event_to_agent_event` AND the `From<AgentEventType> for TaskEventProto` arm in the same change**, or the event is silently black-holed. Grep `_ =>` in server.rs to find the catch-all.
 
 ---
 
