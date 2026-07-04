@@ -17,6 +17,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
 import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
+import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
 import { OrchestratorEventEmitter } from "./events";
@@ -167,6 +168,8 @@ export class UCOrchestrator {
 	private wasConnected = false;
 	private circuitBreaker = new CircuitBreaker();
 	private controlSubscriber: ControlSignalSubscriber;
+	/** WatchTask stream controller — live task/subtask events from the gRPC server. */
+	private watchTaskController?: AbortController;
 	/** Internal event emitter — decouples orchestration from presentation */
 	readonly events = new OrchestratorEventEmitter();
 
@@ -222,6 +225,65 @@ export class UCOrchestrator {
 		// Start NATS control subscriber (or polling fallback) — non-blocking
 		this.controlSubscriber.start().catch((err) => {
 			this.pi.logger.warn(`ControlSubscriber start failed: ${err}`);
+		});
+		// Start WatchTask stream for live subtask_progress events (PR3).
+		// The gRPC server broadcasts all task events from NATS through WatchTask;
+		// we only re-emit subtask_progress here (idempotent telemetry, not deduped
+		// per the event-pipeline spec). Lifecycle events (start/end/failed) are
+		// emitted by the orchestrator for locally-submitted tasks; WatchTask events
+		// originate from NATS (could be other workers/tasks) so we don't duplicate them.
+		this.startWatchTaskStream();
+	}
+
+	/**
+	 * Start (or restart) the WatchTask gRPC stream. On stream end/error,
+	 * schedules a reconnect after a short delay so transient drops recover
+	 * without manual intervention.
+	 */
+	private startWatchTaskStream(): void {
+		if (this.watchTaskController) {
+			this.watchTaskController.abort();
+		}
+		this.watchTaskController = this.bridge.startWatchTask(
+			(ev: TaskEvent) => this.handleWatchTaskEvent(ev),
+			() => {
+				// Stream ended or errored — attempt reconnect after 2s
+				setTimeout(() => {
+					if (!this.bridge.isConnected()) return; // server down; will retry on next health check cycle
+					this.startWatchTaskStream();
+				}, 2000);
+			},
+		);
+	}
+
+	/**
+	 * Handle a WatchTask event from the gRPC server.
+	 *
+	 * SCOPING NOTE: Only subtask_progress is re-emitted. Lifecycle events
+	 * (subtask_start/end/failed/completed) are emitted by the orchestrator for
+	 * locally-submitted tasks; WatchTask events come from NATS and could be from
+	 * other workers/tasks — re-emitting them would duplicate or cross-contaminate.
+	 * subtask_progress is idempotent telemetry (transient, intentionally not
+	 * deduped per event-pipeline-spec), so re-emitting is safe and useful.
+	 */
+	private handleWatchTaskEvent(ev: TaskEvent): void {
+		if (ev.type !== "subtask_progress") return;
+		const d = ev.data;
+		const percentStr = d.percent ?? "0";
+		const percent = Number(percentStr) || 0;
+		const stepIndexStr = d.step_index;
+		const stepTotalStr = d.step_total;
+		this.events.emit("subtask_progress", {
+			taskId: ev.taskId,
+			subtaskId: ev.subtaskId ?? "",
+			workerId: d.worker_id ?? "",
+			phase: d.phase ?? "",
+			percent,
+			stepIndex: stepIndexStr !== undefined && stepIndexStr !== "" ? Number(stepIndexStr) : undefined,
+			stepTotal: stepTotalStr !== undefined && stepTotalStr !== "" ? Number(stepTotalStr) : undefined,
+			stepAgent: d.step_agent,
+			stepStatus: d.step_status,
+			stepSummary: d.step_summary,
 		});
 	}
 
@@ -1690,6 +1752,9 @@ export class UCOrchestrator {
 	 * Call on session_shutdown. After this the orchestrator is unusable.
 	 */
 	async destroy(): Promise<void> {
+		// Stop WatchTask stream (live event subscription)
+		this.watchTaskController?.abort();
+		this.watchTaskController = undefined;
 		// Stop NATS/polling subscriber
 		await this.controlSubscriber.stop();
 		// Abort all running tasks

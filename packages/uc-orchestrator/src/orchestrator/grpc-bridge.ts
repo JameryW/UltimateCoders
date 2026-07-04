@@ -36,7 +36,9 @@ import {
 	GetFileRequestSchema,
 	ListWorkersRequestSchema,
 	ScaleWorkersRequestSchema,
+	WatchTaskRequestSchema,
 	type SubmitTaskResponse,
+	type TaskEvent,
 } from "../grpc/engine_pb.js";
 import { create } from "@bufbuild/protobuf";
 import { readFileSync } from "node:fs";
@@ -341,6 +343,49 @@ export class GrpcBridge {
 			if (!resp.available) return [];
 			return resp.tasks.map((t) => this.parseTaskFromProto(t));
 		}, []);
+	}
+
+	// ── WatchTask Streaming ─────────────────────────────────────
+
+	/**
+	 * Start a WatchTask server-streaming RPC (empty taskId = watch all tasks).
+	 * Returns an AbortController the caller uses to stop the stream.
+	 *
+	 * On normal stream end (server closed) or error (when not caller-aborted),
+	 * the optional onError callback is invoked so the caller can reconnect.
+	 *
+	 * Pattern mirrors dashboard/src/hooks/useGrpcWeb.ts:210-235.
+	 */
+	startWatchTask(
+		onEvent: (ev: TaskEvent) => void,
+		onError?: (err: unknown) => void,
+	): AbortController {
+		const ac = new AbortController();
+		const req = create(WatchTaskRequestSchema, { taskId: "" });
+		// async IIFE — fire-and-forget; caller manages lifecycle via the AbortController
+		void (async () => {
+			try {
+				const stream = this.taskClient.watchTask(req, { signal: ac.signal });
+				for await (const event of stream) {
+					if (ac.signal.aborted) break;
+					try {
+						onEvent(event);
+					} catch (cbErr) {
+						console.warn(`GrpcBridge watchTask onEvent callback error: ${cbErr instanceof Error ? cbErr.message : cbErr}`);
+					}
+				}
+				// Stream ended normally (not aborted) — server closed it
+				if (!ac.signal.aborted) {
+					console.warn("GrpcBridge watchTask stream ended (server closed)");
+					onError?.(new Error("watchTask stream closed by server"));
+				}
+			} catch (err) {
+				if (ac.signal.aborted) return; // caller-initiated stop
+				console.warn(`GrpcBridge watchTask stream error: ${err instanceof Error ? err.message : err}`);
+				onError?.(err);
+			}
+		})();
+		return ac;
 	}
 
 	// ── Upsert (create or update) ──────────────────────────────
