@@ -10,6 +10,7 @@
 import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
+import type { SubtaskProgressInfo } from "./progress-widget";
 import { formatErrorForDisplay } from "./error-format";
 
 // ── Status Icons ─────────────────────────────────────────────────
@@ -32,6 +33,8 @@ function statusIcon(status: string, theme: Theme): string {
 
 export interface SubtaskTreeOptions {
 	tasks: () => TaskState[];
+	/** Accessor for live progress keyed by subtaskId, scoped to a task. */
+	progressForTask?: (taskId: string) => Map<string, SubtaskProgressInfo> | undefined;
 	onRetry?: (taskId: string, subtaskId: string) => void;
 	onClose: () => void;
 }
@@ -98,6 +101,23 @@ class SubtaskTreeComponent {
 				: "";
 
 			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}`);
+
+			// Live progress (agent badge + phase) for running/reviewing subtasks
+			if (item.subtask.status === "running" || item.subtask.status === "reviewing") {
+				const progMap = this.opts.progressForTask?.(item.taskId);
+				const prog = progMap?.get(item.subtask.id);
+				if (prog) {
+					const agentBadge = prog.stepAgent
+						? this.theme.fg("accent", `[${prog.stepAgent}]`)
+						: "";
+					const phaseLabel = prog.phase ? this.theme.fg("dim", prog.phase) : "";
+					const percentLabel = this.theme.fg("accent", `${prog.percent}%`);
+					const parts = [agentBadge, phaseLabel, percentLabel].filter(Boolean).join(" ");
+					if (parts) {
+						lines.push(`      ${parts}`);
+					}
+				}
+			}
 
 			if (this.expanded.has(item.subtask.id)) {
 				if (item.subtask.result) {

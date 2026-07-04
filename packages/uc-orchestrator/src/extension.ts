@@ -209,6 +209,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			await ctx.ui.custom(
 				createSubtaskTreeOverlay({
 					tasks: () => orchestrator.getAllTaskStates(),
+					progressForTask: (taskId: string) => progressState.get(taskId)?.progressBySubtask,
 					onRetry: async (taskId, subtaskId) => {
 						ctx.ui.notify(`Retry requested for ${subtaskId} — use /uc resume ${taskId}`, "info");
 					},

@@ -39,6 +39,16 @@ function progressBar(completed: number, total: number, width: number, theme: The
 	return theme.fg("success", "█".repeat(filled)) + theme.fg("dim", "░".repeat(empty));
 }
 
+// ── Single-subtask percent bar ───────────────────────────────────
+
+/** Compact inline progress bar for a single subtask's percent (0-100). */
+function percentBar(percent: number, width: number, theme: Theme): string {
+	const clamped = Math.max(0, Math.min(100, percent));
+	const filled = Math.round((clamped / 100) * width);
+	const empty = width - filled;
+	return theme.fg("accent", "█".repeat(filled)) + theme.fg("dim", "░".repeat(empty));
+}
+
 // ── Widget Component ─────────────────────────────────────────────
 
 export interface ProgressWidgetState {
@@ -114,6 +124,19 @@ class ProgressWidgetComponent {
 				const icon = statusIcon(st.status, this.theme);
 				const desc = st.description.slice(0, width - 12);
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
+
+				// Live progress (phase / percent / agent) from subtask_progress events
+				const prog = s.progressBySubtask?.get(st.id);
+				if (prog) {
+					const barWidth = Math.min(16, Math.max(6, Math.floor((width - 30) / 2)));
+					const bar = percentBar(prog.percent, barWidth, this.theme);
+					const agentBadge = prog.stepAgent
+						? ` ${this.theme.fg("accent", `[${prog.stepAgent}]`)}`
+						: "";
+					const phaseLabel = prog.phase ? this.theme.fg("dim", prog.phase) : "";
+					const percentLabel = this.theme.fg("accent", `${prog.percent}%`);
+					lines.push(`    ${agentBadge} ${phaseLabel} ${bar} ${percentLabel}`.replace(/\s+/g, " ").trimStart());
+				}
 			}
 			if (running.length > 3) {
 				lines.push(`  ${this.theme.fg("dim", `  ...+${running.length - 3} more`)}`);
