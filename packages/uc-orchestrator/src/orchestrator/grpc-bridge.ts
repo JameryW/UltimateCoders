@@ -289,6 +289,10 @@ export class GrpcBridge {
 						console.warn("GrpcBridge retry after reconnect failed");
 					}
 				}
+			} else {
+				// Non-connection error (business error, serialization issue, etc.)
+				// — log it so "Indexing failed" reports are debuggable.
+				console.warn(`GrpcBridge withReconnect non-connection error:`, err instanceof Error ? `${err.name}: ${err.message}` : err);
 			}
 			return fallback;
 		}

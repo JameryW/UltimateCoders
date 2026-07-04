@@ -153,7 +153,10 @@ The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>
 The OMP extension also registers LLM-callable tools:
 - `uc_task` — Task lifecycle: submit/cancel/pause/resume/status
 - `uc_worker` — Worker management: list workers / check load/capacity/heartbeat, `scale` the cluster to a target count (docker compose), or `deregister` a stale worker from the registry
-- `uc_memory_read`, `uc_memory_write`, `uc_memory_search` — Shared layered memory
+- `uc_memory` — Shared layered memory: read/write/search/delete (task/project/global scopes)
+- `uc_search` — Hybrid index search (text + semantic + AST) across indexed repos
+- `uc_index` — Index management: index_repo / list_repos / get_state / remove_index
+- `uc_file` — File operations: list_dir / get_file
 
 The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.
 
@@ -164,8 +167,8 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 ```
 +-------------------+     +-------------------------------+     +---------------+
 |   Python Worker   |     |  OMP + UC Extension           |     |  Dashboard    |
-|  (LocalWorker/    |     |  +-------------------------+  |     |  (Vite/React) |
-|   NATS fallback)  |     |  │ Orchestrator Core       │  |     +-------+-------+
+|  (NATS Worker /   |     |  +-------------------------+  |     +-------+-------+
+|   local fallback) |     |  │ Orchestrator Core       │  |     |  (Vite/React) |
 +--------+----------+     |  │  ├─ Scheduler (DAG)     │  |             |
          |                |  │  ├─ TaskStore (SQLite)  │  |     +-------v-------+
          | Engine API     |  │  ├─ GrpcBridge          │──┼────►│  uc-grpc-server|
@@ -193,7 +196,7 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 All task events flow through a unified **broadcast channel** (capacity 256) in the gRPC server:
 
 1. **Local decomposition** — TaskStore records events and broadcasts them
-2. **LocalWorkerBridge** — Python subprocess sends JSON-RPC notifications; the bridge applies updates and broadcasts
+2. **Local fallback** — in-process newline-split decomposition records events and broadcasts them (no external worker)
 3. **NATS subscriber** — Receives `uc.task.update` and `uc.task.event` from the Python NATS Worker; applies and broadcasts
 4. **WatchTask stream** — Subscribes to the broadcast channel for instant delivery (replaces polling)
 
@@ -207,21 +210,24 @@ The UC Orchestrator extension (`packages/uc-orchestrator`) is the primary user i
 | **Orchestrator** | `orchestrator.ts` | Task lifecycle: submit → decompose → DAG waves → review → complete |
 | **Scheduler** | `scheduler.ts` | DAG builder, file-overlap wave splitter, CircuitBreaker |
 | **GrpcBridge** | `grpc-bridge.ts` | gRPC client for TaskService (submit, watch, control signals) |
-| **MemoryBridge** | `memory-bridge.ts` | LLM-callable tools: `uc_memory_read/write/search` |
+| **MemoryBridge** | `memory-bridge.ts` | LLM-callable tool: `uc_memory` (read/write/search/delete) |
+| **TaskBridge** | `task-bridge.ts` | LLM-callable tool: `uc_task` (submit/cancel/pause/resume/status) |
+| **IndexBridge** | `index-bridge.ts` | LLM-callable tool: `uc_index` (index_repo/list_repos/get_state/remove_index) |
+| **FileBridge** | `file-bridge.ts` | LLM-callable tool: `uc_file` (list_dir/get_file) |
+| **WorkerBridge** | `worker-bridge.ts` | LLM-callable tool: `uc_worker` (list/status/scale/deregister) |
 | **TaskStore** | `task-store.ts` | SQLite-backed task persistence + restore on startup |
 | **ControlSignals** | `control-signal-subscriber.ts` | gRPC stream for pause/resume/cancel from external sources |
 | **Events** | `events.ts` | Typed event emitter decoupling orchestration ↔ UI |
 
 Agent definition prompts (`agents/decomposer.md`, `supervisor.md`, `worker.md`) configure the LLM roles for task decomposition, subtask review, and code generation.
 
-### LocalWorkerBridge
+### Local Fallback (No NATS)
 
-When NATS is unavailable, the gRPC server can execute tasks locally via a Python subprocess (`python -m ultimate_coders.local_worker`). Communication uses JSON-RPC 2.0 over stdin/stdout. The bridge:
+When NATS is unavailable, the gRPC server executes tasks locally via in-process newline-split decomposition (the legacy `python -m ultimate_coders.local_worker` JSON-RPC subprocess path has been removed). The server:
 
-- Spawns and manages the worker lifecycle
-- Sends `submit_task` requests and reads progress notifications
-- Applies worker updates to TaskStore and broadcasts events
-- Falls back to newline-split decomposition if the worker is unavailable
+- Decomposes the task description into subtasks by newline-split heuristic
+- Applies updates to TaskStore and broadcasts events through the same channel
+- Degrades gracefully — no external worker process required
 
 ### NATS Worker
 
@@ -256,7 +262,7 @@ ultimate-coders/
 ├── crates/
 │   ├── uc-types/             # Shared types + EngineApi trait
 │   ├── uc-engine/            # Core engine (LocalEngine implementation)
-│   ├── uc-grpc/              # gRPC server/client + proto + broadcast + LocalWorkerBridge
+│   ├── uc-grpc/              # gRPC server/client + proto + broadcast channel + NATS integration
 │   ├── uc-grpc-server/       # Standalone gRPC server binary
 │   └── uc-python/            # PyO3 Python binding
 ├── packages/
@@ -266,8 +272,12 @@ ultimate-coders/
 │       │   ├── orchestrator/ # Core orchestration logic
 │       │   │   ├── orchestrator.ts   # Main orchestrator (submit, cancel, pause, resume, DAG waves)
 │       │   │   ├── scheduler.ts      # DAG builder, wave splitter, circuit breaker
-│       │   │   ├── grpc-bridge.ts    # gRPC client for TaskService
-│       │   │   ├── memory-bridge.ts  # LLM-callable memory tools (read/write/search)
+│       │   │   ├── grpc-bridge.ts    # gRPC-Web client for TaskService (submit, watch, control)
+│       │   │   ├── memory-bridge.ts  # LLM tool: uc_memory (read/write/search/delete)
+│       │   │   ├── task-bridge.ts    # LLM tool: uc_task (submit/cancel/pause/resume/status)
+│       │   │   ├── index-bridge.ts   # LLM tool: uc_index (index_repo/list_repos/get_state/remove_index)
+│       │   │   ├── file-bridge.ts    # LLM tool: uc_file (list_dir/get_file)
+│       │   │   ├── worker-bridge.ts  # LLM tool: uc_worker (list/status/scale/deregister)
 │       │   │   ├── task-store.ts     # SQLite-backed task persistence
 │       │   │   ├── control-signal-subscriber.ts  # gRPC stream control signals
 │       │   │   └── events.ts         # Typed event emitter (orchestration ↔ UI)
@@ -276,6 +286,7 @@ ultimate-coders/
 │       │   │   ├── subtask-tree-overlay.ts  # Ctrl+T overlay
 │       │   │   ├── task-list-overlay.ts     # Ctrl+Shift+T overlay
 │       │   │   ├── task-result-renderer.ts  # Custom message renderer
+│       │   │   ├── error-format.ts          # Error message formatting
 │       │   │   ├── status-renderer.ts       # Footer connection status
 │       │   │   └── status-formatter.ts      # Task list/detail formatting
 │       │   ├── agents/       # Agent definition prompts (decomposer, supervisor, worker)
@@ -286,7 +297,7 @@ ultimate-coders/
 │       ├── engine.py         # create_engine() factory
 │       ├── agent/            # Worker + Sandbox + Scheduler
 │       ├── dashboard/        # FastAPI metrics + SSE streaming
-│       ├── local_worker.py   # JSON-RPC worker subprocess (gRPC bridge)
+│       ├── repo_config.py    # uc.repos.yaml loader + RepoScanner auto-discovery
 │       ├── nats_worker.py    # NATS consumer/producer bridge
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
