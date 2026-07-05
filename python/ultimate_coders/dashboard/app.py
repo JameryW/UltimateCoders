@@ -1586,7 +1586,7 @@ class DashboardApp:
     def _subscribe_nats_events(self) -> None:
         """Register a FastAPI startup event to subscribe to NATS events.
 
-        Uses FastAPI's ``add_event_handler("startup", ...)`` so the
+        Uses FastAPI's ``@app.on_event("startup", ...)`` so the
         subscription runs on uvicorn's event loop after the server starts.
         """
         if self._nats_client is None:
@@ -1616,7 +1616,7 @@ class DashboardApp:
         # uvicorn event loop. This is more reliable than trying to
         # grab the loop from a timer thread.
         if self._nats_client is not None:
-            self._app.add_event_handler("startup", _subscribe)
+            self._app.on_event("startup")(_subscribe)
 
     async def _handle_nats_event(self, msg: Any) -> None:
         """Handle a NATS ``uc.task.event`` message.
