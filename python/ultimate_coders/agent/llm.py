@@ -536,8 +536,12 @@ class LLMClient:
             if not llm_response.has_tool_calls:
                 return llm_response, tool_calls_log
 
-            # Process tool calls
+            # Process tool calls. Anthropic expects ALL tool_use blocks for
+            # one assistant turn in a SINGLE assistant message, with ALL
+            # tool_results in a SINGLE following user message. Build the
+            # blocks across the loop, then append once after.
             tool_use_blocks = []
+            tool_result_blocks = []
             for tool_call in llm_response.tool_calls:
                 tool_result_str = ""
                 if tool_executor is not None:
@@ -572,20 +576,16 @@ class LLMClient:
                         "input": tool_call.input,
                     }
                 )
-
-                working_messages.append({"role": "assistant", "content": tool_use_blocks})
-                working_messages.append(
+                tool_result_blocks.append(
                     {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call.id,
-                                "content": tool_result_str,
-                            }
-                        ],
+                        "type": "tool_result",
+                        "tool_use_id": tool_call.id,
+                        "content": tool_result_str,
                     }
                 )
+
+            working_messages.append({"role": "assistant", "content": tool_use_blocks})
+            working_messages.append({"role": "user", "content": tool_result_blocks})
 
         return llm_response, tool_calls_log
 

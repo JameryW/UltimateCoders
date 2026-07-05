@@ -667,6 +667,22 @@ class Worker:
             # ── Retry loop with backoff ────────────────────────────────
             result: SubtaskResult | None = None
             for attempt in range(self.MAX_RETRIES):
+                # Re-acquire workspace each attempt: prior attempt released it
+                # (or never had one). Without this, retry runs against a freed
+                # worktree and double-releases. ponytail: per-attempt acquire
+                if (
+                    self._workspace_manager
+                    and subtask.file_constraints
+                    and workspace_handle is None
+                ):
+                    workspace_handle = await self._workspace_manager.acquire(subtask.id)
+                    if workspace_handle:
+                        logger.info(
+                            "Subtask %s re-acquired workspace %s (attempt %d)",
+                            subtask.id[:8],
+                            workspace_handle.workspace_id,
+                            attempt + 1,
+                        )
                 try:
                     timeout_secs = subtask.timeout_seconds or 600
                     try:
@@ -712,6 +728,7 @@ class Worker:
                                 subtask.id[:8],
                                 merge_result.get("branch_preserved", ""),
                             )
+                        workspace_handle = None  # ponytail: freed; re-acquire next attempt
 
                     if result.success:
                         await _progress("finalizing", 95)
@@ -795,6 +812,7 @@ class Worker:
                     # Release workspace without merge on error
                     if workspace_handle:
                         await self._workspace_manager.release(workspace_handle, merge=False)
+                        workspace_handle = None  # ponytail: freed; re-acquire next attempt
 
                     # Retry on exception too, if attempts remain
                     if attempt < self.MAX_RETRIES - 1:
@@ -1093,7 +1111,11 @@ class Worker:
                 agent=step.agent,
             )
             step_outputs.append(output)
-            all_file_changes.extend(output.file_changes)
+            # Only accumulate file changes from successful steps — a failed
+            # step's partial edits are not a reliable result. ponytail: avoid
+            # reporting partial work as applied when a later step succeeds.
+            if output.success:
+                all_file_changes.extend(output.file_changes)
             await self._emit_step_event(
                 subtask, "subtask_progress",
                 phase=f"step {idx + 1}/{total}: {step.agent}",

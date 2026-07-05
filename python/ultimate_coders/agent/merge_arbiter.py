@@ -80,6 +80,11 @@ class MergeArbiter:
         # ConflictResolver is the escalation path for text-level conflicts
         # that git's own merge cannot auto-resolve.
         self._resolver = ConflictResolver(llm_client)
+        # Serialize concurrent arbitrate() calls on the same clone: two
+        # tasks finishing at once would interleave checkout/merge/push on a
+        # single working tree and corrupt state. ponytail: per-instance lock,
+        # not cross-process — relies on single arbiter process per clone.
+        self._arb_lock = asyncio.Lock()
 
     async def ensure_clone(self) -> None:
         """Ensure a git checkout of the remote exists at ``project_path``.
@@ -170,6 +175,15 @@ class MergeArbiter:
                 )
 
     async def arbitrate(self, subtask_branches: list[str]) -> dict[str, Any]:
+        """Merge subtask branches into ``origin/<base_branch>>`` and push.
+
+        Serializes concurrent calls via ``_arb_lock`` — two arbitrate() calls
+        on the same clone would interleave git ops on one working tree.
+        """
+        async with self._arb_lock:
+            return await self._arbitrate_impl(subtask_branches)
+
+    async def _arbitrate_impl(self, subtask_branches: list[str]) -> dict[str, Any]:
         """Merge subtask branches into ``origin/<base_branch>`` and push.
 
         Steps:
@@ -259,14 +273,25 @@ class MergeArbiter:
         merged: list[str] = []
         conflicts: list[str] = []
         for branch in subtask_branches:
-            # Fetch the branch ref from origin (no-op if already local).
-            await self._git(
+            # Fetch the branch ref from origin. Force-fetch (+refspec) so a
+            # stale local ref of the same name is updated, not rejected.
+            fetch_res = await self._git(
                 [
                     "fetch", self._remote_name,
-                    f"refs/heads/{branch}:refs/heads/{branch}",
+                    f"+refs/heads/{branch}:refs/heads/{branch}",
                 ],
                 cwd=self._project_path,
             )
+            if fetch_res["exit_code"] != 0:
+                # Branch not on remote (worker never pushed / push failed).
+                # Record as conflict-distinguishable missing, not a silent
+                # merge of a stale local ref.
+                conflicts.append(branch)
+                logger.warning(
+                    "MergeArbiter: fetch of %s failed (missing on remote?): %s",
+                    branch, fetch_res["stderr"][:200],
+                )
+                continue
 
             merge_res = await self._git(
                 ["merge", branch, "--no-edit"],
@@ -275,6 +300,28 @@ class MergeArbiter:
             if merge_res["exit_code"] == 0:
                 merged.append(branch)
                 logger.info("MergeArbiter: merged %s", branch)
+                continue
+
+            # Non-zero merge. Distinguish real conflict (unmerged files
+            # present) from infra errors (bad object, lock, identity) so we
+            # don't escalate infra failures to ConflictResolver.
+            unmerged_res = await self._git(
+                ["diff", "--name-only", "--diff-filter=U"],
+                cwd=self._project_path,
+            )
+            has_unmerged = (
+                unmerged_res["exit_code"] == 0
+                and bool(unmerged_res["stdout"].strip())
+            )
+            if not has_unmerged:
+                # Infra error, not a conflict. Abort any partial merge
+                # state and record; do NOT call ConflictResolver.
+                await self._git(["merge", "--abort"], cwd=self._project_path)
+                conflicts.append(branch)
+                logger.error(
+                    "MergeArbiter: merge of %s failed (non-conflict): %s",
+                    branch, merge_res["stderr"][:200],
+                )
                 continue
 
             # Conflict — attempt ConflictResolver escalation on each
@@ -295,7 +342,20 @@ class MergeArbiter:
                     continue
 
             # Could not resolve — abort the merge, record the branch.
-            await self._git(["merge", "--abort"], cwd=self._project_path)
+            abort_res = await self._git(
+                ["merge", "--abort"], cwd=self._project_path
+            )
+            if abort_res["exit_code"] != 0:
+                # abort failed — hard reset to clean state so the next
+                # branch's merge doesn't hit "merge in progress".
+                logger.warning(
+                    "MergeArbiter: merge --abort failed, hard resetting: %s",
+                    abort_res["stderr"][:200],
+                )
+                await self._git(
+                    ["reset", "--hard", f"{self._remote_name}/{self._base_branch}"],
+                    cwd=self._project_path,
+                )
             conflicts.append(branch)
             logger.warning(
                 "MergeArbiter: conflict on %s, merge aborted, branch preserved",
@@ -311,9 +371,12 @@ class MergeArbiter:
             result["push_status"] = "skipped"
             return result
 
-        # All merged — push main.
+        # All merged — push main. Use --force-with-lease so a non-ff push
+        # (main advanced remotely between our fetch and push — concurrent
+        # arbiter or external commit) fails safely instead of clobbering or
+        # being rejected with work lost to the next reset.
         push_res = await self._git(
-            ["push", self._remote_name, self._base_branch],
+            ["push", "--force-with-lease", self._remote_name, self._base_branch],
             cwd=self._project_path,
         )
         if push_res["exit_code"] == 0:
