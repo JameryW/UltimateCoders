@@ -10,6 +10,7 @@ set -euo pipefail
 #   --no-omp        skip OMP startup (just backend + workers)
 #   --docker        use Docker Compose for storage backends (TiKV/Qdrant/PG/NATS)
 #   --build         ensure ultimate_coders Python package is built
+#   --no-dashboard  skip dashboard startup (dashboard starts by default)
 #   --stop          stop all previously started processes
 #   --help          show this help
 
@@ -22,6 +23,13 @@ mkdir -p "$LOG_DIR"
 # ponytail: sourced so both launchers stay in sync; see scripts/omp-workspace.sh.
 # shellcheck source=scripts/omp-workspace.sh
 source "$SCRIPT_DIR/scripts/omp-workspace.sh"
+
+# Dashboard auto-start (FastAPI :8080 + Vite :5173) — shared with run-omp.sh.
+# ponytail: sourced so both launchers stay in sync; see scripts/dashboard-autostart.sh.
+# Exports: START_DASHBOARD (default true), DASH_PID, VITE_PID, start_dashboard().
+# --no-dashboard flag parse below overrides START_DASHBOARD=false after source.
+# shellcheck source=scripts/dashboard-autostart.sh
+source "$SCRIPT_DIR/scripts/dashboard-autostart.sh"
 
 # ── Colors ─────────────────────────────────────────────────────
 GREEN="\033[32m"
@@ -52,6 +60,7 @@ for arg in "$@"; do
     --docker)   USE_DOCKER=true ;;
     --standalone) STANDALONE=true ;;
     --build)    DO_BUILD=true ;;
+    --no-dashboard) START_DASHBOARD=false ;;
     --stop)     DO_STOP=true ;;
     --help|-h)
       echo "Usage: $0 [options]"
@@ -63,6 +72,8 @@ for arg in "$@"; do
       echo "                  Implies local storage containers (incl. NATS) so workers"
       echo "                  have something to connect to. Workers still run on host."
       echo "  --build         ensure ultimate_coders Python package is built"
+      echo "  --no-dashboard  skip dashboard startup (dashboard starts by default)."
+      echo "                  Dashboard: Vite :5173 (http://localhost:5173) + FastAPI :8080."
       echo "  --stop          stop all previously started processes"
       echo "  --help          show this help"
       exit 0
@@ -156,6 +167,14 @@ cleanup() {
     done
     wait 2>/dev/null || true
     rm -f "$PIDS_FILE"
+    # Stop dashboard backend + Vite dev server (if started)
+    for pid in "$DASH_PID" "$VITE_PID"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            log "Stopping dashboard process (PID $pid)..."
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
     if [ "$STANDALONE" = true ]; then
         # gateway + storage containers were started by run-gateway.sh --docker
         "$SCRIPT_DIR/run-gateway.sh" down --docker 2>/dev/null || true
@@ -329,6 +348,7 @@ sleep 2
 if [ "$NO_OMP" = false ]; then
     log "Starting OMP..."
     setup_omp_workspace
+    start_dashboard
     cd "$OMP_WORKSPACE"
     exec bun "$OMP_ENTRY" \
       --extension "$UC_EXT"
