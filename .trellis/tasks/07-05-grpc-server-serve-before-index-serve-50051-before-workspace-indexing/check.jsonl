@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar: no unrequested abstraction, shortest diff, ponytail ladder"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Spawned indexing task must not silently swallow panics or abort the runtime"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify 'listening' log precedes 'Indexing workspace repos' after reorder"}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "Confirm 50051 readiness is the worker registration prerequisite"}

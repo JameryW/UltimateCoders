@@ -39,6 +39,12 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 /// Local engine that runs all components in-process.
+//
+// ponytail: Clone is zero-cost here — every field is an Arc (shared handle,
+// bump refcount). Needed so the standalone gRPC server can keep one handle
+// for serving and hand a clone to a background workspace-indexing task
+// (see uc-grpc-server/src/main.rs). No interior mutation introduced.
+#[derive(Clone)]
 pub struct LocalEngine {
     memory_store: Arc<MemoryStore>,
     metadata_store: Arc<PostgresMetadataStore>,
@@ -921,6 +927,19 @@ mod tests {
                                                // search_engine, embedding_service, checkpoint_manager, conflict_detector,
                                                // rate_limiter, circuit_breaker, sandbox
         assert_eq!(health.components.len(), 11);
+    }
+
+    // Regression: LocalEngine must be Clone so the standalone gRPC server can
+    // hand a clone to a background workspace-indexing task while keeping its
+    // own handle for serving. All fields are Arc, so clone is a refcount bump
+    // and both handles observe the same shared state. See uc-grpc-server/main.rs.
+    #[tokio::test]
+    async fn local_engine_is_clone_and_shares_state() {
+        let engine = LocalEngine::new_fallback();
+        let clone = engine.clone();
+        let a = engine.health().await.unwrap();
+        let b = clone.health().await.unwrap();
+        assert_eq!(a.components.len(), b.components.len());
     }
 
     #[tokio::test]

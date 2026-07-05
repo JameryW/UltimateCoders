@@ -130,3 +130,88 @@ pub use sandbox::docker::DockerSandbox;
 4. Add `pub use` re-exports for key types in `lib.rs`
 5. If the module needs a storage backend, follow the fallback pattern (see database-guidelines.md)
 6. Add `#[cfg(test)] mod tests` at the bottom of each file
+
+---
+
+## Startup Order Contract: `uc-grpc-server/src/main.rs`
+
+`main.rs` is "Server startup + graceful shutdown". The order of these two
+operations is a **load-bearing contract**, not a style choice.
+
+### Contract
+
+`Server::serve(addr)` (binds port 50051) MUST execute before any blocking
+startup work. Workspace repo indexing (`index_workspace_repos`) MUST run as a
+detached `tokio::spawn` task, never `.await`ed before `serve`.
+
+### Signatures
+
+```rust
+// LocalEngine is Clone — all fields are Arc, so clone is a refcount bump.
+// This is what lets the server keep one handle and hand another to indexing.
+#[derive(Clone)]
+pub struct LocalEngine { /* all Arc<...> fields */ }
+
+// main.rs startup sequence (contractual order):
+let index_engine = engine.clone();                 // 1. clone BEFORE move
+tokio::spawn(async move {                          // 2. spawn indexing (detached)
+    index_workspace_repos(&index_engine).await;
+});
+let grpc_server = GrpcServer::with_backends(engine, ...);  // 3. move original
+Server::builder()...serve(addr).await?;            // 4. serve binds 50051
+```
+
+### Validation & Error Matrix
+
+| Condition | Consequence |
+|-----------|-------------|
+| `index_workspace_repos().await` before `serve` | Port 50051 never binds until indexing finishes. Full reindex of a large repo (UltimateCoders = 4905 files) takes minutes. |
+| Container unhealthy + `restart: unless-stopped` | **No restart.** `unless-stopped` only restarts *exited* containers, not unhealthy ones. Process is blocked in async (not exited) → permanent zombie. |
+| `LocalEngine` not `Clone` | Cannot hand a handle to the spawned indexing task; forces either blocking `.await` or an `Arc<LocalEngine>` refactor. |
+
+### Common Mistake: indexing-before-serve zombie
+
+**Symptom**: `docker-gateway-1` shows `status=running` but
+`localhost:50051` Connection refused. Workers log
+`RuntimeError: transport error` on every health check, indefinitely.
+
+**Cause**: `index_workspace_repos(&engine).await` ran synchronously before
+`Server::serve`. A SHA change triggered `falling back to full index` on
+UltimateCoders; the call blocked for minutes, so `serve` was never reached.
+Docker healthcheck (`start_period=15s, retries=5`) marked the container
+unhealthy after ~65s, but `restart: unless-stopped` does not restart
+unhealthy containers — only exited ones. The process never exits (blocked in
+async), so the container sits as a permanent zombie.
+
+**Fix**: derive `Clone` on `LocalEngine` (zero-cost — all-Arc), clone before
+the move into `GrpcServer`, and `tokio::spawn` indexing with the clone.
+`serve` binds within seconds; indexing proceeds in the background.
+
+**Prevention**: Any new blocking startup step in `main.rs` (indexing, warmup,
+migration, preloading) must be either (a) moved after `serve` or (b) spawned
+as a detached task. The listener binds first, always. Docker healthcheck
+`start_period` may then be short (5s).
+
+### Wrong vs Correct
+
+#### Wrong — blocking index before serve
+
+```rust
+index_workspace_repos(&engine).await;   // blocks for minutes on full reindex
+let grpc_server = GrpcServer::with_backends(engine, ...);
+Server::builder()...serve(addr).await?;  // never reached until indexing done
+```
+
+#### Correct — spawn index, serve immediately
+
+```rust
+let index_engine = engine.clone();
+tokio::spawn(async move { index_workspace_repos(&index_engine).await; });
+let grpc_server = GrpcServer::with_backends(engine, ...);  // moves original
+Server::builder()...serve(addr).await?;                     // binds 50051 now
+```
+
+**Trade-off accepted**: searches during indexing return partial results
+(index not yet complete). This is strictly better than a zombie gateway that
+serves nothing. Worker registration and heartbeat do not depend on the index.
+

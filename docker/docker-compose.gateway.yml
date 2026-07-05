@@ -59,10 +59,12 @@ services:
     restart: unless-stopped
     # Lightweight liveness check: probe the gRPC TCP port (50051) via bash
     # /dev/tcp (bookworm-slim ships bash). See docker-compose.yml gateway
-    # service for rationale. start_period gives the server time to bind.
+    # service for rationale. start_period is short (5s): serve binds 50051
+    # before workspace indexing runs (indexing is a detached background task,
+    # never blocks the listener).
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50051' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 5s

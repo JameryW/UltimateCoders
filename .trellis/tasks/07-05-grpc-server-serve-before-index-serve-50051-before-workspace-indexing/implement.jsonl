@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "WorkerService/registration contract — serve must be up for workers to register"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Per-repo indexing failures log+continue; spawned task must not panic the runtime"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Log order: 'listening' before 'Indexing workspace repos' — structured log conventions"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "General backend quality bar for the LocalEngine Clone + main.rs reorder"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Confirms uc-grpc-server/main.rs is the standalone binary entry; LocalEngine lives in uc-engine/src/local.rs"}

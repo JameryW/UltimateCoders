@@ -154,7 +154,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Mirrors Python worker's load_repos_config + RepoScanner.discover_and_index.
     // ponytail: local-path repos only (remote-only entries are skipped — handled
     // by Python worker mode). Failures per-repo log a warning but don't abort.
-    index_workspace_repos(&engine).await;
+    //
+    // CRITICAL: indexing must NOT block Server::serve. A full reindex of a large
+    // repo (e.g. UltimateCoders, 4905 files, triggered when its SHA is no longer
+    // an ancestor of HEAD) can take minutes. If we `.await` here, port 50051
+    // never binds until indexing finishes — the docker healthcheck marks the
+    // container unhealthy, `restart: unless-stopped` does not restart unhealthy
+    // (only exited) containers, and the process never exits (blocked in async),
+    // leaving a permanent zombie that workers cannot connect to.
+    //
+    // Fix: clone the engine (zero-cost — LocalEngine is all-Arc, see
+    // local.rs) and spawn indexing as a detached task. Server::serve binds
+    // 50051 within seconds; indexing proceeds in the background. Searches
+    // during indexing return partial results — acceptable, and strictly better
+    // than a zombie gateway.
+    let index_engine = engine.clone();
+    tokio::spawn(async move {
+        tracing::info!("Background workspace indexing started (non-blocking serve)");
+        index_workspace_repos(&index_engine).await;
+        tracing::info!("Background workspace indexing finished");
+    });
 
     // Create task store backend (in-memory or PostgreSQL)
     let (task_backend, event_store) = create_task_backend().await;
