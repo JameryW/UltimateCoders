@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-05-dashboard-auto-start-with-tui-run-omp-sh-integration/prd.md", "reason": "acceptance: __main__ 启 :8080 + run-omp.sh 默认启 dashboard + 自动 bun install + cleanup + --no-dashboard + 非 docker 模式仍启"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "验证 __main__ 启动符合 DashboardApp 契约（start 生命周期 + SSE 事件源 + 不破现有 REST/SSE）"}

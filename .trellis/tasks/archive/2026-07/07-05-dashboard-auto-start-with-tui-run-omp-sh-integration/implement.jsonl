@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "DashboardApp 契约：FastAPI REST/SSE + 事件源 exclusivity from NATS + start() 生命周期 — __main__.py 启动入口需符合"}
+{"file": ".trellis/tasks/07-05-dashboard-auto-start-with-tui-run-omp-sh-integration/prd.md", "reason": "ADR + 需求（__main__.py + run-omp.sh 集成 + 自动 bun install + cleanup trap）+ acceptance + 2 PR 分解"}
