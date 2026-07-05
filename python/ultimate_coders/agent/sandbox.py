@@ -518,7 +518,7 @@ class SandboxManager:
 
                 logger.info(
                     "Sandbox subprocess completed: exit=%d, time=%.1fs, stdout=%dB, stderr=%dB",
-                    result.exit_code, elapsed if 'elapsed' in dir() else 0,
+                    result.exit_code, elapsed,
                     len(result.stdout), len(result.stderr),
                 )
                 if result.exit_code != 0:
