@@ -873,3 +873,37 @@ PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClien
 ### Next Steps
 
 - None - task complete
+
+
+## Session 80: dashboard auto-start with TUI (run-omp.sh integration)
+
+**Date**: 2026-07-05
+**Task**: dashboard auto-start with TUI (run-omp.sh integration)
+**Branch**: `feat/run-omp-dashboard-autostart`
+
+### Summary
+
+PR1 #225 merged: python -m ultimate_coders.dashboard CLI 入口 (orchestrator=None + best-effort NATS, 修 FastAPI 0.115+ add_event_handler→on_event bug). PR2 #226 open: run-omp.sh start_dashboard() 默认启 :8080+:5173 + 自动 bun install + --no-dashboard + cleanup trap. 非 docker 无 NATS 仍启. trellis-check 0 issue, 49 测试不破. 遗留: run-cluster.sh 未同步加 dashboard autostart.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c020d22c` | (see git log) |
+| `0a3c5b33` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
