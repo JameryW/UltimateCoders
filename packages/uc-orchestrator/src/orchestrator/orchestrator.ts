@@ -703,6 +703,22 @@ export class UCOrchestrator {
 							this.circuitBreaker.recordSuccess();
 						}
 					}
+				} catch (err) {
+					// executeSubtaskWithRetry threw unexpectedly — synthesize a
+					// failed result so the wave continues instead of aborting
+					// (an uncaught throw left `result` undefined → result.id
+					// TypeError + runningCount never decremented → leak).
+					this.circuitBreaker.recordFailure();
+					result = {
+						id: def.id,
+						description: def.description,
+						status: "failed",
+						dependsOn: def.dependsOn,
+						files: def.files,
+						error: `Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+						startedAt: Date.now(),
+						completedAt: Date.now(),
+					};
 				} finally {
 					// Release file intent even on unexpected error to prevent livelock
 					intentTracker.release(def.id);
@@ -1138,8 +1154,13 @@ export class UCOrchestrator {
 		};
 
 		this.abortControllers.set(pseudoTaskId, new AbortController());
+		// Forward parent abort to the pseudo-task's controller. Remove the
+		// listener in finally so long-lived parent signals (a task survives
+		// many decompose/review calls) don't accumulate one listener per
+		// subtask — a leak that also fires N aborts on cancel.
+		const onParentAbort = () => this.abortControllers.get(pseudoTaskId)?.abort();
 		if (abortSignal) {
-			abortSignal.addEventListener("abort", () => this.abortControllers.get(pseudoTaskId)?.abort(), { once: true });
+			abortSignal.addEventListener("abort", onParentAbort, { once: true });
 		}
 
 		try {
@@ -1171,6 +1192,9 @@ export class UCOrchestrator {
 			throw new Error("Remote decomposition timed out");
 		} finally {
 			this.abortControllers.delete(pseudoTaskId);
+			if (abortSignal) {
+				abortSignal.removeEventListener("abort", onParentAbort);
+			}
 		}
 	}
 

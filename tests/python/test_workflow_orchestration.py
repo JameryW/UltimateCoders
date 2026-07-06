@@ -490,3 +490,45 @@ def test_dispatch_mode_from_payload_defaults_on_bad_or_missing():
     assert _dispatch_mode_from_payload("") is DispatchMode.PREFER_REMOTE
     assert _dispatch_mode_from_payload("garbage") is DispatchMode.PREFER_REMOTE
     assert _dispatch_mode_from_payload(123) is DispatchMode.PREFER_REMOTE
+
+
+# ── Orchestrator.pending_task_count ──────────────────────────────
+
+
+def test_pending_task_count_counts_in_progress_not_created():
+    """Tasks submit as IN_PROGRESS (never CREATED); pending = active tasks.
+
+    Regression: the old filter counted TaskStatus.CREATED (always 0),
+    so the dashboard reported zero pending tasks forever.
+    """
+    from ultimate_coders.agent.orchestrator import Orchestrator
+    from ultimate_coders.agent.types import TaskStatus
+
+    orch = Orchestrator()
+    # No tasks → 0.
+    assert orch.pending_task_count == 0
+
+    # One IN_PROGRESS task → counted.
+    t1 = Task(
+        id="t1", description="d", project_id="p",
+        status=TaskStatus.IN_PROGRESS, subtasks=[],
+    )
+    orch.tasks[t1.id] = t1
+    assert orch.pending_task_count == 1
+
+    # A COMPLETED task is terminal → not pending.
+    t2 = Task(
+        id="t2", description="d", project_id="p",
+        status=TaskStatus.COMPLETED, subtasks=[],
+    )
+    orch.tasks[t2.id] = t2
+    assert orch.pending_task_count == 1  # only t1
+
+    # A PAUSED task is still active → pending.
+    t3 = Task(
+        id="t3", description="d", project_id="p",
+        status=TaskStatus.PAUSED, subtasks=[],
+    )
+    orch.tasks[t3.id] = t3
+    assert orch.pending_task_count == 2  # t1 + t3
+

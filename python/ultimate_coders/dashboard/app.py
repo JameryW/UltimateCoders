@@ -1580,7 +1580,10 @@ class DashboardApp:
                     asyncio.set_event_loop(loop)
                 except Exception:
                     pass
-            self._nats_event_queue = asyncio.Queue()
+            # Bounded so a NATS burst with no SSE client draining can't grow
+            # the queue without limit. The QueueFull catch in the publisher
+            # logs + drops — without maxsize that catch is dead code.
+            self._nats_event_queue = asyncio.Queue(maxsize=1000)
         return self._nats_event_queue
 
     def _subscribe_nats_events(self) -> None:

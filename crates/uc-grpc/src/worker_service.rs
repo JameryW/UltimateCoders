@@ -40,7 +40,11 @@ impl RegisteredWorker {
     /// Whether the worker is considered available (heartbeat not stale).
     pub fn is_available(&self, stale_timeout_secs: f64) -> bool {
         let age = (chrono::Utc::now() - self.last_heartbeat).num_seconds() as f64;
-        age <= stale_timeout_secs
+        // "available" means the worker can take more work: heartbeat fresh
+        // AND under capacity. Without the capacity check, a saturated worker
+        // (or one with max_capacity==0) was returned as available, causing
+        // dispatch_ready_subtasks to over-assign to it.
+        age <= stale_timeout_secs && self.current_load < self.max_capacity
     }
 
     /// Load as a percentage of max capacity.
@@ -461,6 +465,63 @@ mod tests {
         .unwrap();
         reg.heartbeat("w-1", 2).unwrap();
         assert_eq!(reg.workers()["w-1"].current_load, 2);
+    }
+
+    // Regression: is_available used to check only heartbeat staleness, so a
+    // worker at full load (or max_capacity==0) was "available" and got
+    // over-assigned. Now it also requires current_load < max_capacity.
+    #[test]
+    fn is_available_excludes_saturated_and_zero_capacity_workers() {
+        let mut reg = WorkerRegistry::new();
+        reg.register(
+            "full".to_string(),
+            vec!["code".to_string()],
+            2, // max_capacity
+            String::new(),
+        )
+        .unwrap();
+        reg.heartbeat("full", 2).unwrap(); // load == capacity → saturated
+        assert!(
+            !reg.workers()["full"].is_available(WorkerRegistry::STALE_TIMEOUT_SECS),
+            "saturated worker must not be available"
+        );
+
+        reg.register(
+            "zero".to_string(),
+            vec!["code".to_string()],
+            0, // max_capacity == 0 → can never take work
+            String::new(),
+        )
+        .unwrap();
+        reg.heartbeat("zero", 0).unwrap();
+        assert!(
+            !reg.workers()["zero"].is_available(WorkerRegistry::STALE_TIMEOUT_SECS),
+            "zero-capacity worker must not be available"
+        );
+
+        // A worker with spare capacity is available.
+        reg.register(
+            "spare".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+        )
+        .unwrap();
+        reg.heartbeat("spare", 1).unwrap();
+        assert!(
+            reg.workers()["spare"].is_available(WorkerRegistry::STALE_TIMEOUT_SECS),
+            "worker with spare capacity should be available"
+        );
+
+        // available_workers / workers_with_capabilities reflect the filter.
+        let avail: Vec<&str> = reg
+            .available_workers()
+            .iter()
+            .map(|w| w.id.as_str())
+            .collect();
+        assert!(avail.contains(&"spare"));
+        assert!(!avail.contains(&"full"));
+        assert!(!avail.contains(&"zero"));
     }
 
     #[test]

@@ -10,9 +10,12 @@ and pattern accumulation.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -62,52 +65,39 @@ class MemoryEntry:
     def from_rust(cls, raw: Any) -> MemoryEntry:
         """Create a MemoryEntry from a PyMemoryEntry (Rust extension).
 
-        Args:
-            raw: A PyMemoryEntry object from the Rust extension.
-
-        Returns:
-            MemoryEntry with extracted fields.
+        PyMemoryEntry exposes FLAT fields (not the old content-enum/key-enum
+        shape): ``key_scope``, ``key``, ``task_id``, ``project_id``,
+        ``content_type``, ``content``, ``source_agent``, ``importance``,
+        ``tags``, ``created_at``/``updated_at`` (i64 epoch millis).
         """
-        content_obj = getattr(raw, "content", None)
-        if content_obj is not None:
-            # Try to extract text from the content enum
-            text = getattr(content_obj, "text", None)
-            if text is not None:
-                content = text
-            else:
-                content = str(content_obj)
-        else:
-            content = ""
+        scope = getattr(raw, "key_scope", "global") or "global"
+        mem_key = MemoryKey(
+            scope=scope,
+            key=getattr(raw, "key", "") or "",
+            task_id=getattr(raw, "task_id", None),
+            project_id=getattr(raw, "project_id", None),
+        )
 
-        metadata = getattr(raw, "metadata", None)
-
-        key_obj = getattr(raw, "key", None)
-        if key_obj is not None:
-            # The Rust MemoryKey is an enum; extract scope and qualifiers
-            key_str = str(key_obj)
-            if "Task" in key_str or "task" in key_str.lower():
-                scope = "task"
-            elif "Project" in key_str or "project" in key_str.lower():
-                scope = "project"
-            else:
-                scope = "global"
-            mem_key = MemoryKey(
-                scope=scope,
-                key=key_str,
-            )
-        else:
-            mem_key = MemoryKey(scope="global", key="")
+        # PyMemoryEntry stores created_at/updated_at as i64 epoch millis;
+        # MemoryEntry holds datetime|None.
+        def _to_dt(millis: Any) -> datetime | None:
+            if not isinstance(millis, (int, float)) or millis <= 0:
+                return None
+            try:
+                return datetime.fromtimestamp(millis / 1000.0, tz=timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
 
         return cls(
             id=getattr(raw, "id", "") or "",
             key=mem_key,
-            content=content,
-            content_type="text",
-            source_agent=getattr(metadata, "source_agent", "") if metadata else "",
-            importance=getattr(metadata, "importance", 0.5) if metadata else 0.5,
-            tags=getattr(metadata, "tags", []) if metadata else [],
-            created_at=getattr(raw, "created_at", None),
-            updated_at=getattr(raw, "updated_at", None),
+            content=getattr(raw, "content", "") or "",
+            content_type=getattr(raw, "content_type", "text") or "text",
+            source_agent=getattr(raw, "source_agent", "") or "",
+            importance=float(getattr(raw, "importance", 0.5) or 0.5),
+            tags=list(getattr(raw, "tags", []) or []),
+            created_at=_to_dt(getattr(raw, "created_at", None)),
+            updated_at=_to_dt(getattr(raw, "updated_at", None)),
         )
 
     @classmethod
@@ -254,10 +244,18 @@ class ShortTermMemory:
         """Convert raw engine output to a MemoryEntry."""
         if isinstance(raw, dict):
             return MemoryEntry.from_dict(raw)
-        # Try Rust extension type conversion
+        # Try Rust extension type conversion. from_rust reads the flat
+        # PyMemoryEntry fields; if raw is some other shape (or a bug
+        # regresses the conversion), log + degrade to a text-only entry
+        # rather than crashing the caller — but surface the failure so it
+        # isn't silently masked.
         try:
             return MemoryEntry.from_rust(raw)
         except Exception:
+            logger.warning(
+                "MemoryEntry.from_rust failed; degrading to text-only entry",
+                exc_info=True,
+            )
             return MemoryEntry(content=str(raw))
 
 

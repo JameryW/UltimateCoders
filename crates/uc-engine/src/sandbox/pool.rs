@@ -107,12 +107,16 @@ impl SandboxPool {
             return Ok(acquired);
         }
 
-        // 2. Create new if under max pool size
-        let active_count = self.active.lock().await.len();
+        // 2. Create new if under max pool size. Hold the active lock across
+        // the count-check + create + insert so two concurrent acquirers
+        // can't both pass the capacity check and exceed max_pool_size.
+        // (Creation under the lock serializes spawns; acceptable for the
+        // subprocess/docker factories which spawn quickly. Upgrade to a
+        // counting semaphore if creation latency becomes a bottleneck.)
+        let mut active = self.active.lock().await;
         let idle_count = self.idle.lock().await.len();
-        if active_count + idle_count < self.max_pool_size {
+        if active.len() + idle_count < self.max_pool_size {
             let handle = self.factory.create(&self.config).await?;
-            let mut active = self.active.lock().await;
             let mut acquired = handle;
             acquired.status = SandboxStatus::Busy;
             active.insert(acquired.id.clone(), acquired.clone());
@@ -122,7 +126,7 @@ impl SandboxPool {
         // 3. Pool is at capacity
         Err(EngineError::SandboxError(format!(
             "Sandbox pool at capacity ({}/{}). Wait for a sandbox to be released.",
-            active_count + idle_count,
+            active.len() + idle_count,
             self.max_pool_size,
         )))
     }
@@ -139,13 +143,16 @@ impl SandboxPool {
             active.remove(&handle.id);
         }
 
-        // If idle pool is below warm size, keep it; otherwise discard
-        let idle_count = self.idle.lock().await.len();
-        if idle_count < self.warm_pool_size {
+        // If idle pool is below warm size, keep it; otherwise discard.
+        // Hold the idle lock across the count-check + push so two concurrent
+        // releases can't both pass the warm-size check and overflow idle.
+        {
             let mut idle = self.idle.lock().await;
-            let mut released = handle;
-            released.status = SandboxStatus::Ready;
-            idle.push(released);
+            if idle.len() < self.warm_pool_size {
+                let mut released = handle;
+                released.status = SandboxStatus::Ready;
+                idle.push(released);
+            }
         }
         // If not keeping it, just drop the handle.
         // For Docker sandboxes, the container was --rm so it's already gone.

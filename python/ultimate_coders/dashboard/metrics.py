@@ -576,6 +576,7 @@ class MetricsStore:
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or _ALERTS_DB_PATH
         self._local = threading.local()
+        self._last_cleanup_ts: float = 0.0
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._init_db()
 
@@ -611,9 +612,16 @@ class MetricsStore:
              sample.cluster_utilization),
         )
         conn.commit()
-        # Retention cleanup — approximately once per hour (when timestamp is near the hour mark)
-        if sample.timestamp % 3600 < 60:
-            cutoff = sample.timestamp - _METRICS_RETENTION_DAYS * 86400
+        # Retention cleanup — run at most once per hour, gated on elapsed
+        # time (NOT wall-clock modulo). The old `sample.timestamp % 3600 < 60`
+        # check only fired when a sample happened to land in the first 60s of
+        # an hour; since samples are TREND_INTERVAL-aligned from process start
+        # (not wall-clock-aligned), that branch never ran and metrics_samples
+        # grew unbounded over days.
+        now = time.time()
+        if now - self._last_cleanup_ts >= 3600:
+            self._last_cleanup_ts = now
+            cutoff = int(now) - _METRICS_RETENTION_DAYS * 86400
             conn.execute("DELETE FROM metrics_samples WHERE timestamp < ?", (cutoff,))
             conn.commit()
 

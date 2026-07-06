@@ -136,3 +136,28 @@ def test_stream_snapshot_payload_shape() -> None:
     assert len(events) >= 1
     payload = json.loads(events[0]["data"])
     assert payload["type"] == "subtask_completed"
+
+
+def test_nats_event_queue_bounded_drops_on_full(caplog: pytest.LogCaptureFixture) -> None:
+    """Regression: the NATS event queue was unbounded (maxsize=0) — a burst
+    with no SSE client draining grew it without limit (memory leak). The
+    QueueFull catch was dead code. Now maxsize=1000; overflow drops + warns."""
+    app = _make_app(nats_client=None)
+
+    async def run() -> None:
+        # Bounded queue, filled to capacity.
+        q: asyncio.Queue = asyncio.Queue(maxsize=2)
+        app._get_nats_event_queue = lambda: q
+        await q.put({"type": "a"})
+        await q.put({"type": "b"})
+
+        # Third event overflows → put_nowait raises QueueFull → caught + warned.
+        msg = SimpleNamespace(data=json.dumps({"type": "c"}).encode())
+        await app._handle_nats_event(msg)
+
+        # Queue still holds only 2 (the overflow was dropped, not enqueued).
+        assert q.qsize() == 2
+
+    asyncio.run(run())
+    assert any("queue full" in r.message.lower() for r in caplog.records)
+

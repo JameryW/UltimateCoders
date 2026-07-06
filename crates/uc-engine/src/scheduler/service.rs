@@ -345,13 +345,17 @@ impl SchedulerService {
                         Ok(())
                     }
                     Err(e) => {
+                        // Dispatch returned Err — NATS unavailable / no worker
+                        // received the task. Record as Skipped (not Failed):
+                        // the task itself is valid, it just didn't execute.
+                        // Returning Err lets the caller decide to retry.
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
                             scheduled_task_id: *task_id,
                             started_at,
                             completed_at: Some(Utc::now()),
-                            status: ExecutionStatus::Failed,
-                            result_summary: Some(format!("Dispatch failed: {}", e)),
+                            status: ExecutionStatus::Skipped,
+                            result_summary: Some(format!("Dispatch skipped (no worker): {}", e)),
                             deferred_reason: None,
                         };
                         self.record_execution(&history).await;

@@ -226,6 +226,15 @@ export class ControlSignalSubscriber {
 			const activeIds = this.handler.getActiveTaskIds();
 			if (activeIds.length === 0) return;
 
+			// Evict state for tasks no longer active (terminated + removed from
+			// the active set). Without this, lastKnownControlState retained an
+			// entry for every task ever polled — unbounded growth over a long
+			// session.
+			const activeSet = new Set(activeIds);
+			for (const id of this.lastKnownControlState.keys()) {
+				if (!activeSet.has(id)) this.lastKnownControlState.delete(id);
+			}
+
 			for (const taskId of activeIds) {
 				try {
 					const task = await this.bridge.getTask(taskId);

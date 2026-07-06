@@ -319,3 +319,37 @@ class TestWorkerSetsErrorField:
 
         assert result.success is True
         assert result.error == ""  # No error on success
+
+
+# ── _parse_litellm_response empty-choices guard ─────────────────
+
+
+class TestParseLitellmEmptyChoices:
+    """Regression: bare `response.choices[0]` raised IndexError on empty
+    choices (some providers return empty choices on content-filter/error),
+    misclassified as an unknown LLM error."""
+
+    def test_empty_choices_returns_empty_response_not_indexerror(self) -> None:
+        from ultimate_coders.agent.llm import LLMClient
+
+        client = LLMClient()
+        # Simulate a provider response with no choices.
+        resp = MagicMock()
+        resp.choices = []
+        resp.model = "gpt-4o"
+
+        out = client._parse_litellm_response(resp)
+        assert out.text == ""
+        assert out.tool_calls == []
+        assert out.stop_reason == "empty_choices"
+
+    def test_none_choices_returns_empty_response(self) -> None:
+        from ultimate_coders.agent.llm import LLMClient
+
+        client = LLMClient()
+        resp = MagicMock()
+        resp.choices = None  # type: ignore[assignment]
+
+        out = client._parse_litellm_response(resp)
+        assert out.stop_reason == "empty_choices"
+

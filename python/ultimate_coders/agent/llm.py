@@ -587,6 +587,10 @@ class LLMClient:
             working_messages.append({"role": "assistant", "content": tool_use_blocks})
             working_messages.append({"role": "user", "content": tool_result_blocks})
 
+        # Exhausted max_tool_rounds while the LLM still requests tools — no
+        # final text was synthesized. Mark the stop_reason so callers can
+        # detect this (the response has has_tool_calls=True, text likely "").
+        llm_response.stop_reason = "max_tool_rounds"
         return llm_response, tool_calls_log
 
     async def _complete_with_tools_litellm(
@@ -682,6 +686,8 @@ class LLMClient:
                     }
                 )
 
+        # Exhausted max_tool_rounds while the LLM still requests tools.
+        llm_response.stop_reason = "max_tool_rounds"
         return llm_response, tool_calls_log
 
     async def _call_with_retry(self, client: Any, params: dict[str, Any]) -> Any:
@@ -795,6 +801,16 @@ class LLMClient:
 
     def _parse_litellm_response(self, response: Any) -> LLMResponse:
         """Parse a litellm ModelResponse (OpenAI-format) into LLMResponse."""
+        if not getattr(response, "choices", None):
+            # Some providers return empty choices on content-filter or error.
+            # Surface as an empty response rather than IndexError.
+            return LLMResponse(
+                text="",
+                tool_calls=[],
+                stop_reason="empty_choices",
+                model=getattr(response, "model", self.model) or self.model,
+                usage={},
+            )
         choice = response.choices[0]
         message = choice.message
 

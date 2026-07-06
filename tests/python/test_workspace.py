@@ -183,3 +183,46 @@ async def test_local_only_mode_unchanged(tmp_path):
     assert result["status"] == "merged"
     # No push_status key in local mode.
     assert "push_status" not in result
+
+
+async def test_acquire_fallback_clears_branch_name(tmp_path):
+    """When worktree add fails, the copy-fallback path runs.
+
+    The fallback never creates a git branch, so ``branch_name`` must be
+    cleared — otherwise release would run ``git log``/``git push`` against
+    a non-existent branch and mislabel as no_changes.
+    """
+    proj = tmp_path / "localproj"
+    proj.mkdir()
+    _git(["init", "-b", "main", str(proj)], cwd=str(tmp_path))
+    _git(["config", "user.email", "test@test"], cwd=str(proj))
+    _git(["config", "user.name", "Test"], cwd=str(proj))
+    (proj / "README.md").write_text("# local\n")
+    _git(["add", "."], cwd=str(proj))
+    _git(["commit", "-m", "init"], cwd=str(proj))
+
+    mgr = WorkspaceManager(project_path=str(proj), base_branch="main")
+    await mgr.ensure_clone()
+
+    # Force every `worktree add` to fail so the copy-fallback path runs.
+    real_git = mgr._git
+
+    async def failing_git(args, cwd=""):
+        if args and args[:1] == ["worktree"]:
+            return {"exit_code": 1, "stdout": "", "stderr": "forced fail"}
+        return await real_git(args, cwd=cwd)
+
+    mgr._git = failing_git
+
+    handle = await mgr.acquire("subtask-fallback")
+    assert handle is not None
+    # Fallback path: no git branch created → branch_name cleared.
+    assert handle.branch_name == ""
+    assert os.path.isdir(handle.worktree_path)
+
+    # Release must skip merge/push (no branch_name) and not error.
+    result = await mgr.release(handle, merge=True)
+    # No branch_name → merge/push block skipped; only workspace_id present,
+    # no "status" key set (and critically no crash on phantom branch).
+    assert "workspace_id" in result
+    assert "push_status" not in result
