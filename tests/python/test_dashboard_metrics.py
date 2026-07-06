@@ -257,21 +257,39 @@ class TestMetricsStore:
         assert trend == []
 
     def test_retention_cleanup(self, tmp_path):
-        """Old samples are cleaned up when retention threshold is met."""
+        """Old samples are cleaned up once retention threshold is met."""
         store = _make_metrics_store(tmp_path)
         now = int(time.time())
         # Insert an old sample (8 days ago — beyond default 7-day retention)
         old_ts = now - 8 * 86400
-        # Make timestamp land near the hour mark to trigger cleanup
-        old_ts = (old_ts // 3600) * 3600 + 30  # within 60s of hour mark
         store.insert(MetricsSample(timestamp=old_ts, events_per_minute=1.0))
 
-        # Insert a new sample that triggers cleanup (timestamp near hour mark)
-        new_ts = (now // 3600) * 3600 + 30
+        # Insert a new sample. Cleanup is now interval-based (runs once/hour
+        # gated on elapsed wall-clock time, NOT wall-clock modulo), so it
+        # fires on the first insert (last_cleanup_ts starts at 0).
+        new_ts = now
         store.insert(MetricsSample(timestamp=new_ts, events_per_minute=2.0))
 
         # Old sample should be cleaned up
         trend = store.get_trend(minutes=60 * 24 * 10)  # 10 days
+        timestamps = [s.timestamp for s in trend]
+        assert old_ts not in timestamps
+        assert new_ts in timestamps
+
+    def test_retention_cleanup_runs_regardless_of_wall_clock_minute(self, tmp_path):
+        """Regression: cleanup used to be `ts % 3600 < 60`, which only fired
+        when a sample happened to land in the first 60s of a wall-clock hour.
+        Samples are TREND_INTERVAL-aligned from process start (not
+        wall-clock-aligned), so the branch never ran and metrics_samples
+        grew unbounded. Now interval-based — runs on first insert."""
+        store = _make_metrics_store(tmp_path)
+        now = int(time.time())
+        # A timestamp deliberately NOT near an hour mark (e.g. :17:23).
+        awkward_ts = (now // 3600) * 3600 + 1043  # 17min23s into the hour
+        old_ts = awkward_ts - 8 * 86400
+        store.insert(MetricsSample(timestamp=old_ts, events_per_minute=1.0))
+        store.insert(MetricsSample(timestamp=awkward_ts, events_per_minute=2.0))
+        trend = store.get_trend(minutes=60 * 24 * 10)
         timestamps = [s.timestamp for s in trend]
         assert old_ts not in timestamps
 

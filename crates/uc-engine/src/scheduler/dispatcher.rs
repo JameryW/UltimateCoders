@@ -101,12 +101,22 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
                 }
             }
             Ok(Err(e)) => {
-                warn!(task_id = %task.id, error = %e, "NATS request failed (graceful degradation)");
-                Ok(())
+                // NATS failed — no worker received the task. Surface as Err
+                // so dispatch_with_guard records Skipped (not Completed, which
+                // previously hid silent dispatch loss — task appeared done
+                // with nothing having run).
+                warn!(task_id = %task.id, error = %e, "NATS request failed (no worker received task)");
+                Err(EngineError::TaskError(format!(
+                    "NATS dispatch failed: {}",
+                    e
+                )))
             }
             Err(_) => {
-                warn!(task_id = %task.id, timeout_secs, "NATS request-reply timed out (graceful degradation)");
-                Ok(())
+                warn!(task_id = %task.id, timeout_secs, "NATS request-reply timed out (no worker received task)");
+                Err(EngineError::TaskError(format!(
+                    "NATS dispatch timed out after {}s",
+                    timeout_secs
+                )))
             }
         }
     }

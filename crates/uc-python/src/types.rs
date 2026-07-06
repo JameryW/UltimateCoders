@@ -4,6 +4,7 @@
 //! Pythonic APIs for search, memory, and index operations.
 
 use pyo3::prelude::*;
+use tracing::warn;
 
 // ── Health types ──────────────────────────────────────────
 
@@ -796,7 +797,13 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
             event_type,
             task_id,
             subtask_id,
-            data: serde_json::to_string(&event.payload).unwrap_or_default(),
+            data: serde_json::to_string(&event.payload).unwrap_or_else(|e| {
+                // Payload is the only event-data carrier to Python; a serde
+                // failure would silently lose all event data. Log so the
+                // loss is observable rather than a silent empty string.
+                warn!(error = %e, "Failed to serialize AgentEvent payload");
+                String::new()
+            }),
             timestamp: event.timestamp.to_rfc3339(),
         }
     }

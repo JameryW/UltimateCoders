@@ -159,7 +159,13 @@ impl Sandbox for DockerSandbox {
         }
 
         let start = Instant::now();
-        let timeout_duration = Duration::from_secs(request.timeout_secs);
+        // timeout_secs == 0 means no timeout (unbounded). Guard against the
+        // default (0) which would otherwise expire immediately.
+        let timeout_duration = if request.timeout_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(request.timeout_secs))
+        };
 
         let config = &self.default_config;
         let working_dir = if request.working_dir.is_empty() {
@@ -224,22 +230,30 @@ impl Sandbox for DockerSandbox {
             .spawn()
             .map_err(|e| EngineError::SandboxError(format!("Failed to spawn docker: {}", e)))?;
 
-        // Wait with timeout
-        let result = timeout(timeout_duration, async {
+        // Wait with optional timeout. Read stdout+stderr concurrently via
+        // tokio::join! before child.wait() — serial reads deadlock when the
+        // child writes >64KB to one pipe while the other fills.
+        let inner = async {
             let mut stdout_buf = Vec::new();
             let mut stderr_buf = Vec::new();
 
-            let stdout_result = if let Some(mut stdout) = child.stdout.take() {
-                stdout.read_to_end(&mut stdout_buf).await
-            } else {
-                Ok(0)
-            };
+            let stdout_handle = child.stdout.take();
+            let stderr_handle = child.stderr.take();
 
-            let stderr_result = if let Some(mut stderr) = child.stderr.take() {
-                stderr.read_to_end(&mut stderr_buf).await
-            } else {
-                Ok(0)
-            };
+            let (stdout_result, stderr_result) = tokio::join!(
+                async {
+                    match stdout_handle {
+                        Some(mut stdout) => stdout.read_to_end(&mut stdout_buf).await,
+                        None => Ok(0),
+                    }
+                },
+                async {
+                    match stderr_handle {
+                        Some(mut stderr) => stderr.read_to_end(&mut stderr_buf).await,
+                        None => Ok(0),
+                    }
+                },
+            );
 
             let status = child.wait().await;
 
@@ -255,8 +269,16 @@ impl Sandbox for DockerSandbox {
             let exit_code = exit_status.code().unwrap_or(-1);
 
             Ok::<(i32, Vec<u8>, Vec<u8>), EngineError>((exit_code, stdout_buf, stderr_buf))
-        })
-        .await;
+        };
+
+        // Apply timeout only when configured; 0 means unbounded.
+        let result: Result<Result<(i32, Vec<u8>, Vec<u8>), EngineError>, EngineError> =
+            match timeout_duration {
+                Some(d) => timeout(d, inner)
+                    .await
+                    .map_err(|_| EngineError::SandboxError("docker command timed out".into())),
+                None => Ok(inner.await),
+            };
 
         let duration_ms = start.elapsed().as_millis() as u64;
 

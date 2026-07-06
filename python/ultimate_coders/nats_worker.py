@@ -718,7 +718,12 @@ class NatsWorker:
                 key="js_last_seq",
             )
             if raw is not None:
-                return int(raw) if isinstance(raw, str) else int(raw)
+                # read_memory returns a MemoryEntry (or str on some
+                # fallbacks). Extract .content before int() — int() on a
+                # MemoryEntry raises TypeError, falling through to 0,
+                # which makes every restart skip JetStream event replay.
+                content = getattr(raw, "content", raw)
+                return int(content)
         except Exception:
             logger.debug("Failed to load js_last_seq")
         return 0
@@ -1117,6 +1122,11 @@ class NatsWorker:
                         "Subtask %s exceeded max retries (%d), marking Failed",
                         next_st.id[:8], max_retries,
                     )
+                    # Drive task-status advancement — without this the task
+                    # sticks IN_PROGRESS when all remaining subtasks hit
+                    # the retry limit (ready_ids is empty, loop breaks, but
+                    # _update_task_status is never called for the FAILED).
+                    self._orchestrator._update_task_status(task)
                     continue
                 ready_ids.append(next_st.id)
 
@@ -1273,7 +1283,7 @@ class NatsWorker:
             return
 
         # Mark subtask as assigned in local Orchestrator
-        self._orchestrator.assign_subtask(subtask, "remote")
+        await self._orchestrator.assign_subtask(subtask, "remote")
 
         # Declare edit intent for conflict tracking
         if subtask.file_constraints:
@@ -1535,6 +1545,17 @@ class NatsWorker:
             if result.success:
                 data["summary"] = result.summary[:300]
                 data["success"] = True
+                # Include modified_files so the receiver can reconstruct
+                # them — without this, remote file changes are silently
+                # lost for aggregation/merge arbitration.
+                data["modified_files"] = [
+                    {
+                        "path": fc.file_path,
+                        "change_type": fc.change_type.value,
+                        "diff_stats": fc.diff[:200] if fc.diff else "",
+                    }
+                    for fc in (result.modified_files or [])
+                ]
             else:
                 # Prefer the structured error field; fall back to summary for compat.
                 # Both are now friendly messages (summary = "LLM 瞬时错误...", error = root cause).
@@ -1596,6 +1617,24 @@ class NatsWorker:
             subtasks=[st],
         )
 
+    def _reset_subtask_to_pending(self, subtask_id: str) -> bool:
+        """Reset an ASSIGNED subtask back to PENDING for re-dispatch.
+
+        Used when a worker rejects a dispatch (missing capabilities) —
+        ``assign_subtask`` had set it ASSIGNED, and ``select_next_subtask``
+        only returns PENDING, so without this reset the subtask would stick
+        ASSIGNED forever. Returns True if the subtask was found + reset.
+        """
+        if self._orchestrator is None:
+            return False
+        for task in self._orchestrator.tasks.values():
+            for st in task.subtasks:
+                if st.id == subtask_id and st.status == SubtaskStatus.ASSIGNED:
+                    st.status = SubtaskStatus.PENDING
+                    st.assigned_worker = None
+                    return True
+        return False
+
     async def _handle_task_event(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle ``uc.task.event`` messages from NATS.
 
@@ -1639,12 +1678,16 @@ class NatsWorker:
             self._dispatch_event.set()
         elif event_type == "subtask_dispatch_rejected":
             # Worker rejected subtask (e.g. missing capabilities).
-            # Keep subtask Pending so it can be dispatched when a capable
-            # worker registers. Don't fail it — just log and wake the loop.
+            # Reset to PENDING so select_next_subtask re-dispatches when a
+            # capable worker registers. (assign_subtask already set it
+            # ASSIGNED — without this reset it would stick ASSIGNED forever
+            # since select_next_subtask only returns PENDING.)
             subtask_id = data.get("subtask_id", "")
             reason = data.get("data", {}).get("reason", "unknown")
+            if subtask_id:
+                self._reset_subtask_to_pending(subtask_id)
             logger.info(
-                "Subtask %s dispatch rejected (%s), keeping Pending",
+                "Subtask %s dispatch rejected (%s), reset to Pending",
                 subtask_id[:8] if subtask_id else "?", reason,
             )
             self._dispatch_event.set()
@@ -1680,11 +1723,23 @@ class NatsWorker:
         # handle_subtask_result is async — must be awaited, otherwise the
         # result never lands and the task status never advances (stall).
         if event_type == "subtask_completed" and self._orchestrator:
+            # Reconstruct modified_files from the event data so remote
+            # file changes flow into aggregation/merge arbitration.
+            from ultimate_coders.agent.types import ChangeType, FileChange
+            modified_files = [
+                FileChange(
+                    file_path=fc.get("path", ""),
+                    change_type=ChangeType(fc.get("change_type", "modified")),
+                    diff=fc.get("diff_stats", ""),
+                )
+                for fc in data.get("modified_files", [])
+            ]
             result = SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id="remote",
                 summary=data.get("summary", ""),
                 success=True,
+                modified_files=modified_files,
             )
             await self._orchestrator.handle_subtask_result(result)
         elif event_type == "subtask_failed" and self._orchestrator:

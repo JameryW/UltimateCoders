@@ -76,7 +76,14 @@ impl Sandbox for SubprocessSandbox {
         }
 
         let start = Instant::now();
-        let timeout_duration = Duration::from_secs(request.timeout_secs);
+        // timeout_secs == 0 means no timeout (unbounded). Guard against the
+        // default (0) which would otherwise expire immediately and kill the
+        // process before it runs.
+        let timeout_duration = if request.timeout_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(request.timeout_secs))
+        };
 
         // Build the command
         let mut cmd = Command::new(&request.command);
@@ -127,25 +134,41 @@ impl Sandbox for SubprocessSandbox {
             }
         }
 
-        // Wait for the process with timeout, capturing output
-        let result = timeout(timeout_duration, async {
+        // Wait for the process (with optional timeout), capturing output.
+        // The inner block reads stdout+stderr concurrently via tokio::join!
+        // before child.wait() — serial reads deadlock when the child writes
+        // >64KB to one pipe while the other fills.
+        let inner = async {
+            // Take stdout+stderr handles up front so we can read them
+            // concurrently with each other and with child.wait(). Reading
+            // them serially before wait() deadlocks when the child writes
+            // >64KB to one pipe while the other fills (both block on a
+            // reader that hasn't started yet).
             let mut stdout_buf = Vec::new();
             let mut stderr_buf = Vec::new();
 
-            // Read stdout and stderr concurrently
-            let stdout_result = if let Some(mut stdout) = child.stdout.take() {
-                stdout.read_to_end(&mut stdout_buf).await
-            } else {
-                Ok(0)
-            };
+            let stdout_handle = child.stdout.take();
+            let stderr_handle = child.stderr.take();
 
-            let stderr_result = if let Some(mut stderr) = child.stderr.take() {
-                stderr.read_to_end(&mut stderr_buf).await
-            } else {
-                Ok(0)
-            };
+            // Read both pipes concurrently; the futures only resolve once
+            // each pipe hits EOF (child closed it). Runs in parallel with
+            // the implicit wait below via tokio::join!.
+            let (stdout_result, stderr_result) = tokio::join!(
+                async {
+                    match stdout_handle {
+                        Some(mut stdout) => stdout.read_to_end(&mut stdout_buf).await,
+                        None => Ok(0),
+                    }
+                },
+                async {
+                    match stderr_handle {
+                        Some(mut stderr) => stderr.read_to_end(&mut stderr_buf).await,
+                        None => Ok(0),
+                    }
+                },
+            );
 
-            // Wait for the process to exit
+            // Now that both pipes are drained, wait for exit.
             let status = child.wait().await;
 
             // Propagate I/O errors
@@ -160,8 +183,18 @@ impl Sandbox for SubprocessSandbox {
             let exit_code = exit_status.code().unwrap_or(-1);
 
             Ok::<(i32, Vec<u8>, Vec<u8>), EngineError>((exit_code, stdout_buf, stderr_buf))
-        })
-        .await;
+        };
+
+        // Apply timeout only when configured; 0 means unbounded. Both
+        // branches yield Result<Result<(i32,Vec<u8>,Vec<u8>), EngineError>, EngineError>,
+        // where the outer Err is a timeout (mapped from Elapsed).
+        let result: Result<Result<(i32, Vec<u8>, Vec<u8>), EngineError>, EngineError> =
+            match timeout_duration {
+                Some(d) => timeout(d, inner)
+                    .await
+                    .map_err(|_| EngineError::SandboxError("command timed out".into())),
+                None => Ok(inner.await),
+            };
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -465,5 +498,81 @@ mod tests {
         let result = truncate_output(bytes, 11);
         assert!(result.contains("hello world"));
         assert!(result.contains("truncated"));
+    }
+
+    // Regression: timeout_secs == 0 (the default) used to create
+    // Duration::from_secs(0) → immediate timeout, killing the process
+    // before it ran. 0 now means unbounded.
+    #[tokio::test]
+    async fn subprocess_sandbox_execute_timeout_zero_is_unbounded() {
+        let sandbox = SubprocessSandbox::new();
+        let config = test_config();
+        let handle = sandbox.create(&config).await.unwrap();
+
+        let request = ExecRequest {
+            command: "echo".to_string(),
+            args: vec!["survived".to_string()],
+            stdin: None,
+            timeout_secs: 0, // unbounded
+            working_dir: String::new(),
+            env_vars: HashMap::new(),
+        };
+
+        let result = sandbox.execute(&handle, request).await.unwrap();
+        assert!(!result.timed_out, "timeout_secs=0 must not time out");
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("survived"));
+    }
+
+    // Regression: stdout+stderr were read serially before child.wait(),
+    // deadlocking when the child writes >64KB to one pipe while the other
+    // fills. Concurrent reads (tokio::join!) drain both. This writes a
+    // large amount to BOTH stdout and stderr — under the old serial read
+    // it would hang until the test timeout.
+    #[tokio::test]
+    async fn subprocess_sandbox_large_concurrent_stdout_stderr_no_deadlock() {
+        let sandbox = SubprocessSandbox::new();
+        let config = test_config();
+        let handle = sandbox.create(&config).await.unwrap();
+
+        // Print ~200KB to stdout AND ~200KB to stderr concurrently. Use a
+        // portable POSIX loop (no brace expansion — dash, the Ubuntu /bin/sh,
+        // doesn't support `{1..N}`). Under the old serial read this hangs
+        // until the test timeout because the child blocks writing to one pipe
+        // while the other fills.
+        let script = r#"
+            i=0
+            while [ $i -lt 4000 ]; do
+              printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+              printf 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' 1>&2
+              i=$((i+1))
+            done
+        "#;
+        let request = ExecRequest {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            stdin: None,
+            timeout_secs: 30,
+            working_dir: String::new(),
+            env_vars: HashMap::new(),
+        };
+
+        let result = sandbox.execute(&handle, request).await.unwrap();
+        assert!(
+            !result.timed_out,
+            "should not deadlock on large dual-pipe output"
+        );
+        assert_eq!(result.exit_code, 0);
+        // ~200KB each (allowing for shell variance).
+        assert!(
+            result.stdout.len() > 100_000,
+            "stdout len: {}",
+            result.stdout.len()
+        );
+        assert!(
+            result.stderr.len() > 100_000,
+            "stderr len: {}",
+            result.stderr.len()
+        );
     }
 }

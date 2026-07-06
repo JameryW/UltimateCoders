@@ -247,6 +247,11 @@ class WorkspaceManager:
                     await self._mkdir(handle.worktree_path)
                     # Copy project files
                     await self._copy_project(handle.worktree_path)
+                    # worktree add failed → no git branch was created. Clear
+                    # branch_name so release skips merge/push (which would
+                    # run `git log`/`git push` against a non-existent branch
+                    # and mislabel as no_changes).
+                    handle.branch_name = ""
             else:
                 handle.worktree_path = os.path.join(
                     self._project_path, f".uc/worktrees/{ws_id}",

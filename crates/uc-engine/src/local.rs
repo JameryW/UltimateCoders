@@ -882,30 +882,43 @@ impl EngineApi for LocalEngine {
         description: String,
         project_id: String,
     ) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().expect("task_store lock poisoned");
+        let mut store = self.task_store_locked();
         Ok(store.submit_task(description, project_id))
     }
 
     async fn get_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let store = self.task_store.lock().expect("task_store lock poisoned");
+        let store = self.task_store_locked();
         store
             .get_task(task_id)
             .ok_or_else(|| EngineError::NotFound(format!("Task {} not found", task_id)))
     }
 
     async fn list_tasks(&self) -> Result<Vec<Task>, EngineError> {
-        let store = self.task_store.lock().expect("task_store lock poisoned");
+        let store = self.task_store_locked();
         Ok(store.list_tasks())
     }
 
     async fn pause_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().expect("task_store lock poisoned");
+        let mut store = self.task_store_locked();
         store.pause_task(task_id).map_err(EngineError::TaskError)
     }
 
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
-        let mut store = self.task_store.lock().expect("task_store lock poisoned");
+        let mut store = self.task_store_locked();
         store.resume_task(task_id).map_err(EngineError::TaskError)
+    }
+}
+
+impl LocalEngine {
+    /// Lock the in-memory task_store, recovering from a poisoned lock rather
+    /// than panicking. A prior panic (e.g. a TaskStore invariant violation)
+    /// would otherwise poison the std::sync::Mutex and cascade — every
+    /// subsequent task op panics forever. The task_store is an in-memory
+    /// cache (the store is the source of truth elsewhere), so recovering
+    /// with the last-held state is acceptable; the alternative is total
+    /// engine failure from one panic.
+    fn task_store_locked(&self) -> std::sync::MutexGuard<'_, crate::task_store::TaskStore> {
+        self.task_store.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

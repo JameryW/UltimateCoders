@@ -132,6 +132,36 @@ class TestParseReposYaml:
         assert config.repos == []
         assert config.scan_dirs == []
 
+    def test_repo_id_path_traversal_rejected(self, tmp_path):
+        """Regression: repo_id from YAML was interpolated unsanitized into
+        the clone cache path + git clone target. ``../../etc/evil`` escaped
+        the cache dir (arbitrary write). Now _safe_id rejects traversal."""
+        yaml_file = tmp_path / "uc.repos.yaml"
+        yaml_file.write_text(
+            "repos:\n"
+            "  - repo_id: '../../etc/evil'\n"
+            "    remote_url: https://example.com/r.git\n"
+            "  - repo_id: 'sneaky/path'\n"
+            "    remote_url: https://example.com/r2.git\n"
+            "  - repo_id: 'safe-repo'\n"
+            "    remote_url: https://example.com/r3.git\n"
+        )
+        config = _parse_repos_yaml(yaml_file)
+        # Only the safe repo_id survives.
+        assert [r.repo_id for r in config.repos] == ["safe-repo"]
+
+    def test_workspace_id_path_traversal_rejected(self, tmp_path):
+        """workspace_id is also a path segment; reject traversal there too."""
+        yaml_file = tmp_path / "uc.repos.yaml"
+        yaml_file.write_text(
+            "workspace_id: '../../escape'\n"
+            "repos: []\n"
+        )
+        config = _parse_repos_yaml(yaml_file)
+        # Unsafe workspace_id falls back to the default, not the traversal string.
+        assert config.workspace_id == "default"
+
+
 
 # ── RepoScanner ────────────────────────────────────────────────
 

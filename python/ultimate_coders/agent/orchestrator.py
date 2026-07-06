@@ -377,7 +377,13 @@ class Orchestrator:
 
     @property
     def pending_task_count(self) -> int:
-        return sum(1 for t in self.tasks.values() if t.status == TaskStatus.CREATED)
+        # Tasks are submitted as IN_PROGRESS (never CREATED); "pending" means
+        # active (not yet terminal). Count IN_PROGRESS + PAUSED.
+        return sum(
+            1
+            for t in self.tasks.values()
+            if t.status in (TaskStatus.IN_PROGRESS, TaskStatus.PAUSED)
+        )
 
     async def flush_pending_tasks(self) -> list[Task]:
         """Flush pending tasks — stub for nats_worker dashboard handler."""

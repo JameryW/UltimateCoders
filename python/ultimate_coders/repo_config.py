@@ -89,6 +89,25 @@ def _resolve_config_path(path: str | Path | None = None) -> Path | None:
     return None
 
 
+def _safe_id(value: str, field: str = "id") -> str:
+    """Sanitize a YAML-sourced identifier used as a filesystem path segment.
+
+    Rejects path traversal (``..``, ``/``, ``\\``, leading ``.``) so a
+    malicious ``repo_id``/``workspace_id`` like ``../../etc/evil`` cannot
+    escape the cache root during ``git clone``. Returns the value if safe,
+    empty string if unsafe (caller drops the entry).
+    """
+    if not value:
+        return ""
+    # No path separators, no parent-dir traversal, no leading dot (hidden/
+    # relative). Alphanumeric + ``-_.`` is the realistic ID charset.
+    forbidden = ("/", "\\", "..")
+    if any(tok in value for tok in forbidden) or value.startswith("."):
+        logger.warning("Rejecting unsafe %s in repos config: %r", field, value)
+        return ""
+    return value
+
+
 def _parse_repos_yaml(path: Path) -> RepoConfig:
     """Parse a repos.yaml file into RepoConfig."""
     try:
@@ -102,8 +121,9 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
 
     repos: list[RepoEntry] = []
     for r in data.get("repos", []):
+        repo_id = _safe_id(r.get("repo_id", ""), "repo_id")
         repos.append(RepoEntry(
-            repo_id=r.get("repo_id", ""),
+            repo_id=repo_id,
             local_path=r.get("local_path", ""),
             remote_url=r.get("remote_url", ""),
             default_branch=r.get("default_branch", "main"),
@@ -112,14 +132,22 @@ def _parse_repos_yaml(path: Path) -> RepoConfig:
 
     # Validate: repo_id required; at least one of local_path/remote_url required.
     # Remote-only entries (no local_path) are cloned on demand by RepoScanner.
-    repos = [
-        r for r in repos
-        if r.repo_id and (r.local_path or r.remote_url)
-    ]
+    kept: list[RepoEntry] = []
+    for r in repos:
+        if not r.repo_id:
+            logger.warning("Dropping repos entry with missing repo_id")
+            continue
+        if not (r.local_path or r.remote_url):
+            logger.warning(
+                "Dropping repos entry %s: needs local_path or remote_url", r.repo_id,
+            )
+            continue
+        kept.append(r)
+    repos = kept
 
     scan_dirs = data.get("scan_dirs", [])
     scan_depth = data.get("scan_depth", 3)
-    workspace_id = data.get("workspace_id", "default")
+    workspace_id = _safe_id(data.get("workspace_id", "default"), "workspace_id") or "default"
 
     return RepoConfig(
         repos=repos,

@@ -316,7 +316,16 @@ class MergeArbiter:
             if not has_unmerged:
                 # Infra error, not a conflict. Abort any partial merge
                 # state and record; do NOT call ConflictResolver.
-                await self._git(["merge", "--abort"], cwd=self._project_path)
+                abort_res = await self._git(
+                    ["merge", "--abort"], cwd=self._project_path
+                )
+                if abort_res["exit_code"] != 0:
+                    # abort failed — hard reset so the next branch's merge
+                    # doesn't hit "merge in progress" (mirrors conflict path).
+                    await self._git(
+                        ["reset", "--hard", f"{self._remote_name}/{self._base_branch}"],
+                        cwd=self._project_path,
+                    )
                 conflicts.append(branch)
                 logger.error(
                     "MergeArbiter: merge of %s failed (non-conflict): %s",
@@ -371,12 +380,15 @@ class MergeArbiter:
             result["push_status"] = "skipped"
             return result
 
-        # All merged — push main. Use --force-with-lease so a non-ff push
-        # (main advanced remotely between our fetch and push — concurrent
-        # arbiter or external commit) fails safely instead of clobbering or
-        # being rejected with work lost to the next reset.
+        # All merged — push main. Plain push (NOT force): the arbiter is the
+        # only writer of main, so a non-ff rejection means a concurrent
+        # arbiter/external commit advanced main between our fetch and push.
+        # --force-with-lease would use our stale remote-tracking ref as the
+        # lease and silently overwrite that concurrent work. Instead reject
+        # safely; the caller re-runs arbitrate (re-fetch + re-merge is
+        # idempotent — subtask branches persist on the remote).
         push_res = await self._git(
-            ["push", "--force-with-lease", self._remote_name, self._base_branch],
+            ["push", self._remote_name, self._base_branch],
             cwd=self._project_path,
         )
         if push_res["exit_code"] == 0:
