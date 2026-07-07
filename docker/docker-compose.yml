@@ -138,11 +138,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../:/app/docker-compose-root:ro
-      # Mount the host workspace (uc.repos.yaml scan_dirs) so the gateway can
-      # index ~/aiworks repos at startup. Read-only — the gateway never writes here.
-      # ponytail: host path hardcoded (machine-specific), same path in/out so
-      # uc.repos.yaml scan_dirs need no remapping.
-      - /Users/jameryw/aiworks:/Users/jameryw/aiworks:ro
+      # ponytail: host workspace mount is platform/machine-specific, so it
+      # lives in docker-compose.override.yml (git-ignored) or the example
+      # override, NOT here. See docker/docker-compose.override.example.yml.
+      # Mac: /Users/<you>/aiworks · Linux/WSL2: /home/<you>/aiworks.
+      # Empty UC_WORKSPACE_HOST = no mount = gateway runs without local
+      # indexing (external git only). UC_REPOS_CONFIG below stays valid only
+      # when the override mounts the workspace.
     environment:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"

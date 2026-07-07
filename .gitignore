@@ -90,3 +90,7 @@ packages/uc-orchestrator/bun.lock
 # Local runtime workspace config (machine-specific paths); template is tracked as uc.repos.yaml.example
 uc.repos.yaml
 uc.repos.yml
+
+# Local docker overrides (machine-specific workspace mount); template tracked as docker-compose.override.example.yml
+docker/docker-compose.override.yml
+docker/docker-compose.override.yaml
