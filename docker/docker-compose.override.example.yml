@@ -1,0 +1,30 @@
+# Local workspace mount override for the gateway service.
+#
+# The gateway indexes host repos declared in uc.repos.yaml (scan_dirs) so
+# the dashboard/search can serve local code. The host path is
+# platform/machine-specific, so it is NOT in docker-compose.yml — copy this
+# file to docker-compose.override.yml (git-ignored) and set UC_WORKSPACE_HOST
+# in docker/.env.
+#
+# run-gateway.sh appends this override explicitly when it exists (compose
+# does NOT auto-load an override sitting next to a non-default -f file).
+#
+# Path is the SAME in and out of the container — uc.repos.yaml scan_dirs
+# use the host path verbatim, so the container must expose it at the
+# identical path.
+#
+#   Mac:       /Users/<you>/aiworks
+#   Linux:     /home/<you>/aiworks
+#   Windows:   WSL2 path, e.g. /home/<you>/aiworks (NOT a C:\ path)
+#
+# To skip local indexing entirely, delete docker-compose.override.yml —
+# UC_WORKSPACE_HOST is required (:? below), an empty value errors loudly
+# rather than mounting an empty source.
+
+services:
+  gateway:
+    volumes:
+      # SAME path in/out — scan_dirs use the host path verbatim.
+      # :? = clear error if UC_WORKSPACE_HOST unset/empty (no silent bad mount).
+      - "${UC_WORKSPACE_HOST:?Set UC_WORKSPACE_HOST in docker/.env, or delete this override file}:${UC_WORKSPACE_HOST:?Set UC_WORKSPACE_HOST in docker/.env, or delete this override file}:ro"
+

@@ -53,6 +53,14 @@ Options:
 Env (default mode, storage-external):
   UC_TIKV_PD_ENDPOINTS, UC_QDRANT_URL, UC_PG_URL, UC_NATS_URL
   — set these to point at remote backends; empty = in-memory fallback.
+
+Workspace indexing (--docker mode):
+  Copy docker/docker-compose.override.example.yml →
+  docker/docker-compose.override.yml (git-ignored) and set
+  UC_WORKSPACE_HOST in docker/.env to your repo root (Mac:
+  /Users/<you>/aiworks, Linux/WSL2: /home/<you>/aiworks). The
+  override is auto-loaded by this script. Delete the override
+  file to run without local indexing (external git only).
 EOF
       exit 0 ;;
     *) echo "Unknown arg: $arg (try --help)" >&2; exit 1 ;;
@@ -72,6 +80,18 @@ else
   COMPOSE_ARGS=(-f "$GATEWAY_COMPOSE")
   COMPOSE_DOWN_ARGS=(-f "$GATEWAY_COMPOSE")
 fi
+# ponytail: auto-append the local workspace override if present. The override
+# mounts UC_WORKSPACE_HOST so the gateway can index host repos (see
+# docker/docker-compose.override.example.yml). docker compose does NOT
+# auto-load an override that sits next to a non-default -f file, so we add it
+# explicitly. Only apply to the full-stack compose (--docker): the workspace
+# mount is meaningless for the gateway-only compose (no compose-root mount,
+# UC_REPOS_CONFIG points at a path the gateway-only image doesn't have).
+OVERRIDE="$SCRIPT_DIR/docker/docker-compose.override.yml"
+if [ -f "$OVERRIDE" ] && [ "$USE_DOCKER" = true ]; then
+  COMPOSE_ARGS+=(-f "$OVERRIDE")
+  COMPOSE_DOWN_ARGS+=(-f "$OVERRIDE")
+fi
 # ponytail: --remove-orphans is a `down` subcommand flag, must follow `down`,
 # not sit in the compose options array.
 DOWN_EXTRA=(--remove-orphans)
@@ -82,18 +102,28 @@ case "$ACTION" in
       docker compose "${COMPOSE_ARGS[@]}" build
     fi
     # ponytail: free port 50051 if a non-docker host process holds it.
-    # A running gateway container holds 50051 via Docker's vpnkit forwarder
-    # (process name com.docker) — never kill that, it crashes the daemon.
-    # A host binary (uc-grpc-server) holding it must yield to the container.
+    # A running gateway container holds 50051 via Docker's port forwarder
+    # (process name varies by platform: com.docker* on Mac, vpnkit/dockerd
+    # on Linux/WSL2). Never kill a forwarder — it crashes the daemon or the
+    # port mapping. Only yield a host binary (uc-grpc-server) holding it.
+    # The match is substring-based to stay platform-agnostic.
     if ! docker compose "${COMPOSE_ARGS[@]}" ps -q gateway 2>/dev/null | grep -q .; then
       pid=$(lsof -ti :50051 2>/dev/null | head -1 || true)
       if [ -n "$pid" ]; then
         pname=$(ps -p "$pid" -o comm= 2>/dev/null | head -1)
-        if [ "$pname" != "com.docker" ] && [ "$pname" != "com.docke" ]; then
-          echo ">>> Port :50051 held by host process $pname (PID $pid) — stopping"
-          kill "$pid" 2>/dev/null || true
-          sleep 1
-        fi
+        # ponytail: skip any docker-side forwarder process; kill only host apps.
+        # Known limitation: Colima (Mac Docker Desktop alt) forwards via an SSH
+        # mux named `ssh: ...colima...ssh.sock [mux]` — not matched here, so a
+        # Colima user with a host process on 50051 could disrupt the mux. Not
+        # broadened to *ssh*/*colima* (would skip legitimate SSH sessions).
+        case "$pname" in
+          *docker*|*vpnkit*|*Docker*|""|com.docke*) : ;;  # skip — likely forwarder
+          *)
+            echo ">>> Port :50051 held by host process $pname (PID $pid) — stopping"
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+            ;;
+        esac
       fi
     fi
     echo ">>> Starting standalone gateway ($([ "$USE_DOCKER" = true ] && echo 'with local storage' || echo 'in-memory/external storage'))..."

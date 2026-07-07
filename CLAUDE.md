@@ -87,6 +87,29 @@ docker compose --profile app up       # Start all services (gateway + orchestrat
 docker compose -f docker/docker-compose.gateway.yml up   # or: ./run-gateway.sh up
 ```
 
+### Cross-platform (Mac / Linux / Windows)
+
+The docker setup runs on all three. Scripts are bash — Windows users run
+them inside **WSL2** (with Docker Desktop's WSL integration); `lsof` is
+available there.
+
+- **Workspace mount** — the gateway indexes host repos via
+  `uc.repos.yaml` `scan_dirs`. The host path is machine-specific, so it
+  is NOT hardcoded in `docker-compose.yml`. Copy
+  `docker/docker-compose.override.example.yml` →
+  `docker/docker-compose.override.yml` (git-ignored) and set
+  `UC_WORKSPACE_HOST` in `docker/.env` to your path (same path in/out of
+  the container, so `scan_dirs` need no remapping):
+  - Mac: `/Users/<you>/aiworks`
+  - Linux / WSL2: `/home/<you>/aiworks` (WSL2 uses the Linux path, not `C:\`)
+  - To run WITHOUT local indexing: delete the override file (or never
+    create it) and leave `UC_WORKSPACE_HOST` unset. With the override
+    present, `UC_WORKSPACE_HOST` is required (`:?` errors loudly on empty)
+    — an empty value does NOT silently skip the mount.
+- **docker.sock** — `/var/run/docker.sock` works on Mac, Linux, and
+  Windows Docker Desktop (auto-mapped to the named pipe). ScaleWorkers
+  is cross-platform as-is.
+
 ### Distributed (cross-host) scaling
 
 `docker compose --scale worker=N` only scales workers on the **same host**

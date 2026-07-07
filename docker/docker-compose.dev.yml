@@ -43,8 +43,8 @@ services:
     environment:
       UC_GRPC_ADDR: "[::]:50051"
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
-      UC_QDRANT_URL: "http://qdrant:6333"
-      UC_POSTGRES_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      UC_QDRANT_URL: "http://qdrant:6334"
+      UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
       RUST_LOG: "info"
     depends_on:
