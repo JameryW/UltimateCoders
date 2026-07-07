@@ -873,3 +873,30 @@ PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClien
 ### Next Steps
 
 - None - task complete
+
+## 2026-07-07: docker 适配 mac/windows/linux 多运行环境
+
+### Changes
+- docker-compose.yml: 移除硬编码 /Users/jameryw/aiworks 挂载 → override file 参数化
+- docker-compose.override.example.yml (NEW): ${UC_WORKSPACE_HOST:?}:${...:?}:ro 同路径挂载
+- docker/.env.example (NEW): UC_WORKSPACE_HOST + git sync vars
+- run-gateway.sh: override 自动 append（USE_DOCKER=true 时）+ forwarder skip 改平台无关 case
+- docker-compose.dev.yml: UC_POSTGRES_URL→UC_PG_URL, Qdrant 6333→6334
+- .gitignore: docker-compose.override.{yml,yaml}
+- CLAUDE.md: Cross-platform 段
+
+### Bug Analysis (11 轮 loop + trellis-check sub-agent)
+修复 11 处 bug：override 不自动加载、volume 路径错、:? 注释矛盾、冗余 env、遗留注释、dev.yml UC_PG_URL、dev.yml Qdrant 端口、.env 误导、注释精准、--help 补全、CLAUDE.md 措辞。known limitation: Colima forwarder 不匹配（文档化）。
+
+### Verification
+- ./run-gateway.sh up --docker: gateway Up (healthy), 索引走通 (UltimateCoders 4909 files 等)
+- compose override volumes merge = append
+- :? 空 + override 存在时报清晰错误
+- bash -n 通过, compose config 校验通过
+
+### Git
+- PR #230 MERGED (squash) → main d402043c
+- CI: cargo check/clippy/fmt pass, 3 test suites pass, storage integration skipped
+
+### Status
+[OK] Completed
