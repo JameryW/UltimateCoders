@@ -59,7 +59,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - working-directory: vendor/oh-my-pi/packages/natives
         run: bun run build
-      - run: bun test --parallel=4 test src
+      - run: bun test --parallel test src
 
   bun-test-uc-orchestrator:
     name: bun test (uc-orchestrator)
