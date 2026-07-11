@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "SubtaskDef + decompose flow in scheduler.ts — adding steps field must follow scheduler conventions"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "steps flow orchestrator→proto→NATS→worker; bridge spec defines subtask payload contract"}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "step.agent selects adapter (claude-code/codex); capability matching must still hold per-step"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "new WorkflowStepDef interface in TS — follow type-safety conventions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "TS SubtaskDef→proto→Rust→Python step chain is cross-layer; guide covers end-to-end contract changes"}

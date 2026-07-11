@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend quality bar for check phase — tests + regression gate"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "TS-side quality bar — type-check + existing ts test regression"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "verify TS→proto→Rust→Python step chain end-to-end contract intact"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "verify steps survive NATS dispatch payload to worker"}
