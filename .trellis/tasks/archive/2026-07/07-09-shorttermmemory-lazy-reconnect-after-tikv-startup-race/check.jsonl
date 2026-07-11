@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify the env-name fix + PD advertise change conform to storage backend conventions and don't regress connection handling."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Confirm the fallback WARN logs still follow logging conventions after the env fix removes the spurious fallback."}

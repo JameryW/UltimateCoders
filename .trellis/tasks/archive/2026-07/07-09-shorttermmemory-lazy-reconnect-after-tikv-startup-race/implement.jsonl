@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Storage backend (TiKV/Qdrant/PG) wiring conventions; config.rs change must match how env vars feed storage backends."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Where StorageConfig lives and how config flows from env → engine; ensures the env-name fix lands in the right module."}
