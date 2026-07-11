@@ -192,6 +192,19 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 						...(s.agent_config_json != null ? { agent_config_json: String(s.agent_config_json) } : {}),
 						...(s.abort_on_failure != null ? { abort_on_failure: Boolean(s.abort_on_failure) } : {}),
 					}));
+					// Derive requiredCapabilities from steps[].agent so the scheduler
+					// routes multi-agent subtasks to workers that actually have the CLIs.
+					// Merge explicit caps (snake_case from JSON) with step agent names,
+					// deduped. Step agent values ("claude-code"/"codex") double as
+					// capability names matching worker _derive_capabilities output.
+					const explicit = Array.isArray(st.required_capabilities)
+						? (st.required_capabilities as string[]).map(String)
+						: [];
+					const stepAgents = def.steps
+						.map((s) => s.agent)
+						.filter((a) => a.length > 0);
+					const merged = [...explicit, ...stepAgents];
+					def.requiredCapabilities = [...new Set(merged)];
 				}
 				return def;
 			});

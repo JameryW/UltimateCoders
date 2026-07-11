@@ -123,4 +123,85 @@ describe("parseSubtaskOutput", () => {
 	it("returns empty array for JSON without subtasks array", () => {
 		expect(parseSubtaskOutput(JSON.stringify({ foo: "bar" }))).toEqual([]);
 	});
+
+	// ── requiredCapabilities derivation from steps[].agent ───────────
+
+	it("derives requiredCapabilities from steps[].agent (union, deduped)", () => {
+		const raw = JSON.stringify({
+			subtasks: [
+				{
+					id: "st-1",
+					description: "implement + codex CR",
+					depends_on: [],
+					files: [],
+					steps: [
+						{ agent: "claude-code", prompt: "Implement." },
+						{ agent: "codex", prompt: "Review." },
+						{ agent: "claude-code", prompt: "Revise." },
+					],
+				},
+			],
+		});
+		const defs = parseSubtaskOutput(raw);
+		expect(defs[0].requiredCapabilities).toEqual(["claude-code", "codex"]);
+	});
+
+	it("merges explicit required_capabilities with step agents (deduped)", () => {
+		const raw = JSON.stringify({
+			subtasks: [
+				{
+					id: "st-1",
+					description: "explicit + steps",
+					depends_on: [],
+					files: [],
+					required_capabilities: ["python", "claude-code"],
+					steps: [
+						{ agent: "claude-code", prompt: "Implement." },
+						{ agent: "codex", prompt: "Review." },
+					],
+				},
+			],
+		});
+		const defs = parseSubtaskOutput(raw);
+		// Explicit caps first, then step agents, deduped
+		expect(defs[0].requiredCapabilities).toEqual(["python", "claude-code", "codex"]);
+	});
+
+	it("skips empty agent strings when deriving capabilities", () => {
+		const raw = JSON.stringify({
+			subtasks: [
+				{
+					id: "st-1",
+					description: "missing agent",
+					depends_on: [],
+					files: [],
+					steps: [
+						{ agent: "codex", prompt: "Review." },
+						{ agent: "", prompt: "No agent." },
+					],
+				},
+			],
+		});
+		const defs = parseSubtaskOutput(raw);
+		// Only valid agent names added — empty string skipped
+		expect(defs[0].requiredCapabilities).toEqual(["codex"]);
+	});
+
+	it("does not set requiredCapabilities when subtask has no steps", () => {
+		const raw = JSON.stringify({
+			subtasks: [
+				{
+					id: "st-1",
+					description: "no steps",
+					depends_on: [],
+					files: [],
+					required_capabilities: ["python"],
+				},
+			],
+		});
+		const defs = parseSubtaskOutput(raw);
+		// Backward compat: no steps = requiredCapabilities left as whatever JSON provided
+		// (parseSubtaskOutput only reads required_capabilities when steps are present)
+		expect(defs[0].requiredCapabilities).toBeUndefined();
+	});
 });

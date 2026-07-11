@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -377,6 +378,13 @@ class Worker:
                     caps.append(f"agent:{name}")
             except (json.JSONDecodeError, TypeError):
                 pass
+        # ponytail: probe agent CLIs on PATH — advertise matching capabilities so
+        # the scheduler can route codex/claude-code step subtasks to workers that
+        # actually have the CLI. Best-effort: missing CLI = capability not advertised.
+        if shutil.which("claude"):
+            caps.append("claude-code")
+        if shutil.which("codex"):
+            caps.append("codex")
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []

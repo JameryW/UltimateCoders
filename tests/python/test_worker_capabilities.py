@@ -163,3 +163,54 @@ class TestDeriveCapabilities:
         w = Worker(engine=None, sandbox_config=SandboxConfig())
         assert "mcp" not in w.capabilities
         assert "file-edit" not in w.capabilities
+
+    # ── agent CLI probing → capability advertisement ──────────────
+
+    def test_codex_cli_present_advertises_codex(self, stub_engine, monkeypatch) -> None:
+        """shutil.which("codex") truthy → "codex" capability advertised."""
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/codex" if cmd == "codex" else None,
+        )
+        caps = self._worker(stub_engine).capabilities
+        assert "codex" in caps
+        assert "claude-code" not in caps
+
+    def test_claude_cli_present_advertises_claude_code(self, stub_engine, monkeypatch) -> None:
+        """shutil.which("claude") truthy → "claude-code" capability advertised."""
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None,
+        )
+        caps = self._worker(stub_engine).capabilities
+        assert "claude-code" in caps
+        assert "codex" not in caps
+
+    def test_both_clis_present_advertises_both(self, stub_engine, monkeypatch) -> None:
+        """Both CLIs on PATH → both capabilities advertised."""
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: f"/usr/local/bin/{cmd}" if cmd in ("claude", "codex") else None,
+        )
+        caps = self._worker(stub_engine).capabilities
+        assert "claude-code" in caps
+        assert "codex" in caps
+
+    def test_no_clis_present_no_agent_caps(self, stub_engine, monkeypatch) -> None:
+        """Neither CLI on PATH → neither capability advertised, but core caps remain."""
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        caps = self._worker(stub_engine).capabilities
+        assert "claude-code" not in caps
+        assert "codex" not in caps
+        # Core caps still present
+        for c in ("code", "search", "memory", "test", "decompose", "review"):
+            assert c in caps, f"{c} missing"
+
+    def test_agent_caps_deduped(self, stub_engine, monkeypatch) -> None:
+        """If 'claude-code' is somehow already in caps, CLI probe doesn't duplicate."""
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None,
+        )
+        caps = self._worker(stub_engine).capabilities
+        assert caps.count("claude-code") == 1
