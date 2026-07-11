@@ -109,12 +109,30 @@ class TestLoadConfigEnvVars:
         finally:
             del os.environ["UC_LLM_RPM_LIMIT"]
 
-    def test_tikv_endpoints_override(self):
-        os.environ["UC_TIKV_ENDPOINTS"] = "10.0.0.1:2379,10.0.0.2:2379"
+    def test_tikv_endpoints_canonical_name(self):
+        os.environ["UC_TIKV_PD_ENDPOINTS"] = "10.0.0.1:2379,10.0.0.2:2379"
         try:
             config = load_config()
             assert config.storage.tikv_endpoints == ["10.0.0.1:2379", "10.0.0.2:2379"]
         finally:
+            del os.environ["UC_TIKV_PD_ENDPOINTS"]
+
+    def test_tikv_endpoints_legacy_alias_still_works(self):
+        os.environ["UC_TIKV_ENDPOINTS"] = "10.0.0.3:2379"
+        try:
+            config = load_config()
+            assert config.storage.tikv_endpoints == ["10.0.0.3:2379"]
+        finally:
+            del os.environ["UC_TIKV_ENDPOINTS"]
+
+    def test_tikv_canonical_wins_over_legacy(self):
+        os.environ["UC_TIKV_PD_ENDPOINTS"] = "pd:2379"
+        os.environ["UC_TIKV_ENDPOINTS"] = "legacy:2379"
+        try:
+            config = load_config()
+            assert config.storage.tikv_endpoints == ["pd:2379"]
+        finally:
+            del os.environ["UC_TIKV_PD_ENDPOINTS"]
             del os.environ["UC_TIKV_ENDPOINTS"]
 
 

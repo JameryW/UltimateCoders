@@ -24,7 +24,12 @@ services:
       - --name=pd
       - --client-urls=http://0.0.0.0:2379
       - --peer-urls=http://0.0.0.0:2380
-      - --advertise-client-urls=http://127.0.0.1:2379,http://pd:2379
+      # ponytail: advertise-client-urls MUST resolve from the gateway
+      # container. 127.0.0.1 here makes tikv-client reconnect to the
+      # gateway's own loopback (no PD there) → connection refused →
+      # short-term memory falls back to in-memory permanently. Keep only
+      # the docker-network hostname.
+      - --advertise-client-urls=http://pd:2379
       - --advertise-peer-urls=http://pd:2380
       - --data-dir=/data
       - --initial-cluster=pd=http://pd:2380
@@ -147,6 +152,9 @@ services:
       # when the override mounts the workspace.
     environment:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
+      # TEMP-VERIFY: legacy alias the old binary still reads. Remove after
+      # gateway image rebuilt with config.rs env-name fix.
+      UC_TIKV_ENDPOINT: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
