@@ -299,6 +299,57 @@ describe("TaskStore", () => {
 			expect(loaded!.subtasks[1].files).toEqual(["c.ts"]);
 		});
 
+		// ponytail: steps round-trip — locks the SubtaskDef.steps → persist → load
+		// contract. If steps don't survive persistence, resumed tasks run empty
+		// step chains (single-agent fallback) silently. This is the one check that
+		// fails if the new steps field is dropped from serialization anywhere.
+		it("persists and restores subtask workflow steps", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({
+				id: "uc-steps-persist",
+				subtasks: [
+					{
+						id: "st-1",
+						description: "implement auth middleware",
+						status: "pending",
+						dependsOn: [],
+						files: ["src/auth/middleware.ts"],
+						steps: [
+							{ agent: "claude-code", prompt: "Implement JWT auth middleware.", abort_on_failure: true },
+							{ agent: "codex", prompt: "Review changes. Prev: {{prev_summary}} files: {{prev_files}}" },
+							{ agent: "claude-code", prompt: "Revise per CR. Prev: {{prev_summary}}", abort_on_failure: false },
+						],
+					},
+				],
+			});
+			await store.save(task);
+
+			const loaded = await store.load("uc-steps-persist");
+			const st = loaded!.subtasks[0];
+			expect(st.steps).toBeDefined();
+			expect(st.steps!.length).toBe(3);
+			expect(st.steps![0].agent).toBe("claude-code");
+			expect(st.steps![0].prompt).toBe("Implement JWT auth middleware.");
+			expect(st.steps![0].abort_on_failure).toBe(true);
+			expect(st.steps![1].agent).toBe("codex");
+			expect(st.steps![1].prompt).toContain("{{prev_summary}}");
+			expect(st.steps![1].abort_on_failure).toBeUndefined();
+			expect(st.steps![2].abort_on_failure).toBe(false);
+		});
+
+		it("steps undefined when not set (backward compatible)", async () => {
+			const store = new TaskStore(testDir);
+			await store.init();
+
+			const task = makeTask({ id: "uc-no-steps" });
+			await store.save(task);
+
+			const loaded = await store.load("uc-no-steps");
+			expect(loaded!.subtasks[0].steps).toBeUndefined();
+		});
+
 		// ── Checkpoint save/load ───────────────────────────────────────
 
 		it("saves and loads a checkpoint", async () => {

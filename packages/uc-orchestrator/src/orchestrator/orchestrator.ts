@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
+import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef, type WorkflowStepDef } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
@@ -137,6 +137,8 @@ export interface SubtaskResult {
 	requiredCapabilities?: string[];
 	/** Per-subtask agent configuration overrides (mirrors SubtaskDef.agentConfig). */
 	agentConfig?: Record<string, unknown>;
+	/** Ordered multi-agent workflow steps (mirrors SubtaskDef.steps). */
+	steps?: WorkflowStepDef[];
 }
 
 interface ReviewResult {
@@ -156,6 +158,64 @@ interface OrchestratorConfig {
 }
 
 // ── Orchestrator ───────────────────────────────────────────────────
+
+/**
+ * Parse a decomposer's JSON/text output into SubtaskDef[].
+ *
+ * Exported (module-private to tests) so the snake_case → field mapping — the
+ * one place a malformed decomposer payload can silently corrupt the step
+ * chain — is unit-testable without instantiating UCOrchestrator (which needs
+ * a live ExtensionAPI + GrpcBridge).
+ *
+ * Contract:
+ * - JSON `{ subtasks: [...] }` → mapped SubtaskDef[]. Unknown fields ignored.
+ * - `steps` optional: present array → mapped; absent → undefined (single-agent).
+ * - Non-JSON → numbered-text fallback (backward compat with older decomposers).
+ */
+export function parseSubtaskOutput(raw: string): SubtaskDef[] {
+	try {
+		const parsed = JSON.parse(raw);
+		if (parsed.subtasks && Array.isArray(parsed.subtasks)) {
+			return parsed.subtasks.map((st: Record<string, unknown>, i: number) => {
+				const def: SubtaskDef = {
+					id: (st.id as string) || `st-${i + 1}`,
+					description: st.description as string,
+					dependsOn: (st.depends_on as string[]) || [],
+					files: (st.files as string[]) || [],
+				};
+				// ponytail: read optional steps array from decomposer JSON —
+				// unknown fields ignored, missing steps key = undefined (backward compat)
+				if (Array.isArray(st.steps)) {
+					def.steps = (st.steps as Array<Record<string, unknown>>).map((s) => ({
+						agent: String(s.agent ?? ""),
+						prompt: String(s.prompt ?? ""),
+						...(s.agent_config_json != null ? { agent_config_json: String(s.agent_config_json) } : {}),
+						...(s.abort_on_failure != null ? { abort_on_failure: Boolean(s.abort_on_failure) } : {}),
+					}));
+				}
+				return def;
+			});
+		}
+	} catch {
+		// Not JSON — fall through
+	}
+
+	// ponytail: text fallback
+	const lines = raw.split("\n").filter((l) => l.trim());
+	const subtasks: SubtaskDef[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const match = lines[i].match(/^\d+\.\s+(.+)/);
+		if (match) {
+			subtasks.push({
+				id: `st-${i + 1}`,
+				description: match[1].trim(),
+				dependsOn: i > 0 ? [`st-${i}`] : [],
+				files: [],
+			});
+		}
+	}
+	return subtasks;
+}
 
 export class UCOrchestrator {
 	private pi: ExtensionAPI;
@@ -360,6 +420,7 @@ export class UCOrchestrator {
 			files: def.files,
 			dispatchMode: def.dispatchMode,
 			requiredCapabilities: def.requiredCapabilities,
+			steps: def.steps,
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
@@ -432,6 +493,7 @@ export class UCOrchestrator {
 			files: def.files,
 			dispatchMode: def.dispatchMode,
 			requiredCapabilities: def.requiredCapabilities,
+			steps: def.steps,
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
@@ -573,6 +635,7 @@ export class UCOrchestrator {
 								files: s.files,
 								dispatchMode: s.dispatchMode,
 								requiredCapabilities: s.requiredCapabilities,
+								steps: s.steps,
 							}));
 						const newWaves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 						ctx.ui.notify(
@@ -825,6 +888,7 @@ export class UCOrchestrator {
 				dispatchMode: def.dispatchMode,
 				requiredCapabilities: def.requiredCapabilities,
 				agentConfig: def.agentConfig,
+				steps: def.steps,
 			}));
 
 			task.subtasks = [
@@ -938,6 +1002,7 @@ export class UCOrchestrator {
 				files: s.files,
 				dispatchMode: s.dispatchMode,
 				requiredCapabilities: s.requiredCapabilities,
+				steps: s.steps,
 			}));
 
 		if (pendingDefs.length === 0) {
@@ -1085,6 +1150,17 @@ export class UCOrchestrator {
 										type: "array",
 										items: { type: "string" },
 									},
+									steps: {
+										type: "array",
+										items: {
+											type: "object",
+											properties: {
+												agent: { type: "string" },
+												prompt: { type: "string" },
+												abort_on_failure: { type: "boolean" },
+											},
+										},
+									},
 								},
 							},
 						},
@@ -1199,35 +1275,7 @@ export class UCOrchestrator {
 	}
 
 	private parseSubtaskOutput(raw: string, _description: string): SubtaskDef[] {
-		try {
-			const parsed = JSON.parse(raw);
-			if (parsed.subtasks && Array.isArray(parsed.subtasks)) {
-				return parsed.subtasks.map((st: Record<string, unknown>, i: number) => ({
-					id: (st.id as string) || `st-${i + 1}`,
-					description: st.description as string,
-					dependsOn: (st.depends_on as string[]) || [],
-					files: (st.files as string[]) || [],
-				}));
-			}
-		} catch {
-			// Not JSON — fall through
-		}
-
-		// ponytail: text fallback
-		const lines = raw.split("\n").filter((l) => l.trim());
-		const subtasks: SubtaskDef[] = [];
-		for (let i = 0; i < lines.length; i++) {
-			const match = lines[i].match(/^\d+\.\s+(.+)/);
-			if (match) {
-				subtasks.push({
-					id: `st-${i + 1}`,
-					description: match[1].trim(),
-					dependsOn: i > 0 ? [`st-${i}`] : [],
-					files: [],
-				});
-			}
-		}
-		return subtasks;
+		return parseSubtaskOutput(raw);
 	}
 
 	// ── Context Injection ────────────────────────────────────────────
@@ -1689,6 +1737,7 @@ export class UCOrchestrator {
 				retryCount: s.retryCount,
 				dispatchMode: s.dispatchMode,
 				requiredCapabilities: s.requiredCapabilities,
+				steps: s.steps,
 			})),
 			createdAt: task.createdAt,
 			completedAt: task.completedAt,
@@ -1722,6 +1771,7 @@ export class UCOrchestrator {
 				retryCount: s.retryCount,
 				dispatchMode: s.dispatchMode,
 				requiredCapabilities: s.requiredCapabilities,
+				steps: s.steps,
 			})),
 			createdAt: p.createdAt,
 			completedAt: p.completedAt,
@@ -1884,6 +1934,7 @@ Given a high-level task description:
 2. Break the task into minimal, independently verifiable subtasks
 3. Define dependency order (which subtasks must complete before others)
 4. Identify critical files for each subtask
+5. For moderate/complex code-writing subtasks, define a multi-agent steps chain
 
 Rules:
 - Each subtask should be completable by a single coding agent in one session
@@ -1892,11 +1943,26 @@ Rules:
 - Keep subtasks between 2-8 items; prefer fewer, larger subtasks over many tiny ones
 - If the task is simple enough for one agent, return a single subtask
 
+When to emit steps (multi-agent workflow chain):
+- simple subtasks (single file, trivial change, <50 lines, pure search/read):
+  Omit steps entirely — single-agent execution.
+- moderate/complex subtasks (real code changes, new features, refactors):
+  Emit a 3-step chain: claude-code (write) -> codex (CR) -> claude-code (revise).
+  The codex and revise step prompts should use {{prev_summary}} and {{prev_files}}
+  template variables to reference the preceding step's output.
+
+Supported template variables (do NOT invent others):
+- {{prev_summary}} — summary of the immediately preceding step
+- {{prev_files}} — modified files from the preceding step
+- {{stepN.summary}} / {{stepN.files}} — reference step N by index (0-based)
+
 Output a JSON object with a "subtasks" array. Each item has:
 - id: string (e.g. "st-1")
 - description: string (what to do)
 - depends_on: string[] (IDs of prerequisite subtasks)
-- files: string[] (critical file paths)`;
+- files: string[] (critical file paths)
+- steps: array (optional) — each item: { agent: "claude-code"|"codex", prompt: string, abort_on_failure?: boolean }
+  Omit steps for simple subtasks. Emit 3-step chain for moderate/complex code-writing subtasks.`;
 
 const WORKER_PROMPT = `You are a coding worker agent. Execute the assigned subtask:
 
