@@ -168,14 +168,20 @@ class TestDeriveCapabilities:
 
     def test_codex_cli_present_advertises_codex(self, stub_engine, monkeypatch) -> None:
         """shutil.which("codex") truthy → "codex" capability advertised."""
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/codex" if cmd == "codex" else None)
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/codex" if cmd == "codex" else None,
+        )
         caps = self._worker(stub_engine).capabilities
         assert "codex" in caps
         assert "claude-code" not in caps
 
     def test_claude_cli_present_advertises_claude_code(self, stub_engine, monkeypatch) -> None:
         """shutil.which("claude") truthy → "claude-code" capability advertised."""
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None)
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None,
+        )
         caps = self._worker(stub_engine).capabilities
         assert "claude-code" in caps
         assert "codex" not in caps
@@ -202,6 +208,9 @@ class TestDeriveCapabilities:
 
     def test_agent_caps_deduped(self, stub_engine, monkeypatch) -> None:
         """If 'claude-code' is somehow already in caps, CLI probe doesn't duplicate."""
-        monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None)
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/claude" if cmd == "claude" else None,
+        )
         caps = self._worker(stub_engine).capabilities
         assert caps.count("claude-code") == 1
