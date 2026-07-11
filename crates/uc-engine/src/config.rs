@@ -20,7 +20,7 @@ impl EngineConfig {
     /// Load configuration from environment variables.
     ///
     /// Env vars:
-    /// - `UC_TIKV_ENDPOINT`: PD endpoint for TiKV (default: "127.0.0.1:2379")
+    /// - `UC_TIKV_PD_ENDPOINTS`: PD endpoint(s) for TiKV, comma-separated (default: "127.0.0.1:2379"). `UC_TIKV_ENDPOINT` is a legacy alias.
     /// - `UC_QDRANT_URL`: Qdrant gRPC URL (default: "http://127.0.0.1:6334")
     /// - `UC_PG_URL`: PostgreSQL connection string (default: "postgres://localhost/ultimatecoders")
     /// - `UC_NATS_URL`: NATS server URL (default: "nats://127.0.0.1:4222")
@@ -76,7 +76,15 @@ impl StorageConfig {
     /// Load storage config from environment variables.
     pub fn from_env() -> Self {
         Self {
-            tikv_pd_endpoints: std::env::var("UC_TIKV_ENDPOINT")
+            // ponytail: UC_TIKV_PD_ENDPOINTS is the canonical name used
+            // across scripts/compose/README/Python. UC_TIKV_ENDPOINT is the
+            // legacy alias from when this was the only consumer. Without this
+            // fix, compose sets UC_TIKV_PD_ENDPOINTS=pd:2379 but the engine
+            // reads UC_TIKV_ENDPOINT (unset) → default 127.0.0.1:2379 → PD
+            // unreachable from the gateway container → permanent in-memory
+            // fallback for short-term memory.
+            tikv_pd_endpoints: std::env::var("UC_TIKV_PD_ENDPOINTS")
+                .or_else(|_| std::env::var("UC_TIKV_ENDPOINT"))
                 .ok()
                 .map(|e| {
                     e.split(',')
@@ -187,5 +195,52 @@ impl EmbeddingConfig {
             retry_base_delay_ms: 1000,
             retry_max_delay_ms: 60000,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ponytail: env vars are process-global — serialize StorageConfig env
+    // tests so concurrent #[test]s don't clobber each other's UC_TIKV_*.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn clear_tikv_env() {
+        unsafe {
+            std::env::remove_var("UC_TIKV_PD_ENDPOINTS");
+            std::env::remove_var("UC_TIKV_ENDPOINT");
+        }
+    }
+
+    #[test]
+    fn tikv_pd_endpoints_canonical_name_wins() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_tikv_env();
+        unsafe {
+            std::env::set_var("UC_TIKV_PD_ENDPOINTS", "pd:2379,pd2:2379");
+            std::env::set_var("UC_TIKV_ENDPOINT", "legacy:2379");
+        }
+        let cfg = StorageConfig::from_env();
+        assert_eq!(cfg.tikv_pd_endpoints, vec!["pd:2379", "pd2:2379"]);
+    }
+
+    #[test]
+    fn tikv_endpoint_legacy_alias_still_works() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_tikv_env();
+        unsafe {
+            std::env::set_var("UC_TIKV_ENDPOINT", "legacy:2379");
+        }
+        let cfg = StorageConfig::from_env();
+        assert_eq!(cfg.tikv_pd_endpoints, vec!["legacy:2379"]);
+    }
+
+    #[test]
+    fn tikv_default_when_no_env() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_tikv_env();
+        let cfg = StorageConfig::from_env();
+        assert_eq!(cfg.tikv_pd_endpoints, vec!["127.0.0.1:2379"]);
     }
 }

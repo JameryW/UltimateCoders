@@ -150,7 +150,9 @@ def load_config(path: str | None = None) -> Config:
         config.llm.tpm_limit = int(os.environ["UC_LLM_TPM_LIMIT"])
 
     # Storage env var overrides
-    tikv_env = os.environ.get("UC_TIKV_ENDPOINTS")
+    # ponytail: UC_TIKV_PD_ENDPOINTS is canonical (matches Rust/scripts/compose).
+    # UC_TIKV_ENDPOINTS was the old Python-only name.
+    tikv_env = os.environ.get("UC_TIKV_PD_ENDPOINTS") or os.environ.get("UC_TIKV_ENDPOINTS")
     if tikv_env:
         config.storage.tikv_endpoints = [e.strip() for e in tikv_env.split(",") if e.strip()]
 
