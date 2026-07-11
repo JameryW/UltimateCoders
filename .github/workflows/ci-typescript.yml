@@ -75,6 +75,11 @@ jobs:
         with:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile
+      # ponytail: OMP vendor install — the pi_natives build (next step) needs
+      # @napi-rs/cli's `napi` binary, which lives in vendor/oh-my-pi/node_modules,
+      # not packages/uc-orchestrator/node_modules.
+      - run: bun install --frozen-lockfile
+        working-directory: vendor/oh-my-pi
       - uses: dtolnay/rust-toolchain@stable
       - working-directory: vendor/oh-my-pi/packages/natives
         run: bun run build
