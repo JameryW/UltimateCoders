@@ -10,6 +10,17 @@
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/** A single step in a subtask's multi-agent workflow chain.
+ *  Field names mirror Rust `WorkflowStep` (snake_case) — proto-generated
+ *  TS types use camelCase, but the decomposer JSON + persistence use snake_case.
+ *  grpc-bridge.ts handles the camelCase mapping at proto serialization time. */
+export interface WorkflowStepDef {
+	agent: string;
+	prompt: string;
+	agent_config_json?: string;
+	abort_on_failure?: boolean;
+}
+
 export interface SubtaskDef {
 	id: string;
 	description: string;
@@ -30,6 +41,10 @@ export interface SubtaskDef {
 	/** Per-subtask agent configuration overrides. Keys: tools, allowed_tools,
 	 *  disallowed_tools, mcp_configs, append_system_prompt, agent_name, agents_json. */
 	agentConfig?: Record<string, unknown>;
+	/** Ordered multi-agent workflow steps. Empty/undefined = single-agent
+	 *  execution (backward compatible). When non-empty, worker runs steps
+	 *  in order, threading each step's output into the next via template vars. */
+	steps?: WorkflowStepDef[];
 }
 
 /** A wave is a group of subtasks that can execute in parallel. */

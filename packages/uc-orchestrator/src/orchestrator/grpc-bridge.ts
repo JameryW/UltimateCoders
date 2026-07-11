@@ -448,6 +448,13 @@ export class GrpcBridge {
 						fileConstraints: st.files ?? [],
 						dispatchMode: st.dispatchMode,
 						requiredCapabilities: st.requiredCapabilities ?? [],
+						// ponytail: map SubtaskDef.steps (snake_case) → proto camelCase fields
+						steps: (st.steps ?? []).map((s) => ({
+							agent: s.agent,
+							prompt: s.prompt,
+							...(s.agent_config_json != null ? { agentConfigJson: s.agent_config_json } : {}),
+							...(s.abort_on_failure != null ? { abortOnFailure: s.abort_on_failure } : {}),
+						})),
 					})),
 				}),
 			);
