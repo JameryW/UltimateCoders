@@ -203,7 +203,6 @@ impl Sandbox for SubprocessSandbox {
                 // Use the default max output size from ResourceLimits.
                 // The subprocess sandbox does not have access to the SandboxConfig
                 // at execute time, so we use the default (50 MB).
-                // DockerSandbox passes ResourceLimits through its stored config.
                 let max_output = 50 * 1024 * 1024;
 
                 let stdout = truncate_output(&stdout_bytes, max_output);
