@@ -935,3 +935,36 @@ Fixed ruff E501 CI failure on PR #236 (route step subtasks to capable workers) â
 ### Next Steps
 
 - None - task complete
+
+
+## Session 81: Remove dead SandboxConfig.backend field; PR #237/#238 merged
+
+**Date**: 2026-07-12
+**Task**: Remove dead SandboxConfig.backend field; PR #237/#238 merged
+**Branch**: `main`
+
+### Summary
+
+Follow-up to PR #237. Removed dead SandboxConfig.backend field â€” written in one place (nats_worker default), never read to select a backend. Deleted field + docstring + sole call-site kwarg + 3 test refs. Net -6. trellis-implement + trellis-check sub-agents ran; 0 issues, grep sweep clean, 60+ SandboxConfig call sites verified. PR #238 CI 4/4 green, merged 9856ee79.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b01b0aeb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
