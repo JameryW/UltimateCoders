@@ -64,13 +64,37 @@ do NOT invent other `{{...}}` variables (they will pass through unrendered):
 |----------|------------|
 | `{{prev_summary}}` | Summary output of the immediately preceding step |
 | `{{prev_files}}` | Comma-separated modified files from the preceding step |
+| `{{prev_outputs_json}}` | Previous step's full `AgentOutput` as JSON (summary, success, file_changes, stderr_tail, tool_calls; large fields truncated). `"{}"` for step 0. |
 | `{{step0.summary}}` | Summary of step 0 (first step) |
 | `{{step0.files}}` | Modified files from step 0 |
+| `{{step0.outputs_json}}` | Step 0's full `AgentOutput` as JSON |
 | `{{step1.summary}}` | Summary of step 1 |
 | `{{step1.files}}` | Modified files from step 1 |
+| `{{step1.outputs_json}}` | Step 1's full `AgentOutput` as JSON |
 
 Use `{{stepN.*}}` to reference any earlier step by index (0-based). `{{prev_*}}`
 is shorthand for `{{step(N-1).*}}` and is the most common in step prompts.
+
+### When to use `{{prev_outputs_json}}` vs `{{prev_summary}}`
+
+- `{{prev_summary}}` / `{{prev_files}}` — simple string interpolation. Fine when
+  the next step only needs a one-line summary and a file list.
+- `{{prev_outputs_json}}` — structured JSON blob carrying the full prior result:
+  `summary`, `success` (bool), `file_changes` (file_path, change_type, diff),
+  `stderr_tail`, and `tool_calls`. Use this when the next agent needs to inspect
+  structured data — e.g. a code-review step reading the `file_changes` diffs and
+  `stderr_tail` from the implement step to target its review. The JSON is
+  compact (no whitespace) and truncated for prompt safety (summary ≤2000 chars,
+  stderr_tail ≤1000, per-file diff ≤1000, tool_calls ≤50 entries).
+
+Example — codex CR step reading structured artifacts from the implement step:
+
+```json
+{
+  "agent": "codex",
+  "prompt": "Review the implementation. Prior step output (JSON): {{prev_outputs_json}}. Check the file_changes diffs for correctness and the stderr_tail for any errors."
+}
+```
 
 ## Example 3-step chain (moderate code-writing subtask)
 
