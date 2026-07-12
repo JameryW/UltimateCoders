@@ -45,6 +45,7 @@ from ultimate_coders.agent.types import (
     SubtaskResult,
     SubtaskStatus,
     WorkerInfo,
+    WorkflowStep,
 )
 from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
@@ -1069,141 +1070,53 @@ class Worker:
         subtask fails. The returned AgentOutput is the LAST step's output;
         file_changes are accumulated across all steps so the SubtaskResult
         reflects every file touched in the workflow.
+
+        Steps with a non-empty ``parallel_group`` run concurrently via
+        ``asyncio.gather`` (consecutive same-group steps form one group).
+        Parallel-group steps MUST be read-only (disallowed_tools includes
+        Edit, Write, Bash) or the subtask fails — this prevents worktree
+        corruption from concurrent writes.
         """
         step_outputs: list[AgentOutput] = []
         all_file_changes: list[FileChange] = []
         last_output: AgentOutput | None = None
         file_constraints_str = ", ".join(subtask.file_constraints) or "none"
 
-        for idx, step in enumerate(subtask.steps):
-            prev = step_outputs[-1] if step_outputs else None
-            rendered = self._render_step_prompt(
-                step.prompt,
-                idx,
-                step_outputs,
-                prev,
-                context_block,
-                file_constraints_str,
-            )
+        # Group consecutive steps by parallel_group. A step with empty
+        # parallel_group runs sequentially (current behavior). A run of
+        # steps with the SAME non-empty parallel_group runs concurrently
+        # via asyncio.gather. Non-consecutive same-group steps are
+        # separate groups (simpler; documented).
+        idx = 0
+        total = len(subtask.steps)
+        while idx < total:
+            step = subtask.steps[idx]
+            group = step.parallel_group
 
-            # ponytail: per-step agent_config override — merge step config over
-            # the subtask-level resolved config (step wins on conflict).
-            base_cfg = self._resolve_agent_config(subtask) or {}
-            merged_cfg = {**base_cfg, **step.agent_config} or None
-
-            logger.info(
-                "Workflow step %d/%d (subtask %s): agent=%s",
-                idx + 1,
-                len(subtask.steps),
-                subtask.id[:8],
-                step.agent,
-            )
-            total = len(subtask.steps)
-            percent = int(100 * idx / total) if total else 0
-
-            # Condition evaluation: skip this step if the expression is false.
-            # Empty condition = always run (backward compat). Parse error →
-            # subtask fails with a clear message (never silently run/skip).
-            if step.condition:
-                try:
-                    should_run = evaluate(step.condition, prev)
-                except ConditionError as e:
-                    logger.error(
-                        "Workflow step %d condition parse error: %s",
-                        idx + 1,
-                        e,
-                    )
-                    return AgentOutput(
-                        summary=f"[step {idx + 1} condition parse error] {e}",
-                        file_changes=all_file_changes,
-                        success=False,
-                    )
-                if not should_run:
-                    logger.info(
-                        "Workflow step %d/%d skipped (condition false): %s",
-                        idx + 1,
-                        total,
-                        step.condition,
-                    )
-                    await self._emit_step_event(
-                        subtask, "subtask_progress",
-                        phase=f"step {idx + 1}/{total}: {step.agent} (skipped)",
-                        percent=percent,
-                        step_index=idx,
-                        step_total=total,
-                        step_agent=step.agent,
-                        step_status="skipped",
-                        step_summary=step.condition[:200],
-                    )
+            if not group:
+                # Sequential step — run directly via the shared helper.
+                prev = step_outputs[-1] if step_outputs else None
+                output = await self._run_single_step(
+                    step, idx, total, step_outputs, prev,
+                    context_block, file_constraints_str,
+                    subtask, working_dir, on_stdout_line,
+                )
+                if output is None:
+                    # Step was skipped (condition false) — no output appended.
+                    idx += 1
                     continue
+                step_outputs.append(output)
+                if output.success:
+                    all_file_changes.extend(output.file_changes)
+                last_output = output
 
-            await self._emit_step_event(
-                subtask, "subtask_progress",
-                phase=f"step {idx + 1}/{total}: {step.agent}",
-                percent=percent,
-                step_index=idx,
-                step_total=total,
-                step_agent=step.agent,
-                step_status="started",
-            )
-            # Retry loop: attempt up to 1 + retry_count times. Only retry on
-            # failure (output.success is False). Between retries, sleep
-            # retry_delay_ms/1000 seconds (0 = immediate). Emit a "retrying"
-            # event before each retry sleep so observers can track attempts.
-            max_attempts = 1 + max(0, step.retry_count)
-            output: AgentOutput | None = None
-            for attempt in range(max_attempts):
-                output = await self._sandbox_manager.execute(
-                    rendered,
-                    working_dir=working_dir,
-                    on_stdout_line=on_stdout_line,
-                    subtask_config=merged_cfg,
-                    agent=step.agent,
-                )
-                if output.success or attempt == max_attempts - 1:
-                    break
-                # Failed and retries remain — emit retrying event + sleep.
-                await self._emit_step_event(
-                    subtask, "subtask_progress",
-                    phase=f"step {idx + 1}/{total}: {step.agent}",
-                    percent=percent,
-                    step_index=idx,
-                    step_total=total,
-                    step_agent=step.agent,
-                    step_status="retrying",
-                    retry_attempt=attempt + 1,
-                    step_summary=output.summary[:200],
-                )
-                if step.retry_delay_ms > 0:
-                    await asyncio.sleep(step.retry_delay_ms / 1000)
-            assert output is not None  # loop runs at least once
-            step_outputs.append(output)
-            # Only accumulate file changes from successful steps — a failed
-            # step's partial edits are not a reliable result. ponytail: avoid
-            # reporting partial work as applied when a later step succeeds.
-            if output.success:
-                all_file_changes.extend(output.file_changes)
-            await self._emit_step_event(
-                subtask, "subtask_progress",
-                phase=f"step {idx + 1}/{total}: {step.agent}",
-                percent=int(100 * (idx + 1) / total) if total else 0,
-                step_index=idx,
-                step_total=total,
-                step_agent=step.agent,
-                step_status="completed" if output.success else "failed",
-                step_summary=output.summary[:200],
-            )
-            last_output = output
-
-            if not output.success:
-                if step.abort_on_failure:
+                if not output.success and step.abort_on_failure:
                     logger.warning(
                         "Workflow step %d failed (agent=%s), aborting chain for subtask %s",
                         idx + 1,
                         step.agent,
                         subtask.id[:8],
                     )
-                    # Surface the failed step's output as the subtask result.
                     return AgentOutput(
                         summary=f"[step {idx + 1} ({step.agent}) failed] {output.summary}",
                         file_changes=all_file_changes,
@@ -1213,9 +1126,102 @@ class Worker:
                         tool_calls=output.tool_calls,
                     )
                 # abort_on_failure=False: log and continue to next step.
-                logger.warning(
-                    "Workflow step %d failed but abort_on_failure=False; continuing chain",
-                    idx + 1,
+                if not output.success:
+                    logger.warning(
+                        "Workflow step %d failed but abort_on_failure=False; continuing chain",
+                        idx + 1,
+                    )
+                idx += 1
+                continue
+
+            # Parallel group — collect all consecutive steps with the same group.
+            group_steps: list[tuple[int, WorkflowStep]] = []
+            while idx < total and subtask.steps[idx].parallel_group == group:
+                group_steps.append((idx, subtask.steps[idx]))
+                idx += 1
+
+            # VALIDATE: every step in a parallel group MUST be read-only.
+            # disallowed_tools must include Edit, Write, and Bash. This is
+            # the worktree-conflict mitigation — read-only steps don't
+            # mutate the shared worktree. A write-capable step in a group
+            # is a hard error (subtask fails).
+            required_disallowed = {"Edit", "Write", "Bash"}
+            for step_idx, gs in group_steps:
+                base_cfg = self._resolve_agent_config(subtask) or {}
+                merged_cfg = {**base_cfg, **gs.agent_config}
+                disallowed = set(merged_cfg.get("disallowed_tools", []) or [])
+                missing = required_disallowed - disallowed
+                if missing:
+                    missing_str = ", ".join(sorted(missing))
+                    logger.error(
+                        "Workflow step %d parallel_group='%s' must be read-only "
+                        "(disallowed_tools must include Edit, Write, Bash); missing: %s",
+                        step_idx + 1,
+                        group,
+                        missing_str,
+                    )
+                    return AgentOutput(
+                        summary=(
+                            f"[step {step_idx + 1} parallel_group='{group}' "
+                            f"must be read-only (disallowed_tools must include "
+                            f"Edit, Write, Bash)]"
+                        ),
+                        file_changes=all_file_changes,
+                        success=False,
+                    )
+
+            # All steps in the group share the SAME prev (last output before
+            # the group). They do NOT see each other's outputs mid-group.
+            prev = step_outputs[-1] if step_outputs else None
+
+            # Run all steps in the group concurrently. Each step's
+            # condition/retry/event logic runs inside _run_single_step.
+            # We pass a snapshot of step_outputs (copy) so concurrent
+            # steps don't see each other's mid-flight mutations.
+            prev_snapshot = list(step_outputs)
+            results = await asyncio.gather(*[
+                self._run_single_step(
+                    gs, si, total, prev_snapshot, prev,
+                    context_block, file_constraints_str,
+                    subtask, working_dir, on_stdout_line,
+                )
+                for si, gs in group_steps
+            ])
+
+            # Collect outputs in order. Skipped steps (condition false)
+            # return None — they don't contribute to step_outputs. A
+            # condition parse error returns success=False (subtask fails).
+            group_failed = False
+            failed_output: AgentOutput | None = None
+            for i, (si, gs) in enumerate(group_steps):
+                output = results[i]
+                if output is None:
+                    continue
+                step_outputs.append(output)
+                if output.success:
+                    all_file_changes.extend(output.file_changes)
+                last_output = output
+                if not output.success and gs.abort_on_failure:
+                    group_failed = True
+                    failed_output = output
+                    logger.warning(
+                        "Workflow step %d failed (agent=%s, parallel_group=%s), "
+                        "aborting chain for subtask %s",
+                        si + 1,
+                        gs.agent,
+                        group,
+                        subtask.id[:8],
+                    )
+                    break
+
+            if group_failed and failed_output is not None:
+                return AgentOutput(
+                    summary=f"[step failed in parallel_group='{group}'] {failed_output.summary}",
+                    file_changes=all_file_changes,
+                    token_usage=failed_output.token_usage,
+                    success=False,
+                    stderr_tail=failed_output.stderr_tail,
+                    tool_calls=failed_output.tool_calls,
                 )
 
         # All steps completed (or non-aborting failures). Return the last
@@ -1236,6 +1242,146 @@ class Worker:
             stderr_tail=last_output.stderr_tail,
             tool_calls=last_output.tool_calls,
         )
+
+    async def _run_single_step(
+        self,
+        step: WorkflowStep,
+        idx: int,
+        total: int,
+        step_outputs: list[AgentOutput],
+        prev: AgentOutput | None,
+        context_block: str,
+        file_constraints_str: str,
+        subtask: Subtask,
+        working_dir: str | None,
+        on_stdout_line: Any,
+    ) -> AgentOutput | None:
+        """Run a single workflow step: render → condition → retry → execute → emit.
+
+        Shared by both the sequential path and the parallel-group path in
+        ``_execute_steps``. Returns the step's ``AgentOutput``, or ``None``
+        if the step was skipped (condition evaluated to false).
+
+        This helper does NOT append to ``step_outputs`` — the caller is
+        responsible for appending the result (so parallel groups can
+        collect outputs after gather completes, avoiding mid-flight list
+        mutation).
+        """
+        rendered = self._render_step_prompt(
+            step.prompt,
+            idx,
+            step_outputs,
+            prev,
+            context_block,
+            file_constraints_str,
+        )
+
+        # ponytail: per-step agent_config override — merge step config over
+        # the subtask-level resolved config (step wins on conflict).
+        base_cfg = self._resolve_agent_config(subtask) or {}
+        merged_cfg = {**base_cfg, **step.agent_config} or None
+
+        logger.info(
+            "Workflow step %d/%d (subtask %s): agent=%s",
+            idx + 1,
+            total,
+            subtask.id[:8],
+            step.agent,
+        )
+        percent = int(100 * idx / total) if total else 0
+
+        # Condition evaluation: skip this step if the expression is false.
+        # Empty condition = always run (backward compat). Parse error →
+        # subtask fails with a clear message (never silently run/skip).
+        if step.condition:
+            try:
+                should_run = evaluate(step.condition, prev)
+            except ConditionError as e:
+                logger.error(
+                    "Workflow step %d condition parse error: %s",
+                    idx + 1,
+                    e,
+                )
+                return AgentOutput(
+                    summary=f"[step {idx + 1} condition parse error] {e}",
+                    file_changes=[],
+                    success=False,
+                )
+            if not should_run:
+                logger.info(
+                    "Workflow step %d/%d skipped (condition false): %s",
+                    idx + 1,
+                    total,
+                    step.condition,
+                )
+                await self._emit_step_event(
+                    subtask, "subtask_progress",
+                    phase=f"step {idx + 1}/{total}: {step.agent} (skipped)",
+                    percent=percent,
+                    step_index=idx,
+                    step_total=total,
+                    step_agent=step.agent,
+                    step_status="skipped",
+                    step_summary=step.condition[:200],
+                )
+                return None
+
+        await self._emit_step_event(
+            subtask, "subtask_progress",
+            phase=f"step {idx + 1}/{total}: {step.agent}",
+            percent=percent,
+            step_index=idx,
+            step_total=total,
+            step_agent=step.agent,
+            step_status="started",
+        )
+        # Retry loop: attempt up to 1 + retry_count times. Only retry on
+        # failure (output.success is False). Between retries, sleep
+        # retry_delay_ms/1000 seconds (0 = immediate). Emit a "retrying"
+        # event before each retry sleep so observers can track attempts.
+        max_attempts = 1 + max(0, step.retry_count)
+        output: AgentOutput | None = None
+        for attempt in range(max_attempts):
+            output = await self._sandbox_manager.execute(
+                rendered,
+                working_dir=working_dir,
+                on_stdout_line=on_stdout_line,
+                subtask_config=merged_cfg,
+                agent=step.agent,
+            )
+            if output.success or attempt == max_attempts - 1:
+                break
+            # Failed and retries remain — emit retrying event + sleep.
+            await self._emit_step_event(
+                subtask, "subtask_progress",
+                phase=f"step {idx + 1}/{total}: {step.agent}",
+                percent=percent,
+                step_index=idx,
+                step_total=total,
+                step_agent=step.agent,
+                step_status="retrying",
+                retry_attempt=attempt + 1,
+                step_summary=output.summary[:200],
+            )
+            if step.retry_delay_ms > 0:
+                await asyncio.sleep(step.retry_delay_ms / 1000)
+        assert output is not None  # loop runs at least once
+
+        # Only accumulate file changes from successful steps — a failed
+        # step's partial edits are not a reliable result. ponytail: avoid
+        # reporting partial work as applied when a later step succeeds.
+        # NOTE: file_changes accumulation is done by the CALLER, not here.
+        await self._emit_step_event(
+            subtask, "subtask_progress",
+            phase=f"step {idx + 1}/{total}: {step.agent}",
+            percent=int(100 * (idx + 1) / total) if total else 0,
+            step_index=idx,
+            step_total=total,
+            step_agent=step.agent,
+            step_status="completed" if output.success else "failed",
+            step_summary=output.summary[:200],
+        )
+        return output
 
     # Truncation limits for {{prev_outputs_json}} / {{stepN.outputs_json}}.
     # Keeps the JSON blob from blowing the agent's context window.

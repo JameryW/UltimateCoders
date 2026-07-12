@@ -1091,3 +1091,135 @@ async def test_execute_steps_condition_skipped_does_not_accumulate_files():
     paths = {fc.file_path for fc in out.file_changes}
     assert paths == {"a.rs", "b.rs"}  # only from steps 0 and 2, NOT step 1
 
+
+# ── Parallel group (parallel_group) ──────────────────────────────
+
+
+def test_workflow_step_parallel_group_roundtrip():
+    """parallel_group field survives to_dict / from_dict round-trip."""
+    s = WorkflowStep(
+        agent="codex",
+        prompt="parallel CR",
+        parallel_group="review-group",
+    )
+    d = s.to_dict()
+    assert d["parallel_group"] == "review-group"
+    again = WorkflowStep.from_dict(d)
+    assert again.parallel_group == "review-group"
+
+
+def test_workflow_step_parallel_group_defaults_empty():
+    """Absent parallel_group field defaults to empty string (backward compat)."""
+    s = WorkflowStep.from_dict({"agent": "codex", "prompt": "CR"})
+    assert s.parallel_group == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_parallel_group_runs_concurrently():
+    """Two read-only steps with the same parallel_group run via asyncio.gather.
+
+    Both steps declare disallowed_tools including Edit, Write, Bash (read-only).
+    The sandbox is called for both, and both succeed.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="cr-1", success=True),
+            AgentOutput(summary="cr-2", success=True),
+        ]
+    )
+    readonly_cfg = {"disallowed_tools": ["Edit", "Write", "Bash"]}
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(
+                agent="codex",
+                prompt="CR concern A",
+                parallel_group="review",
+                agent_config=readonly_cfg,
+            ),
+            WorkflowStep(
+                agent="codex",
+                prompt="CR concern B",
+                parallel_group="review",
+                agent_config=readonly_cfg,
+            ),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # Both steps executed — sandbox called twice.
+    assert w._sandbox_manager.execute.await_count == 2
+    assert out.success is True
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_parallel_group_write_capable_fails():
+    """A write-capable step (missing Edit in disallowed_tools) in a
+    parallel_group is a hard error — subtask fails, sandbox NOT called.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock()
+
+    # disallowed_tools missing Edit → not read-only.
+    not_readonly_cfg = {"disallowed_tools": ["Write", "Bash"]}
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(
+                agent="claude-code",
+                prompt="write code in parallel",
+                parallel_group="bad-group",
+                agent_config=not_readonly_cfg,
+            ),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # Subtask failed — sandbox was NOT called (validation rejected before dispatch).
+    assert out.success is False
+    assert w._sandbox_manager.execute.await_count == 0
+    assert "must be read-only" in out.summary
+    assert "Edit" in out.summary
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_empty_parallel_group_sequential():
+    """Empty parallel_group = sequential (current behavior, no gather).
+
+    Steps with no parallel_group run one at a time, same as before Phase 4.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="s0", success=True),
+            AgentOutput(summary="s1", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0"),
+            WorkflowStep(agent="codex", prompt="s1"),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # Both steps ran sequentially.
+    assert w._sandbox_manager.execute.await_count == 2
+    assert out.success is True
+    assert out.summary == "s1"
+
+

@@ -180,6 +180,11 @@ class WorkflowStep:
     # Optional condition expression. Evaluated against prior step outputs
     # before running this step; step is skipped if false. Empty = always run.
     condition: str = ""
+    # Optional parallel group. Steps sharing a non-empty group run concurrently
+    # via asyncio.gather. Steps in a parallel_group MUST be read-only
+    # (disallowed_tools includes Edit, Write, Bash) or the subtask fails.
+    # Empty = sequential (current behavior, backward compatible).
+    parallel_group: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,6 +195,7 @@ class WorkflowStep:
             "retry_count": self.retry_count,
             "retry_delay_ms": self.retry_delay_ms,
             "condition": self.condition,
+            "parallel_group": self.parallel_group,
         }
 
     @classmethod
@@ -202,6 +208,7 @@ class WorkflowStep:
             retry_count=int(data.get("retry_count", 0) or 0),
             retry_delay_ms=int(data.get("retry_delay_ms", 0) or 0),
             condition=data.get("condition", "") or "",
+            parallel_group=data.get("parallel_group", "") or "",
         )
 
 

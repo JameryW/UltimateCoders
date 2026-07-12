@@ -22,6 +22,7 @@ export interface WorkflowStepDef {
 	retryCount?: number;
 	retryDelayMs?: number;
 	condition?: string;
+	parallelGroup?: string;
 }
 
 export interface SubtaskDef {
