@@ -902,6 +902,7 @@ fn step_to_proto(s: &uc_types::WorkflowStep) -> WorkflowStepProto {
         retry_count: Some(s.retry_count),
         retry_delay_ms: Some(s.retry_delay_ms),
         condition: s.condition.clone(),
+        parallel_group: s.parallel_group.clone(),
     }
 }
 
@@ -915,6 +916,7 @@ fn step_from_proto(s: &WorkflowStepProto) -> uc_types::WorkflowStep {
         retry_count: s.retry_count.unwrap_or(0),
         retry_delay_ms: s.retry_delay_ms.unwrap_or(0),
         condition: s.condition.clone(),
+        parallel_group: s.parallel_group.clone(),
     }
 }
 

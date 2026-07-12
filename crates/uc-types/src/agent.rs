@@ -147,6 +147,11 @@ pub struct WorkflowStep {
     /// before running this step; step is skipped if false. Empty = always run.
     #[serde(default)]
     pub condition: Option<String>,
+    /// Optional parallel group. Steps sharing a non-empty group run concurrently.
+    /// Steps in a parallel_group MUST be read-only (disallowed_tools includes
+    /// Edit, Write, Bash) or the subtask fails. Empty = sequential.
+    #[serde(default)]
+    pub parallel_group: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -341,6 +346,7 @@ mod tests {
             retry_count: 0,
             retry_delay_ms: 0,
             condition: None,
+            parallel_group: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -386,6 +392,7 @@ mod tests {
                     retry_count: 0,
                     retry_delay_ms: 0,
                     condition: None,
+                    parallel_group: None,
                 },
                 WorkflowStep {
                     agent: "codex".to_string(),
@@ -395,6 +402,7 @@ mod tests {
                     retry_count: 0,
                     retry_delay_ms: 0,
                     condition: None,
+                    parallel_group: None,
                 },
             ],
         };
@@ -419,6 +427,7 @@ mod tests {
             retry_count: 3,
             retry_delay_ms: 5000,
             condition: None,
+            parallel_group: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -445,6 +454,7 @@ mod tests {
             retry_count: 0,
             retry_delay_ms: 0,
             condition: Some("prev.success && prev.files.contains(\"src/\")".to_string()),
+            parallel_group: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -460,5 +470,30 @@ mod tests {
         let json = r#"{"agent":"codex","prompt":"CR","abort_on_failure":true}"#;
         let step: WorkflowStep = serde_json::from_str(json).unwrap();
         assert!(step.condition.is_none());
+    }
+
+    #[test]
+    fn workflow_step_parallel_group_round_trip() {
+        let step = WorkflowStep {
+            agent: "codex".to_string(),
+            prompt: "CR".to_string(),
+            agent_config_json: None,
+            abort_on_failure: true,
+            retry_count: 0,
+            retry_delay_ms: 0,
+            condition: None,
+            parallel_group: Some("review-group".to_string()),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.parallel_group.as_deref(), Some("review-group"));
+    }
+
+    #[test]
+    fn workflow_step_parallel_group_defaults_none_when_absent() {
+        // Backward compat: a step serialized before `parallel_group` existed.
+        let json = r#"{"agent":"codex","prompt":"CR","abort_on_failure":true}"#;
+        let step: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert!(step.parallel_group.is_none());
     }
 }

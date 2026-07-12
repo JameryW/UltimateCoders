@@ -27,6 +27,7 @@ output:
                 retry_count: { type: integer, default: 0 }
                 retry_delay_ms: { type: integer, default: 0 }
                 condition: { type: string, default: "" }
+                parallel_group: { type: string, default: "" }
 ---
 
 You are a task decomposition specialist for a coding system.
@@ -188,6 +189,70 @@ with a clear error message — it does NOT silently run or skip the step.
     "prompt": "CR: {{prev_summary}}"
   }
   ```
+
+## Step parallel groups (`parallel_group`)
+
+Steps sharing a non-empty `parallel_group` run **concurrently** via
+`asyncio.gather`. This is useful for running multiple independent
+read-only analyses in parallel (e.g., two code-review steps examining
+different concerns).
+
+### Read-only constraint (HARD requirement)
+
+A step in a `parallel_group` **MUST** be read-only. Its
+`agent_config.disallowed_tools` must include `Edit`, `Write`, **and** `Bash`.
+If any of these is missing, the subtask **fails immediately** with:
+
+```
+[step N parallel_group='X' must be read-only (disallowed_tools must include Edit, Write, Bash)]
+```
+
+This is a hard constraint because parallel steps share a single git worktree
+— write-capable steps would corrupt each other's concurrent file edits.
+
+### Grouping rules
+
+- Only **consecutive** steps with the **same** `parallel_group` value form a
+  group. Non-consecutive same-group steps are separate groups.
+- Steps with empty/absent `parallel_group` run sequentially (default, backward
+  compatible).
+- All steps in a group share the **same `prev`** (the last output before the
+  group). They do NOT see each other's outputs mid-group.
+- Retry (`retry_count`) and condition (`condition`) still work per-step inside
+  a parallel group.
+
+### Example — two parallel code-review steps
+
+```json
+{
+  "steps": [
+    {
+      "agent": "claude-code",
+      "prompt": "Implement feature X"
+    },
+    {
+      "agent": "codex",
+      "prompt": "Review security concerns: {{prev_outputs_json}}",
+      "parallel_group": "cr",
+      "agent_config": {
+        "disallowed_tools": ["Edit", "Write", "Bash"]
+      }
+    },
+    {
+      "agent": "codex",
+      "prompt": "Review performance: {{prev_outputs_json}}",
+      "parallel_group": "cr",
+      "agent_config": {
+        "disallowed_tools": ["Edit", "Write", "Bash"]
+      }
+    }
+  ]
+}
+```
+
+The two codex CR steps run concurrently. Both see the implement step's output
+as `prev`. The next step after the group sees both CR outputs accumulated in
+`step_outputs`.
 
 ## Example 3-step chain (moderate code-writing subtask)
 

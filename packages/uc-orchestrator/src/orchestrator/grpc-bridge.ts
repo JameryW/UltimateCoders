@@ -69,7 +69,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
-		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string }>;
+		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }>;
 	}>;
 }
 
@@ -457,6 +457,7 @@ export class GrpcBridge {
 							...(s.retryCount != null ? { retryCount: s.retryCount } : {}),
 							...(s.retryDelayMs != null ? { retryDelayMs: BigInt(s.retryDelayMs) } : {}),
 							...(s.condition != null ? { condition: s.condition } : {}),
+							...(s.parallelGroup != null ? { parallelGroup: s.parallelGroup } : {}),
 						})),
 					})),
 				}),
@@ -774,7 +775,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -795,6 +796,7 @@ export class GrpcBridge {
 					retryCount: s.retryCount,
 					retryDelayMs: s.retryDelayMs,
 					condition: s.condition,
+					parallelGroup: s.parallelGroup,
 				})),
 			})),
 		};
@@ -822,6 +824,7 @@ export class GrpcBridge {
 					retryCount: s.retryCount,
 					retryDelayMs: s.retryDelayMs,
 					condition: s.condition,
+					parallelGroup: s.parallelGroup,
 				})),
 			})),
 		};
