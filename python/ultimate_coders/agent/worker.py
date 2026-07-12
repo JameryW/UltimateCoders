@@ -1100,6 +1100,8 @@ class Worker:
                     step, idx, total, step_outputs, prev,
                     context_block, file_constraints_str,
                     subtask, working_dir, on_stdout_line,
+                    parallel_group=step.parallel_group or "",
+                    parallel_step_count=1,
                 )
                 if output is None:
                     # Step was skipped (condition false) — no output appended.
@@ -1179,11 +1181,14 @@ class Worker:
             # We pass a snapshot of step_outputs (copy) so concurrent
             # steps don't see each other's mid-flight mutations.
             prev_snapshot = list(step_outputs)
+            group_size = len(group_steps)
             results = await asyncio.gather(*[
                 self._run_single_step(
                     gs, si, total, prev_snapshot, prev,
                     context_block, file_constraints_str,
                     subtask, working_dir, on_stdout_line,
+                    parallel_group=group,
+                    parallel_step_count=group_size,
                 )
                 for si, gs in group_steps
             ])
@@ -1255,6 +1260,8 @@ class Worker:
         subtask: Subtask,
         working_dir: str | None,
         on_stdout_line: Any,
+        parallel_group: str = "",
+        parallel_step_count: int = 1,
     ) -> AgentOutput | None:
         """Run a single workflow step: render → condition → retry → execute → emit.
 
@@ -1266,6 +1273,11 @@ class Worker:
         responsible for appending the result (so parallel groups can
         collect outputs after gather completes, avoiding mid-flight list
         mutation).
+
+        ``parallel_group`` / ``parallel_step_count`` are emitted in every
+        step event so consumers can distinguish concurrent from sequential
+        steps and show a "N parallel" indicator. Empty group + count 1 =
+        sequential (backward compatible).
         """
         rendered = self._render_step_prompt(
             step.prompt,
@@ -1323,6 +1335,8 @@ class Worker:
                     step_agent=step.agent,
                     step_status="skipped",
                     step_summary=step.condition[:200],
+                    parallel_group=parallel_group,
+                    parallel_step_count=parallel_step_count,
                 )
                 return None
 
@@ -1334,6 +1348,8 @@ class Worker:
             step_total=total,
             step_agent=step.agent,
             step_status="started",
+            parallel_group=parallel_group,
+            parallel_step_count=parallel_step_count,
         )
         # Retry loop: attempt up to 1 + retry_count times. Only retry on
         # failure (output.success is False). Between retries, sleep
@@ -1362,6 +1378,8 @@ class Worker:
                 step_status="retrying",
                 retry_attempt=attempt + 1,
                 step_summary=output.summary[:200],
+                parallel_group=parallel_group,
+                parallel_step_count=parallel_step_count,
             )
             if step.retry_delay_ms > 0:
                 await asyncio.sleep(step.retry_delay_ms / 1000)
@@ -1380,6 +1398,8 @@ class Worker:
             step_agent=step.agent,
             step_status="completed" if output.success else "failed",
             step_summary=output.summary[:200],
+            parallel_group=parallel_group,
+            parallel_step_count=parallel_step_count,
         )
         return output
 

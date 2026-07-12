@@ -67,6 +67,10 @@ export interface SubtaskSummary {
   step_total?: number;
   /** Short summary of the current/last step. */
   step_summary?: string;
+  /** Parallel group name (non-empty = this step runs concurrently). */
+  parallel_group?: string;
+  /** Total steps in the parallel group (1 = sequential). */
+  parallel_step_count?: number;
 }
 
 export interface TaskSummary {

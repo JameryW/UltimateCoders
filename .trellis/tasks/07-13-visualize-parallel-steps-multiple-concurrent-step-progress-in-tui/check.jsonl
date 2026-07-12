@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify cargo check/test + ruff + pytest + OMP/dashboard tsc green across the 4-layer change."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify parallel_group flows worker→Rust→proto→TS→dashboard consistently (snake vs camel)."}

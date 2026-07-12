@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-13-visualize-parallel-steps-multiple-concurrent-step-progress-in-tui/research/parallel-step-event-flow.md", "reason": "Complete 5-layer event flow map: worker emit → Rust event → proto data map → TUI ingest → render + dashboard. Identifies parallel_group not emitted, single-entry Map overwrite, Approach C hybrid decision."}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "subtask_progress event contract — verify parallel_group/parallel_step_count added to the documented event payload."}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI WatchTask event display — verify parallel indicator rendering aligns with TUI contract."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Change spans worker/Rust/TS/dashboard 4 layers; verify field consistency (snake in data dict, camel in TS)."}

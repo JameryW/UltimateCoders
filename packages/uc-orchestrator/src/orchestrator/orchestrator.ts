@@ -371,6 +371,7 @@ export class UCOrchestrator {
 		const percent = Number(percentStr) || 0;
 		const stepIndexStr = d.step_index;
 		const stepTotalStr = d.step_total;
+		const parallelStepCountStr = d.parallel_step_count;
 		this.events.emit("subtask_progress", {
 			taskId: ev.taskId,
 			subtaskId: ev.subtaskId ?? "",
@@ -382,6 +383,11 @@ export class UCOrchestrator {
 			stepAgent: d.step_agent,
 			stepStatus: d.step_status,
 			stepSummary: d.step_summary,
+			parallelGroup: d.parallel_group,
+			parallelStepCount:
+				parallelStepCountStr !== undefined && parallelStepCountStr !== ""
+					? Number(parallelStepCountStr)
+					: undefined,
 		});
 	}
 

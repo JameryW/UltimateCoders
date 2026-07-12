@@ -52,7 +52,7 @@ pub enum AgentEventType {
     /// Emitted by the Python worker at phase transitions (preparing/executing/
     /// validating/finalizing) and per workflow-step. Carries `phase`, `percent`,
     /// and optional workflow-step metadata (step_index/step_total/step_agent/
-    /// step_status/step_summary).
+    /// step_status/step_summary/parallel_group/parallel_step_count).
     SubtaskProgress {
         task_id: TaskId,
         subtask_id: TaskId,
@@ -69,6 +69,11 @@ pub enum AgentEventType {
         step_status: Option<String>,
         /// Short summary of the current step's activity.
         step_summary: Option<String>,
+        /// Parallel group name (empty string for sequential steps).
+        /// Steps sharing a non-empty group run concurrently.
+        parallel_group: Option<String>,
+        /// Total number of steps in the parallel group (1 for sequential).
+        parallel_step_count: Option<u32>,
     },
     ToolInvoked {
         task_id: TaskId,
