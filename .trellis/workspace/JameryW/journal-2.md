@@ -1203,3 +1203,36 @@ Enhanced multi-agent workflow orchestration across 5 phases. Phase 0: fixed Pyth
 ### Next Steps
 
 - None - task complete
+
+
+## Session 89: Document multi-agent workflow step contract in specs; PR #250
+
+**Date**: 2026-07-13
+**Task**: Document multi-agent workflow step contract in specs; PR #250
+**Branch**: `main`
+
+### Summary
+
+Documented the WorkflowStep contract (from PRs #245-#249) in specs. New 'Multi-Agent Workflow Steps' section in agent-capability-spec.md (301 lines): field schema (8 fields with proto numbers + source citations), template variables + JSON truncation, execution semantics, parallel groups + read-only constraint, condition expression grammar, step events (started/retrying/completed/failed/skipped), validation matrix. event-pipeline-spec.md: step_status extended + cross-ref. Spec-only, mirrored code exactly (uc-types/agent.rs, engine.proto, types.py, worker.py, step_condition.py, decomposer.md, scheduler.ts, events.rs). Merged ea39c002.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae6ad7f4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
