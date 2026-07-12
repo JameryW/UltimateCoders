@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 86
+- **Total Sessions**: 87
 - **Last Active**: 2026-07-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1135 | Active |
+| `journal-2.md` | ~1168 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 87 | 2026-07-12 | Remove dead orchestrator _pending_task_count field; PR #244 | `b1d95773` | `main` |
 | 86 | 2026-07-12 | Remove dead FallbackCodeEmbedding chunk_type/content_hash; PR #243 | `caa9b417` | `main` |
 | 85 | 2026-07-12 | Remove dead CODE_EMBEDDINGS_COLLECTION const + fix doc; PR #242 | `fa18fa4b` | `main` |
 | 84 | 2026-07-12 | Remove dead LocalEngine.config field; PR #241 | `b6eab7d1` | `main` |

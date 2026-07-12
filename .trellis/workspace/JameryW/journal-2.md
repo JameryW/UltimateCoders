@@ -1133,3 +1133,36 @@ Removed dead FallbackCodeEmbedding.chunk_type and .content_hash fields. Stored a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 87: Remove dead orchestrator _pending_task_count field; PR #244
+
+**Date**: 2026-07-12
+**Task**: Remove dead orchestrator _pending_task_count field; PR #244
+**Branch**: `main`
+
+### Summary
+
+Removed dead Orchestrator._pending_task_count: int = 0 field. Stored at init, never read/mutated - pending_task_count @property computes dynamically over self.tasks. Stale residue from earlier field-counter. Property LIVE (nats_worker/dashboard/tests). Net -1 line. CI all green. Merged 28c42ff8. Found by scanning Python write-but-not-read instance fields (ruff F841 doesn't catch instance attrs).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b1d95773` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
