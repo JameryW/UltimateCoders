@@ -114,6 +114,15 @@ class ProgressWidgetComponent {
 				const icon = statusIcon(st.status, this.theme);
 				const desc = st.description.slice(0, width - 12);
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
+				// Render live step progress (agent + phase + status tag) when available
+				const prog = s.progressBySubtask?.get(st.id);
+				if (prog) {
+					const agentTag = prog.stepAgent ? this.theme.fg("accent", prog.stepAgent) : "";
+					const phaseText = prog.phase ? this.theme.fg("dim", prog.phase.slice(0, Math.max(0, width - 16))) : "";
+					const statusTag = prog.stepStatus ? this._stepStatusTag(prog.stepStatus) : "";
+					const parts = ["    ", agentTag, phaseText, statusTag].filter(Boolean);
+					if (parts.length > 1) lines.push(parts.join(" "));
+				}
 			}
 			if (running.length > 3) {
 				lines.push(`  ${this.theme.fg("dim", `  ...+${running.length - 3} more`)}`);
@@ -137,6 +146,21 @@ class ProgressWidgetComponent {
 
 	invalidate(): void {
 		this.lastRender = [];
+	}
+
+	/** Map a workflow step_status to a colored tag for the progress widget. */
+	private _stepStatusTag(status: string): string {
+		switch (status) {
+			case "retrying":
+				return this.theme.fg("warning", "[retry]");
+			case "skipped":
+				return this.theme.fg("dim", "[skip]");
+			case "failed":
+				return this.theme.fg("error", "[fail]");
+			default:
+				// "started"/"completed" are implied by the phase — no tag
+				return "";
+		}
 	}
 
 	dispose(): void {}
