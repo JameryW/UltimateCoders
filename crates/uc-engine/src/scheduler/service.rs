@@ -181,9 +181,7 @@ impl SchedulerService {
         }
 
         // Store metadata locally
-        let metadata = JobMetadata {
-            task,
-        };
+        let metadata = JobMetadata { task };
         self.job_metadata.write().await.insert(task_id, metadata);
 
         info!(
@@ -223,9 +221,7 @@ impl SchedulerService {
         }
 
         // Store metadata locally
-        let metadata = JobMetadata {
-            task,
-        };
+        let metadata = JobMetadata { task };
         self.job_metadata.write().await.insert(task_id, metadata);
 
         info!(
@@ -420,12 +416,7 @@ impl SchedulerService {
         let persisted_tasks = self.store.list_tasks(true).await?;
         let mut metadata = self.job_metadata.write().await;
         for task in &persisted_tasks {
-            metadata.insert(
-                task.id,
-                JobMetadata {
-                    task: task.clone(),
-                },
-            );
+            metadata.insert(task.id, JobMetadata { task: task.clone() });
         }
         drop(metadata); // Release lock before starting scheduler
 
