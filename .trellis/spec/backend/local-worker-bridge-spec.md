@@ -130,7 +130,6 @@ GrpcServerInner.local_worker: Option<LocalWorkerBridge>
 
 | Key | Required | Default | Purpose |
 |-----|----------|---------|---------|
-| `UC_SANDBOX_MODE` | No | `""` | Set to `"subprocess"` for sandbox execution |
 | `UC_PROJECT_PATH` | No | `os.getcwd()` | Project path for sandbox worker |
 
 ### Health Check

@@ -99,8 +99,8 @@ pub use search::HybridSearchEngine;
 Feature-gated re-exports use `#[cfg(feature = "...")]`:
 
 ```rust
-#[cfg(feature = "docker")]
-pub use sandbox::docker::DockerSandbox;
+#[cfg(feature = "messaging")]
+pub use scheduler::publish_window_event;
 ```
 
 ---
