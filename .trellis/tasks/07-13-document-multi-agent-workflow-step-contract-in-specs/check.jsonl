@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Spec quality bar — verify doc matches code (cite source file:line per field)."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify doc reflects cross-layer field consistency (proto/Rust/TS/Python all carry the 8 fields)."}

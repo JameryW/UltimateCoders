@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Target spec — add Multi-Agent Workflow Steps section here (worker execution contract home)."}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Mentions workflows already — add cross-ref to the new step schema section."}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Check step_status coverage; extend with retrying/skipped if it lists step progress values."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Step contract spans proto/Rust/TS/Python; doc must reflect cross-layer field consistency."}
