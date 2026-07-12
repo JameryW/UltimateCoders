@@ -1269,3 +1269,36 @@ Rendered step_status (retrying/skipped/failed) PRs #245-#249 emit but UI didn't 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 91: Visualize parallel steps in TUI + dashboard; PR #252
+
+**Date**: 2026-07-13
+**Task**: Visualize parallel steps in TUI + dashboard; PR #252
+**Branch**: `main`
+
+### Summary
+
+Visualized parallel step execution. Added hybrid 'N parallel' indicator across 4 layers: worker emits parallel_group + parallel_step_count; Rust AgentEventType gains fields; TUI + dashboard render indicator. Sequential unchanged. Merged a11d8037.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `185bf2a3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
