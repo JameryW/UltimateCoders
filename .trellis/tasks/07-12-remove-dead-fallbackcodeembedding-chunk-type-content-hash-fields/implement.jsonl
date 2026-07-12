@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo check/test green after field deletion."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "indexer/ module structure — verify FallbackCodeEmbedding field removal aligns with documented indexer structure."}
