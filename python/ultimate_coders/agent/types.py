@@ -177,6 +177,9 @@ class WorkflowStep:
     retry_count: int = 0
     # Delay in ms between retry attempts (0 = retry immediately).
     retry_delay_ms: int = 0
+    # Optional condition expression. Evaluated against prior step outputs
+    # before running this step; step is skipped if false. Empty = always run.
+    condition: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +189,7 @@ class WorkflowStep:
             "abort_on_failure": self.abort_on_failure,
             "retry_count": self.retry_count,
             "retry_delay_ms": self.retry_delay_ms,
+            "condition": self.condition,
         }
 
     @classmethod
@@ -197,6 +201,7 @@ class WorkflowStep:
             abort_on_failure=data.get("abort_on_failure", True),
             retry_count=int(data.get("retry_count", 0) or 0),
             retry_delay_ms=int(data.get("retry_delay_ms", 0) or 0),
+            condition=data.get("condition", "") or "",
         )
 
 

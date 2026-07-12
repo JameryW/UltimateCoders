@@ -852,3 +852,242 @@ async def test_execute_steps_emits_retrying_event():
     retrying_call = calls[1]
     assert retrying_call.kwargs["data"]["retry_attempt"] == 1
 
+
+# ── Step condition (condition) ──────────────────────────────────
+
+
+def test_workflow_step_condition_roundtrip():
+    """condition field survives to_dict / from_dict round-trip."""
+    s = WorkflowStep(
+        agent="claude-code",
+        prompt="revise",
+        condition='prev.success && prev.files.contains("src/")',
+    )
+    d = s.to_dict()
+    assert 'prev.success' in d["condition"]
+    again = WorkflowStep.from_dict(d)
+    assert again.condition == 'prev.success && prev.files.contains("src/")'
+
+
+def test_workflow_step_condition_defaults_empty():
+    """Absent condition field defaults to empty string (backward compat)."""
+    s = WorkflowStep.from_dict({"agent": "codex", "prompt": "CR"})
+    assert s.condition == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_condition_false_skips_step():
+    """A step with condition=false is skipped — sandbox NOT called for it."""
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            # Step 0: succeed with files containing "src/"
+            AgentOutput(
+                summary="wrote code",
+                file_changes=[FileChange(file_path="src/main.rs", change_type=ChangeType.MODIFIED)],
+                success=True,
+            ),
+            # Step 2 (step 1 is skipped): succeed
+            AgentOutput(summary="finalized", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="write"),
+            # Condition true (prev succeeded + src/ touched) → would run.
+            # But we want to test SKIP, so use a false condition:
+            WorkflowStep(
+                agent="codex",
+                prompt="CR (should be skipped)",
+                condition='prev.files.contains("nonexistent/")',
+            ),
+            WorkflowStep(agent="claude-code", prompt="finalize {{prev_summary}}"),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # Step 1 was skipped — sandbox called only for steps 0 and 2.
+    assert w._sandbox_manager.execute.await_count == 2
+    assert out.success is True
+    assert out.summary == "finalized"
+
+    # The skipped step emitted a "skipped" event.
+    calls = w._publish_event.await_args_list
+    statuses = [c.kwargs["data"]["step_status"] for c in calls]
+    # step0: started, completed; step1: skipped; step2: started, completed.
+    assert "skipped" in statuses
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_condition_true_runs_step():
+    """A step with condition=true runs normally."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="s0", success=True),
+            AgentOutput(summary="s1", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0"),
+            WorkflowStep(
+                agent="codex",
+                prompt="s1 runs because prev succeeded",
+                condition="prev.success",
+            ),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert w._sandbox_manager.execute.await_count == 2
+    assert out.success is True
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_empty_condition_always_runs():
+    """Empty condition = always run (backward compat)."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="s0", success=False),
+            AgentOutput(summary="s1", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0", abort_on_failure=False),
+            WorkflowStep(agent="codex", prompt="s1 no condition"),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert w._sandbox_manager.execute.await_count == 2
+    assert out.success is True
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_condition_parse_error_fails_subtask():
+    """A malformed condition → subtask fails with a clear error message."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        return_value=AgentOutput(summary="s0", success=True)
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0"),
+            WorkflowStep(
+                agent="codex",
+                prompt="bad condition",
+                condition="foobar && true",  # unknown identifier
+            ),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert out.success is False
+    assert "condition parse error" in out.summary
+    # Step 0 ran, but step 1 didn't (parse error before execute).
+    assert w._sandbox_manager.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_condition_step0_prev_none():
+    """Step 0 with prev.success condition → skipped (no predecessor)."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        return_value=AgentOutput(summary="s1", success=True)
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            # Step 0 with condition "prev.success" — no prev, so False → skip.
+            WorkflowStep(
+                agent="claude-code",
+                prompt="conditional step 0",
+                condition="prev.success",
+            ),
+            # Step 1 with "!prev.success" — prev was skipped (None → False),
+            # so !False = True → run.
+            WorkflowStep(
+                agent="codex",
+                prompt="step 1",
+                condition="!prev.success",
+            ),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    # Step 0 skipped, step 1 ran.
+    assert w._sandbox_manager.execute.await_count == 1
+    assert out.success is True
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_condition_skipped_does_not_accumulate_files():
+    """A skipped step does NOT contribute file_changes to the chain."""
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="s0",
+                file_changes=[FileChange(file_path="a.rs", change_type=ChangeType.CREATED)],
+                success=True,
+            ),
+            AgentOutput(
+                summary="s2",
+                file_changes=[FileChange(file_path="b.rs", change_type=ChangeType.MODIFIED)],
+                success=True,
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="s0"),
+            # Skipped — should not add file_changes.
+            WorkflowStep(
+                agent="codex",
+                prompt="skipped",
+                condition='prev.files.contains("nonexistent/")',
+            ),
+            WorkflowStep(agent="claude-code", prompt="s2"),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    paths = {fc.file_path for fc in out.file_changes}
+    assert paths == {"a.rs", "b.rs"}  # only from steps 0 and 2, NOT step 1
+

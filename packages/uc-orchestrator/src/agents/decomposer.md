@@ -26,6 +26,7 @@ output:
                 abort_on_failure: { type: boolean, default: true }
                 retry_count: { type: integer, default: 0 }
                 retry_delay_ms: { type: integer, default: 0 }
+                condition: { type: string, default: "" }
 ---
 
 You are a task decomposition specialist for a coding system.
@@ -124,6 +125,69 @@ Example — a step that calls a flaky API, retry up to 2 times with 5s backoff:
   "retry_delay_ms": 5000
 }
 ```
+
+## Step condition (`condition`)
+
+A step can declare a `condition` expression that is evaluated against the
+**previous step's output** before running. If the condition is false, the
+step is **skipped** (a `step_status="skipped"` event is emitted, and the
+chain continues to the next step). Empty/absent `condition` = always run
+(current behavior, backward compatible).
+
+### Expression language
+
+The expression is a tiny boolean DSL — no external dependencies, parsed by
+a hand-written recursive-descent parser in the worker.
+
+| Expression | Meaning |
+|---|---|
+| `prev.success` | True if the previous step succeeded |
+| `prev.files.contains("path")` | True if any modified file path contains "path" |
+| `prev.summary.contains("text")` | True if the previous step's summary contains "text" |
+| `true` / `false` | Literal booleans |
+| `!expr` | Logical NOT |
+| `a && b` | Logical AND |
+| `a \|\| b` | Logical OR |
+| `(expr)` | Parenthesized grouping |
+| `prev.success == true` | Equality (only `prev.success` vs `true`/`false`) |
+| `prev.success != false` | Inequality |
+
+**Step 0 (no previous step):** `prev.*` evaluates to `false` — so
+`prev.success` = False, `prev.files.contains(x)` = False, etc.
+Use `!prev.success` to run a step only when there is no predecessor.
+
+**Parse errors:** A malformed condition expression **fails the subtask**
+with a clear error message — it does NOT silently run or skip the step.
+
+### When to use `condition`
+
+- Skip the revise step when the CR step passed cleanly (no issues found):
+  ```json
+  {
+    "agent": "claude-code",
+    "prompt": "Revise per CR feedback: {{prev_summary}}",
+    "condition": "!prev.success || prev.summary.contains(\"issue\")"
+  }
+  ```
+  (Runs only when CR found issues — i.e. the CR step failed OR its summary
+  mentions "issue".)
+
+- Skip a deployment step if the previous step didn't touch deployment files:
+  ```json
+  {
+    "agent": "claude-code",
+    "prompt": "Deploy the changes",
+    "condition": "prev.files.contains(\"deploy/\")"
+  }
+  ```
+
+- Always run (empty/absent condition — default, backward compatible):
+  ```json
+  {
+    "agent": "codex",
+    "prompt": "CR: {{prev_summary}}"
+  }
+  ```
 
 ## Example 3-step chain (moderate code-writing subtask)
 

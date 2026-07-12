@@ -395,6 +395,9 @@ message WorkflowStepProto {
     optional uint32 retry_count = 5;
     // Delay in ms between retry attempts (0 = retry immediately).
     optional uint64 retry_delay_ms = 6;
+    // Optional condition expression. Evaluated against prior step outputs
+    // before running this step; step is skipped if false. Empty = always run.
+    optional string condition = 7;
 }
 
 // ── Batch Memory ────────────────────────────────────────

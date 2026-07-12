@@ -682,6 +682,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 abort_on_failure: true,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             },
             WorkflowStep {
                 agent: "codex".to_string(),
@@ -690,6 +691,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 abort_on_failure: false,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             },
         ],
         Some("crv") | Some("cr-revise") => vec![
@@ -700,6 +702,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 abort_on_failure: true,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             },
             WorkflowStep {
                 agent: "codex".to_string(),
@@ -708,6 +711,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 abort_on_failure: false,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             },
             WorkflowStep {
                 agent: "claude-code".to_string(),
@@ -716,6 +720,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 abort_on_failure: true,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             },
         ],
         _ => Vec::new(),

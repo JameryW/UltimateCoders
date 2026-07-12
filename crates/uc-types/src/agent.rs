@@ -143,6 +143,10 @@ pub struct WorkflowStep {
     /// Delay in ms between retry attempts (0 = retry immediately).
     #[serde(default)]
     pub retry_delay_ms: u64,
+    /// Optional condition expression. Evaluated against prior step outputs
+    /// before running this step; step is skipped if false. Empty = always run.
+    #[serde(default)]
+    pub condition: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -336,6 +340,7 @@ mod tests {
             abort_on_failure: false,
             retry_count: 0,
             retry_delay_ms: 0,
+            condition: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -380,6 +385,7 @@ mod tests {
                     abort_on_failure: true,
                     retry_count: 0,
                     retry_delay_ms: 0,
+                    condition: None,
                 },
                 WorkflowStep {
                     agent: "codex".to_string(),
@@ -388,6 +394,7 @@ mod tests {
                     abort_on_failure: true,
                     retry_count: 0,
                     retry_delay_ms: 0,
+                    condition: None,
                 },
             ],
         };
@@ -411,6 +418,7 @@ mod tests {
             abort_on_failure: true,
             retry_count: 3,
             retry_delay_ms: 5000,
+            condition: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -425,5 +433,32 @@ mod tests {
         let step: WorkflowStep = serde_json::from_str(json).unwrap();
         assert_eq!(step.retry_count, 0);
         assert_eq!(step.retry_delay_ms, 0);
+    }
+
+    #[test]
+    fn workflow_step_condition_round_trip() {
+        let step = WorkflowStep {
+            agent: "codex".to_string(),
+            prompt: "CR".to_string(),
+            agent_config_json: None,
+            abort_on_failure: true,
+            retry_count: 0,
+            retry_delay_ms: 0,
+            condition: Some("prev.success && prev.files.contains(\"src/\")".to_string()),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.condition.as_deref(),
+            Some("prev.success && prev.files.contains(\"src/\")")
+        );
+    }
+
+    #[test]
+    fn workflow_step_condition_defaults_none_when_absent() {
+        // Backward compat: a step serialized before `condition` existed.
+        let json = r#"{"agent":"codex","prompt":"CR","abort_on_failure":true}"#;
+        let step: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert!(step.condition.is_none());
     }
 }

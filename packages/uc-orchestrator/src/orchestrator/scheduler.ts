@@ -21,6 +21,7 @@ export interface WorkflowStepDef {
 	abort_on_failure?: boolean;
 	retryCount?: number;
 	retryDelayMs?: number;
+	condition?: string;
 }
 
 export interface SubtaskDef {
