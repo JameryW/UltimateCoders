@@ -1067,3 +1067,36 @@ Removed dead config: EngineConfig field from LocalEngine. Stored in 3 ctor sites
 ### Next Steps
 
 - None - task complete
+
+
+## Session 85: Remove dead CODE_EMBEDDINGS_COLLECTION const + fix doc; PR #242
+
+**Date**: 2026-07-12
+**Task**: Remove dead CODE_EMBEDDINGS_COLLECTION const + fix doc; PR #242
+**Branch**: `main`
+
+### Summary
+
+Removed dead CODE_EMBEDDINGS_COLLECTION = code_embeddings const (0 refs, private). Dead planning residue - code embeddings actually live in shared memory_embeddings collection via code_embedding: key prefix. Fixed search/semantic.rs:17 doc comment that incorrectly described nonexistent code_embeddings collection. Net -4 lines. CI all green. Merged 1ae5472c. Found by auditing remaining #[allow(dead_code)] annotations.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa18fa4b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
