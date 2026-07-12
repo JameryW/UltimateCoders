@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify ruff + pytest green after field deletion."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Confirm no silent breakage from removing a dataclass field that had a default."}

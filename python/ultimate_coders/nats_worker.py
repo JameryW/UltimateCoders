@@ -831,7 +831,6 @@ class NatsWorker:
         from ultimate_coders.agent.sandbox import SandboxConfig
 
         sandbox_config = SandboxConfig(
-            backend="subprocess",
             project_path=self._project_path or os.getcwd(),
         )
 
