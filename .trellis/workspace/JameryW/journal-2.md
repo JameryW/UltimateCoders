@@ -1100,3 +1100,36 @@ Removed dead CODE_EMBEDDINGS_COLLECTION = code_embeddings const (0 refs, private
 ### Next Steps
 
 - None - task complete
+
+
+## Session 86: Remove dead FallbackCodeEmbedding chunk_type/content_hash; PR #243
+
+**Date**: 2026-07-12
+**Task**: Remove dead FallbackCodeEmbedding chunk_type/content_hash; PR #243
+**Branch**: `main`
+
+### Summary
+
+Removed dead FallbackCodeEmbedding.chunk_type and .content_hash fields. Stored at construction (production push + 2 test fixtures) but never read - fallback search reads repo_id/file_path/start_line/end_line/vector/content/symbol_*; remove_file/remove_repo read repo_id/file_path. Overrode prior PR #242 'design judgment' conclusion by verifying fallback search is fully implemented and doesn't use these fields. format_chunk_type fn + CodeChunk source fields kept (live). Net -10 lines. CI all green. Merged 1fe20f8c.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `caa9b417` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
