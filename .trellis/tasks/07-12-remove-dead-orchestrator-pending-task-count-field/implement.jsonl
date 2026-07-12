@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Orchestrator task-count contract — verify pending_task_count property (not the dead field) is the documented live contract."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify ruff + pytest green after field deletion."}
