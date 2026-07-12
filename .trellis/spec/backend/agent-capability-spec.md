@@ -684,3 +684,304 @@ lines.append(f'command = "{cfg["command"]}"')  # breaks if value contains quotes
 lines.append(f'[mcp_servers."{_toml_escape(name)}"]')
 lines.append(f'command = "{_toml_escape(cfg["command"])}"')
 ```
+
+---
+
+## Multi-Agent Workflow Steps
+
+> Contract for `WorkflowStep` — the ordered multi-agent chain attached to a `Subtask`. A subtask with non-empty `steps` runs each step's coding agent (claude-code / codex) in sequence (or parallel groups), threading each step's `AgentOutput` into the next step's prompt template.
+
+**Source files** (authoritative — mirror exactly, do not invent):
+- `crates/uc-types/src/agent.rs` — `WorkflowStep` struct (Rust domain, serde defaults)
+- `crates/uc-grpc/proto/engine.proto` — `WorkflowStepProto` (wire format, field numbers)
+- `python/ultimate_coders/agent/types.py` — `WorkflowStep` dataclass (Python domain, defaults)
+- `python/ultimate_coders/agent/worker.py` — `_execute_steps` / `_run_single_step` / `_render_step_prompt` (execution semantics)
+- `python/ultimate_coders/agent/step_condition.py` — `evaluate()` (condition expression language)
+- `packages/uc-orchestrator/src/orchestrator/scheduler.ts` — `WorkflowStepDef` (TS interface)
+- `packages/uc-orchestrator/src/agents/decomposer.md` — LLM-facing schema (most complete doc)
+
+### Scope / Trigger
+
+- Trigger: any change to `WorkflowStep` fields, `_execute_steps`, `_run_single_step`, `_render_step_prompt`, `step_condition.py`, or the decomposer's step schema.
+- Cross-layer: Rust `WorkflowStep` ↔ proto `WorkflowStepProto` ↔ Python `WorkflowStep` ↔ TS `WorkflowStepDef` ↔ decomposer.md JSON schema.
+
+### Field Schema
+
+| Field | Type | Default | Backward-compat | Proto # | Source |
+|-------|------|---------|-----------------|---------|--------|
+| `agent` | `String` (Rust) / `str` (Py) | `""` | Required — no default semantics | 1 | `agent.rs:125`, `types.py:169` |
+| `prompt` | `String` / `str` | `""` | Required — template string | 2 | `agent.rs:131`, `types.py:170` |
+| `agent_config_json` | `Option<String>` / `dict[str, Any]` | `None` / `{}` | `#[serde(default)]` → `None`; Py `field(default_factory=dict)`. JSON string on wire (proto), dict in Python domain. `_resolve_agent_config_field()` handles both. | 3 | `agent.rs:135`, `types.py:172` |
+| `abort_on_failure` | `bool` | `true` | `#[serde(default = "default_true")]` → `true` when absent. Py dataclass default `True`. | 4 | `agent.rs:139`, `types.py:175` |
+| `retry_count` | `u32` / `int` | `0` | `#[serde(default)]` → `0`. Py default `0`. Step runs up to `1 + retry_count` times. | 5 | `agent.rs:142`, `types.py:177` |
+| `retry_delay_ms` | `u64` / `int` | `0` | `#[serde(default)]` → `0`. Py default `0`. `0` = retry immediately. | 6 | `agent.rs:145`, `types.py:179` |
+| `condition` | `Option<String>` / `str` | `None` / `""` | `#[serde(default)]` → `None`. Py default `""`. Empty/None = always run. | 7 | `agent.rs:149`, `types.py:182` |
+| `parallel_group` | `Option<String>` / `str` | `None` / `""` | `#[serde(default)]` → `None`. Py default `""`. Empty/None = sequential. | 8 | `agent.rs:154`, `types.py:187` |
+
+> **Rust vs Python type difference**: In Rust, `agent_config_json` is `Option<String>` (JSON string), `condition` and `parallel_group` are `Option<String>`. In Python, `agent_config` is `dict[str, Any]`, `condition` and `parallel_group` are `str` (empty string = unset). The proto wire format uses `optional string` for all three, with `agent_config_json` carrying a JSON string. `_resolve_agent_config_field()` in `types.py` normalizes both key names (`agent_config` vs `agent_config_json`) and value types (dict vs JSON string) at deserialization.
+
+### Template Variables
+
+Prompt templates (`step.prompt`) support these variables, rendered by `Worker._render_step_prompt` (`worker.py:1426`):
+
+| Variable | Expands to | Source |
+|----------|------------|--------|
+| `{{prev_summary}}` | Previous step's `AgentOutput.summary` (empty string for step 0) | `worker.py:1454` |
+| `{{prev_files}}` | Previous step's modified file paths, one per line (empty for step 0) | `worker.py:1455` |
+| `{{prev_outputs_json}}` | Previous step's full `AgentOutput` as compact JSON (see below). `"{}"` for step 0. | `worker.py:1456` |
+| `{{stepN.summary}}` | Step N's summary (N is 0-based, N < current step index) | `worker.py:1472` |
+| `{{stepN.files}}` | Step N's modified file paths, one per line | `worker.py:1476` |
+| `{{stepN.outputs_json}}` | Step N's full `AgentOutput` as JSON (same shape as `{{prev_outputs_json}}`) | `worker.py:1480` |
+| `{{context}}` | The subtask-level context block (dependency summaries + search results) | `worker.py:1462` |
+| `{{file_constraints}}` | Comma-joined `subtask.file_constraints` (or `"none"`) | `worker.py:1463` |
+
+**`{{prev_*}}` is shorthand for `{{step(N-1).*}}`** — it references the immediately preceding step. Step 0 has no predecessor, so `{{prev_summary}}` / `{{prev_files}}` resolve to empty strings and `{{prev_outputs_json}}` resolves to `"{}"`.
+
+**`{{prev_outputs_json}}` / `{{stepN.outputs_json}}` shape** (serialized by `Worker._output_to_json`, `worker.py:1394`):
+
+```json
+{
+  "summary": "...",        // truncated to 2000 chars
+  "success": true,
+  "file_changes": [
+    {"file_path": "...", "change_type": "modified", "diff": "..."}  // diff truncated to 1000 chars
+  ],
+  "stderr_tail": "...",    // truncated to 1000 chars
+  "tool_calls": ["..."]    // truncated to 50 entries
+}
+```
+
+Truncation limits (`worker.py:1388-1391`): `_ARTIFACT_SUMMARY_MAX=2000`, `_ARTIFACT_STDERR_MAX=1000`, `_ARTIFACT_DIFF_MAX=1000`, `_ARTIFACT_TOOL_CALLS_MAX=50`. `token_usage` is omitted (irrelevant to downstream agent).
+
+### Execution Semantics
+
+Source: `Worker._execute_steps` (`worker.py:1053`) + `Worker._run_single_step` (`worker.py:1246`).
+
+**Overall flow** (`_execute_steps`):
+
+1. Steps run **sequentially by default**. The main loop iterates `subtask.steps` by index.
+2. For each step (sequential path, `worker.py:1096-1135`):
+   a. Call `_run_single_step` → render prompt → eval condition → retry loop → sandbox.execute → emit events.
+   b. If step returns `None` (condition false, skipped) → no output appended, continue to next step.
+   c. If step succeeded → append output to `step_outputs`, extend `all_file_changes`.
+   d. If step failed AND `abort_on_failure=True` → return failed `AgentOutput` immediately (chain aborts).
+   e. If step failed AND `abort_on_failure=False` → log warning, continue to next step.
+3. After all steps → return last step's `AgentOutput` with `file_changes` merged across all successful steps.
+
+**Per-step flow** (`_run_single_step`, `worker.py:1246-1384`):
+
+1. **Render prompt** — `_render_step_prompt` substitutes template variables using `step_outputs` and `prev`.
+2. **Merge agent config** — `{**base_cfg, **step.agent_config}` (step overrides subtask-level config).
+3. **Evaluate condition** (`worker.py:1296-1327`):
+   - Empty/absent condition → always run.
+   - `evaluate(condition, prev)` from `step_condition.py`.
+   - If `ConditionError` → return `AgentOutput(success=False)` (subtask fails).
+   - If condition is false → emit `step_status="skipped"` event, return `None`.
+4. **Emit started event** — `step_status="started"`.
+5. **Retry loop** (`worker.py:1342-1367`):
+   - `max_attempts = 1 + max(0, step.retry_count)`.
+   - Loop: `sandbox.execute(rendered, ..., agent=step.agent)`.
+   - If `output.success` or last attempt → break.
+   - Else → emit `step_status="retrying"` with `retry_attempt` (1-indexed), sleep `retry_delay_ms / 1000` seconds.
+6. **Emit completion event** — `step_status="completed"` if success, `"failed"` if not.
+
+**File changes accumulation**: Only successful steps contribute to `all_file_changes` (`worker.py:1109-1110`, `worker.py:1201-1202`). A failed step's partial edits are not reported. The final `AgentOutput.file_changes` is the union of all successful steps' changes.
+
+**Returned `AgentOutput`**: The LAST step's output (summary, success, stderr_tail, tool_calls, token_usage), with `file_changes` replaced by the accumulated set. If the chain aborts on a failed step, the failed step's output is returned with a `[step N (agent) failed]` prefix in the summary.
+
+### Parallel Groups
+
+Source: `_execute_steps` parallel-group path (`worker.py:1137-1225`).
+
+- Steps with a **non-empty** `parallel_group` run concurrently via `asyncio.gather`.
+- Only **consecutive** steps with the **same** `parallel_group` value form one group. Non-consecutive same-group steps are separate groups.
+- All steps in a group share the **same `prev`** (the last output before the group). They do NOT see each other's outputs mid-group.
+- Each step's condition/retry/event logic runs independently inside `_run_single_step`.
+- A `prev_snapshot = list(step_outputs)` is passed so concurrent steps don't see mid-flight mutations.
+
+**Read-only constraint** (HARD requirement, `worker.py:1148-1171`):
+
+Every step in a parallel group MUST be read-only. Its merged `agent_config.disallowed_tools` must include `{"Edit", "Write", "Bash"}`. If any of these is missing, the subtask **fails immediately** with:
+
+```
+[step N parallel_group='X' must be read-only (disallowed_tools must include Edit, Write, Bash)]
+```
+
+This prevents git worktree corruption from concurrent writes — parallel steps share a single worktree.
+
+**Parallel group failure**: If any step in a group fails with `abort_on_failure=True`, the chain aborts after `gather` completes (outputs are collected in order; the first failed step with `abort_on_failure` triggers the abort).
+
+### Condition Expression Language
+
+Source: `python/ultimate_coders/agent/step_condition.py` — `evaluate(condition, prev)`.
+
+Grammar (recursive-descent parser, `step_condition.py:1-26`):
+
+```
+expr       := or_expr
+or_expr    := and_expr ( "||" and_expr )*
+and_expr   := not_expr ( "&&" not_expr )*
+not_expr   := "!" not_expr | comparison
+comparison := primary ( ("==" | "!=") primary )?
+primary    := atom | "(" or_expr ")"
+atom       := "prev.success"
+             | "prev.files.contains(" STRING ")"
+             | "prev.summary.contains(" STRING ")"
+             | "true" | "false"
+```
+
+| Expression | Meaning | Source |
+|---|---|---|
+| `prev.success` | True if previous step succeeded (`prev is not None and prev.success`) | `step_condition.py:247` |
+| `prev.files.contains("path")` | True if any modified file path contains "path" | `step_condition.py:258` |
+| `prev.summary.contains("text")` | True if previous step's summary contains "text" | `step_condition.py:264` |
+| `true` / `false` | Literal booleans | `step_condition.py:249-251` |
+| `!expr` | Logical NOT | `step_condition.py:215` |
+| `a && b` | Logical AND | `step_condition.py:209` |
+| `a \|\| b` | Logical OR | `step_condition.py:201` |
+| `(expr)` | Parenthesized grouping | `step_condition.py:237-239` |
+| `prev.success == true` | Equality (only `prev.success` vs `true`/`false`) | `step_condition.py:225-228` |
+| `prev.success != false` | Inequality | `step_condition.py:225-228` |
+
+**Semantics**:
+- **Step 0 (no previous step)**: `prev` is `None` → `prev.success` = `False`, `prev.files.contains(x)` = `False`, `prev.summary.contains(x)` = `False`. Use `!prev.success` to run a step only when there is no predecessor.
+- **Empty/whitespace-only condition** = always run (returns `True`, no evaluation). `step_condition.py:284-285`.
+- **Parse error** → raises `ConditionError` → caller (`_run_single_step`) returns `AgentOutput(success=False)` → subtask fails. Never silently runs or skips. `worker.py:1299-1309`.
+- **`==` / `!=`** only apply to `prev.success` vs `true`/`false` (boolean comparison). `step_condition.py:218-229`.
+- Whitespace tolerant.
+
+### Step Events
+
+Source: `Worker._emit_step_event` (`worker.py:1035`) + `Worker._run_single_step` event emissions.
+
+Step events are published as `subtask_progress` events (see [Contract: subtask_progress event](#contract-subtask_progress-event-transient-telemetry) in event-pipeline-spec.md). The `data` payload includes workflow-step metadata:
+
+| `step_status` | When emitted | Extra fields | Source |
+|---------------|--------------|--------------|--------|
+| `"started"` | Before the retry loop begins | — | `worker.py:1329-1337` |
+| `"retrying"` | Before each retry sleep (after a failed attempt, retries remaining) | `retry_attempt` (1-indexed int), `step_summary` (failed output summary, ≤200 chars) | `worker.py:1355-1365` |
+| `"completed"` | After step succeeds | `step_summary` (output summary, ≤200 chars) | `worker.py:1374-1383` |
+| `"failed"` | After step fails (all retries exhausted) | `step_summary` (output summary, ≤200 chars) | `worker.py:1374-1383` |
+| `"skipped"` | When condition evaluates to false | `step_summary` (condition expression, ≤200 chars) | `worker.py:1317-1326` |
+
+**Common fields** (all step events):
+- `phase`: `f"step {idx+1}/{total}: {step.agent}"` (or `"... (skipped)"` for skipped)
+- `percent`: `int(100 * idx / total)` (0-based idx; completion event uses `int(100 * (idx+1) / total)`)
+- `step_index`: 0-based step index
+- `step_total`: total number of steps
+- `step_agent`: the agent name (`"claude-code"` or `"codex"`)
+- `worker_id`: the executing worker's ID
+
+**Rust routing** (`uc-engine/src/events.rs:56-72`): `AgentEventType::SubtaskProgress` carries `step_index`, `step_total`, `step_agent`, `step_status`, `step_summary` as `Option` fields. The `nats_event_to_agent_event` match arm in `uc-grpc/server.rs` deserializes these from the NATS payload. `apply_event_to_snapshot` (checkpoint.rs) treats `SubtaskProgress` as a no-op (transient — does not mutate subtask lifecycle state).
+
+> **Gotcha**: `step_index` in the Python payload is 0-based (`worker.py:1321`), but the Rust `AgentEventType::SubtaskProgress` doc comment says "1-based" (`events.rs:62`). The proto serialization passes the value through unchanged — the TUI/dashboard should treat it as the Python worker emits it (0-based). This is a known doc-comment discrepancy.
+
+### Validation & Error Matrix
+
+| Condition | Behavior | Source |
+|-----------|----------|--------|
+| Empty `steps` list | Single-agent execution via `_execute_in_sandbox` (backward compatible) | `worker.py:994` |
+| Step 0 with `{{prev_*}}` template vars | Resolve to empty string / `"{}"` | `worker.py:1454-1456` |
+| Step 0 with `condition` referencing `prev.*` | `prev` is `None` → `prev.*` = `False` | `step_condition.py:247,257,263` |
+| Condition parse error | Subtask fails with `[step N condition parse error]` summary | `worker.py:1299-1309` |
+| Step fails + `abort_on_failure=True` | Chain aborts, subtask fails | `worker.py:1113-1127` |
+| Step fails + `abort_on_failure=False` | Chain continues to next step (failure logged) | `worker.py:1129-1134` |
+| Parallel step missing `Edit`/`Write`/`Bash` in `disallowed_tools` | Subtask fails immediately | `worker.py:1148-1171` |
+| `retry_count=0` (default) | No retry, single attempt | `worker.py:1342` |
+| `retry_count=N` | Up to `1+N` attempts; only `output.success == False` triggers retry | `worker.py:1342-1352` |
+| `retry_delay_ms=0` | Retry immediately (no sleep) | `worker.py:1366-1367` |
+| `_emit_step_event` NATS publish failure | Swallowed (best-effort), step chain continues | `worker.py:1043-1051` |
+| Empty/absent `condition` | Always run (no evaluation) | `step_condition.py:284-285` |
+
+### Good / Base / Bad Cases
+
+- **Good**: 3-step chain (claude-code write → codex CR → claude-code revise), all succeed → `file_changes` accumulated across all 3, last step's summary returned.
+- **Base**: 3-step chain, step 2 (CR) fails, `abort_on_failure=True` → chain aborts, subtask fails with `[step 2 (codex) failed]` summary. Step 1's file changes are preserved in the result.
+- **Bad**: Parallel group with a write-capable step (missing `Bash` in `disallowed_tools`) → subtask fails immediately before any step runs.
+- **Bad**: Malformed condition (`prev.success &&`) → `ConditionError` → subtask fails.
+
+### Wrong vs Correct
+
+#### Wrong: Accumulating file changes from failed steps
+
+```python
+# BAD: A failed step's partial edits are unreliable — don't report them
+all_file_changes.extend(output.file_changes)  # regardless of success
+```
+
+#### Correct: Only accumulate from successful steps
+
+```python
+if output.success:
+    all_file_changes.extend(output.file_changes)
+```
+
+#### Wrong: Parallel steps seeing each other's mid-flight outputs
+
+```python
+# BAD: Passing the live step_outputs list to concurrent steps
+results = await asyncio.gather(*[
+    self._run_single_step(gs, si, total, step_outputs, prev, ...)
+    for si, gs in group_steps
+])
+# A step might read step_outputs while another is appending → race condition
+```
+
+#### Correct: Pass a snapshot copy
+
+```python
+prev_snapshot = list(step_outputs)
+results = await asyncio.gather(*[
+    self._run_single_step(gs, si, total, prev_snapshot, prev, ...)
+    for si, gs in group_steps
+])
+```
+
+#### Wrong: Condition parse error silently skips the step
+
+```python
+# BAD: Swallowing ConditionError and running the step anyway
+try:
+    should_run = evaluate(step.condition, prev)
+except ConditionError:
+    should_run = True  # WRONG — masks malformed expressions
+```
+
+#### Correct: Condition parse error fails the subtask
+
+```python
+try:
+    should_run = evaluate(step.condition, prev)
+except ConditionError as e:
+    return AgentOutput(
+        summary=f"[step {idx + 1} condition parse error] {e}",
+        file_changes=[],
+        success=False,
+    )
+```
+
+#### Wrong: Parallel group without read-only validation
+
+```python
+# BAD: Concurrent writes to a shared worktree → corruption
+results = await asyncio.gather(*[
+    self._run_single_step(gs, si, total, prev_snapshot, prev, ...)
+    for si, gs in group_steps
+])
+# No check that disallowed_tools includes Edit/Write/Bash
+```
+
+#### Correct: Validate read-only before running parallel group
+
+```python
+required_disallowed = {"Edit", "Write", "Bash"}
+for step_idx, gs in group_steps:
+    merged_cfg = {**base_cfg, **gs.agent_config}
+    disallowed = set(merged_cfg.get("disallowed_tools", []) or [])
+    missing = required_disallowed - disallowed
+    if missing:
+        return AgentOutput(
+            summary=f"[step {step_idx+1} parallel_group='{group}' must be read-only ...]",
+            success=False,
+        )
+```
