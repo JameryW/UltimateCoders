@@ -397,10 +397,6 @@ struct FallbackCodeEmbedding {
     symbol_name: Option<String>,
     symbol_kind: Option<String>,
     parent_symbol: Option<String>,
-    #[allow(dead_code)]
-    chunk_type: String,
-    #[allow(dead_code)]
-    content_hash: String,
     content: String,
 }
 
@@ -485,8 +481,6 @@ impl SemanticIndexer {
                         symbol_name: chunk.symbol_name.clone(),
                         symbol_kind: chunk.symbol_kind.clone(),
                         parent_symbol: chunk.parent_symbol.clone(),
-                        chunk_type: format_chunk_type(&chunk.chunk_type).to_string(),
-                        content_hash: chunk.content_hash.clone(),
                         content: chunk.content.clone(),
                     });
                     count += 1; // Still count as embedded (just in fallback)
@@ -1085,8 +1079,6 @@ mod tests {
                 symbol_name: Some("helper".to_string()),
                 symbol_kind: Some("function".to_string()),
                 parent_symbol: None,
-                chunk_type: "symbol".to_string(),
-                content_hash: "abc".to_string(),
                 content: "fn helper() {}".to_string(),
             });
             fallback.push(FallbackCodeEmbedding {
@@ -1100,8 +1092,6 @@ mod tests {
                 symbol_name: Some("main".to_string()),
                 symbol_kind: Some("function".to_string()),
                 parent_symbol: None,
-                chunk_type: "symbol".to_string(),
-                content_hash: "def".to_string(),
                 content: "fn main() {}".to_string(),
             });
         }
