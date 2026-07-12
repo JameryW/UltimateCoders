@@ -107,7 +107,6 @@ class Orchestrator:
         # Task + worker state
         self.tasks: dict[str, Task] = {}
         self.workers: dict[str, WorkerEntry] = {}
-        self._pending_task_count: int = 0
 
         # ponytail: scheduler stub — nats_worker checks orch.scheduler is not None
         self.scheduler = None
