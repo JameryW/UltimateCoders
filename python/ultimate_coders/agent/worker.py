@@ -1111,13 +1111,37 @@ class Worker:
                 step_agent=step.agent,
                 step_status="started",
             )
-            output = await self._sandbox_manager.execute(
-                rendered,
-                working_dir=working_dir,
-                on_stdout_line=on_stdout_line,
-                subtask_config=merged_cfg,
-                agent=step.agent,
-            )
+            # Retry loop: attempt up to 1 + retry_count times. Only retry on
+            # failure (output.success is False). Between retries, sleep
+            # retry_delay_ms/1000 seconds (0 = immediate). Emit a "retrying"
+            # event before each retry sleep so observers can track attempts.
+            max_attempts = 1 + max(0, step.retry_count)
+            output: AgentOutput | None = None
+            for attempt in range(max_attempts):
+                output = await self._sandbox_manager.execute(
+                    rendered,
+                    working_dir=working_dir,
+                    on_stdout_line=on_stdout_line,
+                    subtask_config=merged_cfg,
+                    agent=step.agent,
+                )
+                if output.success or attempt == max_attempts - 1:
+                    break
+                # Failed and retries remain — emit retrying event + sleep.
+                await self._emit_step_event(
+                    subtask, "subtask_progress",
+                    phase=f"step {idx + 1}/{total}: {step.agent}",
+                    percent=percent,
+                    step_index=idx,
+                    step_total=total,
+                    step_agent=step.agent,
+                    step_status="retrying",
+                    retry_attempt=attempt + 1,
+                    step_summary=output.summary[:200],
+                )
+                if step.retry_delay_ms > 0:
+                    await asyncio.sleep(step.retry_delay_ms / 1000)
+            assert output is not None  # loop runs at least once
             step_outputs.append(output)
             # Only accumulate file changes from successful steps — a failed
             # step's partial edits are not a reliable result. ponytail: avoid

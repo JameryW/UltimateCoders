@@ -19,6 +19,8 @@ export interface WorkflowStepDef {
 	prompt: string;
 	agent_config_json?: string;
 	abort_on_failure?: boolean;
+	retryCount?: number;
+	retryDelayMs?: number;
 }
 
 export interface SubtaskDef {

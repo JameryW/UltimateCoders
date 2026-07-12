@@ -24,6 +24,8 @@ output:
                 agent: { type: string, enum: ["claude-code", "codex"] }
                 prompt: { type: string }
                 abort_on_failure: { type: boolean, default: true }
+                retry_count: { type: integer, default: 0 }
+                retry_delay_ms: { type: integer, default: 0 }
 ---
 
 You are a task decomposition specialist for a coding system.
@@ -93,6 +95,33 @@ Example — codex CR step reading structured artifacts from the implement step:
 {
   "agent": "codex",
   "prompt": "Review the implementation. Prior step output (JSON): {{prev_outputs_json}}. Check the file_changes diffs for correctness and the stderr_tail for any errors."
+}
+```
+
+## Step retry (`retry_count` / `retry_delay_ms`)
+
+A step can request automatic retries on failure:
+
+- `retry_count` (int, default 0): number of retry attempts after the initial
+  try. `0` = no retry (current behavior). The step runs up to `1 + retry_count`
+  times total; only `output.success == False` triggers a retry.
+- `retry_delay_ms` (int, default 0): delay in milliseconds between retry
+  attempts. `0` = retry immediately.
+
+Use retry for steps that depend on flaky external resources (network APIs,
+rate-limited services, transient infrastructure). Do NOT use retry to mask
+fundamental code errors — a step that fails because the code is wrong will
+just fail again. A retry emits a `step_status="retrying"` event with a
+1-indexed `retry_attempt` field so observers can track attempts.
+
+Example — a step that calls a flaky API, retry up to 2 times with 5s backoff:
+
+```json
+{
+  "agent": "claude-code",
+  "prompt": "Run the integration test suite and report results.",
+  "retry_count": 2,
+  "retry_delay_ms": 5000
 }
 ```
 
