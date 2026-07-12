@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo check/test green after const + doc deletion."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "indexer/ module listing — verify const removal aligns with documented indexer structure."}
