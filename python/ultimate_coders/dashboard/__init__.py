@@ -1,8 +1,8 @@
 """Dashboard — embedded Web UI for monitoring cluster runtime status.
 
 Provides a FastAPI-based web dashboard embedded in the Orchestrator process.
-Monitors engine health, worker load, task execution, scheduler status,
-circuit breaker, and rate limiter. Uses SSE for real-time updates.
+Monitors engine health, worker load, task execution, and scheduler status.
+Uses SSE for real-time updates.
 
 Usage:
     from ultimate_coders.dashboard import DashboardApp

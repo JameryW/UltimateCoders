@@ -48,11 +48,6 @@ tracing::warn!("TiKV unavailable, using in-memory fallback for short-term memory
 tracing::warn!("Failed to write to long-term memory: {}", e);
 ```
 
-**warn** -- Circuit breaker state change (`crates/uc-engine/src/circuit_breaker.rs:170-173`):
-```rust
-tracing::warn!("Circuit breaker opened after {} failures", failures);
-```
-
 **debug** -- Detailed operation info (`crates/uc-engine/src/memory/mod.rs:103-106`):
 ```rust
 tracing::debug!("Wrote entry to long-term memory (importance={:.2})", entry.metadata.importance);
@@ -124,7 +119,6 @@ logger.error(f"Failed to decompose task {task.id}", exc_info=True)
 | Storage connections | Connected / fallback | info / warn |
 | Migrations | Completed | info |
 | Best-effort failures | Secondary write/delete failed | warn |
-| Circuit breaker | State transitions (open, half-open, re-opened) | warn |
 | Memory importance | Debug info on importance thresholds | debug |
 | Task lifecycle | Created, decomposed, completed, failed | info / error |
 | Worker lifecycle | Registered, unregistered, heartbeat | info / debug |

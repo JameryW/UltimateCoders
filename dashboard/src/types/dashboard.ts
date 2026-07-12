@@ -121,39 +121,6 @@ export interface SchedulerData {
   execution_history: ExecutionHistory[];
 }
 
-// ── Circuit Breaker / Rate Limiter ──────────────────────
-
-export interface CircuitBreakerInfo {
-  available: boolean;
-  state: string;
-  failure_count: number;
-  failure_threshold: number;
-  total_calls: number;
-  total_rejected: number;
-  recovery_timeout_seconds: number;
-  last_failure?: string;
-  error?: string;
-}
-
-export interface RateLimiterInfo {
-  available: boolean;
-  rpm_available: number;
-  tpm_available: number;
-  active_count: number;
-  total_requests: number;
-  remaining_ratio: number;
-  window_seconds: number;
-  error?: string;
-}
-
-export interface CircuitBreakerData {
-  available: boolean;
-  circuit_breaker: CircuitBreakerInfo;
-  rate_limiter: RateLimiterInfo;
-  engine_circuit_breaker: Record<string, unknown>;
-  engine_rate_limiter: Record<string, unknown>;
-}
-
 // ── Events ──────────────────────────────────────────────
 
 export interface DashboardEvent {
@@ -209,7 +176,6 @@ export interface EventMetrics {
 
 export interface SystemMetrics {
   uptime_seconds: number;
-  circuit_breaker_state: string;
   rate_limiter_remaining_ratio: number;
   cluster_utilization_pct: number;
 }
@@ -238,7 +204,6 @@ export interface DashboardSnapshot {
   workers?: WorkersData;
   tasks?: TasksData;
   scheduler?: SchedulerData;
-  circuit_breaker?: CircuitBreakerData;
   events?: DashboardEvent[];
   recent_task_events?: TaskEvent[];
   metrics?: MetricsSnapshot;

@@ -8,7 +8,6 @@
 //! - `CheckpointManager` for event sourcing + snapshot recovery
 //! - `ConflictDetector` for intent-based conflict detection
 //! - `LlmRateLimiter` for dual-dimension API rate limiting
-//! - `CircuitBreaker` for protecting against cascading failures
 
 use uc_types::agent::{DirEntry, DirListing, FileContent};
 use uc_types::{
@@ -18,7 +17,6 @@ use uc_types::{
 };
 
 use crate::checkpoint::{CheckpointConfig, CheckpointManager};
-use crate::circuit_breaker::CircuitBreaker;
 use crate::config::EngineConfig;
 use crate::conflict::{ConflictDetector, ConflictResult, EditIntent};
 use crate::events::{AgentEventType, InMemoryEventStore, TaskSnapshot};
@@ -56,8 +54,6 @@ pub struct LocalEngine {
     conflict_detector: Arc<ConflictDetector>,
     /// Rate limiter for LLM API calls.
     rate_limiter: Arc<LlmRateLimiter>,
-    /// Circuit breaker for LLM API fault tolerance.
-    circuit_breaker: Arc<CircuitBreaker>,
     /// Sandbox for executing coding agents in isolated environments.
     sandbox: Arc<dyn Sandbox>,
     /// Task store for task orchestration methods.
@@ -134,7 +130,6 @@ impl LocalEngine {
         ));
         let conflict_detector = Arc::new(ConflictDetector::new());
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
-        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
 
         // Restore the in-memory text index from source (AST/semantic already
         // persist in Postgres/Qdrant; text index is rebuilt on startup).
@@ -153,7 +148,6 @@ impl LocalEngine {
             checkpoint_manager,
             conflict_detector,
             rate_limiter,
-            circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config,
@@ -211,7 +205,6 @@ impl LocalEngine {
         ));
         let conflict_detector = Arc::new(ConflictDetector::new());
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
-        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
 
         Self {
             memory_store,
@@ -221,7 +214,6 @@ impl LocalEngine {
             checkpoint_manager,
             conflict_detector,
             rate_limiter,
-            circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config: EngineConfig::default(),
@@ -272,7 +264,6 @@ impl LocalEngine {
         ));
         let conflict_detector = Arc::new(ConflictDetector::new());
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
-        let circuit_breaker = Arc::new(CircuitBreaker::with_defaults());
 
         Self {
             memory_store,
@@ -282,7 +273,6 @@ impl LocalEngine {
             checkpoint_manager,
             conflict_detector,
             rate_limiter,
-            circuit_breaker,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             config,
@@ -323,11 +313,6 @@ impl LocalEngine {
     /// Get the rate limiter (for direct access).
     pub fn rate_limiter(&self) -> &Arc<LlmRateLimiter> {
         &self.rate_limiter
-    }
-
-    /// Get the circuit breaker (for direct access).
-    pub fn circuit_breaker(&self) -> &Arc<CircuitBreaker> {
-        &self.circuit_breaker
     }
 
     // ── Fault Tolerance Operations ──────────────────────────────
@@ -395,21 +380,6 @@ impl LocalEngine {
     /// Release rate limit capacity after a request completes.
     pub fn release_rate_limit(&self) {
         self.rate_limiter.release();
-    }
-
-    /// Check if the circuit breaker allows a request.
-    pub fn check_circuit_breaker(&self) -> Result<(), EngineError> {
-        self.circuit_breaker.allow_request()
-    }
-
-    /// Record a successful LLM API call (for circuit breaker).
-    pub fn record_llm_success(&self) {
-        self.circuit_breaker.record_success();
-    }
-
-    /// Record a failed LLM API call (for circuit breaker).
-    pub fn record_llm_failure(&self) {
-        self.circuit_breaker.record_failure();
     }
 
     // ── Sandbox Operations ──────────────────────────────────────
@@ -648,20 +618,6 @@ impl EngineApi for LocalEngine {
                 "RPM: {:.0} available, TPM: {:.0} available",
                 self.rate_limiter.rpm_available(),
                 self.rate_limiter.tpm_available(),
-            )),
-        });
-        components.push(uc_types::engine::ComponentHealth {
-            name: "circuit_breaker".into(),
-            status: match self.circuit_breaker.state() {
-                crate::circuit_breaker::CircuitState::Closed => "healthy",
-                crate::circuit_breaker::CircuitState::HalfOpen => "degraded",
-                crate::circuit_breaker::CircuitState::Open => "unavailable",
-            }
-            .into(),
-            details: Some(format!(
-                "State: {:?}, failures: {}",
-                self.circuit_breaker.state(),
-                self.circuit_breaker.failure_count(),
             )),
         });
         components.push(uc_types::engine::ComponentHealth {
@@ -936,10 +892,10 @@ mod tests {
         let engine = LocalEngine::new_fallback();
         let health = engine.health().await.unwrap();
         assert_eq!(health.status, "degraded"); // Using fallbacks
-                                               // Now has 11 components: short_term, long_term, metadata, index_pipeline,
+                                               // Now has 10 components: short_term, long_term, metadata, index_pipeline,
                                                // search_engine, embedding_service, checkpoint_manager, conflict_detector,
-                                               // rate_limiter, circuit_breaker, sandbox
-        assert_eq!(health.components.len(), 11);
+                                               // rate_limiter, sandbox
+        assert_eq!(health.components.len(), 10);
     }
 
     // Regression: LocalEngine must be Clone so the standalone gRPC server can
@@ -979,11 +935,9 @@ mod tests {
         assert_eq!(health.components[7].status, "healthy");
         assert_eq!(health.components[8].name, "rate_limiter");
         assert_eq!(health.components[8].status, "healthy");
-        assert_eq!(health.components[9].name, "circuit_breaker");
-        assert_eq!(health.components[9].status, "healthy");
         // Sandbox component
-        assert_eq!(health.components[10].name, "sandbox");
-        assert_eq!(health.components[10].status, "healthy");
+        assert_eq!(health.components[9].name, "sandbox");
+        assert_eq!(health.components[9].status, "healthy");
     }
 
     #[tokio::test]
@@ -1295,27 +1249,6 @@ fn load_index() -> Index { Index::new() }"#,
 
         // Release after use
         engine.release_rate_limit();
-    }
-
-    #[test]
-    fn local_engine_circuit_breaker() {
-        let engine = LocalEngine::new_fallback();
-
-        // Circuit should be closed initially
-        assert!(engine.check_circuit_breaker().is_ok());
-
-        // Record some failures
-        for _ in 0..5 {
-            engine.record_llm_failure();
-        }
-
-        // Circuit should now be open
-        assert!(engine.check_circuit_breaker().is_err());
-
-        // Force close for cleanup
-        engine
-            .circuit_breaker()
-            .force_state(crate::circuit_breaker::CircuitState::Closed);
     }
 
     #[tokio::test]

@@ -16,7 +16,6 @@ function eventTypeColor(type: string): string {
   if (type.startsWith("subtask_completed")) return "text-green-400";
   if (type.startsWith("subtask_failed")) return "text-red-400";
   if (type.startsWith("subtask_progress")) return "text-cyan-400";
-  if (type.startsWith("circuit_breaker_reset")) return "text-yellow-500";
   if (type.startsWith("scheduler_trigger")) return "text-green-500";
   return "text-[var(--text-secondary)]";
 }
@@ -31,7 +30,6 @@ function eventTypeBg(type: string): string {
   if (type.startsWith("subtask_completed")) return "evt-completed";
   if (type.startsWith("subtask_failed")) return "evt-failed";
   if (type.startsWith("subtask_progress")) return "evt-started";
-  if (type.startsWith("circuit_breaker_reset")) return "evt-cb-reset";
   if (type.startsWith("scheduler_trigger")) return "evt-trigger";
   return "evt-default";
 }
@@ -85,7 +83,7 @@ function exportEvents(events: DashboardEvent[]): void {
   URL.revokeObjectURL(url);
 }
 
-const ERROR_TYPES: ReadonlySet<string> = new Set(["task_failed", "subtask_failed", "circuit_breaker_reset"]);
+const ERROR_TYPES: ReadonlySet<string> = new Set(["task_failed", "subtask_failed"]);
 
 export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);

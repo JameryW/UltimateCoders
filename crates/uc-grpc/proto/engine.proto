@@ -46,8 +46,6 @@ service WorkerService {
 service DashboardService {
     rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
     rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse);
-    rpc GetCircuitBreakerStatus(GetCircuitBreakerStatusRequest) returns (CircuitBreakerStatusResponse);
-    rpc ResetCircuitBreaker(ResetCircuitBreakerRequest) returns (ResetCircuitBreakerResponse);
     rpc TriggerSchedulerJob(TriggerSchedulerJobRequest) returns (TriggerSchedulerJobResponse);
     rpc FlushPendingTasks(FlushPendingTasksRequest) returns (FlushPendingTasksResponse);
     rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
@@ -529,37 +527,6 @@ message ExecutionHistoryProto {
     optional string error = 5;
 }
 
-message GetCircuitBreakerStatusRequest {}
-
-message CircuitBreakerStatusResponse {
-    bool available = 1;
-    CircuitBreakerProto circuit_breaker = 2;
-    RateLimiterProto rate_limiter = 3;
-}
-
-message CircuitBreakerProto {
-    string state = 1;          // "closed", "open", "half_open"
-    uint32 failure_count = 2;
-    uint32 failure_threshold = 3;
-    double recovery_timeout_seconds = 4;
-    optional string last_failure = 5;
-}
-
-message RateLimiterProto {
-    uint32 max_requests = 1;
-    double window_seconds = 2;
-    uint32 current_requests = 3;
-    double remaining_ratio = 4;
-}
-
-message ResetCircuitBreakerRequest {}
-
-message ResetCircuitBreakerResponse {
-    bool success = 1;
-    string state = 2;
-    optional string error = 3;
-}
-
 message TriggerSchedulerJobRequest {
     string job_id = 1;
 }
@@ -608,7 +575,6 @@ message DashboardSnapshot {
     optional ListWorkersResponse workers = 3;
     optional ListTasksResponse tasks = 4;
     optional GetSchedulerStatusResponse scheduler = 5;
-    optional CircuitBreakerStatusResponse circuit_breaker = 6;
     repeated DashboardEventProto recent_events = 7;
     repeated TaskEvent recent_task_events = 8;
     optional MetricsSnapshot metrics = 9;
@@ -666,7 +632,6 @@ message EventMetrics {
 
 message SystemMetrics {
     uint64 uptime_seconds = 1;
-    string circuit_breaker_state = 2;
     double rate_limiter_remaining_ratio = 3;
     double cluster_utilization_pct = 4;
 }

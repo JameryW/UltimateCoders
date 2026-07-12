@@ -84,12 +84,6 @@ function SystemOverview({ s, trend }: { s: SystemMetrics; trend: MetricsSample[]
     <div className="space-y-1">
       <MetricRow label="Uptime" value={s.uptime_seconds} unit="" className="text-cyan-400" />
       <span className="text-xs text-[var(--text-muted)] font-mono">{formatUptime(s.uptime_seconds)}</span>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-[var(--text-secondary)]">Circuit Breaker</span>
-        <span className={cn("font-mono", "text-xs px-1.5 py-0.5 rounded", s.circuit_breaker_state === "closed" ? "bg-green-900/30 text-green-400" : s.circuit_breaker_state === "open" ? "bg-red-900/30 text-red-400" : "bg-yellow-900/30 text-yellow-400")}>
-          {s.circuit_breaker_state}
-        </span>
-      </div>
       <MetricRow label="Rate Limiter" value={Math.round(s.rate_limiter_remaining_ratio * 100)} unit="%" className={pctClass(s.rate_limiter_remaining_ratio * 100, [30, 60])} />
       <MetricRow
         label="Cluster Utilization"
@@ -249,7 +243,6 @@ function exportMetricsCsv(metrics: MetricsSnapshot) {
   rows.push(`Task,Success Rate,${t.success_rate}`);
   const s = metrics.system;
   rows.push(`System,Uptime (s),${s.uptime_seconds}`);
-  rows.push(`System,Circuit Breaker,${s.circuit_breaker_state}`);
   rows.push(`System,Rate Limiter Ratio,${s.rate_limiter_remaining_ratio}`);
   rows.push(`System,Cluster Utilization (%),${s.cluster_utilization_pct}`);
   const w = metrics.worker;

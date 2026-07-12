@@ -4,7 +4,6 @@
 //! Depends on uc-types for the trait and data definitions.
 
 pub mod checkpoint;
-pub mod circuit_breaker;
 pub mod config;
 pub mod conflict;
 pub mod events;
@@ -21,7 +20,6 @@ pub mod search;
 pub mod task_store;
 
 pub use checkpoint::{CheckpointConfig, CheckpointManager};
-pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState, RetryPolicy};
 pub use config::{EmbeddingConfig, EngineConfig, MemoryConfig, StorageConfig};
 pub use conflict::merger::three_way_merge;
 pub use conflict::{

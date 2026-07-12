@@ -1,21 +1,19 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
-import type { WorkersData, CircuitBreakerData, DashboardEvent, MetricsSnapshot, AlertEvent, AlertRecord } from "@/types/dashboard";
+import type { WorkersData, DashboardEvent, MetricsSnapshot, AlertEvent, AlertRecord } from "@/types/dashboard";
 import { cn } from "@/lib/utils";
 
 interface AlertBarProps {
   workers: WorkersData;
-  circuitBreaker: CircuitBreakerData;
   eventLog: DashboardEvent[];
   metrics: MetricsSnapshot | null;
   activeAlerts: AlertEvent[];
   onJumpWorkers?: () => void;
-  onJumpCB?: () => void;
 }
 
 const ONE_HOUR_MS = 3600_000;
 
 export const AlertBar = memo(function AlertBar({
-  workers, circuitBreaker, eventLog, metrics, activeAlerts, onJumpWorkers, onJumpCB,
+  workers, eventLog, metrics, activeAlerts, onJumpWorkers,
 }: AlertBarProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [alertHistory, setAlertHistory] = useState<AlertRecord[]>([]);
@@ -31,25 +29,6 @@ export const AlertBar = memo(function AlertBar({
         items.push({
           icon: "⚠", message: `${staleCount} stale worker${staleCount > 1 ? "s" : ""}`,
           color: "text-yellow-400", alertType: "stale_workers", onClick: onJumpWorkers,
-        });
-      }
-    }
-
-    // 2. Circuit breaker open
-    if (circuitBreaker.available && circuitBreaker.circuit_breaker.state === "open") {
-      items.push({
-        icon: "🔴", message: "Circuit breaker OPEN",
-        color: "text-red-400", alertType: "circuit_breaker_open", onClick: onJumpCB,
-      });
-    }
-
-    // 3. Rate limiter high usage
-    if (circuitBreaker.available && circuitBreaker.rate_limiter.available) {
-      const usedPct = Math.round((1 - circuitBreaker.rate_limiter.remaining_ratio) * 100);
-      if (usedPct >= 80) {
-        items.push({
-          icon: "⚡", message: `Rate limiter ${usedPct}% used`,
-          color: "text-yellow-400", alertType: "rate_limiter_high", onClick: onJumpCB,
         });
       }
     }
@@ -93,7 +72,7 @@ export const AlertBar = memo(function AlertBar({
     }
 
     return items;
-  }, [workers, circuitBreaker, eventLog, metrics, onJumpWorkers, onJumpCB]);
+  }, [workers, eventLog, metrics, onJumpWorkers]);
 
   // Fetch alert history on first expand
   const fetchHistory = useCallback(async () => {

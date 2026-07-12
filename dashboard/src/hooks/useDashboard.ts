@@ -7,7 +7,6 @@ import type {
   TaskSummary,
   SubtaskSummary,
   SchedulerData,
-  CircuitBreakerData,
   DashboardEvent,
   MetricsSnapshot,
   AlertEvent,
@@ -51,25 +50,6 @@ export function useDashboard() {
     jobs: [],
     execution_history: [],
   });
-  const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerData>({
-    available: false,
-    circuit_breaker: {
-      available: false,
-      state: "Unknown",
-      failure_count: 0,
-      total_calls: 0,
-      total_rejected: 0,
-    },
-    rate_limiter: {
-      available: false,
-      rpm_available: 0,
-      tpm_available: 0,
-      active_count: 0,
-      total_requests: 0,
-    },
-    engine_circuit_breaker: {},
-    engine_rate_limiter: {},
-  });
   const [eventLog, setEventLog] = useState<DashboardEvent[]>([]);
   const [interactionLog, setInteractionLog] = useState<
     Record<string, TaskEvent[]>
@@ -89,7 +69,6 @@ export function useDashboard() {
     health?: HealthData;
     workers?: WorkersData;
     scheduler?: SchedulerData;
-    circuitBreaker?: CircuitBreakerData;
     events?: DashboardEvent[];
     metrics?: MetricsSnapshot;
     alert_events?: AlertEvent[];
@@ -98,7 +77,6 @@ export function useDashboard() {
     if (data.health?.available) setHealth(data.health);
     if (data.workers?.available) setWorkers(data.workers);
     if (data.scheduler?.available) setScheduler(data.scheduler);
-    if (data.circuitBreaker?.available) setCircuitBreaker(data.circuitBreaker);
     if (data.events && data.events.length > 0) setEventLog(data.events);
     if (data.metrics) setMetrics(data.metrics);
     if (data.alert_events && data.alert_events.length > 0) {
@@ -315,7 +293,6 @@ export function useDashboard() {
     skipTasks?: boolean;
     fetchWorkers?: () => Promise<WorkersData>;
     fetchScheduler?: () => Promise<SchedulerData>;
-    fetchCircuitBreaker?: () => Promise<CircuitBreakerData>;
     fetchEvents?: (taskId?: string, limit?: number) => Promise<{ available: boolean; events: DashboardEvent[]; total: number }>;
     fetchTasks?: () => Promise<TasksData>;
   }): Promise<Record<string, string>> => {
@@ -326,7 +303,6 @@ export function useDashboard() {
         ? Promise.resolve()
         : opts?.fetchTasks?.().then((t) => { setTasks(t); }).catch((e) => { errors["tasks"] = String(e); }) ?? Promise.resolve(),
       opts?.fetchScheduler?.().then((s) => { setScheduler(s); }).catch((e) => { errors["scheduler"] = String(e); }) ?? Promise.resolve(),
-      opts?.fetchCircuitBreaker?.().then((c) => { setCircuitBreaker(c); }).catch((e) => { errors["circuit_breaker"] = String(e); }) ?? Promise.resolve(),
       opts?.fetchEvents?.().then((e) => { setEventLog(e.events); }).catch((e) => { errors["events"] = String(e); }) ?? Promise.resolve(),
     ]);
     // results are handled via .then/.catch above; Promise.allSettled just waits for all
@@ -407,7 +383,6 @@ export function useDashboard() {
     workers,
     tasks,
     scheduler,
-    circuitBreaker,
     eventLog,
     interactionLog,
     metrics,
