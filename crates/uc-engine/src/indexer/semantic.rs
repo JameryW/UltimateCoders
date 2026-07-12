@@ -13,10 +13,6 @@ use crate::config::EmbeddingConfig;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Qdrant collection name for code embeddings.
-#[allow(dead_code)]
-const CODE_EMBEDDINGS_COLLECTION: &str = "code_embeddings";
-
 // ── Embedding Service ────────────────────────────────────────────
 
 /// Service for computing code embeddings.
