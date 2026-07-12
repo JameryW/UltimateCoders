@@ -32,7 +32,6 @@ class SandboxConfig:
 
     Args:
         agent: Which coding agent to use ("claude-code" or "codex").
-        backend: Sandbox isolation backend ("subprocess").
         project_path: Path to the project directory.
         api_key: API key for the agent (optional, can use env var).
         max_cpu_seconds: Maximum CPU time in seconds.
@@ -53,7 +52,6 @@ class SandboxConfig:
         agents_json: JSON string defining custom agents for --agents.
     """
     agent: str = "claude-code"
-    backend: str = "subprocess"
     project_path: str = ""
     api_key: str | None = None
     max_cpu_seconds: int = 3600

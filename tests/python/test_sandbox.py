@@ -32,7 +32,6 @@ class TestSandboxConfig:
     def test_defaults(self):
         config = SandboxConfig()
         assert config.agent == "claude-code"
-        assert config.backend == "subprocess"
         assert config.project_path == ""
         assert config.api_key is None
         assert config.max_cpu_seconds == 3600
@@ -46,14 +45,12 @@ class TestSandboxConfig:
     def test_custom(self):
         config = SandboxConfig(
             agent="codex",
-            backend="docker",
             project_path="/tmp/project",
             api_key="sk-test",
             max_cpu_seconds=600,
             network=NetworkMode.NONE,
         )
         assert config.agent == "codex"
-        assert config.backend == "docker"
         assert config.project_path == "/tmp/project"
         assert config.api_key == "sk-test"
         assert config.max_cpu_seconds == 600
