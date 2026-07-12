@@ -278,7 +278,7 @@ async def _publish_event(self, event_type, **kwargs):
     "step_index": 1,                 // optional, workflow only
     "step_total": 3,                 // optional, workflow only
     "step_agent": "codex",           // optional, workflow only (claude-code | codex)
-    "step_status": "started",        // optional (started | completed | failed)
+    "step_status": "started",        // optional (started | completed | failed | retrying | skipped)
     "step_summary": "..."            // optional, truncated
   }
 }
@@ -288,6 +288,8 @@ async def _publish_event(self, event_type, **kwargs):
 **Phases** (workflow path): per-step `step N/total: <agent>`, percent = `100 * idx/total`.
 
 **Rust routing**: `nats_event_to_agent_event` (uc-grpc server.rs) must have a `"subtask_progress" =>` match arm returning `Some(AgentEventType::SubtaskProgress{...})`. The `From<AgentEventType> for TaskEventProto` impl (conversions.rs) must serialize it to the proto `data` map with snake_case keys matching the Python payload. `apply_event_to_snapshot` (checkpoint.rs) treats it as a no-op (transient — does not mutate subtask lifecycle state).
+
+> See [Multi-Agent Workflow Steps](#multi-agent-workflow-steps) in agent-capability-spec.md for the full `WorkflowStep` schema, template variables, execution semantics, condition expression language, and step event details.
 
 > **Warning (Gotcha): Rust match-arm silent drop.** `nats_event_to_agent_event` has a catch-all `_ => None` arm that **silently drops** any event type without an explicit match arm — no log, no error. A new event type published by the Python worker but unhandled in Rust will vanish at the Rust boundary: never enters the broadcast channel, never reaches WatchTask/dashboard/TUI. This is how `subtask_progress` was originally lost (dashboard couldn't show progress despite the worker publishing it). **When adding any new event type: add the match arm in `nats_event_to_agent_event` AND the `From<AgentEventType> for TaskEventProto` arm in the same change**, or the event is silently black-holed. Grep `_ =>` in server.rs to find the catch-all.
 
