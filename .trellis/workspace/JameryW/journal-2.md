@@ -900,3 +900,38 @@ PR #204 merged. uc-lsp auto-falls-back to codegraph (same-process CodegraphClien
 
 ### Status
 [OK] Completed
+
+
+## Session 80: Remove dead DockerSandbox + UC_SANDBOX_MODE; finish PR #236/#237
+
+**Date**: 2026-07-12
+**Task**: Remove dead DockerSandbox + UC_SANDBOX_MODE; finish PR #236/#237
+**Branch**: `main`
+
+### Summary
+
+Fixed ruff E501 CI failure on PR #236 (route step subtasks to capable workers) — wrapped shutil.which lambdas; #236 merged 3916e0aa. Then created+implemented+merged PR #237: removed dead DockerSandbox (440 LOC docker.rs), docker Cargo feature, pub re-export, UC_SANDBOX_MODE env knob (compose + README + 2 specs), stale docstring/comment. trellis-check found 4 doc residual refs, fixed. Net -457/+5. CI 10/10 green on both PRs. Archived tasks 07-12-route-step-subtasks and 07-05-grpc-server-serve-before-index.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e89af712` | (see git log) |
+| `7322b84b` | (see git log) |
+| `76373ce4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
