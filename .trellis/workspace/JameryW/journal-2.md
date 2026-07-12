@@ -1034,3 +1034,36 @@ Removed dead enforce_night_window: bool field from scheduler JobMetadata. Writte
 ### Next Steps
 
 - None - task complete
+
+
+## Session 84: Remove dead LocalEngine.config field; PR #241
+
+**Date**: 2026-07-12
+**Task**: Remove dead LocalEngine.config field; PR #241
+**Branch**: `main`
+
+### Summary
+
+Removed dead config: EngineConfig field from LocalEngine. Stored in 3 ctor sites but self.config had 0 refs - constructors consume config param by cloning sub-fields into stores, then store redundant owner never accessed. new_fallback() constructed EngineConfig::default() purely for dead field. EngineConfig no Drop, field private no accessor. Net -5 lines. CI all green (cargo fmt passed first try this time). Merged 506c2d54. Found by auditing remaining #[allow(dead_code)] annotations after prior dead-code PRs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b6eab7d1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

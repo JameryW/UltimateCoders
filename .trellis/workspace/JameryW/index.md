@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 83
+- **Total Sessions**: 84
 - **Last Active**: 2026-07-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1036 | Active |
+| `journal-2.md` | ~1069 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 84 | 2026-07-12 | Remove dead LocalEngine.config field; PR #241 | `b6eab7d1` | `main` |
 | 83 | 2026-07-12 | Remove dead enforce_night_window JobMetadata field; PR #240 | `7facdd6d` | `main` |
 | 82 | 2026-07-12 | Remove dead circuit breaker dashboard contract (cross-layer); PR #239 | `2db49f53` | `main` |
 | 81 | 2026-07-12 | Remove dead SandboxConfig.backend field; PR #237/#238 merged | `b01b0aeb` | `main` |
