@@ -1303,6 +1303,7 @@ class NatsWorker:
             "dispatch_mode": subtask.dispatch_mode.value,
             "required_capabilities": subtask.required_capabilities,
             "agent_config": subtask.agent_config,
+            "steps": [s.to_dict() for s in subtask.steps],
             "project_id": subtask.project_id,
         }).encode()
 
