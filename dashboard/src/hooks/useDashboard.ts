@@ -505,6 +505,9 @@ function mergeProgressEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskS
   const step_index = ev.data.step_index != null ? Number(ev.data.step_index) : undefined;
   const step_total = ev.data.step_total != null ? Number(ev.data.step_total) : undefined;
   const step_summary = ev.data.step_summary != null ? String(ev.data.step_summary) : undefined;
+  const parallel_group = ev.data.parallel_group != null ? String(ev.data.parallel_group) : undefined;
+  const parallel_step_count =
+    ev.data.parallel_step_count != null ? Number(ev.data.parallel_step_count) : undefined;
 
   const existing = subtasks.find((s) => s.id === sid);
   if (!existing) return subtasks; // progress for an unknown subtask — ignore
@@ -519,6 +522,8 @@ function mergeProgressEvent(subtasks: SubtaskSummary[], ev: TaskEvent): SubtaskS
       step_index: step_index ?? s.step_index,
       step_total: step_total ?? s.step_total,
       step_summary: step_summary ?? s.step_summary,
+      parallel_group: parallel_group ?? s.parallel_group,
+      parallel_step_count: parallel_step_count ?? s.parallel_step_count,
     } : s,
   );
 }

@@ -158,6 +158,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				if (d.stepAgent !== undefined) info.stepAgent = d.stepAgent;
 				if (d.stepStatus !== undefined) info.stepStatus = d.stepStatus;
 				if (d.stepSummary !== undefined) info.stepSummary = d.stepSummary;
+				if (d.parallelGroup !== undefined) info.parallelGroup = d.parallelGroup;
+				if (d.parallelStepCount !== undefined) info.parallelStepCount = d.parallelStepCount;
 				ps.progressBySubtask.set(d.subtaskId, info);
 				ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				break;

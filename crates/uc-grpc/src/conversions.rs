@@ -971,6 +971,8 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 step_agent,
                 step_status,
                 step_summary,
+                parallel_group,
+                parallel_step_count,
             } => {
                 let mut data_map: std::collections::HashMap<String, String> = vec![
                     ("worker_id".to_string(), worker_id.0),
@@ -993,6 +995,12 @@ impl From<uc_engine::AgentEventType> for TaskEventProto {
                 }
                 if let Some(ssum) = step_summary {
                     data_map.insert("step_summary".to_string(), ssum);
+                }
+                if let Some(pg) = parallel_group {
+                    data_map.insert("parallel_group".to_string(), pg);
+                }
+                if let Some(psc) = parallel_step_count {
+                    data_map.insert("parallel_step_count".to_string(), psc.to_string());
                 }
                 (
                     "subtask_progress".to_string(),
@@ -1797,6 +1805,8 @@ mod tests {
             step_agent: Some("codex".to_string()),
             step_status: Some("running".to_string()),
             step_summary: Some("editing main.rs".to_string()),
+            parallel_group: Some("cr".to_string()),
+            parallel_step_count: Some(2),
         };
 
         let proto: TaskEventProto = event.into();
@@ -1825,6 +1835,14 @@ mod tests {
             proto.data.get("step_summary").map(String::as_str),
             Some("editing main.rs")
         );
+        assert_eq!(
+            proto.data.get("parallel_group").map(String::as_str),
+            Some("cr")
+        );
+        assert_eq!(
+            proto.data.get("parallel_step_count").map(String::as_str),
+            Some("2")
+        );
     }
 
     #[test]
@@ -1841,6 +1859,8 @@ mod tests {
             step_agent: None,
             step_status: None,
             step_summary: None,
+            parallel_group: None,
+            parallel_step_count: None,
         };
 
         let proto: TaskEventProto = event.into();
@@ -1857,6 +1877,8 @@ mod tests {
         assert!(proto.data.get("step_agent").is_none());
         assert!(proto.data.get("step_status").is_none());
         assert!(proto.data.get("step_summary").is_none());
+        assert!(proto.data.get("parallel_group").is_none());
+        assert!(proto.data.get("parallel_step_count").is_none());
     }
 
     #[test]

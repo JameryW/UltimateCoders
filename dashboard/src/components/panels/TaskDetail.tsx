@@ -178,6 +178,14 @@ function SubtaskProgress({ st }: { st: SubtaskSummary }) {
           {st.step_status}
         </span>
       )}
+      {st.parallel_group && st.parallel_step_count != null && st.parallel_step_count > 1 && (
+        <span
+          className="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-mono"
+          title={`Parallel group: ${st.parallel_group} (${st.parallel_step_count} concurrent steps)`}
+        >
+          ↻{st.parallel_step_count} parallel
+        </span>
+      )}
       {st.phase && (
         <span className="text-[10px] text-blue-400 font-medium truncate" title={st.phase}>
           {st.phase}

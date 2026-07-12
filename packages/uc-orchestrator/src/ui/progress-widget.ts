@@ -62,6 +62,8 @@ export interface SubtaskProgressInfo {
 	stepAgent?: string;
 	stepStatus?: string;
 	stepSummary?: string;
+	parallelGroup?: string;
+	parallelStepCount?: number;
 }
 
 export function createProgressWidget(state: () => ProgressWidgetState | null) {
@@ -120,7 +122,11 @@ class ProgressWidgetComponent {
 					const agentTag = prog.stepAgent ? this.theme.fg("accent", prog.stepAgent) : "";
 					const phaseText = prog.phase ? this.theme.fg("dim", prog.phase.slice(0, Math.max(0, width - 16))) : "";
 					const statusTag = prog.stepStatus ? this._stepStatusTag(prog.stepStatus) : "";
-					const parts = ["    ", agentTag, phaseText, statusTag].filter(Boolean);
+					const parallelTag =
+						prog.parallelGroup && prog.parallelStepCount && prog.parallelStepCount > 1
+							? this.theme.fg("warning", `↻${prog.parallelStepCount} parallel`)
+							: "";
+					const parts = ["    ", agentTag, phaseText, statusTag, parallelTag].filter(Boolean);
 					if (parts.length > 1) lines.push(parts.join(" "));
 				}
 			}

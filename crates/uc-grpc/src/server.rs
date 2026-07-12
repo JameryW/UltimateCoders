@@ -2641,6 +2641,19 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 .get("step_summary")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let parallel_group = event
+                .data
+                .get("parallel_group")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let parallel_step_count = event
+                .data
+                .get("parallel_step_count")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
+                .map(|n| n as u32);
             Some(uc_engine::AgentEventType::SubtaskProgress {
                 task_id,
                 subtask_id,
@@ -2652,6 +2665,8 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
                 step_agent,
                 step_status,
                 step_summary,
+                parallel_group,
+                parallel_step_count,
             })
         }
         "task_paused" => {
@@ -4529,6 +4544,8 @@ mod tests {
                 step_agent,
                 step_status,
                 step_summary,
+                parallel_group: _,
+                parallel_step_count: _,
             } => {
                 assert_eq!(task_id.0, "t-1");
                 assert_eq!(subtask_id.0, "st-1");

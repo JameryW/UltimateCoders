@@ -48,6 +48,8 @@ export interface OrchestratorEvents {
 		stepAgent?: string;
 		stepStatus?: string;
 		stepSummary?: string;
+		parallelGroup?: string;
+		parallelStepCount?: number;
 	};
 
 	/** Task reached terminal state */
