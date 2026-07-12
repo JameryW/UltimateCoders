@@ -25,7 +25,7 @@ python/ultimate_coders/
         worker.py         # Worker -- subtask execution with LLM + tools
         llm.py            # LLM client abstraction (Anthropic API)
         conflict.py       # Conflict detection/resolution (Python-side)
-        rate_limiter.py   # Rate limiting + circuit breaker (Python-side)
+        rate_limiter.py   # Rate limiting (Python-side)
         sandbox.py        # Sandbox agent execution (Claude Code / Codex adapters)
 
     memory/

@@ -9,7 +9,6 @@ import { HealthPanel } from "@/components/panels/HealthPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { SchedulerPanel } from "@/components/panels/SchedulerPanel";
-import { CircuitBreakerPanel } from "@/components/panels/CircuitBreakerPanel";
 import { EventLogPanel } from "@/components/panels/EventLogPanel";
 import { SearchPanel } from "@/components/panels/SearchPanel";
 import { FileBrowser } from "@/components/panels/FileBrowser";
@@ -158,15 +157,13 @@ function App() {
     disconnect: _dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
-    getCircuitBreakerStatus,
-    resetCircuitBreaker: grpcResetCircuitBreaker,
     triggerSchedulerJob: grpcTriggerSchedulerJob,
     flushPendingTasks: grpcFlushPendingTasks,
     listEvents,
   } = useDashboardGrpc({
     onSnapshot: (snapshot) => {
       dashboard.handleSnapshot(snapshot);
-      if (snapshot.health || snapshot.workers || snapshot.scheduler || snapshot.circuitBreaker) {
+      if (snapshot.health || snapshot.workers || snapshot.scheduler) {
         setLastUpdate(new Date().toISOString());
       }
     },
@@ -189,7 +186,6 @@ function App() {
       skipTasks,
       fetchWorkers: listWorkers,
       fetchScheduler: getSchedulerStatus,
-      fetchCircuitBreaker: getCircuitBreakerStatus,
       fetchEvents: listEvents,
       fetchTasks: grpcState === "connected" ? listTasks : undefined,
     }).then((errors) => {
@@ -302,11 +298,6 @@ function App() {
       showToast(`Cancel failed: ${String(e)}`, "error");
     }
   };
-  const handleResetCB = async () => {
-    const ok = await confirmAction("Reset Circuit Breaker", "Force circuit breaker to closed state?");
-    if (!ok) return;
-    try { const r = await grpcResetCircuitBreaker(); r.success ? showToast("Circuit breaker reset", "success") : showToast(`Reset failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Reset failed: ${String(e)}`, "error"); }
-  };
   const handleTriggerJob = async (jobId: string) => {
     const ok = await confirmAction("Trigger Job", `Trigger scheduled job?`);
     if (!ok) return;
@@ -381,7 +372,6 @@ function App() {
               dashboard.fetchInitial({
                 fetchWorkers: listWorkers,
                 fetchScheduler: getSchedulerStatus,
-                fetchCircuitBreaker: getCircuitBreakerStatus,
                 fetchEvents: listEvents,
                 fetchTasks: (grpcState as string) === "connected" ? listTasks : undefined,
               }).then((errors) => {
@@ -403,7 +393,6 @@ function App() {
   // Sidebar panel summaries for collapsed state
   const workersSummary = dashboard.workers.available ? `${dashboard.workers.available_count}/${dashboard.workers.total} online` : undefined;
   const healthSummary = healthWithGrpc.available ? healthWithGrpc.status : undefined;
-  const cbSummary = dashboard.circuitBreaker.available ? dashboard.circuitBreaker.circuit_breaker.state : undefined;
   const schedulerSummary = dashboard.scheduler.available ? (dashboard.scheduler.is_running ? "Running" : "Stopped") : undefined;
 
   return (
@@ -428,12 +417,10 @@ function App() {
         <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} metrics={dashboard.metrics} stale={grpcStale} />
         <AlertBar
           workers={dashboard.workers}
-          circuitBreaker={dashboard.circuitBreaker}
           eventLog={dashboard.eventLog}
           metrics={dashboard.metrics}
           activeAlerts={dashboard.activeAlerts}
           onJumpWorkers={() => document.getElementById("workers")?.scrollIntoView({ behavior: "smooth" })}
-          onJumpCB={() => document.getElementById("circuit-breaker")?.scrollIntoView({ behavior: "smooth" })}
         />
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
           {/* ── Left column (8/12): Core panels ────────────── */}
@@ -549,19 +536,6 @@ function App() {
                     stale={grpcStale}
                   >
                     <HealthPanel data={healthWithGrpc} stale={grpcStale} embedded />
-                  </SidebarPanel>
-                </ErrorBoundary>
-
-                <ErrorBoundary name="Circuit Breaker">
-                  <SidebarPanel
-                    title="Circuit Breaker"
-                    summary={cbSummary}
-                    summaryVariant={cbSummary === "closed" ? "closed" : cbSummary === "open" ? "open" : cbSummary === "half_open" ? "half_open" : undefined}
-                    collapsed={collapsedPanels.cb}
-                    onToggle={() => togglePanel("cb")}
-                    stale={grpcStale}
-                  >
-                    <CircuitBreakerPanel data={dashboard.circuitBreaker} onReset={handleResetCB} stale={grpcStale} embedded />
                   </SidebarPanel>
                 </ErrorBoundary>
 

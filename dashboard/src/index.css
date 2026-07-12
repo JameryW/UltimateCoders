@@ -119,7 +119,6 @@ body {
 .evt-pause { background-color: #713f1230; }
 .evt-resume { background-color: #16653430; }
 .evt-started { background-color: #1e3a5f20; }
-.evt-cb-reset { background-color: #713f1230; }
 .evt-trigger { background-color: #16653430; }
 .evt-default { background-color: #37415140; }
 
@@ -129,7 +128,6 @@ body {
 [data-theme="light"] .evt-pause { background-color: #fef9c3; }
 [data-theme="light"] .evt-resume { background-color: #dcfce7; }
 [data-theme="light"] .evt-started { background-color: #eff6ff; }
-[data-theme="light"] .evt-cb-reset { background-color: #fef9c3; }
 [data-theme="light"] .evt-trigger { background-color: #dcfce7; }
 [data-theme="light"] .evt-default { background-color: #f3f4f6; }
 

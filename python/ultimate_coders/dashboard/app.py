@@ -230,13 +230,6 @@ class DashboardApp:
                 return resp
             return JSONResponse(self._get_scheduler_data())
 
-        @app.get("/dashboard/api/circuit-breaker")
-        async def circuit_breaker_api(request: Request):
-            """Return circuit breaker and rate limiter JSON."""
-            if (resp := self._check_auth(request)) is not None:
-                return resp
-            return JSONResponse(self._get_circuit_breaker_data())
-
         @app.get("/dashboard/api/stream")
         async def stream(request: Request):
             """SSE endpoint: push real-time events + periodic full snapshots.
@@ -604,16 +597,6 @@ class DashboardApp:
                 return JSONResponse({"success": True, "task_id": task_id, "status": "in_progress"})
             return JSONResponse(
                 {"success": False, "task_id": task_id, "error": "Task not found or not resumable"},
-                status_code=400,
-            )
-
-        @app.post("/dashboard/api/circuit-breaker/reset")
-        async def circuit_breaker_reset_api(request: Request):
-            """Reset the circuit breaker to closed state (deprecated — sandbox-only mode)."""
-            if (resp := self._check_auth(request)) is not None:
-                return resp
-            return JSONResponse(
-                {"success": False, "error": "Circuit breaker removed (sandbox-only mode)"},
                 status_code=400,
             )
 
@@ -1147,7 +1130,7 @@ class DashboardApp:
         TaskEventEmitter events: {timestamp, type, task_id, data}.
 
         Args:
-            event_type: Type of event (e.g., task_pause, circuit_breaker_reset).
+            event_type: Type of event (e.g., task_pause, task_submit).
             **details: Additional event details. If task_id is present in
                 details, it is promoted to the top-level task_id field.
         """
@@ -1357,98 +1340,6 @@ class DashboardApp:
             "execution_history": execution_history,
         }
 
-    def _get_circuit_breaker_data(self, health_data: dict | None = None) -> dict:
-        """Collect circuit breaker and rate limiter data.
-
-        Returns a dict with circuit breaker state and rate limiter
-        availability. Sources data from the Python-side circuit breaker
-        and rate limiter on the Orchestrator, as well as engine health
-        component details.
-        """
-        orch = self.orchestrator
-        if orch is None:
-            return {
-                "circuit_breaker": {
-                    "available": False,
-                    "state": "Unknown",
-                    "failure_count": 0,
-                    "total_calls": 0,
-                    "total_rejected": 0,
-                },
-                "rate_limiter": {
-                    "available": False,
-                    "rpm_available": 0,
-                    "tpm_available": 0,
-                    "active_count": 0,
-                    "total_requests": 0,
-                },
-                "engine_circuit_breaker": {},
-                "engine_rate_limiter": {},
-            }
-
-        # Python-side circuit breaker
-        cb_data: dict[str, Any] = {
-            "available": False,
-            "state": "Unknown",
-            "failure_count": 0,
-            "total_calls": 0,
-            "total_rejected": 0,
-        }
-        if hasattr(orch, "circuit_breaker") and orch.circuit_breaker is not None:
-            cb = orch.circuit_breaker
-            try:
-                cb_data = {
-                    "available": True,
-                    "state": cb.state.value if hasattr(cb.state, "value") else str(cb.state),
-                    "failure_count": cb.failure_count,
-                    "total_calls": cb.total_calls,
-                    "total_rejected": cb.total_rejected,
-                }
-            except Exception as e:
-                logger.warning("Failed to read circuit breaker: %s", e)
-                cb_data["error"] = str(e)
-
-        # Python-side rate limiter
-        rl_data: dict[str, Any] = {
-            "available": False,
-            "rpm_available": 0,
-            "tpm_available": 0,
-            "active_count": 0,
-            "total_requests": 0,
-        }
-        if hasattr(orch, "rate_limiter") and orch.rate_limiter is not None:
-            rl = orch.rate_limiter
-            try:
-                rl_data = {
-                    "available": True,
-                    "rpm_available": round(rl.rpm_available, 1),
-                    "tpm_available": round(rl.tpm_available, 1),
-                    "active_count": rl.active_count,
-                    "total_requests": rl.total_requests,
-                }
-            except Exception as e:
-                logger.warning("Failed to read rate limiter: %s", e)
-                rl_data["error"] = str(e)
-
-        # Also extract from engine health components for Rust-side metrics
-        engine_cb = {}
-        engine_rl = {}
-        if health_data is None:
-            health_data = self._get_health_data()
-        if health_data.get("available"):
-            for comp in health_data.get("components", []):
-                if comp["name"] == "circuit_breaker":
-                    engine_cb = comp
-                elif comp["name"] == "rate_limiter":
-                    engine_rl = comp
-
-        return {
-            "circuit_breaker": cb_data,
-            "rate_limiter": rl_data,
-            "engine_circuit_breaker": engine_cb,
-            "engine_rate_limiter": engine_rl,
-        }
-
     def _get_full_snapshot(self) -> dict:
         """Collect a full state snapshot for SSE push.
 
@@ -1468,7 +1359,6 @@ class DashboardApp:
             "workers": workers,
             "tasks": self._get_tasks_data(),
             "scheduler": self._get_scheduler_data(),
-            "circuit_breaker": self._get_circuit_breaker_data(health_data=health),
             "events": list(self._event_log),
             "metrics": self._metrics_to_dict(metrics_snap),
         }
@@ -1491,16 +1381,6 @@ class DashboardApp:
 
     def _update_system_metrics(self, health: dict, workers: dict) -> None:
         """Push current system state into MetricsAggregator before snapshot."""
-        cb_data = self._get_circuit_breaker_data(health_data=health)
-        cb_state = "unknown"
-        rl_remaining = 1.0
-        if cb_data.get("available"):
-            cb = cb_data.get("circuit_breaker", {})
-            cb_state = cb.get("state", "unknown")
-            # Rate limiter from Python-side data
-            rl = cb_data.get("rate_limiter", {})
-            rl_remaining = rl.get("remaining_ratio", 1.0)
-
         # Cluster utilization from workers
         cluster_pct = 0.0
         avg_hb = 0.0
@@ -1513,8 +1393,7 @@ class DashboardApp:
             avg_hb = sum(hb_ages) / len(hb_ages) if hb_ages else 0.0
 
         self._metrics.update_system_state(
-            circuit_breaker_state=cb_state,
-            rate_limiter_remaining=rl_remaining,
+            rate_limiter_remaining=1.0,
             cluster_utilization_pct=cluster_pct,
             avg_heartbeat_age=avg_hb,
         )

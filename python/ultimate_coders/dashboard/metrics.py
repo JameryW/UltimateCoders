@@ -89,7 +89,6 @@ class EventMetrics:
 @dataclass
 class SystemMetrics:
     uptime_seconds: int = 0
-    circuit_breaker_state: str = "unknown"
     rate_limiter_remaining_ratio: float = 1.0
     cluster_utilization_pct: float = 0.0
 
@@ -109,7 +108,6 @@ class MetricsSnapshot:
 class AlertConfig:
     """Configurable thresholds for alert conditions."""
     stale_worker_threshold_seconds: float = 120.0
-    circuit_breaker_alert: bool = True
     rate_limiter_threshold_pct: float = 80.0
     failure_window_minutes: float = 60.0
     failure_count_threshold: int = 5
@@ -153,7 +151,6 @@ class MetricsAggregator:
         self._total_failed = 0
         self._total_retries = 0
         # System state (updated externally)
-        self._circuit_breaker_state: str = "unknown"
         self._rate_limiter_remaining: float = 1.0
         self._cluster_utilization_pct: float = 0.0
         self._avg_heartbeat_age: float = 0.0
@@ -211,15 +208,12 @@ class MetricsAggregator:
     def update_system_state(
         self,
         *,
-        circuit_breaker_state: str | None = None,
         rate_limiter_remaining: float | None = None,
         cluster_utilization_pct: float | None = None,
         avg_heartbeat_age: float | None = None,
     ) -> None:
         """Update system-level state from external sources (health, workers)."""
         with self._lock:
-            if circuit_breaker_state is not None:
-                self._circuit_breaker_state = circuit_breaker_state
             if rate_limiter_remaining is not None:
                 self._rate_limiter_remaining = rate_limiter_remaining
             if cluster_utilization_pct is not None:
@@ -229,7 +223,6 @@ class MetricsAggregator:
 
         # Sync to Prometheus (outside lock)
         self._prom.update_system_state(
-            circuit_breaker_state=circuit_breaker_state,
             rate_limiter_remaining=rate_limiter_remaining,
             cluster_utilization_pct=cluster_utilization_pct,
         )
@@ -339,7 +332,6 @@ class MetricsAggregator:
             # ── System metrics ─────────────────────────────
             system = SystemMetrics(
                 uptime_seconds=int(now - self._start_time),
-                circuit_breaker_state=self._circuit_breaker_state,
                 rate_limiter_remaining_ratio=self._rate_limiter_remaining,
                 cluster_utilization_pct=self._cluster_utilization_pct,
             )
@@ -404,15 +396,7 @@ class MetricsAggregator:
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
-        # 4. Circuit breaker open
-        if cfg.circuit_breaker_alert and snap.system.circuit_breaker_state == "open":
-            current_types.add("circuit_breaker_open")
-            if "circuit_breaker_open" not in self._active_alert_types:
-                a = Alert("circuit_breaker_open", "Circuit breaker OPEN", "critical", now)
-                self._alert_store.insert(a)
-                new_alerts.append(a)
-
-        # 5. Rate limiter high
+        # 4. Rate limiter high
         used_pct = (1 - snap.system.rate_limiter_remaining_ratio) * 100
         if used_pct >= cfg.rate_limiter_threshold_pct:
             current_types.add("rate_limiter_high")
@@ -421,7 +405,7 @@ class MetricsAggregator:
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
-        # 6. Stale workers (using heartbeat age)
+        # 5. Stale workers (using heartbeat age)
         if snap.worker.avg_heartbeat_age_seconds > cfg.stale_worker_threshold_seconds:
             current_types.add("stale_workers")
             if "stale_workers" not in self._active_alert_types:
@@ -432,7 +416,7 @@ class MetricsAggregator:
                 self._alert_store.insert(a)
                 new_alerts.append(a)
 
-        # 7. Recent failures (within sliding window)
+        # 6. Recent failures (within sliding window)
         if snap.task.recent_failed > 0:
             current_types.add("recent_failures")
             if "recent_failures" not in self._active_alert_types \
@@ -693,11 +677,6 @@ class PrometheusExporter:
             "uc_cluster_utilization",
             "Cluster utilization ratio", registry=registry,
         )
-        self.circuit_breaker_state = pc.Gauge(
-            "uc_circuit_breaker_state",
-            "Circuit breaker state (0=closed, 0.5=half_open, 1=open)",
-            registry=registry,
-        )
         self.rate_limiter_remaining = pc.Gauge(
             "uc_rate_limiter_remaining_ratio", "Rate limiter remaining ratio", registry=registry,
         )
@@ -739,15 +718,11 @@ class PrometheusExporter:
     def update_system_state(
         self,
         *,
-        circuit_breaker_state: str | None = None,
         rate_limiter_remaining: float | None = None,
         cluster_utilization_pct: float | None = None,
     ) -> None:
         if not self._enabled:
             return
-        if circuit_breaker_state is not None:
-            state_map = {"closed": 0, "half_open": 0.5, "open": 1}
-            self.circuit_breaker_state.set(state_map.get(circuit_breaker_state, -1))
         if rate_limiter_remaining is not None:
             self.rate_limiter_remaining.set(rate_limiter_remaining)
         if cluster_utilization_pct is not None:

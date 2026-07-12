@@ -47,7 +47,6 @@ def _make_aggregator(tmp_path: str, alert_config: AlertConfig | None = None) -> 
     agg._total_completed = 0
     agg._total_failed = 0
     agg._total_retries = 0
-    agg._circuit_breaker_state = "unknown"
     agg._rate_limiter_remaining = 1.0
     agg._cluster_utilization_pct = 0.0
     agg._avg_heartbeat_age = 0.0
@@ -71,7 +70,6 @@ class TestAlertConfig:
     def test_defaults(self):
         cfg = AlertConfig()
         assert cfg.stale_worker_threshold_seconds == 120.0
-        assert cfg.circuit_breaker_alert is True
         assert cfg.rate_limiter_threshold_pct == 80.0
         assert cfg.failure_window_minutes == 60.0
         assert cfg.failure_count_threshold == 5
@@ -95,12 +93,10 @@ class TestAlertConfig:
             error_spike_alert=False,
             slow_tasks_alert=False,
             high_latency_alert=False,
-            circuit_breaker_alert=False,
         )
         assert cfg.error_spike_alert is False
         assert cfg.slow_tasks_alert is False
         assert cfg.high_latency_alert is False
-        assert cfg.circuit_breaker_alert is False
 
 
 # ── Alert Tests ──────────────────────────────────────────────
@@ -336,34 +332,9 @@ class TestPrometheusExporter:
         """update_system_state() does not raise regardless of enabled state."""
         exporter = PrometheusExporter()
         exporter.update_system_state(
-            circuit_breaker_state="open",
             rate_limiter_remaining=0.5,
             cluster_utilization_pct=75.0,
         )
-
-    def test_circuit_breaker_state_mapping(self):
-        """Circuit breaker state maps to correct numeric values."""
-        exporter = PrometheusExporter()
-        if not exporter.enabled:
-            pytest.skip("prometheus_client not installed")
-
-        exporter.update_system_state(circuit_breaker_state="closed")
-        assert exporter.circuit_breaker_state._value.get() == 0
-
-        exporter.update_system_state(circuit_breaker_state="half_open")
-        assert exporter.circuit_breaker_state._value.get() == 0.5
-
-        exporter.update_system_state(circuit_breaker_state="open")
-        assert exporter.circuit_breaker_state._value.get() == 1
-
-    def test_unknown_cb_state_maps_to_negative(self):
-        """Unknown circuit breaker state maps to -1."""
-        exporter = PrometheusExporter()
-        if not exporter.enabled:
-            pytest.skip("prometheus_client not installed")
-
-        exporter.update_system_state(circuit_breaker_state="unknown_state")
-        assert exporter.circuit_breaker_state._value.get() == -1
 
     def test_cluster_utilization_conversion(self):
         """Cluster utilization is converted from percentage to ratio."""
@@ -435,15 +406,6 @@ class TestCheckAlerts:
         # No high_latency alert (200s < 300s threshold)
         alert_types = [a.alert_type for a in new_alerts]
         assert "high_latency" not in alert_types
-
-    def test_circuit_breaker_open_alert(self, tmp_path):
-        agg = _make_aggregator(tmp_path)
-        from ultimate_coders.dashboard.metrics import MetricsSnapshot, SystemMetrics
-        snap = MetricsSnapshot(system=SystemMetrics(circuit_breaker_state="open"))
-        new_alerts, _ = agg.check_alerts(snap)
-        assert len(new_alerts) == 1
-        assert new_alerts[0].alert_type == "circuit_breaker_open"
-        assert new_alerts[0].severity == "critical"
 
     def test_rate_limiter_high_alert(self, tmp_path):
         agg = _make_aggregator(tmp_path)

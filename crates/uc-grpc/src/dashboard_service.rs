@@ -1,7 +1,7 @@
 //! DashboardService implementation — NATS passthrough to Python Orchestrator.
 //!
 //! All DashboardService RPCs forward via NATS request-reply to the Python
-//! Orchestrator, which holds workers/scheduler/circuit-breaker state in memory.
+//! Orchestrator, which holds workers/scheduler state in memory.
 //! When NATS is unavailable, RPCs return UNAVAILABLE status.
 
 #[cfg(feature = "messaging")]
@@ -114,35 +114,6 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                 execution_history: vec![],
             })),
         }
-    }
-
-    async fn get_circuit_breaker_status(
-        &self,
-        _request: Request<GetCircuitBreakerStatusRequest>,
-    ) -> Result<Response<CircuitBreakerStatusResponse>, Status> {
-        match self
-            .nats_dashboard_request("GetCircuitBreakerStatus", serde_json::json!({}))
-            .await
-        {
-            Ok(json) => Ok(Response::new(json_to_circuit_breaker_status_response(
-                &json,
-            ))),
-            Err(_) => Ok(Response::new(CircuitBreakerStatusResponse {
-                available: false,
-                circuit_breaker: None,
-                rate_limiter: None,
-            })),
-        }
-    }
-
-    async fn reset_circuit_breaker(
-        &self,
-        _request: Request<ResetCircuitBreakerRequest>,
-    ) -> Result<Response<ResetCircuitBreakerResponse>, Status> {
-        let json = self
-            .nats_dashboard_request("ResetCircuitBreaker", serde_json::json!({}))
-            .await?;
-        Ok(Response::new(json_to_reset_circuit_breaker_response(&json)))
     }
 
     async fn trigger_scheduler_job(
@@ -535,41 +506,6 @@ fn json_to_scheduler_status_response(v: &serde_json::Value) -> GetSchedulerStatu
     }
 }
 
-fn json_to_cb_proto(v: &serde_json::Value) -> CircuitBreakerProto {
-    CircuitBreakerProto {
-        state: json_str(v, "state").to_string(),
-        failure_count: json_u32(v, "failure_count"),
-        failure_threshold: json_u32(v, "failure_threshold"),
-        recovery_timeout_seconds: json_f64(v, "recovery_timeout_seconds"),
-        last_failure: json_opt_str(v, "last_failure"),
-    }
-}
-
-fn json_to_rl_proto(v: &serde_json::Value) -> RateLimiterProto {
-    RateLimiterProto {
-        max_requests: json_u32(v, "max_requests"),
-        window_seconds: json_f64(v, "window_seconds"),
-        current_requests: json_u32(v, "current_requests"),
-        remaining_ratio: json_f64(v, "remaining_ratio"),
-    }
-}
-
-fn json_to_circuit_breaker_status_response(v: &serde_json::Value) -> CircuitBreakerStatusResponse {
-    CircuitBreakerStatusResponse {
-        available: json_bool(v, "available"),
-        circuit_breaker: v.get("circuit_breaker").map(json_to_cb_proto),
-        rate_limiter: v.get("rate_limiter").map(json_to_rl_proto),
-    }
-}
-
-fn json_to_reset_circuit_breaker_response(v: &serde_json::Value) -> ResetCircuitBreakerResponse {
-    ResetCircuitBreakerResponse {
-        success: json_bool(v, "success"),
-        state: json_str(v, "state").to_string(),
-        error: json_opt_str(v, "error"),
-    }
-}
-
 fn json_to_trigger_scheduler_job_response(v: &serde_json::Value) -> TriggerSchedulerJobResponse {
     TriggerSchedulerJobResponse {
         success: json_bool(v, "success"),
@@ -779,7 +715,6 @@ fn json_to_system_metrics(v: &serde_json::Value) -> SystemMetrics {
             .get("uptime_seconds")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
-        circuit_breaker_state: json_str(v, "circuit_breaker_state").to_string(),
         rate_limiter_remaining_ratio: json_f64(v, "rate_limiter_remaining_ratio"),
         cluster_utilization_pct: json_f64(v, "cluster_utilization_pct"),
     }
@@ -825,9 +760,6 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
         workers: v.get("workers").map(json_to_list_workers_response),
         tasks: v.get("tasks").map(json_to_list_tasks_response),
         scheduler: v.get("scheduler").map(json_to_scheduler_status_response),
-        circuit_breaker: v
-            .get("circuit_breaker")
-            .map(json_to_circuit_breaker_status_response),
         recent_events: v
             .get("recent_events")
             .and_then(|v| v.as_array())
@@ -870,7 +802,7 @@ fn event_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
 /// Build a DashboardSnapshot directly from TaskStore + Engine when NATS is unavailable.
 ///
 /// ponytail: minimal snapshot — workers from heartbeat tracking, tasks from TaskStore,
-/// health from Engine. No scheduler/CB state without Python Orchestrator.
+/// health from Engine. No scheduler state without Python Orchestrator.
 #[cfg(not(feature = "messaging"))]
 async fn build_local_snapshot(
     task_store: &tokio::sync::Mutex<super::server::TaskStore>,
@@ -957,7 +889,6 @@ async fn build_local_snapshot(
         workers: Some(workers),
         tasks: Some(tasks),
         scheduler: None,
-        circuit_breaker: None,
         recent_events: Vec::new(),
         recent_task_events,
         metrics: None,

@@ -204,13 +204,11 @@ class TestMetricsAggregator:
     def test_update_system_state(self) -> None:
         agg = MetricsAggregator()
         agg.update_system_state(
-            circuit_breaker_state="open",
             rate_limiter_remaining=0.5,
             cluster_utilization_pct=75.0,
             avg_heartbeat_age=2.3,
         )
         snap = agg.snapshot()
-        assert snap.system.circuit_breaker_state == "open"
         assert snap.system.rate_limiter_remaining_ratio == 0.5
         assert snap.system.cluster_utilization_pct == 75.0
         assert snap.worker.avg_heartbeat_age_seconds == 2.3

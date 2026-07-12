@@ -37,7 +37,6 @@ crates/
     events.rs               # Event sourcing types + EventStore trait
     checkpoint.rs           # Checkpoint manager with snapshot optimization
     rate_limiter.rs         # Token bucket + LLM rate limiter
-    circuit_breaker.rs      # Circuit breaker pattern
   uc-grpc/src/              # gRPC server/client + proto-to-types conversions
     server.rs               # GrpcServer wrapping EngineApi
     client.rs               # GrpcEngineClient implementing EngineApi

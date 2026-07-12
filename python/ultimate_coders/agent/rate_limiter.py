@@ -1,8 +1,8 @@
 """Rate limiter for LLM API calls.
 
 Implements Token Bucket (RPM + TPM dual dimension), priority queue,
-model fallback chain (Opus -> Sonnet -> Haiku), and Circuit Breaker
-for LLM API fault tolerance.
+model fallback chain (Opus -> Sonnet -> Haiku), and RetryPolicy
+for LLM API retry backoff.
 """
 
 from __future__ import annotations
@@ -30,14 +30,6 @@ class RequestPriority(IntEnum):
     MEDIUM = 1    # Context gathering
     HIGH = 2      # Active worker actions
     CRITICAL = 3  # Orchestrator planning
-
-
-class CircuitState(Enum):
-    """Circuit breaker states."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
 
 
 @dataclass
@@ -247,151 +239,6 @@ class ModelFallbackChain:
         if complexity == TaskComplexity.MEDIUM:
             return self.secondary if secondary_available else self.tertiary
         return self.tertiary
-
-
-class CircuitBreaker:
-    """Circuit Breaker for LLM API fault tolerance.
-
-    Implements the Circuit Breaker pattern to prevent cascading failures
-    when an LLM API endpoint is degraded.
-
-    States:
-        CLOSED: Normal operation. Failures are counted.
-        OPEN: All requests rejected immediately. After timeout, transitions to HALF_OPEN.
-        HALF_OPEN: Limited requests allowed to test recovery.
-
-    Usage:
-        cb = CircuitBreaker()
-        if cb.allow_request():
-            try:
-                result = await llm_client.complete(...)
-                cb.record_success()
-            except Exception:
-                cb.record_failure()
-        else:
-            # Circuit is open, use fallback
-    """
-
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        success_threshold: int = 2,
-        reset_timeout_seconds: float = 30.0,
-    ):
-        self.failure_threshold = failure_threshold
-        self.success_threshold = success_threshold
-        self.reset_timeout = reset_timeout_seconds
-        self._state = CircuitState.CLOSED
-        self._failure_count = 0
-        self._success_count = 0
-        self._last_failure_time: float | None = None
-        self._total_calls = 0
-        self._total_rejected = 0
-
-    def allow_request(self) -> bool:
-        """Check if a request is allowed through the circuit.
-
-        Returns:
-            True if the request can proceed, False if the circuit is open.
-        """
-        self._total_calls += 1
-
-        if self._state == CircuitState.CLOSED:
-            return True
-
-        if self._state == CircuitState.OPEN:
-            # Check if reset timeout has elapsed
-            if self._last_failure_time is not None:
-                elapsed = time.monotonic() - self._last_failure_time
-                if elapsed >= self.reset_timeout:
-                    self._state = CircuitState.HALF_OPEN
-                    self._success_count = 0
-                    return True
-
-            self._total_rejected += 1
-            return False
-
-        # HALF_OPEN: allow limited requests
-        return True
-
-    def record_success(self) -> None:
-        """Record a successful call.
-
-        In half-open state, consecutive successes will close the circuit.
-        """
-        self._failure_count = 0
-
-        if self._state == CircuitState.HALF_OPEN:
-            self._success_count += 1
-            if self._success_count >= self.success_threshold:
-                self._state = CircuitState.CLOSED
-                logger.info("Circuit breaker closed — endpoint recovered")
-
-    def record_failure(self) -> None:
-        """Record a failed call.
-
-        In closed state, consecutive failures will open the circuit.
-        In half-open state, a single failure will re-open the circuit.
-        """
-        if self._state == CircuitState.CLOSED:
-            self._failure_count += 1
-            if self._failure_count >= self.failure_threshold:
-                self._state = CircuitState.OPEN
-                self._last_failure_time = time.monotonic()
-                logger.warning(
-                    "Circuit breaker opened after %d failures",
-                    self._failure_count,
-                )
-        elif self._state == CircuitState.HALF_OPEN:
-            self._state = CircuitState.OPEN
-            self._last_failure_time = time.monotonic()
-            self._success_count = 0
-            logger.warning("Circuit breaker re-opened from half-open state")
-        else:
-            # Already open, update timestamp
-            self._last_failure_time = time.monotonic()
-
-    @property
-    def state(self) -> CircuitState:
-        """Get the current circuit state."""
-        if self._state == CircuitState.OPEN and self._last_failure_time is not None:
-            elapsed = time.monotonic() - self._last_failure_time
-            if elapsed >= self.reset_timeout:
-                return CircuitState.HALF_OPEN
-        return self._state
-
-    @property
-    def failure_count(self) -> int:
-        """Get the current failure count."""
-        return self._failure_count
-
-    @property
-    def total_calls(self) -> int:
-        """Get the total number of calls attempted."""
-        return self._total_calls
-
-    @property
-    def total_rejected(self) -> int:
-        """Get the total number of rejected calls."""
-        return self._total_rejected
-
-    def force_state(self, state: CircuitState) -> None:
-        """Force the circuit into a specific state (for testing)."""
-        self._state = state
-
-    def reset(self) -> None:
-        """Reset the circuit breaker to closed state.
-
-        Clears all failure counts and resets the state to CLOSED.
-        Useful for manual recovery via the dashboard when the
-        underlying service has recovered but the circuit hasn't
-        auto-closed yet.
-        """
-        self._state = CircuitState.CLOSED
-        self._failure_count = 0
-        self._success_count = 0
-        self._last_failure_time = None
-        logger.info("Circuit breaker manually reset to closed state")
 
 
 @dataclass

@@ -74,8 +74,6 @@ async def _adaptive_retry(
 | `FALLBACK_TOOL` | Temporarily remove codegraph tools (`symbol_search`, `find_callers`, `find_callees`, `impact_analysis`, `explore_code`), retry, restore tools |
 | `WAIT_RETRY` | `asyncio.sleep(2)`, then retry via `_execute_with_llm` |
 
-**Circuit breaker integration**: `_execute_with_llm` checks `circuit_breaker.allow_request()` before LLM call. On success → `record_success()`. On exception → `record_failure()`, then re-raise. PURE_LLM path wraps `llm_client.complete()` in try/except for the same pattern.
-
 ### Orchestrator._select_worker
 
 ```python
@@ -121,14 +119,6 @@ Sources (in order):
 | 0.5–0.7 | Append `[~ confidence: X%, verify recommended]` to summary |
 | ≥ 0.7 | Normal success |
 
-### Circuit breaker behavior
-
-| State | `_execute_with_llm` | `_adaptive_retry` |
-|-------|---------------------|-------------------|
-| Closed | Proceed with LLM call | N/A (not reached) |
-| Open | Return `success=False` immediately with "Circuit breaker open" summary | Not invoked (execute_subtask catches the returned failure) |
-| Half-open | Allow one request | N/A |
-
 ### FALLBACK_TOOL tool reduction
 
 Removed tools (temporarily): `symbol_search`, `find_callers`, `find_callees`, `impact_analysis`, `explore_code`.
@@ -156,7 +146,6 @@ importance: 0.6 (confidence ≥ 0.5) or 0.8 (confidence < 0.5)
 | No engine + `_record_experience` | No-op (silently skip) |
 | No engine + `_gather_prior_context` experience recall | No-op (silently skip) |
 | Codegraph unavailable + `_gather_prior_context` | Skip codegraph section |
-| Circuit breaker open + `_execute_with_llm` | Return `success=False` immediately |
 | `tool_log=None` + `_self_evaluate` | Skip run_command check (backward compat) |
 | FALLBACK_TOOL + tools restored after exception | try/finally guarantees restoration |
 
@@ -199,7 +188,7 @@ importance: 0.6 (confidence ≥ 0.5) or 0.8 (confidence < 0.5)
 | `test_select_worker_fallback_load` | No match → lowest load |
 | `test_adaptive_retry_fallback_tool` | Tools reduced then restored |
 | `test_adaptive_retry_shrink_scope` | Timeout halved, max_tokens reduced |
-| `test_adaptive_retry_pure_llm` | No tools in call, circuit breaker tracked |
+| `test_adaptive_retry_pure_llm` | No tools in call |
 | `test_schedule_concurrent_dag` | Execution order respects dependencies |
 | `test_schedule_stuck_detection` | Breaks after 2 zero-progress rounds |
 

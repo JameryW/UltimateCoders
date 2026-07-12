@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-12-remove-dead-circuit-breaker-stub-contract/research/circuit-breaker-footprint.md", "reason": "Complete file:line deletion map across Rust proto/engine/gRPC, Python nats_worker/dashboard/metrics/rate_limiter, frontend types/panel/hooks/App, specs, tests. The implementer follows this map layer by layer."}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "Documents the CB API + reset endpoint being removed (lines 30,38,50,103,131,216-220,225,239,320,348,383,389,391,398,400,414,418). Update to remove CB sections."}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Documents CB integration in _execute_with_llm (lines 77,124-129,159,202). Orchestrator has no CB — remove."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "CB integration in error handling + component health row (lines 103,226,298). Remove."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "CB state-change warn logging example (lines 51,53,127). Remove."}
+{"file": ".trellis/spec/backend/omp-tools-spec.md", "reason": "uc_circuit_breaker tool row (line 307). Remove."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "circuit_breaker.rs file listing (line 40). Remove."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "rate_limiter.py circuit breaker note (line 28). Remove CB mention."}

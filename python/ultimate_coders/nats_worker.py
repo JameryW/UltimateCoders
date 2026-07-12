@@ -2057,14 +2057,6 @@ class NatsWorker:
             "execution_history": history,
         }
 
-    async def _dash_getcircuitbreakerstatus(self, _payload: dict) -> dict:
-        """Return circuit breaker + rate limiter status (deprecated — always unavailable)."""
-        return {"available": False, "circuit_breaker": {}, "rate_limiter": {}}
-
-    async def _dash_resetcircuitbreaker(self, _payload: dict) -> dict:
-        """Reset circuit breaker (deprecated — always returns unavailable)."""
-        return {"success": False, "error": "Circuit breaker removed (sandbox-only mode)"}
-
     async def _dash_triggerschedulerjob(self, payload: dict) -> dict:
         """Trigger a scheduled job."""
         orch = self._orchestrator
@@ -2179,9 +2171,6 @@ class NatsWorker:
         # Scheduler
         scheduler = await self._dash_getschedulerstatus({})
 
-        # Circuit breaker
-        circuit_breaker = await self._dash_getcircuitbreakerstatus({})
-
         # Recent events
         dash_app = getattr(orch, "_dashboard_app", None)
         recent = []
@@ -2194,7 +2183,6 @@ class NatsWorker:
             "workers": workers,
             "tasks": tasks,
             "scheduler": scheduler,
-            "circuit_breaker": circuit_breaker,
             "recent_events": recent,
         }
 

@@ -5,8 +5,6 @@ import { DashboardService } from "@/grpc/engine_pb";
 import {
   ListWorkersRequestSchema,
   GetSchedulerStatusRequestSchema,
-  GetCircuitBreakerStatusRequestSchema,
-  ResetCircuitBreakerRequestSchema,
   TriggerSchedulerJobRequestSchema,
   FlushPendingTasksRequestSchema,
   ListEventsRequestSchema,
@@ -17,13 +15,10 @@ import type {
   TaskEvent as GrpcTaskEvent,
   ListWorkersResponse,
   GetSchedulerStatusResponse,
-  CircuitBreakerStatusResponse,
   WorkerProto,
   ScheduledJobProto,
   NightWindowProto,
   ExecutionHistoryProto,
-  CircuitBreakerProto,
-  RateLimiterProto,
   HealthSnapshot,
   MetricsSnapshot as GrpcMetricsSnapshot,
   TaskMetrics as GrpcTaskMetrics,
@@ -40,9 +35,6 @@ import type {
   NightWindow,
   ScheduledJob,
   ExecutionHistory,
-  CircuitBreakerData,
-  CircuitBreakerInfo,
-  RateLimiterInfo,
   DashboardEvent,
   TaskEvent,
   TasksData,
@@ -121,46 +113,6 @@ function grpcSchedulerToDashboard(resp: GetSchedulerStatusResponse): SchedulerDa
     night_window: resp.nightWindow ? grpcNightWindowToDashboard(resp.nightWindow) : null,
     jobs: resp.jobs.map(grpcScheduledJobToDashboard),
     execution_history: resp.executionHistory.map(grpcExecutionHistoryToDashboard),
-  };
-}
-
-function grpcCircuitBreakerToDashboard(cb: CircuitBreakerProto): CircuitBreakerInfo {
-  return {
-    available: true,
-    state: cb.state,
-    failure_count: cb.failureCount,
-    failure_threshold: cb.failureThreshold,
-    // Proto doesn't track total_calls / total_rejected — mark N/A
-    total_calls: -1,
-    total_rejected: -1,
-    recovery_timeout_seconds: cb.recoveryTimeoutSeconds,
-    last_failure: cb.lastFailure ?? undefined,
-  };
-}
-
-function grpcRateLimiterToDashboard(rl: RateLimiterProto): RateLimiterInfo {
-  return {
-    available: true,
-    rpm_available: Math.round(rl.maxRequests * rl.remainingRatio),
-    tpm_available: -1, // not in proto
-    active_count: rl.currentRequests,
-    total_requests: rl.maxRequests,
-    remaining_ratio: rl.remainingRatio,
-    window_seconds: rl.windowSeconds,
-  };
-}
-
-function grpcCircuitBreakerStatusToDashboard(resp: CircuitBreakerStatusResponse): CircuitBreakerData {
-  return {
-    available: resp.available,
-    circuit_breaker: resp.circuitBreaker
-      ? grpcCircuitBreakerToDashboard(resp.circuitBreaker)
-      : { available: false, state: "Unknown", failure_count: 0, failure_threshold: 0, total_calls: -1, total_rejected: -1, recovery_timeout_seconds: 0 },
-    rate_limiter: resp.rateLimiter
-      ? grpcRateLimiterToDashboard(resp.rateLimiter)
-      : { available: false, rpm_available: 0, tpm_available: -1, active_count: 0, total_requests: 0, remaining_ratio: 0, window_seconds: 0 },
-    engine_circuit_breaker: resp.circuitBreaker ?? {},
-    engine_rate_limiter: resp.rateLimiter ?? {},
   };
 }
 
@@ -270,7 +222,6 @@ function grpcEventMetricsToDashboard(m: GrpcEventMetrics): MetricsSnapshotType["
 function grpcSystemMetricsToDashboard(m: GrpcSystemMetrics): MetricsSnapshotType["system"] {
   return {
     uptime_seconds: Number(m.uptimeSeconds),
-    circuit_breaker_state: m.circuitBreakerState,
     rate_limiter_remaining_ratio: m.rateLimiterRemainingRatio,
     cluster_utilization_pct: m.clusterUtilizationPct,
   };
@@ -289,7 +240,7 @@ function grpcMetricsToDashboard(m: GrpcMetricsSnapshot): MetricsSnapshotType {
       events_per_minute: 0, error_spike: false, event_type_counts: {},
     },
     system: m.system ? grpcSystemMetricsToDashboard(m.system) : {
-      uptime_seconds: 0, circuit_breaker_state: "unknown", rate_limiter_remaining_ratio: 1.0, cluster_utilization_pct: 0,
+      uptime_seconds: 0, rate_limiter_remaining_ratio: 1.0, cluster_utilization_pct: 0,
     },
     trend: m.trend.map((s: GrpcMetricsSample) => ({
       timestamp: Number(s.timestamp),
@@ -315,7 +266,6 @@ interface UseDashboardGrpcOptions {
     health?: HealthData;
     workers?: WorkersData;
     scheduler?: SchedulerData;
-    circuitBreaker?: CircuitBreakerData;
     events?: DashboardEvent[];
     metrics?: MetricsSnapshotType;
   }) => void;
@@ -411,14 +361,12 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           health?: HealthData;
           workers?: WorkersData;
           scheduler?: SchedulerData;
-          circuitBreaker?: CircuitBreakerData;
           events?: DashboardEvent[];
           metrics?: MetricsSnapshotType;
         } = {};
         if (snapshot.health?.available) converted.health = snapshot.health;
         if (snapshot.workers?.available) converted.workers = snapshot.workers;
         if (snapshot.scheduler?.available) converted.scheduler = snapshot.scheduler;
-        if (snapshot.circuit_breaker?.available) converted.circuitBreaker = snapshot.circuit_breaker;
         if (snapshot.metrics) converted.metrics = snapshot.metrics;
         if (snapshot.tasks) {
           // Merge task list from SSE snapshot
@@ -479,7 +427,6 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
             health?: HealthData;
             workers?: WorkersData;
             scheduler?: SchedulerData;
-            circuitBreaker?: CircuitBreakerData;
             events?: DashboardEvent[];
             metrics?: MetricsSnapshotType;
           } = {};
@@ -492,9 +439,6 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           }
           if (snapshot.scheduler) {
             converted.scheduler = grpcSchedulerToDashboard(snapshot.scheduler);
-          }
-          if (snapshot.circuitBreaker) {
-            converted.circuitBreaker = grpcCircuitBreakerStatusToDashboard(snapshot.circuitBreaker);
           }
           if (snapshot.recentEvents.length > 0) {
             converted.events = snapshot.recentEvents.map(grpcEventProtoToDashboardEvent);
@@ -561,20 +505,6 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     return grpcSchedulerToDashboard(resp);
   }, []);
 
-  const getCircuitBreakerStatus = useCallback(async (): Promise<CircuitBreakerData> => {
-    const transport = getTransport();
-    const client = createClient(DashboardService, transport);
-    const resp = await client.getCircuitBreakerStatus(create(GetCircuitBreakerStatusRequestSchema, {}));
-    return grpcCircuitBreakerStatusToDashboard(resp);
-  }, []);
-
-  const resetCircuitBreaker = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
-    const transport = getTransport();
-    const client = createClient(DashboardService, transport);
-    const resp = await client.resetCircuitBreaker(create(ResetCircuitBreakerRequestSchema, {}));
-    return { success: resp.success, error: resp.error ?? undefined };
-  }, []);
-
   const triggerSchedulerJob = useCallback(async (jobId: string): Promise<{ success: boolean; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
@@ -617,8 +547,6 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     disconnect,
     listWorkers,
     getSchedulerStatus,
-    getCircuitBreakerStatus,
-    resetCircuitBreaker,
     triggerSchedulerJob,
     flushPendingTasks,
     listEvents,

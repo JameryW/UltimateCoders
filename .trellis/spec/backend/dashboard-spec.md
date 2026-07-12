@@ -27,7 +27,6 @@ class DashboardApp:
     GET /dashboard/api/workers   → JSONResponse  (worker list)
     GET /dashboard/api/tasks     → JSONResponse  (task status)
     GET /dashboard/api/scheduler → JSONResponse  (scheduler state)
-    GET /dashboard/api/circuit-breaker → JSONResponse (CB + rate limiter)
     GET /dashboard/api/stream    → EventSourceResponse (SSE: hybrid real-time events + 5s snapshot)
     GET /dashboard/api/events    → JSONResponse  (event log, supports ?task_id=&limit=)
 
@@ -35,7 +34,6 @@ class DashboardApp:
     POST /dashboard/api/tasks/submit              → JSONResponse (submit new task)
     POST /dashboard/api/tasks/{id}/pause          → JSONResponse (pause task)
     POST /dashboard/api/tasks/{id}/resume         → JSONResponse (resume task)
-    POST /dashboard/api/circuit-breaker/reset     → JSONResponse (reset CB)
     POST /dashboard/api/scheduler/jobs/{id}/trigger → JSONResponse (trigger job)
     POST /dashboard/api/tasks/flush-pending       → JSONResponse (flush night-window queue)
 
@@ -47,7 +45,6 @@ class DashboardApp:
     def _get_workers_data(self) -> dict
     def _get_tasks_data(self) -> dict
     def _get_scheduler_data(self) -> dict
-    def _get_circuit_breaker_data(self, health_data: dict | None = None) -> dict
     def _get_full_snapshot(self) -> dict
     def _record_event(self, event_type: str, **details) -> None
 ```
@@ -100,16 +97,7 @@ class Orchestrator:
     def stop_dashboard(self) -> None
     def pause_task(self, task_id: str) -> bool
     def resume_task(self, task_id: str) -> bool
-    def reset_circuit_breaker(self) -> bool
     # Emits: task_submitted (in submit_task), task_completed (in handle_subtask_result)
-```
-
-#### CircuitBreaker (`python/ultimate_coders/agent/rate_limiter.py`)
-
-```python
-class CircuitBreaker:
-    # Existing methods ...
-    def reset(self) -> None  # Reset to CLOSED state, clear counts
 ```
 
 #### Scheduler (`python/ultimate_coders/agent/scheduler.py`)
@@ -128,7 +116,6 @@ class Scheduler:
 |----------|-----------------|------------------|
 | `POST /tasks/{id}/pause` | `{"success": true, "task_id": ..., "status": "paused"}` | 400: task not found or not pausable, 503: no orchestrator |
 | `POST /tasks/{id}/resume` | `{"success": true, "task_id": ..., "status": "in_progress"}` | 400: task not found or not resumable, 503: no orchestrator |
-| `POST /circuit-breaker/reset` | `{"success": true, "state": "closed"}` | 400: no CB configured, 503: no orchestrator |
 | `POST /scheduler/jobs/{id}/trigger` | `{"success": true, "job_id": ...}` | 404: job not found, 503: no scheduler |
 | `POST /tasks/flush-pending` | `{"success": true, "pending_count": N}` | 503: no orchestrator |
 | `POST /tasks/submit` | `{"success": true, "task_id": ..., "status": ..., "subtask_count": N, "subtasks": [...]}` | 400: no description or invalid JSON, 503: no orchestrator |
@@ -213,16 +200,8 @@ Each SSE event payload is a JSON string with this structure:
     "jobs": [...],
     "recent_executions": [...]
   },
-  "circuit_breaker": {
-    "available": true|false,
-    "circuit_breaker": {"available": true|false, "state": "Closed|Open|HalfOpen|Unknown", "failure_count": 0, "total_calls": 100, "total_rejected": 0},
-    "rate_limiter": {"available": true|false, "rpm_available": 60, "tpm_available": 100000, "active_count": 2, "total_requests": 15},
-    "engine_circuit_breaker": {},
-    "engine_rate_limiter": {}
-  },
   "events": [
-    {"timestamp": "2026-06-12T08:30:00Z", "type": "task_pause", "details": {"task_id": "..."}},
-    {"timestamp": "2026-06-12T08:29:00Z", "type": "circuit_breaker_reset", "details": {}}
+    {"timestamp": "2026-06-12T08:30:00Z", "type": "task_pause", "details": {"task_id": "..."}}
   ]
 }
 ```
@@ -231,14 +210,12 @@ Each SSE event payload is a JSON string with this structure:
 
 | Condition | Panel Response |
 |-----------|---------------|
-| `orchestrator` is None | All panels: `{"available": false}` with full key structure (CB/RL include all metric keys with zero/Unknown defaults) |
+| `orchestrator` is None | All panels: `{"available": false}` with full key structure |
 | `orchestrator.scheduler` is None | `scheduler.available = false`, `night_window = null`, `jobs = []` |
 | `orchestrator.engine` is None | `health.status = "unavailable"`, `components = []` |
 | `engine.health()` raises exception | `health.status = "error"`, `error` key with message, `components = []` |
 | `scheduler.list_jobs()` raises exception | `scheduler.available = true` (still running), `jobs = []` |
-| `circuit_breaker` attribute missing or None | `circuit_breaker.available = false`, all metric keys present with zero/Unknown defaults |
 | `rate_limiter` attribute missing or None | `rate_limiter.available = false`, all metric keys present with zero defaults |
-| CB/RL read raises exception | `available = false`, `error` key added to default dict (dict not replaced) |
 | No workers registered | `workers.available = true`, `workers = []` |
 | No tasks | `tasks.available = true`, `tasks = []`, `total = 0` |
 
@@ -317,7 +294,6 @@ orch.start_dashboard(port=80)  # privileged port
 | Tasks API returns JSON | Unit | `available`, `total`, `by_status` keys |
 | Scheduler API without scheduler | Unit | `available = false` |
 | Scheduler API with scheduler | Unit | `available = true`, `jobs` is list |
-| Circuit breaker without engine | Unit | `circuit_breaker.available = false`, structure has all keys |
 | SSE stream route registered | Unit | Route `/dashboard/api/stream` exists |
 | Full snapshot is JSON-serializable | Unit | `json.dumps(snapshot)` succeeds |
 | Orchestrator.start_dashboard() | Unit | Creates DashboardApp, starts uvicorn in thread |
@@ -334,8 +310,6 @@ orch.start_dashboard(port=80)  # privileged port
 | POST pause not found | Unit | Status 400 |
 | POST resume task | Unit | Status 200, `success=true`, `status=in_progress` |
 | POST resume not paused | Unit | Status 400 |
-| POST CB reset | Unit | Status 200, `success=true`, `state=closed` |
-| POST CB reset no CB | Unit | Status 400 |
 | POST flush pending | Unit | Status 200, `success=true`, has `pending_count` |
 | POST trigger job no scheduler | Unit | Status 503 |
 | POST pause no orchestrator | Unit | Status 503 |
@@ -345,9 +319,6 @@ orch.start_dashboard(port=80)  # privileged port
 | Snapshot includes events | Unit | `events` key present in full snapshot |
 | Orchestrator.pause_task | Unit | Returns True, task status = PAUSED |
 | Orchestrator.resume_task | Unit | Returns True, task status = IN_PROGRESS |
-| Orchestrator.reset_circuit_breaker | Unit | Returns True, CB state = CLOSED |
-| CircuitBreaker.reset from OPEN | Unit | State transitions to CLOSED, counts zeroed |
-| CircuitBreaker.reset from HALF_OPEN | Unit | State transitions to CLOSED |
 
 ### 6c. Tests Required (Task Submit + Event Emitter)
 
@@ -374,59 +345,6 @@ orch.start_dashboard(port=80)  # privileged port
 | Events API no filter | Unit | GET /events returns all events |
 
 ### 7. Wrong vs Correct
-
-#### Wrong: Duplicate engine.health() calls in SSE snapshot
-
-```python
-# BAD: health() called twice per SSE push (PyO3 → Rust round-trip)
-health_data = self._get_health_data()
-cb_data = self._get_circuit_breaker_data()  # calls health() again internally
-```
-
-#### Correct: Pass health_data to avoid duplicate PyO3 calls
-
-```python
-# GOOD: health() called once, result passed to circuit breaker
-health_data = self._get_health_data()
-cb_data = self._get_circuit_breaker_data(health_data=health_data)
-```
-
-#### Wrong: Inconsistent response structure for missing orchestrator
-
-```python
-# BAD: missing keys break JS frontend
-def _get_circuit_breaker_data(self):
-    if not self.orchestrator:
-        return {"available": False}  # no circuit_breaker or rate_limiter keys!
-
-# BAD: sparse dict on exception overwrites all defaults
-cb_data = {"available": False}
-try:
-    cb_data = read_cb()
-except Exception:
-    cb_data = {"available": False, "error": str(e)}  # lost state/failure_count keys!
-```
-
-#### Correct: Always include all expected keys, preserve defaults on error
-
-```python
-# GOOD: consistent structure, JS can always read data["circuit_breaker"]["state"]
-def _get_circuit_breaker_data(self):
-    if not self.orchestrator:
-        return {
-            "available": False,
-            "circuit_breaker": {"available": False, "state": "Unknown", "failure_count": 0, ...},
-            "rate_limiter": {"available": False, "rpm_available": 0, "tpm_available": 0, ...},
-            ...
-        }
-
-# GOOD: on exception, add error to existing defaults instead of replacing
-cb_data = {"available": False, "state": "Unknown", "failure_count": 0, ...}
-try:
-    cb_data = read_cb()
-except Exception as e:
-    cb_data["error"] = str(e)  # preserves all default keys
-```
 
 #### Wrong: Duplicate task_submitted event emission
 
