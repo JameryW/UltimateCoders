@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-12-enhance-multi-agent-workflow-orchestration-artifact-retry-condition-parallel/research/orchestration-extension-points.md", "reason": "Verifier checks each phase's cited line numbers + caveats (dispatch bug, lossy parse, worktree blocker, AgentOutput not in proto) were handled."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo/ruff/pytest/bun/tsc green per phase."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Condition parse-error + parallel read-only violation must fail subtask with clear errors, not silent skip."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Each phase spans proto/Rust/TS/Python; verify no dangling refs + backward compat (existing 3-step chains unchanged)."}

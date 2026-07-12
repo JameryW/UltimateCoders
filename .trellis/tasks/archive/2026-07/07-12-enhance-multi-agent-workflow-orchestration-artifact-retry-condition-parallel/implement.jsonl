@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/07-12-enhance-multi-agent-workflow-orchestration-artifact-retry-condition-parallel/research/orchestration-extension-points.md", "reason": "Complete data-flow map: AgentOutput fields, _render_step_prompt, WorkflowStepProto cross-layer flow, _dispatch_remote bug, parseTaskFromProto lossy parse, worktree parallel blocker, event schema. The implementer follows this map per phase."}
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capability + step execution contract — verify new step fields (retry/condition/parallel_group) align with documented agent capability model."}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS subtask dispatch contract — Phase 0 fixes _dispatch_remote steps omission; verify against documented NATS subtask payload."}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "Worker service contract — step execution + event emission; verify retry/condition/parallel events conform."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "5-phase changes span proto/Rust/TS/Python 4 layers; verify cross-layer field consistency per phase."}
