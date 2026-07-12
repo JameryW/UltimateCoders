@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import { classifyError, formatErrorForDisplay } from "./error-format";
 
 describe("classifyError", () => {
@@ -72,7 +73,7 @@ describe("classifyError", () => {
 });
 
 describe("formatErrorForDisplay", () => {
-	const identity = (_color: string, text: string) => text;
+	const identity = (_color: ThemeColor, text: string) => text;
 
 	it("formats transient error with retry count label", () => {
 		const output = formatErrorForDisplay(
@@ -133,7 +134,7 @@ describe("formatErrorForDisplay", () => {
 
 	it("applies color function to output", () => {
 		let colorCalled = false;
-		const coloredFn = (color: string, text: string) => {
+		const coloredFn = (color: ThemeColor, text: string) => {
 			colorCalled = true;
 			return `<${color}>${text}</${color}>`;
 		};
