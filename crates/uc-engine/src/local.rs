@@ -58,8 +58,6 @@ pub struct LocalEngine {
     sandbox: Arc<dyn Sandbox>,
     /// Task store for task orchestration methods.
     task_store: Arc<Mutex<crate::task_store::TaskStore>>,
-    #[allow(dead_code)]
-    config: EngineConfig,
     start_time: Instant,
 }
 
@@ -150,7 +148,6 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
-            config,
             start_time: Instant::now(),
         })
     }
@@ -216,7 +213,6 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
-            config: EngineConfig::default(),
             start_time: Instant::now(),
         }
     }
@@ -275,7 +271,6 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
-            config,
             start_time: Instant::now(),
         }
     }
