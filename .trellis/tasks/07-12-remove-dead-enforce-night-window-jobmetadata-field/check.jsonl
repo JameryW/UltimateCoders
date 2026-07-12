@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo check/test green after field deletion."}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Confirm global night_window API unaffected; no per-job enforce contract documented."}
