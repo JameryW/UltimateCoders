@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo check/test green after field deletion."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Confirm no silent breakage from removing a private field that had no Drop side-effect."}
