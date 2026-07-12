@@ -164,6 +164,20 @@ function SubtaskProgress({ st }: { st: SubtaskSummary }) {
           {st.step_agent}
         </span>
       )}
+      {st.step_status && ["retrying", "skipped", "failed"].includes(st.step_status) && (
+        <span
+          className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+            st.step_status === "retrying"
+              ? "bg-yellow-500/20 text-yellow-400"
+              : st.step_status === "skipped"
+                ? "bg-gray-500/20 text-gray-400"
+                : "bg-red-500/20 text-red-400"
+          }`}
+          title={`Step status: ${st.step_status}`}
+        >
+          {st.step_status}
+        </span>
+      )}
       {st.phase && (
         <span className="text-[10px] text-blue-400 font-medium truncate" title={st.phase}>
           {st.phase}

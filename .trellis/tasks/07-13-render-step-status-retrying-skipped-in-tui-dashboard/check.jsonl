@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — verify tsc green (OMP + dashboard) + backward compat (no step info = old rendering)."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify step_status optional fields handled safely (no undefined access)."}
