@@ -58,9 +58,6 @@ impl ScheduleDispatcher for LoggingDispatcher {
 struct JobMetadata {
     /// The scheduled task definition.
     task: ScheduledTask,
-    /// Whether to enforce the night window guard.
-    #[allow(dead_code)] // Used in PR4 for per-job night window control
-    enforce_night_window: bool,
 }
 
 /// Result of adding a job to the scheduler.
@@ -184,10 +181,7 @@ impl SchedulerService {
         }
 
         // Store metadata locally
-        let metadata = JobMetadata {
-            task,
-            enforce_night_window: true,
-        };
+        let metadata = JobMetadata { task };
         self.job_metadata.write().await.insert(task_id, metadata);
 
         info!(
@@ -227,10 +221,7 @@ impl SchedulerService {
         }
 
         // Store metadata locally
-        let metadata = JobMetadata {
-            task,
-            enforce_night_window: true,
-        };
+        let metadata = JobMetadata { task };
         self.job_metadata.write().await.insert(task_id, metadata);
 
         info!(
@@ -425,13 +416,7 @@ impl SchedulerService {
         let persisted_tasks = self.store.list_tasks(true).await?;
         let mut metadata = self.job_metadata.write().await;
         for task in &persisted_tasks {
-            metadata.insert(
-                task.id,
-                JobMetadata {
-                    task: task.clone(),
-                    enforce_night_window: true,
-                },
-            );
+            metadata.insert(task.id, JobMetadata { task: task.clone() });
         }
         drop(metadata); // Release lock before starting scheduler
 
