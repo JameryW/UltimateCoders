@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// Semantic search engine backed by Qdrant vector similarity.
 ///
 /// Uses the `EmbeddingService` to compute query embeddings, then searches
-/// the `code_embeddings` collection in Qdrant (or the fallback store).
+/// the shared `memory_embeddings` collection in Qdrant (key prefix `code_embedding:`) or the fallback store.
 pub struct SemanticSearchEngine {
     semantic_indexer: Arc<SemanticIndexer>,
     long_term_memory: Arc<LongTermMemory>,
