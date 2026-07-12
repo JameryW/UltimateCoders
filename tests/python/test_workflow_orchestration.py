@@ -104,6 +104,197 @@ def test_render_injects_context_and_file_constraints():
     assert rendered == "ctx=CTX fc=a.rs, b.rs"
 
 
+# ── _render_step_prompt: {{prev_outputs_json}} / {{stepN.outputs_json}} ──
+
+
+def test_render_prev_outputs_json_step0_is_empty_object():
+    """Step 0 has no predecessor → {{prev_outputs_json}} = "{}"."""
+    w = _make_worker()
+    rendered = w._render_step_prompt(
+        "prior={{prev_outputs_json}}",
+        idx=0,
+        step_outputs=[],
+        prev=None,
+        context_block="",
+        file_constraints_str="",
+    )
+    assert rendered == 'prior={}'
+
+
+def test_render_prev_outputs_json_contains_full_artifact():
+    """{{prev_outputs_json}} serializes summary, success, file_changes,
+    stderr_tail, tool_calls — everything the next agent needs."""
+    w = _make_worker()
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    prev = AgentOutput(
+        summary="wrote main.rs",
+        file_changes=[
+            FileChange(
+                file_path="src/main.rs",
+                change_type=ChangeType.MODIFIED,
+                diff="@@ -1,3 +1,5 @@",
+            ),
+            FileChange(
+                file_path="src/lib.rs",
+                change_type=ChangeType.CREATED,
+                diff="pub fn new() {}",
+            ),
+        ],
+        success=True,
+        stderr_tail="warning: unused import",
+        tool_calls=["Edit", "Bash"],
+    )
+    rendered = w._render_step_prompt(
+        "CR: {{prev_outputs_json}}",
+        idx=1,
+        step_outputs=[prev],
+        prev=prev,
+        context_block="",
+        file_constraints_str="",
+    )
+    import json as _json
+
+    # Extract the JSON blob from the rendered string.
+    blob = rendered[len("CR: "):]
+    data = _json.loads(blob)
+
+    assert data["summary"] == "wrote main.rs"
+    assert data["success"] is True
+    assert data["stderr_tail"] == "warning: unused import"
+    assert data["tool_calls"] == ["Edit", "Bash"]
+    assert len(data["file_changes"]) == 2
+    assert data["file_changes"][0]["file_path"] == "src/main.rs"
+    assert data["file_changes"][0]["change_type"] == "modified"
+    assert data["file_changes"][0]["diff"] == "@@ -1,3 +1,5 @@"
+    assert data["file_changes"][1]["file_path"] == "src/lib.rs"
+    assert data["file_changes"][1]["change_type"] == "created"
+    # token_usage must NOT be present (irrelevant to next agent).
+    assert "token_usage" not in data
+
+
+def test_render_step_n_outputs_json_references_earlier_step():
+    """{{step0.outputs_json}} serializes step 0's full AgentOutput."""
+    w = _make_worker()
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    step0 = AgentOutput(
+        summary="wrote main.rs",
+        file_changes=[
+            FileChange(file_path="src/main.rs", change_type=ChangeType.MODIFIED, diff="d"),
+        ],
+        success=True,
+        stderr_tail="",
+        tool_calls=["Edit"],
+    )
+    step1 = AgentOutput(
+        summary="CR ok", file_changes=[], success=True, stderr_tail="", tool_calls=[]
+    )
+    rendered = w._render_step_prompt(
+        "revise; step0_json={{step0.outputs_json}}",
+        idx=2,
+        step_outputs=[step0, step1],
+        prev=step1,
+        context_block="",
+        file_constraints_str="",
+    )
+    import json as _json
+
+    blob = rendered[len("revise; step0_json="):]
+    data = _json.loads(blob)
+    assert data["summary"] == "wrote main.rs"
+    assert data["success"] is True
+    assert data["file_changes"][0]["file_path"] == "src/main.rs"
+    assert data["file_changes"][0]["change_type"] == "modified"
+    assert data["tool_calls"] == ["Edit"]
+
+
+def test_render_prev_outputs_json_truncates_large_fields():
+    """Truncation keeps the JSON blob from blowing the agent's context window."""
+    w = _make_worker()
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    big_summary = "x" * 5000
+    big_diff = "d" * 5000
+    big_stderr = "e" * 5000
+    many_tools = [f"tool{i}" for i in range(200)]
+    prev = AgentOutput(
+        summary=big_summary,
+        file_changes=[
+            FileChange(file_path="a.rs", change_type=ChangeType.MODIFIED, diff=big_diff),
+        ],
+        success=False,
+        stderr_tail=big_stderr,
+        tool_calls=many_tools,
+    )
+    rendered = w._render_step_prompt(
+        "{{prev_outputs_json}}",
+        idx=1,
+        step_outputs=[prev],
+        prev=prev,
+        context_block="",
+        file_constraints_str="",
+    )
+    import json as _json
+
+    data = _json.loads(rendered)
+    # summary ≤ 2000 chars
+    assert len(data["summary"]) == 2000
+    # stderr_tail ≤ 1000 chars
+    assert len(data["stderr_tail"]) == 1000
+    # per-file diff ≤ 1000 chars
+    assert len(data["file_changes"][0]["diff"]) == 1000
+    # tool_calls ≤ 50 entries
+    assert len(data["tool_calls"]) == 50
+
+
+def test_render_prev_outputs_json_omits_token_usage():
+    """token_usage (cost/billing) is irrelevant to the next agent — omit it."""
+    w = _make_worker()
+    from ultimate_coders.agent.sandbox import TokenUsage
+
+    prev = AgentOutput(
+        summary="ok",
+        token_usage=TokenUsage(input_tokens=1000, output_tokens=500, total_cost_usd=0.05),
+    )
+    rendered = w._render_step_prompt(
+        "{{prev_outputs_json}}",
+        idx=1,
+        step_outputs=[prev],
+        prev=prev,
+        context_block="",
+        file_constraints_str="",
+    )
+    import json as _json
+
+    data = _json.loads(rendered)
+    assert "token_usage" not in data
+    assert data["summary"] == "ok"
+
+
+def test_render_existing_vars_still_work_alongside_json():
+    """Backward compat: {{prev_summary}} / {{prev_files}} coexist with JSON."""
+    w = _make_worker()
+    from ultimate_coders.agent.types import ChangeType, FileChange
+
+    prev = AgentOutput(
+        summary="wrote main.rs",
+        file_changes=[FileChange(file_path="src/main.rs", change_type=ChangeType.MODIFIED)],
+        success=True,
+    )
+    rendered = w._render_step_prompt(
+        "s={{prev_summary}} f={{prev_files}} j={{prev_outputs_json}}",
+        idx=1,
+        step_outputs=[prev],
+        prev=prev,
+        context_block="",
+        file_constraints_str="",
+    )
+    assert "s=wrote main.rs" in rendered
+    assert "f=src/main.rs" in rendered
+    assert '"summary":"wrote main.rs"' in rendered
+
+
 # ── _execute_steps ───────────────────────────────────────────────
 
 

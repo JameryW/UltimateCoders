@@ -1178,6 +1178,46 @@ class Worker:
             tool_calls=last_output.tool_calls,
         )
 
+    # Truncation limits for {{prev_outputs_json}} / {{stepN.outputs_json}}.
+    # Keeps the JSON blob from blowing the agent's context window.
+    _ARTIFACT_SUMMARY_MAX = 2000
+    _ARTIFACT_STDERR_MAX = 1000
+    _ARTIFACT_DIFF_MAX = 1000
+    _ARTIFACT_TOOL_CALLS_MAX = 50
+
+    @staticmethod
+    def _output_to_json(out: AgentOutput | None) -> str:
+        """Serialize an AgentOutput to a compact JSON string for prompt injection.
+
+        Exposes summary, success, file_changes, stderr_tail, and tool_calls —
+        everything a downstream agent needs to reason about the prior step's
+        result. ``token_usage`` is omitted (cost/billing detail irrelevant to
+        the next agent). Large fields are truncated for prompt safety.
+        Returns ``"{}"`` when ``out`` is None (step 0, no predecessor).
+        """
+        if out is None:
+            return "{}"
+        fc_list = []
+        for fc in out.file_changes:
+            fc_list.append(
+                {
+                    "file_path": fc.file_path,
+                    "change_type": fc.change_type.value if fc.change_type else "modified",
+                    "diff": (fc.diff or "")[: Worker._ARTIFACT_DIFF_MAX],
+                }
+            )
+        return json.dumps(
+            {
+                "summary": (out.summary or "")[: Worker._ARTIFACT_SUMMARY_MAX],
+                "success": out.success,
+                "file_changes": fc_list,
+                "stderr_tail": (out.stderr_tail or "")[: Worker._ARTIFACT_STDERR_MAX],
+                "tool_calls": (out.tool_calls or [])[: Worker._ARTIFACT_TOOL_CALLS_MAX],
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
     def _render_step_prompt(
         self,
         template: str,
@@ -1192,7 +1232,13 @@ class Worker:
         Supported variables:
           {{prev_summary}} — previous step's summary (empty for step 0)
           {{prev_files}}   — previous step's modified file paths, one/line
+          {{prev_outputs_json}} — previous step's full AgentOutput as JSON
+                                   (summary, success, file_changes,
+                                   stderr_tail, tool_calls; truncated).
+                                   ``"{}"`` for step 0 (no predecessor).
           {{stepN.summary}} / {{stepN.files}} — step N's output (N < idx)
+          {{stepN.outputs_json}} — step N's full AgentOutput as JSON (same
+                                    shape as {{prev_outputs_json}}).
           {{context}}      — the subtask-level context_block
           {{file_constraints}} — comma-joined file_constraints
         """
@@ -1202,19 +1248,22 @@ class Worker:
 
         prev_summary = prev.summary if prev else ""
         prev_files = _files(prev) if prev else ""
+        prev_json = self._output_to_json(prev)
 
         rendered = template
         rendered = rendered.replace("{{prev_summary}}", prev_summary)
         rendered = rendered.replace("{{prev_files}}", prev_files)
+        rendered = rendered.replace("{{prev_outputs_json}}", prev_json)
         rendered = rendered.replace("{{context}}", context_block or "")
         rendered = rendered.replace("{{file_constraints}}", file_constraints_str)
 
-        # {{stepN.summary}} / {{stepN.files}} for any prior step.
-        # ponytail: f-string {{ → literal {, so "{{{{...}}}}" yields the
-        # double-brace token "{{stepN.summary}}" that templates use.
+        # {{stepN.summary}} / {{stepN.files}} / {{stepN.outputs_json}} for any
+        # prior step. ponytail: f-string {{ → literal {, so "{{{{...}}}}" yields
+        # the double-brace token "{{stepN.summary}}" that templates use.
         for n in range(idx):
             if n < len(step_outputs):
                 so = step_outputs[n]
+                so_json = self._output_to_json(so)
                 rendered = rendered.replace(
                     f"{{{{step{n}.summary}}}}",
                     so.summary,
@@ -1222,6 +1271,10 @@ class Worker:
                 rendered = rendered.replace(
                     f"{{{{step{n}.files}}}}",
                     _files(so),
+                )
+                rendered = rendered.replace(
+                    f"{{{{step{n}.outputs_json}}}}",
+                    so_json,
                 )
 
         return rendered
