@@ -1166,3 +1166,40 @@ Removed dead Orchestrator._pending_task_count: int = 0 field. Stored at init, ne
 ### Next Steps
 
 - None - task complete
+
+
+## Session 88: Multi-agent workflow orchestration enhancement (5 phases); PR #245-249
+
+**Date**: 2026-07-13
+**Task**: Multi-agent workflow orchestration enhancement (5 phases); PR #245-249
+**Branch**: `main`
+
+### Summary
+
+Enhanced multi-agent workflow orchestration across 5 phases. Phase 0: fixed Python _dispatch_remote omitting steps + TS parseTaskFromProto dropping step fields. Phase 1: artifact passing via {{prev_outputs_json}}. Phase 2: step retry (retry_count/retry_delay_ms cross-layer + worker loop). Phase 3: conditional skip via expression language (condition + recursive-descent parser step_condition.py). Phase 4: read-only parallel groups (parallel_group + asyncio.gather + _run_single_step refactor; hard read-only constraint to sidestep worktree conflict). All cross-layer proto/Rust/TS/Python + decomposer.md + regen engine_pb.ts. Backward compat: empty = current. CI all green. Merged 6e86ba5c/f786fe05/038e2971/83fe26b5/82d4c7e2.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6e86ba5c` | (see git log) |
+| `f786fe05` | (see git log) |
+| `038e2971` | (see git log) |
+| `83fe26b5` | (see git log) |
+| `82d4c7e2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
