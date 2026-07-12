@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-12-remove-dead-circuit-breaker-stub-contract/research/circuit-breaker-footprint.md", "reason": "Deletion map + 5 caveats (RetryPolicy coupling, PyO3 binding, RateLimiter separation, Prometheus gauge, generated proto). Verifier checks each caveat was handled."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar — verify cargo check/test workspace + ruff + pytest green after deletion."}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Line 215 already notes 'no circuit_breaker' — confirms removal intent; verify spec stays consistent post-cleanup."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Deletion spans 4 layers (Rust/Python/TS/proto); verify cross-layer consistency — no dangling refs after removal."}
