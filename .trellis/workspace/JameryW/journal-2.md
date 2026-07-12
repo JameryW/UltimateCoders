@@ -968,3 +968,36 @@ Follow-up to PR #237. Removed dead SandboxConfig.backend field — written in on
 ### Next Steps
 
 - None - task complete
+
+
+## Session 82: Remove dead circuit breaker dashboard contract (cross-layer); PR #239
+
+**Date**: 2026-07-12
+**Task**: Remove dead circuit breaker dashboard contract (cross-layer); PR #239
+**Branch**: `main`
+
+### Summary
+
+Removed dead circuit breaker feature across 4 layers + proto + specs. Backend stubs returned hardcoded unavailable, Python CircuitBreaker class never instantiated, Rust CB methods never called, frontend display logic never activated. Deleted circuit_breaker.rs (445 LOC), CircuitBreakerPanel.tsx (179 LOC), 2 gRPC RPCs + 6 proto messages, Python CircuitBreaker class, metrics fields/gauge/alert, all frontend types/hooks/App refs, 7 spec files cleaned. Restored buf.yaml/buf.gen.yaml. Regenerated both engine_pb.ts (dashboard + OMP). Net -1487 lines (32 files). Kept LIVE OMP TypeScript CircuitBreaker in scheduler.ts (host subtask wave-overlap CB, separate component) - research had missed this layer, caught during verification. CI 15/15 green. Sub-agents hit repeated 503 API errors; main session handled OMP engine_pb regen + final verification inline.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2db49f53` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
