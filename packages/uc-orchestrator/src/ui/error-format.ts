@@ -11,6 +11,8 @@
  * (not the friendly prefix).
  */
 
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent";
+
 // ponytail: markers must stay in sync with python/ultimate_coders/agent/llm.py
 // _TRANSIENT_RETRY_MARKERS and _PERMANENT_ERROR_MARKERS.
 const TRANSIENT_MARKERS = [
@@ -95,7 +97,7 @@ export function classifyError(errorStr: string): ClassifiedError {
 export function formatErrorForDisplay(
 	errorStr: string,
 	maxWidth: number,
-	fgColored: (color: string, text: string) => string,
+	fgColored: (color: ThemeColor, text: string) => string,
 ): string {
 	const { kind, rootCause, retryCount } = classifyError(errorStr);
 
