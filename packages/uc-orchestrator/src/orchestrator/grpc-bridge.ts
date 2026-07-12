@@ -69,7 +69,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
-		steps?: Array<{ agent: string; prompt: string }>;
+		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean }>;
 	}>;
 }
 
@@ -771,7 +771,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -784,7 +784,12 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
-				steps: st.steps?.map((s) => ({ agent: s.agent, prompt: s.prompt })),
+				steps: st.steps?.map((s) => ({
+					agent: s.agent,
+					prompt: s.prompt,
+					agentConfigJson: s.agentConfigJson,
+					abortOnFailure: s.abortOnFailure,
+				})),
 			})),
 		};
 	}
@@ -803,7 +808,12 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
-				steps: st.steps?.map((s) => ({ agent: s.agent, prompt: s.prompt })),
+				steps: st.steps?.map((s) => ({
+					agent: s.agent,
+					prompt: s.prompt,
+					agentConfigJson: s.agentConfigJson,
+					abortOnFailure: s.abortOnFailure,
+				})),
 			})),
 		};
 	}

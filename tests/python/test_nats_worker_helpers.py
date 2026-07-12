@@ -13,13 +13,15 @@ Covers regression bugs fixed in the agent-deep-analysis loop:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskStatus,
     Task,
     TaskStatus,
+    WorkflowStep,
 )
 from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 
@@ -120,3 +122,66 @@ def test_reset_subtask_to_pending_unknown_id_returns_false():
     nw = _make_worker()
     nw._orchestrator = Orchestrator()
     assert nw._reset_subtask_to_pending("nope") is False
+
+
+# ── _dispatch_remote includes steps ─────────────────────────────
+
+
+def test_dispatch_remote_serializes_steps_in_nats_payload():
+    """Regression: _dispatch_remote omitted `steps` from the NATS JSON.
+
+    Python-dispatched remote subtasks lost their workflow chain (steps
+    silently dropped). Rust server dispatch (NatsSubtaskExecute) already
+    included steps. The fix adds `"steps": [s.to_dict() for s in subtask.steps]`.
+    """
+    nw = _make_worker()
+
+    # Mock orchestrator so assign_subtask doesn't crash.
+    nw._orchestrator = MagicMock()
+    nw._orchestrator.assign_subtask = AsyncMock()
+    nw._orchestrator.conflict_detector = MagicMock()
+
+    # Mock NATS client to capture the published payload.
+    captured: dict[str, bytes] = {}
+
+    class FakeNc:
+        async def publish(self, subject: str, payload: bytes) -> None:
+            captured["subject"] = subject
+            captured["payload"] = payload
+
+    nw._nc = FakeNc()  # type: ignore[assignment]
+    nw._publisher = MagicMock()  # truthy so the early return is skipped
+
+    # Subtask with 2 steps — must round-trip through the NATS payload.
+    steps = [
+        WorkflowStep(
+            agent="claude-code",
+            prompt="Implement feature X",
+            abort_on_failure=True,
+        ),
+        WorkflowStep(
+            agent="codex",
+            prompt="CR the implementation. {{prev_summary}}",
+            abort_on_failure=False,
+        ),
+    ]
+    subtask = Subtask(
+        id="st-1",
+        description="test subtask",
+        parent_id="t-1",
+        steps=steps,
+    )
+
+    import asyncio
+
+    asyncio.run(nw._dispatch_remote(subtask))
+
+    assert "payload" in captured, "NATS publish was not called"
+    payload = json.loads(captured["payload"])
+    assert "steps" in payload, "steps key missing from dispatch payload"
+    assert len(payload["steps"]) == 2
+    assert payload["steps"][0]["agent"] == "claude-code"
+    assert payload["steps"][0]["prompt"] == "Implement feature X"
+    assert payload["steps"][0]["abort_on_failure"] is True
+    assert payload["steps"][1]["agent"] == "codex"
+    assert payload["steps"][1]["abort_on_failure"] is False
