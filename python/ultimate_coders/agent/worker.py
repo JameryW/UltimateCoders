@@ -38,6 +38,7 @@ from ultimate_coders.agent.state_sync import (
     FileChangeEvent,
     FileChangeEventType,
 )
+from ultimate_coders.agent.step_condition import ConditionError, evaluate
 from ultimate_coders.agent.types import (
     FileChange,
     Subtask,
@@ -1097,11 +1098,45 @@ class Worker:
                 subtask.id[:8],
                 step.agent,
             )
-            # ponytail: emit step boundary events so TUI/dashboard can show
-            # which step of the chain is running. Best-effort — a publish
-            # failure must never abort the workflow.
             total = len(subtask.steps)
             percent = int(100 * idx / total) if total else 0
+
+            # Condition evaluation: skip this step if the expression is false.
+            # Empty condition = always run (backward compat). Parse error →
+            # subtask fails with a clear message (never silently run/skip).
+            if step.condition:
+                try:
+                    should_run = evaluate(step.condition, prev)
+                except ConditionError as e:
+                    logger.error(
+                        "Workflow step %d condition parse error: %s",
+                        idx + 1,
+                        e,
+                    )
+                    return AgentOutput(
+                        summary=f"[step {idx + 1} condition parse error] {e}",
+                        file_changes=all_file_changes,
+                        success=False,
+                    )
+                if not should_run:
+                    logger.info(
+                        "Workflow step %d/%d skipped (condition false): %s",
+                        idx + 1,
+                        total,
+                        step.condition,
+                    )
+                    await self._emit_step_event(
+                        subtask, "subtask_progress",
+                        phase=f"step {idx + 1}/{total}: {step.agent} (skipped)",
+                        percent=percent,
+                        step_index=idx,
+                        step_total=total,
+                        step_agent=step.agent,
+                        step_status="skipped",
+                        step_summary=step.condition[:200],
+                    )
+                    continue
+
             await self._emit_step_event(
                 subtask, "subtask_progress",
                 phase=f"step {idx + 1}/{total}: {step.agent}",

@@ -69,7 +69,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
-		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint }>;
+		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string }>;
 	}>;
 }
 
@@ -456,6 +456,7 @@ export class GrpcBridge {
 							...(s.abort_on_failure != null ? { abortOnFailure: s.abort_on_failure } : {}),
 							...(s.retryCount != null ? { retryCount: s.retryCount } : {}),
 							...(s.retryDelayMs != null ? { retryDelayMs: BigInt(s.retryDelayMs) } : {}),
+							...(s.condition != null ? { condition: s.condition } : {}),
 						})),
 					})),
 				}),
@@ -773,7 +774,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -793,6 +794,7 @@ export class GrpcBridge {
 					abortOnFailure: s.abortOnFailure,
 					retryCount: s.retryCount,
 					retryDelayMs: s.retryDelayMs,
+					condition: s.condition,
 				})),
 			})),
 		};
@@ -819,6 +821,7 @@ export class GrpcBridge {
 					abortOnFailure: s.abortOnFailure,
 					retryCount: s.retryCount,
 					retryDelayMs: s.retryDelayMs,
+					condition: s.condition,
 				})),
 			})),
 		};

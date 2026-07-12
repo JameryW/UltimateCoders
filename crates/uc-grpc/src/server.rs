@@ -3464,6 +3464,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             abort_on_failure: s.abort_on_failure.unwrap_or(true),
                             retry_count: s.retry_count.unwrap_or(0),
                             retry_delay_ms: s.retry_delay_ms.unwrap_or(0),
+                            condition: s.condition.clone(),
                         })
                         .collect(),
                 }
@@ -5323,6 +5324,7 @@ mod tests {
                 abort_on_failure: false,
                 retry_count: 0,
                 retry_delay_ms: 0,
+                condition: None,
             }],
             project_id: "proj-1".to_string(),
         };
