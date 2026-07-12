@@ -104,7 +104,6 @@ class NatsPublisher:
 | Key | Required | Default | Purpose |
 |-----|----------|---------|---------|
 | `UC_NATS_URL` | No | `nats://localhost:4222` | NATS server URL (Rust + Python) |
-| `UC_SANDBOX_MODE` | No | — | Use sandbox decomposition in nats_worker |
 | `UC_PROJECT_PATH` | No | `.` | Project path for sandbox/worker |
 | `UC_GRPC_ADDR` | No | `[::]:50051` | gRPC server listen address |
 

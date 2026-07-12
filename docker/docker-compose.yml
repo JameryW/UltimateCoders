@@ -242,7 +242,6 @@ services:
     environment:
       UC_NATS_URL: "nats://nats:4222"
       UC_GRPC_ENDPOINT: "http://gateway:50051"
-      UC_SANDBOX_MODE: "subprocess"
       UC_PROJECT_PATH: "/workspace"
       # ── External git sync (Phase 1) ───────────────────────────────
       # Leave UC_REPO_URL empty to keep the legacy local-only behaviour.
@@ -287,7 +286,6 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_GRPC_ENDPOINT: "http://gateway:50051"
-      UC_SANDBOX_MODE: "subprocess"
       UC_PROJECT_PATH: "/workspace"
       # ── External git sync (Phase 1) ───────────────────────────────
       # Same env as the worker service; empty UC_REPO_URL = local mode.

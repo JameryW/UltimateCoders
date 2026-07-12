@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/agent-capability-spec.md", "reason": "Worker capability advertisement contract — confirms subprocess is the live backend; dead DockerSandbox must not be referenced here."}
+{"file": ".trellis/spec/backend/worker-service-spec.md", "reason": "Worker service env contract — UC_SANDBOX_MODE removal must not break documented worker env expectations."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Deletion of a pub re-export is a breaking change; follow error-handling conventions for any fallthrough reference."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Deletion-over-addition guidance; confirms removing dead code is preferred over keeping 'for later'."}

@@ -445,7 +445,6 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_QDRANT_API_KEY` | - | Qdrant API key (optional) |
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
-| `UC_SANDBOX_MODE` | - | Sandbox mode: `subprocess` or empty |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for LLM calls |
 

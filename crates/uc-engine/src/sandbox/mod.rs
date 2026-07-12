@@ -15,19 +15,15 @@
 //!                                 │  Pool      │
 //!                                 └─────┬─────┘
 //!                                       │
-//!                           ┌───────────┼───────────┐
-//!                           │           │           │
-//!                     SubprocessSandbox DockerSandbox (future: NsJailSandbox)
-//!                     (MVP)          (production)
+//!                                       │
+//!                               SubprocessSandbox
+//!                               (MVP, production)
 //! ```
 
 pub mod agents;
 pub mod file_tracker;
 pub mod pool;
 pub mod subprocess;
-
-#[cfg(feature = "docker")]
-pub mod docker;
 
 // Re-export agent adapter types for convenience
 pub use agents::claude_code::ClaudeCodeAgent;
@@ -44,8 +40,7 @@ use uc_types::EngineError;
 /// Sandbox execution trait -- abstracts over isolation backends.
 ///
 /// Implementations provide different levels of isolation:
-/// - `SubprocessSandbox`: No isolation, runs as child process (MVP)
-/// - `DockerSandbox`: Full container isolation (production)
+/// - `SubprocessSandbox`: No isolation, runs as child process (MVP, production)
 #[async_trait]
 pub trait Sandbox: Send + Sync {
     /// Create a new sandbox environment.
