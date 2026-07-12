@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 89
+- **Total Sessions**: 90
 - **Last Active**: 2026-07-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1238 | Active |
+| `journal-2.md` | ~1271 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 90 | 2026-07-13 | Render step_status in TUI + dashboard; PR #251 | `ae43efd7` | `main` |
 | 89 | 2026-07-13 | Document multi-agent workflow step contract in specs; PR #250 | `ae6ad7f4` | `main` |
 | 88 | 2026-07-13 | Multi-agent workflow orchestration enhancement (5 phases); PR #245-249 | `6e86ba5c`, `f786fe05`, `038e2971`, `83fe26b5`, `82d4c7e2` | `main` |
 | 87 | 2026-07-12 | Remove dead orchestrator _pending_task_count field; PR #244 | `b1d95773` | `main` |

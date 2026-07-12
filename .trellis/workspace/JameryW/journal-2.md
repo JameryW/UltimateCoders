@@ -1236,3 +1236,36 @@ Documented the WorkflowStep contract (from PRs #245-#249) in specs. New 'Multi-A
 ### Next Steps
 
 - None - task complete
+
+
+## Session 90: Render step_status in TUI + dashboard; PR #251
+
+**Date**: 2026-07-13
+**Task**: Render step_status in TUI + dashboard; PR #251
+**Branch**: `main`
+
+### Summary
+
+Rendered step_status (retrying/skipped/failed) PRs #245-#249 emit but UI didn't display. TUI progress-widget uses progressBySubtask + _stepStatusTag helper. Dashboard TaskDetail step_status badge. Both conditional, backward compat. Merged 4680c7bc.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae43efd7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
