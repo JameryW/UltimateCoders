@@ -723,3 +723,132 @@ def test_pending_task_count_counts_in_progress_not_created():
     orch.tasks[t3.id] = t3
     assert orch.pending_task_count == 2  # t1 + t3
 
+
+# ── Step retry (retry_count / retry_delay_ms) ────────────────────
+
+
+def test_workflow_step_retry_fields_roundtrip():
+    """retry_count + retry_delay_ms survive to_dict / from_dict round-trip."""
+    s = WorkflowStep(agent="claude-code", prompt="flaky", retry_count=3, retry_delay_ms=5000)
+    d = s.to_dict()
+    assert d["retry_count"] == 3
+    assert d["retry_delay_ms"] == 5000
+    again = WorkflowStep.from_dict(d)
+    assert again.retry_count == 3
+    assert again.retry_delay_ms == 5000
+
+
+def test_workflow_step_retry_defaults_zero():
+    """Absent retry fields default to 0 (no retry — backward compat)."""
+    s = WorkflowStep.from_dict({"agent": "codex", "prompt": "CR"})
+    assert s.retry_count == 0
+    assert s.retry_delay_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_retries_failing_step_then_succeeds():
+    """retry_count=2 → 3 total attempts; fails twice, succeeds on 3rd."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    # Fail, fail, succeed.
+    seq = [
+        AgentOutput(summary="fail1", success=False),
+        AgentOutput(summary="fail2", success=False),
+        AgentOutput(summary="ok", success=True),
+    ]
+    w._sandbox_manager.execute = AsyncMock(side_effect=seq)
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="flaky", retry_count=2, retry_delay_ms=0),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert out.success is True
+    assert out.summary == "ok"
+    # 3 calls total (1 initial + 2 retries).
+    assert w._sandbox_manager.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_retry_exhausted_all_attempts_fail():
+    """retry_count=1 → 2 total attempts; both fail → step fails."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        return_value=AgentOutput(summary="boom", success=False)
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="always fails", retry_count=1),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert out.success is False
+    # 2 calls (initial + 1 retry).
+    assert w._sandbox_manager.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_retry_count_zero_no_retry():
+    """retry_count=0 → single attempt on failure (current behavior)."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        return_value=AgentOutput(summary="fail", success=False)
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="fail once", retry_count=0),
+        ],
+    )
+    out = await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    assert out.success is False
+    assert w._sandbox_manager.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_emits_retrying_event():
+    """A retry emits step_status='retrying' with retry_attempt (1-indexed)."""
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    # Fail once, then succeed.
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(summary="fail", success=False),
+            AgentOutput(summary="ok", success=True),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="claude-code", prompt="flaky", retry_count=1, retry_delay_ms=0),
+        ],
+    )
+    await w._execute_steps(subtask, working_dir=None, on_stdout_line=None, context_block="")
+
+    calls = w._publish_event.await_args_list
+    # Events: started, retrying, completed = 3.
+    statuses = [c.kwargs["data"]["step_status"] for c in calls]
+    assert statuses == ["started", "retrying", "completed"]
+    # The retrying event carries retry_attempt=1.
+    retrying_call = calls[1]
+    assert retrying_call.kwargs["data"]["retry_attempt"] == 1
+

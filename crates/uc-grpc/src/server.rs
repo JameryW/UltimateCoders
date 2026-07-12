@@ -3462,6 +3462,8 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                             prompt: s.prompt.clone(),
                             agent_config_json: s.agent_config_json.clone(),
                             abort_on_failure: s.abort_on_failure.unwrap_or(true),
+                            retry_count: s.retry_count.unwrap_or(0),
+                            retry_delay_ms: s.retry_delay_ms.unwrap_or(0),
                         })
                         .collect(),
                 }
@@ -5319,6 +5321,8 @@ mod tests {
                 prompt: "CR {{prev_summary}}".to_string(),
                 agent_config_json: Some(r#"{"agent_name":"reviewer"}"#.to_string()),
                 abort_on_failure: false,
+                retry_count: 0,
+                retry_delay_ms: 0,
             }],
             project_id: "proj-1".to_string(),
         };

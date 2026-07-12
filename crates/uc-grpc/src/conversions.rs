@@ -899,6 +899,8 @@ fn step_to_proto(s: &uc_types::WorkflowStep) -> WorkflowStepProto {
         prompt: s.prompt.clone(),
         agent_config_json: s.agent_config_json.clone(),
         abort_on_failure: Some(s.abort_on_failure),
+        retry_count: Some(s.retry_count),
+        retry_delay_ms: Some(s.retry_delay_ms),
     }
 }
 
@@ -909,6 +911,8 @@ fn step_from_proto(s: &WorkflowStepProto) -> uc_types::WorkflowStep {
         prompt: s.prompt.clone(),
         agent_config_json: s.agent_config_json.clone(),
         abort_on_failure: s.abort_on_failure.unwrap_or(true),
+        retry_count: s.retry_count.unwrap_or(0),
+        retry_delay_ms: s.retry_delay_ms.unwrap_or(0),
     }
 }
 

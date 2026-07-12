@@ -391,6 +391,10 @@ message WorkflowStepProto {
     optional string agent_config_json = 3;
     // If true (default), a failed step aborts the whole chain.
     optional bool abort_on_failure = 4;
+    // Number of times to retry this step on failure (0 = no retry, default).
+    optional uint32 retry_count = 5;
+    // Delay in ms between retry attempts (0 = retry immediately).
+    optional uint64 retry_delay_ms = 6;
 }
 
 // ── Batch Memory ────────────────────────────────────────

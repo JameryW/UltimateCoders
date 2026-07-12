@@ -69,7 +69,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
-		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean }>;
+		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint }>;
 	}>;
 }
 
@@ -454,6 +454,8 @@ export class GrpcBridge {
 							prompt: s.prompt,
 							...(s.agent_config_json != null ? { agentConfigJson: s.agent_config_json } : {}),
 							...(s.abort_on_failure != null ? { abortOnFailure: s.abort_on_failure } : {}),
+							...(s.retryCount != null ? { retryCount: s.retryCount } : {}),
+							...(s.retryDelayMs != null ? { retryDelayMs: BigInt(s.retryDelayMs) } : {}),
 						})),
 					})),
 				}),
@@ -771,7 +773,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -789,6 +791,8 @@ export class GrpcBridge {
 					prompt: s.prompt,
 					agentConfigJson: s.agentConfigJson,
 					abortOnFailure: s.abortOnFailure,
+					retryCount: s.retryCount,
+					retryDelayMs: s.retryDelayMs,
 				})),
 			})),
 		};
@@ -813,6 +817,8 @@ export class GrpcBridge {
 					prompt: s.prompt,
 					agentConfigJson: s.agentConfigJson,
 					abortOnFailure: s.abortOnFailure,
+					retryCount: s.retryCount,
+					retryDelayMs: s.retryDelayMs,
 				})),
 			})),
 		};

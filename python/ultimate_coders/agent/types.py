@@ -173,6 +173,10 @@ class WorkflowStep:
     # If True (default), a failed step aborts the whole chain and the
     # subtask fails. If False, the chain continues to the next step.
     abort_on_failure: bool = True
+    # Number of times to retry this step on failure (0 = no retry, default).
+    retry_count: int = 0
+    # Delay in ms between retry attempts (0 = retry immediately).
+    retry_delay_ms: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +184,8 @@ class WorkflowStep:
             "prompt": self.prompt,
             "agent_config": self.agent_config,
             "abort_on_failure": self.abort_on_failure,
+            "retry_count": self.retry_count,
+            "retry_delay_ms": self.retry_delay_ms,
         }
 
     @classmethod
@@ -189,6 +195,8 @@ class WorkflowStep:
             prompt=data.get("prompt", ""),
             agent_config=_resolve_agent_config_field(data),
             abort_on_failure=data.get("abort_on_failure", True),
+            retry_count=int(data.get("retry_count", 0) or 0),
+            retry_delay_ms=int(data.get("retry_delay_ms", 0) or 0),
         )
 
 

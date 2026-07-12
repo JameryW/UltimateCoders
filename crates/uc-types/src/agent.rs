@@ -137,6 +137,12 @@ pub struct WorkflowStep {
     /// subtask fails. If false, the chain continues to the next step.
     #[serde(default = "default_true")]
     pub abort_on_failure: bool,
+    /// Number of times to retry this step on failure (0 = no retry, default).
+    #[serde(default)]
+    pub retry_count: u32,
+    /// Delay in ms between retry attempts (0 = retry immediately).
+    #[serde(default)]
+    pub retry_delay_ms: u64,
 }
 
 fn default_true() -> bool {
@@ -328,6 +334,8 @@ mod tests {
             prompt: "CR: {{prev_summary}}".to_string(),
             agent_config_json: Some(r#"{"agent_name":"reviewer"}"#.to_string()),
             abort_on_failure: false,
+            retry_count: 0,
+            retry_delay_ms: 0,
         };
         let json = serde_json::to_string(&step).unwrap();
         let back: WorkflowStep = serde_json::from_str(&json).unwrap();
@@ -370,12 +378,16 @@ mod tests {
                     prompt: "write".to_string(),
                     agent_config_json: None,
                     abort_on_failure: true,
+                    retry_count: 0,
+                    retry_delay_ms: 0,
                 },
                 WorkflowStep {
                     agent: "codex".to_string(),
                     prompt: "CR {{prev_summary}}".to_string(),
                     agent_config_json: None,
                     abort_on_failure: true,
+                    retry_count: 0,
+                    retry_delay_ms: 0,
                 },
             ],
         };
@@ -388,5 +400,30 @@ mod tests {
         assert_eq!(back.steps.len(), 2);
         assert_eq!(back.steps[0].agent, "claude-code");
         assert_eq!(back.steps[1].agent, "codex");
+    }
+
+    #[test]
+    fn workflow_step_retry_fields_round_trip() {
+        let step = WorkflowStep {
+            agent: "claude-code".to_string(),
+            prompt: "flaky API call".to_string(),
+            agent_config_json: None,
+            abort_on_failure: true,
+            retry_count: 3,
+            retry_delay_ms: 5000,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.retry_count, 3);
+        assert_eq!(back.retry_delay_ms, 5000);
+    }
+
+    #[test]
+    fn workflow_step_defaults_retry_zero_when_absent() {
+        // Backward compat: a step serialized before retry fields existed.
+        let json = r#"{"agent":"codex","prompt":"CR","abort_on_failure":true}"#;
+        let step: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert_eq!(step.retry_count, 0);
+        assert_eq!(step.retry_delay_ms, 0);
     }
 }
