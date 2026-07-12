@@ -1001,3 +1001,36 @@ Removed dead circuit breaker feature across 4 layers + proto + specs. Backend st
 ### Next Steps
 
 - None - task complete
+
+
+## Session 83: Remove dead enforce_night_window JobMetadata field; PR #240
+
+**Date**: 2026-07-12
+**Task**: Remove dead enforce_night_window JobMetadata field; PR #240
+**Branch**: `main`
+
+### Summary
+
+Removed dead enforce_night_window: bool field from scheduler JobMetadata. Written in 3 ctor sites (always true) but never read - check_night_window() enforces global night_window, not per-job. Per-job control layer never built (#[allow(dead_code)] comment referenced PR4 that never landed). JobMetadata now only task field. Net -6 lines. CI 7/7 green (cargo fmt failed first - sub-agent left multi-line struct, fmt collapsed to single-line; fixed in follow-up commit). Merged 89f5f317.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7facdd6d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

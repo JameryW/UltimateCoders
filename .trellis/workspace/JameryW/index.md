@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 82
+- **Total Sessions**: 83
 - **Last Active**: 2026-07-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1003 | Active |
+| `journal-2.md` | ~1036 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 83 | 2026-07-12 | Remove dead enforce_night_window JobMetadata field; PR #240 | `7facdd6d` | `main` |
 | 82 | 2026-07-12 | Remove dead circuit breaker dashboard contract (cross-layer); PR #239 | `2db49f53` | `main` |
 | 81 | 2026-07-12 | Remove dead SandboxConfig.backend field; PR #237/#238 merged | `b01b0aeb` | `main` |
 | 80 | 2026-07-12 | Remove dead DockerSandbox + UC_SANDBOX_MODE; finish PR #236/#237 | `e89af712`, `7322b84b`, `76373ce4` | `main` |
