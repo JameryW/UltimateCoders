@@ -284,12 +284,12 @@ const SSE_FALLBACK_THRESHOLD = 5;
 export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   const [connectionState, setConnectionState] =
     useState<DashboardConnectionState>("disconnected");
-  const connectionStateRef = useRef<DashboardConnectionState>(connectionState);
-  connectionStateRef.current = connectionState;
+  // D1: connectionStateRef removed — dead write (never read); was flagged by react-hooks/refs.
   const abortRef = useRef<AbortController | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   optsRef.current = opts;
   const connectRef = useRef<() => void>(() => {});
   const sseRef = useRef<EventSource | null>(null);
@@ -388,6 +388,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     };
   }, [scheduleReconnect]);
 
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   connectSseRef.current = connectSse;
 
   // ── WatchDashboard stream ─────────────────────────────────
@@ -476,6 +477,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     })();
   }, [clearRetryTimer, scheduleReconnect]);
 
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   connectRef.current = connect;
 
   const disconnect = useCallback(() => {

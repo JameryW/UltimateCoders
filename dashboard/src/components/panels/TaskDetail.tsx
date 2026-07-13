@@ -60,6 +60,7 @@ function SubtaskDAG({ subtasks }: { subtasks: SubtaskSummary[] }) {
   useEffect(() => {
     const hasDeps = subtasks.some((st) => st.depends_on.length > 0);
     if (!hasDeps || subtasks.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- conditional reset when no deps; no cascading render (states become null/false)
       setSvg(null);
       setRenderFailed(false);
       return;

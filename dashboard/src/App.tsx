@@ -218,6 +218,7 @@ function App() {
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
   useEffect(() => {
     if (grpcState !== "connected") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- conditional reset on disconnect; no cascading render (state is already empty)
       setGrpcHealthComponents([]);
       return;
     }

@@ -153,6 +153,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     useState<GrpcConnectionState>("disconnected");
   // #4: Ref to track real-time connection state, avoiding stale closure
   const connectionStateRef = useRef<GrpcConnectionState>(connectionState);
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: submitTask reads synchronously to check real-time state
   connectionStateRef.current = connectionState;
   // #9: Track gRPC exhaustion state for stop-reconnect button
   const [grpcExhausted, setGrpcExhausted] = useState(false);
@@ -160,6 +161,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optsRef = useRef(opts);
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   optsRef.current = opts;
   // Ref breaks connect<->scheduleReconnect cycle
   const connectRef = useRef<() => void>(() => {});
@@ -249,6 +251,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, [clearRetryTimer, scheduleReconnect]);
 
   // Keep ref in sync so scheduleReconnect always calls the latest connect
+  // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   connectRef.current = connect;
 
   const disconnect = useCallback(() => {
@@ -374,6 +377,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- canonical connect-on-mount pattern; setState cascades are expected and harmless
     connect();
     return disconnect;
   }, [connect, disconnect]);
