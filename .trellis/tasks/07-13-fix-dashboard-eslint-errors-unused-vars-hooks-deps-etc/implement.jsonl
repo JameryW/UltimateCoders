@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — verify lint error count drops + tsc/test green."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dashboard component conventions — eslint-disable usage must match documented patterns."}

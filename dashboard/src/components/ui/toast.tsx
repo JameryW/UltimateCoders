@@ -14,6 +14,7 @@ function notify() {
   _listeners.forEach((l) => l());
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function showToast(message: string, type: "success" | "error") {
   const id = _nextId++;
   _toasts = [..._toasts, { id, message, type }];
