@@ -1434,3 +1434,36 @@ Resolved all 19 react-hooks/exhaustive-deps warnings. Dashboard lint now 0 error
 ### Next Steps
 
 - None - task complete
+
+
+## Session 96: Fix OMP non-vendor tsc errors; PR #257
+
+**Date**: 2026-07-13
+**Task**: Fix OMP non-vendor tsc errors; PR #257
+**Branch**: `main`
+
+### Summary
+
+Fixed 11 non-vendor OMP tsc errors. DispatchMode union + typed test helper. OMP tsc 0 non-vendor, bun test 119 pass. Merged 90e478ef.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f849b69b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
