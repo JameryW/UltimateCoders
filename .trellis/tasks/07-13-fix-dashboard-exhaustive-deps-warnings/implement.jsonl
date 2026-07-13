@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — verify lint warnings drop + tsc green + no behavior change."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "React hook deps state management — verify getTransport stable + dashboard object stability."}

@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify lint warnings ≤5 + tsc green + no behavior change."}
