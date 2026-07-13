@@ -9,10 +9,28 @@ import { describe, expect, it } from "bun:test";
 import { RpcServer } from "./uc-rpc-server";
 import type { JsonRpcResponse } from "./uc-rpc-server";
 
+/** Shape of `result` across all RPC handlers in RpcServer.handleMethod().
+ *  Every field is optional because handlers return different subsets. */
+interface RpcResult {
+	tasks?: unknown[];
+	task?: unknown | null;
+	ok?: boolean;
+	status?: string;
+	task_id?: string;
+}
+
+/** JsonRpcResponse with a typed `result` so tests can access fields without
+ *  `unknown`-narrowing noise. The real dispatch() returns `result?: unknown`
+ *  (the server is a generic JSON-RPC bridge), but the test suite only calls
+ *  handlers whose results fit this shape. */
+interface TypedRpcResponse extends JsonRpcResponse {
+	result?: RpcResult;
+}
+
 // ponytail: dispatch a fresh server without init() — init() subscribes
 // orchestrator events to stdout, which we don't want in unit tests.
-async function dispatch(server: RpcServer, method: string, params: Record<string, unknown>, id?: number): Promise<JsonRpcResponse> {
-	return server.dispatch({ method, params, id });
+async function dispatch(server: RpcServer, method: string, params: Record<string, unknown>, id?: number): Promise<TypedRpcResponse> {
+	return server.dispatch({ method, params, id }) as Promise<TypedRpcResponse>;
 }
 
 describe("RpcServer.dispatch", () => {

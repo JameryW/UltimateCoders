@@ -15,7 +15,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef, type WorkflowStepDef } from "./scheduler";
+import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef, type WorkflowStepDef, type DispatchMode } from "./scheduler";
 import { GrpcBridge } from "./grpc-bridge";
 import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
@@ -131,8 +131,8 @@ export interface SubtaskResult {
 	stderrTail?: string;
 	/** How many retries this subtask has used (for checkpoint). */
 	retryCount?: number;
-	/** Dispatch mode: "local" | "remote" | "prefer_remote" */
-	dispatchMode?: string;
+	/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
+	dispatchMode?: DispatchMode;
 	/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
 	requiredCapabilities?: string[];
 	/** Per-subtask agent configuration overrides (mirrors SubtaskDef.agentConfig). */
