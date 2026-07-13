@@ -10,6 +10,10 @@
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/** Dispatch mode for a subtask. "auto" resolves to "prefer_remote" or
+ *  "local" based on worker availability (see resolveDispatchMode). */
+export type DispatchMode = "local" | "remote" | "prefer_remote" | "auto";
+
 /** A single step in a subtask's multi-agent workflow chain.
  *  Field names mirror Rust `WorkflowStep` (snake_case) — proto-generated
  *  TS types use camelCase, but the decomposer JSON + persistence use snake_case.
@@ -30,8 +34,8 @@ export interface SubtaskDef {
 	description: string;
 	dependsOn: string[];
 	files: string[];
-	/** How this subtask should be dispatched: "local" | "remote" | "prefer_remote" (default) */
-	dispatchMode?: string;
+	/** How this subtask should be dispatched: "local" | "remote" | "prefer_remote" (default) | "auto" */
+	dispatchMode?: DispatchMode;
 	/** Capabilities required by this subtask (e.g. "rust", "python", "docker"). Worker must have ALL. */
 	requiredCapabilities?: string[];
 	/** Parent subtask ID — set when this subtask was decomposed from a larger one. */
@@ -564,8 +568,9 @@ export function resolveDispatchMode(
 		return { mode: "local", blocked: false };
 	}
 
-	// No capable worker at all
-	return { mode, blocked: true };
+	// No capable worker at all — "prefer_remote" and "auto" both fall back
+	// to "prefer_remote" (the default) when no worker can serve the subtask.
+	return { mode: "prefer_remote", blocked: true };
 }
 
 function pickLeastLoaded(workers: WorkerAvailability[]): WorkerAvailability {
