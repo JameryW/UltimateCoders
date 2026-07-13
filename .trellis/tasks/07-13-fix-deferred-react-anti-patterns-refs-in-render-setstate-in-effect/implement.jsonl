@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-13-fix-deferred-react-anti-patterns-refs-in-render-setstate-in-effect/research/react-anti-pattern-fixes.md", "reason": "Per-error line numbers + context + fix approach + risk verdict. 3 safe fix, 8 eslint-disable with intent. Implementer follows this map."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — verify lint 0 errors + tsc green + no behavior change."}

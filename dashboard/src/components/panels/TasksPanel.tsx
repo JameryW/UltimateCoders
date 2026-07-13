@@ -96,6 +96,7 @@ export function TasksPanel({ data, interactionLog, onFlush, onPauseTask, onResum
   // ponytail: auto-expand and scroll to highlighted task after submit
   useEffect(() => {
     if (highlightTaskId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- conditional highlight reset responds to highlightTaskId prop change; no cascading render
       setExpandedTaskId(highlightTaskId);
       setStatusFilter(null); // clear filter so the task is visible
       // Double rAF to wait for DOM render after state changes

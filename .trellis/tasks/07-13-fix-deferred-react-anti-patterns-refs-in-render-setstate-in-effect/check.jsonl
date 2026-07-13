@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify lint 0 errors + tsc green + dead ref deleted + each disable has intent comment."}
