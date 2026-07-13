@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 92
+- **Total Sessions**: 93
 - **Last Active**: 2026-07-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1337 | Active |
+| `journal-2.md` | ~1370 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 93 | 2026-07-13 | Fix dashboard eslint mechanical errors; PR #254 | `4a4a50b9` | `main` |
 | 92 | 2026-07-13 | Fix ThemeColor error-format callback type; PR #253 | `f4b30e4b` | `main` |
 | 91 | 2026-07-13 | Visualize parallel steps in TUI + dashboard; PR #252 | `185bf2a3` | `main` |
 | 90 | 2026-07-13 | Render step_status in TUI + dashboard; PR #251 | `ae43efd7` | `main` |

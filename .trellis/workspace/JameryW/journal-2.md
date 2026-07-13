@@ -1335,3 +1335,36 @@ Fixed pre-existing TS2345 at 3 UI call sites. Narrowed fgColored string->ThemeCo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 93: Fix dashboard eslint mechanical errors; PR #254
+
+**Date**: 2026-07-13
+**Task**: Fix dashboard eslint mechanical errors; PR #254
+**Branch**: `main`
+
+### Summary
+
+Fixed 17/28 dashboard eslint errors (mechanical). 11 React anti-patterns deferred. lint 28->11, tsc 0. Merged 5fe9fb27.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4a4a50b9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
