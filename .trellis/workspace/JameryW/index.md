@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 94
+- **Total Sessions**: 95
 - **Last Active**: 2026-07-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1403 | Active |
+| `journal-2.md` | ~1436 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 95 | 2026-07-13 | Fix dashboard exhaustive-deps warnings; PR #256 | `0c730ad2` | `main` |
 | 94 | 2026-07-13 | Fix React anti-pattern eslint errors; PR #255 | `efe90c47` | `main` |
 | 93 | 2026-07-13 | Fix dashboard eslint mechanical errors; PR #254 | `4a4a50b9` | `main` |
 | 92 | 2026-07-13 | Fix ThemeColor error-format callback type; PR #253 | `f4b30e4b` | `main` |

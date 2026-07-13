@@ -1401,3 +1401,36 @@ Fixed remaining 11 dashboard eslint errors (deferred from PR #254). D1: deleted 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 95: Fix dashboard exhaustive-deps warnings; PR #256
+
+**Date**: 2026-07-13
+**Task**: Fix dashboard exhaustive-deps warnings; PR #256
+**Branch**: `main`
+
+### Summary
+
+Resolved all 19 react-hooks/exhaustive-deps warnings. Dashboard lint now 0 errors 0 warnings (was 28 errors + 19 warnings before PRs #254/#255/#256). getTransport stable deps (12), dashboard object eslint-disable (3), TIME_RANGE_MS module scope, FileBrowser mount-only disable, TaskDetail useMemo, engine_pb globalIgnores. Merged 0b999f69.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c730ad2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
