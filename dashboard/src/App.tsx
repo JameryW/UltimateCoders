@@ -142,8 +142,10 @@ function App() {
 
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { connectionState: grpcState, grpcExhausted, submitTask: grpcSubmitTask, healthCheck, connect: grpcConnect, disconnect: _grpcDisconnect, listTasks, pauseTask: grpcPauseTask, resumeTask: grpcResumeTask, cancelTask: grpcCancelTask } = useGrpcWeb({
     onTaskEvent: dedupedHandleTaskEvent,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     onSyncRequired: (_reason: string, _skipped: number) => {
       needsSyncCountRef.current += 1;
       dashboard.setNeedsSync(true);
@@ -154,6 +156,7 @@ function App() {
   const {
     connectionState: dashGrpcState,
     connect: dashGrpcConnect,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     disconnect: _dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
@@ -236,7 +239,7 @@ function App() {
       : grpcState === "error" || grpcState === "reconnecting" ? "error"
       : "unavailable";
     const grpcComponent = { name: "gRPC-Web", status: grpcStatus };
-    let components = [...dashboard.health.components];
+    const components = [...dashboard.health.components];
     for (const gc of grpcHealthComponents) {
       const idx = components.findIndex((c) => c.name === gc.name);
       if (idx >= 0) components[idx] = gc;
@@ -267,7 +270,8 @@ function App() {
     try {
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
-        r.success ? showToast("Task paused", "success") : showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+        if (r.success) showToast("Task paused", "success");
+        else showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
@@ -279,7 +283,8 @@ function App() {
     try {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);
-        r.success ? showToast("Task resumed", "success") : showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+        if (r.success) showToast("Task resumed", "success");
+        else showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "paused");
@@ -291,7 +296,8 @@ function App() {
     try {
       if (grpcState === "connected") {
         const r = await grpcCancelTask(taskId);
-        r.success ? showToast("Task cancelled", "success") : showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error");
+        if (r.success) showToast("Task cancelled", "success");
+        else showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error");
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
@@ -301,12 +307,12 @@ function App() {
   const handleTriggerJob = async (jobId: string) => {
     const ok = await confirmAction("Trigger Job", `Trigger scheduled job?`);
     if (!ok) return;
-    try { const r = await grpcTriggerSchedulerJob(jobId); r.success ? showToast("Job triggered", "success") : showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
+    try { const r = await grpcTriggerSchedulerJob(jobId); if (r.success) showToast("Job triggered", "success"); else showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
   };
   const handleFlush = async () => {
     const ok = await confirmAction("Flush Pending Tasks", "Execute all queued tasks?");
     if (!ok) return;
-    try { const r = await grpcFlushPendingTasks(); r.success ? showToast("Pending tasks flushed", "success") : showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
+    try { const r = await grpcFlushPendingTasks(); if (r.success) showToast("Pending tasks flushed", "success"); else showToast(`Flush failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Flush failed: ${String(e)}`, "error"); }
   };
 
   // Selected task for detail view

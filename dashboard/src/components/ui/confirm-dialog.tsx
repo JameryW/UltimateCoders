@@ -13,6 +13,7 @@ function notify() {
   _listeners.forEach((l) => l());
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function confirmAction(title: string, message: string): Promise<boolean> {
   return new Promise((resolve) => {
     _confirmState = { title, message, resolve };
@@ -20,6 +21,7 @@ export function confirmAction(title: string, message: string): Promise<boolean> 
   });
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useConfirmDialog() {
   const [, forceUpdate] = useState(0);
 

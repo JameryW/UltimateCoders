@@ -23,11 +23,12 @@ type SortKey = "time" | "status" | "duration";
 function sortTasks(tasks: TaskSummary[], sort: SortKey): TaskSummary[] {
   const sorted = [...tasks];
   switch (sort) {
-    case "status":
+    case "status": {
       // in_progress first, then submitted, paused, completed, failed
       const rank: Record<string, number> = { in_progress: 0, submitted: 1, assigned: 2, paused: 3, completed: 4, failed: 5 };
       sorted.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
       break;
+    }
     case "duration": {
       const now = Date.now();
       sorted.sort((a, b) => {

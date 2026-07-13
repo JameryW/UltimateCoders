@@ -291,7 +291,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         };
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error("gRPC submitTask timed out after 30s");
+          throw new Error("gRPC submitTask timed out after 30s", { cause: err });
         }
         throw err;
       } finally {
