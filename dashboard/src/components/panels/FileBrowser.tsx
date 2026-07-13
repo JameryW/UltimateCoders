@@ -45,6 +45,7 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
         setSelectedRepo(data.repos[0]!.repo_id);
       }
     }).catch((err) => { console.warn("[FileBrowser] getRepos failed:", err); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only fetch; adding selectedRepo would re-fetch on every selection change
   }, []);
 
   // Load directory when repo or path changes

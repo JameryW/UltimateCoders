@@ -85,6 +85,8 @@ function exportEvents(events: DashboardEvent[]): void {
 
 const ERROR_TYPES: ReadonlySet<string> = new Set(["task_failed", "subtask_failed"]);
 
+const TIME_RANGE_MS: Record<string, number> = { "5m": 300_000, "30m": 1_800_000, "1h": 3_600_000 };
+
 export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSelectTask }: { events: DashboardEvent[]; stale?: boolean; onSelectTask?: (taskId: string) => void }) {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -98,8 +100,6 @@ export const EventLogPanel = memo(function EventLogPanel({ events, stale, onSele
     () => [...new Set(events.map((e) => e.type))],
     [events]
   );
-
-  const TIME_RANGE_MS: Record<string, number> = { "5m": 300_000, "30m": 1_800_000, "1h": 3_600_000 };
 
   const filteredEvents = useMemo(() => {
     let result = events;

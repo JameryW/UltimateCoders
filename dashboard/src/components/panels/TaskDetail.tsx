@@ -244,7 +244,7 @@ function EventTimeline({ events }: { events: TaskEvent[] }) {
 }
 
 export function TaskDetail({ task, interactionLog, onNavigateFile, repoId }: TaskDetailProps) {
-  const subtasks = task.subtasks ?? [];
+  const subtasks = useMemo(() => task.subtasks ?? [], [task.subtasks]);
   const failedSubtasks = useMemo(() => subtasks.filter((s) => s.status === "failed"), [subtasks]);
   const [filterSubtaskId, setFilterSubtaskId] = useState("");
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
