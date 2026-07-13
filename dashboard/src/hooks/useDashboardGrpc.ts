@@ -475,7 +475,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
         scheduleReconnect();
       }
     })();
-  }, [clearRetryTimer, scheduleReconnect]);
+  }, [clearRetryTimer, scheduleReconnect, getTransport]);
 
   // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
   connectRef.current = connect;
@@ -498,28 +498,28 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     const client = createClient(DashboardService, transport);
     const resp = await client.listWorkers(create(ListWorkersRequestSchema, {}));
     return grpcWorkersToDashboard(resp);
-  }, []);
+  }, [getTransport]);
 
   const getSchedulerStatus = useCallback(async (): Promise<SchedulerData> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
     const resp = await client.getSchedulerStatus(create(GetSchedulerStatusRequestSchema, {}));
     return grpcSchedulerToDashboard(resp);
-  }, []);
+  }, [getTransport]);
 
   const triggerSchedulerJob = useCallback(async (jobId: string): Promise<{ success: boolean; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
     const resp = await client.triggerSchedulerJob(create(TriggerSchedulerJobRequestSchema, { jobId }));
     return { success: resp.success, error: resp.error ?? undefined };
-  }, []);
+  }, [getTransport]);
 
   const flushPendingTasks = useCallback(async (): Promise<{ success: boolean; pendingCount: number; executedCount: number; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
     const resp = await client.flushPendingTasks(create(FlushPendingTasksRequestSchema, {}));
     return { success: resp.success, pendingCount: resp.pendingCount, executedCount: resp.executedCount, error: resp.error ?? undefined };
-  }, []);
+  }, [getTransport]);
 
   const listEvents = useCallback(async (taskId?: string, limit = 100): Promise<{ available: boolean; events: DashboardEvent[]; total: number }> => {
     const transport = getTransport();
@@ -534,7 +534,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
       events: resp.events.map(grpcEventProtoToDashboardEvent),
       total: resp.total,
     };
-  }, []);
+  }, [getTransport]);
 
   // ── Lifecycle ─────────────────────────────────────────────
 

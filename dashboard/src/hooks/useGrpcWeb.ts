@@ -248,7 +248,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         scheduleReconnect();
       }
     })();
-  }, [clearRetryTimer, scheduleReconnect]);
+  }, [clearRetryTimer, scheduleReconnect, getTransport]);
 
   // Keep ref in sync so scheduleReconnect always calls the latest connect
   // eslint-disable-next-line react-hooks/refs -- stable-callback ref-mirror: synchronous to avoid one-frame race in reconnect timers
@@ -319,7 +319,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         details: c.details ?? undefined,
       })),
     };
-  }, []);
+  }, [getTransport]);
 
   /** Fetch task list via gRPC-Web. Returns TasksData-compatible structure. */
   const listTasks = useCallback(async () => {
@@ -350,7 +350,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
       // ponytail: derive pending_task_count from status_counts instead of hardcoding 0
       pending_task_count: (resp.statusCounts as Record<string, number>)["pending"] ?? (resp.statusCounts as Record<string, number>)["submitted"] ?? 0,
     };
-  }, []);
+  }, [getTransport]);
 
   /** Pause a running task via gRPC-Web. */
   const pauseTask = useCallback(async (taskId: string) => {
@@ -358,7 +358,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const client = createClient(TaskService, transport);
     const resp = await client.pauseTask(create(PauseTaskRequestSchema, { taskId }));
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
-  }, []);
+  }, [getTransport]);
 
   /** Resume a paused task via gRPC-Web. */
   const resumeTask = useCallback(async (taskId: string) => {
@@ -366,7 +366,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const client = createClient(TaskService, transport);
     const resp = await client.resumeTask(create(ResumeTaskRequestSchema, { taskId }));
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
-  }, []);
+  }, [getTransport]);
 
   /** Cancel a task via gRPC-Web. */
   const cancelTask = useCallback(async (taskId: string) => {
@@ -374,7 +374,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
     const client = createClient(TaskService, transport);
     const resp = await client.cancelTask(create(CancelTaskRequestSchema, { taskId }));
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
-  }, []);
+  }, [getTransport]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- canonical connect-on-mount pattern; setState cascades are expected and harmless

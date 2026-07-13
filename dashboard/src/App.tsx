@@ -195,7 +195,8 @@ function App() {
       setLoading(false);
       if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
     });
-  }, [auth.isChecking, auth.isAuthenticated, grpcState]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render (hook returns new object literal); its methods (fetchInitial) are stable useCallbacks
+  }, [auth.isChecking, auth.isAuthenticated, grpcState, listWorkers, getSchedulerStatus, listEvents, listTasks]);
 
   useEffect(() => {
     if (dashGrpcState !== "connected" && grpcState === "connected") {
@@ -203,6 +204,7 @@ function App() {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch((err) => { console.warn("[Dashboard] listTasks failed (grpc→dash merge):", err); });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render; mergeGrpcTasks (stable useCallback) is already in deps
   }, [dashGrpcState, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
   useEffect(() => {
@@ -213,6 +215,7 @@ function App() {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch((err) => { console.warn("[Dashboard] listTasks failed (sync):", err); });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render; needsSync and mergeGrpcTasks (accessed via property) are already in deps
   }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
   const [grpcHealthComponents, setGrpcHealthComponents] = useState<{ name: string; status: string; details?: string }[]>([]);
