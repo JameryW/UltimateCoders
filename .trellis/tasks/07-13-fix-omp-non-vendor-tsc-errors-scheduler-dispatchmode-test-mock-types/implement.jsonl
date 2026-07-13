@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Type safety spec — verify OMP tsc non-vendor 0 errors + no string-leak."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar — verify bun run check + bun test green."}

@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify OMP tsc non-vendor 0 errors + bun test green."}
