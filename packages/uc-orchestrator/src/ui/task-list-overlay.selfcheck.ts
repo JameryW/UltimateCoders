@@ -106,5 +106,20 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("age present on task line", lines.some((l: string) => l.includes("ago")));
 }
 
+// empty list — pageDown/end/G must not produce a negative cursorIdx (phantom cursor)
+// ponytail: Math.min(tasks.length-1, …) on empty list = Math.min(-1, …) = -1 without the floor.
+{
+	const { comp } = makeComponent([]);
+	comp.handleInput(PAGEDOWN);
+	check("empty list pageDown cursor >= 0", comp.cursorIdx >= 0);
+	comp.handleInput(END);
+	check("empty list end cursor >= 0", comp.cursorIdx >= 0);
+	comp.handleInput("G");
+	check("empty list G cursor >= 0", comp.cursorIdx >= 0);
+	// render must not crash / show a phantom cursor row beyond "No tasks"
+	const lines = comp.render(80);
+	check("empty list renders No tasks", lines.some((l: string) => l.includes("No tasks")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
