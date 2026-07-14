@@ -103,7 +103,7 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const lines = comp.render(80);
 	// header(1) + hint(1) + blank(1) + 2 task rows = 5; age must NOT be its own row
 	check("one row per task (no separate age line)", lines.length === 5);
-	check("age present on task line", lines.some(l => l.includes("ago")));
+	check("age present on task line", lines.some((l: string) => l.includes("ago")));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

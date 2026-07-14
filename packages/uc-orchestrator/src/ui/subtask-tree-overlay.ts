@@ -113,24 +113,28 @@ class SubtaskTreeComponent {
 			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}`);
 
 			if (this.expanded.has(item.subtask.id)) {
-				if (item.subtask.result) {
-					const resultLines = item.subtask.result.split("\n").slice(0, 5);
-					for (const rl of resultLines) {
-						lines.push(this.theme.fg("dim", `      ${rl.slice(0, Math.max(0, width - 8))}`));
-					}
-				}
+				// ponytail: one detail line per expanded subtask. The old code emitted
+				// up to 9 lines (5 result + error + review + retries + mode), which made
+				// maxVisible (paginated by subtask count) undercount rendered rows —
+				// expanded detail overflowed the fixed overlay height with no scroll.
+				// Single preview line keeps rows 1:1 with flatItems for sane paging.
+				const parts: string[] = [];
 				if (item.subtask.error) {
-					lines.push(`      ${formatErrorForDisplay(item.subtask.error, width - 12, (c, t) => this.theme.fg(c, t))}`);
+					parts.push(formatErrorForDisplay(item.subtask.error, Math.max(0, width - 12), (c, t) => this.theme.fg(c, t)));
+				} else if (item.subtask.result) {
+					parts.push(this.theme.fg("dim", item.subtask.result.split("\n")[0].slice(0, Math.max(0, width - 8))));
 				}
 				if (item.subtask.review) {
-					const approved = item.subtask.review.approved ? "approved" : "rejected";
-					lines.push(this.theme.fg("dim", `      Review: ${approved}`));
+					parts.push(this.theme.fg("dim", item.subtask.review.approved ? "✓ approved" : "✗ rejected"));
 				}
 				if (item.subtask.retryCount && item.subtask.retryCount > 0) {
-					lines.push(this.theme.fg("dim", `      Retries: ${item.subtask.retryCount}`));
+					parts.push(this.theme.fg("dim", `retry×${item.subtask.retryCount}`));
 				}
 				if (item.subtask.dispatchMode && item.subtask.dispatchMode !== "prefer_remote") {
-					lines.push(this.theme.fg("dim", `      Mode: ${item.subtask.dispatchMode}`));
+					parts.push(this.theme.fg("dim", item.subtask.dispatchMode));
+				}
+				if (parts.length > 0) {
+					lines.push(`      ${parts.join(" · ")}`);
 				}
 			}
 		}
