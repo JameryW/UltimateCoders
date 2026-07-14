@@ -95,5 +95,16 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("esc closes overlay from list", closed() === true);
 }
 
+// one line per task in list mode (age folded into main line, not a 2nd row)
+// ponytail: invariant — maxVisible tasks == maxVisible rendered rows, else the
+// window overflows the overlay height while the footer claims 1-N fit.
+{
+	const { comp } = makeComponent([makeTask("t1","in_progress"), makeTask("t2","in_progress")]);
+	const lines = comp.render(80);
+	// header(1) + hint(1) + blank(1) + 2 task rows = 5; age must NOT be its own row
+	check("one row per task (no separate age line)", lines.length === 5);
+	check("age present on task line", lines.some(l => l.includes("ago")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

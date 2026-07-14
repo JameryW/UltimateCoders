@@ -98,11 +98,15 @@ class TaskListComponent {
 			const badge = statusBadge(task.status, this.theme);
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const total = task.subtasks.length;
-			const desc = task.description.slice(0, Math.max(0, width - 30));
 			const age = this.formatAge(task.createdAt);
+			// ponytail: one line per task — age folded into a dim suffix so the
+			// visible window (maxVisible tasks) matches actual rendered rows.
+			// Previously the 2nd age line doubled the row count, pushing rows
+			// past the overlay height while the footer still claimed 1-N fit.
+			const ageSuffix = this.theme.fg("dim", ` ${age}`);
+			const desc = task.description.slice(0, Math.max(0, width - 34 - age.length));
 
-			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${completed}/${total} ${desc}`);
-			lines.push(this.theme.fg("dim", `      ${age}`));
+			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${completed}/${total} ${desc}${ageSuffix}`);
 		}
 
 		if (tasks.length > this.maxVisible) {
