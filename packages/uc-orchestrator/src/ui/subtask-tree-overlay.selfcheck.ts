@@ -127,5 +127,26 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	check("r on completed subtask does not invoke onRetry", called === false);
 }
 
+// ponytail: adaptive page size — small terminal (rows=10) yields < 20 visible items.
+// maxVisible derives from tui.terminal.rows; with rows=10 → clamp(10-4,1,20)=6,
+// so 50 subtasks render 3 chrome + 6 rows + 1 footer = 10 lines (not 24).
+{
+	const subs = Array.from({ length: 50 }, (_, i) => makeSubtask(`s${i}`));
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: subs,
+	} as unknown as TaskState;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: () => {},
+		onClose: () => {},
+	});
+	const mockTui = { requestRender: () => {}, terminal: { rows: 10, columns: 80 } };
+	const comp = factory(mockTui as any, theme, undefined, () => {}) as any;
+	const lines = comp.render(80);
+	check("small terminal shows < 20 item rows", lines.length < 24);
+	check("small terminal page size = 6", lines.length === 10);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

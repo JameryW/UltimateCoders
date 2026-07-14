@@ -222,5 +222,23 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("empty filtered shows 'no match' line", lines.some((l: string) => l.includes("no match for")));
 }
 
+// ponytail: adaptive page size — small terminal (rows=10) yields < 20 visible items.
+// rows - 4 (chrome + footer reserve) = 6, clamped to [1, 20] → 6 visible task rows.
+{
+	const tasks = Array.from({ length: 50 }, (_, i) => makeTask(`t${i}`, "in_progress"));
+	const factory = createTaskListOverlay({
+		tasks: () => tasks,
+		getTask: (id) => tasks.find((t) => t.id === id),
+		onClose: () => {},
+	});
+	// ponytail: mock tui with terminal.rows = 10 — simulates a short tmux/split-pane viewport.
+	const mockTui = { requestRender: () => {}, terminal: { rows: 10, columns: 80 } };
+	const comp = factory(mockTui as any, theme, undefined, () => {}) as any;
+	const lines = comp.render(80);
+	// 3 chrome + 6 task rows + 1 footer = 10 lines (NOT 3 + 20 + 1 = 24)
+	check("small terminal shows < 20 item rows", lines.length < 24);
+	check("small terminal page size = 6", lines.length === 10);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
