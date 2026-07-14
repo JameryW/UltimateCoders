@@ -45,6 +45,8 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	return { comp, closed: () => closed };
 }
 
+const PAGEDOWN = "\x1b[6~";
+
 // collapsed: one subtask → header + hint + blank + 1 row
 {
 	const { comp } = makeComponent([makeSubtask("s1")]);
@@ -127,27 +129,6 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	check("r on completed subtask does not invoke onRetry", called === false);
 	const lines = comp.render(80);
 	check("r on completed renders flashMsg with 'only failed'", lines.some((l: string) => l.includes("only failed")));
-}
-
-// ponytail: adaptive page size — small terminal (rows=10) yields < 20 visible items.
-// maxVisible derives from tui.terminal.rows; with rows=10 → clamp(10-4,1,20)=6,
-// so 50 subtasks render 3 chrome + 6 rows + 1 footer = 10 lines (not 24).
-{
-	const subs = Array.from({ length: 50 }, (_, i) => makeSubtask(`s${i}`));
-	const task = {
-		id: "T", description: "t", status: "failed", controlState: "running",
-		createdAt: 0, subtasks: subs,
-	} as unknown as TaskState;
-	const factory = createSubtaskTreeOverlay({
-		tasks: () => [task],
-		onRetry: () => {},
-		onClose: () => {},
-	});
-	const mockTui = { requestRender: () => {}, terminal: { rows: 10, columns: 80 } };
-	const comp = factory(mockTui as any, theme, undefined, () => {}) as any;
-	const lines = comp.render(80);
-	check("small terminal shows < 20 item rows", lines.length < 24);
-	check("small terminal page size = 6", lines.length === 10);
 }
 
 // ── search/filter tests ──────────────────────────────────────────
@@ -252,6 +233,30 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	comp.handleInput("\r"); // exit editing, keep filter "zzz" → no match
 	const lines = comp.render(80);
 	check("empty filtered shows 'no match' line", lines.some((l: string) => l.includes("no match for")));
+}
+
+// height-adaptive page size: a 24-row terminal reserves 12 rows for chrome, so
+// maxVisible = 12, not the legacy hardcoded 20 that the maxHeight:"100%" clamp
+// would silently truncate (cutting the footer + bottom cursor rows).
+// ponytail: overlayPageSize reads tui.terminal.rows; undefined tui -> fallback 20.
+{
+	const subtasks = Array.from({length:50},(_,i)=>makeSubtask(`s${i}`));
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	const tui = { terminal: { rows: 24 } };
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task], onRetry: () => {}, onClose: () => {},
+	});
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	check("24-row terminal page size = 12", comp.maxVisible === 12);
+	const lines: string[] = comp.render(80);
+	// header(1) + hint(1) + blank(1) + 12 rows + footer(1) = 16
+	check("24-row terminal shows 12 subtask rows", lines.length === 16);
+	check("24-row terminal footer shows 1-12 of 50", lines.some((l: string) => l.includes("1-12 of 50")));
+	comp.handleInput(PAGEDOWN);
+	check("24-row terminal pageDown +12 (not +20)", comp.cursorIdx === 12);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

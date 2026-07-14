@@ -11,6 +11,7 @@ import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState } from "../orchestrator/orchestrator";
 import { formatTaskDetail } from "./status-formatter";
+import { overlayPageSize } from "./overlay-pagination";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), match bytes directly.
@@ -58,14 +59,12 @@ export function createTaskListOverlay(opts: TaskListOptions) {
 class TaskListComponent {
 	private cursorIdx = 0;
 	private scrollOffset = 0;
-	// ponytail: derive page size from terminal height so short viewports (tmux /
-	// split panes) don't overflow — 3 chrome lines (header + hint + blank) + 1
-	// footer reserve. Cap at 20 so a tall terminal doesn't dump 50 rows into a
-	// paginated overlay. Fall back to 20 when tui/terminal is absent (test mocks).
+	/**
+	 * ponytail: height-adaptive page size (see overlayPageSize). Read live so a
+	 * terminal resize takes effect on the next render/input without restart.
+	 */
 	private get maxVisible(): number {
-		const rows = (this.tui as any)?.terminal?.rows;
-		if (typeof rows !== "number" || rows <= 0) return 20;
-		return Math.max(1, Math.min(20, rows - 4));
+		return overlayPageSize(this.tui);
 	}
 	// detail mode: showing one task's breakdown, Esc returns to list
 	private detailTaskId: string | null = null;
