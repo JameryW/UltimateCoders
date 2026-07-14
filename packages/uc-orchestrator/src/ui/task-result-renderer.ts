@@ -28,30 +28,37 @@ export function createTaskResultRenderer(): (message: any, options: { expanded: 
 		const details: TaskResultDetails | undefined = message.details;
 		if (!details) return undefined;
 
-		const lines: string[] = [];
-
+		const summaryLines: string[] = [];
 		// Summary header
 		const statusColor = details.status === "completed" ? "success" : details.status === "failed" ? "error" : "dim";
-		lines.push(
+		summaryLines.push(
 			theme.fg(statusColor, `■ Task ${details.taskId.slice(0, 12)}`) +
 			theme.fg("dim", ` — ${details.status} — ${details.subtaskCount} subtask(s)`),
 		);
 
-		// When expanded, show subtask details
-		if (options.expanded && details.task) {
-			for (const st of details.task.subtasks) {
-				const icon = statusIcon(st.status, theme);
-				const desc = st.description.slice(0, 80);
-				lines.push(`  ${icon} ${st.id}: ${desc}`);
-				if (st.error) {
-					lines.push(`    ${formatErrorForDisplay(st.error, 70, (c, t) => theme.fg(c, t))}`);
-				}
-			}
-		}
+		// ponytail: capture raw subtask data at factory time; slice to width inside
+		// render(width) since the factory closure doesn't receive the terminal width.
+		const expandedSubtasks = options.expanded && details.task
+			? details.task.subtasks.map((st) => ({
+				icon: statusIcon(st.status, theme),
+				id: st.id,
+				desc: st.description,
+				error: st.error,
+			}))
+			: [];
 
-		// Return a Component that renders our lines
 		return {
-			render: () => lines,
+			render: (width: number): string[] => {
+				const lines = [...summaryLines];
+				for (const st of expandedSubtasks) {
+					const desc = st.desc.slice(0, Math.max(0, width - st.id.length - 6));
+					lines.push(`  ${st.icon} ${st.id}: ${desc}`);
+					if (st.error) {
+						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
+					}
+				}
+				return lines;
+			},
 			invalidate: () => {},
 		};
 	};
