@@ -11,6 +11,9 @@
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 
 // ponytail: superset of task + subtask status unions; unknown statuses fall back to pending.
+// `in_progress` is a task-level status (task-list overlay uses STATUS_BADGE "run";
+// this icon mirrors it for /uc status + task-result-renderer so the same task
+// doesn't render as ○ pending there).
 export const STATUS_ICON: Record<string, (theme: Theme) => string> = {
 	completed: (t) => t.fg("success", "✓"),
 	running: (t) => t.fg("warning", "●"),
@@ -19,6 +22,7 @@ export const STATUS_ICON: Record<string, (theme: Theme) => string> = {
 	cancelled: (t) => t.fg("dim", "⊘"),
 	pending: (t) => t.fg("dim", "○"),
 	planning: (t) => t.fg("dim", "◎"),
+	in_progress: (t) => t.fg("warning", "●"),
 };
 
 export function statusIcon(status: string, theme: Theme): string {

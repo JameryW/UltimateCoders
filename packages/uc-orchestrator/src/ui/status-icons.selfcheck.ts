@@ -20,10 +20,10 @@ function check(name: string, cond: boolean) {
 	if (!cond) failures++;
 }
 
-// Canonical subtask statuses (from orchestrator.ts SubtaskResult union)
+// Canonical subtask statuses (from orchestrator.ts SubtaskResult union) + task-only in_progress
 const subtaskStatuses = ["pending", "running", "reviewing", "completed", "failed", "cancelled"];
 
-for (const s of [...subtaskStatuses, "planning"]) {
+for (const s of [...subtaskStatuses, "planning", "in_progress"]) {
 	const icon = statusIcon(s, theme);
 	check(`statusIcon(${s}) non-empty`, icon.length > 0);
 }
@@ -33,6 +33,9 @@ check("unknown status falls back to pending", statusIcon("bogus", theme) === sta
 
 // planning IS in the table (was missing from task-result-renderer pre-extraction)
 check("planning in STATUS_ICON table", "planning" in STATUS_ICON);
+
+// in_progress IS in the table (task-level status; was falling back to pending ○)
+check("in_progress in STATUS_ICON table", "in_progress" in STATUS_ICON);
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
