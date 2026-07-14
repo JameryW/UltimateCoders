@@ -11,6 +11,7 @@ import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 import { formatErrorForDisplay } from "./error-format";
+import { statusIcon } from "./status-icons";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), so match bytes directly like the
@@ -25,22 +26,6 @@ const KEY = {
 	enter: "\r",
 	esc: "\x1b",
 };
-
-// ── Status Icons ─────────────────────────────────────────────────
-
-const STATUS_ICON: Record<string, (theme: Theme) => string> = {
-	completed: (t) => t.fg("success", "✓"),
-	running: (t) => t.fg("warning", "●"),
-	reviewing: (t) => t.fg("accent", "◉"),
-	failed: (t) => t.fg("error", "✗"),
-	cancelled: (t) => t.fg("dim", "⊘"),
-	pending: (t) => t.fg("dim", "○"),
-	planning: (t) => t.fg("dim", "◎"),
-};
-
-function statusIcon(status: string, theme: Theme): string {
-	return (STATUS_ICON[status] ?? STATUS_ICON.pending)(theme);
-}
 
 // ── SubtaskTree Component ────────────────────────────────────────
 
