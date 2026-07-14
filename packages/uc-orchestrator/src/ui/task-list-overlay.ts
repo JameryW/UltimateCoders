@@ -10,6 +10,20 @@
 import type { Component, TUI } from "@oh-my-pi/pi-tui";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState } from "../orchestrator/orchestrator";
+import { formatTaskDetail } from "./status-formatter";
+
+// ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
+// (vendor utils setNativeKillTree mismatch), match bytes directly.
+const KEY = {
+	up: "\x1b[A",
+	down: "\x1b[B",
+	pageUp: "\x1b[5~",
+	pageDown: "\x1b[6~",
+	home: "\x1b[H",
+	end: "\x1b[F",
+	enter: "\r",
+	esc: "\x1b",
+};
 
 // ── Status badge ─────────────────────────────────────────────────
 
@@ -30,7 +44,8 @@ function statusBadge(status: string, theme: Theme): string {
 
 export interface TaskListOptions {
 	tasks: () => TaskState[];
-	onSelect?: (taskId: string) => void;
+	// ponytail: detail rendered in-overlay (Esc returns) instead of notify() spam
+	getTask?: (taskId: string) => TaskState | undefined;
 	onClose: () => void;
 }
 
@@ -44,6 +59,10 @@ class TaskListComponent {
 	private cursorIdx = 0;
 	private scrollOffset = 0;
 	private maxVisible = 20;
+	// detail mode: showing one task's breakdown, Esc returns to list
+	private detailTaskId: string | null = null;
+	private detailLines: string[] = [];
+	private detailScroll = 0;
 
 	constructor(
 		private opts: TaskListOptions,
@@ -53,11 +72,16 @@ class TaskListComponent {
 	) {}
 
 	render(width: number): string[] {
+		if (this.detailTaskId) return this.renderDetail(width);
+		return this.renderList(width);
+	}
+
+	private renderList(width: number): string[] {
 		const tasks = this.opts.tasks();
 		const lines: string[] = [];
 
 		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", ` — ${tasks.length} task(s)`));
-		lines.push(this.theme.fg("dim", "  ↑↓ navigate · Enter select · Esc close"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk navigate · Enter detail · PgUp/PgDn · g/G · Esc close"));
 		lines.push("");
 
 		if (tasks.length === 0) {
@@ -88,6 +112,23 @@ class TaskListComponent {
 		return lines;
 	}
 
+	private renderDetail(width: number): string[] {
+		const lines: string[] = [];
+		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · Esc back to list"));
+		lines.push("");
+		const maxVisible = this.maxVisible;
+		const start = this.detailScroll;
+		const slice = this.detailLines.slice(start, start + maxVisible);
+		for (const l of slice) {
+			lines.push(`  ${l.slice(0, width - 2)}`);
+		}
+		if (this.detailLines.length > maxVisible) {
+			lines.push(this.theme.fg("dim", `  ${start + 1}-${Math.min(start + maxVisible, this.detailLines.length)} of ${this.detailLines.length}`));
+		}
+		return lines;
+	}
+
 	private formatAge(ts: number): string {
 		const diff = Date.now() - ts;
 		if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
@@ -97,29 +138,62 @@ class TaskListComponent {
 	}
 
 	handleInput(data: string): void {
+		if (this.detailTaskId) {
+			// detail scroll mode
+			if (data === KEY.esc) {
+				this.detailTaskId = null;
+				this.detailScroll = 0;
+				return;
+			}
+			if (data === KEY.up || data === "k") this.detailScroll = Math.max(0, this.detailScroll - 1);
+			else if (data === KEY.down || data === "j") this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + 1);
+			else if (data === KEY.pageUp) this.detailScroll = Math.max(0, this.detailScroll - this.maxVisible);
+			else if (data === KEY.pageDown) this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + this.maxVisible);
+			else if (data === KEY.home || data === "g") this.detailScroll = 0;
+			else if (data === KEY.end || data === "G") this.detailScroll = Math.max(0, this.detailLines.length - this.maxVisible);
+			return;
+		}
+
 		const tasks = this.opts.tasks();
 
-		if (data === "\x1b" || data === "q") {
+		if (data === KEY.esc || data === "q") {
 			this.done();
 			return;
 		}
-		if (data === "\x1b[A" || data === "k") {
-			if (this.cursorIdx > 0) {
-				this.cursorIdx--;
-				if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
-			}
-		} else if (data === "\x1b[B" || data === "j") {
-			if (this.cursorIdx < tasks.length - 1) {
-				this.cursorIdx++;
-				if (this.cursorIdx >= this.scrollOffset + this.maxVisible) this.scrollOffset++;
-			}
-		} else if (data === "\r" || data === "\n") {
+		if (data === KEY.up || data === "k") {
+			if (this.cursorIdx > 0) this.cursorIdx--;
+		} else if (data === KEY.down || data === "j") {
+			if (this.cursorIdx < tasks.length - 1) this.cursorIdx++;
+		} else if (data === KEY.pageUp) {
+			this.cursorIdx = Math.max(0, this.cursorIdx - this.maxVisible);
+		} else if (data === KEY.pageDown) {
+			this.cursorIdx = Math.min(tasks.length - 1, this.cursorIdx + this.maxVisible);
+		} else if (data === KEY.home) {
+			this.cursorIdx = 0;
+		} else if (data === KEY.end) {
+			this.cursorIdx = Math.max(0, tasks.length - 1);
+		} else if (data === "g") {
+			this.cursorIdx = 0;
+		} else if (data === "G") {
+			this.cursorIdx = Math.max(0, tasks.length - 1);
+		} else if (data === KEY.enter || data === "\n") {
 			const task = tasks[this.cursorIdx];
-			if (task && this.opts.onSelect) {
-				this.opts.onSelect(task.id);
-			}
+			if (task) this.openDetail(task.id);
 		}
-		(this.tui as any).requestRender?.();
+		// clamp scroll to cursor
+		if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
+		else if (this.cursorIdx >= this.scrollOffset + this.maxVisible) {
+			this.scrollOffset = this.cursorIdx - this.maxVisible + 1;
+		}
+		if (this.scrollOffset < 0) this.scrollOffset = 0;
+	}
+
+	private openDetail(taskId: string): void {
+		const task = this.opts.getTask ? this.opts.getTask(taskId) : this.opts.tasks().find((t) => t.id === taskId);
+		if (!task) return;
+		this.detailTaskId = taskId;
+		this.detailLines = formatTaskDetail(task, this.theme);
+		this.detailScroll = 0;
 	}
 
 	invalidate(): void {}

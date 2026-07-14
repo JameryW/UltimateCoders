@@ -227,15 +227,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			await ctx.ui.custom(
 				createTaskListOverlay({
 					tasks: () => orchestrator.getAllTaskStates(),
-					onSelect: async (taskId) => {
-						const task = orchestrator.getTaskState(taskId);
-						if (task) {
-							const lines = formatTaskDetail(task, ctx.ui.theme);
-							for (const line of lines) {
-								ctx.ui.notify(line, "info");
-							}
-						}
-					},
+					getTask: (taskId) => orchestrator.getTaskState(taskId),
 					onClose: () => {},
 				}),
 				{ overlay: true },
