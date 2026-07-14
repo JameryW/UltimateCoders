@@ -223,8 +223,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			await ctx.ui.custom(
 				createSubtaskTreeOverlay({
 					tasks: () => orchestrator.getAllTaskStates(),
-					onRetry: async (taskId, subtaskId) => {
-						ctx.ui.notify(`Retry requested for ${subtaskId} — use /uc resume ${taskId}`, "info");
+					onRetry: async (taskId, _subtaskId) => {
+						// subtaskId is informational only — resume is task-scoped
+						// (resumes ALL failed subtasks in that task, per resumeTask contract)
+						const ok = await orchestrator.resumeTask(taskId, ctx as unknown as ExtensionCommandContext);
+						if (ok) {
+							ctx.ui.notify(`Resuming task ${taskId.slice(0, 8)} — failed subtasks re-queued`, "info");
+						} else {
+							ctx.ui.notify(`Cannot retry: task ${taskId.slice(0, 8)} not in failed/paused state`, "warning");
+						}
 					},
 					onClose: () => {},
 				}),
