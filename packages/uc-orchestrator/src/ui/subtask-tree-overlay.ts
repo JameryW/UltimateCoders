@@ -105,7 +105,7 @@ class SubtaskTreeComponent {
 			const isCursor = globalIdx === this.cursorIdx;
 			const cursor = isCursor ? this.theme.bold("›") : " ";
 			const icon = statusIcon(item.subtask.status, this.theme);
-			const desc = item.subtask.description.slice(0, width - 16);
+			const desc = item.subtask.description.slice(0, Math.max(0, width - 16));
 			const deps = item.subtask.dependsOn.length > 0
 				? this.theme.fg("dim", ` ←${item.subtask.dependsOn.join(",")}`)
 				: "";
@@ -116,7 +116,7 @@ class SubtaskTreeComponent {
 				if (item.subtask.result) {
 					const resultLines = item.subtask.result.split("\n").slice(0, 5);
 					for (const rl of resultLines) {
-						lines.push(this.theme.fg("dim", `      ${rl.slice(0, width - 8)}`));
+						lines.push(this.theme.fg("dim", `      ${rl.slice(0, Math.max(0, width - 8))}`));
 					}
 				}
 				if (item.subtask.error) {

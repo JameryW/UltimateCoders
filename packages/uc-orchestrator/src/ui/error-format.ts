@@ -101,8 +101,11 @@ export function formatErrorForDisplay(
 ): string {
 	const { kind, rootCause, retryCount } = classifyError(errorStr);
 
-	const truncated = rootCause.length > maxWidth
-		? rootCause.slice(0, maxWidth - 1) + "…"
+	// ponytail: clamp — narrow terminals pass negative width; slice(0, neg) would
+	// drop chars and leave only "…". Treat <1 as "no room", show empty root cause.
+	const w = Math.max(0, maxWidth);
+	const truncated = rootCause.length > w
+		? rootCause.slice(0, Math.max(0, w - 1)) + (w > 0 ? "…" : "")
 		: rootCause;
 
 	if (kind === "transient") {

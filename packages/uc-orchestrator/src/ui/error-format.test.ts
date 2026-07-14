@@ -143,4 +143,17 @@ describe("formatErrorForDisplay", () => {
 		expect(output).toContain("<error>");
 		expect(output).toContain("</error>");
 	});
+
+	it("clamps width 0/negative without dangling ellipsis", () => {
+		const fg = (_c: ThemeColor, t: string) => t;
+		const err = "LLM 永久错误: 401 invalid_api_key";
+		// width 0 — no room, must not emit "…" alone
+		expect(formatErrorForDisplay(err, 0, fg)).not.toContain("…");
+		// negative width (narrow terminal) — must not throw, no ellipsis
+		const neg = formatErrorForDisplay(err, -5, fg);
+		expect(typeof neg).toBe("string");
+		expect(neg).not.toContain("…");
+		// width 1 — truncate to 0 chars + ellipsis
+		expect(formatErrorForDisplay(err, 1, fg)).toContain("…");
+	});
 });
