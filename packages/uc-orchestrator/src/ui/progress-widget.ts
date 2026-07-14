@@ -101,17 +101,24 @@ class ProgressWidgetComponent {
 				const icon = statusIcon(st.status, this.theme);
 				const desc = st.description.slice(0, Math.max(0, width - 12));
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
-				// Render live step progress (agent + phase + status tag) when available
+				// Render live step progress (agent + phase + percent + status tag) when available
 				const prog = s.progressBySubtask?.get(st.id);
 				if (prog) {
 					const agentTag = prog.stepAgent ? this.theme.fg("accent", prog.stepAgent) : "";
 					const phaseText = prog.phase ? this.theme.fg("dim", prog.phase.slice(0, Math.max(0, width - 16))) : "";
+					// ponytail: percent + stepIndex/stepTotal were populated by the
+					// subtask_progress event but never rendered — dead data. Show them.
+					const pctTag = prog.percent >= 0 ? this.theme.fg("warning", `${prog.percent}%`) : "";
+					const stepTag =
+						prog.stepIndex !== undefined && prog.stepTotal !== undefined && prog.stepTotal > 0
+							? this.theme.fg("dim", `[${prog.stepIndex}/${prog.stepTotal}]`)
+							: "";
 					const statusTag = prog.stepStatus ? this._stepStatusTag(prog.stepStatus) : "";
 					const parallelTag =
 						prog.parallelGroup && prog.parallelStepCount && prog.parallelStepCount > 1
 							? this.theme.fg("warning", `↻${prog.parallelStepCount} parallel`)
 							: "";
-					const parts = ["    ", agentTag, phaseText, statusTag, parallelTag].filter(Boolean);
+					const parts = ["    ", agentTag, pctTag, stepTag, phaseText, statusTag, parallelTag].filter(Boolean);
 					if (parts.length > 1) lines.push(parts.join(" "));
 				}
 			}

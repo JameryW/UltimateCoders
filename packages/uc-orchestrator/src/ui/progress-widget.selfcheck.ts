@@ -68,5 +68,22 @@ function renderLines(failedIds: string[], width: number): string[] {
 	check("tiny width appends no raw IDs", !failedLine.includes("s1"));
 }
 
+// Live progress fields (percent + stepIndex/stepTotal) render, not dead data
+// ponytail: SubtaskProgressInfo.percent/stepIndex/stepTotal were populated by the
+// subtask_progress event but never displayed. Verify they now surface.
+{
+	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
+	const progressBySubtask = new Map([["s1", { phase: "executing", percent: 42, stepIndex: 3, stepTotal: 7, stepAgent: "coder" }]]);
+	let st: ProgressWidgetState = { task, progressBySubtask };
+	const factory = createProgressWidget(() => st);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	const progLine = lines.find((l) => l.includes("coder")) ?? "";
+	check("percent rendered", progLine.includes("42%"));
+	check("stepIndex/stepTotal rendered", progLine.includes("[3/7]"));
+	check("agent tag rendered", progLine.includes("coder"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
