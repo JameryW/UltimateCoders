@@ -12,22 +12,7 @@ import type { TaskState } from "../orchestrator/orchestrator";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { formatErrorForDisplay } from "./error-format";
-
-// ── Status Icons ─────────────────────────────────────────────────
-
-const STATUS_ICON: Record<string, (theme: Theme) => string> = {
-	completed: (t) => t.fg("success", "✓"),
-	running: (t) => t.fg("warning", "●"),
-	reviewing: (t) => t.fg("accent", "◉"),
-	failed: (t) => t.fg("error", "✗"),
-	cancelled: (t) => t.fg("dim", "⊘"),
-	pending: (t) => t.fg("dim", "○"),
-	planning: (t) => t.fg("dim", "◎"),
-};
-
-function statusIcon(status: string, theme: Theme): string {
-	return (STATUS_ICON[status] ?? STATUS_ICON.pending)(theme);
-}
+import { statusIcon } from "./status-icons";
 
 // ── Progress Bar ─────────────────────────────────────────────────
 
