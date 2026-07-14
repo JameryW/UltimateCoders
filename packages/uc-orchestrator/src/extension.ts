@@ -282,9 +282,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					if (!taskId) {
 						const tasks = orchestrator.getAllTaskStates();
 						const lines = formatTaskList(tasks, ctx.ui.theme);
-						for (const line of lines) {
-							ctx.ui.notify(line, "info");
-						}
+						ctx.ui.notify(lines.join("\n"), "info");
 					} else {
 						const task = orchestrator.getTaskState(taskId);
 						if (!task) {
@@ -292,9 +290,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							return;
 						}
 						const lines = formatTaskDetail(task, ctx.ui.theme);
-						for (const line of lines) {
-							ctx.ui.notify(line, "info");
-						}
+						ctx.ui.notify(lines.join("\n"), "info");
 					}
 					return;
 				}
