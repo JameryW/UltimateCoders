@@ -17,7 +17,7 @@ import { statusIcon } from "./status-icons";
 // ── Progress Bar ─────────────────────────────────────────────────
 
 function progressBar(completed: number, total: number, width: number, theme: Theme): string {
-	if (total === 0) return "";
+	if (total === 0 || width <= 0) return "";
 	const ratio = completed / total;
 	const filled = Math.round(ratio * width);
 	const empty = width - filled;
@@ -88,7 +88,7 @@ class ProgressWidgetComponent {
 		if (waveIdx !== undefined && totalWaves !== undefined && totalWaves > 0) {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const total = task.subtasks.length;
-			const bar = progressBar(completed, total, Math.min(width - 20, 30), this.theme);
+			const bar = progressBar(completed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
 			lines.push(
 				`  ${this.theme.fg("dim", `Wave ${waveIdx + 1}/${totalWaves}`)} ${bar} ${completed}/${total}`,
 			);
@@ -99,7 +99,7 @@ class ProgressWidgetComponent {
 		if (running.length > 0) {
 			for (const st of running.slice(0, 3)) {
 				const icon = statusIcon(st.status, this.theme);
-				const desc = st.description.slice(0, width - 12);
+				const desc = st.description.slice(0, Math.max(0, width - 12));
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
 				// Render live step progress (agent + phase + status tag) when available
 				const prog = s.progressBySubtask?.get(st.id);

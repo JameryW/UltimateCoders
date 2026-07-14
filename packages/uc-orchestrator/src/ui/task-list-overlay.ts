@@ -98,7 +98,7 @@ class TaskListComponent {
 			const badge = statusBadge(task.status, this.theme);
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const total = task.subtasks.length;
-			const desc = task.description.slice(0, width - 30);
+			const desc = task.description.slice(0, Math.max(0, width - 30));
 			const age = this.formatAge(task.createdAt);
 
 			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${completed}/${total} ${desc}`);
@@ -121,7 +121,7 @@ class TaskListComponent {
 		const start = this.detailScroll;
 		const slice = this.detailLines.slice(start, start + maxVisible);
 		for (const l of slice) {
-			lines.push(`  ${l.slice(0, width - 2)}`);
+			lines.push(`  ${l.slice(0, Math.max(0, width - 2))}`);
 		}
 		if (this.detailLines.length > maxVisible) {
 			lines.push(this.theme.fg("dim", `  ${start + 1}-${Math.min(start + maxVisible, this.detailLines.length)} of ${this.detailLines.length}`));
