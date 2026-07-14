@@ -171,7 +171,9 @@ class TaskListComponent {
 		} else if (data === KEY.pageUp) {
 			this.cursorIdx = Math.max(0, this.cursorIdx - this.maxVisible);
 		} else if (data === KEY.pageDown) {
-			this.cursorIdx = Math.min(tasks.length - 1, this.cursorIdx + this.maxVisible);
+			// ponytail: Math.max(0, …) — empty list makes tasks.length-1 = -1,
+			// which would clamp cursorIdx to -1 and render a phantom cursor.
+			this.cursorIdx = Math.max(0, Math.min(tasks.length - 1, this.cursorIdx + this.maxVisible));
 		} else if (data === KEY.home) {
 			this.cursorIdx = 0;
 		} else if (data === KEY.end) {
