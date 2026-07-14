@@ -42,10 +42,29 @@ export function formatTaskDetail(task: TaskState, theme: Theme): string[] {
 	lines.push("");
 	lines.push(theme.fg("accent", "Subtasks:"));
 
-	// Group by dependency depth for simple tree visualization
+	// ponytail: true topological depth (longest dependency chain to a root),
+	// not dependsOn.length. A subtask depending on 3 roots was indented to
+	// depth 3 and grouped with real depth-3 nodes; now it's depth 1.
+	const depthCache = new Map<string, number>();
+	const subtaskById = new Map(task.subtasks.map((st) => [st.id, st]));
+	const depthOf = (id: string, seen: Set<string>): number => {
+		if (depthCache.has(id)) return depthCache.get(id)!;
+		if (seen.has(id)) return 0; // ponytail: cycle guard — treat as root
+		const st = subtaskById.get(id);
+		if (!st || st.dependsOn.length === 0) {
+			depthCache.set(id, 0);
+			return 0;
+		}
+		seen.add(id);
+		const d = 1 + Math.max(...st.dependsOn.map((d2) => depthOf(d2, seen)));
+		seen.delete(id);
+		depthCache.set(id, d);
+		return d;
+	};
+
 	const byDeps = new Map<number, SubtaskResult[]>();
 	for (const st of task.subtasks) {
-		const depth = st.dependsOn.length;
+		const depth = depthOf(st.id, new Set());
 		if (!byDeps.has(depth)) byDeps.set(depth, []);
 		byDeps.get(depth)!.push(st);
 	}
