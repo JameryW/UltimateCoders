@@ -85,5 +85,17 @@ function renderLines(failedIds: string[], width: number): string[] {
 	check("agent tag rendered", progLine.includes("coder"));
 }
 
+// stepSummary renders on its own dim line (was dead data)
+{
+	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
+	const progressBySubtask = new Map([["s1", { phase: "executing", percent: 10, stepSummary: "editing auth.ts" }]]);
+	let st: ProgressWidgetState = { task, progressBySubtask };
+	const factory = createProgressWidget(() => st);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	check("stepSummary rendered", lines.some((l: string) => l.includes("editing auth.ts")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

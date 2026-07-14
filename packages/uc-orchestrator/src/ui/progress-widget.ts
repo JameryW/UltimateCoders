@@ -120,6 +120,12 @@ class ProgressWidgetComponent {
 							: "";
 					const parts = ["    ", agentTag, pctTag, stepTag, phaseText, statusTag, parallelTag].filter(Boolean);
 					if (parts.length > 1) lines.push(parts.join(" "));
+					// ponytail: stepSummary is the human-readable current-step text
+					// (populated by subtask_progress, was dead data). Show on its own
+					// dim line, truncated to width, so the tag line stays scannable.
+					if (prog.stepSummary) {
+						lines.push(this.theme.fg("dim", `      ${prog.stepSummary.slice(0, Math.max(0, width - 6))}`));
+					}
 				}
 			}
 			if (running.length > 3) {
