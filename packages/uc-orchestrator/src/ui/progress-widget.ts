@@ -123,7 +123,15 @@ class ProgressWidgetComponent {
 		// Failed subtasks summary — show IDs plus first error for quick diagnosis
 		const failed = task.subtasks.filter((s) => s.status === "failed");
 		if (failed.length > 0) {
-			lines.push(`  ${this.theme.fg("error", `⚠ ${failed.length} failed:`)} ${failed.map((s) => s.id).join(", ")}`);
+			// ponytail: prefix eats ~12 cols (`  ⚠ N failed: `); truncate ID list to
+			// the remaining width so a long failure set doesn't wrap the line.
+			const prefix = `  ⚠ ${failed.length} failed: `;
+			const idBudget = Math.max(0, width - prefix.length - 2);
+			let idList = failed.map((s) => s.id).join(", ");
+			if (idList.length > idBudget) {
+				idList = idBudget > 0 ? idList.slice(0, idBudget - 1) + "…" : "";
+			}
+			lines.push(`${this.theme.fg("error", prefix)}${idList}`);
 			// Show first failed subtask's error (truncated root cause, friendly label)
 			const firstErr = failed.find((s) => s.error);
 			if (firstErr && firstErr.error) {
