@@ -121,6 +121,18 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "subtask_start": {
 				const d = data as OrchestratorEvents["subtask_start"];
 				ctx.ui.setWorkingMessage(`UC: ${d.description.slice(0, 40)}`);
+				// ponytail: refresh the widget's task snapshot so the now-running
+				// subtask shows in the "running" list immediately. Without this, ps.task
+				// stayed stale from task_planning until subtask_end — the running row
+				// was invisible for the subtask's whole lifetime if no progress event fired.
+				const task = orchestrator.getTaskState(d.taskId);
+				if (task) {
+					const ps = progressState.get(d.taskId);
+					if (ps) {
+						ps.task = task;
+						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
+					}
+				}
 				break;
 			}
 			case "subtask_end":
