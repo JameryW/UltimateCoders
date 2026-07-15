@@ -76,6 +76,26 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp.handleInput(PAGEUP); check("pageUp back 20", comp.cursorIdx === 20);
 }
 
+// height-adaptive page size: a 24-row terminal reserves 12 rows for chrome, so
+// maxVisible = 12, not the legacy hardcoded 20 that the maxHeight:"100%" clamp
+// would silently truncate (cutting the footer + bottom cursor rows).
+// ponytail: overlayPageSize reads tui.terminal.rows; undefined tui -> fallback 20.
+{
+	const tui = { terminal: { rows: 24 } };
+	const tasks = Array.from({length:50},(_,i)=>makeTask(`t${i}`,"in_progress"));
+	const factory = createTaskListOverlay({
+		tasks: () => tasks, getTask: () => undefined, onClose: () => {},
+	});
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	check("24-row terminal page size = 12", comp.maxVisible === 12);
+	const lines: string[] = comp.render(80);
+	// header(1) + hint(1) + blank(1) + 12 rows + footer(1) = 16
+	check("24-row terminal renders 12 item rows + chrome", lines.length === 16);
+	check("24-row terminal footer shows 1-12 of 50", lines.some((l: string) => l.includes("1-12 of 50")));
+	comp.handleInput(PAGEDOWN);
+	check("24-row terminal pageDown +12 (not +20)", comp.cursorIdx === 12);
+}
+
 // detail mode
 {
 	const { comp } = makeComponent([makeTask("t1","in_progress")]);
@@ -248,8 +268,10 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("empty filtered shows 'no match' line", lines.some((l: string) => l.includes("no match for")));
 }
 
-// ponytail: adaptive page size — small terminal (rows=10) yields < 20 visible items.
-// rows - 4 (chrome + footer reserve) = 6, clamped to [1, 20] → 6 visible task rows.
+// height-adaptive page size: a 24-row terminal reserves 12 rows for chrome, so
+// maxVisible = 12, not the legacy hardcoded 20 that the maxHeight:"100%" clamp
+// would silently truncate (cutting the footer + bottom cursor rows).
+// ponytail: overlayPageSize reads tui.terminal.rows; undefined tui -> fallback 20.
 {
 	const tasks = Array.from({ length: 50 }, (_, i) => makeTask(`t${i}`, "in_progress"));
 	const factory = createTaskListOverlay({
@@ -257,13 +279,12 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 		getTask: (id) => tasks.find((t) => t.id === id),
 		onClose: () => {},
 	});
-	// ponytail: mock tui with terminal.rows = 10 — simulates a short tmux/split-pane viewport.
-	const mockTui = { requestRender: () => {}, terminal: { rows: 10, columns: 80 } };
-	const comp = factory(mockTui as any, theme, undefined, () => {}) as any;
+	const tui = { terminal: { rows: 24 } };
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	check("24-row terminal page size = 12", comp.maxVisible === 12);
 	const lines = comp.render(80);
-	// 3 chrome + 6 task rows + 1 footer = 10 lines (NOT 3 + 20 + 1 = 24)
-	check("small terminal shows < 20 item rows", lines.length < 24);
-	check("small terminal page size = 6", lines.length === 10);
+	// header(1) + hint(1) + blank(1) + 12 rows + footer(1) = 16
+	check("24-row terminal shows 12 task rows", lines.length === 16);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

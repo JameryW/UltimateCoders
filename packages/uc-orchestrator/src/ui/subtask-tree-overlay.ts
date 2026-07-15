@@ -12,6 +12,7 @@ import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
+import { overlayPageSize } from "./overlay-pagination";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), so match bytes directly like the
@@ -46,14 +47,14 @@ class SubtaskTreeComponent {
 	private expanded = new Set<string>();
 	private flatItems: { taskId: string; subtask: SubtaskResult; depth: number }[] = [];
 	private scrollOffset = 0;
-	// ponytail: derive page size from terminal height so short viewports (tmux /
-	// split panes) don't overflow — 3 chrome lines (header + hint + blank) + 1
-	// footer reserve. Cap at 20 so a tall terminal doesn't dump 50 rows into a
-	// paginated overlay. Fall back to 20 when tui/terminal is absent (test mocks).
+	/**
+	 * ponytail: height-adaptive page size (see overlayPageSize). Read live so a
+	 * terminal resize takes effect on the next render/input without restart.
+	 * Was a hardcoded 20 that overflowed short terminals, letting the
+	 * maxHeight:"100%" clamp cut the footer + bottom cursor rows.
+	 */
 	private get maxVisible(): number {
-		const rows = (this.tui as any)?.terminal?.rows;
-		if (typeof rows !== "number" || rows <= 0) return 20;
-		return Math.max(1, Math.min(20, rows - 4));
+		return overlayPageSize(this.tui);
 	}
 	// ponytail: stamp flatItems only when task count changes, not every render
 	private lastSubtaskCount = -1;
