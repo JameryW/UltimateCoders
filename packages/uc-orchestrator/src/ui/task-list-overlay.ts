@@ -100,7 +100,7 @@ class TaskListComponent {
 	}
 
 	render(width: number): string[] {
-		if (this.detailTaskId) return this.renderDetail(width);
+		if (this.detailTaskId) return this.renderDetail();
 		return this.renderList(width);
 	}
 
@@ -166,7 +166,7 @@ class TaskListComponent {
 		return lines;
 	}
 
-	private renderDetail(width: number): string[] {
+	private renderDetail(): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
 		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · Esc back to list"));
@@ -175,7 +175,12 @@ class TaskListComponent {
 		const start = this.detailScroll;
 		const slice = this.detailLines.slice(start, start + maxVisible);
 		for (const l of slice) {
-			lines.push(`  ${l.slice(0, Math.max(0, width - 2))}`);
+			// ponytail: don't raw-slice - detailLines carry ANSI theme codes, and
+			// String.slice would split an escape sequence (color bleed / garble)
+			// and over-truncate (ANSI bytes eat the visible-width budget). The
+			// overlay compositor already truncates each line to terminal width
+			// ANSI-safely (sliceByColumn), so emit the full line and let it clip.
+			lines.push(`  ${l}`);
 		}
 		if (this.detailLines.length > maxVisible) {
 			lines.push(this.theme.fg("dim", `  ${start + 1}-${Math.min(start + maxVisible, this.detailLines.length)} of ${this.detailLines.length}`));

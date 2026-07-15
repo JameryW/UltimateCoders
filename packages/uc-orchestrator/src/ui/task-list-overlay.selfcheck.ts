@@ -88,6 +88,32 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("esc returns to list", comp.detailTaskId === null);
 }
 
+// detail mode must not raw-slice ANSI-themed lines: String.slice on a
+// theme-colored detailLine splits escape sequences and drops the closing reset,
+// bleeding color / garbling the display. Rely on the compositor's ANSI-aware
+// truncation instead.
+// ponytail: renderDetail used l.slice(0, width-2) on ANSI-laden detailLines.
+{
+	const ansiTheme: Theme = {
+		fg: (_c: ThemeColor, t: string) => `\x1b[36m${t}\x1b[0m`,
+		bold: (t: string) => `\x1b[1m${t}\x1b[0m`,
+	} as unknown as Theme;
+	const task = makeTask("t1", "failed");
+	task.description = "x".repeat(80); // long -> Description line exceeds narrow width
+	const comp = createTaskListOverlay({
+		tasks: () => [task], getTask: () => task, onClose: () => {},
+	})(undefined, ansiTheme, undefined, () => {}) as any;
+	comp.handleInput(ENTER);
+	check("ansi: detail open", comp.detailTaskId === "t1");
+	const lines: string[] = comp.render(30); // narrow
+	// The long themed "Description:" line must keep its closing \x1b[0m reset;
+	// raw slice(0, width-2) would have cut it off mid-line (no reset).
+	check(
+		"ansi: detail line reset preserved (no raw slice)",
+		lines.some((l: string) => l.includes("Description:") && l.endsWith("\x1b[0m")),
+	);
+}
+
 // esc closes from list
 {
 	const { comp, closed } = makeComponent([makeTask("t1","in_progress")]);
