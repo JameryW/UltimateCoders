@@ -223,14 +223,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			await ctx.ui.custom(
 				createSubtaskTreeOverlay({
 					tasks: () => orchestrator.getAllTaskStates(),
-					onRetry: async (taskId, _subtaskId) => {
-						// subtaskId is informational only — resume is task-scoped
-						// (resumes ALL failed subtasks in that task, per resumeTask contract)
-						const ok = await orchestrator.resumeTask(taskId, ctx as unknown as ExtensionCommandContext);
+					onRetry: async (taskId, subtaskId) => {
+						// Per-subtask retry: reset + re-dispatch ONLY the cursor's failed
+						// subtask (+ its cascade-cancelled downstream), leaving other
+						// failed subtasks untouched. Distinct from task-scoped resumeTask.
+						const ok = await orchestrator.retrySubtask(taskId, subtaskId, ctx as unknown as ExtensionCommandContext);
 						if (ok) {
-							ctx.ui.notify(`Resuming task ${taskId.slice(0, 8)} — failed subtasks re-queued`, "info");
+							ctx.ui.notify(`Retrying subtask ${subtaskId.slice(0, 8)} — re-dispatched`, "info");
 						} else {
-							ctx.ui.notify(`Cannot retry: task ${taskId.slice(0, 8)} not in failed/paused state`, "warning");
+							ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
 						}
 					},
 					onClose: () => {},
