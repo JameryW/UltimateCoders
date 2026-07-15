@@ -28,10 +28,15 @@ function makeTask(id: string, status: TaskState["status"], subtaskCount = 2): Ta
 	} as unknown as TaskState;
 }
 
-function makeComponent(tasks: TaskState[]) {
+function makeComponent(tasks: TaskState[], opts?: {
+	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => void;
+	initialDetailTaskId?: string;
+}) {
 	const factory = createTaskListOverlay({
 		tasks: () => tasks,
 		getTask: (id) => tasks.find((t) => t.id === id),
+		onAction: opts?.onAction,
+		initialDetailTaskId: opts?.initialDetailTaskId,
 		onClose: () => {},
 	});
 	let closed = false;
@@ -285,6 +290,58 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const lines = comp.render(80);
 	// header(1) + hint(1) + blank(1) + 12 rows + footer(1) = 16
 	check("24-row terminal shows 12 task rows", lines.length === 16);
+}
+
+// ponytail: c/p/r quick actions — pause/resume fire immediately; cancel needs a
+// double-tap (first arms via flashMsg, second fires onAction).
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ onAction: (id, action) => calls.push([id, action]) },
+	);
+	comp.handleInput(DOWN); // cursor on t2
+	comp.handleInput("p");
+	check("`p` pauses cursor task immediately", calls.length === 1 && calls[0][0] === "t2" && calls[0][1] === "pause");
+	comp.handleInput("r");
+	check("`r` resumes cursor task immediately", calls.length === 2 && calls[1][1] === "resume");
+}
+
+// double-tap cancel: first `c` arms (no onAction), second `c` fires cancel.
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress")],
+		{ onAction: (id, action) => calls.push([id, action]) },
+	);
+	comp.handleInput("c");
+	check("first `c` arms cancel (no fire)", calls.length === 0);
+	check("first `c` sets flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("cancel"));
+	comp.handleInput("c");
+	check("second `c` fires cancel", calls.length === 1 && calls[0][1] === "cancel");
+	check("second `c` clears flashMsg", comp.flashMsg === null);
+}
+
+// double-tap abort: first `c` arms, a nav key clears without firing.
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ onAction: (id, action) => calls.push([id, action]) },
+	);
+	comp.handleInput("c");
+	comp.handleInput(DOWN); // any non-c key aborts
+	check("nav after armed `c` aborts (no fire)", calls.length === 0);
+	check("nav clears flashMsg", comp.flashMsg === null);
+}
+
+// initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.
+{
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ initialDetailTaskId: "t2" },
+	);
+	check("initialDetailTaskId opens in detail mode", comp.detailTaskId === "t2");
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

@@ -12,6 +12,7 @@
  * Keyboard shortcuts:
  * - Ctrl+T        — Open SubtaskTree overlay
  * - Ctrl+Shift+T  — Open TaskList overlay
+ * - Ctrl+Shift+F  — Open SubtaskTree on first failed subtask
  *
  * LLM-callable tools:
  * - uc_memory  — Read/write/search/delete UC layered memory
@@ -25,6 +26,7 @@
  * - Rich progress widget above editor (real-time subtask progress)
  * - SubtaskTree overlay (Ctrl+T) with keyboard navigation
  * - TaskList overlay (Ctrl+Shift+T)
+ * - Jump to first failed subtask (Ctrl+Shift+F)
  * - Custom message renderer for task results
  * - Connection status in footer
  */
@@ -217,6 +219,31 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── Keyboard shortcuts ──────────────────────────────────────
 
+	// ponytail: shared task-list opener — used by Ctrl+Shift+T (list) and the
+	// subtask-tree `d` jump (lands in detail via initialDetailTaskId).
+	async function openTaskList(ctx: ExtensionCommandContext, initialDetailTaskId?: string) {
+		await ctx.ui.custom(
+			createTaskListOverlay({
+				tasks: () => orchestrator.getAllTaskStates(),
+				getTask: (taskId) => orchestrator.getTaskState(taskId),
+				onAction: async (taskId, action) => {
+					// c/p/r quick actions — mirrors /uc cancel|pause|resume.
+					const ok = action === "cancel"
+						? await orchestrator.cancelTask(taskId, undefined, ctx as unknown as ExtensionCommandContext)
+						: action === "pause"
+							? await orchestrator.pauseTask(taskId, ctx as unknown as ExtensionCommandContext)
+							: await orchestrator.resumeTask(taskId, ctx as unknown as ExtensionCommandContext);
+					if (!ok) {
+						ctx.ui.notify(`Cannot ${action} task ${taskId.slice(0, 8)}: wrong state`, "warning");
+					}
+				},
+				initialDetailTaskId,
+				onClose: () => {},
+			}),
+			{ overlay: true },
+		);
+	}
+
 	pi.registerShortcut("ctrl+t" as KeyId, {
 		description: "Open UC subtask tree",
 		handler: async (ctx) => {
@@ -234,6 +261,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
 						}
 					},
+					onJumpToTask: (taskId) => {
+						// `d` — close tree (done() is called by the overlay) then open the
+						// task-list straight into that task's detail.
+						void openTaskList(ctx as unknown as ExtensionCommandContext, taskId);
+					},
 					onClose: () => {},
 				}),
 				{ overlay: true },
@@ -244,10 +276,36 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut("ctrl+shift+t" as KeyId, {
 		description: "Open UC task list",
 		handler: async (ctx) => {
+			await openTaskList(ctx as unknown as ExtensionCommandContext);
+		},
+	});
+
+	pi.registerShortcut("ctrl+shift+f" as KeyId, {
+		description: "Jump to first failed subtask",
+		handler: async (ctx) => {
+			// ponytail: open the subtask tree with the cursor pre-set to the first
+			// failed subtask — fastest path to the `R` retry key. No failed → toast.
+			const hasFailed = orchestrator.getAllTaskStates().some((t) =>
+				t.subtasks.some((s) => s.status === "failed"));
+			if (!hasFailed) {
+				ctx.ui.notify("No failed subtasks", "info");
+				return;
+			}
 			await ctx.ui.custom(
-				createTaskListOverlay({
+				createSubtaskTreeOverlay({
 					tasks: () => orchestrator.getAllTaskStates(),
-					getTask: (taskId) => orchestrator.getTaskState(taskId),
+					cursorOnFailed: true,
+					onRetry: async (taskId, subtaskId) => {
+						const ok = await orchestrator.retrySubtask(taskId, subtaskId, ctx as unknown as ExtensionCommandContext);
+						if (ok) {
+							ctx.ui.notify(`Retrying subtask ${subtaskId.slice(0, 8)} — re-dispatched`, "info");
+						} else {
+							ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
+						}
+					},
+					onJumpToTask: (taskId) => {
+						void openTaskList(ctx as unknown as ExtensionCommandContext, taskId);
+					},
 					onClose: () => {},
 				}),
 				{ overlay: true },
@@ -386,6 +444,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"Shortcuts:",
 							"  Ctrl+T         Subtask tree overlay",
 							"  Ctrl+Shift+T   Task list overlay",
+							"  Ctrl+Shift+F   Jump to first failed subtask",
 						].join("\n"),
 						"info",
 					);
