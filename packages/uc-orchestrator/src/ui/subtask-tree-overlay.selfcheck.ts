@@ -143,5 +143,109 @@ function makeComponent(subtasks: SubtaskResult[]) {
 	check("r on completed renders flashMsg with 'only failed'", lines.some((l: string) => l.includes("only failed")));
 }
 
+// ── search/filter tests ──────────────────────────────────────────
+
+// `/` enters filter mode (render shows `/ ` input line with cursor)
+{
+	const { comp } = makeComponent([makeSubtask("s1")]);
+	comp.handleInput("/");
+	const lines = comp.render(80);
+	check("/ enters filter mode (input line visible)", lines.some((l: string) => l.includes("/ ") && l.includes("▏")));
+}
+
+// typing narrows: 2 subtasks "alpha" / "beta", type "bet" → only beta visible
+{
+	const subtasks = [
+		makeSubtask("s1", { description: "alpha task" }),
+		makeSubtask("s2", { description: "beta task" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");  // enter filter mode
+	comp.handleInput("b");
+	comp.handleInput("e");
+	comp.handleInput("t");
+	comp.handleInput("\r"); // Enter: exit editing, keep filter
+	const lines = comp.render(80);
+	// Only the "beta" subtask row should be present, not "alpha"
+	check("typing narrows to beta only", lines.some((l: string) => l.includes("beta")) && !lines.some((l: string) => l.includes("alpha")));
+	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
+}
+
+// Esc exits filter + restores full list
+{
+	const subtasks = [
+		makeSubtask("s1", { description: "alpha task" }),
+		makeSubtask("s2", { description: "beta task" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	comp.handleInput("b");
+	comp.handleInput("e");
+	comp.handleInput("t");
+	comp.handleInput("\r"); // Enter: exit editing, keep filter
+	// Now Esc should clear the filter (not close the overlay)
+	comp.handleInput("\x1b");
+	const lines = comp.render(80);
+	check("Esc restores full list (both visible)", lines.some((l: string) => l.includes("alpha")) && lines.some((l: string) => l.includes("beta")));
+	check("Esc clears filter (no 'filtered from')", !lines.some((l: string) => l.includes("filtered from")));
+}
+
+// Backspace drops a char
+{
+	const subtasks = [
+		makeSubtask("s1", { description: "alpha" }),
+		makeSubtask("s2", { description: "alphabet" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	comp.handleInput("a");
+	comp.handleInput("l");
+	comp.handleInput("p");
+	// Now backspace once — drops the "p"
+	comp.handleInput("\x7f");
+	// Still in searchMode with query="al" → both alpha and alphabet match
+	const items = comp.currentItems();
+	check("backspace drops last char (query=al → 2 results)", items.length === 2);
+}
+
+// r/R on a filtered failed subtask fires onRetry with the filtered id
+{
+	const subtasks = [
+		makeSubtask("s1", { description: "alpha", status: "failed" }),
+		makeSubtask("s2", { description: "beta", status: "failed" }),
+	];
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	let retryArgs: [string, string] | null = null;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: (tid: string, sid: string) => { retryArgs = [tid, sid]; },
+		onClose: () => {},
+	});
+	const comp = factory(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput("/");
+	comp.handleInput("b");
+	comp.handleInput("e");
+	comp.handleInput("t");
+	comp.handleInput("\r"); // Enter: exit editing, keep filter (only beta visible)
+	comp.handleInput("r"); // retry the filtered cursor (beta)
+	check("r on filtered failed fires onRetry with s2", retryArgs?.[1] === "s2");
+}
+
+// Empty filtered result → "no match" line
+{
+	const subtasks = [makeSubtask("s1", { description: "alpha" })];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	comp.handleInput("z");
+	comp.handleInput("z");
+	comp.handleInput("z");
+	comp.handleInput("\r"); // exit editing, keep filter "zzz" → no match
+	const lines = comp.render(80);
+	check("empty filtered shows 'no match' line", lines.some((l: string) => l.includes("no match for")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

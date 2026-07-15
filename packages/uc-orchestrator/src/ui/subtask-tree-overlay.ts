@@ -52,6 +52,10 @@ class SubtaskTreeComponent {
 	// ponytail: transient in-overlay hint for dead keys (e.g. r on non-failed).
 	// Cleared on the next non-r/R keypress so any nav/enter/esc dismisses it.
 	private flashMsg: string | null = null;
+	// ponytail: search/filter mode — `/` enters editing, typing narrows the list,
+	// Enter/nav exits editing but keeps the filter active, Esc clears everything.
+	private searchMode = false;
+	private query = "";
 
 	constructor(
 		private opts: SubtaskTreeOptions,
@@ -79,21 +83,55 @@ class SubtaskTreeComponent {
 		}
 	}
 
+	private currentItems(): { taskId: string; subtask: SubtaskResult; depth: number }[] {
+		// ponytail: single source of truth for the visible list — used by BOTH
+		// render (visible slice + footer count) AND handleInput (cursor bounds,
+		// retry target, expand target) so they always agree on row count.
+		if (!this.query) return this.flatItems;
+		const q = this.query.toLowerCase();
+		return this.flatItems.filter(
+			(it) =>
+				it.subtask.id.toLowerCase().includes(q) ||
+				it.subtask.description.toLowerCase().includes(q),
+		);
+	}
+
 	private clampScroll(): void {
+		const items = this.currentItems();
 		if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
 		else if (this.cursorIdx >= this.scrollOffset + this.maxVisible) {
 			this.scrollOffset = this.cursorIdx - this.maxVisible + 1;
 		}
 		if (this.scrollOffset < 0) this.scrollOffset = 0;
+		// ponytail: clamp cursor into filtered bounds — query changes can shrink
+		// the list below the current cursor, so snap it back.
+		if (this.cursorIdx >= items.length) {
+			this.cursorIdx = Math.max(0, items.length - 1);
+		}
 	}
 
 	render(width: number): string[] {
 		this.rebuildItems();
 		const lines: string[] = [];
 		const tasks = this.opts.tasks();
+		const items = this.currentItems();
+		const filtering = this.query.length > 0;
 
-		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", ` — ${tasks.length} task(s), ${this.flatItems.length} subtask(s)`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · R retry · PgUp/PgDn · g/G · Esc close"));
+		const headerExtra = filtering
+			? ` — ${tasks.length} task(s), ${items.length} subtask(s) (filtered from ${this.flatItems.length})`
+			: ` — ${tasks.length} task(s), ${this.flatItems.length} subtask(s)`;
+		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra));
+
+		// ponytail: filter input line replaces the hint when searchMode or filter
+		// active. Editing shows a cursor block; filter-active-not-editing shows
+		// a mini hint for how to edit / clear. Normal hint adds `/ filter`.
+		if (this.searchMode) {
+			lines.push(this.theme.fg("dim", "  / ") + this.query + this.theme.bold("▏"));
+		} else if (filtering) {
+			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
+		} else {
+			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · R retry · PgUp/PgDn · g/G · / filter · Esc close"));
+		}
 		lines.push("");
 
 		if (this.flatItems.length === 0) {
@@ -101,7 +139,17 @@ class SubtaskTreeComponent {
 			return lines;
 		}
 
-		const visible = this.flatItems.slice(this.scrollOffset, this.scrollOffset + this.maxVisible);
+		// ponytail: empty filtered result — dim "no match" line so the user sees
+		// feedback rather than a blank list.
+		if (items.length === 0 && filtering) {
+			lines.push(this.theme.fg("dim", `  no match for '${this.query}'`));
+			if (this.flashMsg) {
+				lines.push(this.theme.fg("dim", `  ${this.flashMsg.slice(0, Math.max(0, width - 2))}`));
+			}
+			return lines;
+		}
+
+		const visible = items.slice(this.scrollOffset, this.scrollOffset + this.maxVisible);
 		for (let i = 0; i < visible.length; i++) {
 			const item = visible[i];
 			const globalIdx = this.scrollOffset + i;
@@ -142,8 +190,8 @@ class SubtaskTreeComponent {
 			}
 		}
 
-		if (this.flatItems.length > this.maxVisible) {
-			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, this.flatItems.length)} of ${this.flatItems.length}`));
+		if (items.length > this.maxVisible) {
+			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, items.length)} of ${items.length}`));
 		}
 
 		// ponytail: flashMsg hint rendered after footer so it doesn't shift list rows.
@@ -159,34 +207,107 @@ class SubtaskTreeComponent {
 		// ponytail: clear flashMsg on any key that isn't r/R so navigation,
 		// enter, esc, etc. dismiss the hint. Don't return — let the key
 		// still do its normal thing. r/R refreshes the message instead.
-		if (this.flashMsg && data !== "r" && data !== "R") {
+		// In searchMode the flashMsg clear is skipped (filter editing doesn't
+		// count as a "real" key for dismissal; the filter line is the focus).
+		if (this.flashMsg && !this.searchMode && data !== "r" && data !== "R") {
 			this.flashMsg = null;
 		}
 
+		// ── filter-editing mode: intercept printable/backspace/esc/enter ──────
+		if (this.searchMode) {
+			if (data === KEY.esc) {
+				// Esc in search mode: clear query + exit (full list restored)
+				this.query = "";
+				this.searchMode = false;
+				this.cursorIdx = 0;
+				this.scrollOffset = 0;
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
+			if (data === KEY.enter || data === "\n") {
+				// Enter: exit editing but KEEP the filter active for navigation
+				this.searchMode = false;
+				this.clampScroll();
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
+			if (data === "\x7f" || data === "\b") {
+				// Backspace: drop last char; stay in filter mode even if empty
+				this.query = this.query.slice(0, -1);
+				this.clampScroll();
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
+			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
+			if (data.length === 1 && data >= " " && data <= "~") {
+				this.query += data;
+				this.clampScroll();
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
+			// ponytail: nav keys (arrows/page/home/end/g/G/j/k) in search-edit:
+			// exit editing (keep filter) then FALL THROUGH to normal handler so
+			// the cursor moves within the filtered set in one keystroke.
+			const navKeys = [KEY.up, KEY.down, KEY.pageUp, KEY.pageDown, KEY.home, KEY.end, "g", "G", "j", "k"];
+			if (navKeys.includes(data)) {
+				this.searchMode = false;
+				// fall through to normal handling below
+			} else if (data === "r" || data === "R") {
+				// r/R in search-edit: exit editing (keep filter) then fall through
+				this.searchMode = false;
+				// fall through to normal handling below
+			} else {
+				// Unknown control sequence in search mode — ignore (don't exit)
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
+		}
+
+		// ── normal (non-search) mode ─────────────────────────────────────────
+		if (data === "/") {
+			// Enter filter mode (or resume editing an existing filter)
+			this.searchMode = true;
+			// ponytail: clear flashMsg when entering filter — `/` is a non-r/R key
+			this.flashMsg = null;
+			(this.tui as any)?.requestRender?.();
+			return;
+		}
+
 		if (data === KEY.esc || data === "q") {
+			// ponytail: if a filter is active, Esc clears it first (stay open);
+			// only a second Esc (or Esc with no filter) closes the overlay.
+			if (this.query) {
+				this.query = "";
+				this.cursorIdx = 0;
+				this.scrollOffset = 0;
+				(this.tui as any)?.requestRender?.();
+				return;
+			}
 			this.done();
 			return;
 		}
+
+		const items = this.currentItems();
 		if (data === KEY.up || data === "k") {
 			if (this.cursorIdx > 0) this.cursorIdx--;
 		} else if (data === KEY.down || data === "j") {
-			if (this.cursorIdx < this.flatItems.length - 1) this.cursorIdx++;
+			if (this.cursorIdx < items.length - 1) this.cursorIdx++;
 		} else if (data === KEY.pageUp) {
 			this.cursorIdx = Math.max(0, this.cursorIdx - this.maxVisible);
 		} else if (data === KEY.pageDown) {
-			// ponytail: Math.max(0, …) — empty list makes flatItems.length-1 = -1,
+			// ponytail: Math.max(0, …) — empty list makes items.length-1 = -1,
 			// which would clamp cursorIdx to -1 and render a phantom cursor.
-			this.cursorIdx = Math.max(0, Math.min(this.flatItems.length - 1, this.cursorIdx + this.maxVisible));
+			this.cursorIdx = Math.max(0, Math.min(items.length - 1, this.cursorIdx + this.maxVisible));
 		} else if (data === KEY.home) {
 			this.cursorIdx = 0;
 		} else if (data === KEY.end) {
-			this.cursorIdx = Math.max(0, this.flatItems.length - 1);
+			this.cursorIdx = Math.max(0, items.length - 1);
 		} else if (data === "g") {
 			this.cursorIdx = 0;
 		} else if (data === "G") {
-			this.cursorIdx = Math.max(0, this.flatItems.length - 1);
+			this.cursorIdx = Math.max(0, items.length - 1);
 		} else if (data === KEY.enter || data === "\n") {
-			const item = this.flatItems[this.cursorIdx];
+			const item = items[this.cursorIdx];
 			if (item) {
 				if (this.expanded.has(item.subtask.id)) {
 					this.expanded.delete(item.subtask.id);
@@ -195,7 +316,7 @@ class SubtaskTreeComponent {
 				}
 			}
 		} else if (data === "r" || data === "R") {
-			const item = this.flatItems[this.cursorIdx];
+			const item = items[this.cursorIdx];
 			if (item && item.subtask.status === "failed" && this.opts.onRetry) {
 				this.opts.onRetry(item.taskId, item.subtask.id);
 				this.flashMsg = null;
