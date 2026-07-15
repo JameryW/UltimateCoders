@@ -1062,6 +1062,103 @@ export class UCOrchestrator {
 		}
 	}
 
+	/** Reset a subtask to pending (clears error/result/retryCount/timestamps). */
+	// ponytail: delegates to the module-level pure fn so reset logic has one home.
+	private resetToPending(st: SubtaskResult): void {
+		resetSubtaskToPending(st);
+	}
+
+	/**
+	 * Reverse cascadeCancel: un-cancel subtasks whose deps are now satisfied
+	 * (completed, or just-reset to pending in `reset`). Iterated to a fixed point
+	 * so a chain of downstream cancels recovers in one pass. A downstream whose
+	 * deps include ANOTHER still-failed subtask stays cancelled (deps unsatisfied).
+	 *
+	 * Delegates to the module-level pure fn (unit-testable without UCOrchestrator).
+	 */
+	private reverseCascadeUnCancel(task: TaskState, reset: Set<string>): void {
+		return reverseCascadeUnCancel(task.subtasks, reset);
+	}
+
+	/**
+	 * Retry a SINGLE failed subtask: reset it (and the downstream cancelled
+	 * solely because it failed) to pending and re-dispatch, leaving other
+	 * failed/cancelled subtasks untouched. Distinct from task-scoped resumeTask.
+	 *
+	 * Flow (see task prd: 07-15-feat-per-subtask-retry-...):
+	 * 1. Guard: task exists, target status === "failed".
+	 * 2. Refuse if target's own deps aren't all completed (can't re-dispatch).
+	 * 3. Reset target → pending (error/result undefined, retryCount=0).
+	 * 4. Reverse cascade-un-cancel: a cancelled subtask whose deps are now all
+	 *    (completed OR in the reset-pending set) goes back to pending, iterated
+	 *    to a fixed point. Recovers the downstream cancelled ONLY because X
+	 *    failed; a downstream depending on ANOTHER still-failed subtask stays.
+	 * 5. Rebuild waves from pending+running, executeWaves.
+	 */
+	async retrySubtask(taskId: string, subtaskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
+		const task = this.tasks.get(taskId);
+		if (!task) return false;
+
+		const target = task.subtasks.find((s) => s.id === subtaskId);
+		if (!target || target.status !== "failed") return false;
+
+		// Refuse if the target's own deps aren't all completed (can't re-dispatch).
+		const targetDepsOk = target.dependsOn.every((depId) => {
+			const dep = task.subtasks.find((s) => s.id === depId);
+			return dep?.status === "completed";
+		});
+		if (!targetDepsOk) {
+			ctx?.ui.notify(`Cannot retry ${subtaskId}: dependencies not all completed`, "warning");
+			return false;
+		}
+
+		// Reset target → pending.
+		const reset = new Set<string>([subtaskId]);
+		this.resetToPending(target);
+		this.reverseCascadeUnCancel(task, reset);
+
+		task.controlState = "running";
+		task.status = "in_progress";
+		task.error = undefined;
+		task.resumeFromWave = undefined;
+		this.abortControllers.set(taskId, new AbortController());
+		// Reuse the task-scoped resume bridge call for state sync — it just pushes
+		// the updated task snapshot; no per-subtask RPC exists.
+		this.bridge.resumeTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync retrySubtask to gRPC: ${err}`); });
+		this.syncTaskToGrpc(task);
+
+		const pendingDefs: SubtaskDef[] = task.subtasks
+			.filter((s) => s.status === "pending" || s.status === "running")
+			.map((s) => ({
+				id: s.id,
+				description: s.description,
+				dependsOn: s.dependsOn,
+				files: s.files,
+				dispatchMode: s.dispatchMode,
+				requiredCapabilities: s.requiredCapabilities,
+				steps: s.steps,
+			}));
+
+		if (pendingDefs.length === 0) {
+			// Shouldn't happen (target was reset), but guard anyway.
+			task.status = "completed";
+			task.completedAt = Date.now();
+			await this.persist(task);
+			this.syncTaskToGrpc(task);
+			return true;
+		}
+
+		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
+		await this.persist(task);
+		ctx?.ui.notify(`Task ${taskId}: retrying ${subtaskId} (${reset.size} subtask(s) re-dispatched)`, "info");
+		this.events.emit("task_resumed", { taskId });
+
+		const execCtx = ctx ?? stubContext();
+		// Fire-and-forget so the TUI overlay handler returns immediately.
+		void this.executeWaves(task, waves, execCtx);
+		return true;
+	}
+
 	// ── Status ───────────────────────────────────────────────────────
 
 	async showStatus(taskId: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
@@ -2013,6 +2110,46 @@ Output a JSON object with:
 - approved: boolean (true if the subtask is satisfactorily completed)
 - issues: string[] (list of problems found, empty if approved)
 - suggestions: string[] (optional improvements, not blockers)`;
+
+/**
+ * Reverse cascadeCancel over a subtask list: un-cancel subtasks whose deps are
+ * now satisfied (completed, or just-reset to pending via `reset`). Iterated to
+ * a fixed point so a downstream chain recovers in one pass. A downstream whose
+ * deps include ANOTHER still-failed subtask stays cancelled.
+ *
+ * Module-level (pure over `subtasks`) so it is unit-testable without
+ * instantiating UCOrchestrator. Called by retrySubtask.
+ *
+ * ponytail: O(passes × n²); n is tens at most. Pre-index by dependsOn if huge.
+ */
+export function reverseCascadeUnCancel(subtasks: SubtaskResult[], reset: Set<string>): void {
+	let changed = true;
+	while (changed) {
+		changed = false;
+		for (const st of subtasks) {
+			if (st.status !== "cancelled") continue;
+			const depsOk = st.dependsOn.every((depId) => {
+				const dep = subtasks.find((s) => s.id === depId);
+				return dep?.status === "completed" || reset.has(depId);
+			});
+			if (depsOk) {
+				resetSubtaskToPending(st);
+				reset.add(st.id);
+				changed = true;
+			}
+		}
+	}
+}
+
+/** Reset a subtask to pending (clears error/result/retryCount/timestamps). */
+function resetSubtaskToPending(st: SubtaskResult): void {
+	st.status = "pending";
+	st.error = undefined;
+	st.result = undefined;
+	st.retryCount = 0;
+	st.completedAt = undefined;
+	st.startedAt = undefined;
+}
 
 // ponytail: stub ExtensionCommandContext for RPC server (no omp runtime)
 function stubContext(): ExtensionCommandContext {
