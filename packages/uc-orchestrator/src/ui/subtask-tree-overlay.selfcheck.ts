@@ -116,7 +116,7 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	check("onRetry receives cursor's subtaskId (s2)", args2?.subtaskId === "s2");
 }
 
-// r on a non-failed subtask does NOT invoke onRetry
+// r on a non-failed subtask does NOT invoke onRetry, and sets a flashMsg
 {
 	let called = false;
 	const { comp } = makeComponent(
@@ -125,6 +125,8 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	);
 	comp.handleInput("r");
 	check("r on completed subtask does not invoke onRetry", called === false);
+	const lines = comp.render(80);
+	check("r on completed renders flashMsg with 'only failed'", lines.some((l: string) => l.includes("only failed")));
 }
 
 // ponytail: adaptive page size — small terminal (rows=10) yields < 20 visible items.
