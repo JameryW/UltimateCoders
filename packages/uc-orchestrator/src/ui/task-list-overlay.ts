@@ -58,7 +58,15 @@ export function createTaskListOverlay(opts: TaskListOptions) {
 class TaskListComponent {
 	private cursorIdx = 0;
 	private scrollOffset = 0;
-	private maxVisible = 20;
+	// ponytail: derive page size from terminal height so short viewports (tmux /
+	// split panes) don't overflow — 3 chrome lines (header + hint + blank) + 1
+	// footer reserve. Cap at 20 so a tall terminal doesn't dump 50 rows into a
+	// paginated overlay. Fall back to 20 when tui/terminal is absent (test mocks).
+	private get maxVisible(): number {
+		const rows = (this.tui as any)?.terminal?.rows;
+		if (typeof rows !== "number" || rows <= 0) return 20;
+		return Math.max(1, Math.min(20, rows - 4));
+	}
 	// detail mode: showing one task's breakdown, Esc returns to list
 	private detailTaskId: string | null = null;
 	private detailLines: string[] = [];

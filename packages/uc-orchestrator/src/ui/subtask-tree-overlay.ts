@@ -46,7 +46,15 @@ class SubtaskTreeComponent {
 	private expanded = new Set<string>();
 	private flatItems: { taskId: string; subtask: SubtaskResult; depth: number }[] = [];
 	private scrollOffset = 0;
-	private maxVisible = 20; // ponytail: reasonable default
+	// ponytail: derive page size from terminal height so short viewports (tmux /
+	// split panes) don't overflow — 3 chrome lines (header + hint + blank) + 1
+	// footer reserve. Cap at 20 so a tall terminal doesn't dump 50 rows into a
+	// paginated overlay. Fall back to 20 when tui/terminal is absent (test mocks).
+	private get maxVisible(): number {
+		const rows = (this.tui as any)?.terminal?.rows;
+		if (typeof rows !== "number" || rows <= 0) return 20;
+		return Math.max(1, Math.min(20, rows - 4));
+	}
 	// ponytail: stamp flatItems only when task count changes, not every render
 	private lastSubtaskCount = -1;
 
