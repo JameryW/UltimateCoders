@@ -63,6 +63,11 @@ class TaskListComponent {
 	private detailTaskId: string | null = null;
 	private detailLines: string[] = [];
 	private detailScroll = 0;
+	// ponytail: search/filter mode — `/` enters editing, typing narrows the list,
+	// Enter/nav exits editing but keeps the filter active, Esc clears everything.
+	// Applies to LIST mode only — detail mode is a single-task view, no list to filter.
+	private searchMode = false;
+	private query = "";
 
 	constructor(
 		private opts: TaskListOptions,
@@ -71,21 +76,58 @@ class TaskListComponent {
 		private done: (result: void) => void,
 	) {}
 
+	// ponytail: single source of truth for the visible list — used by BOTH
+	// renderList (visible slice + footer count + header) AND handleInput list-mode
+	// (cursor bounds, openDetail target, nav) so they always agree on row count.
+	// Detail mode does NOT use currentTasks — detail is a single-task view.
+	private currentTasks(): TaskState[] {
+		if (!this.query) return this.opts.tasks();
+		const q = this.query.toLowerCase();
+		return this.opts.tasks().filter(
+			(t) =>
+				t.id.toLowerCase().includes(q) ||
+				t.description.toLowerCase().includes(q) ||
+				t.status.toLowerCase().includes(q),
+		);
+	}
+
 	render(width: number): string[] {
 		if (this.detailTaskId) return this.renderDetail(width);
 		return this.renderList(width);
 	}
 
 	private renderList(width: number): string[] {
-		const tasks = this.opts.tasks();
+		const allTasks = this.opts.tasks();
+		const tasks = this.currentTasks();
+		const filtering = this.query.length > 0;
 		const lines: string[] = [];
 
-		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", ` — ${tasks.length} task(s)`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk navigate · Enter detail · PgUp/PgDn · g/G · Esc close"));
+		const headerExtra = filtering
+			? ` — ${tasks.length} task(s) (filtered from ${allTasks.length})`
+			: ` — ${allTasks.length} task(s)`;
+		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra));
+
+		// ponytail: filter input line replaces the hint when searchMode or filter
+		// active. Editing shows a cursor block; filter-active-not-editing shows
+		// a mini hint for how to edit / clear. Normal hint adds `/ filter`.
+		if (this.searchMode) {
+			lines.push(this.theme.fg("dim", "  / ") + this.query + this.theme.bold("▏"));
+		} else if (filtering) {
+			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
+		} else {
+			lines.push(this.theme.fg("dim", "  ↑↓/jk navigate · Enter detail · PgUp/PgDn · g/G · / filter · Esc close"));
+		}
 		lines.push("");
 
-		if (tasks.length === 0) {
+		if (allTasks.length === 0) {
 			lines.push(this.theme.fg("dim", "  No tasks"));
+			return lines;
+		}
+
+		// ponytail: empty filtered result — dim "no match" line so the user sees
+		// feedback rather than a blank list.
+		if (tasks.length === 0 && filtering) {
+			lines.push(this.theme.fg("dim", `  no match for '${this.query}'`));
 			return lines;
 		}
 
@@ -141,9 +183,23 @@ class TaskListComponent {
 		return `${Math.floor(diff / 86400_000)}d ago`;
 	}
 
+	// ponytail: clamp cursor into filtered bounds — query changes can shrink
+	// the list below the current cursor, so snap it back. Also clamps scroll.
+	private clampCursorAndScroll(): void {
+		const tasks = this.currentTasks();
+		if (this.cursorIdx >= tasks.length) {
+			this.cursorIdx = Math.max(0, tasks.length - 1);
+		}
+		if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
+		else if (this.cursorIdx >= this.scrollOffset + this.maxVisible) {
+			this.scrollOffset = this.cursorIdx - this.maxVisible + 1;
+		}
+		if (this.scrollOffset < 0) this.scrollOffset = 0;
+	}
+
 	handleInput(data: string): void {
 		if (this.detailTaskId) {
-			// detail scroll mode
+			// detail scroll mode — filter does not apply in detail mode
 			if (data === KEY.esc) {
 				this.detailTaskId = null;
 				this.detailScroll = 0;
@@ -155,15 +211,74 @@ class TaskListComponent {
 			else if (data === KEY.pageDown) this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + this.maxVisible);
 			else if (data === KEY.home || data === "g") this.detailScroll = 0;
 			else if (data === KEY.end || data === "G") this.detailScroll = Math.max(0, this.detailLines.length - this.maxVisible);
+			// ponytail: `/` in detail mode is a no-op — detail is a single-task view,
+			// no list to filter. Ignored rather than entering searchMode.
 			return;
 		}
 
-		const tasks = this.opts.tasks();
+		// ── filter-editing mode: intercept printable/backspace/esc/enter ──────
+		if (this.searchMode) {
+			if (data === KEY.esc) {
+				// Esc in search mode: clear query + exit (full list restored)
+				this.query = "";
+				this.searchMode = false;
+				this.cursorIdx = 0;
+				this.scrollOffset = 0;
+				return;
+			}
+			if (data === KEY.enter || data === "\n") {
+				// Enter: exit editing but KEEP the filter active for navigation
+				this.searchMode = false;
+				this.clampCursorAndScroll();
+				return;
+			}
+			if (data === "\x7f" || data === "\b") {
+				// Backspace: drop last char; stay in filter mode even if empty
+				this.query = this.query.slice(0, -1);
+				this.clampCursorAndScroll();
+				return;
+			}
+			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
+			if (data.length === 1 && data >= " " && data <= "~") {
+				this.query += data;
+				this.clampCursorAndScroll();
+				return;
+			}
+			// ponytail: nav keys (arrows/page/home/end/g/G/j/k) in search-edit:
+			// exit editing (keep filter) then FALL THROUGH to normal handler so
+			// the cursor moves within the filtered set in one keystroke.
+			const navKeys = [KEY.up, KEY.down, KEY.pageUp, KEY.pageDown, KEY.home, KEY.end, "g", "G", "j", "k"];
+			if (navKeys.includes(data)) {
+				this.searchMode = false;
+				// fall through to normal handling below
+			} else {
+				// Unknown control sequence in search mode — ignore (don't exit)
+				return;
+			}
+		}
+
+		// ── normal (non-search) mode ─────────────────────────────────────────
+		if (data === "/") {
+			// Enter filter mode (or resume editing an existing filter)
+			this.searchMode = true;
+			return;
+		}
 
 		if (data === KEY.esc || data === "q") {
+			// ponytail: if a filter is active, Esc clears it first (stay open);
+			// only a second Esc (or Esc with no filter) closes the overlay.
+			if (this.query) {
+				this.query = "";
+				this.cursorIdx = 0;
+				this.scrollOffset = 0;
+				return;
+			}
 			this.done();
 			return;
 		}
+
+		const tasks = this.currentTasks();
+
 		if (data === KEY.up || data === "k") {
 			if (this.cursorIdx > 0) this.cursorIdx--;
 		} else if (data === KEY.down || data === "j") {
@@ -187,11 +302,7 @@ class TaskListComponent {
 			if (task) this.openDetail(task.id);
 		}
 		// clamp scroll to cursor
-		if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
-		else if (this.cursorIdx >= this.scrollOffset + this.maxVisible) {
-			this.scrollOffset = this.cursorIdx - this.maxVisible + 1;
-		}
-		if (this.scrollOffset < 0) this.scrollOffset = 0;
+		this.clampCursorAndScroll();
 	}
 
 	private openDetail(taskId: string): void {

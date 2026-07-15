@@ -121,5 +121,106 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("empty list renders No tasks", lines.some((l: string) => l.includes("No tasks")));
 }
 
+// ── search/filter tests ──────────────────────────────────────────
+
+// `/` enters filter mode (render shows `/ ` input line with cursor)
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	comp.handleInput("/");
+	const lines = comp.render(80);
+	check("/ enters filter mode (input line visible)", lines.some((l: string) => l.includes("/ ") && l.includes("▏")));
+}
+
+// typing narrows: 2 tasks "alpha-done" / "beta-failed", type "bet" → only beta visible
+{
+	const { comp } = makeComponent([
+		makeTask("alpha", "completed"),
+		makeTask("beta", "failed"),
+	]);
+	comp.handleInput("/");  // enter filter mode
+	comp.handleInput("b");
+	comp.handleInput("e");
+	comp.handleInput("t");
+	comp.handleInput(ENTER); // Enter: exit editing, keep filter
+	const lines = comp.render(80);
+	// Only the "beta" task row should be present, not "alpha"
+	check("typing narrows to beta only", lines.some((l: string) => l.includes("beta")) && !lines.some((l: string) => l.includes("alpha")));
+	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
+}
+
+// Esc exits filter + restores full list
+{
+	const { comp } = makeComponent([
+		makeTask("alpha", "completed"),
+		makeTask("beta", "failed"),
+	]);
+	comp.handleInput("/");
+	comp.handleInput("b");
+	comp.handleInput("e");
+	comp.handleInput("t");
+	comp.handleInput(ENTER); // Enter: exit editing, keep filter
+	// Now Esc should clear the filter (not close the overlay)
+	comp.handleInput(ESC);
+	const lines = comp.render(80);
+	check("Esc restores full list (both visible)", lines.some((l: string) => l.includes("alpha")) && lines.some((l: string) => l.includes("beta")));
+	check("Esc clears filter (no 'filtered from')", !lines.some((l: string) => l.includes("filtered from")));
+}
+
+// Backspace drops a char
+{
+	const { comp } = makeComponent([
+		makeTask("alpha", "completed"),
+		makeTask("alphabet", "failed"),
+	]);
+	comp.handleInput("/");
+	comp.handleInput("a");
+	comp.handleInput("l");
+	comp.handleInput("p");
+	// Now backspace once — drops the "p"
+	comp.handleInput("\x7f");
+	// Still in searchMode with query="al" → both alpha and alphabet match
+	const items = comp.currentTasks();
+	check("backspace drops last char (query=al → 2 results)", items.length === 2);
+}
+
+// Enter keeps filter then j moves within filtered set
+{
+	const { comp } = makeComponent([
+		makeTask("alpha", "completed"),
+		makeTask("beta", "failed"),
+		makeTask("gamma", "completed"),
+	]);
+	comp.handleInput("/");
+	comp.handleInput("a"); // matches "alpha" and "gamma" (both contain "a" in description "task alpha"/"task gamma")
+	comp.handleInput(ENTER); // exit editing, keep filter
+	const before = comp.cursorIdx;
+	comp.handleInput("j");  // move down within filtered set
+	check("nav within filtered set moves cursor", comp.cursorIdx === before + 1);
+}
+
+// `/` in detail mode is a no-op (doesn't crash, doesn't change detail)
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	comp.handleInput(ENTER); // open detail
+	check("detail mode active", comp.detailTaskId === "t1");
+	comp.handleInput("/");   // `/` in detail mode — should be ignored
+	check("/ in detail mode is no-op (still in detail)", comp.detailTaskId === "t1");
+	check("/ in detail mode does not enter searchMode", comp.searchMode === false);
+	const lines = comp.render(80);
+	check("detail still renders subtasks header", lines.some((l: string) => l.includes("Subtasks")));
+}
+
+// Empty filtered result → "no match" line
+{
+	const { comp } = makeComponent([makeTask("alpha", "completed")]);
+	comp.handleInput("/");
+	comp.handleInput("z");
+	comp.handleInput("z");
+	comp.handleInput("z");
+	comp.handleInput(ENTER); // exit editing, keep filter "zzz" → no match
+	const lines = comp.render(80);
+	check("empty filtered shows 'no match' line", lines.some((l: string) => l.includes("no match for")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
