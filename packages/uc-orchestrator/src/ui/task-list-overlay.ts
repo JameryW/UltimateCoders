@@ -47,6 +47,10 @@ export interface TaskListOptions {
 	tasks: () => TaskState[];
 	// ponytail: detail rendered in-overlay (Esc returns) instead of notify() spam
 	getTask?: (taskId: string) => TaskState | undefined;
+	/** Quick actions on the cursor task: c cancel / p pause / r resume. */
+	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => void;
+	/** Open straight into detail mode for this task (jump-from-subtask-tree). */
+	initialDetailTaskId?: string;
 	onClose: () => void;
 }
 
@@ -75,13 +79,22 @@ class TaskListComponent {
 	// Applies to LIST mode only — detail mode is a single-task view, no list to filter.
 	private searchMode = false;
 	private query = "";
+	// ponytail: double-tap cancel confirm — first `c` arms it (+ flashMsg),
+	// second `c` fires onAction; any other key clears it (mirrors retry flashMsg).
+	private pendingCancel: string | null = null;
+	// ponytail: transient hint for dead/confirm keys (c on non-cancellable, etc).
+	// Cleared on the next non-c keypress so nav/enter/esc dismisses it.
+	private flashMsg: string | null = null;
 
 	constructor(
 		private opts: TaskListOptions,
 		private tui: TUI,
 		private theme: Theme,
 		private done: (result: void) => void,
-	) {}
+	) {
+		// ponytail: jump-from-subtask-tree lands directly in detail mode.
+		if (this.opts.initialDetailTaskId) this.openDetail(this.opts.initialDetailTaskId);
+	}
 
 	// ponytail: single source of truth for the visible list — used by BOTH
 	// renderList (visible slice + footer count + header) AND handleInput list-mode
@@ -122,7 +135,7 @@ class TaskListComponent {
 		} else if (filtering) {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
-			lines.push(this.theme.fg("dim", "  ↑↓/jk navigate · Enter detail · PgUp/PgDn · g/G · / filter · Esc close"));
+			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · / filter · Esc close"));
 		}
 		lines.push("");
 
@@ -160,6 +173,11 @@ class TaskListComponent {
 
 		if (tasks.length > this.maxVisible) {
 			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, tasks.length)} of ${tasks.length}`));
+		}
+
+		// ponytail: flashMsg after footer so it doesn't shift list rows.
+		if (this.flashMsg) {
+			lines.push(this.theme.fg("dim", `  ${this.flashMsg.slice(0, Math.max(0, width - 2))}`));
 		}
 
 		return lines;
@@ -270,6 +288,11 @@ class TaskListComponent {
 		}
 
 		// ── normal (non-search) mode ─────────────────────────────────────────
+		// ponytail: clear flashMsg on any key that isn't c/C so nav/enter/esc
+		// dismisses the confirm/abort hint. c/C refreshes it instead.
+		if (this.flashMsg && data !== "c" && data !== "C") {
+			this.flashMsg = null;
+		}
 		if (data === "/") {
 			// Enter filter mode (or resume editing an existing filter)
 			this.searchMode = true;
@@ -312,6 +335,28 @@ class TaskListComponent {
 		} else if (data === KEY.enter || data === "\n") {
 			const task = tasks[this.cursorIdx];
 			if (task) this.openDetail(task.id);
+		} else if (data === "c" || data === "C") {
+			// ponytail: double-tap cancel. First c arms (flashMsg naming the task);
+			// second c fires onAction. Any non-c key clears (handled at top of fn).
+			const task = tasks[this.cursorIdx];
+			if (task && this.opts.onAction) {
+				if (this.pendingCancel === task.id) {
+					this.opts.onAction(task.id, "cancel");
+					this.pendingCancel = null;
+					this.flashMsg = null;
+				} else {
+					this.pendingCancel = task.id;
+					this.flashMsg = `press c again to cancel ${task.id.slice(0, 8)} (any other key aborts)`;
+				}
+			} else if (task) {
+				this.flashMsg = "cancel unavailable";
+			}
+		} else if (data === "p") {
+			const task = tasks[this.cursorIdx];
+			if (task && this.opts.onAction) this.opts.onAction(task.id, "pause");
+		} else if (data === "r") {
+			const task = tasks[this.cursorIdx];
+			if (task && this.opts.onAction) this.opts.onAction(task.id, "resume");
 		}
 		// clamp scroll to cursor
 		this.clampCursorAndScroll();

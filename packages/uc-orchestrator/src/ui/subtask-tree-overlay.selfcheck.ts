@@ -27,7 +27,11 @@ function makeSubtask(id: string, over: Partial<SubtaskResult> = {}): SubtaskResu
 	} as unknown as SubtaskResult;
 }
 
-function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: string, subtaskId: string) => void }) {
+function makeComponent(subtasks: SubtaskResult[], opts?: {
+	onRetry?: (taskId: string, subtaskId: string) => void;
+	onJumpToTask?: (taskId: string) => void;
+	cursorOnFailed?: boolean;
+}) {
 	const task = {
 		id: "T", description: "t", status: "failed", controlState: "running",
 		createdAt: 0, subtasks,
@@ -35,6 +39,8 @@ function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: st
 	const factory = createSubtaskTreeOverlay({
 		tasks: () => [task],
 		onRetry: opts?.onRetry ?? (() => {}),
+		onJumpToTask: opts?.onJumpToTask,
+		cursorOnFailed: opts?.cursorOnFailed,
 		onClose: () => {},
 	});
 	let closed = false;
@@ -257,6 +263,47 @@ const PAGEDOWN = "\x1b[6~";
 	check("24-row terminal footer shows 1-12 of 50", lines.some((l: string) => l.includes("1-12 of 50")));
 	comp.handleInput(PAGEDOWN);
 	check("24-row terminal pageDown +12 (not +20)", comp.cursorIdx === 12);
+}
+
+// ponytail: cursorOnFailed (Ctrl+Shift+F) — constructor pre-sets cursor to the
+// first failed subtask so `R` retry is one keystroke away. Mixed-status list:
+// cursor must land on the failed one, not index 0.
+{
+	const subs = [
+		makeSubtask("s0", { status: "completed" }),
+		makeSubtask("s1", { status: "completed" }),
+		makeSubtask("s2", { status: "failed" }),
+		makeSubtask("s3", { status: "failed" }),
+	];
+	const { comp } = makeComponent(subs, { cursorOnFailed: true });
+	check("cursorOnFailed lands on first failed (idx 2)", comp.cursorIdx === 2);
+}
+
+// ponytail: cursorOnFailed with NO failed subtask — cursor stays at 0 (no crash,
+// no phantom). The toast is the caller's job (extension.ts checks hasFailed first).
+{
+	const subs = [makeSubtask("s0", { status: "completed" }), makeSubtask("s1", { status: "running" })];
+	const { comp } = makeComponent(subs, { cursorOnFailed: true });
+	check("cursorOnFailed no-failed stays at 0", comp.cursorIdx === 0);
+}
+
+// `d` jump — fires onJumpToTask with the subtask's taskId, then closes the tree.
+{
+	let jumpedTo: string | null = null;
+	const { comp, closed } = makeComponent(
+		[makeSubtask("s0", { status: "failed" })],
+		{ onJumpToTask: (taskId) => { jumpedTo = taskId; } },
+	);
+	comp.handleInput("d");
+	check("`d` fires onJumpToTask with parent taskId", jumpedTo === "T");
+	check("`d` closes the tree (done())", closed() === true);
+}
+
+// `d` with no onJumpToTask wired — sets flashMsg, does NOT close.
+{
+	const { comp, closed } = makeComponent([makeSubtask("s0", { status: "failed" })]);
+	comp.handleInput("d");
+	check("`d` no-jump-handler does not close", closed() === false);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

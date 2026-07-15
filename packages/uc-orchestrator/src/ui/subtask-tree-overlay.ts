@@ -33,6 +33,10 @@ const KEY = {
 export interface SubtaskTreeOptions {
 	tasks: () => TaskState[];
 	onRetry?: (taskId: string, subtaskId: string) => void;
+	/** `d` jumps to the subtask's parent task detail (opens task-list overlay). */
+	onJumpToTask?: (taskId: string) => void;
+	/** Open with cursor on the first failed subtask (Ctrl+Shift+F jump-to-failed). */
+	cursorOnFailed?: boolean;
 	onClose: () => void;
 }
 
@@ -73,6 +77,13 @@ class SubtaskTreeComponent {
 		private done: (result: void) => void,
 	) {
 		this.rebuildItems();
+		// ponytail: Ctrl+Shift-F jump-to-failed — pre-set cursor to first failed
+		// subtask so the user lands on the retry target in one keystroke.
+		if (this.opts.cursorOnFailed) {
+			const idx = this.flatItems.findIndex((it) => it.subtask.status === "failed");
+			if (idx >= 0) this.cursorIdx = idx;
+			this.clampScroll();
+		}
 	}
 
 	private rebuildItems(force = false): void {
@@ -139,7 +150,7 @@ class SubtaskTreeComponent {
 		} else if (filtering) {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
-			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · R retry · PgUp/PgDn · g/G · / filter · Esc close"));
+			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · / filter · Esc close"));
 		}
 		lines.push("");
 
@@ -335,6 +346,16 @@ class SubtaskTreeComponent {
 				// so the user knows why nothing happened.
 				const status = item ? item.subtask.status : "no subtask selected";
 				this.flashMsg = `only failed subtasks can be retried (cursor is ${status})`;
+			}
+		} else if (data === "d") {
+			// ponytail: jump to parent task detail — open the task-list overlay on
+			// this subtask's task (close the tree first so overlays don't stack).
+			const item = items[this.cursorIdx];
+			if (item && this.opts.onJumpToTask) {
+				this.opts.onJumpToTask(item.taskId);
+				this.done();
+			} else if (!this.opts.onJumpToTask) {
+				this.flashMsg = "jump unavailable";
 			}
 		}
 		this.clampScroll();
