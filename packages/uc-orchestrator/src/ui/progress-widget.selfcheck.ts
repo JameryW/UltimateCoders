@@ -97,5 +97,48 @@ function renderLines(failedIds: string[], width: number): string[] {
 	check("stepSummary rendered", lines.some((l: string) => l.includes("editing auth.ts")));
 }
 
+// Header shows the task description (truncated to width) so the always-visible
+// widget says what the task IS, not just a truncated UUID.
+// ponytail: header was "UC <id> <status>" with no description.
+{
+	const task = {
+		id: "task-uuid-1234", description: "Refactor the auth module into a service",
+		status: "in_progress", controlState: "running", createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	const st: ProgressWidgetState = { task };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const header = (comp.render(80) as string[])[0];
+	check("header includes task description", header.includes("Refactor the auth module"));
+	check("header still includes status", header.includes("in_progress"));
+	check("header still includes UC marker", header.includes("UC"));
+}
+
+// Long description truncates to fit width (no overflow beyond terminal width)
+{
+	const task = {
+		id: "t1", description: "x".repeat(200), status: "in_progress", controlState: "running",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	const st: ProgressWidgetState = { task };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const header = (comp.render(40) as string[])[0];
+	// selfcheck theme adds no ANSI, so string length == visible width
+	check("long desc header fits width", header.length <= 40);
+	check("long desc header still has status", header.includes("in_progress"));
+}
+
+// Narrow terminal: description budget clamps to 0 -> header omits " - " (no overflow)
+{
+	const task = {
+		id: "t1", description: "y".repeat(50), status: "in_progress", controlState: "running",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	const st: ProgressWidgetState = { task };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const header = (comp.render(20) as string[])[0];
+	check("narrow terminal header omits description", !header.includes(" - "));
+	check("narrow terminal header fits width", header.length <= 20);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

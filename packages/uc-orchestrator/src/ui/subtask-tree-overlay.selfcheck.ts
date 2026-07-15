@@ -27,18 +27,21 @@ function makeSubtask(id: string, over: Partial<SubtaskResult> = {}): SubtaskResu
 	} as unknown as SubtaskResult;
 }
 
-function makeComponent(subtasks: SubtaskResult[]) {
+function makeComponent(subtasks: SubtaskResult[], opts?: { onRetry?: (taskId: string, subtaskId: string) => void }) {
 	const task = {
 		id: "T", description: "t", status: "failed", controlState: "running",
 		createdAt: 0, subtasks,
 	} as unknown as TaskState;
 	const factory = createSubtaskTreeOverlay({
 		tasks: () => [task],
-		onRetry: () => {},
+		onRetry: opts?.onRetry ?? (() => {}),
 		onClose: () => {},
 	});
 	let closed = false;
-	const comp = factory(undefined, theme, undefined, () => { closed = true; }) as any;
+	// ponytail: pass a mock tui with requestRender — handleInput calls it at the end,
+	// and undefined tui crashes (optional chaining guards the method, not the object).
+	const mockTui = { requestRender: () => {} };
+	const comp = factory(mockTui as any, theme, undefined, () => { closed = true; }) as any;
 	return { comp, closed: () => closed };
 }
 
@@ -82,6 +85,46 @@ function makeComponent(subtasks: SubtaskResult[]) {
 	const { comp, closed } = makeComponent([makeSubtask("s1")]);
 	comp.handleInput("\x1b");
 	check("esc closes", closed() === true);
+}
+
+// pressing r on a failed subtask at the cursor invokes onRetry with (taskId, subtaskId)
+{
+	// ponytail: TS can't track closure mutation, so read through a getter
+	// to avoid narrowing `holder.args` to `null` after the explicit `= null` reset.
+	const holder: { args: { taskId: string; subtaskId: string } | null } = { args: null };
+	const getArgs = () => holder.args;
+	const { comp } = makeComponent(
+		[makeSubtask("s1"), makeSubtask("s2")],
+		{
+			onRetry: (taskId, subtaskId) => { holder.args = { taskId, subtaskId }; },
+		},
+	);
+	// cursor starts at index 0 → s1
+	comp.handleInput("r");
+	const args1 = getArgs();
+	check("r on failed subtask invokes onRetry", args1 !== null);
+	check("onRetry receives correct taskId", args1?.taskId === "T");
+	check("onRetry receives cursor's subtaskId", args1?.subtaskId === "s1");
+
+	// move cursor down to s2, retry again
+	holder.args = null;
+	comp.handleInput("\x1b[B"); // down
+	comp.handleInput("R");
+	const args2 = getArgs();
+	check("R on second failed subtask invokes onRetry", args2 !== null);
+	check("onRetry receives correct taskId (s2)", args2?.taskId === "T");
+	check("onRetry receives cursor's subtaskId (s2)", args2?.subtaskId === "s2");
+}
+
+// r on a non-failed subtask does NOT invoke onRetry
+{
+	let called = false;
+	const { comp } = makeComponent(
+		[makeSubtask("s1", { status: "completed" })],
+		{ onRetry: () => { called = true; } },
+	);
+	comp.handleInput("r");
+	check("r on completed subtask does not invoke onRetry", called === false);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

@@ -77,11 +77,20 @@ class ProgressWidgetComponent {
 		const { task, waveIdx, totalWaves } = s;
 		const lines: string[] = [];
 
-		// Header: task ID + status
+		// Header: task ID + status + description (what the task IS, not just a UUID)
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 		const statusColor = task.status === "completed" ? "success" : task.status === "failed" ? "error" : "accent";
+		const idStr = task.id.slice(0, 12);
+		// ponytail: budget the description by the PLAIN-text prefix length (ANSI is
+		// applied after slicing, mirroring the failed-IDs line) - no pi-tui value
+		// imports are available for ANSI-aware truncation. Without the description,
+		// the always-visible widget showed only a truncated UUID, not what the task
+		// was about; /uc status showed it but the glanceable view did not.
+		const prefixPlain = `  UC ${idStr} ${task.status}${ctrl}`;
+		const descBudget = Math.max(0, width - prefixPlain.length - 3); // 3 for " - "
+		const desc = task.description.slice(0, descBudget);
 		lines.push(
-			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", task.id.slice(0, 12))} ${this.theme.fg(statusColor, task.status)}${ctrl}`,
+			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}`,
 		);
 
 		// Wave progress
