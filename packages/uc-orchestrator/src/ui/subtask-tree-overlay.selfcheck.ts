@@ -84,5 +84,64 @@ function makeComponent(subtasks: SubtaskResult[]) {
 	check("esc closes", closed() === true);
 }
 
+// r on a failed subtask invokes onRetry with (taskId, subtaskId)
+{
+	const subtasks = [makeSubtask("s1", { status: "failed" }), makeSubtask("s2", { status: "failed" })];
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	let retryArgs: [string, string] | null = null;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: (tid: string, sid: string) => { retryArgs = [tid, sid]; },
+		onClose: () => {},
+	});
+	const comp = factory(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput("r");
+	check("r on failed invokes onRetry", retryArgs !== null);
+	check("r on failed passes correct taskId", retryArgs?.[0] === "T");
+	check("r on failed passes correct subtaskId", retryArgs?.[1] === "s1");
+}
+
+// R on the 2nd failed subtask (cursor at idx 1) invokes onRetry with s2
+{
+	const subtasks = [makeSubtask("s1", { status: "failed" }), makeSubtask("s2", { status: "failed" })];
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	let retryArgs: [string, string] | null = null;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: (tid: string, sid: string) => { retryArgs = [tid, sid]; },
+		onClose: () => {},
+	});
+	const comp = factory(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput("\x1b[B"); // down to s2
+	comp.handleInput("R");
+	check("R on 2nd failed invokes onRetry with s2", retryArgs?.[1] === "s2");
+}
+
+// r on a completed subtask does NOT invoke onRetry, and sets a flashMsg
+{
+	const subtasks = [makeSubtask("s1", { status: "completed" })];
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	let called = false;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: () => { called = true; },
+		onClose: () => {},
+	});
+	const comp = factory(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput("r");
+	check("r on completed does NOT invoke onRetry", called === false);
+	const lines = comp.render(80);
+	check("r on completed renders flashMsg with 'only failed'", lines.some((l: string) => l.includes("only failed")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

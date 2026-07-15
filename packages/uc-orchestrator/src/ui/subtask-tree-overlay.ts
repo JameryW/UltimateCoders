@@ -49,6 +49,9 @@ class SubtaskTreeComponent {
 	private maxVisible = 20; // ponytail: reasonable default
 	// ponytail: stamp flatItems only when task count changes, not every render
 	private lastSubtaskCount = -1;
+	// ponytail: transient in-overlay hint for dead keys (e.g. r on non-failed).
+	// Cleared on the next non-r/R keypress so any nav/enter/esc dismisses it.
+	private flashMsg: string | null = null;
 
 	constructor(
 		private opts: SubtaskTreeOptions,
@@ -143,10 +146,23 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, this.flatItems.length)} of ${this.flatItems.length}`));
 		}
 
+		// ponytail: flashMsg hint rendered after footer so it doesn't shift list rows.
+		// Only present when set (non-null), so existing line-count assertions hold.
+		if (this.flashMsg) {
+			lines.push(this.theme.fg("dim", `  ${this.flashMsg.slice(0, Math.max(0, width - 2))}`));
+		}
+
 		return lines;
 	}
 
 	handleInput(data: string): void {
+		// ponytail: clear flashMsg on any key that isn't r/R so navigation,
+		// enter, esc, etc. dismiss the hint. Don't return — let the key
+		// still do its normal thing. r/R refreshes the message instead.
+		if (this.flashMsg && data !== "r" && data !== "R") {
+			this.flashMsg = null;
+		}
+
 		if (data === KEY.esc || data === "q") {
 			this.done();
 			return;
@@ -182,11 +198,19 @@ class SubtaskTreeComponent {
 			const item = this.flatItems[this.cursorIdx];
 			if (item && item.subtask.status === "failed" && this.opts.onRetry) {
 				this.opts.onRetry(item.taskId, item.subtask.id);
+				this.flashMsg = null;
+			} else {
+				// ponytail: dead-key feedback — r on a non-failed subtask (or no
+				// cursor / no onRetry) sets a dim hint naming the actual status
+				// so the user knows why nothing happened.
+				const status = item ? item.subtask.status : "no subtask selected";
+				this.flashMsg = `only failed subtasks can be retried (cursor is ${status})`;
 			}
 		}
 		this.clampScroll();
-		// ponytail: requestRender on tui — type assertion needed since TUI type is opaque
-		(this.tui as any).requestRender?.();
+		// ponytail: requestRender on tui — type assertion needed since TUI type is opaque.
+		// Guard for undefined tui (selfcheck passes undefined as the mock).
+		(this.tui as any)?.requestRender?.();
 	}
 
 	invalidate(): void {
