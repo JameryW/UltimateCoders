@@ -112,6 +112,16 @@ class TaskListComponent {
 		);
 	}
 
+	// ponytail: S5 — narrow-screen hint. The full hint line is ~78 chars; when the
+	// compositor ANSI-truncates to a narrow terminal, the right side (Esc close,
+	// / filter) is lost and the user can't see how to close. Use a compact version
+	// that keeps the essential keys (nav, Enter, quick actions, Esc close) under
+	// 60 columns. Only applied to the normal (non-search, non-filtering) hint —
+	// searchMode/filtering lines are short or user-typed.
+	private hintLine(width: number, full: string, compact: string): string {
+		return width < 60 ? compact : full;
+	}
+
 	render(width: number): string[] {
 		if (this.detailTaskId) return this.renderDetail();
 		return this.renderList(width);
@@ -136,7 +146,10 @@ class TaskListComponent {
 		} else if (filtering) {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
-			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · / filter · Esc close"));
+			lines.push(this.theme.fg("dim", this.hintLine(width,
+				"  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · / filter · Esc close",
+				"  ↑↓ nav · Enter · c/p/r · Esc close",
+			)));
 		}
 		lines.push("");
 
