@@ -95,6 +95,7 @@ mod tests {
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
             dispatch_retry_count: 0,
+            retry_count: 0,
             required_capabilities: Vec::new(),
             agent_config_json: None,
             steps: Vec::new(),

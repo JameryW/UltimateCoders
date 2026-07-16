@@ -113,6 +113,11 @@ pub struct Subtask {
     /// claude-code revise.
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
+    /// How many times execution has been retried (for failed-then-retried
+    /// subtasks). Distinct from `dispatch_retry_count` (dispatch-level).
+    /// Populated by the worker and surfaced to the TUI for retry×N display.
+    #[serde(default)]
+    pub retry_count: u32,
 }
 
 /// A single step in a subtask's multi-agent workflow.
@@ -381,6 +386,7 @@ mod tests {
             result: None,
             dispatch_mode: DispatchMode::PreferRemote,
             dispatch_retry_count: 0,
+            retry_count: 0,
             required_capabilities: Vec::new(),
             agent_config_json: None,
             steps: vec![
