@@ -158,6 +158,14 @@ class ProgressWidgetComponent {
 			const firstErr = failed.find((s) => s.error);
 			if (firstErr && firstErr.error) {
 				lines.push(`  ${formatErrorForDisplay(firstErr.error, width - 6, (c, t) => this.theme.fg(c, t))}`);
+				// ponytail: S8 — show retry count on a separate dim line when the
+				// first failed subtask was retried. formatErrorForDisplay reads
+				// st.error (pure root cause, no retry prefix for remote subtasks),
+				// so the retry count wouldn't be visible otherwise. Only shown when
+				// retryCount > 0 to avoid noise on first-attempt failures.
+				if (firstErr.retryCount && firstErr.retryCount > 0) {
+					lines.push(this.theme.fg("dim", `  retried ${firstErr.retryCount}×`));
+				}
 			}
 		}
 

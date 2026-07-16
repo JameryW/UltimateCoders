@@ -610,6 +610,13 @@ export class UCOrchestrator {
 						st.error = result.error;
 						st.review = result.review;
 						st.completedAt = result.completedAt;
+						// ponytail: S7 — copy retryCount from SubtaskResult so the
+						// progress-widget + subtask-tree-overlay show retry count
+						// for local-exec subtasks (executeSubtaskWithRetry sets it at
+						// L1437). Remote subtasks have no retry_count in SubtaskProto
+						// (only WorkflowStepProto does), so result.retryCount is
+						// undefined there — this assignment is a no-op for remote.
+						st.retryCount = result.retryCount;
 					}
 				}
 
@@ -815,6 +822,10 @@ export class UCOrchestrator {
 					st.error = result.error;
 					st.review = result.review;
 					st.completedAt = result.completedAt;
+					// ponytail: S7 — copy retryCount (see comment at the wave-level
+					// copy block above). Local-exec sets result.retryCount at L1437;
+					// remote-exec leaves it undefined (SubtaskProto has no retry_count).
+					st.retryCount = result.retryCount;
 				}
 				this.syncTaskToGrpc(task);
 				if (result.result) {

@@ -62,6 +62,9 @@ const PAGEDOWN = "\x1b[6~";
 }
 
 // expanded with all fields (error + result + review + retry + mode) → +1 line max
+// ponytail: S7 — retryCount display in the expanded detail line (retry×N) is
+// now reachable for local-exec subtasks after the orchestrator's result→TaskState
+// copy path was fixed to copy retryCount. This test pins the overlay side of that.
 {
 	const st = makeSubtask("s1", {
 		error: "boom",
@@ -76,6 +79,8 @@ const PAGEDOWN = "\x1b[6~";
 	// 4 (collapsed) + 1 detail line = 5, NOT 4+9
 	check("expanded adds exactly 1 detail line", lines.length === 5);
 	check("detail line present", lines.some((l: string) => l.includes("boom")));
+	// S7: retryCount=3 → "retry×3" in the detail line
+	check("S7: retry×3 shown in expanded detail", lines.some((l: string) => l.includes("retry×3")));
 }
 
 // expanded with only result → 1 line, first result line shown

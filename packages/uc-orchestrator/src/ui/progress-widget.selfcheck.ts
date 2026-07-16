@@ -140,5 +140,58 @@ function renderLines(failedIds: string[], width: number): string[] {
 	check("narrow terminal header fits width", header.length <= 20);
 }
 
+// ponytail: S8 — failed subtask with retryCount > 0 shows a "retried N×" dim line.
+// The retry count comes from SubtaskResult.retryCount (copied to st.retryCount by
+// the orchestrator's result→TaskState copy path). formatErrorForDisplay reads
+// st.error (pure root cause), so without this line the retry count would be
+// invisible for remote/local subtasks whose error lacks the friendly prefix.
+{
+	const st = failedSubtask("s1");
+	st.retryCount = 2;
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [st],
+	} as unknown as TaskState;
+	const progState: ProgressWidgetState = { task };
+	const factory = createProgressWidget(() => progState);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	check("S8: retry line present", lines.some((l: string) => l.includes("retried")));
+	check("S8: retry line shows count", lines.some((l: string) => l.includes("2")));
+	check("S8: retry line has × symbol", lines.some((l: string) => l.includes("×")));
+}
+
+// ponytail: S8 — failed subtask with retryCount=0 (first attempt) does NOT show
+// a retry line (no noise on first-attempt failures).
+{
+	const st = failedSubtask("s1");
+	st.retryCount = 0;
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [st],
+	} as unknown as TaskState;
+	const progState: ProgressWidgetState = { task };
+	const factory = createProgressWidget(() => progState);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	check("S8: retryCount=0 no retry line", !lines.some((l: string) => l.includes("retried")));
+}
+
+// ponytail: S8 — failed subtask with retryCount undefined (never retried, e.g.
+// remote subtask where SubtaskProto has no retry_count) does NOT show retry line.
+{
+	const st = failedSubtask("s1");
+	// retryCount left undefined (as-is from failedSubtask factory)
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [st],
+	} as unknown as TaskState;
+	const progState: ProgressWidgetState = { task };
+	const factory = createProgressWidget(() => progState);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	check("S8: undefined retryCount no retry line", !lines.some((l: string) => l.includes("retried")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
