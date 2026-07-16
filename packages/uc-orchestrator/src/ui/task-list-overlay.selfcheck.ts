@@ -254,14 +254,18 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("nav within filtered set moves cursor", comp.cursorIdx === before + 1);
 }
 
-// `/` in detail mode is a no-op (doesn't crash, doesn't change detail)
+// `/` in detail mode gives feedback (flashMsg) instead of silent no-op.
+// ponytail: S4 — detail is a single-task view, no list to filter; `/` tells the
+// user why instead of being silently ignored. Must NOT enter searchMode.
 {
 	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
 	comp.handleInput(ENTER); // open detail
 	check("detail mode active", comp.detailTaskId === "t1");
-	comp.handleInput("/");   // `/` in detail mode — should be ignored
-	check("/ in detail mode is no-op (still in detail)", comp.detailTaskId === "t1");
+	comp.handleInput("/");   // `/` in detail mode — now sets flashMsg
+	check("/ in detail mode stays in detail", comp.detailTaskId === "t1");
 	check("/ in detail mode does not enter searchMode", comp.searchMode === false);
+	check("/ in detail mode sets 'filter not available' flashMsg",
+		comp.flashMsg !== null && comp.flashMsg.includes("filter not available"));
 	const lines = comp.render(80);
 	check("detail still renders subtasks header", lines.some((l: string) => l.includes("Subtasks")));
 }
@@ -351,6 +355,29 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 		{ initialDetailTaskId: "t2" },
 	);
 	check("initialDetailTaskId opens in detail mode", comp.detailTaskId === "t2");
+}
+
+// ponytail: S3 — detail-mode quick actions (c/p/r) fire on the detail's own task.
+// Single-tap (no double-tap confirm): detail is a focused single-task view.
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+	);
+	comp.handleInput(ENTER); // open detail for t1 (cursor at index 0)
+	check("detail open for t1", comp.detailTaskId === "t1");
+	comp.handleInput("p");
+	check("detail `p` fires pause on detail task", calls.length === 1 && calls[0][0] === "t1" && calls[0][1] === "pause");
+	check("detail `p` sets paused flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("paused"));
+	comp.handleInput("r");
+	check("detail `r` fires resume on detail task", calls.length === 2 && calls[1][0] === "t1" && calls[1][1] === "resume");
+	check("detail `r` sets resumed flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("resumed"));
+	comp.handleInput("c");
+	check("detail `c` fires cancel immediately (no double-tap)", calls.length === 3 && calls[2][0] === "t1" && calls[2][1] === "cancel");
+	check("detail `c` sets cancelled flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("cancelled"));
+	// detail `c` must NOT arm pendingCancel (single-tap, not double-tap)
+	check("detail `c` does not arm pendingCancel", comp.pendingCancel === null);
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

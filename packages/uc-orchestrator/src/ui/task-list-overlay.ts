@@ -187,7 +187,7 @@ class TaskListComponent {
 	private renderDetail(): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · Esc/q back to list"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · Esc/q back"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
@@ -238,14 +238,33 @@ class TaskListComponent {
 				this.detailScroll = 0;
 				return;
 			}
+			// ponytail: S4 — `/` in detail mode gives feedback instead of silent no-op.
+			// Detail is a single-task view, no list to filter; tell the user why.
+			if (data === "/") {
+				this.setFlash("filter not available in detail view");
+				return;
+			}
+			// ponytail: S3 — detail-mode quick actions fire on the detail's own task.
+			// Single-tap (no double-tap confirm): detail is a focused single-task view,
+			// the user already chose this task. fireAction clears pendingCancel itself.
+			if (data === "c" || data === "C") {
+				this.fireAction(this.detailTaskId, "cancel", "cancelled");
+				return;
+			}
+			if (data === "p") {
+				this.fireAction(this.detailTaskId, "pause", "paused");
+				return;
+			}
+			if (data === "r") {
+				this.fireAction(this.detailTaskId, "resume", "resumed");
+				return;
+			}
 			if (data === KEY.up || data === "k") this.detailScroll = Math.max(0, this.detailScroll - 1);
 			else if (data === KEY.down || data === "j") this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + 1);
 			else if (data === KEY.pageUp) this.detailScroll = Math.max(0, this.detailScroll - this.maxVisible);
 			else if (data === KEY.pageDown) this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + this.maxVisible);
 			else if (data === KEY.home || data === "g") this.detailScroll = 0;
 			else if (data === KEY.end || data === "G") this.detailScroll = Math.max(0, this.detailLines.length - this.maxVisible);
-			// ponytail: `/` in detail mode is a no-op — detail is a single-task view,
-			// no list to filter. Ignored rather than entering searchMode.
 			return;
 		}
 
