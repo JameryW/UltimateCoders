@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "resumeTask RPC contract + task state sync via gRPC — retrySubtask reuses bridge.resumeTask for sync"}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "wave rebuild (buildDAG/splitWavesByFileOverlap) + executeWaves — retrySubtask rebuilds waves from reset pending set"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "events emitted on subtask lifecycle (subtask_start/progress/end) — retrySubtask re-dispatch emits these"}
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI overlay -> orchestrator bridge conventions — onRetry callback wiring"}
