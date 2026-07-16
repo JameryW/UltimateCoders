@@ -433,6 +433,16 @@ class TaskListComponent {
 		this.detailTaskId = taskId;
 		this.detailLines = formatTaskDetail(task, this.theme);
 		this.detailScroll = 0;
+		// ponytail: align list cursor to the detail task so Esc→list lands the focus
+		// on it (jump-from-subtask-tree `d` opens detail via initialDetailTaskId with
+		// cursorIdx still 0; without this, Esc back to list left the cursor on the
+		// first task, so a subsequent c/p/r would hit the wrong task). Respect any
+		// active filter — if the task isn't in the filtered set, leave cursor as-is.
+		const idx = this.currentTasks().findIndex((t) => t.id === taskId);
+		if (idx >= 0) {
+			this.cursorIdx = idx;
+			this.clampCursorAndScroll();
+		}
 	}
 
 	invalidate(): void {}
