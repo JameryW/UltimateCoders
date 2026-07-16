@@ -21,7 +21,7 @@ output:
             items:
               type: object
               properties:
-                agent: { type: string, enum: ["claude-code", "codex"] }
+                agent: { type: string, enum: ["grok-build", "grok", "codex"] }
                 prompt: { type: string }
                 abort_on_failure: { type: boolean, default: true }
                 retry_count: { type: integer, default: 0 }
@@ -52,9 +52,9 @@ Rules:
   Omit `steps` entirely — the subtask runs as a single-agent execution (backward compatible).
 - **moderate/complex** subtasks (1+ files with real code changes, new features, refactors,
   bug fixes requiring design decisions): Emit a **3-step chain**:
-  1. `claude-code` — write/implement the code changes
+  1. `grok-build` — write/implement the code changes
   2. `codex` — code review (CR) the changes, identify issues
-  3. `claude-code` — revise based on CR feedback
+  3. `grok-build` — revise based on CR feedback
 
 This ensures code quality via a write→review→revise loop. If the subtask is trivial
 (e.g., update a config value, fix a typo), do NOT emit steps — single agent is enough.
@@ -120,7 +120,7 @@ Example — a step that calls a flaky API, retry up to 2 times with 5s backoff:
 
 ```json
 {
-  "agent": "claude-code",
+  "agent": "grok-build",
   "prompt": "Run the integration test suite and report results.",
   "retry_count": 2,
   "retry_delay_ms": 5000
@@ -165,7 +165,7 @@ with a clear error message — it does NOT silently run or skip the step.
 - Skip the revise step when the CR step passed cleanly (no issues found):
   ```json
   {
-    "agent": "claude-code",
+    "agent": "grok-build",
     "prompt": "Revise per CR feedback: {{prev_summary}}",
     "condition": "!prev.success || prev.summary.contains(\"issue\")"
   }
@@ -176,7 +176,7 @@ with a clear error message — it does NOT silently run or skip the step.
 - Skip a deployment step if the previous step didn't touch deployment files:
   ```json
   {
-    "agent": "claude-code",
+    "agent": "grok-build",
     "prompt": "Deploy the changes",
     "condition": "prev.files.contains(\"deploy/\")"
   }
@@ -227,7 +227,7 @@ This is a hard constraint because parallel steps share a single git worktree
 {
   "steps": [
     {
-      "agent": "claude-code",
+      "agent": "grok-build",
       "prompt": "Implement feature X"
     },
     {
@@ -264,7 +264,7 @@ as `prev`. The next step after the group sees both CR outputs accumulated in
   "files": ["src/auth/middleware.ts"],
   "steps": [
     {
-      "agent": "claude-code",
+      "agent": "grok-build",
       "prompt": "Implement JWT-based authentication middleware in src/auth/middleware.ts. Validate tokens from the Authorization header, attach the decoded user to the request context, and return 401 for invalid/expired tokens. Follow existing middleware patterns in src/auth/."
     },
     {
@@ -272,7 +272,7 @@ as `prev`. The next step after the group sees both CR outputs accumulated in
       "prompt": "Review the authentication middleware changes. Check for: (1) token validation correctness, (2) error handling for malformed tokens, (3) timing attack resistance, (4) proper TypeScript types. Previous work summary: {{prev_summary}}. Modified files: {{prev_files}}."
     },
     {
-      "agent": "claude-code",
+      "agent": "grok-build",
       "prompt": "Revise the authentication middleware based on the code review feedback. Address all issues identified. Previous review summary: {{prev_summary}}. Files to update: {{prev_files}}."
     }
   ]

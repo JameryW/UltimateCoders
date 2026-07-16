@@ -158,7 +158,7 @@ def _resolve_agent_config_field(data: dict[str, Any]) -> dict[str, Any]:
 class WorkflowStep:
     """A single step in a subtask's multi-agent workflow.
 
-    Each step runs one coding agent (claude-code / codex) with a prompt
+    Each step runs one coding agent (grok-build / claude-code / codex) with a prompt
     template. Steps run sequentially; the previous step's AgentOutput is
     available to the next step's prompt via template variables:
       {{prev_summary}} — previous step's AgentOutput.summary

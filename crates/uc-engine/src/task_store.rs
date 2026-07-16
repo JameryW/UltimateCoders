@@ -654,7 +654,7 @@ fn matches_marker(m: &str) -> bool {
 /// ponytail: marker-based heuristic, no LLM. A subtask whose description
 /// ends with `>>cr` (or `>>review`) gets a 2-step chain (write + CR), and
 /// `>>crv` (or `>>cr-revise`) gets the full 3-step chain matching the
-/// original goal: claude-code writes → codex code-reviews → claude-code
+/// original goal: grok-build writes → codex code-reviews → grok-build
 /// revises per the CR feedback (each step threads the prior summary via
 /// `{{prev_summary}}`). No marker = empty steps = legacy single-agent path.
 ///
@@ -678,7 +678,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
     match marker {
         Some("cr") | Some("review") => vec![
             WorkflowStep {
-                agent: "claude-code".to_string(),
+                agent: "grok-build".to_string(),
                 prompt: implement_prompt,
                 agent_config_json: None,
                 abort_on_failure: true,
@@ -700,7 +700,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
         ],
         Some("crv") | Some("cr-revise") => vec![
             WorkflowStep {
-                agent: "claude-code".to_string(),
+                agent: "grok-build".to_string(),
                 prompt: implement_prompt,
                 agent_config_json: None,
                 abort_on_failure: true,
@@ -720,7 +720,7 @@ fn steps_for_description(desc: &str) -> Vec<WorkflowStep> {
                 parallel_group: None,
             },
             WorkflowStep {
-                agent: "claude-code".to_string(),
+                agent: "grok-build".to_string(),
                 prompt: "Revise the implementation per the code review feedback from the previous step. Address each concrete issue; skip nitpicks. {{prev_summary}}".to_string(),
                 agent_config_json: None,
                 abort_on_failure: true,
@@ -876,7 +876,7 @@ mod tests {
         assert_eq!(subs.len(), 1);
         let steps = &subs[0].steps;
         assert_eq!(steps.len(), 2, ">>cr produces write + CR chain");
-        assert_eq!(steps[0].agent, "claude-code");
+        assert_eq!(steps[0].agent, "grok-build");
         assert_eq!(steps[1].agent, "codex");
         // Step 0 prompt carries the cleaned description (marker stripped).
         assert!(steps[0].prompt.contains("implement feature X"));
@@ -904,9 +904,9 @@ mod tests {
         let steps = &subs[0].steps;
         assert_eq!(steps.len(), 3, ">>crv produces write + CR + revise");
         // write → CR → revise, matching the original goal end-to-end.
-        assert_eq!(steps[0].agent, "claude-code");
+        assert_eq!(steps[0].agent, "grok-build");
         assert_eq!(steps[1].agent, "codex");
-        assert_eq!(steps[2].agent, "claude-code");
+        assert_eq!(steps[2].agent, "grok-build");
         // Step 0 prompt carries the cleaned description (marker stripped).
         assert!(steps[0].prompt.contains("implement feature X"));
         assert!(!steps[0].prompt.contains(">>crv"));

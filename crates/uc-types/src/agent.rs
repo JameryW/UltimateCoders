@@ -109,8 +109,8 @@ pub struct Subtask {
     /// execution via `agent_config_json` (backward compatible). When non-empty,
     /// the worker runs steps in order, threading each step's output into the
     /// next step's prompt template (`{{prev_summary}}`, `{{prev_files}}`,
-    /// `{{step<N>.summary}}`). Typical chain: claude-code write → codex CR →
-    /// claude-code revise.
+    /// `{{step<N>.summary}}`). Typical chain: grok-build write → codex CR →
+    /// grok-build revise.
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
     /// How many times execution has been retried (for failed-then-retried
@@ -122,12 +122,12 @@ pub struct Subtask {
 
 /// A single step in a subtask's multi-agent workflow.
 ///
-/// Each step runs one coding agent (claude-code / codex) with a prompt
+/// Each step runs one coding agent (grok-build / claude-code / codex) with a prompt
 /// template. Steps run sequentially; the previous step's AgentOutput is
 /// available to the next step's prompt via template variables.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowStep {
-    /// Agent adapter name ("claude-code" | "codex").
+    /// Agent adapter name ("grok-build"/"grok" | "claude-code" | "codex").
     pub agent: String,
     /// Prompt template. Supports:
     ///   {{prev_summary}} — previous step's AgentOutput.summary

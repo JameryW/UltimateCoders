@@ -186,6 +186,18 @@ class TestDeriveCapabilities:
         assert "claude-code" in caps
         assert "codex" not in caps
 
+    def test_grok_cli_present_advertises_grok_build(self, stub_engine, monkeypatch) -> None:
+        """grok on PATH advertises both the canonical name and CLI alias."""
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda cmd: "/usr/local/bin/grok" if cmd == "grok" else None,
+        )
+        caps = self._worker(stub_engine).capabilities
+        assert "grok-build" in caps
+        assert "grok" in caps
+        assert "claude-code" not in caps
+        assert "codex" not in caps
+
     def test_both_clis_present_advertises_both(self, stub_engine, monkeypatch) -> None:
         """Both CLIs on PATH → both capabilities advertised."""
         monkeypatch.setattr(
@@ -202,6 +214,8 @@ class TestDeriveCapabilities:
         caps = self._worker(stub_engine).capabilities
         assert "claude-code" not in caps
         assert "codex" not in caps
+        assert "grok-build" not in caps
+        assert "grok" not in caps
         # Core caps still present
         for c in ("code", "search", "memory", "test", "decompose", "review"):
             assert c in caps, f"{c} missing"

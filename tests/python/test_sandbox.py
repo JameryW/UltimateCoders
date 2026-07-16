@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 from ultimate_coders.agent.sandbox import (
@@ -11,6 +12,7 @@ from ultimate_coders.agent.sandbox import (
     CodexAdapter,
     DecomposeAdapter,
     ExecResult,
+    GrokBuildAdapter,
     NetworkMode,
     SandboxConfig,
     SandboxManager,
@@ -29,9 +31,10 @@ from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, Task
 class TestSandboxConfig:
     """Tests for SandboxConfig."""
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        monkeypatch.delenv("UC_CODING_AGENT", raising=False)
         config = SandboxConfig()
-        assert config.agent == "claude-code"
+        assert config.agent == "grok-build"
         assert config.project_path == ""
         assert config.api_key is None
         assert config.max_cpu_seconds == 3600
@@ -41,6 +44,10 @@ class TestSandboxConfig:
         assert config.network == NetworkMode.FULL
         assert config.warm_pool_size == 2
         assert config.max_pool_size == 10
+
+    def test_default_agent_can_be_overridden_by_environment(self, monkeypatch):
+        monkeypatch.setenv("UC_CODING_AGENT", "codex")
+        assert SandboxConfig().agent == "codex"
 
     def test_custom(self):
         config = SandboxConfig(
@@ -76,6 +83,11 @@ class TestSandboxConfig:
         engine_config = config.to_engine_config()
         assert "OPENAI_API_KEY" in engine_config["env_vars"]
 
+    def test_to_engine_config_grok(self):
+        config = SandboxConfig(agent="grok-build", api_key="xai-test")
+        engine_config = config.to_engine_config()
+        assert engine_config["env_vars"]["XAI_API_KEY"] == "xai-test"
+
     def test_build_env_vars_no_key(self):
         config = SandboxConfig(agent="claude-code")
         env = config._build_env_vars()
@@ -83,12 +95,17 @@ class TestSandboxConfig:
 
     def test_build_env_vars_with_extra(self):
         config = SandboxConfig(
+            agent="claude-code",
             env_vars={"CUSTOM_VAR": "value"},
             api_key="sk-test",
         )
         env = config._build_env_vars()
         assert env["CUSTOM_VAR"] == "value"
         assert env["ANTHROPIC_API_KEY"] == "sk-test"
+
+    def test_build_env_vars_grok(self):
+        config = SandboxConfig(agent="grok-build", api_key="xai-test")
+        assert config._build_env_vars()["XAI_API_KEY"] == "xai-test"
 
 
 # ── ExecResult tests ────────────────────────────────────────────
@@ -187,6 +204,106 @@ class TestClaudeCodeAdapter:
         output = adapter.parse_output(result)
         assert output.success
         assert "fixed the bug" in output.summary
+
+
+# ── GrokBuildAdapter tests ──────────────────────────────────────
+
+class TestGrokBuildAdapter:
+    """Tests for the default xAI Grok Build adapter."""
+
+    def test_name(self):
+        assert GrokBuildAdapter().name() == "grok-build"
+
+    def test_build_request_headless_defaults(self):
+        adapter = GrokBuildAdapter()
+        config = SandboxConfig(project_path="/tmp/project", api_key="xai-test")
+        request = adapter.build_request("Implement feature", "/tmp/project", config)
+
+        assert request["command"] == "grok"
+        args = request["args"]
+        assert "-p" in args and "Implement feature" in args
+        assert "--output-format" in args and "streaming-json" in args
+        assert "--always-approve" in args
+        assert "--no-alt-screen" in args
+        assert request["env_vars"]["XAI_API_KEY"] == "xai-test"
+
+    def test_build_request_translates_agent_config(self):
+        adapter = GrokBuildAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request(
+            "Fix bug", "/tmp/project", config,
+            subtask_config={
+                "tools": ["default", "mcp__codegraph__*"],
+                "allowed_tools": ["Bash(git *)"],
+                "disallowed_tools": ["Bash(rm *)", "mcp__secret__*"],
+                "append_system_prompt": "Focus on tests",
+                "agent_name": "builder",
+                "agents_json": '{"builder": {}}',
+            },
+        )
+        args = request["args"]
+        assert args[args.index("--tools") + 1] == "default,codegraph__*"
+        assert args[args.index("--disallowed-tools") + 1] == "Bash(rm *),mcp__secret__*"
+        assert args[args.index("--rules") + 1] == "Focus on tests"
+        assert args[args.index("--agent") + 1] == "builder"
+        assert args[args.index("--agents") + 1] == '{"builder": {}}'
+        assert "--allow" in args and "Bash(git *)" in args
+
+    def test_parse_streaming_json(self):
+        adapter = GrokBuildAdapter()
+        stdout = "\n".join([
+            json.dumps({"type": "tool_call", "name": "shell"}),
+            json.dumps({"type": "agent_message_chunk", "text": "Fixed "}),
+            json.dumps({"type": "agent_message_chunk", "text": "the bug."}),
+            json.dumps({
+                "type": "result",
+                "result": "Fixed the bug.",
+                "usage": {"input_tokens": 12, "output_tokens": 8},
+            }),
+        ])
+        output = adapter.parse_output(ExecResult(exit_code=0, stdout=stdout))
+        assert output.success
+        assert output.summary == "Fixed the bug."
+        assert output.tool_calls == ["shell"]
+        assert output.token_usage is not None
+        assert output.token_usage.input_tokens == 12
+
+    def test_parse_plain_output_and_failures(self):
+        adapter = GrokBuildAdapter()
+        output = adapter.parse_output(ExecResult(
+            exit_code=0,
+            stdout="Implemented feature.\nCreated: src/feature.rs",
+        ))
+        assert output.success
+        assert "Implemented feature" in output.summary
+        assert output.file_changes[0].file_path == "src/feature.rs"
+
+        failed = adapter.parse_output(ExecResult(exit_code=1, stderr="API error"))
+        assert not failed.success
+        assert "Grok Build exited with code 1" in failed.summary
+
+    def test_inline_mcp_creates_grok_home(self):
+        adapter = GrokBuildAdapter()
+        config = SandboxConfig(project_path="/tmp/project")
+        request = adapter.build_request(
+            "Fix bug", "/tmp/project", config,
+            subtask_config={
+                "mcp_configs": [{
+                    "codegraph": {
+                        "command": "python3",
+                        "args": ["-m", "codegraph"],
+                        "env": {"MODE": "test"},
+                    },
+                }],
+            },
+        )
+        grok_home = request["env_vars"]["GROK_HOME"]
+        with open(f"{grok_home}/config.toml", encoding="utf-8") as f:
+            content = f.read()
+        assert '[mcp_servers."codegraph"]' in content
+        assert 'command = "python3"' in content
+        assert '"MODE" = "test"' in content
+        shutil.rmtree(grok_home)
 
 
 # ── CodexAdapter tests ──────────────────────────────────────────
@@ -490,6 +607,8 @@ class TestAdapterFactory:
 
     def test_available_agents(self):
         agents = available_agents()
+        assert "grok-build" in agents
+        assert "grok" in agents
         assert "claude-code" in agents
         assert "claude-code-decompose" in agents
         assert "codex" in agents
@@ -505,6 +624,10 @@ class TestAdapterFactory:
     def test_create_adapter_codex(self):
         adapter = create_adapter("codex")
         assert isinstance(adapter, CodexAdapter)
+
+    def test_create_adapter_grok_aliases(self):
+        assert isinstance(create_adapter("grok-build"), GrokBuildAdapter)
+        assert isinstance(create_adapter("grok"), GrokBuildAdapter)
 
     def test_create_adapter_unknown(self):
         with pytest.raises(ValueError, match="Unknown agent"):
@@ -532,6 +655,8 @@ class TestWorkerSandboxMode:
         from ultimate_coders.agent.worker import Worker
         worker = Worker(worker_id="w-default")
         assert worker._sandbox_manager is not None
+        assert worker._sandbox_config.agent == "grok-build"
+        assert isinstance(worker._sandbox_manager._adapter, GrokBuildAdapter)
 
 
 # ── Worker capability derivation tests ──────────────────────────────
