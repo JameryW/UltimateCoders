@@ -12,7 +12,19 @@ import { statusIcon } from "./status-icons";
 
 // ── Task List (no task ID) ───────────────────────────────────────
 
-export function formatTaskList(tasks: TaskState[], theme: Theme): string[] {
+// ponytail: width budget helpers. /uc status renders via notify() (toast),
+// NOT the overlay compositor — so there is no ANSI-aware truncation backstop.
+// Long description/error lines wrap and garble the toast. Slice the PLAIN
+// content BEFORE wrapping it in theme.fg (NEVER raw-slice a themed string —
+// that splits escape sequences, see [[tui-overlay-rendering-constraints]]).
+// `width` is optional: the overlay detail path passes the live render width;
+// notify callers pass ctx.ui.terminal.columns. Undefined → legacy fixed caps.
+function cap(text: string, budget: number | undefined, fallback: number): string {
+	const b = typeof budget === "number" && budget > 0 ? budget : fallback;
+	return text.length > b ? text.slice(0, Math.max(0, b - 1)) + "…" : text;
+}
+
+export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number): string[] {
 	if (tasks.length === 0) return [theme.fg("dim", "No tasks")];
 
 	const lines: string[] = [];
@@ -22,21 +34,25 @@ export function formatTaskList(tasks: TaskState[], theme: Theme): string[] {
 		const total = task.subtasks.length;
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 		lines.push(`${icon} ${task.id.slice(0, 14)} ${completed}/${total} ${task.status}${ctrl}`);
-		lines.push(theme.fg("dim", `  ${task.description.slice(0, 60)}`));
+		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc
+		// budget; cap the plain desc so the toast line fits the terminal.
+		lines.push(theme.fg("dim", `  ${cap(task.description, width !== undefined ? width - 2 : undefined, 60)}`));
 	}
 	return lines;
 }
 
 // ── Task Detail (with task ID) ───────────────────────────────────
 
-export function formatTaskDetail(task: TaskState, theme: Theme): string[] {
+export function formatTaskDetail(task: TaskState, theme: Theme, width?: number): string[] {
 	const lines: string[] = [];
 	const icon = statusIcon(task.status, theme);
 
 	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}`);
-	lines.push(theme.fg("dim", `  Description: ${task.description}`));
+	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
+	// truncation backstop (overlay detail does, but this fn feeds both paths).
+	lines.push(theme.fg("dim", `  Description: ${cap(task.description, width !== undefined ? width - 2 : undefined, 200)}`));
 	if (task.error) {
-		lines.push(theme.fg("error", `  Error: ${task.error.slice(0, 100)}`));
+		lines.push(theme.fg("error", `  Error: ${task.error.slice(0, Math.max(0, (width !== undefined ? width : 120) - 2))}`));
 	}
 
 	lines.push("");
@@ -77,10 +93,23 @@ export function formatTaskDetail(task: TaskState, theme: Theme): string[] {
 			const deps = st.dependsOn.length > 0
 				? theme.fg("dim", ` ←${st.dependsOn.join(",")}`)
 				: "";
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${st.description.slice(0, 50)}${deps}`);
+			// ponytail: cap desc to the remaining width after indent+icon+prefix+id.
+			// Without width (legacy notify path), keep the 50-char cap. deps is themed
+			// and appended AFTER capping the plain desc, so it never splits the ANSI.
+			const headPlain = `${indent}${prefix}${st.id}: `;
+			const descBudget = width !== undefined
+				? Math.max(0, width - headPlain.length - stIcon.length - 2)
+				: 50;
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}`);
 
 			if (st.error) {
-				lines.push(`${indent}  ${formatErrorForDisplay(st.error, 60, (c, t) => theme.fg(c, t))}`);
+				// ponytail: error budget = terminal width minus indent; default 60 for
+				// the legacy notify path. formatErrorForDisplay slices plain error text
+				// internally before theming, so passing a width is ANSI-safe.
+				const errBudget = width !== undefined
+					? Math.max(0, width - indent.length - 2)
+					: 60;
+				lines.push(`${indent}  ${formatErrorForDisplay(st.error, errBudget, (c, t) => theme.fg(c, t))}`);
 			}
 			if (st.retryCount && st.retryCount > 0) {
 				lines.push(theme.fg("dim", `${indent}  Retries: ${st.retryCount}`));

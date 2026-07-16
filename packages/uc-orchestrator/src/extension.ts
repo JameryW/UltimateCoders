@@ -348,9 +348,13 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				}
 				case "status": {
 					const taskId = rest.trim() || undefined;
+					// ponytail: pass live terminal columns so /uc status (notify toast,
+					// no overlay compositor truncation backstop) caps long desc/error
+					// lines to the actual width instead of fixed 50/60/100.
+					const cols = (ctx.ui as any)?.terminal?.columns;
 					if (!taskId) {
 						const tasks = orchestrator.getAllTaskStates();
-						const lines = formatTaskList(tasks, ctx.ui.theme);
+						const lines = formatTaskList(tasks, ctx.ui.theme, cols);
 						ctx.ui.notify(lines.join("\n"), "info");
 					} else {
 						const task = orchestrator.getTaskState(taskId);
@@ -358,7 +362,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							ctx.ui.notify(`Task ${taskId} not found`, "error");
 							return;
 						}
-						const lines = formatTaskDetail(task, ctx.ui.theme);
+						const lines = formatTaskDetail(task, ctx.ui.theme, cols);
 						ctx.ui.notify(lines.join("\n"), "info");
 					}
 					return;
