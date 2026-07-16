@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证模式参考；overlay 改动用 selfcheck 文件验证（.selfcheck.ts），非 pytest，但同理：最小可失败检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全验证；flashMsg 赋值 + KEY 比较需类型检查通过"}
