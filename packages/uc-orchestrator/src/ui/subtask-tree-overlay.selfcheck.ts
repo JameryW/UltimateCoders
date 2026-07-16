@@ -1,9 +1,12 @@
 /**
- * Self-check for SubtaskTreeOverlay expanded detail (single-line preview).
+ * Self-check for SubtaskTreeOverlay expanded detail.
  * Run: bun run src/ui/subtask-tree-overlay.selfcheck.ts
  *
- * ponytail: invariant — an expanded subtask adds at most ONE detail line
- * (was up to 9, overflowing the fixed overlay height with no scroll).
+ * ponytail: invariant — an expanded subtask adds at most TWO detail lines
+ * (line 1: error-or-result on its own line; line 2: meta tags with a width
+ * guard). Was up to 9 lines originally (overflowed the fixed overlay height
+ * with no scroll), then 1 line (error joined with tags, truncated right side),
+ * now 2 lines (error separated for diagnostic priority + meta on its own line).
  */
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
@@ -61,10 +64,14 @@ const PAGEDOWN = "\x1b[6~";
 	check("collapsed one subtask = 4 lines", lines.length === 4);
 }
 
-// expanded with all fields (error + result + review + retry + mode) → +1 line max
+// expanded with all fields (error + result + review + retry + mode) → up to 2 lines
 // ponytail: S7 — retryCount display in the expanded detail line (retry×N) is
 // now reachable for local-exec subtasks after the orchestrator's result→TaskState
 // copy path was fixed to copy retryCount. This test pins the overlay side of that.
+// ponytail: S10 — error is now on its OWN line (diagnostic priority), and meta
+// tags (retry×N, review, dispatchMode) are on a SEPARATE line. The old code joined
+// them into one line, causing the compositor to truncate the right side (retry/mode).
+// Now 2 lines max: error line + meta line.
 {
 	const st = makeSubtask("s1", {
 		error: "boom",
@@ -76,11 +83,19 @@ const PAGEDOWN = "\x1b[6~";
 	const { comp } = makeComponent([st]);
 	comp.expanded.add("s1");
 	const lines = comp.render(80);
-	// 4 (collapsed) + 1 detail line = 5, NOT 4+9
-	check("expanded adds exactly 1 detail line", lines.length === 5);
-	check("detail line present", lines.some((l: string) => l.includes("boom")));
-	// S7: retryCount=3 → "retry×3" in the detail line
-	check("S7: retry×3 shown in expanded detail", lines.some((l: string) => l.includes("retry×3")));
+	// 4 (collapsed) + 2 detail lines (error + meta) = 6, NOT 4+9
+	check("expanded adds up to 2 detail lines (error + meta)", lines.length === 6);
+	// error on its OWN line
+	const errorLine = lines.find((l: string) => l.includes("boom"));
+	check("error present on its own line", errorLine !== undefined);
+	check("error line does NOT contain retry×3", errorLine !== undefined && !errorLine.includes("retry×3"));
+	// meta tags on a SEPARATE line
+	const metaLine = lines.find((l: string) => l.includes("retry×3"));
+	check("S7: retry×3 shown in expanded detail (meta line)", metaLine !== undefined);
+	check("meta line does NOT contain the error text", metaLine !== undefined && !metaLine.includes("boom"));
+	// both lines' plain width <= 80 (strip ANSI for measurement — theme.fg is identity in test mock)
+	check("error line plain width <= 80", errorLine !== undefined && errorLine.length <= 80);
+	check("meta line plain width <= 80", metaLine !== undefined && metaLine.length <= 80);
 }
 
 // expanded with only result → 1 line, first result line shown
@@ -368,6 +383,51 @@ const PAGEDOWN = "\x1b[6~";
 		comp.flashMsg !== null && comp.flashMsg.includes("no subtask selected"));
 	check("`d` on empty list does NOT call onJumpToTask", jumpedTo === null);
 	check("`d` on empty list does NOT close", closed === false);
+}
+
+// ponytail: S10 — error + meta at narrow width=30. Error gets its own line
+// (width-8=22 budget for the root cause); meta line gets its own line with a
+// width guard that drops low-priority tags (dispatchMode first, then review)
+// to keep retry×N visible. Both lines must be <= 30 plain width.
+{
+	const st = makeSubtask("s1", {
+		error: "something went wrong here with a longish message",
+		review: { approved: false } as any,
+		retryCount: 3,
+		dispatchMode: "local",
+	});
+	const { comp } = makeComponent([st]);
+	comp.expanded.add("s1");
+	const lines = comp.render(30);
+	// error on its own line
+	const errorLine = lines.find((l: string) => l.includes("something"));
+	check("narrow: error on its own line", errorLine !== undefined);
+	check("narrow: error line plain width <= 30", errorLine !== undefined && errorLine.length <= 30);
+	// retry×N should still be present (highest priority — never dropped)
+	const metaLine = lines.find((l: string) => l.includes("retry×3"));
+	check("narrow: retry×3 present on meta line", metaLine !== undefined);
+	check("narrow: meta line plain width <= 30", metaLine !== undefined && metaLine.length <= 30);
+}
+
+// ponytail: S10 — width guard drops dispatchMode before review/retry.
+// At width=30 with retry×3 + review + dispatchMode=local, the joined meta
+// plain string "retry×3 · ✗ rejected · local" = 28 chars + 6 indent = 34 > 30.
+// dispatchMode (lowest priority) should be dropped first to fit.
+{
+	const st = makeSubtask("s1", {
+		error: "err",
+		review: { approved: false } as any,
+		retryCount: 3,
+		dispatchMode: "local",
+	});
+	const { comp } = makeComponent([st]);
+	comp.expanded.add("s1");
+	const lines = comp.render(30);
+	const metaLine = lines.find((l: string) => l.includes("retry×3"));
+	check("width guard: retry×3 kept", metaLine !== undefined && metaLine.includes("retry×3"));
+	// dispatchMode "local" should be dropped if over budget — acceptable either way
+	// but verify retry×N survived (the point of the priority drop)
+	check("width guard: retry×N survives over-budget", metaLine !== undefined && metaLine.includes("retry×3"));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);

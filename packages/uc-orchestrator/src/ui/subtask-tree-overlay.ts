@@ -197,28 +197,64 @@ class SubtaskTreeComponent {
 			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}`);
 
 			if (this.expanded.has(item.subtask.id)) {
-				// ponytail: one detail line per expanded subtask. The old code emitted
-				// up to 9 lines (5 result + error + review + retries + mode), which made
-				// maxVisible (paginated by subtask count) undercount rendered rows —
-				// expanded detail overflowed the fixed overlay height with no scroll.
-				// Single preview line keeps rows 1:1 with flatItems for sane paging.
-				const parts: string[] = [];
+				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
+				// the error (or result if no error) on its own line with full
+				// width budget; line 2 is the secondary meta tags (review,
+				// retry×N, dispatchMode) joined with " · ". maxVisible paginates
+				// by subtask count, so bounding detail to ≤2 lines keeps paging
+				// sane (the old code emitted up to 9 lines, overflowing the fixed
+				// overlay height with no scroll).
+				//
+				// ponytail: error-on-own-line — the error is diagnostic-critical;
+				// the old code joined error + review + retry + mode into ONE line
+				// with " · ", so after the error consumed width-12, the appended
+				// tags pushed the joined line past `width` and the compositor
+				// ANSI-truncated the RIGHT side — dropping retry×N / dispatchMode
+				// / review. Separating error onto its own line (width-8 budget)
+				// ensures the error is never truncated by the tags, AND the meta
+				// tags get their own short line with a width guard that drops
+				// low-priority tags (dispatchMode first, then review) to keep
+				// retry×N visible on narrow terminals.
 				if (item.subtask.error) {
-					parts.push(formatErrorForDisplay(item.subtask.error, Math.max(0, width - 12), (c, t) => this.theme.fg(c, t)));
+					lines.push("      " + formatErrorForDisplay(item.subtask.error, Math.max(0, width - 8), (c, t) => this.theme.fg(c, t)));
 				} else if (item.subtask.result) {
-					parts.push(this.theme.fg("dim", item.subtask.result.split("\n")[0].slice(0, Math.max(0, width - 8))));
+					lines.push("      " + this.theme.fg("dim", item.subtask.result.split("\n")[0].slice(0, Math.max(0, width - 8))));
+				}
+
+				// ponytail: meta line — secondary tags joined with " · ". Track
+				// plain lengths manually (NO pi-tui value imports — ANSI width
+				// utils crash at runtime). Order by drop-priority: retry×N
+				// (HIGH, shows retry state) > review (✓/✗) > dispatchMode (LOW,
+				// rarely non-default). If the joined plain length exceeds the
+				// budget (6 indent), drop dispatchMode first, then review.
+				const metaParts: string[] = [];
+				const metaPlain: string[] = [];
+				if (item.subtask.retryCount && item.subtask.retryCount > 0) {
+					const tag = `retry×${item.subtask.retryCount}`;
+					metaParts.push(this.theme.fg("dim", tag));
+					metaPlain.push(tag);
 				}
 				if (item.subtask.review) {
-					parts.push(this.theme.fg("dim", item.subtask.review.approved ? "✓ approved" : "✗ rejected"));
-				}
-				if (item.subtask.retryCount && item.subtask.retryCount > 0) {
-					parts.push(this.theme.fg("dim", `retry×${item.subtask.retryCount}`));
+					const tag = item.subtask.review.approved ? "✓ approved" : "✗ rejected";
+					metaParts.push(this.theme.fg("dim", tag));
+					metaPlain.push(tag);
 				}
 				if (item.subtask.dispatchMode && item.subtask.dispatchMode !== "prefer_remote") {
-					parts.push(this.theme.fg("dim", item.subtask.dispatchMode));
+					const tag = item.subtask.dispatchMode;
+					metaParts.push(this.theme.fg("dim", tag));
+					metaPlain.push(tag);
 				}
-				if (parts.length > 0) {
-					lines.push(`      ${parts.join(" · ")}`);
+				// ponytail: width guard — join plain strings with " · " and check
+				// total plain length against width-6 (6 indent). If over budget,
+				// drop the LAST tag (lowest priority = dispatchMode, then review)
+				// and re-check until it fits. retry×N is always kept (index 0).
+				const budget = Math.max(0, width - 6);
+				while (metaPlain.length > 1 && metaPlain.join(" · ").length > budget) {
+					metaPlain.pop();
+					metaParts.pop();
+				}
+				if (metaParts.length > 0) {
+					lines.push(`      ${metaParts.join(" · ")}`);
 				}
 			}
 		}
