@@ -130,6 +130,16 @@ class SubtaskTreeComponent {
 		}
 	}
 
+	// ponytail: S5 — narrow-screen hint. The full hint line is ~73 chars; when the
+	// compositor ANSI-truncates to a narrow terminal, the right side (Esc close,
+	// / filter) is lost and the user can't see how to close. Use a compact version
+	// that keeps the essential keys (nav, Enter, retry, Esc close) under 60
+	// columns. Only applied to the normal (non-search, non-filtering) hint —
+	// searchMode/filtering lines are short or user-typed.
+	private hintLine(width: number, full: string, compact: string): string {
+		return width < 60 ? compact : full;
+	}
+
 	render(width: number): string[] {
 		this.rebuildItems();
 		const lines: string[] = [];
@@ -150,7 +160,10 @@ class SubtaskTreeComponent {
 		} else if (filtering) {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
-			lines.push(this.theme.fg("dim", "  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · / filter · Esc close"));
+			lines.push(this.theme.fg("dim", this.hintLine(width,
+				"  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · / filter · Esc close",
+				"  ↑↓ nav · Enter · R retry · Esc close",
+			)));
 		}
 		lines.push("");
 
@@ -327,6 +340,8 @@ class SubtaskTreeComponent {
 		} else if (data === "G") {
 			this.cursorIdx = Math.max(0, items.length - 1);
 		} else if (data === KEY.enter || data === "\n") {
+			// ponytail: S6 — Enter on an empty list / no cursor sets a flashMsg so the
+			// user knows the keystroke was received, instead of silent no-op.
 			const item = items[this.cursorIdx];
 			if (item) {
 				if (this.expanded.has(item.subtask.id)) {
@@ -334,6 +349,8 @@ class SubtaskTreeComponent {
 				} else {
 					this.expanded.add(item.subtask.id);
 				}
+			} else {
+				this.flashMsg = "no subtask selected";
 			}
 		} else if (data === "r" || data === "R") {
 			const item = items[this.cursorIdx];
@@ -350,12 +367,15 @@ class SubtaskTreeComponent {
 		} else if (data === "d") {
 			// ponytail: jump to parent task detail — open the task-list overlay on
 			// this subtask's task (close the tree first so overlays don't stack).
+			// S6: restructure so no-item case gets feedback (was silent on empty list).
 			const item = items[this.cursorIdx];
-			if (item && this.opts.onJumpToTask) {
-				this.opts.onJumpToTask(item.taskId);
-				this.done();
+			if (!item) {
+				this.flashMsg = "no subtask selected";
 			} else if (!this.opts.onJumpToTask) {
 				this.flashMsg = "jump unavailable";
+			} else {
+				this.opts.onJumpToTask(item.taskId);
+				this.done();
 			}
 		}
 		this.clampScroll();

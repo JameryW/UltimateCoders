@@ -380,5 +380,23 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("detail `c` does not arm pendingCancel", comp.pendingCancel === null);
 }
 
+// ponytail: S5 — narrow-screen hint. Full hint (~78 chars) gets ANSI-truncated
+// on terminals < 78 cols, losing the right side (Esc close, / filter). The
+// renderList hint uses a compact version under 60 cols. Detail hint (~50 chars)
+// is left as-is (fits most widths). Only the NORMAL (non-search, non-filtering)
+// hint branch is affected.
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress"), makeTask("t2", "in_progress")]);
+	const wide = comp.render(80).join("\n");
+	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
+	check("wide hint has / filter", wide.includes("/ filter"));
+	check("wide hint has Esc close", wide.includes("Esc close"));
+
+	const narrow = comp.render(50).join("\n");
+	check("narrow hint has c/p/r", narrow.includes("c/p/r"));
+	check("narrow hint has Esc close", narrow.includes("Esc close"));
+	check("narrow hint does NOT have PgUp/PgDn", !narrow.includes("PgUp/PgDn"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

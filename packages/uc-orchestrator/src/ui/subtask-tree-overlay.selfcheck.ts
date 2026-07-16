@@ -306,5 +306,64 @@ const PAGEDOWN = "\x1b[6~";
 	check("`d` no-jump-handler does not close", closed() === false);
 }
 
+// ponytail: S5 — narrow-screen hint. Full hint (~73 chars) gets ANSI-truncated
+// on terminals < ~73 cols, losing the right side (Esc close, / filter). The
+// render hint uses a compact version under 60 cols. Only the NORMAL (non-search,
+// non-filtering) hint branch is affected.
+{
+	const { comp } = makeComponent([makeSubtask("s1")]);
+	const wide = comp.render(80).join("\n");
+	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
+	check("wide hint has / filter", wide.includes("/ filter"));
+	check("wide hint has Esc close", wide.includes("Esc close"));
+
+	const narrow = comp.render(50).join("\n");
+	check("narrow hint has Esc close", narrow.includes("Esc close"));
+	check("narrow hint does NOT have PgUp/PgDn", !narrow.includes("PgUp/PgDn"));
+}
+
+// ponytail: S6 — Enter on empty subtask list sets flashMsg instead of silent no-op.
+// Empty tasks array → flatItems is empty → items[this.cursorIdx] is undefined.
+{
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: () => {},
+		onClose: () => {},
+	});
+	const mockTui = { requestRender: () => {} };
+	const comp = factory(mockTui as any, theme, undefined, () => {}) as any;
+	comp.handleInput("\r"); // Enter
+	check("Enter on empty list sets 'no subtask selected' flashMsg",
+		comp.flashMsg !== null && comp.flashMsg.includes("no subtask selected"));
+}
+
+// ponytail: S6 — `d` on empty subtask list sets flashMsg, does NOT call onJumpToTask,
+// does NOT close. Restructured so no-item case is the first check (was silent before).
+{
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	let jumpedTo: string | null = null;
+	let closed = false;
+	const factory = createSubtaskTreeOverlay({
+		tasks: () => [task],
+		onRetry: () => {},
+		onJumpToTask: (taskId: string) => { jumpedTo = taskId; },
+		onClose: () => {},
+	});
+	const mockTui = { requestRender: () => {} };
+	const comp = factory(mockTui as any, theme, undefined, () => { closed = true; }) as any;
+	comp.handleInput("d");
+	check("`d` on empty list sets 'no subtask selected' flashMsg",
+		comp.flashMsg !== null && comp.flashMsg.includes("no subtask selected"));
+	check("`d` on empty list does NOT call onJumpToTask", jumpedTo === null);
+	check("`d` on empty list does NOT close", closed === false);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
