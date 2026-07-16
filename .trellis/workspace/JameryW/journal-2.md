@@ -1467,3 +1467,235 @@ Fixed 11 non-vendor OMP tsc errors. DispatchMode union + typed test helper. OMP 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 97: TUI retry-key dead-interaction fix
+
+**Date**: 2026-07-14
+**Task**: TUI retry-key dead-interaction fix
+**Branch**: `fix/tui-retry-key-wire-resume`
+
+### Summary
+
+Wired Ctrl+T subtask-tree overlay r/R retry key to orchestrator.resumeTask (was dead toast-only placeholder). Toast success + cannot-retry paths, matching /uc resume pattern. Added selfcheck wiring-lock (r/R on failed fires onRetry with correct taskId+subtaskId; not on completed). 13/13 pass, CI 3/3 green. PR #275.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2f8a412` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 98: TUI adaptive overlay page size
+
+**Date**: 2026-07-14
+**Task**: TUI adaptive overlay page size
+**Branch**: `fix/tui-adaptive-overlay-page-size`
+
+### Summary
+
+Replaced hardcoded maxVisible=20 in both UC overlays (Ctrl+T subtask tree, Ctrl+Shift+T task list) with a getter deriving page size from tui.terminal.rows: clamp(rows-4,1,20), fallback 20 for test mocks. Fixes short-terminal (tmux/split) overflow that clipped the pagination footer + last items and made PgDn overshoot. Selfcheck adaptive assertions added (rows=10 → 10 lines not 24). 8/8 + 23/23 pass, tsc src/ clean, CI 3/3 green. PR #276. Also ruled out a false optimization: progress-widget setWidget-per-progress-tick is architecturally required (no widget-level requestRender API; widget first arg is ctx.ui not TUI) — YAGNI.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54f784f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 98: TUI /uc status notify coalesce
+
+**Date**: 2026-07-14
+**Task**: TUI /uc status notify coalesce
+**Branch**: `fix/tui-coalesce-status-notify`
+
+### Summary
+
+Coalesced /uc status per-line notify loops (no-arg list + detail-with-id) into single multiline toast via lines.join, matching /uc search handler precedent. Was 2N/10+ stacked toasts. 1 file +2/-6, bun 120/120, tsc src/ clean, CI 3/3 green. PR #277.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `863828cf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 98: TUI retry feedback on non-failed subtask
+
+**Date**: 2026-07-15
+**Task**: TUI retry feedback on non-failed subtask
+**Branch**: `fix/tui-retry-feedback-non-failed`
+
+### Summary
+
+Subtask-tree r/R on non-failed was silent dead key. Added flashMsg: failed+onRetry→retry+clear, else→'only failed retriable (cursor is status)'. Dim line after footer, cleared on non-r/R keypress. Fixed pre-existing requestRender guard (tui undefined threw). 6 new assertions, 12/12 pass, bun 120/120, CI 3/3 green. PR #278. Adjacent to PR #275 selfcheck, rebase if #275 lands first.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e448c0d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 99: TUI subtask-tree search/filter mode
+
+**Date**: 2026-07-15
+**Task**: TUI subtask-tree search/filter mode
+**Branch**: `feat/tui-subtask-tree-search-filter`
+
+### Summary
+
+Added /-triggered filter mode to Ctrl+T subtask-tree overlay. / enters edit, printable appends query, backspace drops, Esc clears+exits, Enter keeps filter. Nav/r/R exit-edit-keep-filter fall-through. currentItems() single source (case-insensitive substring on id OR description) for render+handleInput. Empty=no-match line. retry+filter compose. Preserves flashMsg/retry-wiring/guard. 8 new assertions, 20/20 pass, bun 120/120, tsc src/ clean. PR #279 stacked on #278, base=non-main so no CI, local-verified; rebase to main after #278 merges.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fafb5f88` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 100: TUI task-list search/filter mode
+
+**Date**: 2026-07-15
+**Task**: TUI task-list search/filter mode
+**Branch**: `feat/tui-task-list-search-filter`
+
+### Summary
+
+Mirrored PR #279 filter pattern onto Ctrl+Shift+T task-list overlay LIST mode (detail mode unchanged). / enters edit, printable/backspace/esc/enter/nav-fallthrough. currentTasks() single source (case-insensitive substring on id/description/status) for renderList+handleInput. openDetail reads filtered cursor. / no-op in detail. Empty=no-match. Preserves adaptive maxVisible + empty guards + paging. 12 new assertions, 33/33 pass, bun 120/120, tsc src/ clean, CI 3/3 green. PR #280, independent (no flashMsg dep).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `318403c1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 101: TUI overlay interaction: per-subtask retry + quick actions
+
+**Date**: 2026-07-16
+**Task**: TUI overlay interaction: per-subtask retry + quick actions
+**Branch**: `main`
+
+### Summary
+
+Closed 3 TUI overlay gaps across 2 PRs. #282 (98ae5d33): UCOrchestrator.retrySubtask resets+redispatches a single failed subtask (+ reverse-cascade-un-cancel downstream) distinct from task-scoped resumeTask; overlay r/R routed to it. #283 (2b19a9aa): task-list c/p/r quick actions (cancel double-tap confirm, pause/resume immediate), subtask-tree d jump-to-task-detail, global Ctrl+Shift+F jump-to-failed. New overlay opts mirror onRetry; shared openTaskList helper. typecheck 0 errors, 97 orchestrator tests + 6 ui selfchecks green, all CI green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `98ae5d33` | (see git log) |
+| `2b19a9aa` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
