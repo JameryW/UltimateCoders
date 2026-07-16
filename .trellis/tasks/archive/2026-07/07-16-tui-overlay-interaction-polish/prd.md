@@ -39,6 +39,25 @@ detail 只能 scroll，不能直接 cancel/pause/resume 当前 task。需 detail
 - 走 feature branch + PR（见 git-workflow-pr-only memory）
 - PR 后查 CI（见 pr-ci-check-workflow memory）
 
+## 已完成
+
+- S1+S2 → PR #284 merged（6b3f25e3）：p/r/c 成功 flashMsg + detail `q` back
+- S3+S4 → PR #285 merged（4ce1d03e）：detail c/p/r single-tap + detail `/` flashMsg
+- S5+S6 → PR #286 merged（b7f115ea）：hintLine 窄屏精简 + dead-key flashMsg
+- S7+S8 → PR #287 merged（36dc6942）：retryCount copy（本地）+ progress-widget `retried N×`
+- 远程 proto → PR #288 merged（bbb4a233）：SubtaskProto retry_count field 15 全链路 + executeSubtaskWithRetry clobber guard
+
+## 下轮候选
+
+### S9 — live step 行 width-aware 截断（progress-widget L106-143）[价值中等，compositor 兜底]
+progress-widget running subtask 的 live step 行（L130 `parts.join(" ")`）拼接 agentTag+pctTag+stepTag+phaseText+statusTag+parallelTag 后**不按 width 截断整行**。compositor ANSI-truncate 兜底（不崩），但窄屏右侧 parallelTag/statusTag 丢。
+
+另：L117 phaseText budget `width-16` 独立计算却拼进整行——phase 占 width-16 再加其他 tag 必超，budget 与拼接不一致。phase 截断后拼 statusTag 视觉断裂。
+
+**改**：算整行 plain-text 宽度，超 width 按优先级砍（先砍 phaseText，保 agent/pct 核心）。或 phaseText budget 改 `width - 其他 tag plain 宽度和`。需 selfcheck 断言窄屏整行不超 width + 核心 tag 在。
+
+数据源（extension.ts L156-179 progressBySubtask 填）+ 清理（L150 terminal 清）已正确，无数据层问题。
+
 ## 不做
 
 - 不动 vendor/oh-my-pi 上游 pi-tui 核心
