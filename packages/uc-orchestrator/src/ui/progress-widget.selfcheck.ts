@@ -85,6 +85,83 @@ function renderLines(failedIds: string[], width: number): string[] {
 	check("agent tag rendered", progLine.includes("coder"));
 }
 
+// ponytail: S9 — live-step tag line is width-aware. The joined line
+// [agent, pct, step, status, parallel, phase] must never exceed `width`.
+// On narrow terminals, phase is trimmed/dropped first (lowest priority);
+// agent+pct always survive (highest priority). parallelTag/statusTag
+// are kept before phase (dropped only if even they don't fit).
+// selfcheck theme adds no ANSI, so string length == visible width.
+function renderRunningWithProgress(prog: Record<string, unknown>, width: number): string[] {
+	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
+	const progressBySubtask = new Map([["s1", prog]]);
+	const st: ProgressWidgetState = { task, progressBySubtask };
+	const factory = createProgressWidget(() => st);
+	const comp = factory(undefined, theme) as any;
+	return comp.render(width) as string[];
+}
+
+// S9: wide terminal (80) — all tags fit, phase present, line <= 80
+{
+	const prog = {
+		phase: "executing code edits", percent: 42, stepIndex: 3, stepTotal: 7,
+		stepAgent: "coder", stepStatus: "retrying", parallelGroup: "g1", parallelStepCount: 3,
+	};
+	const lines = renderRunningWithProgress(prog, 80);
+	const progLine = lines.find((l) => l.includes("coder")) ?? "";
+	check("S9 w80: agent present", progLine.includes("coder"));
+	check("S9 w80: pct present", progLine.includes("42%"));
+	check("S9 w80: step present", progLine.includes("[3/7]"));
+	check("S9 w80: status present", progLine.includes("[retry]"));
+	check("S9 w80: parallel present", progLine.includes("parallel"));
+	check("S9 w80: phase present", progLine.includes("executing"));
+	check("S9 w80: line fits width", progLine.length <= 80);
+}
+
+// S9: medium terminal (40) — line <= 40, agent+pct survive, phase trimmed or absent
+{
+	const prog = {
+		phase: "executing code edits in the auth module", percent: 42, stepIndex: 3, stepTotal: 7,
+		stepAgent: "coder", stepStatus: "retrying", parallelGroup: "g1", parallelStepCount: 3,
+	};
+	const lines = renderRunningWithProgress(prog, 40);
+	const progLine = lines.find((l) => l.includes("coder")) ?? "";
+	check("S9 w40: agent present", progLine.includes("coder"));
+	check("S9 w40: pct present", progLine.includes("42%"));
+	check("S9 w40: line fits width", progLine.length <= 40);
+	// phase either trimmed with ellipsis or absent
+	const phaseOk = progLine.includes("…") || !progLine.includes("executing");
+	check("S9 w40: phase trimmed or absent", phaseOk);
+}
+
+// S9: narrow terminal (20) — agent+pct survive (core), line <= 20
+{
+	const prog = {
+		phase: "executing code edits", percent: 5, stepIndex: 1, stepTotal: 7,
+		stepAgent: "coder", stepStatus: "failed", parallelGroup: "g1", parallelStepCount: 2,
+	};
+	const lines = renderRunningWithProgress(prog, 20);
+	const progLine = lines.find((l) => l.includes("coder")) ?? "";
+	check("S9 w20: agent present", progLine.includes("coder"));
+	check("S9 w20: pct present", progLine.includes("5%"));
+	check("S9 w20: line fits width", progLine.length <= 20);
+}
+
+// S9: existing live-step tests still pass (agent-only, pct-only, etc.)
+{
+	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
+	const progressBySubtask = new Map([["s1", { phase: "executing", percent: 42, stepIndex: 3, stepTotal: 7, stepAgent: "coder" }]]);
+	let st: ProgressWidgetState = { task, progressBySubtask };
+	const factory = createProgressWidget(() => st);
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	const progLine = lines.find((l) => l.includes("coder")) ?? "";
+	check("S9 legacy: percent rendered", progLine.includes("42%"));
+	check("S9 legacy: stepIndex/stepTotal rendered", progLine.includes("[3/7]"));
+	check("S9 legacy: agent tag rendered", progLine.includes("coder"));
+}
+
 // stepSummary renders on its own dim line (was dead data)
 {
 	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;

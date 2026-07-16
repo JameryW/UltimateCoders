@@ -113,22 +113,68 @@ class ProgressWidgetComponent {
 				// Render live step progress (agent + phase + percent + status tag) when available
 				const prog = s.progressBySubtask?.get(st.id);
 				if (prog) {
-					const agentTag = prog.stepAgent ? this.theme.fg("accent", prog.stepAgent) : "";
-					const phaseText = prog.phase ? this.theme.fg("dim", prog.phase.slice(0, Math.max(0, width - 16))) : "";
-					// ponytail: percent + stepIndex/stepTotal were populated by the
-					// subtask_progress event but never rendered — dead data. Show them.
-					const pctTag = prog.percent >= 0 ? this.theme.fg("warning", `${prog.percent}%`) : "";
-					const stepTag =
-						prog.stepIndex !== undefined && prog.stepTotal !== undefined && prog.stepTotal > 0
-							? this.theme.fg("dim", `[${prog.stepIndex}/${prog.stepTotal}]`)
-							: "";
-					const statusTag = prog.stepStatus ? this._stepStatusTag(prog.stepStatus) : "";
-					const parallelTag =
-						prog.parallelGroup && prog.parallelStepCount && prog.parallelStepCount > 1
-							? this.theme.fg("warning", `↻${prog.parallelStepCount} parallel`)
-							: "";
-					const parts = ["    ", agentTag, pctTag, stepTag, phaseText, statusTag, parallelTag].filter(Boolean);
-					if (parts.length > 1) lines.push(parts.join(" "));
+					// ponytail: S9 — the tag line joins [agent, pct, step, status,
+					// parallel, phase] with spaces. Previously each tag was built
+					// independently (phase got `width-16` budget as if standalone)
+					// then joined — the joined line could exceed `width`, and on
+					// narrow terminals the compositor ANSI-truncated the RIGHT
+					// side, cutting parallelTag/statusTag (the most action-relevant
+					// tags). Now we track each tag's PLAIN-text length alongside its
+					// rendered (ANSI-themed) string, then greedily fit tags into the
+					// line budget, dropping/truncating LOW-priority tags first.
+					// Priority (HIGH→LOW, drop low first): agent > pct > step >
+					// status > parallel > phase. phase is last so it's trimmed first.
+					// We track plain widths manually because pi-tui value imports
+					// (ANSI-aware width utils) crash at runtime per project memory.
+					// NEVER raw-slice a rendered (ANSI) string — trimming happens on
+					// plain content BEFORE applying theme.fg.
+					const tags: { plain: string; rendered: string }[] = [];
+					if (prog.stepAgent) tags.push({ plain: prog.stepAgent, rendered: this.theme.fg("accent", prog.stepAgent) });
+					if (prog.percent >= 0) tags.push({ plain: `${prog.percent}%`, rendered: this.theme.fg("warning", `${prog.percent}%`) });
+					if (prog.stepIndex !== undefined && prog.stepTotal !== undefined && prog.stepTotal > 0) {
+						const plain = `[${prog.stepIndex}/${prog.stepTotal}]`;
+						tags.push({ plain, rendered: this.theme.fg("dim", plain) });
+					}
+					if (prog.stepStatus) {
+						const tag = this._stepStatusTag(prog.stepStatus);
+						if (tag) {
+							// _stepStatusTag returns themed string; plain is the tag text
+							const plainMap: Record<string, string> = { retrying: "[retry]", skipped: "[skip]", failed: "[fail]" };
+							tags.push({ plain: plainMap[prog.stepStatus] ?? prog.stepStatus, rendered: tag });
+						}
+					}
+					if (prog.parallelGroup && prog.parallelStepCount && prog.parallelStepCount > 1) {
+						const plain = `↻${prog.parallelStepCount} parallel`;
+						tags.push({ plain, rendered: this.theme.fg("warning", plain) });
+					}
+					// phase LAST — lowest priority, trimmed/dropped first
+					if (prog.phase) tags.push({ plain: prog.phase, rendered: this.theme.fg("dim", prog.phase) });
+
+					const prefix = "    ";
+					const sep = " ";
+					const budget = Math.max(0, width - prefix.length);
+					const kept: string[] = [];
+					let used = 0;
+					for (let i = 0; i < tags.length; i++) {
+						const t = tags[i];
+						const isLast = i === tags.length - 1;
+						const add = (kept.length > 0 ? sep.length : 0) + t.plain.length;
+						if (used + add <= budget) {
+							kept.push(t.rendered);
+							used += add;
+						} else if (isLast && prog.phase) {
+							// Trim phase (the last tag) to fit remaining budget with ellipsis
+							const remain = budget - used - (kept.length > 0 ? sep.length : 0);
+							if (remain > 1) {
+								kept.push(this.theme.fg("dim", prog.phase.slice(0, remain - 1) + "…"));
+							}
+							break;
+						} else {
+							// Skip this tag; if it's the last one, stop
+							if (isLast) break;
+						}
+					}
+					if (kept.length > 0) lines.push(prefix + kept.join(sep));
 					// ponytail: stepSummary is the human-readable current-step text
 					// (populated by subtask_progress, was dead data). Show on its own
 					// dim line, truncated to width, so the tag line stays scannable.
