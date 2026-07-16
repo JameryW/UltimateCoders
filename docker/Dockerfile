@@ -50,7 +50,7 @@ FROM python:3.11-slim
 # multilspy's TypeScriptLanguageServer (it shells out to node/npm to
 # install typescript-language-server into its static dir).
 RUN apt-get update && apt-get install -y \
-    libssl3 ca-certificates curl git openssh-client nodejs npm \
+    bash libssl3 ca-certificates curl git openssh-client nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # git-askpass helper: git invokes this only when auth is needed.
@@ -74,6 +74,13 @@ COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
 RUN npm install -g typescript-language-server typescript \
     && typescript-language-server --version \
     || echo "typescript-language-server install skipped (non-fatal)"
+
+# Grok Build is the default coding agent for Python workers. The installer is
+# the official xAI distribution path for the grok-build project; no API key is
+# needed at image build time.
+RUN curl -fsSL https://x.ai/cli/install.sh | bash
+ENV PATH="/root/.local/bin:/root/.grok/bin:${PATH}"
+RUN grok --version
 
 # Copy the Python source (maturin develop links to the source tree)
 COPY python/ultimate_coders /app/python/ultimate_coders

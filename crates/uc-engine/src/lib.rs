@@ -49,6 +49,7 @@ pub use task_store::{InMemoryTaskBackend, TaskStoreBackend};
 // Sandbox module re-exports
 pub use sandbox::agents::claude_code::ClaudeCodeAgent;
 pub use sandbox::agents::codex::CodexAgent;
+pub use sandbox::agents::grok::GrokBuildAgent;
 pub use sandbox::agents::{available_agents, create_adapter, AgentAdapter};
 pub use sandbox::file_tracker::FileTracker;
 pub use sandbox::pool::SandboxPool;

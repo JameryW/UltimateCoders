@@ -243,6 +243,10 @@ services:
       UC_NATS_URL: "nats://nats:4222"
       UC_GRPC_ENDPOINT: "http://gateway:50051"
       UC_PROJECT_PATH: "/workspace"
+      # Grok Build is the default worker coding agent. Override with
+      # claude-code or codex for compatibility deployments.
+      UC_CODING_AGENT: "${UC_CODING_AGENT:-grok-build}"
+      XAI_API_KEY: "${XAI_API_KEY:-}"
       # ── External git sync (Phase 1) ───────────────────────────────
       # Leave UC_REPO_URL empty to keep the legacy local-only behaviour.
       UC_REPO_URL: "${UC_REPO_URL:-}"
@@ -287,6 +291,8 @@ services:
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_GRPC_ENDPOINT: "http://gateway:50051"
       UC_PROJECT_PATH: "/workspace"
+      UC_CODING_AGENT: "${UC_CODING_AGENT:-grok-build}"
+      XAI_API_KEY: "${XAI_API_KEY:-}"
       # ── External git sync (Phase 1) ───────────────────────────────
       # Same env as the worker service; empty UC_REPO_URL = local mode.
       UC_REPO_URL: "${UC_REPO_URL:-}"

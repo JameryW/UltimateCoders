@@ -63,7 +63,7 @@ pub enum AgentEventType {
         step_index: Option<u32>,
         /// Total number of workflow steps (None for single-agent).
         step_total: Option<u32>,
-        /// Agent running the current step (e.g. "claude-code", "codex").
+        /// Agent running the current step (e.g. "grok-build", "claude-code", "codex").
         step_agent: Option<String>,
         /// Status of the current step (e.g. "running", "completed", "failed").
         step_status: Option<String>,

@@ -385,7 +385,7 @@ message SubtaskProto {
 
 // A single step in a subtask's multi-agent workflow.
 message WorkflowStepProto {
-    // Agent adapter name: "claude-code" | "codex"
+    // Agent adapter name: "grok-build"/"grok" | "claude-code" | "codex"
     string agent = 1;
     // Prompt template. Supports {{prev_summary}}, {{prev_files}},
     // {{step<N>.summary}}, {{step<N>.files}}.

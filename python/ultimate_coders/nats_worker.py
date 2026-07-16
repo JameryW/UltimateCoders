@@ -828,11 +828,15 @@ class NatsWorker:
         )
 
         # Worker — sandbox-only, always
-        from ultimate_coders.agent.sandbox import SandboxConfig
+        from ultimate_coders.agent.sandbox import DEFAULT_CODING_AGENT, SandboxConfig
 
         sandbox_config = SandboxConfig(
+            # Grok Build is the default coding agent; UC_CODING_AGENT keeps
+            # deployments able to opt into Claude Code or Codex explicitly.
+            agent=os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT),
             project_path=self._project_path or os.getcwd(),
         )
+        logger.info("Worker coding agent: %s", sandbox_config.agent)
 
         # Workspace isolation for distributed execution
         workspace_manager = None

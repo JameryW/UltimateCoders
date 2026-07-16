@@ -1,8 +1,8 @@
-"""Worker — executes subtasks via sandbox agent (Claude Code / Codex).
+"""Worker — executes subtasks via sandbox coding agents.
 
 Previously supported an LLM tool-calling mode — removed in favor of
-sandbox-only execution. Coding agents (Claude Code, Codex) have their
-own tool chains and don't need a Python-side tool-calling loop.
+sandbox-only execution. Coding agents (Grok Build, Claude Code, Codex) have
+their own tool chains and don't need a Python-side tool-calling loop.
 """
 
 from __future__ import annotations
@@ -381,8 +381,10 @@ class Worker:
             except (json.JSONDecodeError, TypeError):
                 pass
         # ponytail: probe agent CLIs on PATH — advertise matching capabilities so
-        # the scheduler can route codex/claude-code step subtasks to workers that
-        # actually have the CLI. Best-effort: missing CLI = capability not advertised.
+        # the scheduler can route explicit agent steps to workers that actually
+        # have the CLI. Best-effort: missing CLI = capability not advertised.
+        if shutil.which("grok"):
+            caps.extend(("grok-build", "grok"))
         if shutil.which("claude"):
             caps.append("claude-code")
         if shutil.which("codex"):
@@ -940,7 +942,7 @@ class Worker:
         context_block: str = "",
         workspace_handle: Any | None = None,
     ) -> SubtaskResult:
-        """Execute via sandbox (Claude Code / Codex).
+        """Execute via sandbox (Grok Build by default; Claude Code / Codex optional).
 
         Automatically declares and releases EditIntent for file_constraints
         so the conflict detector tracks which files are being modified.
@@ -1059,7 +1061,7 @@ class Worker:
     ) -> AgentOutput:
         """Run a subtask's ordered multi-agent workflow steps.
 
-        Each step runs its configured agent (claude-code / codex) with a
+        Each step runs its configured agent (grok-build / claude-code / codex) with a
         prompt template. Templates support:
           {{prev_summary}} — previous step's AgentOutput.summary
           {{prev_files}}   — previous step's modified file paths (one/line)

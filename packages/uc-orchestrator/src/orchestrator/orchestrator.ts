@@ -195,7 +195,7 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 					// Derive requiredCapabilities from steps[].agent so the scheduler
 					// routes multi-agent subtasks to workers that actually have the CLIs.
 					// Merge explicit caps (snake_case from JSON) with step agent names,
-					// deduped. Step agent values ("claude-code"/"codex") double as
+					// deduped. Step agent values ("grok-build"/"grok"/"codex") double as
 					// capability names matching worker _derive_capabilities output.
 					const explicit = Array.isArray(st.required_capabilities)
 						? (st.required_capabilities as string[]).map(String)
@@ -2087,7 +2087,7 @@ When to emit steps (multi-agent workflow chain):
 - simple subtasks (single file, trivial change, <50 lines, pure search/read):
   Omit steps entirely — single-agent execution.
 - moderate/complex subtasks (real code changes, new features, refactors):
-  Emit a 3-step chain: claude-code (write) -> codex (CR) -> claude-code (revise).
+  Emit a 3-step chain: grok-build (write) -> codex (CR) -> grok-build (revise).
   The codex and revise step prompts should use {{prev_summary}} and {{prev_files}}
   template variables to reference the preceding step's output.
 
@@ -2101,7 +2101,7 @@ Output a JSON object with a "subtasks" array. Each item has:
 - description: string (what to do)
 - depends_on: string[] (IDs of prerequisite subtasks)
 - files: string[] (critical file paths)
-- steps: array (optional) — each item: { agent: "claude-code"|"codex", prompt: string, abort_on_failure?: boolean }
+- steps: array (optional) — each item: { agent: "grok-build"|"grok"|"codex", prompt: string, abort_on_failure?: boolean }
   Omit steps for simple subtasks. Emit 3-step chain for moderate/complex code-writing subtasks.`;
 
 const WORKER_PROMPT = `You are a coding worker agent. Execute the assigned subtask:

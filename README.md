@@ -6,7 +6,7 @@
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. It uses OMP's `runSubprocess` API to invoke Claude Code CLI for task decomposition and subtask execution. The Rust core handles indexing, search, memory, and scheduling. Python Worker/Sandbox handles the gRPC LocalWorkerBridge fallback path. A broadcast channel delivers real-time task events to Dashboard consumers.
+The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) terminal coding agent (`grok`) for subtask execution; Claude Code and Codex remain explicit compatibility options. OMP's local `runSubprocess` path is separate and still handles its own local decomposition/execution flow. The Rust core handles indexing, search, memory, and scheduling. A broadcast channel delivers real-time task events to Dashboard consumers.
 
 ## Quick Start
 
@@ -15,7 +15,15 @@ The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal
 - Rust 1.75+ (stable)
 - Python 3.9+
 - Bun (for OMP runtime)
+- [Grok Build CLI](https://docs.x.ai/build/overview) (for the default local worker)
 - Docker and Docker Compose (optional, for storage backends)
+
+For a local worker, install Grok Build and provide an xAI API key:
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+export XAI_API_KEY=your-key
+```
 
 ### 单机模式（推荐）
 
@@ -239,6 +247,10 @@ An independent process that bridges the gRPC TaskService with Python Worker/Sand
 4. Publishes real-time events to `uc.task.event`
 5. Sends heartbeats to `uc.heartbeat` every 30 seconds
 
+The worker invokes `grok -p ... --output-format streaming-json` by default. Set
+`UC_CODING_AGENT=claude-code` or `UC_CODING_AGENT=codex` when an existing
+deployment needs one of the compatibility adapters.
+
 ### Multi-Worker Distributed Architecture
 
 Multiple NATS Worker processes can collaborate on a single task:
@@ -446,6 +458,8 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_POSTGRES_URL` | `postgresql://localhost:5432/ultimatecoders` | PostgreSQL connection URL |
 | `UC_NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
+| `UC_CODING_AGENT` | `grok-build` | Worker coding agent (`grok-build`/`grok`, `claude-code`, or `codex`) |
+| `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for LLM calls |
 
 Docker Compose default credentials:

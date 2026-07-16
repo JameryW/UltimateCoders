@@ -1,6 +1,6 @@
 //! Sandbox execution environment for coding agents.
 //!
-//! Provides isolated execution of Claude Code, Codex, and other coding agents
+//! Provides isolated execution of Grok Build, Claude Code, Codex, and other coding agents
 //! with resource limits and file change tracking.
 //!
 //! # Architecture
@@ -28,6 +28,7 @@ pub mod subprocess;
 // Re-export agent adapter types for convenience
 pub use agents::claude_code::ClaudeCodeAgent;
 pub use agents::codex::CodexAgent;
+pub use agents::grok::GrokBuildAgent;
 pub use agents::{available_agents, create_adapter, AgentAdapter};
 
 use async_trait::async_trait;
@@ -187,7 +188,7 @@ pub enum SandboxStatus {
 /// Execution request sent to a sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecRequest {
-    /// Command to execute (e.g., "claude", "codex").
+    /// Command to execute (e.g., "grok", "claude", "codex").
     pub command: String,
     /// Command-line arguments.
     pub args: Vec<String>,

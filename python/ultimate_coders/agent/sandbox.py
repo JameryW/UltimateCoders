@@ -1,7 +1,7 @@
 """Sandbox management for agent execution.
 
 Provides Python wrappers for creating and managing sandbox environments
-that execute coding agents (Claude Code, Codex) in isolated settings.
+that execute coding agents (Grok Build, Claude Code, Codex) in isolated settings.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -17,6 +18,9 @@ from typing import Any
 from ultimate_coders.agent.types import ChangeType, FileChange
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CODING_AGENT = "grok-build"
+GROK_AGENT_ALIASES = ("grok-build", "grok")
 
 
 class NetworkMode:
@@ -31,7 +35,7 @@ class SandboxConfig:
     """Configuration for sandbox agent execution.
 
     Args:
-        agent: Which coding agent to use ("claude-code" or "codex").
+        agent: Which coding agent to use ("grok-build", "claude-code", or "codex").
         project_path: Path to the project directory.
         api_key: API key for the agent (optional, can use env var).
         max_cpu_seconds: Maximum CPU time in seconds.
@@ -43,15 +47,17 @@ class SandboxConfig:
         max_pool_size: Maximum total sandbox instances.
         working_dir: Working directory inside the sandbox.
         env_vars: Additional environment variables.
-        tools: Tool list for --tools flag (e.g. ["default", "mcp__*"]).
-        allowed_tools: Allowed tool patterns for --allowedTools.
-        disallowed_tools: Disallowed tool patterns for --disallowedTools.
-        mcp_configs: MCP server config file paths for --mcp-config.
-        append_system_prompt: Extra system prompt for --append-system-prompt.
+        tools: Tool list for the selected agent's tools flag.
+        allowed_tools: Allowed tool patterns for the selected agent.
+        disallowed_tools: Disallowed tool patterns for the selected agent.
+        mcp_configs: MCP server config file paths or inline server mappings.
+        append_system_prompt: Extra rules/system prompt for the selected agent.
         agent_name: Custom agent name for --agent.
         agents_json: JSON string defining custom agents for --agents.
     """
-    agent: str = "claude-code"
+    agent: str = field(
+        default_factory=lambda: os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT)
+    )
     project_path: str = ""
     api_key: str | None = None
     max_cpu_seconds: int = 3600
@@ -63,12 +69,12 @@ class SandboxConfig:
     max_pool_size: int = 10
     working_dir: str = ""
     env_vars: dict[str, str] = field(default_factory=dict)
-    # Agent customization (passed as claude CLI flags)
+    # Agent customization (translated to the selected CLI's flags/config)
     tools: list[str] | None = None              # --tools (e.g. ["default", "mcp__codegraph__*"])
     allowed_tools: list[str] | None = None      # --allowedTools
     disallowed_tools: list[str] | None = None   # --disallowedTools
-    mcp_configs: list[str] | None = None        # --mcp-config file paths
-    append_system_prompt: str | None = None      # --append-system-prompt
+    mcp_configs: list[str | dict[str, Any]] | None = None
+    append_system_prompt: str | None = None
     agent_name: str | None = None                # --agent (custom agent name)
     agents_json: str | None = None               # --agents JSON string
 
@@ -107,7 +113,9 @@ class SandboxConfig:
         """Build environment variables including API keys."""
         env = dict(self.env_vars)
         if self.api_key:
-            if self.agent == "claude-code":
+            if self.agent in GROK_AGENT_ALIASES:
+                env["XAI_API_KEY"] = self.api_key
+            elif self.agent == "claude-code":
                 env["ANTHROPIC_API_KEY"] = self.api_key
             elif self.agent == "codex":
                 env["OPENAI_API_KEY"] = self.api_key
@@ -168,9 +176,9 @@ class SandboxManager:
 
     Usage:
         config = SandboxConfig(
-            agent="claude-code",
+            agent="grok-build",
             project_path="/path/to/project",
-            api_key="sk-...",
+            api_key="xai-...",
         )
         manager = SandboxManager(config)
         output = await manager.execute("Fix the bug in main.rs")
@@ -195,12 +203,14 @@ class SandboxManager:
 
     def _create_adapter(self, agent: str) -> AgentAdapter:
         """Create an agent adapter for the specified agent type."""
-        if agent == "claude-code":
+        if agent in GROK_AGENT_ALIASES:
+            return GrokBuildAdapter()
+        elif agent == "claude-code":
             return ClaudeCodeAdapter()
         elif agent == "codex":
             return CodexAdapter()
         else:
-            raise ValueError(f"Unknown agent: {agent}. Available: claude-code, codex")
+            raise ValueError(f"Unknown agent: {agent}. Available: {available_agents()}")
 
     async def acquire(self) -> SandboxHandle:
         """Acquire a sandbox instance from the pool or create a new one.
@@ -254,7 +264,7 @@ class SandboxManager:
                 streaming of tool_call/file_modified events to TUI/Dashboard.
             subtask_config: Per-subtask agent config overrides (tools, mcp, etc.)
             agent: Override the agent adapter for this call (e.g. "codex" while
-                the manager's default is "claude-code"). Used by multi-step
+                the manager's default is "grok-build"). Used by multi-step
                 workflows where each step may run a different agent. None = use
                 the manager's configured adapter (default behavior).
 
@@ -323,10 +333,13 @@ class SandboxManager:
             )
 
         finally:
-            # Clean up temp files (inline MCP configs, codex config.toml)
+            # Clean up temp files/directories (inline MCP configs, agent config).
             for path in temp_files:
                 try:
-                    os.unlink(path)
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.unlink(path)
                 except OSError:
                     pass
             await self.release(handle)
@@ -606,6 +619,11 @@ class DecomposeAdapter(AgentAdapter):
         subtask_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         timeout = min(config.max_cpu_seconds, 300)
+        env_vars = config._build_env_vars()
+        # Decomposition remains Claude-specific for backward compatibility;
+        # the coding-agent default does not change its API-key contract.
+        if config.api_key:
+            env_vars.setdefault("ANTHROPIC_API_KEY", config.api_key)
         logger.info(
             "DecomposeAdapter: building request (timeout=%ds, cwd=%s, prompt_len=%d)",
             timeout, working_dir, len(prompt),
@@ -620,7 +638,7 @@ class DecomposeAdapter(AgentAdapter):
             ],
             "timeout_secs": timeout,
             "working_dir": working_dir,
-            "env_vars": config._build_env_vars(),
+            "env_vars": env_vars,
         }
 
     def parse_output(self, result: ExecResult) -> AgentOutput:
@@ -818,6 +836,365 @@ def _codex_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
         tools_str = ", ".join(f'"{_toml_escape(t)}"' for t in cfg["disabled_tools"])
         lines.append(f"disabled_tools = [{tools_str}]")
     return "\n".join(lines)
+
+
+def _grok_toml_value(value: Any) -> str:
+    """Serialize the small set of TOML values used by Grok MCP configs."""
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_grok_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        pairs = [
+            f"{json.dumps(str(key), ensure_ascii=False)} = {_grok_toml_value(item)}"
+            for key, item in value.items()
+        ]
+        return "{ " + ", ".join(pairs) + " }"
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _grok_mcp_server_toml(name: str, cfg: dict[str, Any]) -> str:
+    """Convert an MCP server mapping to Grok Build's TOML configuration."""
+    lines = [
+        f"[mcp_servers.{json.dumps(str(name), ensure_ascii=False)}]",
+    ]
+    # These keys are shared by the Claude/Cursor MCP JSON shape and Grok's
+    # native TOML shape. Keeping the translation explicit prevents arbitrary
+    # user input from becoming a TOML table/key.
+    for key in (
+        "command", "args", "env", "url", "headers",
+        "bearer_token_env_var", "enabled_tools", "disabled_tools",
+        "enabled", "startup_timeout_sec", "tool_timeout_sec",
+    ):
+        if key in cfg:
+            lines.append(f"{key} = {_grok_toml_value(cfg[key])}")
+    return "\n".join(lines)
+
+
+def _grok_mcp_config_toml(
+    mcp_configs: list[str | dict[str, Any]],
+) -> str:
+    """Load MCP JSON entries and return a Grok ``config.toml`` fragment."""
+    sections: list[str] = []
+    for entry in mcp_configs:
+        data: Any = entry
+        if isinstance(entry, str):
+            if not os.path.isfile(entry):
+                logger.warning("Grok MCP config does not exist: %s", entry)
+                continue
+            try:
+                with open(entry, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read Grok MCP config %s: %s", entry, exc)
+                continue
+
+        if not isinstance(data, dict):
+            logger.warning("Skipping invalid Grok MCP config entry: %r", entry)
+            continue
+
+        # Accept native project mappings as well as the common JSON formats.
+        servers = data.get(
+            "mcpServers",
+            data.get("mcp_servers", data.get("servers", data)),
+        )
+        if not isinstance(servers, dict):
+            logger.warning("Skipping Grok MCP config without server mappings: %r", entry)
+            continue
+        for name, server_cfg in servers.items():
+            if isinstance(server_cfg, dict):
+                sections.append(_grok_mcp_server_toml(str(name), server_cfg))
+            else:
+                logger.warning("Skipping invalid Grok MCP server %s", name)
+
+    return "\n\n".join(sections) + ("\n" if sections else "")
+
+
+def _grok_tool_name(value: Any) -> str | None:
+    """Extract a tool name from a Grok streaming event, if present."""
+    if isinstance(value, dict):
+        for key in ("name", "tool_name", "toolName"):
+            if isinstance(value.get(key), str) and value[key]:
+                return value[key]
+        for key in ("tool_call", "toolCall", "tool_use", "toolUse", "function"):
+            nested = value.get(key)
+            name = _grok_tool_name(nested)
+            if name:
+                return name
+    return None
+
+
+def _grok_text(value: Any, *, _depth: int = 0) -> str:
+    """Extract human-readable text from Grok JSON/streaming-json values."""
+    if _depth > 5:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [_grok_text(item, _depth=_depth + 1) for item in value]
+        return " ".join(part for part in parts if part)
+    if not isinstance(value, dict):
+        return ""
+
+    for key in (
+        "result", "output_text", "text", "summary", "response",
+        "message", "content", "output",
+    ):
+        if key in value:
+            text = _grok_text(value[key], _depth=_depth + 1)
+            if text:
+                return text
+
+    messages = value.get("messages")
+    if isinstance(messages, list):
+        for message in reversed(messages):
+            if isinstance(message, dict) and message.get("role") in (None, "assistant"):
+                text = _grok_text(message, _depth=_depth + 1)
+                if text:
+                    return text
+    return ""
+
+
+def _grok_usage(value: Any) -> TokenUsage | None:
+    """Extract token usage from a Grok result envelope."""
+    if not isinstance(value, dict):
+        return None
+    usage = value.get("usage", value.get("token_usage"))
+    if not isinstance(usage, dict):
+        return None
+
+    def _int(*keys: str) -> int:
+        for key in keys:
+            try:
+                return int(usage.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    cost = usage.get("total_cost_usd", usage.get("cost_usd"))
+    try:
+        cost = float(cost) if cost is not None else None
+    except (TypeError, ValueError):
+        cost = None
+    return TokenUsage(
+        input_tokens=_int("input_tokens", "prompt_tokens"),
+        output_tokens=_int("output_tokens", "completion_tokens"),
+        total_cost_usd=cost,
+    )
+
+
+def _parse_agent_file_changes(output: str) -> list[FileChange]:
+    """Parse the conventional Created/Modified/Deleted lines from output."""
+    changes: list[FileChange] = []
+    change_types = {
+        "Created:": ChangeType.CREATED,
+        "Modified:": ChangeType.MODIFIED,
+        "Deleted:": ChangeType.DELETED,
+    }
+    for line in output.splitlines():
+        trimmed = line.strip()
+        for keyword, change_type in change_types.items():
+            if trimmed.startswith(keyword):
+                path = trimmed[len(keyword):].strip()
+                if path:
+                    changes.append(FileChange(
+                        file_path=path,
+                        change_type=change_type,
+                        diff="",
+                    ))
+                break
+    return changes
+
+
+class GrokBuildAdapter(AgentAdapter):
+    """Adapter for the xAI Grok Build terminal coding agent."""
+
+    def name(self) -> str:
+        return "grok-build"
+
+    def build_request(
+        self,
+        prompt: str,
+        working_dir: str,
+        config: SandboxConfig,
+        subtask_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        cfg = _merge_agent_config(config, subtask_config)
+        args = [
+            "--no-auto-update",
+            "--no-alt-screen",
+            "--always-approve",
+            "--cwd", working_dir,
+            "--output-format", "streaming-json",
+            "-p", prompt,
+        ]
+
+        if cfg.get("tools"):
+            tools = cfg["tools"] if isinstance(cfg["tools"], list) else [cfg["tools"]]
+            # Claude-compatible MCP names are mcp__server__tool; Grok names
+            # the same tools server__tool.
+            normalized = [
+                str(tool)[len("mcp__"):]
+                if str(tool).startswith("mcp__") else str(tool)
+                for tool in tools
+            ]
+            args += ["--tools", ",".join(normalized)]
+        if cfg.get("allowed_tools"):
+            allowed = (
+                cfg["allowed_tools"]
+                if isinstance(cfg["allowed_tools"], list)
+                else [cfg["allowed_tools"]]
+            )
+            for rule in allowed:
+                args += ["--allow", str(rule)]
+        if cfg.get("disallowed_tools"):
+            denied = (
+                cfg["disallowed_tools"]
+                if isinstance(cfg["disallowed_tools"], list)
+                else [cfg["disallowed_tools"]]
+            )
+            args += ["--disallowed-tools", ",".join(str(rule) for rule in denied)]
+        if cfg.get("append_system_prompt"):
+            args += ["--rules", str(cfg["append_system_prompt"])]
+        if cfg.get("agent_name"):
+            args += ["--agent", str(cfg["agent_name"])]
+        if cfg.get("agents_json"):
+            agents_json = cfg["agents_json"]
+            if not isinstance(agents_json, str):
+                agents_json = json.dumps(agents_json, ensure_ascii=False)
+            args += ["--agents", agents_json]
+
+        env_vars = config._build_env_vars()
+        # A workflow may select Grok for one step while the manager was
+        # constructed with another adapter. Preserve the explicit API key in
+        # that case without changing the manager-wide environment.
+        if config.api_key:
+            env_vars.setdefault("XAI_API_KEY", config.api_key)
+
+        temp_files: list[str] = []
+        mcp_configs = cfg.get("mcp_configs")
+        if mcp_configs:
+            mcp_toml = _grok_mcp_config_toml(mcp_configs)
+            if mcp_toml:
+                grok_home = tempfile.mkdtemp(prefix="uc-grok-")
+                source_home = env_vars.get(
+                    "GROK_HOME",
+                    os.environ.get("GROK_HOME", os.path.expanduser("~/.grok")),
+                )
+                auth_path = os.path.join(source_home, "auth.json")
+                if os.path.isfile(auth_path):
+                    try:
+                        shutil.copy2(auth_path, os.path.join(grok_home, "auth.json"))
+                    except OSError as exc:
+                        logger.warning("Could not copy Grok auth cache: %s", exc)
+                with open(os.path.join(grok_home, "config.toml"), "w", encoding="utf-8") as f:
+                    f.write(mcp_toml)
+                env_vars["GROK_HOME"] = grok_home
+                temp_files.append(grok_home)
+
+        return {
+            "command": "grok",
+            "args": args,
+            "timeout_secs": config.max_cpu_seconds,
+            "working_dir": working_dir,
+            "env_vars": env_vars,
+            "_temp_files": temp_files,
+        }
+
+    @staticmethod
+    def _json_events(output: str) -> list[dict[str, Any]]:
+        """Decode either a single JSON envelope or newline-delimited events."""
+        if not output:
+            return []
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                return [parsed]
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            pass
+
+        events: list[dict[str, Any]] = []
+        for line in output.splitlines():
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+        return events
+
+    def parse_output(self, result: ExecResult) -> AgentOutput:
+        stderr_tail = ""
+        if result.stderr:
+            stderr_tail = "\n".join(result.stderr.strip().splitlines()[-10:])
+
+        if result.timed_out:
+            return AgentOutput(
+                summary="Grok Build execution timed out",
+                success=False,
+                stderr_tail=stderr_tail,
+            )
+        if result.exit_code != 0:
+            return AgentOutput(
+                summary=f"Grok Build exited with code {result.exit_code}: {result.stderr[:200]}",
+                success=False,
+                stderr_tail=stderr_tail,
+            )
+
+        output = result.stdout.strip()
+        events = self._json_events(output)
+        if not events:
+            return AgentOutput(
+                summary=output[:1000] if output else "Grok Build completed",
+                file_changes=_parse_agent_file_changes(output),
+                success=True,
+                stderr_tail=stderr_tail,
+            )
+
+        final_summary = ""
+        last_summary = ""
+        message_chunks: list[str] = []
+        tool_calls: list[str] = []
+        token_usage: TokenUsage | None = None
+        for event in events:
+            event_type = str(
+                event.get("type", event.get("event", event.get("kind", "")))
+            ).lower()
+            tool_name = _grok_tool_name(event)
+            if tool_name and ("tool" in event_type or "call" in event_type):
+                tool_calls.append(tool_name)
+
+            usage = _grok_usage(event)
+            if usage is not None:
+                token_usage = usage
+
+            text = _grok_text(event)
+            if not text:
+                continue
+            if "thought" in event_type or "tool" in event_type:
+                continue
+            if "chunk" in event_type and "message" in event_type:
+                message_chunks.append(text)
+            elif event_type in ("result", "final", "completion", "done") or "result" in event:
+                final_summary = text
+            else:
+                last_summary = text
+
+        summary = final_summary or ("".join(message_chunks) if message_chunks else last_summary)
+        return AgentOutput(
+            summary=truncate_str(summary, 1000) if summary else "Grok Build completed",
+            file_changes=_parse_agent_file_changes(output),
+            token_usage=token_usage,
+            success=True,
+            stderr_tail=stderr_tail,
+            tool_calls=tool_calls[-5:],
+        )
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -1039,17 +1416,33 @@ class CodexAdapter(AgentAdapter):
         codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
         config_content = self._build_config_toml(cfg)
         profile_name: str | None = None
+        env_vars = config._build_env_vars()
         if config_content:
             # Must place the file in CODEX_HOME and name it <name>.config.toml
             # so that --profile <name> resolves to $CODEX_HOME/<name>.config.toml
-            target_dir = codex_home if os.path.isdir(codex_home) else None
-            fd, config_path = tempfile.mkstemp(
-                suffix=".config.toml", prefix="uc-codex-",
-                dir=target_dir,
+            target_dir = (
+                codex_home
+                if os.path.isdir(codex_home) and os.access(codex_home, os.W_OK)
+                else None
             )
+            try:
+                fd, config_path = tempfile.mkstemp(
+                    suffix=".config.toml", prefix="uc-codex-",
+                    dir=target_dir,
+                )
+            except OSError:
+                # A read-only CODEX_HOME is common in managed workers. Put the
+                # profile in a writable temp directory and point this process
+                # at it so --profile still resolves correctly.
+                fd, config_path = tempfile.mkstemp(
+                    suffix=".config.toml", prefix="uc-codex-",
+                )
+                target_dir = None
             with os.fdopen(fd, "w") as f:
                 f.write(config_content)
             temp_files.append(config_path)
+            if target_dir is None:
+                env_vars["CODEX_HOME"] = os.path.dirname(config_path)
             # Extract profile name: filename without .config.toml suffix
             basename = os.path.basename(config_path)
             profile_name = basename[: -len(".config.toml")]
@@ -1063,7 +1456,7 @@ class CodexAdapter(AgentAdapter):
             "args": args,
             "timeout_secs": config.max_cpu_seconds,
             "working_dir": working_dir,
-            "env_vars": config._build_env_vars(),
+            "env_vars": env_vars,
             "_temp_files": temp_files,
         }
 
@@ -1168,7 +1561,10 @@ class CodexAdapter(AgentAdapter):
 
 def available_agents() -> list[str]:
     """List available agent adapter names."""
-    return ["claude-code", "claude-code-decompose", "codex"]
+    return [
+        "grok-build", "grok",
+        "claude-code", "claude-code-decompose", "codex",
+    ]
 
 
 def create_adapter(name: str) -> AgentAdapter:
@@ -1183,7 +1579,9 @@ def create_adapter(name: str) -> AgentAdapter:
     Raises:
         ValueError: If the agent name is not recognized.
     """
-    if name == "claude-code":
+    if name in GROK_AGENT_ALIASES:
+        return GrokBuildAdapter()
+    elif name == "claude-code":
         return ClaudeCodeAdapter()
     elif name == "claude-code-decompose":
         return DecomposeAdapter()
