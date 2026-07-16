@@ -1699,3 +1699,41 @@ Closed 3 TUI overlay gaps across 2 PRs. #282 (98ae5d33): UCOrchestrator.retrySub
 ### Next Steps
 
 - None - task complete
+
+
+## Session 102: TUI overlay interaction polish — 6 PRs (S1-S9 + remote proto)
+
+**Date**: 2026-07-16
+**Task**: TUI overlay interaction polish — 6 PRs (S1-S9 + remote proto)
+**Branch**: `main`
+
+### Summary
+
+TUI overlay interaction polish across 6 PRs: (1) #284 onAction boolean + success flashMsg + detail q-back; (2) #285 detail-mode c/p/r single-tap quick actions + / filter feedback; (3) #286 hintLine width-aware compact hint + subtask-tree dead-key flashMsg; (4) #287 retryCount passthrough to TaskState (local) + progress-widget retried N×; (5) #288 SubtaskProto retry_count field 15 full remote chain (proto→Rust→grpc-bridge→executeSubtaskRemote), trellis-check caught executeSubtaskWithRetry clobber bug; (6) #290 progress-widget live-step width-aware greedy tag fitter. All via Trellis sub-agent flow (implement→check→commit→PR→merge). main green: 6 selfcheck + 24 test.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6b3f25e3` | (see git log) |
+| `4ce1d03e` | (see git log) |
+| `b7f115ea` | (see git log) |
+| `36dc6942` | (see git log) |
+| `bbb4a233` | (see git log) |
+| `31272392` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

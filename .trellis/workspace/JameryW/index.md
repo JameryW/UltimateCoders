@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 101
+- **Total Sessions**: 102
 - **Last Active**: 2026-07-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1701 | Active |
+| `journal-2.md` | ~1739 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 102 | 2026-07-16 | TUI overlay interaction polish — 6 PRs (S1-S9 + remote proto) | `6b3f25e3`, `4ce1d03e`, `b7f115ea`, `36dc6942`, `bbb4a233`, `31272392` | `main` |
 | 101 | 2026-07-16 | TUI overlay interaction: per-subtask retry + quick actions | `98ae5d33`, `2b19a9aa` | `main` |
 | 100 | 2026-07-15 | TUI task-list search/filter mode | `318403c1` | `feat/tui-task-list-search-filter` |
 | 99 | 2026-07-15 | TUI subtask-tree search/filter mode | `fafb5f88` | `feat/tui-subtask-tree-search-filter` |
