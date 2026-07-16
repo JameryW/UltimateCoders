@@ -29,7 +29,7 @@ function makeTask(id: string, status: TaskState["status"], subtaskCount = 2): Ta
 }
 
 function makeComponent(tasks: TaskState[], opts?: {
-	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => void;
+	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => boolean | Promise<boolean>;
 	initialDetailTaskId?: string;
 }) {
 	const factory = createTaskListOverlay({
@@ -111,6 +111,11 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("detail shows subtasks header", lines.some(l => l.includes("Subtasks")));
 	comp.handleInput(ESC);
 	check("esc returns to list", comp.detailTaskId === null);
+	// ponytail: `q` mirrors list-mode back key in detail (Esc/q consistency)
+	comp.handleInput(ENTER); // reopen detail
+	check("re-enter detail", comp.detailTaskId === "t1");
+	comp.handleInput("q");
+	check("`q` returns to list from detail", comp.detailTaskId === null);
 }
 
 // detail mode must not raw-slice ANSI-themed lines: String.slice on a
@@ -298,13 +303,15 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const calls: [string, string][] = [];
 	const { comp } = makeComponent(
 		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
-		{ onAction: (id, action) => calls.push([id, action]) },
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
 	);
 	comp.handleInput(DOWN); // cursor on t2
 	comp.handleInput("p");
 	check("`p` pauses cursor task immediately", calls.length === 1 && calls[0][0] === "t2" && calls[0][1] === "pause");
+	check("`p` sets paused flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("paused"));
 	comp.handleInput("r");
 	check("`r` resumes cursor task immediately", calls.length === 2 && calls[1][1] === "resume");
+	check("`r` sets resumed flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("resumed"));
 }
 
 // double-tap cancel: first `c` arms (no onAction), second `c` fires cancel.
@@ -312,14 +319,16 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const calls: [string, string][] = [];
 	const { comp } = makeComponent(
 		[makeTask("t1", "in_progress")],
-		{ onAction: (id, action) => calls.push([id, action]) },
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
 	);
 	comp.handleInput("c");
 	check("first `c` arms cancel (no fire)", calls.length === 0);
 	check("first `c` sets flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("cancel"));
 	comp.handleInput("c");
 	check("second `c` fires cancel", calls.length === 1 && calls[0][1] === "cancel");
-	check("second `c` clears flashMsg", comp.flashMsg === null);
+	// ponytail: second `c` now sets a confirmation flashMsg ("cancelled …") instead
+	// of clearing to null — the user sees the action landed.
+	check("second `c` sets cancelled flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("cancelled"));
 }
 
 // double-tap abort: first `c` arms, a nav key clears without firing.
@@ -327,7 +336,7 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const calls: [string, string][] = [];
 	const { comp } = makeComponent(
 		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
-		{ onAction: (id, action) => calls.push([id, action]) },
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
 	);
 	comp.handleInput("c");
 	comp.handleInput(DOWN); // any non-c key aborts

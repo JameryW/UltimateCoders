@@ -47,8 +47,9 @@ export interface TaskListOptions {
 	tasks: () => TaskState[];
 	// ponytail: detail rendered in-overlay (Esc returns) instead of notify() spam
 	getTask?: (taskId: string) => TaskState | undefined;
-	/** Quick actions on the cursor task: c cancel / p pause / r resume. */
-	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => void;
+	/** Quick actions on the cursor task: c cancel / p pause / r resume.
+	 * Returns true if the action applied (for in-overlay confirmation feedback). */
+	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => boolean | Promise<boolean>;
 	/** Open straight into detail mode for this task (jump-from-subtask-tree). */
 	initialDetailTaskId?: string;
 	onClose: () => void;
@@ -186,7 +187,7 @@ class TaskListComponent {
 	private renderDetail(): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · Esc back to list"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · Esc/q back to list"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
@@ -230,7 +231,9 @@ class TaskListComponent {
 	handleInput(data: string): void {
 		if (this.detailTaskId) {
 			// detail scroll mode — filter does not apply in detail mode
-			if (data === KEY.esc) {
+			// ponytail: `q` mirrors list mode (consistency) — Esc is the documented
+			// back key, but muscle memory from list-mode `q` should also work here.
+			if (data === KEY.esc || data === "q") {
 				this.detailTaskId = null;
 				this.detailScroll = 0;
 				return;
@@ -341,9 +344,11 @@ class TaskListComponent {
 			const task = tasks[this.cursorIdx];
 			if (task && this.opts.onAction) {
 				if (this.pendingCancel === task.id) {
-					this.opts.onAction(task.id, "cancel");
+					// ponytail: await result via .then (handleInput is sync, can't be async)
+					// so confirmation feedback lands after the orchestrator resolves.
+					this.flashMsg = "cancelling…";
+					this.fireAction(task.id, "cancel", "cancelled");
 					this.pendingCancel = null;
-					this.flashMsg = null;
 				} else {
 					this.pendingCancel = task.id;
 					this.flashMsg = `press c again to cancel ${task.id.slice(0, 8)} (any other key aborts)`;
@@ -353,13 +358,41 @@ class TaskListComponent {
 			}
 		} else if (data === "p") {
 			const task = tasks[this.cursorIdx];
-			if (task && this.opts.onAction) this.opts.onAction(task.id, "pause");
+			if (task && this.opts.onAction) this.fireAction(task.id, "pause", "paused");
 		} else if (data === "r") {
 			const task = tasks[this.cursorIdx];
-			if (task && this.opts.onAction) this.opts.onAction(task.id, "resume");
+			if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
 		}
 		// clamp scroll to cursor
 		this.clampCursorAndScroll();
+	}
+
+	// ponytail: fire onAction + set in-overlay flashMsg on success. handleInput is
+	// sync (pi-tui interface), so resolve the (possibly async) onAction via .then.
+	// Failure is surfaced by extension.ts notify(); overlay only confirms success
+	// so the user sees the action landed without leaving the overlay.
+	private fireAction(taskId: string, action: "cancel" | "pause" | "resume", verb: string): void {
+		if (!this.opts.onAction) return;
+		// ponytail: pending-armed state only applies to cancel; clear it for pause/resume
+		// so a leftover pendingCancel doesn't linger across a p/r press.
+		this.pendingCancel = null;
+		try {
+			const ret = this.opts.onAction(taskId, action);
+			if (ret && typeof (ret as Promise<boolean>).then === "function") {
+				(ret as Promise<boolean>).then((ok) => {
+					if (ok) this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+				});
+			} else if (ret) {
+				this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+			}
+		} catch {
+			// swallow — extension.ts surfaces failures via notify()
+		}
+	}
+
+	private setFlash(msg: string): void {
+		this.flashMsg = msg;
+		(this.tui as any)?.requestRender?.();
 	}
 
 	private openDetail(taskId: string): void {

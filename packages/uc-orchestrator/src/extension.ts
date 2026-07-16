@@ -233,9 +233,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						: action === "pause"
 							? await orchestrator.pauseTask(taskId, ctx as unknown as ExtensionCommandContext)
 							: await orchestrator.resumeTask(taskId, ctx as unknown as ExtensionCommandContext);
+					// ponytail: return ok so the overlay can show in-overlay confirmation
+					// (flashMsg) on success; surface failure via notify (warning toast).
 					if (!ok) {
 						ctx.ui.notify(`Cannot ${action} task ${taskId.slice(0, 8)}: wrong state`, "warning");
 					}
+					return ok;
 				},
 				initialDetailTaskId,
 				onClose: () => {},
