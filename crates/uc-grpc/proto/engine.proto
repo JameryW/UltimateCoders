@@ -377,6 +377,10 @@ message SubtaskProto {
     // via agent_config_json (backward compatible). When non-empty, the worker
     // runs steps in order, threading each step's output into the next.
     repeated WorkflowStepProto steps = 14;
+    // How many times execution has been retried (for failed-then-retried subtasks).
+    // Distinct from dispatch_retry_count (dispatch-level). Populated by worker
+    // (worker.py sets result.retry_count) and surfaced to TUI for retry×N display.
+    optional uint32 retry_count = 15;
 }
 
 // A single step in a subtask's multi-agent workflow.

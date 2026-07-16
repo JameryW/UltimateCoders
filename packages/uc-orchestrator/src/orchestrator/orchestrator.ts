@@ -611,11 +611,12 @@ export class UCOrchestrator {
 						st.review = result.review;
 						st.completedAt = result.completedAt;
 						// ponytail: S7 — copy retryCount from SubtaskResult so the
-						// progress-widget + subtask-tree-overlay show retry count
-						// for local-exec subtasks (executeSubtaskWithRetry sets it at
-						// L1437). Remote subtasks have no retry_count in SubtaskProto
-						// (only WorkflowStepProto does), so result.retryCount is
-						// undefined there — this assignment is a no-op for remote.
+						// progress-widget + subtask-tree-overlay show retry count.
+						// Local-exec: executeSubtaskWithRetry sets it (attempt counter).
+						// Remote-exec: executeSubtaskRemote sets it from
+						// remoteSubtask.retryCount (SubtaskProto field 15, populated
+						// by worker). executeSubtaskWithRetry preserves remote
+						// retryCount (only overwrites when undefined).
 						st.retryCount = result.retryCount;
 					}
 				}
@@ -823,8 +824,8 @@ export class UCOrchestrator {
 					st.review = result.review;
 					st.completedAt = result.completedAt;
 					// ponytail: S7 — copy retryCount (see comment at the wave-level
-					// copy block above). Local-exec sets result.retryCount at L1437;
-					// remote-exec leaves it undefined (SubtaskProto has no retry_count).
+					// copy block above). Local-exec: set by executeSubtaskWithRetry.
+					// Remote-exec: set by executeSubtaskRemote from worker proto.
 					st.retryCount = result.retryCount;
 				}
 				this.syncTaskToGrpc(task);
@@ -1445,7 +1446,13 @@ export class UCOrchestrator {
 
 		for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
 			const result = await this.executeSubtask(def, task, ctx);
-			result.retryCount = attempt;
+			// Only set orchestrator-side attempt count for local execution.
+			// Remote execution sets result.retryCount from the worker's proto
+			// (remoteSubtask.retryCount) — don't clobber it with the local
+			// retry loop counter. When undefined (local path), use attempt.
+			if (result.retryCount === undefined) {
+				result.retryCount = attempt;
+			}
 
 			if (result.status === "completed" || result.status === "cancelled" || (result.error?.startsWith("Review rejected"))) {
 				return result;
@@ -1472,7 +1479,11 @@ export class UCOrchestrator {
 		}
 
 		// Retries exhausted — mark failed and notify Dashboard
-		lastResult!.retryCount = this.config.maxRetries;
+		// Preserve remote worker's retryCount if set (from proto); only
+		// overwrite with maxRetries for local path (undefined).
+		if (lastResult!.retryCount === undefined) {
+			lastResult!.retryCount = this.config.maxRetries;
+		}
 		this.pi.logger.warn(
 			`Subtask ${def.id} failed permanently after ${this.config.maxRetries} retries`,
 		);
@@ -1624,12 +1635,14 @@ export class UCOrchestrator {
 						if (status === "completed") {
 							result.status = "completed";
 							result.result = remoteSubtask.result || "(completed remotely)";
+							result.retryCount = remoteSubtask.retryCount;
 							result.completedAt = Date.now();
 							this.events.emit("subtask_end", { taskId: task.id, subtaskId: result.id, result: result.result });
 							return result;
 						} else if (status === "failed") {
 							result.status = "failed";
 							result.error = remoteSubtask.result || "Remote execution failed";
+							result.retryCount = remoteSubtask.retryCount;
 							result.completedAt = Date.now();
 							this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error });
 							return result;

@@ -588,6 +588,10 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
             .get("dispatch_retry_count")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32),
+        retry_count: v
+            .get("retry_count")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
         required_capabilities: v
             .get("required_capabilities")
             .and_then(|v| v.as_array())

@@ -69,6 +69,7 @@ export interface TaskSync {
 		dependsOn: string[];
 		assignedWorker?: string;
 		result?: string;
+		retryCount?: number;
 		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }>;
 	}>;
 }
@@ -775,7 +776,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -788,6 +789,7 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				retryCount: st.retryCount,
 				steps: st.steps?.map((s) => ({
 					agent: s.agent,
 					prompt: s.prompt,
@@ -816,6 +818,7 @@ export class GrpcBridge {
 				dependsOn: [...st.dependsOn],
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				retryCount: st.retryCount,
 				steps: st.steps?.map((s) => ({
 					agent: s.agent,
 					prompt: s.prompt,
