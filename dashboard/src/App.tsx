@@ -275,7 +275,11 @@ function App() {
       if (grpcState === "connected") {
         const r = await grpcPauseTask(taskId);
         if (r.success) showToast("Task paused", "success");
-        else showToast(`Pause failed: ${r.error ?? "unknown"}`, "error");
+        // ponytail: revert the optimistic pause on server rejection (wrong
+        // state, etc.) — otherwise the UI shows paused while the server didn't
+        // pause it, until a sync re-pulls the truth. catch (throw) path already
+        // reverts; this covers the r.success===false path.
+        else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); }
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
@@ -288,7 +292,8 @@ function App() {
       if (grpcState === "connected") {
         const r = await grpcResumeTask(taskId);
         if (r.success) showToast("Task resumed", "success");
-        else showToast(`Resume failed: ${r.error ?? "unknown"}`, "error");
+        // ponytail: revert optimistic resume on server rejection — back to paused.
+        else { dashboard.optimisticStatusUpdate(taskId, "paused"); showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); }
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "paused");
@@ -301,7 +306,8 @@ function App() {
       if (grpcState === "connected") {
         const r = await grpcCancelTask(taskId);
         if (r.success) showToast("Task cancelled", "success");
-        else showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error");
+        // ponytail: revert optimistic cancel on server rejection — back to in_progress.
+        else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
       }
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
