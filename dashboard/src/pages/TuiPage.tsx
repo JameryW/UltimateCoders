@@ -25,9 +25,13 @@ export default function TuiPage() {
       </div>
     );
   }
-  if (!auth.isAuthenticated && !redirect) {
-    setRedirect(true);
-  }
+  // ponytail: trigger the redirect in an effect, NOT in the render body.
+  // Calling setRedirect during render is a React anti-pattern that warns under
+  // StrictMode and can loop if the condition re-evaluates each pass. The effect
+  // runs after commit, so React schedules exactly one redirect render.
+  useEffect(() => {
+    if (!auth.isAuthenticated) setRedirect(true);
+  }, [auth.isAuthenticated]);
   if (redirect) {
     return (
       <div className="flex items-center justify-center h-screen text-[var(--text-secondary)]">

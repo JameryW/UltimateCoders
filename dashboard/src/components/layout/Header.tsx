@@ -39,7 +39,6 @@ const NAV_SECTIONS = [
   { hash: "events", label: "Events" },
   { hash: "workers", label: "Workers" },
   { hash: "health", label: "Health" },
-  { hash: "circuit-breaker", label: "CB" },
   { hash: "scheduler", label: "Scheduler" },
   { hash: "chart", label: "Chart" },
   { hash: "search", label: "Search" },

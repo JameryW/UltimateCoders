@@ -32,7 +32,9 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Heartbeat</span>
         <span className="text-[var(--text-primary)]">
-          {new Date(worker.last_heartbeat).toLocaleString()}
+          {/* ponytail: empty/non-ISO last_heartbeat (worker never heartbeated) →
+            new Date("") yields "Invalid Date". Show a fallback instead. */}
+          {worker.last_heartbeat ? new Date(worker.last_heartbeat).toLocaleString() : "—"}
         </span>
       </div>
       <div className="flex items-start gap-2">

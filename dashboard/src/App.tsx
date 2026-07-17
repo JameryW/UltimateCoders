@@ -526,6 +526,8 @@ function App() {
                 <ErrorBoundary name="Workers">
                   <SidebarPanel
                     title="Workers"
+                    id="workers"
+                    className="scroll-mt-20"
                     summary={workersSummary}
                     summaryVariant="ok"
                     collapsed={collapsedPanels.workers}
@@ -539,6 +541,8 @@ function App() {
                 <ErrorBoundary name="Health">
                   <SidebarPanel
                     title="Engine Health"
+                    id="health"
+                    className="scroll-mt-20"
                     summary={healthSummary}
                     summaryVariant={healthSummary === "ok" ? "ok" : healthSummary === "degraded" ? "degraded" : healthSummary === "error" ? "error" : "unavailable"}
                     collapsed={collapsedPanels.health}
@@ -552,6 +556,8 @@ function App() {
                 <ErrorBoundary name="Scheduler">
                   <SidebarPanel
                     title="Scheduler"
+                    id="scheduler"
+                    className="scroll-mt-20"
                     summary={schedulerSummary}
                     summaryVariant={dashboard.scheduler.available ? (dashboard.scheduler.is_running ? "ok" : "degraded") : "unavailable"}
                     collapsed={collapsedPanels.scheduler}
