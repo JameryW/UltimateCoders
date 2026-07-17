@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { createClient } from "@connectrpc/connect";
 import { EngineService } from "@/grpc/engine_pb";
 import type { SearchResultItem as GrpcSearchResultItem } from "@/grpc/engine_pb";
@@ -35,6 +35,12 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
   const [showFilters, setShowFilters] = useState(false);
   const [modes, setModes] = useState<SearchMode[]>([]);
   const [language, setLanguage] = useState("");
+  // ponytail: request-id guard — gRPC-Web unary has no AbortController wired
+  // through the Connect client here, so track the latest search. If a slow
+  // search resolves after a newer one, its results are stale and must NOT
+  // overwrite the fresh setResults (else the UI shows query A's results under
+  // query B's input after a fast-then-slow double-Enter).
+  const latestSearchId = useRef(0);
 
   const toggleMode = (m: SearchMode) => {
     setModes((prev) => prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]);
@@ -43,6 +49,8 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
   const handleSearch = useCallback(async () => {
     const q = query.trim();
     if (!q) return;
+    // ponytail: stamp this search; only the latest resolves may setResults.
+    const reqId = ++latestSearchId.current;
     setSearching(true);
     setError(null);
     try {
@@ -55,13 +63,15 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
         languages: language.trim() ? [language.trim()] : undefined,
       });
       const resp = await client.search(req);
+      if (reqId !== latestSearchId.current) return; // stale — a newer search won
       setResults(resp.items.map(mapResult));
       setSearched(true);
     } catch (err) {
+      if (reqId !== latestSearchId.current) return; // stale error from an abandoned search
       setError(String(err));
       setResults([]);
     } finally {
-      setSearching(false);
+      if (reqId === latestSearchId.current) setSearching(false);
     }
   }, [query, maxResults, modes, language]);
 
