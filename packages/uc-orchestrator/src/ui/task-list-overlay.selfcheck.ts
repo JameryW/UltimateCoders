@@ -357,6 +357,29 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("initialDetailTaskId opens in detail mode", comp.detailTaskId === "t2");
 }
 
+// ponytail: S11 — jump-from-subtask-tree opens detail via initialDetailTaskId
+// with cursorIdx at 0; Esc back to list must land the cursor on the jumped-to
+// task (t2 at idx 1), not the first task. Without the openDetail cursor-align,
+// a subsequent c/p/r would hit t1, not the task the user just inspected.
+{
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress"), makeTask("t3", "in_progress")],
+		{ initialDetailTaskId: "t2" },
+	);
+	check("jump lands in detail for t2", comp.detailTaskId === "t2");
+	comp.handleInput(ESC); // back to list
+	check("esc returns to list", comp.detailTaskId === null);
+	check("list cursor aligned to jumped task (t2@idx1)", comp.cursorIdx === 1);
+	// verify the rendered cursor row is on t2, not t1
+	const lines = comp.render(80) as string[];
+	check("rendered cursor is on t2", lines.some((l: string) => l.includes("t2") && l.includes("›")));
+	check("rendered cursor is NOT on t1", !lines.some((l: string) => l.includes("t1") && l.includes("›")));
+	// a detail open via Enter (cursor already aligned) must keep alignment
+	comp.handleInput(ENTER);
+	comp.handleInput(ESC);
+	check("re-enter+esc keeps cursor on t2", comp.cursorIdx === 1);
+}
+
 // ponytail: S3 — detail-mode quick actions (c/p/r) fire on the detail's own task.
 // Single-tap (no double-tap confirm): detail is a focused single-task view.
 {
