@@ -416,20 +416,44 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							ctx.ui.notify("No results found.", "info");
 							return;
 						}
-						const lines = results.slice(0, 20).map(
+						// ponytail: notify() is a toast with no ANSI-aware truncation
+						// backstop (unlike the overlay compositor), so cap each line's
+						// plain content to the live terminal width. Path/snippet are plain
+						// text — slice before building the line. Undefined cols (headless)
+						// keeps the legacy fixed caps (80 path / 120 snippet).
+						const cols = (ctx.ui as any)?.terminal?.columns as number | undefined;
+						const SHOWN = 20;
+						const shown = results.slice(0, SHOWN);
+						const lines = shown.map(
 							(r: any) => {
 								const repo = r.repoId ?? r.repo_id ?? "?";
 								const path = r.filePath ?? r.file_path ?? "?";
 								const score = r.score ? ` (${r.score.toFixed(2)})` : "";
 								const snippet = (r.snippet ?? "").replace(/\s+/g, " ").trim();
-								const snip = snippet ? `\n      ${snippet.slice(0, 120)}` : "";
-								return `  [${repo}] ${path}${score}${snip}`;
+								// `  [repo] path score\n      snippet` — the path line prefix
+								// is `  [repo] ` (~6 + repo) + score; cap path so it fits.
+								const pathPrefix = `  [${repo}] `;
+								const pathBudget = cols !== undefined
+									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0))
+									: 80;
+								const pathStr = path.length > pathBudget
+									? path.slice(0, Math.max(0, pathBudget - 1)) + "…"
+									: path;
+								// snippet line prefix is 6 spaces; cap the snippet body.
+								const snipBudget = cols !== undefined ? Math.max(0, cols - 6) : 120;
+								const snip = snippet
+									? `\n      ${snippet.length > snipBudget ? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…" : snippet}`
+									: "";
+								return `${pathPrefix}${pathStr}${score}${snip}`;
 							},
 						);
-						ctx.ui.notify(
-							[`Found ${results.length} result(s):`, ...lines].join("\n"),
-							"info",
-						);
+						// ponytail: if we truncated the result set, say so — "Found 50"
+						// while only listing 20 misled users into thinking the rest were
+						// lost or that 20 was the total.
+						const header = results.length > SHOWN
+							? `Found ${results.length} result(s) — showing first ${SHOWN}:`
+							: `Found ${results.length} result(s):`;
+						ctx.ui.notify([header, ...lines].join("\n"), "info");
 					} catch (e) {
 						ctx.ui.notify(`Search failed: ${e}`, "error");
 					}
