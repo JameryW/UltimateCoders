@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { getRepos, indexRepo, removeIndex } from "@/api/endpoints";
+import { showToast } from "@/components/ui/toast";
 import type { RepoInfo } from "@/types/dashboard";
 
 interface RepoManagementPanelProps {
@@ -55,8 +56,13 @@ export const RepoManagementPanel = memo(function RepoManagementPanel({
           forceFull,
         );
         await fetchRepos();
-      } catch {
-        // error handled silently
+        // ponytail: surface success — indexRepo/removeIndex have no internal
+        // toast, so without this the user sees only the spinner stop.
+        showToast(`Reindex started: ${repo.repo_id}`, "success");
+      } catch (e) {
+        // ponytail: was `catch {}` — indexRepo failure left the spinner
+        // silently stopping with no indication the action failed.
+        showToast(`Reindex failed: ${String(e)}`, "error");
       } finally {
         setActionLoading(null);
       }
@@ -71,8 +77,10 @@ export const RepoManagementPanel = memo(function RepoManagementPanel({
       try {
         await removeIndex(repoId);
         await fetchRepos();
-      } catch {
-        // error handled silently
+        showToast(`Removed: ${repoId}`, "success");
+      } catch (e) {
+        // ponytail: was `catch {}` — silent failure, no feedback.
+        showToast(`Remove failed: ${String(e)}`, "error");
       } finally {
         setActionLoading(null);
       }
