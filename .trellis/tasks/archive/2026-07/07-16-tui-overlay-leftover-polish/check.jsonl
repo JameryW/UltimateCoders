@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证模式：selfcheck 最小可失败检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全验证"}

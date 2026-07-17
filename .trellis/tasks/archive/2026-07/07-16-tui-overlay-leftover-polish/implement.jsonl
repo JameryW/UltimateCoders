@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI 渲染约束：ANSI-safe 截断、不 raw-slice themed lines（见 [[tui-overlay-rendering-constraints]] memory）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型安全：overlay handleInput KEY 常量 + 字符串比较"}
