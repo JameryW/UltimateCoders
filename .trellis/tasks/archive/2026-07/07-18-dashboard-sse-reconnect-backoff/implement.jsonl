@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "reconnect 定时器：ref 持 retryCount、useCallback 闭包"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "connectionState 状态机：reconnecting/connected/error 转换"}

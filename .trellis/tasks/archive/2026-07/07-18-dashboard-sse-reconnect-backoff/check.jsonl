@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证模式：vite build + 逻辑推理"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型：delay number、RETRY_INTERVALS 索引"}
