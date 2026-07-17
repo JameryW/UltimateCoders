@@ -3,6 +3,10 @@ import { cn } from "@/lib/utils";
 
 interface SidebarPanelProps {
   title: string;
+  /** Anchor id for hash-nav scroll targets (e.g. "workers"). */
+  id?: string;
+  /** Extra className for the panel root (e.g. scroll-mt-20 for nav offset). */
+  className?: string;
   /** Short metric shown when collapsed, e.g. "3/5 online" */
   summary?: string;
   /** Badge variant for summary */
@@ -24,13 +28,15 @@ const SUMMARY_VARIANT_CLASS: Record<string, string> = {
 };
 
 export const SidebarPanel = React.forwardRef<HTMLDivElement, SidebarPanelProps>(
-  ({ title, summary, summaryVariant, collapsed, onToggle, stale, children }, ref) => {
+  ({ title, id, className, summary, summaryVariant, collapsed, onToggle, stale, children }, ref) => {
     return (
       <div
         ref={ref}
+        id={id}
         className={cn(
           "rounded-xl border border-[var(--border-color)] bg-[var(--bg-surface)] shadow-sm transition-all duration-200 overflow-hidden",
           stale && "opacity-70",
+          className,
         )}
       >
         {/* Header row — always visible */}
