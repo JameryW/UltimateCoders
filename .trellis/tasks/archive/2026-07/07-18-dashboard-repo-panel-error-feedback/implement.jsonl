@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件内错误反馈：toast 模式、user-facing 错误展示"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "async handler try/catch 错误处理完整性"}

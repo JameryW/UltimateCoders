@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证模式：vite build"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型：catch err String 化"}
