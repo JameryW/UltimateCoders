@@ -314,11 +314,15 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     // Fallback to SSE after too many gRPC failures
     if (retryCountRef.current >= SSE_FALLBACK_THRESHOLD && !usingSseRef.current) {
       if (import.meta.env.DEV) console.log("[Dashboard] gRPC failed repeatedly, falling back to SSE");
+      // ponytail: use `delay` (the same exponential backoff as the gRPC path),
+      // not a fixed 1000ms. SSE failing too (e.g. gRPC-only deploy with no
+      // /dashboard/api/stream) would otherwise retry every 1s forever —
+      // retryCount keeps climbing so delay grows up to MAX_RETRY_INTERVAL.
       retryTimerRef.current = setTimeout(() => {
         if (optsRef.current.enabled) {
           connectSseRef.current();
         }
-      }, 1000);
+      }, delay);
       return;
     }
 
