@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "React hook 模式：useCallback deps、async handler、ref 持 mutable latest id"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "useState 异步 set 竞态：reqId guard 防 stale resolve 覆盖"}

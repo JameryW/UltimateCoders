@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证模式：最小可失败检查 + vite build 验证"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型安全：reqId ref 类型、guard 条件"}
