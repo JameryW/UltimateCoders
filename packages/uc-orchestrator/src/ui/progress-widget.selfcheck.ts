@@ -6,7 +6,7 @@
  */
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
-import { createProgressWidget, type ProgressWidgetState } from "./progress-widget";
+import { createProgressWidget, type ProgressWidgetState, type SubtaskProgressInfo } from "./progress-widget";
 
 const theme: Theme = {
 	fg: (_c: ThemeColor, t: string) => t,
@@ -94,7 +94,9 @@ function renderLines(failedIds: string[], width: number): string[] {
 function renderRunningWithProgress(prog: Record<string, unknown>, width: number): string[] {
 	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
 	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
-	const progressBySubtask = new Map([["s1", prog]]);
+	// ponytail: assert prog shape as SubtaskProgressInfo so the Map type matches
+	// ProgressWidgetState.progressBySubtask (was Record<string,unknown> → TS2322).
+	const progressBySubtask = new Map<string, SubtaskProgressInfo>([["s1", prog as unknown as SubtaskProgressInfo]]);
 	const st: ProgressWidgetState = { task, progressBySubtask };
 	const factory = createProgressWidget(() => st);
 	const comp = factory(undefined, theme) as any;
