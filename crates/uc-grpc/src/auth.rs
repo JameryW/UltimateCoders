@@ -151,7 +151,9 @@ mod tests {
         // No header.
         assert!(interceptor.call(make_request(None)).is_ok());
         // Wrong header still passes (gate disabled).
-        assert!(interceptor.call(make_request(Some("Bearer anything"))).is_ok());
+        assert!(interceptor
+            .call(make_request(Some("Bearer anything")))
+            .is_ok());
     }
 
     #[test]

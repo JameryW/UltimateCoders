@@ -1594,14 +1594,16 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         Intercepted<DashboardServiceServer<Self>>,
         Intercepted<WorkerServiceServer<Self>>,
     ) {
-        let engine_service =
-            EngineServiceServer::with_interceptor(Self { inner: self.inner.clone() }, interceptor.clone());
-        let task_service =
-            TaskServiceServer::with_interceptor(self.clone(), interceptor.clone());
+        let engine_service = EngineServiceServer::with_interceptor(
+            Self {
+                inner: self.inner.clone(),
+            },
+            interceptor.clone(),
+        );
+        let task_service = TaskServiceServer::with_interceptor(self.clone(), interceptor.clone());
         let dashboard_service =
             DashboardServiceServer::with_interceptor(self.clone(), interceptor.clone());
-        let worker_service =
-            WorkerServiceServer::with_interceptor(self, interceptor);
+        let worker_service = WorkerServiceServer::with_interceptor(self, interceptor);
         (
             engine_service,
             task_service,
