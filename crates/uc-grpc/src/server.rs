@@ -1346,6 +1346,14 @@ pub struct GrpcServer<E: EngineApi + Send + Sync + 'static> {
     inner: Arc<GrpcServerInner<E>>,
 }
 
+/// A business gRPC service wrapped with [`crate::AuthInterceptor`].
+///
+/// Each of the four business services (engine/task/dashboard/worker) is
+/// wrapped in this form when `UC_DASHBOARD_TOKEN` is set. The tonic_health
+/// standard service is intentionally NOT wrapped.
+pub(crate) type Intercepted<S> =
+    tonic::service::interceptor::InterceptedService<S, crate::AuthInterceptor>;
+
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Create a new gRPC server wrapping the given engine, without NATS.
     ///
@@ -1558,6 +1566,44 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let task_service = TaskServiceServer::new(self.clone());
         let dashboard_service = DashboardServiceServer::new(self.clone());
         let worker_service = WorkerServiceServer::new(self);
+        (
+            engine_service,
+            task_service,
+            dashboard_service,
+            worker_service,
+        )
+    }
+
+    /// Convert into tonic services wrapped with an auth interceptor.
+    ///
+    /// Each business service (engine/task/dashboard/worker) is wrapped via the
+    /// generated `with_interceptor`, which validates `Authorization: Bearer
+    /// <token>` on every request. The interceptor is cloned per service
+    /// (clone-cheap: inner is `Arc<str>`).
+    ///
+    /// The tonic_health standard health service is NOT produced here and must
+    /// NOT be wrapped — health probes must remain unauthenticated for kube /
+    /// docker compatibility.
+    #[allow(clippy::type_complexity)] // 4-tuple of distinct intercepted services is inherently complex
+    pub fn into_intercepted_services(
+        self,
+        interceptor: crate::AuthInterceptor,
+    ) -> (
+        Intercepted<EngineServiceServer<Self>>,
+        Intercepted<TaskServiceServer<Self>>,
+        Intercepted<DashboardServiceServer<Self>>,
+        Intercepted<WorkerServiceServer<Self>>,
+    ) {
+        let engine_service = EngineServiceServer::with_interceptor(
+            Self {
+                inner: self.inner.clone(),
+            },
+            interceptor.clone(),
+        );
+        let task_service = TaskServiceServer::with_interceptor(self.clone(), interceptor.clone());
+        let dashboard_service =
+            DashboardServiceServer::with_interceptor(self.clone(), interceptor.clone());
+        let worker_service = WorkerServiceServer::with_interceptor(self, interceptor);
         (
             engine_service,
             task_service,
