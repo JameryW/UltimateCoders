@@ -275,6 +275,10 @@ function exportMetricsCsv(metrics: MetricsSnapshot) {
 export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: MetricsPanelProps) {
   const [trendRange, setTrendRange] = useState<number>(60); // minutes
   const [extendedTrend, setExtendedTrend] = useState<MetricsSample[] | null>(null);
+  // ponytail: track whether the extended-trend REST fetch failed, so the UI
+  // can tell the user the 6h/24h view is actually showing the SSE 1h fallback
+  // instead of silently labeling 1h of data as "24h".
+  const [extendedFailed, setExtendedFailed] = useState(false);
 
   const handleExport = useCallback(() => {
     if (metrics) exportMetricsCsv(metrics);
@@ -284,19 +288,33 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
   useEffect(() => {
     if (trendRange <= 60 || !metrics) return;
     let cancelled = false;
+    // ponytail: reset failure state on each new fetch (range change) so a
+    // later success clears the "unavailable" hint.
+    setExtendedFailed(false);
     fetch(`/dashboard/api/trend?minutes=${trendRange}`)
-      .then(res => res.ok ? res.json() : null)
+      .then(res => {
+        if (!res.ok) return null;
+        return res.json();
+      })
       .then(data => {
-        if (!cancelled && data?.trend) {
+        if (cancelled) return;
+        if (data?.trend) {
           setExtendedTrend(data.trend);
+        } else {
+          // ponytail: non-ok response or missing trend field — mark failed so
+          // the UI shows the 1h fallback explicitly instead of masquerading.
+          setExtendedFailed(true);
         }
       })
-      .catch(() => { /* graceful fallback */ });
+      .catch(() => { if (!cancelled) setExtendedFailed(true); });
     return () => { cancelled = true; };
   }, [trendRange, metrics]);
 
   // Reset extended trend when switching back to 1h (SSE data is sufficient)
   const effectiveTrend = trendRange <= 60 ? null : extendedTrend;
+  // ponytail: true when we're showing SSE 1h data under a >60min label because
+  // the extended fetch failed.
+  const showingFallback = trendRange > 60 && extendedTrend === null && extendedFailed;
 
   if (!metrics) {
     return (
@@ -385,6 +403,11 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
       </div>
 
       {/* Full-width trend chart */}
+      {showingFallback && (
+        <p className="text-xs text-[var(--text-muted)] -mb-2">
+          showing last 1h — extended trend data unavailable
+        </p>
+      )}
       <MetricsTrendChart trend={trend} stale={stale} />
     </div>
   );
