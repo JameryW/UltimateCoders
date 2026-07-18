@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 验证：cargo check/test + interceptor 单测"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "Rust 类型：Interceptor trait、Arc<String> token"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证：cargo test interceptor 单测 + vite build"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "Rust/TS 类型安全：Status::unauthenticated、Bearer header"}
