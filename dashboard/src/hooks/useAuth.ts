@@ -1,4 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
+import { createClient, ConnectError, Code } from "@connectrpc/connect";
+import { createGrpcWebTransport } from "@connectrpc/connect-web";
+import { create } from "@bufbuild/protobuf";
+import { EngineService, HealthRequestSchema } from "@/grpc/engine_pb";
+
+// ponytail: auth validation needs a transport that does NOT auto-attach the
+// localStorage token. The shared transport in useGrpcWeb.ts has an
+// authInterceptor that reads localStorage and overwrites the `authorization`
+// header — which would defeat validateToken's per-call candidate token (e.g.
+// at login, when a stale token is still in localStorage and the user types a
+// new password). This dedicated transport has no interceptors, so the per-call
+// `authorization` header set by validateToken is the sole source of truth.
+const GRPC_WEB_ADDR = import.meta.env.VITE_GRPC_WEB_ADDR ?? "";
+let _authTransport: ReturnType<typeof createGrpcWebTransport> | null = null;
+function getAuthTransport() {
+  if (!_authTransport) {
+    _authTransport = createGrpcWebTransport({ baseUrl: GRPC_WEB_ADDR });
+  }
+  return _authTransport;
+}
 
 export interface AuthState {
   isAuthenticated: boolean;
@@ -32,26 +52,32 @@ function setStoredToken(token: string | null) {
 }
 
 /**
- * Validate a token by calling gRPC Health with Bearer auth.
- * Returns true if the server responds (any non-error), false otherwise.
+ * Validate a token by calling gRPC Health with Bearer auth via the Connect
+ * client (correct gRPC-Web framing + protobuf, unlike bare fetch which sent
+ * JSON to a protobuf endpoint and misread 415s as "auth ok").
+ *
+ * - success (200) → true (server accepted the token, or no auth gate configured)
+ * - Unauthenticated / PermissionDenied → false (auth gate rejected the token)
+ * - any other error (network, unavailable) → false (can't confirm)
  */
 async function validateToken(token: string): Promise<boolean> {
   try {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    };
-    const res = await fetch("/ultimate_coders.EngineService/Health", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
+    // Dedicated token-free transport: the per-call `authorization` header below
+    // is the sole source of truth (the shared transport's authInterceptor would
+    // overwrite it with the localStorage token, breaking the login flow when a
+    // stale token is still stored).
+    const client = createClient(EngineService, getAuthTransport());
+    const req = create(HealthRequestSchema, {});
+    await client.health(req, {
+      headers: { authorization: `Bearer ${token}` },
     });
-    // 200 = server accepted auth; 401/403 = auth rejected; other = server up but maybe no auth
-    if (res.ok) return true;
-    if (res.status === 401 || res.status === 403) return false;
-    // Server responded but with non-auth error — probably no auth gate, allow through
     return true;
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof ConnectError) {
+      if (err.code === Code.Unauthenticated || err.code === Code.PermissionDenied) {
+        return false;
+      }
+    }
     return false;
   }
 }
@@ -91,22 +117,17 @@ export function useAuth(): AuthState {
           setToken(null);
         }
 
-        // No token or token invalid — try unauthenticated reachability
-        const res = await fetch("/ultimate_coders.EngineService/Health", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        // Server reachable without auth → no auth gate, allow through
-        if (res.ok || (res.status >= 400 && res.status !== 401 && res.status !== 403)) {
+        // No token or token invalid — try unauthenticated Health.
+        // Server with no auth gate (UC_DASHBOARD_TOKEN unset) → 200 → authed.
+        // Server with auth gate → Unauthenticated → show login.
+        const valid = await validateToken("");
+        if (valid) {
           setConnectionError(false);
           setIsAuthenticated(true);
-          return;
+        } else {
+          setConnectionError(false);
+          setIsAuthenticated(false);
         }
-
-        // 401/403 → auth required but no valid token
-        setConnectionError(false);
-        setIsAuthenticated(false);
       } catch {
         // Server unreachable
         setConnectionError(true);
@@ -129,27 +150,11 @@ export function useAuth(): AuthState {
       return true;
     }
 
-    // Check if it's a connection error or auth rejection
-    try {
-      const res = await fetch("/ultimate_coders.EngineService/Health", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (res.status === 401 || res.status === 403) {
-        setLoginError("Invalid password");
-      } else {
-        // Server up but health failed for other reason — likely no auth gate
-        setStoredToken(password);
-        setToken(password);
-        setIsAuthenticated(true);
-        return true;
-      }
-    } catch {
-      setLoginError("Cannot connect to server");
-      setConnectionError(true);
-    }
-
+    // ponytail: validateToken already distinguished auth-rejection from
+    // network failure by returning false in both cases. Treat all failures
+    // as login errors; the bare-fetch JSON probe that previously bypassed
+    // auth is gone.
+    setLoginError("Invalid password");
     return false;
   }, []);
 

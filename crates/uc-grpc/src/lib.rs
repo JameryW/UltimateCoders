@@ -7,12 +7,14 @@
 //! - `GrpcEngineClient` — implements `EngineApi` by calling a remote gRPC server
 //! - `conversions` — bidirectional type mapping between proto and uc-types
 
+pub mod auth;
 pub mod client;
 pub mod conversions;
 pub mod dashboard_service;
 pub mod server;
 pub mod worker_service;
 
+pub use auth::AuthInterceptor;
 pub use server::TaskStore;
 pub use server::{
     NatsHeartbeat, NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate,

@@ -18,6 +18,7 @@ use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
+use uc_grpc::AuthInterceptor;
 use uc_types::EngineApi;
 
 use tonic::transport::Server;
@@ -189,9 +190,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
-    let (engine_service, task_service, dashboard_service, worker_service) =
-        grpc_server.into_services();
-
     // Create health reporter (marks EngineService as serving)
     let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
 
@@ -254,20 +252,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // ── Auth interceptor (UC_DASHBOARD_TOKEN) ──────────────────────────
+    // Non-empty token → wrap all 4 business services with AuthInterceptor so
+    // every RPC requires `Authorization: Bearer <token>`. Empty/unset → no
+    // wrapping, open access (backwards compat for dev / local). The standard
+    // tonic_health service is never wrapped (kube/docker probe compatibility).
+    let dashboard_token = std::env::var("UC_DASHBOARD_TOKEN")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
     tracing::info!(
         "UltimateCoders gRPC server listening on {} (gRPC-Web enabled)",
         addr
     );
 
-    Server::builder()
-        // Accept both gRPC and gRPC-Web (HTTP/1.1) requests
-        .accept_http1(true)
-        .layer(GrpcWebLayer::new())
-        .layer(cors)
-        .add_service(engine_service)
-        .add_service(task_service)
-        .add_service(dashboard_service)
-        .add_service(worker_service)
+    let server_builder = if dashboard_token.is_empty() {
+        tracing::info!("gRPC auth disabled (no UC_DASHBOARD_TOKEN — open access)");
+
+        let (engine_service, task_service, dashboard_service, worker_service) =
+            grpc_server.into_services();
+
+        Server::builder()
+            // Accept both gRPC and gRPC-Web (HTTP/1.1) requests
+            .accept_http1(true)
+            .layer(GrpcWebLayer::new())
+            .layer(cors)
+            .add_service(engine_service)
+            .add_service(task_service)
+            .add_service(dashboard_service)
+            .add_service(worker_service)
+    } else {
+        tracing::info!("gRPC auth enabled (UC_DASHBOARD_TOKEN set)");
+
+        let interceptor = AuthInterceptor::new(Arc::from(dashboard_token.as_str()));
+        let (engine_service, task_service, dashboard_service, worker_service) =
+            grpc_server.into_intercepted_services(interceptor);
+
+        Server::builder()
+            // Accept both gRPC and gRPC-Web (HTTP/1.1) requests
+            .accept_http1(true)
+            .layer(GrpcWebLayer::new())
+            .layer(cors.clone())
+            .add_service(engine_service)
+            .add_service(task_service)
+            .add_service(dashboard_service)
+            .add_service(worker_service)
+    };
+
+    // health_service is added unconditionally OUTSIDE the auth gate so kube /
+    // docker health probes keep working without a bearer token.
+    server_builder
         .add_service(health_service)
         .serve(addr)
         .await?;
