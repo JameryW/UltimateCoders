@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件状态：extendedFailed flag + 条件 UI 提示"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useEffect fetch + cleanup cancelled flag"}
