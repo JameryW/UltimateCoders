@@ -13,6 +13,8 @@ import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
 import { overlayPageSize } from "./overlay-pagination";
+// ponytail: F8/F19 — shared with progress-widget's elapsed tag (same format).
+import { formatElapsed } from "./elapsed";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), so match bytes directly like the
@@ -27,17 +29,6 @@ const KEY = {
 	enter: "\r",
 	esc: "\x1b",
 };
-
-// ponytail: F8 — compact elapsed for running rows ("42s" / "3m" / "1h 05m").
-// A hung subtask's %/phase freeze; a live-ticking elapsed (F7 timer re-renders)
-// is the cue that separates "running 9m and stuck" from "running 9m and fine".
-function formatElapsed(ms: number): string {
-	const s = Math.max(0, Math.floor(ms / 1000));
-	if (s < 60) return `${s}s`;
-	const m = Math.floor(s / 60);
-	if (m < 60) return `${m}m`;
-	return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
-}
 
 // ── SubtaskTree Component ────────────────────────────────────────
 

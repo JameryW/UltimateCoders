@@ -143,6 +143,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						progressState.set(d.taskId, ps);
 					}
 					ps.task = task;
+					// ponytail: F19 — seed the progress entry at dispatch so elapsed
+					// starts now (not at the first progress event — local subtasks
+					// never emit those, so without this they'd get no elapsed at all).
+					// percent -1 = no data yet; the widget skips negatives. Don't
+					// clobber an existing entry (retries re-fire subtask_start).
+					if (!ps.progressBySubtask) ps.progressBySubtask = new Map<string, SubtaskProgressInfo>();
+					if (!ps.progressBySubtask.has(d.subtaskId)) {
+						ps.progressBySubtask.set(d.subtaskId, { phase: "starting", percent: -1, firstSeen: Date.now() });
+					}
 					ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				}
 				break;
@@ -198,6 +207,9 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				if (d.stepSummary !== undefined) info.stepSummary = d.stepSummary;
 				if (d.parallelGroup !== undefined) info.parallelGroup = d.parallelGroup;
 				if (d.parallelStepCount !== undefined) info.parallelStepCount = d.parallelStepCount;
+				// ponytail: F19 — carry firstSeen across the wholesale replace so
+				// elapsed keeps counting from dispatch (seeded at subtask_start).
+				info.firstSeen = ps.progressBySubtask.get(d.subtaskId)?.firstSeen ?? Date.now();
 				ps.progressBySubtask.set(d.subtaskId, info);
 				ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				break;
