@@ -7,6 +7,7 @@
  * - /uc cancel <task-id> [<st>]  — Cancel task or specific subtask
  * - /uc pause <task-id>          — Pause task after current wave
  * - /uc resume <task-id>         — Resume a paused task
+ * - /uc search <query>           — Search across indexed repos
  * - /uc help                     — Show help
  *
  * Keyboard shortcuts:
@@ -428,9 +429,22 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("uc", {
 		description: "UltimateCoders task orchestration",
 		getArgumentCompletions: (prefix: string) => {
+			// ponytail: F33 — past the first word, complete TASK IDS for the
+			// commands that take one (ids are long and only ever displayed
+			// truncated — completion is the usability win next to F26 prefix
+			// matching). cancel's 3rd word (subtask id) is left out: low freq.
+			const words = prefix.split(/\s+/);
+			if (words.length >= 2 && ["status", "cancel", "pause", "resume"].includes(words[0])) {
+				const frag = words[words.length - 1];
+				return orchestrator.getAllTaskStates()
+					.filter((t) => t.id.startsWith(frag))
+					.slice(0, 10)
+					.map((t) => ({ label: `${t.id.slice(0, 14)} (${t.status})`, value: t.id }));
+			}
+			const first = words[0] ?? "";
 			if (!prefix) return SUBCOMMANDS.map((s) => ({ label: s, value: s }));
 			return SUBCOMMANDS
-				.filter((s) => s.startsWith(prefix))
+				.filter((s) => s.startsWith(first))
 				.map((s) => ({ label: s, value: s }));
 		},
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -445,7 +459,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						return;
 					}
 					if (isSpawnDisabled()) {
-						ctx.ui.notify("子任务派发已禁用 (UC_NO_SPAWN)。用 /uc status 查看已有任务。", "error");
+						// ponytail: F38 — English like every other user-facing string.
+					ctx.ui.notify("Subtask spawning disabled (UC_NO_SPAWN). Use /uc status to view existing tasks.", "error");
 						return;
 					}
 					await orchestrator.submitTask(rest, ctx);

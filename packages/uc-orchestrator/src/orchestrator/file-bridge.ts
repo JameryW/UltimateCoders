@@ -5,6 +5,7 @@
  * so agents can browse indexed repo file trees and read files.
  */
 
+import { statSync } from "node:fs";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { GrpcBridge } from "./grpc-bridge";
 
@@ -28,7 +29,20 @@ export function registerFileTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 				if (p.action === "list_dir") {
 					const entries = await bridge.listDir(p.path, p.repo_id);
 					if (entries.length === 0) {
-						return { content: [{ type: "text" as const, text: "(empty directory or not found)" }], useless: true };
+						// ponytail: F37 — disambiguate. Without repo_id the path is
+						// local: stat tells typo from genuinely-empty. Remote repos
+						// can't be stat'd client-side — say so honestly.
+						if (!p.repo_id) {
+							try {
+								if (!statSync(p.path).isDirectory()) {
+									return { content: [{ type: "text" as const, text: `Not a directory: ${p.path}` }], isError: true };
+								}
+								return { content: [{ type: "text" as const, text: `(empty directory: ${p.path})` }], useless: true };
+							} catch {
+								return { content: [{ type: "text" as const, text: `Directory not found: ${p.path}` }], useless: true };
+							}
+						}
+						return { content: [{ type: "text" as const, text: "(empty directory, or not found in remote repo)" }], useless: true };
 					}
 					const lines = entries.map((e) => `${e.type === "dir" ? "📁" : "📄"} ${e.name} ${e.size > 0 ? `(${e.size}B)` : ""}`);
 					return { content: [{ type: "text" as const, text: lines.join("\n") }] };

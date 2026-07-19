@@ -44,7 +44,8 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 					case "submit": {
 						if (isSpawnDisabled()) {
 							return {
-								content: [{ type: "text" as const, text: "子任务派发已禁用 (UC_NO_SPAWN)。用 /uc status 查看已有任务。" }],
+								// ponytail: F38 — English like every other tool message.
+								content: [{ type: "text" as const, text: "Subtask spawning disabled (UC_NO_SPAWN). Use /uc status to view existing tasks." }],
 								isError: true,
 							};
 						}

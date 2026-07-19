@@ -33,10 +33,12 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 	const memorySchema = pi.zod.object({
 		action: pi.zod.enum(["read", "write", "search", "delete"]).describe("Memory operation"),
 		scope: pi.zod.string().describe("Memory scope: short_term, long_term, metadata (or task/project/global)"),
-		key: pi.zod.string().describe("Memory key"),
+		// ponytail: F35 — for action=search this field IS the query; saying only
+		// "Memory key" made LLMs pass a literal key and get "(no results)".
+		key: pi.zod.string().describe("Memory key (or the search query when action=search)"),
 		content: pi.zod.string().optional().describe("Content to write (required for write action)"),
-		content_type: pi.zod.string().optional().describe("Content type for write: text, structured, code, diff, reference (default: text)"),
-		importance: pi.zod.number().optional().describe("Importance score 0-1 for write (>= 0.7 writes to long-term memory)"),
+		content_type: pi.zod.enum(["text", "structured", "code", "diff", "reference"]).optional().describe("Content type for write (default: text)"),
+		importance: pi.zod.number().min(0).max(1).optional().describe("Importance score 0-1 for write (>= 0.7 writes to long-term memory)"),
 		tags: pi.zod.array(pi.zod.string()).optional().describe("Tags for write (categorization)"),
 	});
 
@@ -73,7 +75,15 @@ export function registerMemoryTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 						p.importance,
 						p.tags,
 					);
-					return { content: [{ type: "text" as const, text: ok ? "Written successfully" : "Write failed" }] };
+					// ponytail: F35 — the bridge collapses failure to a bool (the
+					// server error only lands in a console.warn); say what we can.
+					return {
+						content: [{
+							type: "text" as const,
+							text: ok ? "Written successfully" : "Write failed (server rejected the entry or is unavailable)",
+						}],
+						...(ok ? {} : { isError: true }),
+					};
 				}
 				if (p.action === "search") {
 					const results = await bridge.searchMemory(p.key, mapScope(p.scope));
