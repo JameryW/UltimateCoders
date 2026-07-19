@@ -88,13 +88,19 @@ class MemoryEntry:
             except (OSError, OverflowError, ValueError):
                 return None
 
+        # ponytail: F61 — the old `x or 0.5` coerced a legitimate
+        # importance=0.0 (falsy) to 0.5, shifting long-term promotion
+        # behavior. Only a MISSING value falls back to the default.
+        raw_imp = getattr(raw, "importance", None)
+        importance = 0.5 if raw_imp is None else float(raw_imp)
+
         return cls(
             id=getattr(raw, "id", "") or "",
             key=mem_key,
             content=getattr(raw, "content", "") or "",
             content_type=getattr(raw, "content_type", "text") or "text",
             source_agent=getattr(raw, "source_agent", "") or "",
-            importance=float(getattr(raw, "importance", 0.5) or 0.5),
+            importance=importance,
             tags=list(getattr(raw, "tags", []) or []),
             created_at=_to_dt(getattr(raw, "created_at", None)),
             updated_at=_to_dt(getattr(raw, "updated_at", None)),
@@ -374,7 +380,9 @@ class LongTermMemory:
         )
 
         entries = []
-        for raw in raw_results:
+        # ponytail: F61 — engine may return None when unavailable; iterate
+        # safely instead of raising TypeError.
+        for raw in (raw_results or []):
             # search_memory returns MemorySearchResult objects
             entry_obj = getattr(raw, "entry", None)
             if entry_obj is not None:

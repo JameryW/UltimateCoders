@@ -724,6 +724,11 @@ class DashboardApp:
         @app.get("/metrics")
         async def prometheus_metrics(request: Request):
             """Prometheus exposition endpoint."""
+            # ponytail: F62 — every other route gates on _check_auth; /metrics
+            # didn't, leaking task/worker/error metrics (incl. worker ids) to
+            # unauthenticated clients when the dashboard is network-exposed.
+            if (resp := self._check_auth(request)) is not None:
+                return resp
             return Response(
                 content=self._metrics.generate_prometheus(),
                 media_type="text/plain; version=0.0.4; charset=utf-8",

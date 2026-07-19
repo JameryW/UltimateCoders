@@ -104,3 +104,27 @@ class TestFromRust:
         assert entry.key.scope == "global"
         assert entry.content_type == "text"
         assert entry.tags == []
+
+
+class TestF61ImportanceAndSearch:
+    def test_importance_zero_preserved(self):
+        """importance=0.0 is legitimate — the old `x or 0.5` rewrote it to
+        0.5, shifting long-term promotion behavior."""
+        entry = MemoryEntry.from_rust(_py_entry(importance=0.0))
+        assert entry.importance == 0.0
+
+    def test_importance_missing_defaults_to_half(self):
+        raw = SimpleNamespace()  # no importance attribute at all
+        entry = MemoryEntry.from_rust(raw)
+        assert entry.importance == pytest.approx(0.5)
+
+    def test_search_handles_none_results(self):
+        """Engine returning None (unavailable) must not raise TypeError."""
+        from unittest.mock import MagicMock
+
+        from ultimate_coders.memory.memory import LongTermMemory
+
+        engine = MagicMock()
+        engine.search_memory = MagicMock(return_value=None)
+        ltm = LongTermMemory(engine)
+        assert ltm.search("anything") == []
