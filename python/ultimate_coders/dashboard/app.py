@@ -86,6 +86,7 @@ class DashboardApp:
         orchestrator: Any,
         nats_publisher: Any = None,
         nats_client: Any = None,
+        nats_url: str | None = None,
     ) -> None:
         """Create the dashboard app.
 
@@ -95,15 +96,23 @@ class DashboardApp:
                 task submit/pause/resume are routed through NATS so that
                 the gRPC TaskStore stays in sync with TUI consumers.
                 When None, falls back to direct Orchestrator calls (legacy mode).
-            nats_client: Optional nats-py Client instance. When set,
-                the Dashboard subscribes to ``uc.task.event`` and merges
-                those events into the SSE stream. This gives the Dashboard
-                visibility into tasks submitted via gRPC/TUI. When None,
-                only local TaskEventEmitter events are streamed.
+            nats_client: Optional ALREADY-CONNECTED nats-py Client (must be
+                bound to the loop it will run on — tests/embedded callers).
+                The Dashboard subscribes to ``uc.task.event`` and merges
+                those events into the SSE stream.
+            nats_url: NATS server URL to connect to FROM THE SERVER'S EVENT
+                LOOP at startup (F58). Preferred over pre-connecting: a
+                client connected on another loop and carried over never
+                delivers messages (its reader/ping tasks belong to the
+                original loop).
         """
         self.orchestrator = orchestrator
         self._nats_publisher = nats_publisher
         self._nats_client = nats_client
+        self._nats_url = nats_url
+        # True when this app connected the client itself (startup hook) and
+        # therefore owns its shutdown drain.
+        self._owns_nats_client = False
         # ponytail: lazy Queue — Python 3.9 asyncio.Queue() needs a running
         # event loop at init time, which doesn't exist in synchronous tests.
         self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] | None = None
@@ -1465,40 +1474,91 @@ class DashboardApp:
             self._nats_event_queue = asyncio.Queue(maxsize=1000)
         return self._nats_event_queue
 
-    def _subscribe_nats_events(self) -> None:
-        """Register a FastAPI startup event to subscribe to NATS events.
+    async def _connect_and_subscribe_nats(self) -> None:
+        """Connect (if given a URL) and subscribe to ``uc.task.event``.
 
-        Uses FastAPI's ``@app.on_event("startup", ...)`` so the
-        subscription runs on uvicorn's event loop after the server starts.
+        ponytail: F58 — runs as the FastAPI startup hook, i.e. ON uvicorn's
+        event loop. The old code connected on a throwaway loop and closed
+        it, killing nats-py's reader/ping tasks — the carried-over client
+        then never delivered a single message while startup logged
+        "Connected to NATS". Connecting here keeps the transport bound to
+        the loop that actually runs the subscription.
         """
         if self._nats_client is None:
-            logger.debug("No NATS client configured, skipping event subscription")
-            return
-
-        # Schedule the NATS subscription on the server's event loop.
-        # The uvicorn server creates its own event loop in the background
-        # thread. We use a startup event hook to schedule the subscription
-        # once the loop is running.
-        async def _subscribe():
+            if not self._nats_url:
+                logger.debug("No NATS client/URL configured, skipping event subscription")
+                return
             try:
-                sub = await self._nats_client.subscribe(
-                    NATS_SUBJECT_TASK_EVENT,
-                    cb=self._handle_nats_event,
+                import nats as nats_lib
+
+                self._nats_client = await asyncio.wait_for(
+                    nats_lib.connect(
+                        self._nats_url,
+                        connect_timeout=5.0,
+                        max_reconnect_attempts=0,
+                    ),
+                    timeout=6.0,
                 )
-                self._nats_subscriptions.append(sub)
-                logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+                # Force a real round-trip so lazy-connect failures surface now.
+                await asyncio.wait_for(self._nats_client.flush(), timeout=5.0)
+                self._owns_nats_client = True
+                logger.info(
+                    "Dashboard connected to NATS at %s (on server loop)",
+                    self._nats_url,
+                )
+                # ponytail: F58 — a publisher was requested implicitly
+                # (from_env passes the URL with no publisher): create it from
+                # the loop-bound client so REST publishes aren't bound to a
+                # dead loop either. Handlers seeing None until now used the
+                # documented direct-call fallback.
+                if self._nats_publisher is None:
+                    from ultimate_coders.nats_worker import NatsPublisher
+
+                    self._nats_publisher = NatsPublisher(self._nats_client)
             except Exception:
                 logger.warning(
-                    "Failed to subscribe to %s",
-                    NATS_SUBJECT_TASK_EVENT,
+                    "Dashboard failed to connect to NATS at %s; "
+                    "running snapshot-only (no live uc.task.event)",
+                    self._nats_url,
                     exc_info=True,
                 )
+                self._nats_client = None
+                return
+        try:
+            sub = await self._nats_client.subscribe(
+                NATS_SUBJECT_TASK_EVENT,
+                cb=self._handle_nats_event,
+            )
+            self._nats_subscriptions.append(sub)
+            logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+        except Exception:
+            logger.warning(
+                "Failed to subscribe to %s",
+                NATS_SUBJECT_TASK_EVENT,
+                exc_info=True,
+            )
 
-        # Use a startup event to schedule the subscription on the
-        # uvicorn event loop. This is more reliable than trying to
-        # grab the loop from a timer thread.
-        if self._nats_client is not None:
-            self._app.on_event("startup")(_subscribe)
+    async def _close_owned_nats(self) -> None:
+        """Drain + close a client this app connected itself (shutdown hook)."""
+        if self._owns_nats_client and self._nats_client is not None:
+            try:
+                await self._nats_client.drain()
+            except Exception:
+                logger.debug("NATS drain failed (ignoring)", exc_info=True)
+            self._nats_client = None
+            self._owns_nats_client = False
+
+    def _subscribe_nats_events(self) -> None:
+        """Register FastAPI startup/shutdown hooks for NATS connect+subscribe.
+
+        Uses FastAPI's ``@app.on_event`` so both run on uvicorn's event loop
+        (F58 — the client must be bound to the loop that subscribes).
+        """
+        if self._nats_client is None and not self._nats_url:
+            logger.debug("No NATS client/URL configured, skipping event subscription")
+            return
+        self._app.on_event("startup")(self._connect_and_subscribe_nats)
+        self._app.on_event("shutdown")(self._close_owned_nats)
 
     async def _handle_nats_event(self, msg: Any) -> None:
         """Handle a NATS ``uc.task.event`` message.
@@ -1582,41 +1642,15 @@ class DashboardApp:
             logger.info("UC_NATS_URL not set, Dashboard running without NATS")
             return cls(orchestrator, nats_publisher=nats_publisher)
 
-        # Try to connect to NATS synchronously
-        nats_client = None
-        try:
-            import nats as nats_lib
-
-            # Run the async connect in a new event loop
-            loop = asyncio.new_event_loop()
-            try:
-                nats_client = loop.run_until_complete(
-                    nats_lib.connect(nats_url, connect_timeout=5.0)
-                )
-                logger.info("Dashboard connected to NATS at %s", nats_url)
-            finally:
-                loop.close()
-        except ImportError:
-            logger.warning(
-                "nats-py not installed, Dashboard running without NATS. "
-                "Install with: pip install nats-py"
-            )
-        except Exception as e:
-            logger.warning(
-                "Failed to connect to NATS at %s: %s. "
-                "Dashboard running without NATS event subscription.",
-                nats_url,
-                e,
-            )
-
-        # Create NatsPublisher if we have a client and none was provided
-        if nats_client is not None and nats_publisher is None:
-            from ultimate_coders.nats_worker import NatsPublisher
-
-            nats_publisher = NatsPublisher(nats_client)
-
+        # ponytail: F58 — DO NOT connect here. The old code connected on a
+        # throwaway event loop and closed it, killing nats-py's reader/ping
+        # tasks — the carried-over client then never delivered a message
+        # (subscription) or published reliably, while startup logged
+        # "Connected to NATS". Pass the URL instead; the app connects on its
+        # own (uvicorn) event loop in the startup hook, and creates the
+        # NatsPublisher from that loop-bound client there too.
         return cls(
             orchestrator,
             nats_publisher=nats_publisher,
-            nats_client=nats_client,
+            nats_url=nats_url,
         )
