@@ -62,4 +62,26 @@ describe("sleepBackoff", () => {
 		expect(elapsed).toBeGreaterThanOrEqual(40);
 		expect(elapsed).toBeLessThan(500);
 	});
+
+	// ponytail: F10 — onAttempt reports the exact delay about to be slept, so a
+	// UI countdown matches reality even under jitter (no second computation).
+	it("calls onAttempt with the attempt and exact delay before sleeping", async () => {
+		const calls: [number, number][] = [];
+		const result = await sleepBackoff(2, {
+			initialMs: 10, maxMs: 1000, maxAttempts: 5,
+			onAttempt: (a, d) => calls.push([a, d]),
+		});
+		expect(result).toBe(true);
+		expect(calls).toEqual([[2, 40]]); // 10 * 2^2
+	});
+
+	it("does not call onAttempt when backoff is exhausted", async () => {
+		const calls: [number, number][] = [];
+		const result = await sleepBackoff(5, {
+			maxAttempts: 5,
+			onAttempt: (a, d) => calls.push([a, d]),
+		});
+		expect(result).toBe(false);
+		expect(calls).toEqual([]);
+	});
 });

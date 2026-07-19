@@ -53,6 +53,12 @@ export interface BridgeConfig {
 	timeoutMs: number;
 	/** Callback when connection state changes. */
 	onConnectionChange?: (connected: boolean) => void;
+	/**
+	 * ponytail: F10 — progress callback during the reconnect backoff loop:
+	 * 1-based attempt number + the delay about to be slept. Lets the UI show
+	 * "reconnecting · try N · Xs" instead of a static "disconnected".
+	 */
+	onReconnectAttempt?: (attempt: number, nextDelayMs: number) => void;
 	/** Backoff config for connection-error reconnects. See backoff.ts. */
 	reconnectBackoff?: BackoffOptions;
 }
@@ -161,6 +167,11 @@ export class GrpcBridge {
 		this.config.onConnectionChange = callback;
 	}
 
+	/** Set or replace the onReconnectAttempt callback (F10). Used by UCOrchestrator to wire events. */
+	setOnReconnectAttempt(callback: (attempt: number, nextDelayMs: number) => void): void {
+		this.config.onReconnectAttempt = callback;
+	}
+
 	/** Check if an error looks like a broken connection (transport-level, not a gRPC business error). */
 	static isConnectionError(err: unknown): boolean {
 		// Walk the cause chain — connectrpc wraps the real transport error
@@ -240,7 +251,12 @@ export class GrpcBridge {
 						`GrpcBridge reconnect attempt ${attempt + 1} failed: ${verifyErr instanceof Error ? verifyErr.message : verifyErr}`,
 					);
 				}
-				const slept = await sleepBackoff(attempt, backoff);
+				// ponytail: F10 — report the upcoming wait (1-based attempt for
+				// display) via sleepBackoff's onAttempt so jitter stays exact.
+				const slept = await sleepBackoff(attempt, {
+					...backoff,
+					onAttempt: (_a, delayMs) => this.config.onReconnectAttempt?.(attempt + 1, delayMs),
+				});
 				if (!slept) return false; // exhausted maxAttempts
 			}
 		} finally {

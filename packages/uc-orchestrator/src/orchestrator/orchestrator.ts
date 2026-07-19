@@ -270,6 +270,11 @@ export class UCOrchestrator {
 			}
 			this.wasConnected = connected;
 		});
+		// ponytail: F10 — surface reconnect backoff progress (setter works for
+		// both external and default bridge, like setOnConnectionChange above).
+		this.bridge.setOnReconnectAttempt((attempt, nextRetryMs) => {
+			this.events.emit("reconnect_progress", { attempt, nextRetryMs });
+		});
 		// ponytail: workspaceRoot may not exist on Settings — fallback to cwd
 		const settings = pi.pi.settings as unknown as Record<string, unknown>;
 		const ws = settings.workspaceRoot;

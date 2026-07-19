@@ -81,6 +81,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
 			"subtask_progress",
 			"connection_state",
+			"reconnect_progress",
 		];
 
 		for (const type of progressEvents) {
@@ -200,6 +201,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "connection_state": {
 				const d = data as OrchestratorEvents["connection_state"];
 				statusRenderer?.setField("conn", d.connected ? "UC: connected" : "UC: disconnected");
+				break;
+			}
+			case "reconnect_progress": {
+				// ponytail: F10 — live reconnect countdown in the footer. Each backoff
+				// wait fires this once; connection_state(true) overwrites it back to
+				// "UC: connected" when the bridge recovers.
+				const d = data as OrchestratorEvents["reconnect_progress"];
+				const secs = Math.max(1, Math.ceil(d.nextRetryMs / 1000));
+				statusRenderer?.setField("conn", `UC: reconnecting · try ${d.attempt} · ${secs}s`);
 				break;
 			}
 		}

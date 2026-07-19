@@ -66,6 +66,14 @@ export interface OrchestratorEvents {
 
 	/** Connection state changed (gRPC bridge) */
 	connection_state: { connected: boolean; error?: string };
+
+	/**
+	 * ponytail: F10 — reconnect backoff progress (gRPC bridge). Fires before each
+	 * wait so the UI can show "reconnecting · try N · Xs" instead of a static
+	 * "disconnected". Distinct from connection_state (a state-change event —
+	 * repeating `connected: false` mid-backoff would muddy its semantics).
+	 */
+	reconnect_progress: { attempt: number; nextRetryMs: number };
 }
 
 export type OrchestratorEventType = keyof OrchestratorEvents;

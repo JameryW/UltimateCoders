@@ -87,4 +87,17 @@ describe("GrpcBridge against a dead server", () => {
 		expect(h.status).toBe("unavailable");
 		bridge.close();
 	});
+
+	// ponytail: F10 — reconnect backoff reports 1-based attempts + exact delay so
+	// the footer can show "reconnecting · try N · Xs". fastBackoff maxAttempts=1
+	// → exactly one wait (attempt 0 → report (1, 10ms) → second health fail →
+	// backoff exhausted).
+	it("fires onReconnectAttempt with 1-based attempt and backoff delay", async () => {
+		const seen: [number, number][] = [];
+		const bridge = new GrpcBridge({ serverUrl: deadUrl, reconnectBackoff: fastBackoff });
+		bridge.setOnReconnectAttempt((a, d) => seen.push([a, d]));
+		await bridge.readMemory("scope", "key");
+		expect(seen).toEqual([[1, 10]]);
+		bridge.close();
+	});
 });
