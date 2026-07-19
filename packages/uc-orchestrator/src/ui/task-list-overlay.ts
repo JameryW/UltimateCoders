@@ -35,10 +35,14 @@ const STATUS_BADGE: Record<string, (theme: Theme) => string> = {
 	in_progress: (t) => t.fg("warning", "run "),
 	planning: (t) => t.fg("dim", "plan"),
 	paused: (t) => t.fg("accent", "hold"),
+	// ponytail: F5 — unknown status shows "?" (4-wide like the other badges)
+	// instead of masquerading as "plan". Happens when the server runs a newer
+	// status the TUI doesn't know yet.
+	unknown: (t) => t.fg("dim", "?   "),
 };
 
 function statusBadge(status: string, theme: Theme): string {
-	return (STATUS_BADGE[status] ?? STATUS_BADGE.planning)(theme);
+	return (STATUS_BADGE[status] ?? STATUS_BADGE.unknown)(theme);
 }
 
 // ── TaskList Component ───────────────────────────────────────────
@@ -186,7 +190,7 @@ class TaskListComponent {
 		}
 
 		if (tasks.length > this.maxVisible) {
-			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, tasks.length)} of ${tasks.length}`));
+			lines.push(this.scrollFooter(this.scrollOffset, this.maxVisible, tasks.length));
 		}
 
 		// ponytail: flashMsg after footer so it doesn't shift list rows.
@@ -214,7 +218,7 @@ class TaskListComponent {
 			lines.push(`  ${l}`);
 		}
 		if (this.detailLines.length > maxVisible) {
-			lines.push(this.theme.fg("dim", `  ${start + 1}-${Math.min(start + maxVisible, this.detailLines.length)} of ${this.detailLines.length}`));
+			lines.push(this.scrollFooter(start, maxVisible, this.detailLines.length));
 		}
 		// ponytail: F1 — detail mode must show flashMsg too. Before this, setFlash()
 		// in detail (c/p/r success/fail, `/` hint) set state the renderer never
@@ -223,6 +227,15 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  ${this.flashMsg.slice(0, Math.max(0, width - 2))}`));
 		}
 		return lines;
+	}
+
+	// ponytail: F6 — scroll footer with direction arrows. The bare "X-Y of Z"
+	// count doesn't tell the user content ABOVE is clipped once scrollOffset > 0;
+	// ▲/▼ do. Arrows only appear on the clipped side; no extra lines.
+	private scrollFooter(offset: number, visible: number, total: number): string {
+		const up = offset > 0 ? "▲ " : "";
+		const down = offset + visible < total ? " ▼" : "";
+		return this.theme.fg("dim", `  ${up}${offset + 1}-${Math.min(offset + visible, total)} of ${total}${down}`);
 	}
 
 	private formatAge(ts: number): string {
