@@ -1563,13 +1563,26 @@ class Worker:
         elif workspace_handle and workspace_handle.project_path:
             base_path = workspace_handle.project_path
 
+        # ponytail: F64 — NATS default max_payload is 1MB; a sandbox may edit
+        # 500MB files. Reading/embedding those spikes memory and the publish
+        # raises (silently dropped before) — the gateway never re-indexes the
+        # file. Cap at 512KB and send a marker the gateway can distinguish
+        # from empty/deleted content.
+        max_content_bytes = 512 * 1024
         for fc in result.modified_files:
             content = ""
             if base_path and fc.change_type.value != "deleted":
                 full = os.path.join(base_path, fc.file_path)
                 try:
-                    with open(full, encoding="utf-8", errors="replace") as fh:
-                        content = fh.read()
+                    if os.path.getsize(full) > max_content_bytes:
+                        content = "[content omitted: exceeds 512KB — re-index from source]"
+                        logger.warning(
+                            "File %s too large to broadcast; sending marker",
+                            fc.file_path,
+                        )
+                    else:
+                        with open(full, encoding="utf-8", errors="replace") as fh:
+                            content = fh.read()
                 except OSError:
                     logger.debug("Could not read post-edit content for %s", fc.file_path)
             event = FileChangeEvent(
@@ -1590,7 +1603,12 @@ class Worker:
                     data=event.to_dict(),
                 )
             except Exception:
-                logger.debug("Failed to broadcast file change for %s", fc.file_path)
+                # ponytail: F64 — was debug-only: a dropped broadcast meant the
+                # gateway silently never re-indexed this file.
+                logger.warning(
+                    "Failed to broadcast file change for %s",
+                    fc.file_path, exc_info=True,
+                )
 
     async def send_heartbeat(self) -> dict[str, Any]:
         self._last_heartbeat_at = datetime.now(timezone.utc)
