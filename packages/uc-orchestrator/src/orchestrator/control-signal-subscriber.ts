@@ -12,13 +12,16 @@
 
 import { connect, type NatsConnection, type Subscription } from "nats";
 import { GrpcBridge, type TaskSync } from "./grpc-bridge";
+import type { ControlOutcome } from "./orchestrator";
 
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface ControlSignalHandler {
-	pauseTask(taskId: string): Promise<boolean>;
-	resumeTask(taskId: string): Promise<boolean>;
-	cancelTask(taskId: string): Promise<boolean>;
+	// ponytail: F27 — control methods return discriminated outcomes (the
+	// subscriber ignores the payload; the signature mirrors UCOrchestrator).
+	pauseTask(taskId: string): Promise<ControlOutcome>;
+	resumeTask(taskId: string): Promise<ControlOutcome>;
+	cancelTask(taskId: string): Promise<ControlOutcome>;
 	/** Get IDs of currently active (non-terminal) tasks. */
 	getActiveTaskIds(): string[];
 }
