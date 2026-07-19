@@ -1688,7 +1688,7 @@ class TestProjectIdPropagation:
 
         w = Worker(engine=engine)
         st = Subtask(id="s1", description="fix auth", project_id="backend")
-        ctx = w._build_search_context(st)
+        ctx = await w._build_search_context(st)
         assert ctx is not None
         assert "backend" in ctx
         assert "src/auth.py" in ctx
@@ -1716,7 +1716,7 @@ class TestProjectIdPropagation:
         st = Subtask(id="s1", parent_id="t1", description="fix auth", project_id="backend")
 
         # Verify search context is generated
-        ctx = w._build_search_context(st)
+        ctx = await w._build_search_context(st)
         assert ctx is not None
         assert "backend" in ctx
         assert "src/auth.py" in ctx
@@ -1791,48 +1791,48 @@ class TestCrossRepoSearchAndMemorySharing:
         st = Subtask(id="s2", parent_id="t2", description="fix bug")
         assert st.project_id == ""
 
-    def test_search_across_repos_no_engine(self):
+    async def test_search_across_repos_no_engine(self):
         """search_across_repos returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
         w = Worker(engine=None)
-        result = w.search_across_repos("authentication")
+        result = await w.search_across_repos("authentication")
         assert result is None
 
-    def test_build_search_context_no_engine(self):
+    async def test_build_search_context_no_engine(self):
         """_build_search_context returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
         w = Worker(engine=None)
         st = Subtask(id="s1", description="fix auth")
-        result = w._build_search_context(st)
+        result = await w._build_search_context(st)
         assert result is None
 
-    def test_build_search_context_no_description(self):
+    async def test_build_search_context_no_description(self):
         """_build_search_context returns None for empty description."""
         from ultimate_coders.agent.worker import Worker
         w = Worker()
         st = Subtask(id="s1", description="")
-        result = w._build_search_context(st)
+        result = await w._build_search_context(st)
         assert result is None
 
-    def test_read_shared_memory_no_engine(self):
+    async def test_read_shared_memory_no_engine(self):
         """read_shared_memory returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
         w = Worker(engine=None)
-        result = w.read_shared_memory("architecture")
+        result = await w.read_shared_memory("architecture")
         assert result is None
 
-    def test_write_shared_memory_no_engine(self):
+    async def test_write_shared_memory_no_engine(self):
         """write_shared_memory returns None when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
         w = Worker(engine=None)
-        result = w.write_shared_memory("architecture", "Use microservices")
+        result = await w.write_shared_memory("architecture", "Use microservices")
         assert result is None
 
-    def test_delete_shared_memory_no_engine(self):
+    async def test_delete_shared_memory_no_engine(self):
         """delete_shared_memory returns False when engine is unavailable."""
         from ultimate_coders.agent.worker import Worker
         w = Worker(engine=None)
-        assert w.delete_shared_memory("architecture") is False
+        assert await w.delete_shared_memory("architecture") is False
 
     def test_search_query_in_all_repos(self):
         """SearchQuery.in_all_repos() populates repo_ids from engine."""
@@ -1883,7 +1883,7 @@ class TestCrossRepoSearchAndSharedMemory:
         w._search_cache = WorkerLocalCache()
         return w
 
-    def test_build_search_context_caches_on_miss(self):
+    async def test_build_search_context_caches_on_miss(self):
         """First search calls engine.search and caches the result."""
         from unittest.mock import MagicMock
 
@@ -1894,13 +1894,13 @@ class TestCrossRepoSearchAndSharedMemory:
 
         w = self._make_worker(engine=engine)
         st = Subtask(id="s1", description="auth logic", project_id="r1")
-        ctx = w._build_search_context(st)
+        ctx = await w._build_search_context(st)
 
         assert ctx is not None
         assert "Related code" in ctx
         engine.search.assert_called_once()
 
-    def test_build_search_context_hits_cache(self):
+    async def test_build_search_context_hits_cache(self):
         """Second identical search is served from cache — engine not called again."""
         from unittest.mock import MagicMock
 
@@ -1911,12 +1911,12 @@ class TestCrossRepoSearchAndSharedMemory:
 
         w = self._make_worker(engine=engine)
         st = Subtask(id="s1", description="auth logic", project_id="r1")
-        w._build_search_context(st)
-        w._build_search_context(st)  # second call
+        await w._build_search_context(st)
+        await w._build_search_context(st)  # second call
 
         engine.search.assert_called_once()  # cache hit on 2nd
 
-    def test_read_shared_memory_calls_engine(self):
+    async def test_read_shared_memory_calls_engine(self):
         """read_shared_memory routes to engine.read_memory with project scope."""
         from unittest.mock import MagicMock
 
@@ -1924,7 +1924,7 @@ class TestCrossRepoSearchAndSharedMemory:
         engine.read_memory.return_value = MagicMock(content="Use PostgreSQL")
         w = self._make_worker(engine=engine)
 
-        result = w.read_shared_memory("decisions", project_id="proj-1")
+        result = await w.read_shared_memory("decisions", project_id="proj-1")
 
         assert result is not None
         assert result.content == "Use PostgreSQL"
@@ -1933,7 +1933,7 @@ class TestCrossRepoSearchAndSharedMemory:
         assert kwargs["key_scope"] == "project"
         assert kwargs["project_id"] == "proj-1"
 
-    def test_write_shared_memory_broadcasts_via_nats(self):
+    async def test_write_shared_memory_broadcasts_via_nats(self):
         """write_shared_memory publishes uc.memory.changed when a publisher is set."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
@@ -1949,12 +1949,12 @@ class TestCrossRepoSearchAndSharedMemory:
 
         # Run inside an event loop so the fire-and-forget task can schedule.
         async def _drive():
-            result = w.write_shared_memory("k", "v", project_id="proj-1")
+            result = await w.write_shared_memory("k", "v", project_id="proj-1")
             # Yield once so the scheduled create_task coroutine runs.
             await asyncio.sleep(0)
             return result
 
-        result = asyncio.run(_drive())
+        result = await _drive()
 
         assert result is not None
         engine.write_memory.assert_called_once()
@@ -1962,7 +1962,7 @@ class TestCrossRepoSearchAndSharedMemory:
             project_id="proj-1", key="k", action="write", source_worker="worker-A",
         )
 
-    def test_broadcast_task_kept_alive_until_complete(self):
+    async def test_broadcast_task_kept_alive_until_complete(self):
         """The fire-and-forget broadcast task is held in _bg_tasks (asyncio
         only weakly refs tasks — an unreferenced create_task can be GC'd before
         it runs) and removed once it completes."""
@@ -1988,7 +1988,7 @@ class TestCrossRepoSearchAndSharedMemory:
 
             publisher.publish_memory_changed = slow_publish
 
-            w.write_shared_memory("k", "v", project_id="proj-1")
+            await w.write_shared_memory("k", "v", project_id="proj-1")
             await started.wait()  # task has started and is now suspended
             # While the broadcast is in flight, it must be referenced.
             assert len(w._bg_tasks) == 1, "broadcast task not held in _bg_tasks"
@@ -2000,11 +2000,11 @@ class TestCrossRepoSearchAndSharedMemory:
                     break
             return len(w._bg_tasks)
 
-        remaining = asyncio.run(_drive())
+        remaining = await _drive()
 
         assert remaining == 0, "broadcast task not discarded after completion"
 
-    def test_write_shared_memory_failure_skips_broadcast(self):
+    async def test_write_shared_memory_failure_skips_broadcast(self):
         """If engine.write_memory raises, returns None and no broadcast fires."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
@@ -2018,17 +2018,17 @@ class TestCrossRepoSearchAndSharedMemory:
         w.worker_id = "worker-A"
 
         async def _drive():
-            result = w.write_shared_memory("k", "v", project_id="proj-1")
+            result = await w.write_shared_memory("k", "v", project_id="proj-1")
             await asyncio.sleep(0)
             return result
 
-        result = asyncio.run(_drive())
+        result = await _drive()
 
         assert result is None
         engine.write_memory.assert_called_once()
         publisher.publish_memory_changed.assert_not_awaited()
 
-    def test_delete_shared_memory_broadcasts_via_nats(self):
+    async def test_delete_shared_memory_broadcasts_via_nats(self):
         """delete_shared_memory publishes uc.memory.changed with action='delete'."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
@@ -2041,11 +2041,11 @@ class TestCrossRepoSearchAndSharedMemory:
         w.worker_id = "worker-A"
 
         async def _drive():
-            ok = w.delete_shared_memory("k", project_id="proj-1")
+            ok = await w.delete_shared_memory("k", project_id="proj-1")
             await asyncio.sleep(0)  # let the fire-and-forget task run
             return ok
 
-        ok = asyncio.run(_drive())
+        ok = await _drive()
 
         assert ok is True
         engine.delete_memory.assert_called_once_with(
@@ -2055,7 +2055,7 @@ class TestCrossRepoSearchAndSharedMemory:
             project_id="proj-1", key="k", action="delete", source_worker="worker-A",
         )
 
-    def test_delete_shared_memory_failure_skips_broadcast(self):
+    async def test_delete_shared_memory_failure_skips_broadcast(self):
         """If engine.delete_memory raises, no broadcast fires and returns False."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
@@ -2069,11 +2069,11 @@ class TestCrossRepoSearchAndSharedMemory:
         w.worker_id = "worker-A"
 
         async def _drive():
-            ok = w.delete_shared_memory("k", project_id="proj-1")
+            ok = await w.delete_shared_memory("k", project_id="proj-1")
             await asyncio.sleep(0)
             return ok
 
-        ok = asyncio.run(_drive())
+        ok = await _drive()
 
         assert ok is False
         engine.delete_memory.assert_called_once()
