@@ -1549,6 +1549,26 @@ class NatsWorker:
             project_id=data.get("project_id", ""),
         )
 
+        # ponytail: F54 — dispatch the execution to a background task and
+        # return. nats-py awaits this callback INLINE on the subscription's
+        # single reader task, so awaiting execute_subtask here (up to 600s)
+        # serialized ALL subtasks — max_capacity was dead code and queued
+        # messages past pending_msgs_limit were silently dropped (lost
+        # subtasks, tasks stuck forever). With the callback thin, the reader
+        # drains instantly and the semaphore inside _execute_and_report does
+        # the real concurrency limiting. Bonus: bg tasks are tracked in
+        # _bg_tasks, so stop()'s cancellation finally reaches executions.
+        self._spawn_bg(self._execute_and_report(subtask))
+
+    async def _execute_and_report(self, subtask: Subtask) -> None:
+        """Run one subtask (semaphore-bounded) and publish its result.
+
+        ponytail: F54 — moved out of the NATS callback so executions run
+        concurrently up to max_capacity instead of strictly serially.
+        """
+        assert self._worker is not None  # callback guards this before spawning
+        task_id = subtask.parent_id
+        subtask_id = subtask.id
         try:
             # Bound concurrent executions to max_capacity so a flood of
             # uc.subtask.execute messages doesn't spawn that many agent

@@ -285,3 +285,72 @@ async def test_heartbeat_success_resets_failure_counter(monkeypatch):
     await _run_one_heartbeat_tick(nw)
     assert nw._consecutive_heartbeat_failures == 0
     assert nw._grpc_reg_engine is not None
+
+
+# ── F54: NATS callback must not await execution ───────────────────
+
+
+async def test_handle_subtask_execute_dispatches_to_background():
+    """HIGH regression: nats-py awaits the subscription callback inline on
+    its single reader task, so awaiting execute_subtask in the callback
+    serialized all subtasks (max_capacity dead) and queued messages past
+    pending_msgs_limit were silently dropped. The callback must hand the
+    execution to a background task and return immediately.
+    """
+    import asyncio
+
+    nw = _make_worker()
+    nw._running = True
+    nw._dispatch_event = asyncio.Event()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_execute(subtask):
+        started.set()
+        await release.wait()
+        result = MagicMock()
+        result.success = True
+        result.summary = "done"
+        result.modified_files = []
+        return result
+
+    worker = MagicMock()
+    worker.worker_id = "w-1"
+    worker.capabilities = []
+    worker.execute_subtask = slow_execute
+    nw._worker = worker
+    nw._publisher = MagicMock()
+    nw._publisher.publish_event = AsyncMock()
+    nw._publisher.publish_update = AsyncMock()
+
+    msg = MagicMock()
+    msg.data = json.dumps({
+        "task_id": "t-1",
+        "subtask_id": "st-1",
+        "description": "do the thing",
+        "timeout_seconds": 600,
+        "dispatch_mode": "prefer_remote",
+        "steps": [],
+    }).encode()
+
+    # Callback must return while execution is still blocked on `release`.
+    # (wait_for succeeding at all proves the callback didn't await the
+    # execution; the poll gives the spawned task its first loop tick.)
+    await asyncio.wait_for(nw._handle_subtask_execute(msg), timeout=2)
+    for _ in range(50):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert started.is_set(), "execution never started"
+    assert not release.is_set(), "callback waited for execution to finish"
+
+    # Let the background task finish and publish the result.
+    release.set()
+    for _ in range(50):
+        if nw._publisher.publish_event.await_count >= 1:
+            break
+        await asyncio.sleep(0.02)
+    assert nw._publisher.publish_event.await_count >= 1
+    published_type = nw._publisher.publish_event.await_args.args[0]
+    assert published_type == "subtask_completed"
