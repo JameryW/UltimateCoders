@@ -198,6 +198,25 @@ class Orchestrator:
         for task in self.tasks.values():
             for st in task.subtasks:
                 if st.id == result.subtask_id:
+                    # ponytail: F55 — idempotent. A result can legitimately
+                    # arrive twice: default-mode workers consume their own
+                    # published uc.task.event loopback (audit #3), so the
+                    # _run_one direct call and the loopback both land here.
+                    # Double-processing used to decrement worker load twice
+                    # (stealing capacity accounting from concurrent subtasks)
+                    # and re-fire _schedule_arbitration — two concurrent
+                    # MergeArbiter runs merging into main. First result wins;
+                    # retries are unaffected because the subtask is reset to
+                    # PENDING before re-execution (status leaves terminal).
+                    if st.status in (
+                        SubtaskStatus.COMPLETED, SubtaskStatus.FAILED,
+                    ):
+                        logger.debug(
+                            "Subtask %s result already applied (%s); "
+                            "ignoring duplicate",
+                            st.id[:8], st.status.value,
+                        )
+                        return
                     st.status = SubtaskStatus.COMPLETED if result.success else SubtaskStatus.FAILED
                     st.result = result
                     # Update worker load
