@@ -185,3 +185,103 @@ def test_dispatch_remote_serializes_steps_in_nats_payload():
     assert payload["steps"][0]["abort_on_failure"] is True
     assert payload["steps"][1]["agent"] == "codex"
     assert payload["steps"][1]["abort_on_failure"] is False
+
+
+# ── F52: worker liveness refresh in the heartbeat tick ────────────
+
+
+async def test_heartbeat_loop_refreshes_worker_liveness():
+    """CRITICAL regression: Worker._last_heartbeat_at was only refreshed
+    inside Worker.send_heartbeat() — which had ZERO callers — so the stall
+    detector re-dispatched every subtask running >90s while still executing
+    (duplicate worktrees + duplicate result events). The heartbeat tick must
+    refresh it on every pass.
+    """
+    import asyncio
+
+    nw = _make_worker()
+    nw._running = True
+    worker = MagicMock()
+    worker.send_heartbeat = AsyncMock(return_value={})
+    nw._worker = worker
+    nw._publisher = None  # skip the NATS block
+    nw._orchestrator = None
+    nw._grpc_reg_engine = None
+
+    task = asyncio.create_task(nw._heartbeat_loop())
+    await asyncio.sleep(0.05)  # tick body runs before the 30s sleep
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert worker.send_heartbeat.await_count >= 1
+
+
+async def test_worker_send_heartbeat_refreshes_timestamp():
+    """The liveness stamp must actually advance."""
+    import asyncio
+
+    from ultimate_coders.agent.worker import Worker
+
+    w = Worker(worker_id="test-w")
+    original = w._last_heartbeat_at
+    await asyncio.sleep(0.01)
+    info = await w.send_heartbeat()
+    assert w._last_heartbeat_at > original
+    assert info["worker_id"] == "test-w"
+
+
+# ── F53: consecutive heartbeat failures force re-registration ─────
+
+
+async def _run_one_heartbeat_tick(nw: _NatsWorker) -> None:
+    import asyncio
+
+    task = asyncio.create_task(nw._heartbeat_loop())
+    await asyncio.sleep(0.05)  # one tick completes; loop then sleeps 30s
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+def _make_heartbeat_worker(hb_ok: bool) -> _NatsWorker:
+    nw = _make_worker()
+    nw._running = True
+    worker = MagicMock()
+    worker.send_heartbeat = AsyncMock(return_value={})
+    worker.worker_id = "w-1"
+    worker.get_info.return_value = MagicMock(current_load=0)
+    nw._worker = worker
+    nw._publisher = MagicMock()
+    nw._publisher.publish_heartbeat = AsyncMock()
+    nw._orchestrator = None
+    nw._grpc_endpoint = ""  # no re-registration endpoint in this test
+    engine = MagicMock()
+    engine.worker_heartbeat_async = AsyncMock(return_value=hb_ok)
+    nw._grpc_reg_engine = engine
+    return nw
+
+
+async def test_heartbeat_failure_threshold_forces_reregistration(monkeypatch):
+    """After 3 consecutive gateway heartbeat failures the registration engine
+    is cleared, so the next tick takes the existing re-registration path —
+    instead of silently staying 'registered' while the gateway dropped us.
+    """
+    monkeypatch.delenv("UC_GRPC_ENDPOINT", raising=False)
+    nw = _make_heartbeat_worker(hb_ok=False)
+    nw._consecutive_heartbeat_failures = 2  # next failure hits the threshold
+    await _run_one_heartbeat_tick(nw)
+    assert nw._consecutive_heartbeat_failures == 3
+    assert nw._grpc_reg_engine is None
+
+
+async def test_heartbeat_success_resets_failure_counter(monkeypatch):
+    monkeypatch.delenv("UC_GRPC_ENDPOINT", raising=False)
+    nw = _make_heartbeat_worker(hb_ok=True)
+    nw._consecutive_heartbeat_failures = 2
+    await _run_one_heartbeat_tick(nw)
+    assert nw._consecutive_heartbeat_failures == 0
+    assert nw._grpc_reg_engine is not None

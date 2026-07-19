@@ -2692,6 +2692,9 @@ class TestNatsWorkerGatewayRegistrationRetry:
             worker.get_info = MagicMock(return_value=MagicMock(
                 id="w-1", capabilities=[], current_load=0, max_capacity=3,
             ))
+            # F52: the heartbeat tick now awaits Worker.send_heartbeat()
+            # (liveness refresh) — must be awaitable on the mock.
+            worker.send_heartbeat = AsyncMock(return_value={})
             nw._worker = worker
 
             # _grpc_reg_engine is None (registration failed at startup).

@@ -351,6 +351,9 @@ class NatsWorker:
         # Capacity semaphore — lazy-constructed in _init_components (Semaphore
         # binds a loop on Py3.9). Caps concurrent subtask executions.
         self._exec_semaphore: asyncio.Semaphore | None = None
+        # ponytail: F53 — consecutive gRPC heartbeat failures; at the threshold
+        # the worker forces gateway re-registration (see _heartbeat_loop).
+        self._consecutive_heartbeat_failures: int = 0
         # JetStream Event Sourcing: last acked sequence for replay
         self._js_last_seq: int = 0
 
@@ -1323,6 +1326,18 @@ class NatsWorker:
         """Publish heartbeat to ``uc.heartbeat`` every 30 seconds."""
         while self._running:
             try:
+                # ponytail: F52 — refresh the local Worker's OWN liveness stamp
+                # at the top of every tick, before any network publish. The stall
+                # detector (_stale_worker_cleanup_loop) reads
+                # Worker._last_heartbeat_at, which was previously only refreshed
+                # inside Worker.send_heartbeat() — a method with zero callers —
+                # so every legitimate subtask execution longer than 90s was
+                # declared stalled and re-dispatched WHILE STILL RUNNING
+                # (duplicate worktrees, duplicate result events). "The event
+                # loop made progress" is the real liveness signal; a failed
+                # NATS publish must not count as the worker being dead.
+                if self._worker is not None:
+                    await self._worker.send_heartbeat()
                 if self._publisher is not None:
                     w_info = None
                     pending_count = 0
@@ -1360,9 +1375,25 @@ class NatsWorker:
                     # Send gRPC WorkerService heartbeat if registered
                     if self._grpc_reg_engine is not None and self._worker is not None:
                         load = self._worker.get_info().current_load if self._worker else 0
-                        await self._grpc_reg_engine.worker_heartbeat_async(
+                        hb_ok = await self._grpc_reg_engine.worker_heartbeat_async(
                             self._worker.worker_id, load
                         )
+                        # ponytail: F53 — worker_heartbeat_async swallows errors
+                        # (debug-logged inside the engine) and returns False. The
+                        # old code ignored the return: if the gateway dropped us,
+                        # we'd keep running locally while dispatch stopped matching
+                        # — with nothing above DEBUG to say so. After 3 consecutive
+                        # failures, force re-registration via the retry path above.
+                        if hb_ok:
+                            self._consecutive_heartbeat_failures = 0
+                        else:
+                            self._consecutive_heartbeat_failures += 1
+                            if self._consecutive_heartbeat_failures == 3:
+                                logger.warning(
+                                    "Gateway heartbeat failed 3× consecutively; "
+                                    "forcing re-registration"
+                                )
+                                self._grpc_reg_engine = None
                     logger.debug(
                         "Heartbeat sent (consumer_id=%s)", self._consumer_id
                     )
