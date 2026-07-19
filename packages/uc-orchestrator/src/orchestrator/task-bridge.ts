@@ -21,6 +21,32 @@ export function isSpawnDisabled(): boolean {
 	return Boolean(process.env.UC_NO_SPAWN);
 }
 
+// ponytail: F40 — tool-output wording for local orchestrator failures when
+// gRPC is down (mirrors extension.ts's controlFailureMessage for slash
+// commands). Without this, a down server read as "not found"/"not in
+// progress" and LLMs concluded the task didn't exist — re-submitting work.
+function localFailureMessage(verb: string, tid: string, r: { reason: string; candidates?: string[] }): string {
+	const list = (r.candidates ?? []).join(", ") || "(none)";
+	switch (r.reason) {
+		case "not_found":
+			return `${verb} failed: gRPC server unavailable, and no local task matches "${tid}". Recent local tasks: ${list}`;
+		case "ambiguous":
+			return `${verb} failed: "${tid}" matches multiple local tasks: ${list}`;
+		case "bad_state":
+			return `${verb} failed: local task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
+		default:
+			return `${verb} failed (${r.reason})`;
+	}
+}
+
+// ponytail: F40 — local TaskState rendered in the bridge-status shape, with
+// a banner saying the server view is missing (no steps tag: TaskState
+// subtasks carry no steps).
+function renderLocalTask(t: { id: string; status: string; subtasks: Array<{ id: string; status: string; description: string }> }): string {
+	const lines = t.subtasks.map((st) => `  [${st.status}] ${st.id.slice(0, 8)}: ${st.description.slice(0, 60)}`);
+	return `Task ${t.id}\nStatus: ${t.status}\nSubtasks:\n${lines.join("\n") || "  (none)"}\n(local view — gRPC server unavailable)`;
+}
+
 export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestrator?: UCOrchestrator): void {
 	const taskSchema = pi.zod.object({
 		action: pi.zod.enum(["submit", "cancel", "pause", "resume", "status"]).describe("Task action"),
@@ -117,6 +143,26 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								}],
 							};
 						}
+						// ponytail: F40 — down server must read as "unavailable", not
+						// "not found"; tasks the local orchestrator owns still cancel.
+						if (!bridge.isConnected()) {
+							if (orchestrator) {
+								const r = await orchestrator.cancelTask(p.task_id);
+								return {
+									content: [{
+										type: "text" as const,
+										text: r.ok
+											? `Cancelled task ${r.taskId} (local — gRPC server unavailable)`
+											: localFailureMessage("Cancel", p.task_id, r),
+									}],
+									...(r.ok ? {} : { isError: true }),
+								};
+							}
+							return {
+								content: [{ type: "text" as const, text: "Cancel failed: gRPC server unavailable" }],
+								isError: true,
+							};
+						}
 						// Whole-task cancel stays server-side (remote tasks aren't in
 						// the local orchestrator). Don't pass subtask_id — the server
 						// ignores it; claiming subtask success here would lie.
@@ -137,6 +183,24 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								isError: true,
 							};
 						}
+						// ponytail: F40 — bridge collapses transport failure to false,
+						// which used to read as "not in progress" when the server was
+						// down. Check connectivity; fall back to the local orchestrator.
+						if (!bridge.isConnected()) {
+							if (!orchestrator) {
+								return { content: [{ type: "text" as const, text: "Pause failed: gRPC server unavailable" }], isError: true };
+							}
+							const r = await orchestrator.pauseTask(p.task_id);
+							return {
+								content: [{
+									type: "text" as const,
+									text: r.ok
+										? `Paused task ${r.taskId} (local — gRPC server unavailable)`
+										: localFailureMessage("Pause", p.task_id, r),
+								}],
+								...(r.ok ? {} : { isError: true }),
+							};
+						}
 						const ok = await bridge.pauseTask(p.task_id);
 						return {
 							content: [{
@@ -152,6 +216,22 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								isError: true,
 							};
 						}
+						// ponytail: F40 — same connectivity guard as pause.
+						if (!bridge.isConnected()) {
+							if (!orchestrator) {
+								return { content: [{ type: "text" as const, text: "Resume failed: gRPC server unavailable" }], isError: true };
+							}
+							const r = await orchestrator.resumeTask(p.task_id);
+							return {
+								content: [{
+									type: "text" as const,
+									text: r.ok
+										? `Resumed task ${r.taskId} (local — gRPC server unavailable)`
+										: localFailureMessage("Resume", p.task_id, r),
+								}],
+								...(r.ok ? {} : { isError: true }),
+							};
+						}
 						const ok = await bridge.resumeTask(p.task_id);
 						return {
 							content: [{
@@ -162,6 +242,24 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 					}
 					case "status": {
 						if (p.task_id) {
+							// ponytail: F40 — with the server down, "not found" is
+							// wrong: consult the local orchestrator, and only report
+							// unavailability if the task isn't local either.
+							if (!bridge.isConnected()) {
+								if (orchestrator) {
+									const resolved = orchestrator.resolveTask(p.task_id);
+									if (!("ok" in resolved)) {
+										return { content: [{ type: "text" as const, text: renderLocalTask(resolved) }] };
+									}
+								}
+								return {
+									content: [{
+										type: "text" as const,
+										text: `Status unavailable: gRPC server is down${orchestrator ? ` and no local task matches "${p.task_id}"` : ""}`,
+									}],
+									isError: true,
+								};
+							}
 							const task = await bridge.getTask(p.task_id);
 							if (!task) {
 								return {
@@ -184,6 +282,20 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 							};
 						}
 						// List all tasks
+						// ponytail: F40 — "(no tasks)" on a down server made LLMs
+						// think nothing existed. Show the local view with a banner.
+						if (!bridge.isConnected() && orchestrator) {
+							const local = orchestrator.getAllTaskStates();
+							const localLines = local
+								.slice(0, 20)
+								.map((t) => `[${t.status}] ${t.id.slice(0, 8)}: ${t.description.slice(0, 60)}`);
+							return {
+								content: [{
+									type: "text" as const,
+									text: `${localLines.join("\n") || "(no local tasks)"}\n(local view — gRPC server unavailable; remote tasks not shown)`,
+								}],
+							};
+						}
 						const tasks = await bridge.listTasks();
 						if (tasks.length === 0) {
 							return { content: [{ type: "text" as const, text: "(no tasks)" }], useless: true };

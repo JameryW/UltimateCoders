@@ -153,7 +153,9 @@ describe("uc_task cancel routing", () => {
 		const { registerTaskTools } = await import("./task-bridge");
 		const bridgeCancel = opts.bridgeCancel ?? mock(() => Promise.resolve(true));
 		const orchCancel = opts.orchCancel ?? mock(() => Promise.resolve({ ok: true, taskId: "t-1" }));
-		const bridge = { cancelTask: bridgeCancel } as unknown as import("./grpc-bridge").GrpcBridge;
+		// ponytail: isConnected true — these cases cover the server-up paths
+		// (F40's down-server branch is tested in "uc_task verbs with gRPC down").
+		const bridge = { cancelTask: bridgeCancel, isConnected: () => true } as unknown as import("./grpc-bridge").GrpcBridge;
 		const orch = { cancelTask: orchCancel } as unknown as import("./orchestrator").UCOrchestrator;
 		registerTaskTools(makeMockPi(), bridge, orch);
 		expect(captured).not.toBeNull();
@@ -184,5 +186,101 @@ describe("uc_task cancel routing", () => {
 		expect(bridgeCancel).toHaveBeenCalled();
 		expect(orchCancel).not.toHaveBeenCalled();
 		expect(result.content[0].text).toContain("Cancelled task t-1");
+	});
+});
+
+// ponytail: F40 — a down gRPC server collapsed to bridge fallbacks (false/
+// null/[]), so the tools reported "not found"/"not in progress"/"(no tasks)"
+// and LLMs concluded tasks didn't exist. Verbs now check isConnected() and
+// fall back to the local orchestrator with an explicit "unavailable" wording.
+describe("uc_task verbs with gRPC down", () => {
+	let captured: { name: string; parameters: unknown; execute: (...args: unknown[]) => Promise<unknown> } | null = null;
+
+	function makeMockPi() {
+		captured = null;
+		const chainable = (): unknown => {
+			const fn = () => chainable();
+			return new Proxy(fn, {
+				get: (_t, prop) => {
+					if (typeof prop === "string") return () => chainable();
+					return undefined;
+				},
+				apply: () => chainable(),
+			});
+		};
+		return {
+			zod: { object: () => chainable(), enum: () => chainable(), string: () => chainable() },
+			logger: { info: () => {}, warn: () => {}, error: () => {} },
+			registerTool: mock((def: { name: string; parameters: unknown; execute: (...args: unknown[]) => Promise<unknown> }) => {
+				captured = def;
+			}),
+			registerCommand: mock(() => {}),
+		} as unknown as import("@oh-my-pi/pi-coding-agent").ExtensionAPI;
+	}
+
+	async function run(params: Record<string, unknown>, opts: {
+		connected: boolean;
+		bridgePause?: ReturnType<typeof mock>;
+		orchPause?: ReturnType<typeof mock>;
+		orchList?: () => unknown[];
+		withOrchestrator?: boolean;
+	}) {
+		const { registerTaskTools } = await import("./task-bridge");
+		const bridgePause = opts.bridgePause ?? mock(() => Promise.resolve(true));
+		const bridge = {
+			isConnected: () => opts.connected,
+			pauseTask: bridgePause,
+		} as unknown as import("./grpc-bridge").GrpcBridge;
+		const orch = opts.withOrchestrator === false ? undefined : ({
+			pauseTask: opts.orchPause ?? mock(() => Promise.resolve({ ok: true as const, taskId: "t-1" })),
+			getAllTaskStates: opts.orchList ?? (() => []),
+		} as unknown as import("./orchestrator").UCOrchestrator);
+		registerTaskTools(makeMockPi(), bridge, orch);
+		expect(captured).not.toBeNull();
+		const result = await captured!.execute("id", params, undefined, undefined, undefined) as { content: { text: string }[]; isError?: boolean };
+		return { result, bridgePause };
+	}
+
+	it("pause with server down routes to the local orchestrator", async () => {
+		const { result, bridgePause } = await run(
+			{ action: "pause", task_id: "t-1" }, { connected: false });
+		expect(bridgePause).not.toHaveBeenCalled();
+		expect(result.content[0].text).toContain("local");
+		expect(result.content[0].text).toContain("unavailable");
+	});
+
+	it("pause with server down and no local match says unavailable, not 'not in progress'", async () => {
+		const orchPause = mock(() => Promise.resolve({ ok: false, reason: "not_found", candidates: ["t-9"] }));
+		const { result } = await run(
+			{ action: "pause", task_id: "zz" }, { connected: false, orchPause });
+		expect(result.content[0].text).toContain("unavailable");
+		expect(result.content[0].text).not.toContain("not in progress");
+		expect(result.content[0].text).toContain("t-9");
+	});
+
+	it("pause with no orchestrator reports plain unavailability", async () => {
+		const { result } = await run(
+			{ action: "pause", task_id: "t-1" }, { connected: false, withOrchestrator: false });
+		expect(result.content[0].text).toBe("Pause failed: gRPC server unavailable");
+	});
+
+	it("status list with server down shows the local view with a banner", async () => {
+		const { result } = await run(
+			{ action: "status" },
+			{
+				connected: false,
+				orchList: () => [{ id: "t-1", status: "in_progress", description: "doing things", subtasks: [] }],
+			});
+		expect(result.content[0].text).toContain("[in_progress] t-1");
+		expect(result.content[0].text).toContain("local view");
+	});
+
+	it("pause with server up stays on the bridge (regression)", async () => {
+		const orchPause = mock(() => Promise.resolve({ ok: true as const, taskId: "t-1" }));
+		const { result, bridgePause } = await run(
+			{ action: "pause", task_id: "t-1" }, { connected: true, orchPause });
+		expect(bridgePause).toHaveBeenCalled();
+		expect(orchPause).not.toHaveBeenCalled();
+		expect(result.content[0].text).toBe("Paused task t-1");
 	});
 });
