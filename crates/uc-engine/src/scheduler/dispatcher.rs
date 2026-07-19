@@ -187,10 +187,11 @@ impl OrchestratorDispatcher {
                     EngineError::InternalError(format!("Failed to serialize subtask: {e}"))
                 })?;
                 let c = client.clone();
-                let _ = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(async { c.publish(subject, payload.into()).await })
-                });
+                // dispatch() already runs inside block_in_place (see L78), so we must
+                // NOT nest another block_in_place here — that panics. block_on alone is
+                // legal within a block_in_place context.
+                let _ = tokio::runtime::Handle::current()
+                    .block_on(async { c.publish(subject, payload.into()).await });
             }
         }
 
