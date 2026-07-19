@@ -81,6 +81,12 @@ export function classifyError(errorStr: string): ClassifiedError {
 	if (colonIdx > 0 && colonIdx < errorStr.length - 2) {
 		rootCause = errorStr.slice(colonIdx + 2);
 	}
+	// ponytail: F18 — flatten to one line. All consumers (progress-widget,
+	// status-formatter, task-result-renderer) push the result as exactly one
+	// line; a stderrTail/stack-trace root cause with embedded newlines would
+	// inject extra untruncated rows, breaking widget structure and bypassing
+	// the width cap.
+	rootCause = rootCause.replace(/\s*\n+\s*/g, " ").trim();
 
 	return { kind, rootCause, retryCount };
 }

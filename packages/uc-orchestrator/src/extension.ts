@@ -64,7 +64,10 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── Register message renderer for task results ──────────────
-	pi.registerMessageRenderer("uc-task-result", createTaskResultRenderer());
+	// ponytail: F15 — the renderer resolves the live task snapshot via getter
+	// (message details carry only taskId/status/subtaskCount), so expanding a
+	// task-result message shows its subtask rows.
+	pi.registerMessageRenderer("uc-task-result", createTaskResultRenderer((id) => orchestrator.getTaskState(id)));
 
 	// ── Wire orchestrator events → UI updates ───────────────────
 	pi.on("session_start", async (_event, ctx) => {

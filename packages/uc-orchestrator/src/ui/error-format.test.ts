@@ -70,6 +70,21 @@ describe("classifyError", () => {
 		const result = classifyError("LLM 瞬时错误（已重试 1 次）: Error: 503 busy");
 		expect(result.rootCause).toBe("503 busy");
 	});
+
+	// ponytail: F18 — all consumers push the root cause as exactly one line; a
+	// stderrTail/stack-trace error with embedded newlines would inject extra
+	// untruncated rows, breaking widget structure and bypassing width caps.
+	it("flattens multiline root cause to a single line", () => {
+		const result = classifyError("Execution error: first line\n  second line\n\nthird");
+		expect(result.rootCause).not.toContain("\n");
+		expect(result.rootCause).toBe("first line second line third");
+	});
+
+	it("formatErrorForDisplay output is single-line for multiline errors", () => {
+		const identity = (_color: ThemeColor, text: string) => text;
+		const output = formatErrorForDisplay("boom: line1\nline2\nline3", 80, identity);
+		expect(output).not.toContain("\n");
+	});
 });
 
 describe("formatErrorForDisplay", () => {
