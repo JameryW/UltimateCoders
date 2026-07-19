@@ -49,6 +49,13 @@ export interface PersistedTask {
 	}>;
 	createdAt: number;
 	completedAt?: number;
+	/**
+	 * Write timestamp stamped by save()/saveCheckpoint() (F46). restore()
+	 * prefers the NEWER of task file vs checkpoint — checkpoints are only
+	 * written at wave boundaries, so an unconditional checkpoint preference
+	 * rolled mid-wave progress back after a crash. Absent on legacy files.
+	 */
+	savedAt?: number;
 }
 
 // ── TaskStore ──────────────────────────────────────────────────────
@@ -73,7 +80,10 @@ export class TaskStore {
 		// killed by its parent), which loadAll then can't parse. tmp + rename is
 		// atomic on POSIX, so readers see either the old or the new file.
 		const filePath = path.join(this.dir, `${task.id}.json`);
-		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(task, null, 2), "utf-8");
+		// ponytail: F46 — stamp savedAt on the WRITTEN copy (don't mutate the
+		// caller's in-memory object).
+		const stamped = { ...task, savedAt: Date.now() };
+		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(stamped, null, 2), "utf-8");
 		await fs.rename(`${filePath}.tmp`, filePath);
 	}
 
@@ -138,8 +148,10 @@ export class TaskStore {
 	/** Save a wave-boundary checkpoint snapshot (latest-wins). */
 	async saveCheckpoint(task: PersistedTask): Promise<void> {
 		// ponytail: F42 — atomic write, same rationale as save().
+		// F46 — savedAt stamp so restore() can pick the newer artifact.
 		const filePath = path.join(this.checkpointDir, `${task.id}.snap.json`);
-		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(task, null, 2), "utf-8");
+		const stamped = { ...task, savedAt: Date.now() };
+		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(stamped, null, 2), "utf-8");
 		await fs.rename(`${filePath}.tmp`, filePath);
 	}
 

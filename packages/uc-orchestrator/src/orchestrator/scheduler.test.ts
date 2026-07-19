@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef } from "./scheduler";
+import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, normalizeFileIntent, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -629,5 +629,43 @@ describe("CircuitBreaker", () => {
 		cb.reset();
 		expect(cb.getState()).toBe("closed");
 		expect(cb.canExecute()).toBe(true);
+	});
+});
+
+// ponytail: F47 — decomposer files arrive unnormalized; raw string equality
+// missed same-file variants, scheduling concurrent writers on one file.
+describe("file intent normalization (F47)", () => {
+	it("normalizes ./ prefixes and redundant separators", () => {
+		expect(normalizeFileIntent("./src/a.ts")).toBe(normalizeFileIntent("src/a.ts"));
+		expect(normalizeFileIntent("src//a.ts")).toBe(normalizeFileIntent("src/a.ts"));
+		expect(normalizeFileIntent("src/b/../a.ts")).toBe(normalizeFileIntent("src/a.ts"));
+	});
+
+	it("case-folds on case-insensitive platforms only", () => {
+		if (process.platform === "darwin" || process.platform === "win32") {
+			expect(normalizeFileIntent("src/A.ts")).toBe(normalizeFileIntent("src/a.ts"));
+		} else {
+			expect(normalizeFileIntent("src/A.ts")).not.toBe(normalizeFileIntent("src/a.ts"));
+		}
+	});
+
+	it("splitWavesByFileOverlap treats ./-prefixed and plain paths as the same file", () => {
+		const waves = buildDAG([
+			st("a", "a", [], ["./src/shared.ts"]),
+			st("b", "b", [], ["src/shared.ts"]),
+			st("c", "c", [], ["other.ts"]),
+		]);
+		const split = splitWavesByFileOverlap(waves);
+		expect(split.length).toBe(2);
+		const sizes = split.map((w) => w.length).sort();
+		expect(sizes).toEqual([1, 2]);
+	});
+
+	it("FileIntentTracker matches case variants on darwin/win32", () => {
+		if (process.platform !== "darwin" && process.platform !== "win32") return;
+		const tracker = new FileIntentTracker();
+		tracker.declare("s1", ["src/Config.ts"]);
+		expect(tracker.isConflicting(["src/config.ts"]).has("s1")).toBe(true);
+		expect(tracker.isConflicting(["./src/CONFIG.ts"]).has("s1")).toBe(true);
 	});
 });

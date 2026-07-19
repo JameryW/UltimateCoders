@@ -299,9 +299,20 @@ export class UCOrchestrator {
 		await this.store.init();
 		const recoverable = await this.store.loadRecoverable();
 		for (const p of recoverable) {
-			// Prefer checkpoint data (has accurate resumeFromWave)
 			const cp = await this.store.loadCheckpoint(p.id);
-			const source = cp ?? p;
+			// ponytail: F46 — prefer the NEWER artifact, not blindly the
+			// checkpoint. Checkpoints are only written at wave boundaries while
+			// the task file is persisted on every state transition; after a
+			// mid-wave crash the old unconditional checkpoint preference rolled
+			// completed subtasks back to the previous boundary, re-running them
+			// on files they had already edited. Legacy checkpoints without
+			// savedAt keep the historical preference (treated as newest).
+			let source = p;
+			if (cp) {
+				const taskTs = p.savedAt ?? 0;
+				const cpTs = cp.savedAt ?? Infinity;
+				if (cpTs >= taskTs) source = cp;
+			}
 			const task = this.fromPersisted(source);
 			this.tasks.set(task.id, task);
 			// Update counter to avoid ID collision
