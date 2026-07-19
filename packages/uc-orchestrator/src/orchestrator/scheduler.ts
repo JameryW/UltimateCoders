@@ -8,6 +8,8 @@
  * upgrade to incremental if tasks get huge.
  */
 
+import * as path from "node:path";
+
 // ── Types ──────────────────────────────────────────────────────────
 
 /** Dispatch mode for a subtask. "auto" resolves to "prefer_remote" or
@@ -245,10 +247,24 @@ export function splitWavesByFileOverlap(waves: DAGWave[]): DAGWave[] {
 	return result;
 }
 
+// ponytail: F47 — decomposer `files` arrays are LLM output with no
+// normalization guarantee: "./src/a.ts" vs "src/a.ts", "src/a.ts" vs
+// "src/A.ts" (darwin/win32 filesystems are case-insensitive), relative vs
+// absolute. Raw string equality judged all of those disjoint, scheduling two
+// subtasks that write the SAME file into the same wave (last-write-wins
+// corruption). Normalize before comparing. Ceiling: no workspace-root
+// relativization (needs root context at every call site); normalize + case
+// fold covers the variants LLMs actually emit.
+export function normalizeFileIntent(file: string): string {
+	let n = path.normalize(file.trim());
+	if (process.platform === "darwin" || process.platform === "win32") n = n.toLowerCase();
+	return n;
+}
+
 function hasFileOverlap(a: string[], b: string[]): boolean {
 	if (a.length === 0 || b.length === 0) return false;
-	const setB = new Set(b);
-	return a.some((f) => setB.has(f));
+	const setB = new Set(b.map(normalizeFileIntent));
+	return a.some((f) => setB.has(normalizeFileIntent(f)));
 }
 
 // ── Runtime File Intent Tracking ────────────────────────────────────
@@ -268,15 +284,19 @@ export class FileIntentTracker {
 	private fileOwners = new Map<string, Set<string>>();
 
 	/** Declare that a subtask intends to modify the given files.
-	 *  If the subtask already has declared intents, releases old ones first. */
+	 *  If the subtask already has declared intents, releases old ones first.
+	 *  ponytail: F47 — keys are normalized, so "./src/a.ts" and "src/A.ts"
+	 *  (darwin) collide correctly. getOwnedFiles() therefore shows normalized
+	 *  keys — fine for its debug/status purpose. */
 	declare(subtaskId: string, files: string[]): void {
 		// Release any previous intents for this subtask to avoid stale entries
 		if (this.intents.has(subtaskId)) {
 			this.release(subtaskId);
 		}
-		const fileSet = new Set(files);
+		const normalized = files.map(normalizeFileIntent);
+		const fileSet = new Set(normalized);
 		this.intents.set(subtaskId, fileSet);
-		for (const f of files) {
+		for (const f of fileSet) {
 			if (!this.fileOwners.has(f)) this.fileOwners.set(f, new Set());
 			this.fileOwners.get(f)!.add(subtaskId);
 		}
@@ -297,11 +317,12 @@ export class FileIntentTracker {
 	}
 
 	/** Check if any of the given files conflict with running subtasks.
-	 *  Returns the set of conflicting subtask IDs (empty if no conflict). */
+	 *  Returns the set of conflicting subtask IDs (empty if no conflict).
+	 *  ponytail: F47 — normalize the query to match normalized declare() keys. */
 	isConflicting(files: string[]): Set<string> {
 		const conflicting = new Set<string>();
 		for (const f of files) {
-			const owners = this.fileOwners.get(f);
+			const owners = this.fileOwners.get(normalizeFileIntent(f));
 			if (owners) {
 				for (const id of owners) conflicting.add(id);
 			}

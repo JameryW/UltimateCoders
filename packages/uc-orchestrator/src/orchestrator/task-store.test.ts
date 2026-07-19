@@ -69,4 +69,15 @@ describe("TaskStore", () => {
 		expect(removed).toBe(1);
 		expect(readdirSync(join(ws, ".uc", "tasks"))).toEqual(["keep.json"]);
 	});
+
+	it("F46: save stamps savedAt (restore freshness preference)", async () => {
+		const before = Date.now();
+		await store.save(makeTask("t-9"));
+		const loaded = await store.load("t-9");
+		expect(typeof loaded?.savedAt).toBe("number");
+		expect(loaded!.savedAt!).toBeGreaterThanOrEqual(before);
+		await store.saveCheckpoint(makeTask("t-9"));
+		const cp = await store.loadCheckpoint("t-9");
+		expect(typeof cp?.savedAt).toBe("number");
+	});
 });
