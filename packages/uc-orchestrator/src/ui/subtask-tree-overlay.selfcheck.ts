@@ -464,5 +464,37 @@ const PAGEDOWN = "\x1b[6~";
 	check("F6 tree mid-scroll: both ▲ and ▼", footer()?.includes("▲") === true && footer()?.includes("▼") === true);
 }
 
+// ponytail: F8 — running rows show live elapsed from startedAt; hung subtasks
+// (frozen %/phase) become distinguishable from active ones. Non-running: none.
+{
+	const running = makeSubtask("s1", { status: "running", startedAt: Date.now() - 65_000 });
+	const { comp } = makeComponent([running]);
+	check("F8 running row shows elapsed (1m)", (comp.render(80) as string[]).some((l: string) => l.includes("(1m")));
+	const done = makeSubtask("s2", { status: "completed", startedAt: Date.now() - 65_000 });
+	const { comp: comp2 } = makeComponent([done]);
+	check("F8 completed row has no elapsed", !(comp2.render(80) as string[]).some((l: string) => l.includes("(1m")));
+}
+
+// ponytail: F7 — refresh timer ticks requestRender; dispose() stops it.
+{
+	let ticks = 0;
+	const mockTui = { requestRender: () => { ticks++; } };
+	const task = {
+		id: "T", description: "t", status: "in_progress", controlState: "running",
+		createdAt: 0, subtasks: [makeSubtask("s1", { status: "running", startedAt: Date.now() })],
+	} as unknown as TaskState;
+	const comp = createSubtaskTreeOverlay({
+		tasks: () => [task], onRetry: () => {}, onClose: () => {},
+	})(mockTui as any, theme, undefined, () => {}) as any;
+	await new Promise((r) => setTimeout(r, 1100));
+	check("F7 tree timer ticks requestRender", ticks >= 1);
+	comp.dispose();
+	const after = ticks;
+	await new Promise((r) => setTimeout(r, 1100));
+	check("F7 tree dispose stops timer", ticks === after);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
-if (failures > 0) process.exit(1);
+// ponytail: explicit exit — overlay components start 1s refresh timers; without
+// exit(0) the pending intervals keep the script alive after ALL PASS.
+process.exit(failures === 0 ? 0 : 1);

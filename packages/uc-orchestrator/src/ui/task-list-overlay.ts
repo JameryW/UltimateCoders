@@ -90,6 +90,10 @@ class TaskListComponent {
 	// ponytail: transient hint for dead/confirm keys (c on non-cancellable, etc).
 	// Cleared on the next non-c keypress so nav/enter/esc dismisses it.
 	private flashMsg: string | null = null;
+	// ponytail: F7 — 1s tick so time-based fields (task ages) re-render while
+	// the overlay sits open (formatAge froze at the last event-driven render).
+	// Cleared in dispose(); modal overlays are short-lived.
+	private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
 		private opts: TaskListOptions,
@@ -97,6 +101,7 @@ class TaskListComponent {
 		private theme: Theme,
 		private done: (result: void) => void,
 	) {
+		this.refreshTimer = setInterval(() => (this.tui as any)?.requestRender?.(), 1000);
 		// ponytail: jump-from-subtask-tree lands directly in detail mode.
 		if (this.opts.initialDetailTaskId) this.openDetail(this.opts.initialDetailTaskId);
 	}
@@ -479,5 +484,10 @@ class TaskListComponent {
 	}
 
 	invalidate(): void {}
-	dispose(): void {}
+	dispose(): void {
+		if (this.refreshTimer) {
+			clearInterval(this.refreshTimer);
+			this.refreshTimer = null;
+		}
+	}
 }
