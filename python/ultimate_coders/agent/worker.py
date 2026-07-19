@@ -8,6 +8,7 @@ their own tool chains and don't need a Python-side tool-calling loop.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -50,6 +51,31 @@ from ultimate_coders.agent.types import (
 from ultimate_coders.agent.workspace import WorkspaceHandle, WorkspaceManager
 
 logger = logging.getLogger(__name__)
+
+
+async def _engine_call(
+    engine: Any,
+    sync_name: str,
+    async_name: str,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Call an Engine method without blocking the event loop.
+
+    ponytail: F59 — in gRPC mode the sync engine API is a blocking RPC
+    (up to grpc_timeout_seconds=30), which froze the worker's whole loop —
+    stalling the 30s NATS heartbeat toward the gateway's 90s stale-worker
+    eviction. Prefer the engine's ``*_async`` variant when present; fall
+    back to the sync call for engines without one (in-memory engine /
+    legacy test mocks — fast and non-blocking anyway).
+    """
+    # ponytail: iscoroutinefunction guard — plain MagicMocks auto-create the
+    # *_async attribute as a non-coroutine; treat those as sync engines.
+    async_fn = getattr(engine, async_name, None)
+    if async_fn is not None and inspect.iscoroutinefunction(async_fn):
+        return await async_fn(*args, **kwargs)
+    return getattr(engine, sync_name)(*args, **kwargs)
+
 
 # ponytail: map mcp:<server> tags to semantic capability aliases.
 # Add rows as more in-process MCP servers land.
@@ -610,7 +636,7 @@ class Worker:
 
         try:
             # Check for existing checkpoint — skip if already completed
-            checkpoint = self._load_checkpoint(subtask.id)
+            checkpoint = await self._load_checkpoint(subtask.id)
             if checkpoint is not None and checkpoint.get("success"):
                 logger.info(
                     "Subtask %s has completed checkpoint, skipping execution",
@@ -640,7 +666,7 @@ class Worker:
             context_block = self._context_injector.build_context(subtask.depends_on)
 
             # Auto-inject cross-repo search context (when engine is available)
-            search_block = self._build_search_context(subtask)
+            search_block = await self._build_search_context(subtask)
             if search_block:
                 if context_block:
                     context_block = f"{context_block}\n\n{search_block}"
@@ -714,7 +740,7 @@ class Worker:
                         )
 
                     # Save checkpoint for resume
-                    self._save_checkpoint(subtask.id, result)
+                    await self._save_checkpoint(subtask.id, result)
 
                     # Record result in context injector for dependent subtasks
                     self._context_injector.add_result(
@@ -886,14 +912,14 @@ class Worker:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
 
-    def _save_checkpoint(self, subtask_id: str, result: SubtaskResult) -> None:
+    async def _save_checkpoint(self, subtask_id: str, result: SubtaskResult) -> None:
         """Persist subtask result to engine memory for checkpoint/resume.
 
         Stores full result including modified_files, tool_calls, and error
         so that resume can reconstruct a complete SubtaskResult.
 
-        ponytail: synchronous write — engine.write_memory may be async,
-        but we use in-memory fallback so it's fine. Non-fatal on failure.
+        ponytail: F59 — async (was sync): in gRPC mode write_memory blocked
+        the event loop for up to 30s. Non-fatal on failure.
         """
         if self.engine is None:
             return
@@ -911,7 +937,8 @@ class Worker:
                 "error": result.summary if not result.success else None,
                 "stderr_tail": result.stderr_tail,
             }
-            self.engine.write_memory(
+            await _engine_call(
+                self.engine, "write_memory", "write_memory_async",
                 key_scope="checkpoint",
                 key=f"subtask:{subtask_id}",
                 content=json.dumps(data),
@@ -921,12 +948,13 @@ class Worker:
         except Exception:
             logger.debug("Failed to save checkpoint for subtask %s", subtask_id[:8])
 
-    def _load_checkpoint(self, subtask_id: str) -> dict | None:
-        """Load checkpoint from engine memory."""
+    async def _load_checkpoint(self, subtask_id: str) -> dict | None:
+        """Load checkpoint from engine memory (F59: async, see _save_checkpoint)."""
         if self.engine is None:
             return None
         try:
-            raw = self.engine.read_memory(
+            raw = await _engine_call(
+                self.engine, "read_memory", "read_memory_async",
                 key_scope="checkpoint",
                 key=f"subtask:{subtask_id}",
             )
@@ -1599,10 +1627,12 @@ class Worker:
     def release_edit_intent(self, file_path: str) -> None:
         self.conflict_detector.remove_intent(file_path, self.worker_id)
 
-    def _build_search_context(self, subtask: Subtask) -> str | None:
+    async def _build_search_context(self, subtask: Subtask) -> str | None:
         """Search across repos for code relevant to the subtask description.
 
         Returns a formatted context block with search results, or None.
+        ponytail: F59 — async: search + repo discovery are gRPC RPCs that
+        blocked the event loop (runs at every subtask start).
         """
         if self.engine is None or not subtask.description:
             return None
@@ -1614,7 +1644,16 @@ class Worker:
             if subtask.project_id:
                 sq.in_repos([subtask.project_id])
             else:
-                sq.in_all_repos(self.engine)
+                # ponytail: F59 — inline in_all_repos with the async repo
+                # discovery (SearchQuery.in_all_repos calls sync list_repos,
+                # another blocking RPC). Mirrors its repo_id extraction.
+                repos = await _engine_call(
+                    self.engine, "list_repos", "list_repos_async",
+                )
+                sq.in_repos([
+                    r.repo_id if hasattr(r, "repo_id") else str(r)
+                    for r in (repos or [])
+                ])
             d = sq.to_dict()
             cache_key = WorkerLocalCache.search_key(
                 d["query"],
@@ -1624,7 +1663,9 @@ class Worker:
             )
             result = self._search_cache.get_search(cache_key)
             if result is None:
-                result = self.engine.search(sq)
+                result = await _engine_call(
+                    self.engine, "search", "search_async", sq,
+                )
                 if result is not None:
                     self._search_cache.put_search(cache_key, result)
             items = getattr(result, "items", result) if result else []
@@ -1643,7 +1684,7 @@ class Worker:
             # ponytail: search failure is non-fatal — subtask still executes
             return None
 
-    def search_across_repos(
+    async def search_across_repos(
         self,
         query: str,
         modes: list[str] | None = None,
@@ -1666,14 +1707,19 @@ class Worker:
             return None
         from ultimate_coders.search.query import SearchQuery
 
-        sq = SearchQuery(query).in_all_repos(self.engine)
+        # ponytail: F59 — async repo discovery + search (see _build_search_context).
+        repos = await _engine_call(self.engine, "list_repos", "list_repos_async")
+        sq = SearchQuery(query).in_repos([
+            r.repo_id if hasattr(r, "repo_id") else str(r)
+            for r in (repos or [])
+        ])
         if modes:
             sq.with_modes(modes)
         sq.limit(max_results)
-        result = self.engine.search(sq)
+        result = await _engine_call(self.engine, "search", "search_async", sq)
         return getattr(result, "items", result) if result else None
 
-    def read_shared_memory(
+    async def read_shared_memory(
         self,
         key: str,
         project_id: str = "",
@@ -1691,13 +1737,16 @@ class Worker:
             return None
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
-        return self.engine.read_memory(
+        # ponytail: F59 — async engine call (sync version blocked the loop in
+        # gRPC mode).
+        return await _engine_call(
+            self.engine, "read_memory", "read_memory_async",
             key_scope=scope,
             key=key,
             project_id=pid or None,
         )
 
-    def write_shared_memory(
+    async def write_shared_memory(
         self,
         key: str,
         content: str,
@@ -1726,7 +1775,10 @@ class Worker:
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
         try:
-            result = self.engine.write_memory(
+            # ponytail: F59 — async engine call (sync version blocked the loop
+            # in gRPC mode).
+            result = await _engine_call(
+                self.engine, "write_memory", "write_memory_async",
                 key_scope=scope,
                 key=key,
                 content=content,
@@ -1747,7 +1799,7 @@ class Worker:
             self._broadcast_memory_changed(pid, key, "write")
         return result
 
-    def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
+    async def delete_shared_memory(self, key: str, project_id: str = "") -> bool:
         """Delete project-scoped memory (shared across Workers via Gateway).
 
         Mirrors ``write_shared_memory``: routes to ``engine.delete_memory`` and
@@ -1763,7 +1815,10 @@ class Worker:
         pid = project_id or getattr(self.current_task, "project_id", "")
         scope = "project" if pid else "global"
         try:
-            self.engine.delete_memory(
+            # ponytail: F59 — async engine call (sync version blocked the loop
+            # in gRPC mode).
+            await _engine_call(
+                self.engine, "delete_memory", "delete_memory_async",
                 key_scope=scope,
                 key=key,
                 project_id=pid or None,
