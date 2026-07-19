@@ -15,6 +15,7 @@ import { statusIcon } from "./status-icons";
 import { overlayPageSize } from "./overlay-pagination";
 // ponytail: F8/F19 — shared with progress-widget's elapsed tag (same format).
 import { formatElapsed } from "./elapsed";
+import { copyText } from "./clipboard";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), so match bytes directly like the
@@ -39,6 +40,9 @@ export interface SubtaskTreeOptions {
 	onJumpToTask?: (taskId: string) => void;
 	/** Open with cursor on the first failed subtask (Ctrl+Shift+F jump-to-failed). */
 	cursorOnFailed?: boolean;
+	/** Clipboard writer for `y`/`Y` yank (default: system clipboard). Injectable
+	 * so selfchecks don't touch the real clipboard. */
+	copy?: (text: string) => boolean;
 	onClose: () => void;
 }
 
@@ -205,7 +209,7 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · R retry · Esc close",
 			)));
 		}
@@ -481,11 +485,30 @@ class SubtaskTreeComponent {
 				this.opts.onJumpToTask(item.taskId);
 				this.done();
 			}
+		} else if (data === "y" || data === "Y") {
+			// ponytail: F22 — `y` yanks the cursor subtask id, `Y` yanks its error
+			// text (the two things routinely pasted into tickets/chat).
+			const item = items[this.cursorIdx];
+			if (!item) {
+				this.flashMsg = "no subtask selected";
+			} else if (data === "Y") {
+				if (item.subtask.error) this.yank(item.subtask.error);
+				else this.flashMsg = "no error to copy";
+			} else {
+				this.yank(item.subtask.id);
+			}
 		}
 		this.clampScroll();
 		// ponytail: requestRender on tui — type assertion needed since TUI type is opaque.
 		// Guard for undefined tui (selfcheck passes undefined as the mock).
 		(this.tui as any)?.requestRender?.();
+	}
+
+	// ponytail: F22 — yank with in-overlay feedback. opts.copy is injectable so
+	// selfchecks don't touch the real clipboard; default is the system clipboard.
+	private yank(text: string): void {
+		const ok = (this.opts.copy ?? copyText)(text);
+		this.flashMsg = ok ? `copied ${text.slice(0, 8)}` : "copy failed";
 	}
 
 	invalidate(): void {

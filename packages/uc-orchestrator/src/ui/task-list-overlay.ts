@@ -12,6 +12,7 @@ import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState } from "../orchestrator/orchestrator";
 import { formatTaskDetail } from "./status-formatter";
 import { overlayPageSize } from "./overlay-pagination";
+import { copyText } from "./clipboard";
 
 // ponytail: raw xterm key sequences — pi-tui value imports crash at runtime
 // (vendor utils setNativeKillTree mismatch), match bytes directly.
@@ -56,6 +57,9 @@ export interface TaskListOptions {
 	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => boolean | Promise<boolean>;
 	/** Open straight into detail mode for this task (jump-from-subtask-tree). */
 	initialDetailTaskId?: string;
+	/** Clipboard writer for `y` yank (default: system clipboard). Injectable
+	 * so selfchecks don't touch the real clipboard. */
+	copy?: (text: string) => boolean;
 	onClose: () => void;
 }
 
@@ -156,7 +160,7 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · c/p/r · Esc close",
 			)));
 		}
@@ -279,6 +283,11 @@ class TaskListComponent {
 			// Detail is a single-task view, no list to filter; tell the user why.
 			if (data === "/") {
 				this.setFlash("filter not available in detail view");
+				return;
+			}
+			// ponytail: F22 — yank the detail task's id for pasting elsewhere.
+			if (data === "y") {
+				if (this.detailTaskId) this.yank(this.detailTaskId);
 				return;
 			}
 			// ponytail: S3 — detail-mode quick actions fire on the detail's own task.
@@ -421,6 +430,10 @@ class TaskListComponent {
 			const task = tasks[this.cursorIdx];
 			if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
 			else if (task) this.flashMsg = "resume unavailable";
+		} else if (data === "y") {
+			// ponytail: F22 — yank cursor task id for pasting into chat/tickets/terminal.
+			const task = tasks[this.cursorIdx];
+			if (task) this.yank(task.id);
 		}
 		// clamp scroll to cursor
 		this.clampCursorAndScroll();
@@ -463,6 +476,13 @@ class TaskListComponent {
 	private setFlash(msg: string): void {
 		this.flashMsg = msg;
 		(this.tui as any)?.requestRender?.();
+	}
+
+	// ponytail: F22 — yank with in-overlay feedback. opts.copy is injectable so
+	// selfchecks don't touch the real clipboard; default is the system clipboard.
+	private yank(text: string): void {
+		const ok = (this.opts.copy ?? copyText)(text);
+		this.setFlash(ok ? `copied ${text.slice(0, 8)}` : "copy failed");
 	}
 
 	private openDetail(taskId: string): void {
