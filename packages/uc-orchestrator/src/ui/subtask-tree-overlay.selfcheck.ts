@@ -430,5 +430,23 @@ const PAGEDOWN = "\x1b[6~";
 	check("width guard: retry×N survives over-budget", metaLine !== undefined && metaLine.includes("retry×3"));
 }
 
+// ponytail: F4 — filter must match status, not just id/description (task-list
+// overlay already matches status). `/ failed` is the common filter intent;
+// before F4 it returned no match despite failed subtasks existing.
+{
+	const subtasks = [
+		makeSubtask("s1", { status: "completed", description: "alpha" }),
+		makeSubtask("s2", { status: "failed", description: "beta" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	for (const ch of "failed") comp.handleInput(ch);
+	comp.handleInput("\r"); // exit editing, keep filter
+	check("F4 filter by status matches failed subtask", comp.currentItems().length === 1);
+	const lines = comp.render(80);
+	check("F4 render shows failed row only", lines.some((l: string) => l.includes("beta")) && !lines.some((l: string) => l.includes("alpha")));
+	check("F4 filtered count in header", lines.some((l: string) => l.includes("filtered from 2")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

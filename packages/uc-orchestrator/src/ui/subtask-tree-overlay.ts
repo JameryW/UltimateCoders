@@ -109,10 +109,14 @@ class SubtaskTreeComponent {
 		// retry target, expand target) so they always agree on row count.
 		if (!this.query) return this.flatItems;
 		const q = this.query.toLowerCase();
+		// ponytail: F4 — match status too (task-list overlay already does). `/ failed`
+		// is the most common filter intent; without this it returns no match despite
+		// failed subtasks existing.
 		return this.flatItems.filter(
 			(it) =>
 				it.subtask.id.toLowerCase().includes(q) ||
-				it.subtask.description.toLowerCase().includes(q),
+				it.subtask.description.toLowerCase().includes(q) ||
+				it.subtask.status.toLowerCase().includes(q),
 		);
 	}
 

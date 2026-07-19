@@ -123,7 +123,7 @@ class TaskListComponent {
 	}
 
 	render(width: number): string[] {
-		if (this.detailTaskId) return this.renderDetail();
+		if (this.detailTaskId) return this.renderDetail(width);
 		return this.renderList(width);
 	}
 
@@ -197,7 +197,7 @@ class TaskListComponent {
 		return lines;
 	}
 
-	private renderDetail(): string[] {
+	private renderDetail(width: number): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
 		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · Esc/q back"));
@@ -215,6 +215,12 @@ class TaskListComponent {
 		}
 		if (this.detailLines.length > maxVisible) {
 			lines.push(this.theme.fg("dim", `  ${start + 1}-${Math.min(start + maxVisible, this.detailLines.length)} of ${this.detailLines.length}`));
+		}
+		// ponytail: F1 — detail mode must show flashMsg too. Before this, setFlash()
+		// in detail (c/p/r success/fail, `/` hint) set state the renderer never
+		// emitted, silently nullifying the S3/S4 feedback fixes in detail mode.
+		if (this.flashMsg) {
+			lines.push(this.theme.fg("dim", `  ${this.flashMsg.slice(0, Math.max(0, width - 2))}`));
 		}
 		return lines;
 	}
@@ -390,10 +396,13 @@ class TaskListComponent {
 			}
 		} else if (data === "p") {
 			const task = tasks[this.cursorIdx];
+			// ponytail: F3 — mirror c's "cancel unavailable" so p isn't a silent dead key.
 			if (task && this.opts.onAction) this.fireAction(task.id, "pause", "paused");
+			else if (task) this.flashMsg = "pause unavailable";
 		} else if (data === "r") {
 			const task = tasks[this.cursorIdx];
 			if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
+			else if (task) this.flashMsg = "resume unavailable";
 		}
 		// clamp scroll to cursor
 		this.clampCursorAndScroll();
@@ -404,7 +413,13 @@ class TaskListComponent {
 	// Failure is surfaced by extension.ts notify(); overlay only confirms success
 	// so the user sees the action landed without leaving the overlay.
 	private fireAction(taskId: string, action: "cancel" | "pause" | "resume", verb: string): void {
-		if (!this.opts.onAction) return;
+		// ponytail: F3 — list-mode callers guard onAction before calling (c shows
+		// "cancel unavailable", p/r show their own), so this branch only fires for
+		// detail-mode c/p/r, which previously no-op'd silently without onAction.
+		if (!this.opts.onAction) {
+			this.setFlash(`${action} unavailable`);
+			return;
+		}
 		// ponytail: pending-armed state only applies to cancel; clear it for pause/resume
 		// so a leftover pendingCancel doesn't linger across a p/r press.
 		this.pendingCancel = null;
@@ -412,10 +427,15 @@ class TaskListComponent {
 			const ret = this.opts.onAction(taskId, action);
 			if (ret && typeof (ret as Promise<boolean>).then === "function") {
 				(ret as Promise<boolean>).then((ok) => {
+					// ponytail: F2 — ok=false must replace the "cancelling…" flash,
+					// else it lingers until the next keypress despite the action failing.
 					if (ok) this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+					else this.setFlash(`${action} failed`);
 				});
 			} else if (ret) {
 				this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+			} else {
+				this.setFlash(`${action} failed`);
 			}
 		} catch {
 			// swallow — extension.ts surfaces failures via notify()

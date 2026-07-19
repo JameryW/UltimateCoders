@@ -421,5 +421,54 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("narrow hint does NOT have PgUp/PgDn", !narrow.includes("PgUp/PgDn"));
 }
 
+// ponytail: F1 — detail mode must RENDER flashMsg, not just set state. Before F1,
+// renderDetail() omitted the flashMsg line, so `/` and c/p/r feedback in detail
+// mode was invisible even though the state was set (S3/S4 selfchecks only asserted
+// state — the render-layer regression slipped through).
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	comp.handleInput(ENTER);
+	comp.handleInput("/");
+	check("F1 state: detail `/` sets flashMsg", comp.flashMsg !== null);
+	const lines = comp.render(80) as string[];
+	check("F1 render: detail output contains flashMsg text",
+		lines.some((l: string) => l.includes("filter not available")));
+}
+
+// ponytail: F2 — failed action must replace "cancelling…" with "${action} failed".
+// Sync false and Promise false both covered.
+{
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress")],
+		{ onAction: () => false }, // sync failure
+	);
+	comp.handleInput("c"); comp.handleInput("c"); // double-tap fires cancel
+	check("F2 sync false sets 'cancel failed'", comp.flashMsg !== null && comp.flashMsg.includes("cancel failed"));
+
+	const { comp: comp2 } = makeComponent(
+		[makeTask("t1", "in_progress")],
+		{ onAction: () => Promise.resolve(false) }, // async failure
+	);
+	comp2.handleInput("p");
+	await new Promise((r) => setTimeout(r, 10));
+	check("F2 promise false sets 'pause failed'", comp2.flashMsg !== null && comp2.flashMsg.includes("pause failed"));
+}
+
+// ponytail: F3 — p/r without onAction are no longer silent dead keys (list mode
+// mirrors c's "cancel unavailable"; detail mode c/p/r surface via fireAction).
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]); // no onAction
+	comp.handleInput("p");
+	check("F3 list `p` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("pause unavailable"));
+	comp.handleInput("r");
+	check("F3 list `r` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("resume unavailable"));
+	comp.handleInput(ENTER); // detail mode, still no onAction
+	comp.handleInput("c");
+	check("F3 detail `c` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("cancel unavailable"));
+	const lines = comp.render(80) as string[];
+	check("F3 detail unavailable flash is rendered (F1 pair)",
+		lines.some((l: string) => l.includes("cancel unavailable")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
