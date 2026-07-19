@@ -369,7 +369,10 @@ async def test_reclaim_timed_out_remote_subtasks():
 
     from ultimate_coders.agent.orchestrator import Orchestrator
     from ultimate_coders.agent.types import (
-        Subtask, SubtaskStatus, Task, TaskStatus,
+        Subtask,
+        SubtaskStatus,
+        Task,
+        TaskStatus,
     )
 
     nw = _make_worker()
@@ -410,7 +413,10 @@ async def test_dispatch_remote_publish_failure_resets_to_pending():
     """
     from ultimate_coders.agent.orchestrator import Orchestrator
     from ultimate_coders.agent.types import (
-        Subtask, SubtaskStatus, Task, TaskStatus,
+        Subtask,
+        SubtaskStatus,
+        Task,
+        TaskStatus,
     )
 
     nw = _make_worker()
