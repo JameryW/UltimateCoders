@@ -74,7 +74,20 @@ export class TaskStore {
 		await fs.mkdir(this.checkpointDir, { recursive: true });
 	}
 
+	/**
+	 * ponytail: F51 — defense in depth. Every method below builds file paths
+	 * from task ids; ids are currently server-generated ("uc-<n>-<ts>") and
+	 * never come from external input, so this is unreachable today — but if an
+	 * untrusted id path ever appears, "../" must not escape the tasks dir.
+	 */
+	private assertSafeId(taskId: string): void {
+		if (!/^[\w.-]+$/.test(taskId) || taskId.includes("..")) {
+			throw new Error(`Unsafe task id rejected: ${JSON.stringify(taskId)}`);
+		}
+	}
+
 	async save(task: PersistedTask): Promise<void> {
+		this.assertSafeId(task.id);
 		// ponytail: F42 — atomic write. Direct writeFile leaves a truncated/empty
 		// file when the process dies mid-write (SIGKILL/OOM — the RPC server is
 		// killed by its parent), which loadAll then can't parse. tmp + rename is
@@ -88,6 +101,7 @@ export class TaskStore {
 	}
 
 	async load(taskId: string): Promise<PersistedTask | null> {
+		this.assertSafeId(taskId);
 		try {
 			const filePath = path.join(this.dir, `${taskId}.json`);
 			const raw = await fs.readFile(filePath, "utf-8");
@@ -128,6 +142,7 @@ export class TaskStore {
 	}
 
 	async remove(taskId: string): Promise<void> {
+		this.assertSafeId(taskId);
 		try {
 			await fs.unlink(path.join(this.dir, `${taskId}.json`));
 		} catch (err) {
@@ -147,6 +162,7 @@ export class TaskStore {
 
 	/** Save a wave-boundary checkpoint snapshot (latest-wins). */
 	async saveCheckpoint(task: PersistedTask): Promise<void> {
+		this.assertSafeId(task.id);
 		// ponytail: F42 — atomic write, same rationale as save().
 		// F46 — savedAt stamp so restore() can pick the newer artifact.
 		const filePath = path.join(this.checkpointDir, `${task.id}.snap.json`);
@@ -157,6 +173,7 @@ export class TaskStore {
 
 	/** Load the latest checkpoint for a task, or null if none exists. */
 	async loadCheckpoint(taskId: string): Promise<PersistedTask | null> {
+		this.assertSafeId(taskId);
 		try {
 			const filePath = path.join(this.checkpointDir, `${taskId}.snap.json`);
 			const raw = await fs.readFile(filePath, "utf-8");

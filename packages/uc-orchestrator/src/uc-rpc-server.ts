@@ -30,9 +30,22 @@ interface JsonRpcRequest {
 }
 
 export interface JsonRpcResponse {
-	id: number;
+	// ponytail: F50 — null for parse errors (the request id is unknown); a
+	// real client may legitimately use id 0, so 0 can't mean "no id".
+	id: number | null;
 	result?: unknown;
 	error?: { code: number; message: string };
+}
+
+/**
+ * ponytail: F50 — typed JSON-RPC errors so callers (the Python bridge) can
+ * tell user errors from internal failures: -32601 unknown method, -32602
+ * invalid/missing params, -32000 internal (everything else).
+ */
+class RpcError extends Error {
+	constructor(readonly code: number, message: string) {
+		super(message);
+	}
 }
 
 interface JsonRpcEvent {
@@ -124,7 +137,8 @@ export class RpcServer {
 			return {
 				id,
 				error: {
-					code: -32000,
+					// ponytail: F50 — surface the error class code when typed.
+					code: err instanceof RpcError ? err.code : -32000,
 					message: err instanceof Error ? err.message : String(err),
 				},
 			};
@@ -138,7 +152,7 @@ export class RpcServer {
 		switch (method) {
 			case "submit_task": {
 				const description = String(params.description ?? "");
-				if (!description) throw new Error("description is required");
+				if (!description) throw new RpcError(-32602, "description is required");
 				if (isSpawnDisabled()) {
 					// ponytail: F38 follow-up — English like the extension/task-bridge
 					// spawn messages (this RPC-side copy was missed in round 14).
@@ -162,7 +176,13 @@ export class RpcServer {
 
 			case "cancel_task": {
 				const taskId = String(params.task_id ?? "");
-				if (!taskId) throw new Error("task_id is required");
+				if (!taskId) throw new RpcError(-32602, "task_id is required");
+				// ponytail: F50 — a non-string subtask_id (e.g. a number) can never
+				// match a string subtask id; passing it through produced a spurious
+				// not-found outcome with candidates. Reject it as an invalid param.
+				if (params.subtask_id !== undefined && typeof params.subtask_id !== "string") {
+					throw new RpcError(-32602, "subtask_id must be a string");
+				}
 				// ponytail: F27 — surface the discriminated outcome (reason +
 				// candidates) to RPC callers instead of a bare boolean.
 				const r = await this.orchestrator.cancelTask(taskId, params.subtask_id as string | undefined);
@@ -173,7 +193,7 @@ export class RpcServer {
 
 			case "pause_task": {
 				const taskId = String(params.task_id ?? "");
-				if (!taskId) throw new Error("task_id is required");
+				if (!taskId) throw new RpcError(-32602, "task_id is required");
 				const r = await this.orchestrator.pauseTask(taskId);
 				return r.ok
 					? { ok: true, task_id: r.taskId }
@@ -182,7 +202,7 @@ export class RpcServer {
 
 			case "resume_task": {
 				const taskId = String(params.task_id ?? "");
-				if (!taskId) throw new Error("task_id is required");
+				if (!taskId) throw new RpcError(-32602, "task_id is required");
 				// ponytail: F45 — resume re-enters wave execution (spawns subtasks),
 				// so it needs the same gate as submit. Without it, UC_NO_SPAWN let a
 				// resume churn through every wave producing failed subtasks instead
@@ -213,15 +233,17 @@ export class RpcServer {
 					};
 				}
 				const task = this.orchestrator.getTaskState(taskId);
-				if (!task) return { status: "not_found" };
+				// ponytail: F50 — unified not-found shape (both verbs now carry
+				// status AND task; clients that read either field keep working).
+				if (!task) return { status: "not_found", task: null };
 				return { status: "ok", task: serializeTask(task) };
 			}
 
 			case "get_task": {
 				const taskId = String(params.task_id ?? "");
-				if (!taskId) throw new Error("task_id is required");
+				if (!taskId) throw new RpcError(-32602, "task_id is required");
 				const task = this.orchestrator.getTaskState(taskId);
-				if (!task) return { task: null };
+				if (!task) return { status: "not_found", task: null };
 				return { task: serializeTask(task) };
 			}
 
@@ -238,7 +260,7 @@ export class RpcServer {
 			}
 
 			default:
-				throw new Error(`Unknown method: ${method}`);
+				throw new RpcError(-32601, `Method not found: ${method}`);
 		}
 	}
 
@@ -290,8 +312,10 @@ async function main(): Promise<void> {
 		try {
 			req = JSON.parse(trimmed);
 		} catch {
+			// ponytail: F50 — JSON-RPC parse errors carry id null; id 0 collides
+			// with a legitimate client request id 0 (dispatch preserves client ids).
 			writeLine(JSON.stringify({
-				id: 0,
+				id: null,
 				error: { code: -32700, message: "Parse error" },
 			}));
 			return;

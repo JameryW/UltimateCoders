@@ -72,7 +72,18 @@ export type DAGWave = SubtaskDef[];
  * @throws Error if circular dependencies are detected
  */
 export function buildDAG(subtasks: SubtaskDef[]): DAGWave[] {
-	const ids = new Set(subtasks.map((s) => s.id));
+	// ponytail: F48 — explicit duplicate-id validation. Decomposer input is
+	// model-generated JSON, so duplicates happen. Without this they fell
+	// through to detectCycles (empty-array result → misleading "Circular
+	// dependencies detected: []") or the Kahn loop ("Deadlock") — sending
+	// users hunting a cycle that doesn't exist.
+	const ids = new Set<string>();
+	for (const st of subtasks) {
+		if (ids.has(st.id)) {
+			throw new Error(`Duplicate subtask id "${st.id}" — subtask ids must be unique`);
+		}
+		ids.add(st.id);
+	}
 
 	// Validate: all depends_on references must exist
 	for (const st of subtasks) {
@@ -96,8 +107,12 @@ export function buildDAG(subtasks: SubtaskDef[]): DAGWave[] {
 	const dependents = new Map<string, Set<string>>(); // who depends on me
 
 	for (const st of subtasks) {
-		inDegree.set(st.id, st.dependsOn.length);
-		for (const dep of st.dependsOn) {
+		// ponytail: F48 — dedupe dependsOn for degree counting: dependents is a
+		// Set (decrements once per dep), so duplicate entries would over-count
+		// inDegree and deadlock the wave loop.
+		const deps = new Set(st.dependsOn);
+		inDegree.set(st.id, deps.size);
+		for (const dep of deps) {
 			if (!dependents.has(dep)) dependents.set(dep, new Set());
 			dependents.get(dep)!.add(st.id);
 		}
@@ -147,8 +162,12 @@ export function detectCycles(subtasks: SubtaskDef[]): string[] | null {
 	const dependents = new Map<string, Set<string>>();
 
 	for (const st of subtasks) {
-		inDegree.set(st.id, st.dependsOn.length);
-		for (const dep of st.dependsOn) {
+		// ponytail: F48 — dedupe: dependents decrements once per unique dep
+		// (it's a Set), so raw duplicate dependsOn entries would over-count
+		// inDegree and report a false cycle.
+		const deps = new Set(st.dependsOn);
+		inDegree.set(st.id, deps.size);
+		for (const dep of deps) {
 			if (!dependents.has(dep)) dependents.set(dep, new Set());
 			dependents.get(dep)!.add(st.id);
 		}
@@ -508,14 +527,20 @@ export function recursiveDecompose(waves: DAGWave[]): DAGWave[] {
 	const result: DAGWave[] = [];
 	for (const wave of waves) {
 		const newWave: SubtaskDef[] = [];
+		// ponytail: F49 — collect the rest-children and splice them AFTER the
+		// parent's wave. The old code pushed children[1..n] into result inside
+		// the loop but newWave (with children[0]) only after it, so dependent
+		// children executed BEFORE c0. Now: children[0] takes the parent's
+		// slot; the rest are scheduled by a mini-Kahn over what's already been
+		// emitted — file-split children (all depend only on c0) run parallel
+		// in one wave, chain children (ci → c(i-1)) serialize naturally.
+		const restChildren: SubtaskDef[] = [];
 		for (const subtask of wave) {
 			if (shouldDecompose(subtask)) {
 				const children = decomposeSubtask(subtask);
-				// First child takes parent's position in wave
-				// Remaining children form sequential waves (depends on previous)
 				newWave.push(children[0]);
 				for (let i = 1; i < children.length; i++) {
-					result.push([children[i]]);
+					restChildren.push(children[i]);
 				}
 			} else {
 				newWave.push(subtask);
@@ -523,6 +548,23 @@ export function recursiveDecompose(waves: DAGWave[]): DAGWave[] {
 		}
 		if (newWave.length > 0) {
 			result.push(newWave);
+		}
+		// Emitted ids = everything already in result (prior waves satisfy the
+		// parents' external deps; newWave holds c0).
+		const emitted = new Set<string>();
+		for (const w of result) for (const s of w) emitted.add(s.id);
+		let pending = restChildren;
+		while (pending.length > 0) {
+			const ready = pending.filter((s) => s.dependsOn.every((d) => emitted.has(d)));
+			if (ready.length === 0) {
+				// Shouldn't happen (children only depend on c0/siblings) — emit
+				// the remainder as-is rather than drop it.
+				result.push(pending);
+				break;
+			}
+			result.push(ready);
+			for (const s of ready) emitted.add(s.id);
+			pending = pending.filter((s) => !ready.includes(s));
 		}
 	}
 	return result;

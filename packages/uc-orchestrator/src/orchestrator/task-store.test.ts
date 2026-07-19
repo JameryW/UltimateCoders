@@ -70,6 +70,12 @@ describe("TaskStore", () => {
 		expect(readdirSync(join(ws, ".uc", "tasks"))).toEqual(["keep.json"]);
 	});
 
+	it("F51: unsafe task ids are rejected (path traversal defense)", async () => {
+		await expect(store.save(makeTask("../evil"))).rejects.toThrow(/Unsafe task id/);
+		await expect(store.load("../../etc/passwd")).rejects.toThrow(/Unsafe task id/);
+		await expect(store.remove("a/b")).rejects.toThrow(/Unsafe task id/);
+	});
+
 	it("F46: save stamps savedAt (restore freshness preference)", async () => {
 		const before = Date.now();
 		await store.save(makeTask("t-9"));
