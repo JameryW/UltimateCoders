@@ -68,7 +68,8 @@ export function createProgressWidget(state: () => ProgressWidgetState | null) {
 }
 
 class ProgressWidgetComponent {
-	private lastRender: string[] = [];
+	// ponytail: F24 — removed the lastRender cache field (write-only, never
+	// read; invalidate() cleared it but nothing consumed it).
 
 	constructor(
 		private state: () => ProgressWidgetState | null,
@@ -78,9 +79,7 @@ class ProgressWidgetComponent {
 	render(width: number): string[] {
 		const s = this.state();
 		if (!s) {
-			const result = [this.theme.fg("dim", "  UC: idle")];
-			this.lastRender = result;
-			return result;
+			return [this.theme.fg("dim", "  UC: idle")];
 		}
 
 		const { task, waveIdx, totalWaves } = s;
@@ -107,8 +106,11 @@ class ProgressWidgetComponent {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const total = task.subtasks.length;
 			const bar = progressBar(completed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
+			// ponytail: F24 — the bar counts TASK-wide completion; leading with
+			// "Wave X/Y" read as if the bar measured the current wave. Progress
+			// first, wave identity as trailing context.
 			lines.push(
-				`  ${this.theme.fg("dim", `Wave ${waveIdx + 1}/${totalWaves}`)} ${bar} ${completed}/${total}`,
+				`  ${bar} ${completed}/${total} ${this.theme.fg("dim", `· wave ${waveIdx + 1}/${totalWaves}`)}`,
 			);
 		}
 
@@ -117,7 +119,10 @@ class ProgressWidgetComponent {
 		if (running.length > 0) {
 			for (const st of running.slice(0, 3)) {
 				const icon = statusIcon(st.status, this.theme);
-				const desc = st.description.slice(0, Math.max(0, width - 12));
+				// ponytail: F24 — budget by the actual prefix ("  " + icon visible 1
+				// + " " + id + ": "). The old width-12 assumed short st-N ids, but
+				// the planner accepts LLM-chosen ids, which overflowed the line.
+				const desc = st.description.slice(0, Math.max(0, width - 6 - st.id.length));
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
 				// Render live step progress (agent + phase + percent + status tag) when available
 				const prog = s.progressBySubtask?.get(st.id);
@@ -233,13 +238,10 @@ class ProgressWidgetComponent {
 			}
 		}
 
-		this.lastRender = lines;
 		return lines;
 	}
 
-	invalidate(): void {
-		this.lastRender = [];
-	}
+	invalidate(): void {}
 
 	/** Map a workflow step_status to a colored tag for the progress widget. */
 	private _stepStatusTag(status: string): string {

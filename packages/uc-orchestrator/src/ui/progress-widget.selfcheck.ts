@@ -297,5 +297,23 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("F19 tight width drops elapsed before parallel", !tightLine.includes("(1m"));
 }
 
+// ponytail: F24 — wave row: progress leads, wave identity trails (the bar
+// counts task-wide completion — leading with "Wave X/Y" read as per-wave).
+// Long LLM-chosen subtask ids budget by actual id length, not a fixed 12.
+{
+	const stW = { id: "s1", description: "w", status: "completed", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const taskW = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [stW] } as unknown as TaskState;
+	const wLines = (createProgressWidget(() => ({ task: taskW, waveIdx: 0, totalWaves: 2 }))(undefined, theme) as any).render(80) as string[];
+	const waveLine = wLines.find((l) => l.includes("wave")) ?? "";
+	check("F24 wave row: progress first, '· wave 1/2' trails", waveLine.includes("1/1") && waveLine.includes("· wave 1/2"));
+
+	const longId = "implement-auth-subtask-with-a-very-long-id";
+	const stL = { id: longId, description: "d".repeat(60), status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const taskL = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [stL] } as unknown as TaskState;
+	const lLines = (createProgressWidget(() => ({ task: taskL }))(undefined, theme) as any).render(50) as string[];
+	const runLine = lLines.find((l) => l.includes(longId)) ?? "";
+	check("F24 long-id running row fits width", runLine.length > 0 && runLine.length <= 50);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

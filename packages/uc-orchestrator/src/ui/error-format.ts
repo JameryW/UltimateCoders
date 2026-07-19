@@ -18,9 +18,6 @@ import type { ThemeColor } from "@oh-my-pi/pi-coding-agent";
 const TRANSIENT_MARKERS = [
 	"瞬时错误", // "transient error" in Chinese (from worker.py friendly summary)
 	"transient",
-	"503",
-	"429",
-	"529",
 	"overloaded",
 	"server_error",
 	"system is busy",
@@ -32,16 +29,20 @@ const TRANSIENT_MARKERS = [
 const PERMANENT_MARKERS = [
 	"永久错误", // "permanent error" in Chinese (from worker.py friendly summary)
 	"permanent",
-	"400",
-	"401",
-	"403",
-	"404",
 	"invalid_api_key",
 	"invalid key",
 	"unauthorized",
 	"forbidden",
 	"authentication",
 ];
+
+// ponytail: F23 — bare status codes match as whole tokens only. The old
+// includes() on "400"/"404"/"429"/… false-positived on "processed 400 items",
+// "port 8429" (digit-adjacent) and "404.html" (dot-adjacent). The lookarounds
+// reject digits and dots on either side; friendly string markers above keep
+// plain substring matching.
+const TRANSIENT_CODES = /(?<![.\d])(?:503|429|529)(?![.\d])/;
+const PERMANENT_CODES = /(?<![.\d])(?:400|401|403|404)(?![.\d])/;
 
 export type ErrorKind = "transient" | "permanent" | "unknown";
 
@@ -61,9 +62,9 @@ export function classifyError(errorStr: string): ClassifiedError {
 	const lower = errorStr.toLowerCase();
 
 	let kind: ErrorKind = "unknown";
-	if (TRANSIENT_MARKERS.some((m) => lower.includes(m.toLowerCase()))) {
+	if (TRANSIENT_MARKERS.some((m) => lower.includes(m.toLowerCase())) || TRANSIENT_CODES.test(errorStr)) {
 		kind = "transient";
-	} else if (PERMANENT_MARKERS.some((m) => lower.includes(m.toLowerCase()))) {
+	} else if (PERMANENT_MARKERS.some((m) => lower.includes(m.toLowerCase())) || PERMANENT_CODES.test(errorStr)) {
 		kind = "permanent";
 	}
 
@@ -115,8 +116,10 @@ export function formatErrorForDisplay(
 		: rootCause;
 
 	if (kind === "transient") {
+		// ponytail: F23 — warning (amber), not error (red): transient means
+		// retriable / likely to resolve, which the color should signal.
 		const retryLabel = retryCount !== null ? ` (已重试${retryCount}次)` : "";
-		return fgColored("error", `⚠ 瞬时错误${retryLabel}: ${truncated}`);
+		return fgColored("warning", `⚠ 瞬时错误${retryLabel}: ${truncated}`);
 	}
 	if (kind === "permanent") {
 		return fgColored("error", `⚠ 永久错误: ${truncated}`);

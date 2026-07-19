@@ -71,6 +71,21 @@ describe("classifyError", () => {
 		expect(result.rootCause).toBe("503 busy");
 	});
 
+	// ponytail: F23 — bare status codes reject digit/dot-adjacent matches. The
+	// old substring match false-positived on ports ("8429" contains "429") and
+	// file names ("404.html"). A standalone-token "400" still classifies — that
+	// IS how real status codes appear in errors ("HTTP 400", "request failed: 401").
+	it("does not classify digit/dot-adjacent numbers as status codes", () => {
+		expect(classifyError("dial tcp 10.0.0.1:8429: connect refused").kind).toBe("unknown");
+		expect(classifyError("static/404.html missing from bundle").kind).toBe("unknown");
+		expect(classifyError("timeout after 5033ms").kind).toBe("unknown");
+	});
+
+	it("classifies whole-token status codes", () => {
+		expect(classifyError("HTTP 503 from gateway").kind).toBe("transient");
+		expect(classifyError("request failed: 401").kind).toBe("permanent");
+	});
+
 	// ponytail: F18 — all consumers push the root cause as exactly one line; a
 	// stderrTail/stack-trace error with embedded newlines would inject extra
 	// untruncated rows, breaking widget structure and bypassing width caps.
@@ -84,6 +99,17 @@ describe("classifyError", () => {
 		const identity = (_color: ThemeColor, text: string) => text;
 		const output = formatErrorForDisplay("boom: line1\nline2\nline3", 80, identity);
 		expect(output).not.toContain("\n");
+	});
+
+	// ponytail: F23 — transient renders warning (amber, "retriable"), permanent
+	// keeps error (red).
+	it("renders transient with warning color, permanent with error color", () => {
+		const colors: string[] = [];
+		const record = (c: ThemeColor, t: string) => { colors.push(c); return t; };
+		formatErrorForDisplay("503 busy", 40, record);
+		formatErrorForDisplay("401 invalid_api_key", 40, record);
+		expect(colors[0]).toBe("warning");
+		expect(colors[1]).toBe("error");
 	});
 });
 
@@ -153,10 +179,11 @@ describe("formatErrorForDisplay", () => {
 			colorCalled = true;
 			return `<${color}>${text}</${color}>`;
 		};
+		// ponytail: F23 — transient renders warning ("retriable"), not error.
 		const output = formatErrorForDisplay("503 busy", 100, coloredFn);
 		expect(colorCalled).toBe(true);
-		expect(output).toContain("<error>");
-		expect(output).toContain("</error>");
+		expect(output).toContain("<warning>");
+		expect(output).toContain("</warning>");
 	});
 
 	it("clamps width 0/negative without dangling ellipsis", () => {
