@@ -341,6 +341,11 @@ class NatsWorker:
         self._dispatch_event: asyncio.Event | None = None
         # Remote worker discovery via heartbeat
         self._known_remote_workers: dict[str, dict[str, Any]] = {}
+        # ponytail: F56 — dispatch time of each remote-assigned subtask, so the
+        # cleanup loop can reclaim ones whose result event got lost. "remote"
+        # is never a key in _known_remote_workers, so the stale-worker path
+        # could never see them — they stuck ASSIGNED forever.
+        self._remote_dispatched_at: dict[str, datetime] = {}
         self._cleanup_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Hold fire-and-forget subtask execution tasks so asyncio's weak-ref GC
         # can't reap them before they run — a reaped _execute_subtasks task
@@ -539,6 +544,51 @@ class NatsWorker:
             except (asyncio.CancelledError, Exception):
                 pass
         self._bg_tasks.clear()
+
+        # ponytail: F57 (audit #10) — report subtasks still assigned to this
+        # worker as failed. Without this, abandoned executions left their
+        # subtasks RUNNING/ASSIGNED with no result ever coming — tasks stuck
+        # IN_PROGRESS, invisible to operators. Apply locally (reliable; F55
+        # idempotency prevents double-processing if the event loops back) and
+        # publish so the gateway/other consumers learn the subtask died.
+        # Worker mode has no local orchestrator — the condition skips it.
+        if (
+            self._orchestrator is not None
+            and self._publisher is not None
+            and self._worker is not None
+        ):
+            wid = self._worker.worker_id
+            for task in self._orchestrator.tasks.values():
+                if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    continue
+                for st in task.subtasks:
+                    if (
+                        st.status in (SubtaskStatus.RUNNING, SubtaskStatus.ASSIGNED)
+                        and st.assigned_worker == wid
+                    ):
+                        try:
+                            await self._orchestrator.handle_subtask_result(
+                                SubtaskResult(
+                                    subtask_id=st.id,
+                                    worker_id=wid,
+                                    summary="worker shutting down",
+                                    success=False,
+                                )
+                            )
+                            await self._publisher.publish_event(
+                                "subtask_failed",
+                                task_id=task.id,
+                                subtask_id=st.id,
+                                data={
+                                    "error": "worker shutting down",
+                                    "worker_id": wid,
+                                },
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Failed to report abandoned subtask %s",
+                                st.id[:8], exc_info=True,
+                            )
 
         # Unsubscribe
         for sub in self._subscriptions:
@@ -1290,6 +1340,9 @@ class NatsWorker:
 
         # Mark subtask as assigned in local Orchestrator
         await self._orchestrator.assign_subtask(subtask, "remote")
+        # ponytail: F56 — start the timeout clock (reclaimed by
+        # _reclaim_timed_out_remote_subtasks if no result ever arrives).
+        self._remote_dispatched_at[subtask.id] = datetime.now(timezone.utc)
 
         # Declare edit intent for conflict tracking
         if subtask.file_constraints:
@@ -1314,7 +1367,20 @@ class NatsWorker:
             "project_id": subtask.project_id,
         }).encode()
 
-        await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
+        try:
+            await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
+        except Exception as e:
+            # ponytail: F56 — a failed publish used to leave the subtask
+            # ASSIGNED to "remote" forever (the exception escaped into the
+            # spawn-bg task, never retrieved). Reset to PENDING so
+            # select_next_subtask picks it up again.
+            self._remote_dispatched_at.pop(subtask.id, None)
+            self._reset_subtask_to_pending(subtask.id)
+            logger.warning(
+                "Remote dispatch publish failed for subtask %s, reset to Pending: %s",
+                subtask.id[:8], e,
+            )
+            return
         logger.info(
             "Dispatched subtask %s to remote workers",
             subtask.id[:8],
@@ -1687,6 +1753,9 @@ class NatsWorker:
                 if st.id == subtask_id and st.status == SubtaskStatus.ASSIGNED:
                     st.status = SubtaskStatus.PENDING
                     st.assigned_worker = None
+                    # ponytail: F56 — stop the remote-timeout clock for this
+                    # subtask (it's no longer awaiting a remote result).
+                    self._remote_dispatched_at.pop(subtask_id, None)
                     return True
         return False
 
@@ -1727,6 +1796,8 @@ class NatsWorker:
             # subtask result, leaking edit intents, and stalling tasks.)
             subtask_id = data.get("subtask_id", "")
             if subtask_id:
+                # ponytail: F56 — result arrived: stop the remote-timeout clock.
+                self._remote_dispatched_at.pop(subtask_id, None)
                 await self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
             # Wake _execute_subtasks loop so newly-unblocked subtasks
             # dispatch immediately
@@ -1925,6 +1996,58 @@ class NatsWorker:
                 return True
         return False
 
+    async def _reclaim_timed_out_remote_subtasks(self) -> None:
+        """Reset remote-assigned subtasks whose result event never arrived.
+
+        ponytail: F56 — "remote" is not a real worker entry, so the
+        stale-worker sweep above can never see these. A lost result event
+        (executing worker crashed before publishing, publish swallowed
+        during a NATS blip) used to leave the subtask ASSIGNED forever and
+        the task stuck IN_PROGRESS with nothing surfaced. Reclaim after
+        timeout_seconds + 60s grace; a missing dispatch timestamp counts as
+        expired (within a session every remote dispatch records one).
+        """
+        if self._orchestrator is None:
+            return
+        now = datetime.now(timezone.utc)
+        reclaimed = False
+        for task in self._orchestrator.tasks.values():
+            if task.status in (
+                TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED,
+            ):
+                continue
+            for st in task.subtasks:
+                if st.status != SubtaskStatus.ASSIGNED or st.assigned_worker != "remote":
+                    continue
+                dispatched_at = self._remote_dispatched_at.get(st.id)
+                deadline = (st.timeout_seconds or 600) + 60
+                elapsed = (now - dispatched_at).total_seconds() if dispatched_at else deadline + 1
+                if elapsed <= deadline:
+                    continue
+                st.status = SubtaskStatus.PENDING
+                st.assigned_worker = None
+                st.retry_count += 1
+                self._remote_dispatched_at.pop(st.id, None)
+                reclaimed = True
+                logger.warning(
+                    "Remote subtask %s timed out after %.0fs with no result, "
+                    "reset to Pending (retry %d)",
+                    st.id[:8], elapsed, st.retry_count,
+                )
+                if self._publisher is not None:
+                    await self._publisher.publish_event(
+                        "subtask_retrying",
+                        task_id=task.id,
+                        subtask_id=st.id,
+                        data={
+                            "reason": "remote_timeout",
+                            "worker_id": "remote",
+                            "retry_count": st.retry_count,
+                        },
+                    )
+        if reclaimed and self._dispatch_event is not None:
+            self._dispatch_event.set()
+
     async def _stale_worker_cleanup_loop(self) -> None:
         """Periodically remove workers with no heartbeat for >90s.
 
@@ -1977,6 +2100,10 @@ class NatsWorker:
                                     )
                     # Wake dispatch loop to pick up reassigned subtasks
                     self._dispatch_event.set()
+
+            # ponytail: F56 — reclaim remote-assigned subtasks whose result
+            # event got lost (no real worker entry to go stale for these).
+            await self._reclaim_timed_out_remote_subtasks()
 
             # Self-heartbeat stall detection: if local Worker hasn't
             # sent a heartbeat in >90s, release its current subtask
