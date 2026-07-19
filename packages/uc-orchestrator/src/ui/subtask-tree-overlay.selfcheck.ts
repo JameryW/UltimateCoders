@@ -494,6 +494,32 @@ const PAGEDOWN = "\x1b[6~";
 	check("F7 tree dispose stops timer", ticks === after);
 }
 
+// ponytail: F9 — row-budget window. Expanded items render up to 3 rows; the old
+// item-count slice showed all 6 (18 rows) on a 12-row budget, and the maxHeight
+// clamp silently cut the footer + flashMsg. Row windowing must stop at 4 items
+// (12 rows) and keep the footer visible.
+{
+	const subtasks = Array.from({ length: 6 }, (_, i) =>
+		makeSubtask(`s${i}`, { status: "failed", error: "boom", retryCount: 2 }));
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	const tui = { terminal: { rows: 24 } }; // maxVisible = 12
+	const factory = createSubtaskTreeOverlay({ tasks: () => [task], onRetry: () => {}, onClose: () => {} });
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	for (const st of subtasks) comp.expanded.add(st.id); // all expanded → 3 rows each
+	const lines = comp.render(80) as string[];
+	const shown = subtasks.filter((st) => lines.some((l: string) => l.includes(`${st.id}:`))).length;
+	check("F9 row budget stops at 4 expanded items (not 6)", shown === 4);
+	check("F9 footer visible despite overflow", lines.some((l: string) => l.includes("1-4 of 6")));
+	// cursor down to item 5 → clampScroll must advance offset so it renders
+	comp.handleInput("\x1b[B"); comp.handleInput("\x1b[B"); comp.handleInput("\x1b[B"); comp.handleInput("\x1b[B");
+	const lines2 = comp.render(80) as string[];
+	check("F9 cursor item 5 visible after nav", lines2.some((l: string) => l.includes("s4:")));
+	check("F9 footer shows ▲ after scroll", lines2.some((l: string) => l.includes("of 6") && l.includes("▲")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.
