@@ -470,5 +470,31 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 		lines.some((l: string) => l.includes("cancel unavailable")));
 }
 
+// ponytail: F5 — unknown status badge renders "?" (4-wide column), not "plan",
+// so a newer server's status can't masquerade as planning.
+{
+	const t = makeTask("t1", "in_progress");
+	(t as any).status = "some_future_status";
+	const { comp } = makeComponent([t]);
+	const lines = comp.render(80) as string[];
+	check("F5 unknown badge renders ?", lines.some((l: string) => l.includes("?")));
+	check("F5 unknown badge not 'plan'", !lines.some((l: string) => l.includes("plan")));
+}
+
+// ponytail: F6 — scroll footer arrows mark the clipped side. Bare counts don't
+// convey that content ABOVE is hidden once scrollOffset > 0.
+{
+	const tui = { terminal: { rows: 24 } }; // maxVisible = 12
+	const tasks = Array.from({ length: 50 }, (_, i) => makeTask(`t${i}`, "in_progress"));
+	const factory = createTaskListOverlay({ tasks: () => tasks, getTask: () => undefined, onClose: () => {} });
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	const footer = () => (comp.render(80) as string[]).find((l: string) => l.includes("of 50"));
+	check("F6 at top: ▼ below, no ▲", footer()?.includes("▼") === true && footer()?.includes("▲") === false);
+	comp.handleInput(PAGEDOWN); // cursor 12 → scrollOffset 1
+	check("F6 mid-scroll: both ▲ and ▼", footer()?.includes("▲") === true && footer()?.includes("▼") === true);
+	comp.handleInput("G"); // bottom
+	check("F6 at bottom: ▲ above, no ▼", footer()?.includes("▲") === true && footer()?.includes("▼") === false);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

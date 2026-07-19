@@ -264,7 +264,11 @@ class SubtaskTreeComponent {
 		}
 
 		if (items.length > this.maxVisible) {
-			lines.push(this.theme.fg("dim", `  ${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, items.length)} of ${items.length}`));
+			// ponytail: F6 — ▲/▼ mark the clipped side; bare counts don't convey
+			// that content above is hidden once scrollOffset > 0.
+			const up = this.scrollOffset > 0 ? "▲ " : "";
+			const down = this.scrollOffset + this.maxVisible < items.length ? " ▼" : "";
+			lines.push(this.theme.fg("dim", `  ${up}${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, items.length)} of ${items.length}${down}`));
 		}
 
 		// ponytail: flashMsg hint rendered after footer so it doesn't shift list rows.

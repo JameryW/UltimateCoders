@@ -28,8 +28,10 @@ for (const s of [...subtaskStatuses, "planning", "in_progress"]) {
 	check(`statusIcon(${s}) non-empty`, icon.length > 0);
 }
 
-// Unknown status falls back to pending (non-empty)
-check("unknown status falls back to pending", statusIcon("bogus", theme) === statusIcon("pending", theme));
+// ponytail: F5 — unknown status renders "?" (distinct from pending ○), so a
+// new/renamed status from a newer server can't masquerade as "not started".
+check("unknown status renders ?", statusIcon("bogus", theme) === "?");
+check("unknown status distinct from pending", statusIcon("bogus", theme) !== statusIcon("pending", theme));
 
 // planning IS in the table (was missing from task-result-renderer pre-extraction)
 check("planning in STATUS_ICON table", "planning" in STATUS_ICON);

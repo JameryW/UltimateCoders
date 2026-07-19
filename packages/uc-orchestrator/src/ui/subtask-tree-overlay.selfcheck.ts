@@ -448,5 +448,21 @@ const PAGEDOWN = "\x1b[6~";
 	check("F4 filtered count in header", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: F6 — scroll footer arrows mark the clipped side.
+{
+	const subtasks = Array.from({ length: 50 }, (_, i) => makeSubtask(`s${i}`));
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	const tui = { terminal: { rows: 24 } }; // maxVisible = 12
+	const factory = createSubtaskTreeOverlay({ tasks: () => [task], onRetry: () => {}, onClose: () => {} });
+	const comp = factory(tui as any, theme, undefined, () => {}) as any;
+	const footer = () => (comp.render(80) as string[]).find((l: string) => l.includes("of 50"));
+	check("F6 tree at top: ▼ below, no ▲", footer()?.includes("▼") === true && footer()?.includes("▲") === false);
+	comp.handleInput(PAGEDOWN);
+	check("F6 tree mid-scroll: both ▲ and ▼", footer()?.includes("▲") === true && footer()?.includes("▼") === true);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
