@@ -120,9 +120,11 @@ def test_stream_snapshot_payload_shape() -> None:
 
     async def run() -> tuple[list, Exception | None]:
         # asyncio.Queue must be created inside the running loop (Py3.9 binds
-        # a loop at construction).
+        # a loop at construction). F63: the generator subscribes via
+        # _subscribe_sse — patch it to return our pre-seeded queue.
         q: asyncio.Queue = asyncio.Queue()
-        app._get_nats_event_queue = lambda: q
+        app._subscribe_sse = lambda: q
+        app._unsubscribe_sse = lambda _q: None
         await q.put({"type": "subtask_completed", "data": {"id": "st-1"}})
         # max_iters=1: one iteration consumes the queued event and yields it;
         # a second iteration would block 2s on an empty queue (wait_for
@@ -139,15 +141,15 @@ def test_stream_snapshot_payload_shape() -> None:
 
 
 def test_nats_event_queue_bounded_drops_on_full(caplog: pytest.LogCaptureFixture) -> None:
-    """Regression: the NATS event queue was unbounded (maxsize=0) — a burst
-    with no SSE client draining grew it without limit (memory leak). The
-    QueueFull catch was dead code. Now maxsize=1000; overflow drops + warns."""
+    """Regression: event queues must stay bounded — a stalled client's burst
+    can't grow memory without limit. F63: each SSE client queue is
+    maxsize=1000; a full client queue drops + warns without affecting others."""
     app = _make_app(nats_client=None)
 
     async def run() -> None:
-        # Bounded queue, filled to capacity.
+        # Bounded per-client queue, filled to capacity.
         q: asyncio.Queue = asyncio.Queue(maxsize=2)
-        app._get_nats_event_queue = lambda: q
+        app._sse_subscribers.add(q)
         await q.put({"type": "a"})
         await q.put({"type": "b"})
 
@@ -160,4 +162,48 @@ def test_nats_event_queue_bounded_drops_on_full(caplog: pytest.LogCaptureFixture
 
     asyncio.run(run())
     assert any("queue full" in r.message.lower() for r in caplog.records)
+
+
+def test_fanout_every_client_gets_every_event() -> None:
+    """F63: the old shared queue load-balanced events between SSE clients —
+    multi-tab dashboards each saw a random subset. Now every subscriber
+    queue receives every event, and log/metrics record exactly once."""
+    app = _make_app(nats_client=MagicMock())
+
+    async def run() -> tuple[asyncio.Queue, asyncio.Queue]:
+        q1: asyncio.Queue = asyncio.Queue()
+        q2: asyncio.Queue = asyncio.Queue()
+        app._sse_subscribers.add(q1)
+        app._sse_subscribers.add(q2)
+
+        for t in ("subtask_start", "subtask_end", "task_complete"):
+            msg = SimpleNamespace(data=json.dumps({"type": t}).encode())
+            await app._handle_nats_event(msg)
+
+        assert q1.qsize() == 3 and q2.qsize() == 3
+        types1 = [q1.get_nowait()["type"] for _ in range(3)]
+        types2 = [q2.get_nowait()["type"] for _ in range(3)]
+        assert types1 == types2 == ["subtask_start", "subtask_end", "task_complete"]
+        return q1, q2
+
+    asyncio.run(run())
+    # Recorded once per event (not once per client): 3 events.
+    assert app._metrics.record_event.call_count == 3
+    assert len(app._event_log) == 3
+
+
+def test_events_recorded_with_zero_sse_clients() -> None:
+    """F63: recording used to live in the client loop — with no clients
+    attached, REST /events and metrics lost everything. Now _handle_nats_event
+    records unconditionally."""
+    app = _make_app(nats_client=MagicMock())
+    assert len(app._sse_subscribers) == 0
+
+    async def run() -> None:
+        msg = SimpleNamespace(data=json.dumps({"type": "task_complete"}).encode())
+        await app._handle_nats_event(msg)
+
+    asyncio.run(run())
+    assert len(app._event_log) == 1
+    assert app._metrics.record_event.call_count == 1
 
