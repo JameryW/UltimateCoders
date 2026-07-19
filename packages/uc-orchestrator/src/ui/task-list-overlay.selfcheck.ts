@@ -496,5 +496,24 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F6 at bottom: ▲ above, no ▼", footer()?.includes("▲") === true && footer()?.includes("▼") === false);
 }
 
+// ponytail: F7 — refresh timer ticks requestRender while open; dispose() stops
+// it (leaked timers would keep re-rendering a closed overlay + pin the process).
+{
+	let ticks = 0;
+	const mockTui = { requestRender: () => { ticks++; } };
+	const comp = createTaskListOverlay({
+		tasks: () => [makeTask("t1", "in_progress")],
+		getTask: () => undefined, onClose: () => {},
+	})(mockTui as any, theme, undefined, () => {}) as any;
+	await new Promise((r) => setTimeout(r, 1100));
+	check("F7 timer ticks requestRender", ticks >= 1);
+	comp.dispose();
+	const after = ticks;
+	await new Promise((r) => setTimeout(r, 1100));
+	check("F7 dispose stops timer", ticks === after);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
-if (failures > 0) process.exit(1);
+// ponytail: explicit exit — overlay components start 1s refresh timers; without
+// exit(0) the pending intervals keep the script alive after ALL PASS.
+process.exit(failures === 0 ? 0 : 1);

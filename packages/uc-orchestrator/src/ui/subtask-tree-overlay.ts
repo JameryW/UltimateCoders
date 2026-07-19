@@ -28,6 +28,17 @@ const KEY = {
 	esc: "\x1b",
 };
 
+// ponytail: F8 — compact elapsed for running rows ("42s" / "3m" / "1h 05m").
+// A hung subtask's %/phase freeze; a live-ticking elapsed (F7 timer re-renders)
+// is the cue that separates "running 9m and stuck" from "running 9m and fine".
+function formatElapsed(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) return `${s}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m`;
+	return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
 // ── SubtaskTree Component ────────────────────────────────────────
 
 export interface SubtaskTreeOptions {
@@ -69,6 +80,10 @@ class SubtaskTreeComponent {
 	// Enter/nav exits editing but keeps the filter active, Esc clears everything.
 	private searchMode = false;
 	private query = "";
+	// ponytail: F7 — 1s tick so time-based fields (running elapsed) re-render
+	// while the overlay sits open. Cleared in dispose(); modal overlays are
+	// short-lived, so 1fps redraw cost is negligible.
+	private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(
 		private opts: SubtaskTreeOptions,
@@ -76,6 +91,7 @@ class SubtaskTreeComponent {
 		private theme: Theme,
 		private done: (result: void) => void,
 	) {
+		this.refreshTimer = setInterval(() => (this.tui as any)?.requestRender?.(), 1000);
 		this.rebuildItems();
 		// ponytail: Ctrl+Shift-F jump-to-failed — pre-set cursor to first failed
 		// subtask so the user lands on the retry target in one keystroke.
@@ -197,8 +213,12 @@ class SubtaskTreeComponent {
 			const deps = item.subtask.dependsOn.length > 0
 				? this.theme.fg("dim", ` ←${item.subtask.dependsOn.join(",")}`)
 				: "";
+			// ponytail: F8 — live elapsed on running rows (re-rendered by F7 timer).
+			const elapsed = item.subtask.status === "running" && item.subtask.startedAt
+				? this.theme.fg("dim", ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`)
+				: "";
 
-			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}`);
+			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}`);
 
 			if (this.expanded.has(item.subtask.id)) {
 				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
@@ -432,5 +452,10 @@ class SubtaskTreeComponent {
 		this.rebuildItems(true);
 	}
 
-	dispose(): void {}
+	dispose(): void {
+		if (this.refreshTimer) {
+			clearInterval(this.refreshTimer);
+			this.refreshTimer = null;
+		}
+	}
 }
