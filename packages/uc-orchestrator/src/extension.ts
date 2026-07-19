@@ -130,17 +130,22 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				// was invisible for the subtask's whole lifetime if no progress event fired.
 				const task = orchestrator.getTaskState(d.taskId);
 				if (task) {
-					const ps = progressState.get(d.taskId);
-					if (ps) {
-						ps.task = task;
-						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
+					// ponytail: F14 — create the state if missing. Entries were only
+					// created by task_planning (new submits) and subtask_progress
+					// (remote workers), so resumed tasks and local-execution subtasks
+					// never got the rich widget at all.
+					let ps = progressState.get(d.taskId);
+					if (!ps) {
+						ps = { task: getTaskOrEmpty(d.taskId) };
+						progressState.set(d.taskId, ps);
 					}
+					ps.task = task;
+					ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				}
 				break;
 			}
 			case "subtask_end":
-			case "subtask_failed":
-			case "subtask_reviewing": {
+			case "subtask_failed": {
 				const d = data as OrchestratorEvents["subtask_end"] | OrchestratorEvents["subtask_failed"];
 				const task = orchestrator.getTaskState(d.taskId);
 				if (task) {
@@ -149,6 +154,21 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						ps.task = task;
 						// Clear progress entry for terminal subtasks (completed/failed)
 						ps.progressBySubtask?.delete(d.subtaskId);
+						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
+					}
+				}
+				break;
+			}
+			case "subtask_reviewing": {
+				// ponytail: F12 — reviewing is NOT terminal: keep the progress entry
+				// (agent/step/percent tags stay visible during review). The old shared
+				// end/failed/reviewing branch deleted it, blanking the live tags.
+				const d = data as OrchestratorEvents["subtask_reviewing"];
+				const task = orchestrator.getTaskState(d.taskId);
+				if (task) {
+					const ps = progressState.get(d.taskId);
+					if (ps) {
+						ps.task = task;
 						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
 					}
 				}
@@ -182,6 +202,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "wave_end": {
 				const d = data as OrchestratorEvents["wave_end"];
 				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
+				// ponytail: F12 — refresh the widget so completed-wave rows render
+				// immediately. Before, state changed but nothing re-rendered until
+				// the next subtask event (the wave row stayed stale).
+				const task = orchestrator.getTaskState(d.taskId);
+				const ps = progressState.get(d.taskId);
+				if (task && ps) {
+					ps.task = task;
+					ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
+				}
 				break;
 			}
 			case "task_complete": {
