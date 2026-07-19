@@ -664,10 +664,14 @@ class NatsWorker:
         try:
             js = self._nc.jetstream()
             try:
+                # ponytail: F65 — NO deliver_subject: that made this a PUSH
+                # consumer, but _replay_missed_events binds it with
+                # pull_subscribe — the server rejects pull-binding a push
+                # consumer, so replay setup always failed (warning-swallowed)
+                # and every restart skipped replay.
                 await js.add_consumer(
                     stream="UC_TASK_EVENTS",
                     durable_name="dashboard-replay",
-                    deliver_subject="uc.task.event.replay",
                     ack_policy="explicit",
                     max_deliver=1,
                 )
@@ -734,7 +738,11 @@ class NatsWorker:
                     try:
                         await self._handle_task_event(msg)
                         await msg.ack()
-                        self._js_last_seq = msg.sequence
+                        # ponytail: F65 — nats-py Msg has no .sequence; the
+                        # stream sequence lives in metadata (the old attribute
+                        # raised AttributeError per message, so _js_last_seq
+                        # never advanced and replay re-read the same events).
+                        self._js_last_seq = msg.metadata.sequence.stream
                     except Exception:
                         logger.debug("Replay event handling failed", exc_info=True)
                 self._save_js_seq(self._js_last_seq)

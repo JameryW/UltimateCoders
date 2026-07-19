@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ponytail: F66 — bounds for limit(); negative/huge values passed straight
+# through before (the engine would reject or over-fetch).
+_MIN_RESULTS = 1
+_MAX_RESULTS = 1000
+
 
 class SearchQuery:
     """Builder for search queries.
@@ -42,8 +51,13 @@ class SearchQuery:
                 for r in repos
             ]
         except Exception:
-            # ponytail: if list_repos fails, leave repo_ids empty (searches all)
-            pass
+            # ponytail: F66 — failing silently widened the search to ALL repos
+            # (empty repo_ids = unscoped); surface it so a broken repo list is
+            # visible instead of looking like a normal wide search.
+            logger.warning(
+                "list_repos failed; search scope widened to all repositories",
+                exc_info=True,
+            )
         return self
 
     def in_workspace(self, engine: object, workspace_id: str) -> SearchQuery:
@@ -66,8 +80,13 @@ class SearchQuery:
                 for r in repos
             ]
         except Exception:
-            # If list_repos fails, leave repo_ids empty (searches all)
-            pass
+            # ponytail: F66 — failing silently widened the search to ALL repos
+            # (empty repo_ids = unscoped); surface it so a broken repo list is
+            # visible instead of looking like a normal wide search.
+            logger.warning(
+                "list_repos failed; search scope widened to all repositories",
+                exc_info=True,
+            )
         return self
 
     def in_languages(self, languages: list[str]) -> SearchQuery:
@@ -79,7 +98,8 @@ class SearchQuery:
         return self
 
     def limit(self, max_results: int) -> SearchQuery:
-        self._max_results = max_results
+        # ponytail: F66 — clamp; negative/huge values previously passed through.
+        self._max_results = max(_MIN_RESULTS, min(_MAX_RESULTS, int(max_results)))
         return self
 
     def to_dict(self) -> dict:

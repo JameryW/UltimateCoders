@@ -843,16 +843,27 @@ class DashboardApp:
 
             # Reader: PTY stdout → WebSocket
             async def _pty_reader():
-                loop = asyncio.get_running_loop()
+                # ponytail: F66 — non-blocking fd + short sleep instead of
+                # run_in_executor(os.read): a thread parked inside os.read
+                # CANNOT be cancelled, so every disconnected client leaked one
+                # default-executor thread for the life of the process. With
+                # O_NONBLOCK the coroutine awaits at the sleep point, where
+                # task.cancel() actually lands.
+                import fcntl
+
+                fd = pty.stdout.fileno()
+                flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
                 while pty.poll() is None:
                     try:
-                        # Read in thread to avoid blocking the event loop
-                        data = await loop.run_in_executor(
-                            None, lambda: os.read(pty.stdout.fileno(), 4096)
-                        )
+                        data = os.read(fd, 4096)
                         if not data:
+                            # EOF — PTY closed
                             break
                         await ws.send_bytes(data)
+                    except BlockingIOError:
+                        # No data ready — yield briefly (the cancellable point)
+                        await asyncio.sleep(0.02)
                     except (OSError, ValueError):
                         break
                     except Exception:
