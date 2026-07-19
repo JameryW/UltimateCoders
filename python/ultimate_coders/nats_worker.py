@@ -1314,9 +1314,25 @@ class NatsWorker:
                 # Log any exceptions from gather
                 for i, r in enumerate(results):
                     if isinstance(r, Exception):
+                        # ponytail: F60 — index by local_batch, NOT batch_ids
+                        # (which also contains remote-dispatched ids — the old
+                        # code logged the WRONG subtask id whenever the remote
+                        # portion was non-empty).
+                        sid = local_batch[i]
                         logger.error(
                             "Subtask %s raised exception: %s",
-                            batch_ids[i], r, exc_info=True,
+                            sid, r, exc_info=True,
+                        )
+                        # ponytail: F60 — record a failure result. Without this,
+                        # a raising subtask stayed RUNNING/ASSIGNED forever and
+                        # the task stalled with no failure surfaced.
+                        await self._orchestrator.handle_subtask_result(
+                            SubtaskResult(
+                                subtask_id=sid,
+                                worker_id=self._worker.worker_id if self._worker else "local",
+                                summary=f"Execution raised: {r}"[:200],
+                                success=False,
+                            )
                         )
 
             # Refresh task state
