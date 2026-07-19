@@ -147,6 +147,17 @@ interface ReviewResult {
 	suggestions: string[];
 }
 
+/**
+ * ponytail: F26/F27 — discriminated result for control commands (cancel/pause/
+ * resume) and id resolution. UIs only ever display TRUNCATED task ids, so the
+ * plain boolean they used to get couldn't say WHY a command failed ("typo'd
+ * prefix" vs "wrong state" vs "typo'd subtask id"). `candidates` carries the
+ * matches (ambiguous) or recent task ids (not_found) for guidance.
+ */
+export type ControlOutcome =
+	| { ok: true; taskId: string }
+	| { ok: false; reason: "not_found" | "ambiguous" | "subtask_not_found" | "bad_state"; candidates?: string[] };
+
 interface OrchestratorConfig {
 	enableReview: boolean;
 	reviewTimeoutMs: number;
@@ -963,14 +974,40 @@ export class UCOrchestrator {
 
 	// ── Control: Cancel / Pause / Resume ──────────────────────────────
 
-	async cancelTask(taskId: string, subtaskId?: string, ctx?: ExtensionCommandContext): Promise<boolean> {
-		const task = this.tasks.get(taskId);
-		if (!task) return false;
+	/**
+	 * ponytail: F26 — resolve a possibly-prefixed task id. Every UI surface
+	 * truncates ids (8-14 chars), so a copy-pasted id never matches exactly.
+	 * Exact match wins; otherwise a UNIQUE prefix resolves; otherwise report
+	 * ambiguous (with the matches) or not_found (with recent ids for guidance).
+	 */
+	resolveTask(idOrPrefix: string): TaskState | ControlOutcome {
+		const exact = this.tasks.get(idOrPrefix);
+		if (exact) return exact;
+		const matches = [...this.tasks.values()].filter((t) => t.id.startsWith(idOrPrefix));
+		if (matches.length === 1) return matches[0];
+		if (matches.length > 1) {
+			return { ok: false, reason: "ambiguous", candidates: matches.slice(0, 5).map((t) => t.id) };
+		}
+		const recent = [...this.tasks.values()]
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.slice(0, 5)
+			.map((t) => t.id);
+		return { ok: false, reason: "not_found", candidates: recent };
+	}
+
+	async cancelTask(taskId: string, subtaskId?: string, ctx?: ExtensionCommandContext): Promise<ControlOutcome> {
+		const resolved = this.resolveTask(taskId);
+		if ("ok" in resolved) return resolved;
+		const task = resolved;
 
 		if (subtaskId) {
 			// Subtask-level cancel
 			const st = task.subtasks.find((s) => s.id === subtaskId);
-			if (!st) return false;
+			// ponytail: F27 — name the real failure: a typo'd subtask id used to
+			// surface as "task not found".
+			if (!st) {
+				return { ok: false, reason: "subtask_not_found", candidates: task.subtasks.map((s) => s.id) };
+			}
 
 			st.status = "cancelled";
 			st.completedAt = Date.now();
@@ -978,7 +1015,14 @@ export class UCOrchestrator {
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
 			ctx?.ui.notify(`Subtask ${subtaskId} cancelled (cascade applied)`, "info");
-			return true;
+			return { ok: true, taskId: task.id };
+		}
+
+		// ponytail: F27/#3 — terminal-state guard. pause/resume both guard status;
+		// cancel didn't, so cancelling a completed task silently flipped it to
+		// "cancelled", re-persisted, and re-emitted task_cancelled as if legitimate.
+		if (task.status === "completed" || task.status === "cancelled" || task.status === "failed") {
+			return { ok: false, reason: "bad_state" };
 		}
 
 		// Task-level cancel
@@ -999,35 +1043,37 @@ export class UCOrchestrator {
 
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
-		ctx?.ui.notify(`Task ${taskId} cancelled`, "info");
-			this.events.emit("task_cancelled", { taskId });
-		return true;
+		ctx?.ui.notify(`Task ${task.id} cancelled`, "info");
+			this.events.emit("task_cancelled", { taskId: task.id });
+		return { ok: true, taskId: task.id };
 	}
 
-	async pauseTask(taskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
-		const task = this.tasks.get(taskId);
-		if (!task) return false;
-		if (task.status !== "in_progress" && task.status !== "planning") return false;
+	async pauseTask(taskId: string, ctx?: ExtensionCommandContext): Promise<ControlOutcome> {
+		const resolved = this.resolveTask(taskId);
+		if ("ok" in resolved) return resolved;
+		const task = resolved;
+		if (task.status !== "in_progress" && task.status !== "planning") return { ok: false, reason: "bad_state" };
 
 		task.controlState = "paused";
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
-		this.bridge.pauseTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync pause to gRPC: ${err}`); });
-		ctx?.ui.notify(`Task ${taskId} pausing (will stop after current wave)`, "info");
-		return true;
+		this.bridge.pauseTask(task.id).catch((err) => { this.pi.logger.warn(`Failed to sync pause to gRPC: ${err}`); });
+		ctx?.ui.notify(`Task ${task.id} pausing (will stop after current wave)`, "info");
+		return { ok: true, taskId: task.id };
 	}
 
-	async resumeTask(taskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
-		const task = this.tasks.get(taskId);
-		if (!task) return false;
-		if (task.controlState !== "paused" && task.status !== "failed") return false;
+	async resumeTask(taskId: string, ctx?: ExtensionCommandContext): Promise<ControlOutcome> {
+		const resolved = this.resolveTask(taskId);
+		if ("ok" in resolved) return resolved;
+		const task = resolved;
+		if (task.controlState !== "paused" && task.status !== "failed") return { ok: false, reason: "bad_state" };
 
 		task.controlState = "running";
 		task.status = "in_progress";
 		task.error = undefined;
 		task.resumeFromWave = undefined;
-		this.abortControllers.set(taskId, new AbortController());
-		this.bridge.resumeTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync resume to gRPC: ${err}`); });
+		this.abortControllers.set(task.id, new AbortController());
+		this.bridge.resumeTask(task.id).catch((err) => { this.pi.logger.warn(`Failed to sync resume to gRPC: ${err}`); });
 		this.syncTaskToGrpc(task);
 
 		// Reset failed subtasks back to pending (skip completed ones)
@@ -1058,19 +1104,19 @@ export class UCOrchestrator {
 			task.completedAt = Date.now();
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
-			ctx?.ui.notify(`Task ${taskId}: all subtasks already completed`, "info");
-			return true;
+			ctx?.ui.notify(`Task ${task.id}: all subtasks already completed`, "info");
+			return { ok: true, taskId: task.id };
 		}
 
 		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
-		ctx?.ui.notify(`Task ${taskId}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
-			this.events.emit("task_resumed", { taskId });
+		ctx?.ui.notify(`Task ${task.id}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
+			this.events.emit("task_resumed", { taskId: task.id });
 
 		// Execute remaining waves — stub ctx if not provided (ponytail: rpc server doesn't have omp context)
 		const execCtx = ctx ?? stubContext();
 		await this.executeWaves(task, waves, execCtx);
-		return true;
+		return { ok: true, taskId: task.id };
 	}
 
 	/** Cascade cancel to all downstream subtasks that depend on cancelled ones. */

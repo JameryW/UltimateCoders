@@ -100,6 +100,29 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── Event handler ───────────────────────────────────────────
+
+	// ponytail: F27 — per-reason failure messages for /uc status|cancel|pause|
+	// resume. The old toasts were hardcoded ("task not found") whatever the
+	// cause, so a typo'd subtask id blamed the task and an ambiguous prefix
+	// gave no way forward. `candidates` are the matches or recent task ids.
+	function controlFailureMessage(
+		verb: string,
+		tid: string,
+		r: Extract<import("./orchestrator/orchestrator").ControlOutcome, { ok: false }>,
+	): string {
+		const list = (r.candidates ?? []).join(", ") || "(none)";
+		switch (r.reason) {
+			case "not_found":
+				return `${verb} failed: no task matches "${tid}". Recent tasks: ${list}`;
+			case "ambiguous":
+				return `${verb} failed: "${tid}" matches multiple tasks: ${list}`;
+			case "subtask_not_found":
+				return `${verb} failed: no such subtask in task. Subtasks: ${list}`;
+			case "bad_state":
+				return `${verb} failed: task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
+		}
+	}
+
 	function handleOrchestratorEvent(
 		type: OrchestratorEventType,
 		data: OrchestratorEvents[OrchestratorEventType],
@@ -282,17 +305,17 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				getTask: (taskId) => orchestrator.getTaskState(taskId),
 				onAction: async (taskId, action) => {
 					// c/p/r quick actions — mirrors /uc cancel|pause|resume.
-					const ok = action === "cancel"
+					const r = action === "cancel"
 						? await orchestrator.cancelTask(taskId, undefined, ctx as unknown as ExtensionCommandContext)
 						: action === "pause"
 							? await orchestrator.pauseTask(taskId, ctx as unknown as ExtensionCommandContext)
 							: await orchestrator.resumeTask(taskId, ctx as unknown as ExtensionCommandContext);
 					// ponytail: return ok so the overlay can show in-overlay confirmation
 					// (flashMsg) on success; surface failure via notify (warning toast).
-					if (!ok) {
-						ctx.ui.notify(`Cannot ${action} task ${taskId.slice(0, 8)}: wrong state`, "warning");
+					if (!r.ok) {
+						ctx.ui.notify(`Cannot ${action} task ${taskId.slice(0, 8)}: ${r.reason === "bad_state" ? "wrong state" : r.reason}`, "warning");
 					}
-					return ok;
+					return r.ok;
 				},
 				initialDetailTaskId,
 				onClose: () => {},
@@ -411,12 +434,16 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						const lines = formatTaskList(tasks, ctx.ui.theme, cols);
 						ctx.ui.notify(lines.join("\n"), "info");
 					} else {
-						const task = orchestrator.getTaskState(taskId);
-						if (!task) {
-							ctx.ui.notify(`Task ${taskId} not found`, "error");
+						// ponytail: F26 — prefix resolution; UI only shows truncated ids.
+						// resolveTask returns a task or a failure outcome (never ok:true).
+						const resolved = orchestrator.resolveTask(taskId);
+						if ("ok" in resolved) {
+							if (!resolved.ok) {
+								ctx.ui.notify(controlFailureMessage("Status", taskId, resolved), "error");
+							}
 							return;
 						}
-						const lines = formatTaskDetail(task, ctx.ui.theme, cols);
+						const lines = formatTaskDetail(resolved, ctx.ui.theme, cols);
 						ctx.ui.notify(lines.join("\n"), "info");
 					}
 					return;
@@ -429,33 +456,35 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						ctx.ui.notify("Usage: /uc cancel <task-id> [<subtask-id>]", "error");
 						return;
 					}
-					const ok = await orchestrator.cancelTask(tid, subtaskId, ctx);
-					if (!ok) {
-						ctx.ui.notify(`Cancel failed: task ${tid} not found`, "error");
+					const r = await orchestrator.cancelTask(tid, subtaskId, ctx);
+					if (!r.ok) {
+						ctx.ui.notify(controlFailureMessage("Cancel", tid, r), "error");
 					}
 					return;
 				}
 				case "pause": {
-					const tid = rest.trim();
+					// ponytail: F29 — take the first token (cancel already did; pause/
+					// resume took the whole remainder, so "/uc pause uc-1 why" failed).
+					const tid = rest.trim().split(/\s+/)[0];
 					if (!tid) {
 						ctx.ui.notify("Usage: /uc pause <task-id>", "error");
 						return;
 					}
-					const ok = await orchestrator.pauseTask(tid, ctx);
-					if (!ok) {
-						ctx.ui.notify(`Pause failed: task ${tid} not found or not in progress`, "error");
+					const r = await orchestrator.pauseTask(tid, ctx);
+					if (!r.ok) {
+						ctx.ui.notify(controlFailureMessage("Pause", tid, r), "error");
 					}
 					return;
 				}
 				case "resume": {
-					const tid = rest.trim();
+					const tid = rest.trim().split(/\s+/)[0];
 					if (!tid) {
 						ctx.ui.notify("Usage: /uc resume <task-id>", "error");
 						return;
 					}
-					const ok = await orchestrator.resumeTask(tid, ctx);
-					if (!ok) {
-						ctx.ui.notify(`Resume failed: task ${tid} not found or not paused/failed`, "error");
+					const r = await orchestrator.resumeTask(tid, ctx);
+					if (!r.ok) {
+						ctx.ui.notify(controlFailureMessage("Resume", tid, r), "error");
 					}
 					return;
 				}
@@ -514,8 +543,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					return;
 				}
 					default:
+					// ponytail: F28 — "/uc submti" used to dump help identically to
+					// "/uc help", so typos looked like success. Flag unknown input.
+					// (Empty input maps to "help" at parse time — only genuine
+					// unknown words reach this warning path.)
 					ctx.ui.notify(
 						[
+							...(parts[0] && !SUBCOMMANDS.includes(parts[0])
+								? [`Unknown subcommand "${parts[0]}".`, ""]
+								: []),
 							"UC Orchestrator — distributed AI coding orchestration",
 							"",
 							"  /uc submit <description>       Submit a task",
@@ -531,7 +567,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"  Ctrl+Shift+T   Task list overlay",
 							"  Ctrl+Shift+F   Jump to first failed subtask",
 						].join("\n"),
-						"info",
+						parts[0] && !SUBCOMMANDS.includes(parts[0]) ? "warning" : "info",
 					);
 					return;
 			}

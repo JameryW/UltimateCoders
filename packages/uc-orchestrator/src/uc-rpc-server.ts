@@ -161,22 +161,30 @@ export class RpcServer {
 			case "cancel_task": {
 				const taskId = String(params.task_id ?? "");
 				if (!taskId) throw new Error("task_id is required");
-				const ok = await this.orchestrator.cancelTask(taskId, params.subtask_id as string | undefined);
-				return { ok };
+				// ponytail: F27 — surface the discriminated outcome (reason +
+				// candidates) to RPC callers instead of a bare boolean.
+				const r = await this.orchestrator.cancelTask(taskId, params.subtask_id as string | undefined);
+				return r.ok
+					? { ok: true, task_id: r.taskId }
+					: { ok: false, reason: r.reason, candidates: r.candidates };
 			}
 
 			case "pause_task": {
 				const taskId = String(params.task_id ?? "");
 				if (!taskId) throw new Error("task_id is required");
-				const ok = await this.orchestrator.pauseTask(taskId);
-				return { ok };
+				const r = await this.orchestrator.pauseTask(taskId);
+				return r.ok
+					? { ok: true, task_id: r.taskId }
+					: { ok: false, reason: r.reason, candidates: r.candidates };
 			}
 
 			case "resume_task": {
 				const taskId = String(params.task_id ?? "");
 				if (!taskId) throw new Error("task_id is required");
-				const ok = await this.orchestrator.resumeTask(taskId);
-				return { ok };
+				const r = await this.orchestrator.resumeTask(taskId);
+				return r.ok
+					? { ok: true, task_id: r.taskId }
+					: { ok: false, reason: r.reason, candidates: r.candidates };
 			}
 
 			case "show_status": {
