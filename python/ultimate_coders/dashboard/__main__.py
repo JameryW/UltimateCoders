@@ -23,7 +23,6 @@ Environment:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import signal
@@ -33,7 +32,6 @@ from typing import Any
 logger = logging.getLogger("ultimate_coders.dashboard.__main__")
 
 _DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
-_NATS_CONNECT_TIMEOUT = 2.0  # seconds — short, best-effort
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -57,88 +55,35 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _connect_nats(nats_url: str) -> Any | None:
-    """Best-effort synchronous NATS connect.
-
-    ``nats.connect()`` is lazy and, on connection failure, will retry
-    indefinitely by default. We disable reconnects and hard-cap the
-    whole call with ``asyncio.wait_for`` so a dead NATS server cannot
-    block startup. Returns the connected client, or None on any failure.
-    """
-    try:
-        import nats as nats_lib
-    except ImportError:
-        logger.warning(
-            "nats-py not installed; dashboard running without NATS. "
-            "Install with: pip install nats-py"
-        )
-        return None
-
-    loop = asyncio.new_event_loop()
-    try:
-        # max_reconnect_attempts=0 prevents the internal reconnect loop
-        # from blocking when the server is unreachable.
-        client = loop.run_until_complete(
-            asyncio.wait_for(
-                nats_lib.connect(
-                    nats_url,
-                    connect_timeout=_NATS_CONNECT_TIMEOUT,
-                    max_reconnect_attempts=0,
-                ),
-                timeout=_NATS_CONNECT_TIMEOUT + 1.0,
-            )
-        )
-        # Force a real round-trip so lazy-connect failures surface now.
-        loop.run_until_complete(asyncio.wait_for(client.flush(), timeout=_NATS_CONNECT_TIMEOUT))
-        return client
-    except Exception as e:
-        logger.warning(
-            "Failed to connect to NATS at %s: %s. "
-            "Dashboard running without NATS event subscription.",
-            nats_url,
-            f"{type(e).__name__}: {e}" if str(e) else type(e).__name__,
-        )
-        return None
-    finally:
-        loop.close()
-
-
-def _drain_nats(nats_client: Any) -> None:
-    """Best-effort NATS drain + close on shutdown."""
-    if nats_client is None:
-        return
-    loop = asyncio.new_event_loop()
-    try:
-        try:
-            loop.run_until_complete(nats_client.drain())
-        except Exception as e:
-            logger.debug("NATS drain failed (ignoring): %s", e)
-    finally:
-        loop.close()
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    # Resolve NATS client
+    # ponytail: F58 — pass the NATS URL; don't pre-connect. The old code
+    # connected on a throwaway event loop (this thread has no running loop)
+    # and closed it immediately — the client's reader/ping tasks died with
+    # it, so the dashboard never received a single uc.task.event while
+    # logging "Connected to NATS". DashboardApp connects on the uvicorn
+    # server's event loop in its startup hook instead.
     if args.no_nats:
-        nats_client: Any | None = None
+        nats_url: str | None = None
         logger.info("--no-nats: skipping NATS connection")
     else:
-        nats_client = _connect_nats(args.nats_url)
-        if nats_client is not None:
-            logger.info("Connected to NATS at %s", args.nats_url)
+        nats_url = args.nats_url
 
     # Import here so a missing nats-py / maturin build doesn't break --help
     from ultimate_coders.dashboard.app import DashboardApp
 
-    app = DashboardApp(orchestrator=None, nats_client=nats_client)
+    app = DashboardApp(orchestrator=None, nats_url=nats_url)
     app.start(host=args.host, port=args.port)
 
+    nats_banner = (
+        "enabled (connects on server start — see log)"
+        if nats_url else "disabled (snapshot-only)"
+    )
     print(
         f"Dashboard API: http://localhost:{args.port}/dashboard/\n"
         f"Dashboard UI:  http://localhost:5173  (Vite dev; run `cd dashboard && bun run dev`)\n"
-        f"NATS: {'connected' if nats_client is not None else 'not connected (SSE snapshot-only)'}",
+        f"NATS: {nats_banner}",
         flush=True,
     )
 
@@ -158,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             app.stop()
         except Exception:
             logger.warning("Error stopping dashboard", exc_info=True)
-        _drain_nats(nats_client)
+        # ponytail: F58 — NATS drain happens in the app's shutdown hook (on
+        # the server's loop, where the client is bound).
         logger.info("Shutdown complete")
 
     signal.signal(signal.SIGINT, _handle_signal)
