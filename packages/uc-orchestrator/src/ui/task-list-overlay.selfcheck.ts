@@ -513,6 +513,28 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F7 dispose stops timer", ticks === after);
 }
 
+// ponytail: F22 — yank keys with injectable copier (no real clipboard touched).
+{
+	const copied: string[] = [];
+	const tasks = [makeTask("t1", "in_progress"), makeTask("t2", "in_progress")];
+	const mk = (copy: (t: string) => boolean) => createTaskListOverlay({
+		tasks: () => tasks,
+		getTask: (id) => tasks.find((t) => t.id === id),
+		copy, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	const comp = mk((t) => { copied.push(t); return true; });
+	comp.handleInput(DOWN); // cursor → t2
+	comp.handleInput("y");
+	check("F22 list `y` copies cursor task id", copied.length === 1 && copied[0] === "t2");
+	check("F22 list `y` flashes copied", comp.flashMsg !== null && comp.flashMsg.includes("copied"));
+	comp.handleInput(ENTER); // detail for t2 (cursor aligned)
+	comp.handleInput("y");
+	check("F22 detail `y` copies detail task id", copied.length === 2 && copied[1] === "t2");
+	const comp2 = mk(() => false);
+	comp2.handleInput("y");
+	check("F22 copy failure flashes 'copy failed'", comp2.flashMsg !== null && comp2.flashMsg.includes("copy failed"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.

@@ -520,6 +520,34 @@ const PAGEDOWN = "\x1b[6~";
 	check("F9 footer shows ▲ after scroll", lines2.some((l: string) => l.includes("of 6") && l.includes("▲")));
 }
 
+// ponytail: F22 — `y` yanks subtask id, `Y` yanks its error text (injectable
+// copier — the real clipboard is never touched).
+{
+	const copied: string[] = [];
+	const subtasks = [
+		makeSubtask("s1", { status: "failed", error: "full error text here" }),
+		makeSubtask("s2", { status: "completed" }),
+	];
+	const task = {
+		id: "T", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	const mockTui = { requestRender: () => {} };
+	const comp = createSubtaskTreeOverlay({
+		tasks: () => [task], onRetry: () => {},
+		copy: (t) => { copied.push(t); return true; },
+		onClose: () => {},
+	})(mockTui as any, theme, undefined, () => {}) as any;
+	comp.handleInput("y");
+	check("F22 tree `y` copies cursor subtask id", copied.length === 1 && copied[0] === "s1");
+	comp.handleInput("Y");
+	check("F22 tree `Y` copies error text", copied.length === 2 && copied[1] === "full error text here");
+	comp.handleInput("\x1b[B"); // cursor → s2 (completed, no error)
+	comp.handleInput("Y");
+	check("F22 `Y` without error flashes", comp.flashMsg !== null && comp.flashMsg.includes("no error to copy"));
+	check("F22 `Y` without error copies nothing", copied.length === 2);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.
