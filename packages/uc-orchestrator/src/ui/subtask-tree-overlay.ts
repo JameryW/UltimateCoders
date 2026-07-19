@@ -136,11 +136,44 @@ class SubtaskTreeComponent {
 		);
 	}
 
+	// ponytail: F9 — rows an item occupies when rendered: base line always,
+	// plus error/result + meta lines when expanded. Meta-line PRESENCE is
+	// width-independent (the width guard drops tags but keeps ≥1), so this
+	// count is exact for windowing.
+	private itemLineCount(item: { subtask: SubtaskResult }): number {
+		if (!this.expanded.has(item.subtask.id)) return 1;
+		let n = 1;
+		if (item.subtask.error || item.subtask.result) n++;
+		const hasMeta = (item.subtask.retryCount ?? 0) > 0
+			|| !!item.subtask.review
+			|| (!!item.subtask.dispatchMode && item.subtask.dispatchMode !== "prefer_remote");
+		if (hasMeta) n++;
+		return n;
+	}
+
+	// ponytail: F9 — does the target item still start inside the row budget when
+	// the window begins at scrollOffset? Mirrors render's window loop (first item
+	// always admitted). Used by clampScroll instead of the old item-count math,
+	// which assumed 1 item = 1 row and let expanded items overflow the clamp.
+	private fitsInWindow(target: number, items: { subtask: SubtaskResult }[]): boolean {
+		let used = 0;
+		for (let i = this.scrollOffset; i <= target && i < items.length; i++) {
+			const n = this.itemLineCount(items[i]);
+			if (used + n > this.maxVisible && i > this.scrollOffset) return false;
+			used += n;
+		}
+		return true;
+	}
+
 	private clampScroll(): void {
 		const items = this.currentItems();
 		if (this.cursorIdx < this.scrollOffset) this.scrollOffset = this.cursorIdx;
-		else if (this.cursorIdx >= this.scrollOffset + this.maxVisible) {
-			this.scrollOffset = this.cursorIdx - this.maxVisible + 1;
+		else {
+			// ponytail: F9 — advance until the cursor item fits the row budget.
+			// Cursor moves ≤1 item per keypress, so this iterates only a few times.
+			while (this.scrollOffset < this.cursorIdx && !this.fitsInWindow(this.cursorIdx, items)) {
+				this.scrollOffset++;
+			}
 		}
 		if (this.scrollOffset < 0) this.scrollOffset = 0;
 		// ponytail: clamp cursor into filtered bounds — query changes can shrink
@@ -202,7 +235,21 @@ class SubtaskTreeComponent {
 			return lines;
 		}
 
-		const visible = items.slice(this.scrollOffset, this.scrollOffset + this.maxVisible);
+		// ponytail: F9 — row-budget window, not item-count. Expanded items render
+		// up to 3 lines; slicing by item count let total rows reach ~3× maxVisible,
+		// overflowing the maxHeight clamp which silently cut the footer + flashMsg
+		// (the exact failure overlay-pagination was written to prevent). The first
+		// item is always admitted (≤3 rows ≪ budget) so the window never empties.
+		const visible: typeof items = [];
+		let usedLines = 0;
+		let endIdx = this.scrollOffset;
+		for (let i = this.scrollOffset; i < items.length; i++) {
+			const n = this.itemLineCount(items[i]);
+			if (usedLines + n > this.maxVisible && visible.length > 0) break;
+			visible.push(items[i]);
+			usedLines += n;
+			endIdx = i + 1;
+		}
 		for (let i = 0; i < visible.length; i++) {
 			const item = visible[i];
 			const globalIdx = this.scrollOffset + i;
@@ -224,10 +271,10 @@ class SubtaskTreeComponent {
 				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
 				// the error (or result if no error) on its own line with full
 				// width budget; line 2 is the secondary meta tags (review,
-				// retry×N, dispatchMode) joined with " · ". maxVisible paginates
-				// by subtask count, so bounding detail to ≤2 lines keeps paging
-				// sane (the old code emitted up to 9 lines, overflowing the fixed
-				// overlay height with no scroll).
+				// retry×N, dispatchMode) joined with " · ". Bounding detail to
+				// ≤2 lines keeps itemLineCount's windowing exact (F9) — the old
+				// code emitted up to 9 lines, overflowing the fixed overlay
+				// height with no scroll.
 				//
 				// ponytail: error-on-own-line — the error is diagnostic-critical;
 				// the old code joined error + review + retry + mode into ONE line
@@ -283,12 +330,14 @@ class SubtaskTreeComponent {
 			}
 		}
 
-		if (items.length > this.maxVisible) {
-			// ponytail: F6 — ▲/▼ mark the clipped side; bare counts don't convey
-			// that content above is hidden once scrollOffset > 0.
+		// ponytail: F9 — show the footer whenever rows are clipped (either side),
+		// not when item count > maxVisible: few items all expanded still overflow.
+		// Range reflects the actually-rendered window (endIdx), and ▲/▼ (F6) mark
+		// the clipped side.
+		if (this.scrollOffset > 0 || endIdx < items.length) {
 			const up = this.scrollOffset > 0 ? "▲ " : "";
-			const down = this.scrollOffset + this.maxVisible < items.length ? " ▼" : "";
-			lines.push(this.theme.fg("dim", `  ${up}${this.scrollOffset + 1}-${Math.min(this.scrollOffset + this.maxVisible, items.length)} of ${items.length}${down}`));
+			const down = endIdx < items.length ? " ▼" : "";
+			lines.push(this.theme.fg("dim", `  ${up}${this.scrollOffset + 1}-${endIdx} of ${items.length}${down}`));
 		}
 
 		// ponytail: flashMsg hint rendered after footer so it doesn't shift list rows.
