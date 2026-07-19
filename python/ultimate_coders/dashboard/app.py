@@ -113,9 +113,10 @@ class DashboardApp:
         # True when this app connected the client itself (startup hook) and
         # therefore owns its shutdown drain.
         self._owns_nats_client = False
-        # ponytail: lazy Queue — Python 3.9 asyncio.Queue() needs a running
-        # event loop at init time, which doesn't exist in synchronous tests.
-        self._nats_event_queue: asyncio.Queue[dict[str, Any] | None] | None = None
+        # ponytail: F63 — fan-out: each SSE client gets its own bounded queue
+        # (set construction is loop-free; the per-client Queues are created in
+        # _subscribe_sse inside the running loop — Py3.9 binds at construction).
+        self._sse_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._nats_subscriptions: list[Any] = []
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
@@ -278,52 +279,38 @@ class DashboardApp:
             async def event_generator():
                 nonlocal event_id, last_heartbeat, last_snapshot
 
-                while True:
-                    if await request.is_disconnected():
-                        break
+                # ponytail: F63 — this client's own queue (fan-out). Created
+                # inside the running loop (Py3.9 binds Queues at construction);
+                # unregistered in finally even when sse-starlette cancels the
+                # generator on client disconnect — no subscriber leaks.
+                sse_queue = (
+                    self._subscribe_sse()
+                    if self._nats_client is not None else None
+                )
+                try:
+                    while True:
+                        if await request.is_disconnected():
+                            break
 
-                    # Heartbeat comment every 15s to prevent browser timeout
-                    now = loop.time()
-                    if now - last_heartbeat >= 15:
-                        last_heartbeat = now
-                        yield {"comment": "heartbeat"}
+                        # Heartbeat comment every 15s to prevent browser timeout
+                        now = loop.time()
+                        if now - last_heartbeat >= 15:
+                            last_heartbeat = now
+                            yield {"comment": "heartbeat"}
 
-                    # Drain NATS event queue — push mode: await the
-                    # queue directly instead of polling at 0.5s intervals.
-                    # This reduces SSE latency from ~500ms to ~50ms.
-                    had_event = False
-                    if self._nats_client is not None:
-                        try:
-                            # First event: blocking wait (max 2s for snapshot)
-                            nats_event = await asyncio.wait_for(
-                                self._get_nats_event_queue().get(), timeout=2.0,
-                            )
-                            if nats_event is not None:
-                                self._event_log.appendleft(nats_event)
-                                if self.event_emitter is not None:
-                                    self.event_emitter._recent.append(nats_event)
-                                self._metrics.record_event(
-                                    nats_event.get("type", ""),
-                                    nats_event.get("data", {}),
+                        # Drain own queue — push mode: await directly instead
+                        # of polling (SSE latency ~50ms, not ~500ms).
+                        # ponytail: F63 — event-log/metrics recording moved into
+                        # _handle_nats_event (once per event); here we only emit
+                        # to THIS client.
+                        had_event = False
+                        if sse_queue is not None:
+                            try:
+                                # First event: blocking wait (max 2s for snapshot)
+                                nats_event = await asyncio.wait_for(
+                                    sse_queue.get(), timeout=2.0,
                                 )
-                                event_id += 1
-                                yield {
-                                    "id": str(event_id),
-                                    "event": "task_event",
-                                    "data": json.dumps(nats_event),
-                                }
-                                had_event = True
-                            # Drain any remaining events non-blocking
-                            while True:
-                                nats_event = self._get_nats_event_queue().get_nowait()
                                 if nats_event is not None:
-                                    self._event_log.appendleft(nats_event)
-                                    if self.event_emitter is not None:
-                                        self.event_emitter._recent.append(nats_event)
-                                    self._metrics.record_event(
-                                        nats_event.get("type", ""),
-                                        nats_event.get("data", {}),
-                                    )
                                     event_id += 1
                                     yield {
                                         "id": str(event_id),
@@ -331,33 +318,48 @@ class DashboardApp:
                                         "data": json.dumps(nats_event),
                                     }
                                     had_event = True
-                                else:
-                                    break
-                        except asyncio.TimeoutError:
-                            pass  # No events — proceed to snapshot
-                        except asyncio.QueueEmpty:
-                            pass
+                                # Drain any remaining events non-blocking
+                                while True:
+                                    nats_event = sse_queue.get_nowait()
+                                    if nats_event is not None:
+                                        event_id += 1
+                                        yield {
+                                            "id": str(event_id),
+                                            "event": "task_event",
+                                            "data": json.dumps(nats_event),
+                                        }
+                                        had_event = True
+                                    else:
+                                        break
+                            except asyncio.TimeoutError:
+                                pass  # No events — proceed to snapshot
+                            except asyncio.QueueEmpty:
+                                pass
 
-                    # No NATS — still need periodic iteration for snapshots
-                    if not had_event and self._nats_client is None:
-                        await cancellable_sleep(0.2)
+                        # No NATS — still need periodic iteration for snapshots
+                        if not had_event and self._nats_client is None:
+                            await cancellable_sleep(0.2)
 
-                    # Periodic full snapshot — incremental-first:
-                    # Skip snapshot when events are flowing (client already has
-                    # state from incremental task_event messages). Only send
-                    # full snapshot during idle periods for reconciliation.
-                    if not had_event:
-                        snapshot_interval = 10.0
-                        now = loop.time()
-                        if now - last_snapshot >= snapshot_interval:
-                            snapshot = self._get_full_snapshot()
-                            last_snapshot = now
-                            event_id += 1
-                            yield {
-                                "id": str(event_id),
-                                "event": "update",
-                                "data": json.dumps(snapshot),
-                            }
+                        # Periodic full snapshot — incremental-first:
+                        # Skip snapshot when events are flowing (client already
+                        # has state from incremental task_event messages). Only
+                        # send full snapshot during idle periods for
+                        # reconciliation.
+                        if not had_event:
+                            snapshot_interval = 10.0
+                            now = loop.time()
+                            if now - last_snapshot >= snapshot_interval:
+                                snapshot = self._get_full_snapshot()
+                                last_snapshot = now
+                                event_id += 1
+                                yield {
+                                    "id": str(event_id),
+                                    "event": "update",
+                                    "data": json.dumps(snapshot),
+                                }
+                finally:
+                    if sse_queue is not None:
+                        self._unsubscribe_sse(sse_queue)
 
             return EventSourceResponse(event_generator())
 
@@ -1456,28 +1458,18 @@ class DashboardApp:
         # Subscribe to NATS uc.task.event if client is available
         self._subscribe_nats_events()
 
-    def _get_nats_event_queue(self) -> asyncio.Queue[dict[str, Any] | None]:
-        """Lazily create the NATS event asyncio.Queue on first use.
+    def _subscribe_sse(self) -> asyncio.Queue[dict[str, Any]]:
+        """F63: register an SSE client; returns its own event queue.
 
-        Python 3.9 asyncio.Queue() requires a running event loop at creation
-        time. If no loop is running (e.g. in synchronous tests), we create
-        a new event loop and set it as the current loop for this thread.
+        Bounded (1000) so a stalled client can't grow memory without limit;
+        _handle_nats_event drops into-full queues per client.
         """
-        if self._nats_event_queue is None:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                # ponytail: no running loop — set one so Queue() works on 3.9
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                except Exception:
-                    pass
-            # Bounded so a NATS burst with no SSE client draining can't grow
-            # the queue without limit. The QueueFull catch in the publisher
-            # logs + drops — without maxsize that catch is dead code.
-            self._nats_event_queue = asyncio.Queue(maxsize=1000)
-        return self._nats_event_queue
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+        self._sse_subscribers.add(queue)
+        return queue
+
+    def _unsubscribe_sse(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        self._sse_subscribers.discard(queue)
 
     async def _connect_and_subscribe_nats(self) -> None:
         """Connect (if given a URL) and subscribe to ``uc.task.event``.
@@ -1590,10 +1582,28 @@ class DashboardApp:
         if payload.get("data"):
             event_dict["data"] = payload.get("data")
 
-        try:
-            self._get_nats_event_queue().put_nowait(event_dict)
-        except asyncio.QueueFull:
-            logger.warning("NATS event queue full, dropping event: %s", event_dict.get("type"))
+        # ponytail: F63 — record + fan out exactly ONCE per event. Previously
+        # the event went into one shared queue that every SSE client raced to
+        # drain (multi-tab dashboards each saw a random subset), and the
+        # event-log/metrics recording lived in the client loop — so with zero
+        # clients attached, REST /events and metrics lost events entirely.
+        self._event_log.appendleft(event_dict)
+        if self.event_emitter is not None:
+            self.event_emitter._recent.append(event_dict)
+        self._metrics.record_event(
+            event_dict.get("type", ""),
+            event_dict.get("data", {}),
+        )
+        for q in list(self._sse_subscribers):
+            try:
+                q.put_nowait(event_dict)
+            except asyncio.QueueFull:
+                # Per-client backpressure: a stalled client drops events but
+                # no longer starves the others (old shared-queue behavior).
+                logger.warning(
+                    "SSE client queue full, dropping event: %s",
+                    event_dict.get("type"),
+                )
 
     def stop(self) -> None:
         """Stop the dashboard server gracefully.
