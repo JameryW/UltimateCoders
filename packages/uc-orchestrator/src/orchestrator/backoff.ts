@@ -18,6 +18,12 @@ export interface BackoffOptions {
 	maxAttempts?: number;
 	/** Jitter factor 0..1. Default 0 (no jitter). Each delay is multiplied by (1 ± factor). */
 	jitter?: number;
+	/**
+	 * Called with the exact delay about to be slept (0-indexed attempt).
+	 * ponytail: F10 — surfaces reconnect progress without recomputing the delay
+	 * (which under jitter would differ from the actual sleep).
+	 */
+	onAttempt?: (attempt: number, delayMs: number) => void;
 }
 
 /**
@@ -45,6 +51,7 @@ export function backoffDelay(attempt: number, opts: BackoffOptions = {}): number
 export async function sleepBackoff(attempt: number, opts: BackoffOptions = {}): Promise<boolean> {
 	const delay = backoffDelay(attempt, opts);
 	if (delay === null) return false;
+	opts.onAttempt?.(attempt, delay);
 	await new Promise<void>((resolve) => {
 		const t = setTimeout(resolve, delay);
 		// Allow the Node/Bun event loop to exit promptly during teardown.
