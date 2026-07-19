@@ -62,6 +62,32 @@ describe("ControlSignalSubscriber stop()", () => {
 		await expect(sub.stop()).resolves.toBeUndefined();
 	});
 
+	// ponytail: F43 — without NATS the polling fallback must detect resume.
+	// Before, only Paused/Failed transitions were handled, so a task resumed
+	// remotely moved out of "Paused" unobserved and sat paused forever.
+	it("F43: polling detects resume (Paused → running) and not-cancel (Paused → Failed)", () => {
+		const { handler, calls } = makeHandler();
+		const sub = new ControlSignalSubscriber(handler, makeBridge(), {
+			natsUrl: "nats://127.0.0.1:1", pollIntervalMs: 1000, maxReconnectAttempts: 1,
+		});
+		const drive = sub as unknown as { checkControlStateChange(id: string, task: { status: string }): void };
+
+		drive.checkControlStateChange("t-1", { status: "Paused" });
+		drive.checkControlStateChange("t-1", { status: "Running" });
+		expect(calls.some((c) => c.method === "resume" && c.taskId === "t-1")).toBe(true);
+		expect(calls.some((c) => c.method === "cancel")).toBe(false);
+
+		// Paused → Failed is the cancel transition, NOT a resume
+		const { handler: h2, calls: calls2 } = makeHandler();
+		const sub2 = new ControlSignalSubscriber(h2, makeBridge(), {
+			natsUrl: "nats://127.0.0.1:1", pollIntervalMs: 1000, maxReconnectAttempts: 1,
+		});
+		const drive2 = sub2 as unknown as { checkControlStateChange(id: string, task: { status: string }): void };
+		drive2.checkControlStateChange("t-2", { status: "Paused" });
+		drive2.checkControlStateChange("t-2", { status: "Failed" });
+		expect(calls2.some((c) => c.method === "resume")).toBe(false);
+	});
+
 	it("start() is idempotent-ish: calling stop then start resets stopped", async () => {
 		const { handler } = makeHandler();
 		const sub = new ControlSignalSubscriber(

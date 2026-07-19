@@ -140,7 +140,9 @@ export class RpcServer {
 				const description = String(params.description ?? "");
 				if (!description) throw new Error("description is required");
 				if (isSpawnDisabled()) {
-					throw new Error("子任务派发已禁用 (UC_NO_SPAWN)");
+					// ponytail: F38 follow-up — English like the extension/task-bridge
+					// spawn messages (this RPC-side copy was missed in round 14).
+					throw new Error("Subtask spawning disabled (UC_NO_SPAWN)");
 				}
 				// Fire-and-forget: submitTask blocks until decomposition + execution
 				// complete, but the RPC protocol requires an immediate task_id response.
@@ -181,6 +183,13 @@ export class RpcServer {
 			case "resume_task": {
 				const taskId = String(params.task_id ?? "");
 				if (!taskId) throw new Error("task_id is required");
+				// ponytail: F45 — resume re-enters wave execution (spawns subtasks),
+				// so it needs the same gate as submit. Without it, UC_NO_SPAWN let a
+				// resume churn through every wave producing failed subtasks instead
+				// of refusing up front. (pause/cancel don't spawn — no gate needed.)
+				if (isSpawnDisabled()) {
+					throw new Error("Subtask spawning disabled (UC_NO_SPAWN)");
+				}
 				const r = await this.orchestrator.resumeTask(taskId);
 				return r.ok
 					? { ok: true, task_id: r.taskId }

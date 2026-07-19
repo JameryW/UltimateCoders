@@ -81,7 +81,16 @@ export class ControlSignalSubscriber {
 	async start(): Promise<void> {
 		this.stopped = false;
 		try {
-			this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
+			const conn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
+			// ponytail: F44 — stop() may have landed during the connect window
+			// (it saw natsConn === null and finished cleanly); assigning the
+			// connection now would leak it plus a live subscription for the
+			// process lifetime. Bail out instead.
+			if (this.stopped) {
+				try { await conn.close(); } catch { /* already closed */ }
+				return;
+			}
+			this.natsConn = conn;
 			this.natsConnected = true;
 			this.startNatsSubscription();
 			console.info(`[ControlSignalSubscriber] Connected to NATS at ${this.config.natsUrl}`);
@@ -153,7 +162,13 @@ export class ControlSignalSubscriber {
 			await new Promise((r) => setTimeout(r, delay));
 			if (this.stopped) return; // shutdown during backoff sleep
 			try {
-				this.natsConn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
+				const conn = await connect({ servers: this.config.natsUrl, timeout: 2_000 });
+				// ponytail: F44 — same stop()-during-connect guard as start().
+				if (this.stopped) {
+					try { await conn.close(); } catch { /* already closed */ }
+					return;
+				}
+				this.natsConn = conn;
 				this.natsConnected = true;
 				// Stop polling timer before switching to NATS subscription
 				if (this.pollTimer) {
@@ -274,6 +289,13 @@ export class ControlSignalSubscriber {
 		if (currentStatus === "Paused" && previous !== "Paused") {
 			console.info(`[ControlSignalSubscriber] Polling detected pause for task ${taskId}`);
 			this.handler.pauseTask(taskId).catch((err) => { console.warn(`[ControlSignalSubscriber] pauseTask handler failed for ${taskId}: ${err}`); });
+		} else if (previous === "Paused" && currentStatus !== "Paused" && currentStatus !== "Failed") {
+			// ponytail: F43 — without NATS (the fallback, and the common local-dev
+			// case), a remote resume moves the task out of "Paused" and nothing
+			// noticed — the task sat paused until NATS returned or a restart.
+			// (Failed is excluded: the cancel branch below owns that transition.)
+			console.info(`[ControlSignalSubscriber] Polling detected resume for task ${taskId}`);
+			this.handler.resumeTask(taskId).catch((err) => { console.warn(`[ControlSignalSubscriber] resumeTask handler failed for ${taskId}: ${err}`); });
 		} else if (currentStatus === "Failed" && previous !== "Failed") {
 			// gRPC cancel_task sets status to Failed. Distinguish from natural
 			// failure by checking whether the Orchestrator still considers the

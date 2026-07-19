@@ -68,8 +68,13 @@ export class TaskStore {
 	}
 
 	async save(task: PersistedTask): Promise<void> {
+		// ponytail: F42 — atomic write. Direct writeFile leaves a truncated/empty
+		// file when the process dies mid-write (SIGKILL/OOM — the RPC server is
+		// killed by its parent), which loadAll then can't parse. tmp + rename is
+		// atomic on POSIX, so readers see either the old or the new file.
 		const filePath = path.join(this.dir, `${task.id}.json`);
-		await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
+		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(task, null, 2), "utf-8");
+		await fs.rename(`${filePath}.tmp`, filePath);
 	}
 
 	async load(taskId: string): Promise<PersistedTask | null> {
@@ -86,21 +91,30 @@ export class TaskStore {
 	}
 
 	async loadAll(): Promise<PersistedTask[]> {
+		let files: string[];
 		try {
-			const files = await fs.readdir(this.dir);
-			const tasks: PersistedTask[] = [];
-			for (const file of files) {
-				if (!file.endsWith(".json")) continue;
-				const raw = await fs.readFile(path.join(this.dir, file), "utf-8");
-				tasks.push(JSON.parse(raw) as PersistedTask);
-			}
-			return tasks;
+			files = await fs.readdir(this.dir);
 		} catch (err) {
 			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
 				console.warn(`TaskStore loadAll failed: ${err instanceof Error ? err.message : err}`);
 			}
 			return [];
 		}
+		const tasks: PersistedTask[] = [];
+		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
+			// ponytail: F41 — per-file try/catch. The old single catch around the
+			// whole loop meant ONE corrupt file discarded every task (restore()
+			// showed nothing until the bad file was found by hand). Skip the bad
+			// file, keep the rest.
+			try {
+				const raw = await fs.readFile(path.join(this.dir, file), "utf-8");
+				tasks.push(JSON.parse(raw) as PersistedTask);
+			} catch (err) {
+				console.warn(`TaskStore skipping unreadable task file ${file}: ${err instanceof Error ? err.message : err}`);
+			}
+		}
+		return tasks;
 	}
 
 	async remove(taskId: string): Promise<void> {
@@ -123,8 +137,10 @@ export class TaskStore {
 
 	/** Save a wave-boundary checkpoint snapshot (latest-wins). */
 	async saveCheckpoint(task: PersistedTask): Promise<void> {
+		// ponytail: F42 — atomic write, same rationale as save().
 		const filePath = path.join(this.checkpointDir, `${task.id}.snap.json`);
-		await fs.writeFile(filePath, JSON.stringify(task, null, 2), "utf-8");
+		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(task, null, 2), "utf-8");
+		await fs.rename(`${filePath}.tmp`, filePath);
 	}
 
 	/** Load the latest checkpoint for a task, or null if none exists. */
@@ -148,8 +164,11 @@ export class TaskStore {
 			try {
 				const files = await fs.readdir(dir);
 				for (const file of files) {
-					if (!file.endsWith(".json")) continue;
-					const taskId = file.replace(/\.snap\.json$|\.json$/, "");
+					// ponytail: F42 — also sweep .tmp orphans a crash can leave
+					// behind from the atomic-write rename.
+					const isTmp = file.endsWith(".json.tmp");
+					if (!file.endsWith(".json") && !isTmp) continue;
+					const taskId = file.replace(/\.json\.tmp$|\.snap\.json$|\.json$/, "");
 					if (!taskIdsToKeep.has(taskId)) {
 						try {
 							await fs.unlink(path.join(dir, file));
