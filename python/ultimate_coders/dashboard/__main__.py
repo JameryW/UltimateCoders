@@ -76,10 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     app = DashboardApp(orchestrator=None, nats_url=nats_url)
     app.start(host=args.host, port=args.port)
 
+    nats_banner = (
+        "enabled (connects on server start — see log)"
+        if nats_url else "disabled (snapshot-only)"
+    )
     print(
         f"Dashboard API: http://localhost:{args.port}/dashboard/\n"
         f"Dashboard UI:  http://localhost:5173  (Vite dev; run `cd dashboard && bun run dev`)\n"
-        f"NATS: {'enabled (connects on server start — see log)' if nats_url else 'disabled (snapshot-only)'}",
+        f"NATS: {nats_banner}",
         flush=True,
     )
 
