@@ -354,3 +354,83 @@ async def test_handle_subtask_execute_dispatches_to_background():
     assert nw._publisher.publish_event.await_count >= 1
     published_type = nw._publisher.publish_event.await_args.args[0]
     assert published_type == "subtask_completed"
+
+
+# ── F56: remote subtask timeout reclaim ───────────────────
+
+
+async def test_reclaim_timed_out_remote_subtasks():
+    """Remote-assigned subtasks with no result past timeout+grace reset to
+    PENDING; fresh dispatches are untouched. 'remote' is never a real worker
+    entry, so the stale-worker sweep could never see these before.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from ultimate_coders.agent.orchestrator import Orchestrator
+    from ultimate_coders.agent.types import (
+        Subtask,
+        SubtaskStatus,
+        Task,
+        TaskStatus,
+    )
+
+    nw = _make_worker()
+    orch = Orchestrator()
+    st = Subtask(id="st-r1", description="remote one", parent_id="t-1", timeout_seconds=600)
+    st.status = SubtaskStatus.ASSIGNED
+    st.assigned_worker = "remote"
+    task = Task(id="t-1", description="t", subtasks=[st], status=TaskStatus.IN_PROGRESS)
+    orch.tasks["t-1"] = task
+    nw._orchestrator = orch
+    nw._publisher = MagicMock()
+    nw._publisher.publish_event = AsyncMock()
+    nw._dispatch_event = asyncio.Event()
+
+    # Expired: 700s > 600 timeout + 60s grace → reclaimed
+    nw._remote_dispatched_at["st-r1"] = datetime.now(timezone.utc) - timedelta(seconds=700)
+    await nw._reclaim_timed_out_remote_subtasks()
+    assert st.status == SubtaskStatus.PENDING
+    assert st.assigned_worker is None
+    assert st.retry_count == 1
+    assert "st-r1" not in nw._remote_dispatched_at
+    assert nw._publisher.publish_event.await_count == 1
+
+    # Fresh dispatch (100s < deadline) → untouched
+    st2 = Subtask(id="st-r2", description="remote two", parent_id="t-1", timeout_seconds=600)
+    st2.status = SubtaskStatus.ASSIGNED
+    st2.assigned_worker = "remote"
+    task.subtasks.append(st2)
+    nw._remote_dispatched_at["st-r2"] = datetime.now(timezone.utc) - timedelta(seconds=100)
+    await nw._reclaim_timed_out_remote_subtasks()
+    assert st2.status == SubtaskStatus.ASSIGNED
+    assert st2.assigned_worker == "remote"
+
+
+async def test_dispatch_remote_publish_failure_resets_to_pending():
+    """A failed NATS publish must not leave the subtask ASSIGNED to 'remote'
+    forever — reset to PENDING so it gets re-selected.
+    """
+    from ultimate_coders.agent.orchestrator import Orchestrator
+    from ultimate_coders.agent.types import (
+        Subtask,
+        SubtaskStatus,
+        Task,
+        TaskStatus,
+    )
+
+    nw = _make_worker()
+    orch = Orchestrator()
+    st = Subtask(id="st-d1", description="d", parent_id="t-2")
+    task = Task(id="t-2", description="t", subtasks=[st], status=TaskStatus.IN_PROGRESS)
+    orch.tasks["t-2"] = task
+    nw._orchestrator = orch
+    nw._publisher = MagicMock()
+    nw._nc = MagicMock()
+    nw._nc.publish = AsyncMock(side_effect=Exception("nats down"))
+
+    await nw._dispatch_remote(st)
+
+    assert st.status == SubtaskStatus.PENDING
+    assert st.assigned_worker is None
+    assert "st-d1" not in nw._remote_dispatched_at
