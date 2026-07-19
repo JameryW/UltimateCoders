@@ -50,9 +50,15 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).
-	lines.push(theme.fg("dim", `  Description: ${cap(task.description, width !== undefined ? width - 2 : undefined, 200)}`));
+	// F16: budget must subtract the "  Description: " prefix (15 cols) — the old
+	// width-2 overflowed the line by ~13.
+	lines.push(theme.fg("dim", `  Description: ${cap(task.description, width !== undefined ? width - 15 : undefined, 200)}`));
 	if (task.error) {
-		lines.push(theme.fg("error", `  Error: ${task.error.slice(0, Math.max(0, (width !== undefined ? width : 120) - 2))}`));
+		// ponytail: F16 — route through formatErrorForDisplay like the subtask
+		// error path: classification label + ellipsis + ANSI-safe slicing. The old
+		// raw slice ignored the prefix (overflowed ~7) and had no label/ellipsis.
+		const errBudget = width !== undefined ? Math.max(0, width - 4) : 60;
+		lines.push(`  ${formatErrorForDisplay(task.error, errBudget, (c, t) => theme.fg(c, t))}`);
 	}
 
 	lines.push("");
@@ -96,9 +102,12 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// ponytail: cap desc to the remaining width after indent+icon+prefix+id.
 			// Without width (legacy notify path), keep the 50-char cap. deps is themed
 			// and appended AFTER capping the plain desc, so it never splits the ANSI.
+			// F17: icon VISIBLE width is 1 — stIcon.length includes ~11 ANSI escape
+			// chars in real terminals, so the old subtraction over-truncated desc
+			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - stIcon.length - 2)
+				? Math.max(0, width - headPlain.length - 1 - 2)
 				: 50;
 			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}`);
 

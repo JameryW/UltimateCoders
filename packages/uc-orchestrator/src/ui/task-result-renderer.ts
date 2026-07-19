@@ -23,7 +23,7 @@ interface TaskResultDetails {
 
 // ── Renderer ─────────────────────────────────────────────────────
 
-export function createTaskResultRenderer(): (message: any, options: { expanded: boolean }, theme: Theme) => Component | undefined {
+export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState | undefined): (message: any, options: { expanded: boolean }, theme: Theme) => Component | undefined {
 	return (message, options, theme) => {
 		const details: TaskResultDetails | undefined = message.details;
 		if (!details) return undefined;
@@ -38,8 +38,12 @@ export function createTaskResultRenderer(): (message: any, options: { expanded: 
 
 		// ponytail: capture raw subtask data at factory time; slice to width inside
 		// render(width) since the factory closure doesn't receive the terminal width.
-		const expandedSubtasks = options.expanded && details.task
-			? details.task.subtasks.map((st) => ({
+		// F15: the emitter only sends {taskId, status, subtaskCount} — details.task
+		// is never populated, so resolve live via the getter (extension passes
+		// orchestrator.getTaskState). Evicted tasks degrade to the header only.
+		const task = details.task ?? getTask?.(details.taskId);
+		const expandedSubtasks = options.expanded && task
+			? task.subtasks.map((st) => ({
 				icon: statusIcon(st.status, theme),
 				id: st.id,
 				desc: st.description,

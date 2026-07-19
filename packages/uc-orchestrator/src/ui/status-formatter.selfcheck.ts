@@ -113,5 +113,24 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList wide: full desc kept", wideDesc.includes(longDesc));
 }
 
+// ponytail: F16 — full lines must fit the width. Old budgets subtracted 2 while
+// the prefixes are 15 ("  Description: ") and 9 ("  Error: ") cols → overflow
+// ~13/~7. Task error was also a raw slice — no ellipsis, no classification
+// label, unlike the subtask error path it now mirrors.
+{
+	const task = {
+		id: "T1", description: "d".repeat(120), status: "failed", controlState: "running",
+		createdAt: 0, subtasks: [], error: "Execution error: " + "E".repeat(120),
+	} as unknown as TaskState;
+	const lines = formatTaskDetail(task, theme, 60);
+	const descLine = lines.find((l) => l.startsWith("  Description:")) ?? "";
+	check("F16 description line fits width (prefix budgeted)", descLine.length > 0 && descLine.length <= 60);
+	check("F16 description ellipsed", descLine.endsWith("…"));
+	const errLine = lines.find((l) => l.includes("⚠")) ?? "";
+	check("F16 task error via formatErrorForDisplay (label)", errLine.length > 0);
+	check("F16 task error ellipsed (not raw slice)", errLine.includes("…"));
+	check("F16 task error root cause capped", !errLine.includes("E".repeat(100)));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

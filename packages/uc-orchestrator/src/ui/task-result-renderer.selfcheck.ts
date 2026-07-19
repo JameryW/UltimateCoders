@@ -69,5 +69,25 @@ const renderer = createTaskResultRenderer();
 	check("tiny width still shows subtask id", lines.some((l: string) => l.includes("s1")));
 }
 
+// ponytail: F15 — the emitter sends only {taskId, status, subtaskCount} (no
+// details.task), so the expanded view must resolve the snapshot via getter.
+{
+	const subs = [makeSubtask("s1", "completed", "getter task"), makeSubtask("s2", "failed", "other", "kaput")];
+	const liveTask = {
+		id: "T-1234567890", description: "t", status: "failed", controlState: "running",
+		createdAt: 0, subtasks: subs,
+	} as unknown as TaskState;
+	const withGetter = createTaskResultRenderer((id) => (id === "T-1234567890" ? liveTask : undefined));
+	// exactly what the emitter sends — no `task` field
+	const msg = { details: { taskId: "T-1234567890", status: "failed", subtaskCount: 2 } };
+	const lines = (withGetter(msg, { expanded: true }, theme) as any).render(80) as string[];
+	check("F15 getter resolves expanded subtasks", lines.some((l: string) => l.includes("s1")) && lines.some((l: string) => l.includes("s2")));
+	check("F15 getter shows subtask error", lines.some((l: string) => l.includes("kaput")));
+	// no getter + no details.task → header only (graceful degradation for evicted tasks)
+	const bare = createTaskResultRenderer();
+	const bareLines = (bare(msg, { expanded: true }, theme) as any).render(80) as string[];
+	check("F15 no task source degrades to header only", bareLines.length === 1);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
