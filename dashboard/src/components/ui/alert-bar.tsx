@@ -17,6 +17,10 @@ export const AlertBar = memo(function AlertBar({
 }: AlertBarProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [alertHistory, setAlertHistory] = useState<AlertRecord[]>([]);
+  // ponytail: track whether the history fetch failed, so the empty state can
+  // distinguish "no alerts recorded" from "history unavailable" instead of
+  // showing the same message for both (misleading on a failed fetch).
+  const [historyError, setHistoryError] = useState(false);
   const historyFetched = useRef(false);
 
   const alerts = useMemo(() => {
@@ -81,8 +85,18 @@ export const AlertBar = memo(function AlertBar({
       if (res.ok) {
         const data = await res.json();
         setAlertHistory(data.alerts || []);
+        // ponytail: clear any prior error on success.
+        setHistoryError(false);
+      } else {
+        // ponytail: non-ok response (e.g. endpoint absent in gRPC-only deploy)
+        // — mark failed so the empty state names the cause instead of saying
+        // "No alerts recorded".
+        setHistoryError(true);
       }
-    } catch { /* graceful fallback */ }
+    } catch {
+      // ponytail: network/transport failure — same misleading-avoidance.
+      setHistoryError(true);
+    }
   }, []);
 
   const toggleHistory = useCallback(() => {
@@ -136,7 +150,9 @@ export const AlertBar = memo(function AlertBar({
             <span className="text-xs font-semibold text-[var(--text-muted)]">Alert History</span>
           </div>
           {alertHistory.length === 0 ? (
-            <div className="px-3 py-4 text-xs text-[var(--text-muted)] text-center">No alerts recorded</div>
+            <div className="px-3 py-4 text-xs text-[var(--text-muted)] text-center">
+              {historyError ? "Alert history unavailable" : "No alerts recorded"}
+            </div>
           ) : (
             <div className="divide-y divide-[var(--border-color)]">
               {alertHistory.map((a) => (
