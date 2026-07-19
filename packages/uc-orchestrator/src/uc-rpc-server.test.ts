@@ -68,12 +68,12 @@ describe("RpcServer.dispatch", () => {
 		expect(resp.result?.ok).toBe(false);
 	});
 
-	it("unknown method returns error code -32000 with descriptive message", async () => {
+	it("unknown method returns -32601 (F50: was -32000)", async () => {
 		const server = new RpcServer();
 		const resp = await dispatch(server, "bogus_method", {}, 6);
 		expect(resp.error).toBeDefined();
-		expect(resp.error?.code).toBe(-32000);
-		expect(resp.error?.message).toContain("Unknown method");
+		expect(resp.error?.code).toBe(-32601);
+		expect(resp.error?.message).toContain("bogus_method");
 	});
 
 	it("show_status without task_id returns ok + tasks array", async () => {
@@ -112,5 +112,38 @@ describe("RpcServer.dispatch", () => {
 		const resp = await dispatch(server, "list_tasks", {});
 		expect(typeof resp.id).toBe("number");
 		expect(resp.id).toBeGreaterThan(0);
+	});
+
+	// ── F50: typed error codes + unified not-found ──────────────────
+
+	it("F50: missing required param returns -32602", async () => {
+		const server = new RpcServer();
+		const resp = await dispatch(server, "pause_task", {}, 11);
+		expect(resp.error?.code).toBe(-32602);
+	});
+
+	it("F50: submit without description returns -32602", async () => {
+		const server = new RpcServer();
+		const resp = await dispatch(server, "submit_task", {}, 12);
+		expect(resp.error?.code).toBe(-32602);
+	});
+
+	it("F50: non-string subtask_id is rejected as -32602", async () => {
+		const server = new RpcServer();
+		const resp = await dispatch(server, "cancel_task", { task_id: "t-1", subtask_id: 5 }, 13);
+		expect(resp.error?.code).toBe(-32602);
+	});
+
+	it("F50: get_task not-found carries the unified {status, task} shape", async () => {
+		const server = new RpcServer();
+		const resp = await dispatch(server, "get_task", { task_id: "nonexistent" }, 14);
+		expect(resp.result?.status).toBe("not_found");
+		expect(resp.result?.task).toBeNull();
+	});
+
+	it("F50: client request id 0 is echoed, not replaced", async () => {
+		const server = new RpcServer();
+		const resp = await dispatch(server, "bogus_method", {}, 0);
+		expect(resp.id).toBe(0);
 	});
 });

@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, normalizeFileIntent, type SubtaskDef } from "./scheduler";
+import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, normalizeFileIntent, recursiveDecompose, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -667,5 +667,45 @@ describe("file intent normalization (F47)", () => {
 		tracker.declare("s1", ["src/Config.ts"]);
 		expect(tracker.isConflicting(["src/config.ts"]).has("s1")).toBe(true);
 		expect(tracker.isConflicting(["./src/CONFIG.ts"]).has("s1")).toBe(true);
+	});
+});
+
+// ponytail: F48 — duplicate ids used to surface as "Circular dependencies
+// detected: []" or a deadlock; duplicate dependsOn entries deadlocked the
+// wave loop (inDegree over-counted vs the deduped dependents set).
+describe("buildDAG input validation (F48)", () => {
+	it("duplicate subtask ids throw an explicit error, not a bogus cycle", () => {
+		expect(() => buildDAG([st("a", "a"), st("a", "a-dup")])).toThrow(/Duplicate subtask id "a"/);
+	});
+
+	it("duplicate dependsOn entries don't deadlock", () => {
+		const waves = buildDAG([st("a", "a"), st("b", "b", ["a", "a", "a"])]);
+		expect(waves.length).toBe(2);
+		expect(waves[1].map((s) => s.id)).toEqual(["b"]);
+	});
+});
+
+// ponytail: F49 — recursiveDecompose used to emit children[1..n] BEFORE the
+// wave containing children[0], so dependent children ran before their
+// dependency. File-split children (all depend only on c0) must run parallel.
+describe("recursiveDecompose wave ordering (F49)", () => {
+	it("file-split: c0 takes parent slot, siblings run parallel after", () => {
+		const parent = st("p", "parent", [], ["f1.ts", "f2.ts", "f3.ts"]); // ≥3 files → decomposes
+		const out = recursiveDecompose([[parent]]);
+		expect(out.map((w) => w.map((s) => s.id))).toEqual([
+			["p-f0"],
+			["p-f1", "p-f2"], // parallel — both depend only on p-f0
+		]);
+	});
+
+	it("description-split: chain children stay strictly ordered after c0", () => {
+		const longDesc = ["a".repeat(70), "b".repeat(70), "c".repeat(70)].join("\n"); // >200 → decomposes
+		const parent = st("p", longDesc);
+		const out = recursiveDecompose([[parent]]);
+		expect(out.map((w) => w.map((s) => s.id))).toEqual([
+			["p-p0"],
+			["p-p1"],
+			["p-p2"],
+		]);
 	});
 });
