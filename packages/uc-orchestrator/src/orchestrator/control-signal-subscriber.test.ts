@@ -19,9 +19,11 @@ function makeHandler() {
 	const calls: Array<{ method: string; taskId: string }> = [];
 	return {
 		handler: {
-			pauseTask: async (taskId: string) => { calls.push({ method: "pause", taskId }); return true; },
-			resumeTask: async (taskId: string) => { calls.push({ method: "resume", taskId }); return true; },
-			cancelTask: async (taskId: string) => { calls.push({ method: "cancel", taskId }); return true; },
+			// ponytail: F27 — handler methods return ControlOutcome (tests only
+			// record calls; the payload is unused here).
+			pauseTask: async (taskId: string) => { calls.push({ method: "pause", taskId }); return { ok: true, taskId }; },
+			resumeTask: async (taskId: string) => { calls.push({ method: "resume", taskId }); return { ok: true, taskId }; },
+			cancelTask: async (taskId: string) => { calls.push({ method: "cancel", taskId }); return { ok: true, taskId }; },
 			getActiveTaskIds: () => [] as string[],
 		},
 		calls,

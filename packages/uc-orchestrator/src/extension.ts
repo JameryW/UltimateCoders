@@ -57,6 +57,10 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	// ── Live state for widgets/overlays ─────────────────────────
 	const progressState: Map<string, ProgressWidgetState> = new Map();
 	let statusRenderer: StatusRenderer | undefined;
+	// ponytail: F31 — the working message is one global slot; tasks run
+	// concurrently (RPC fire-and-forget, restored tasks), so task_complete must
+	// only clear the message if it still belongs to the completing task.
+	let lastWorkingTaskId: string | null = null;
 
 	// ── Restore persisted tasks on startup ──────────────────────
 	orchestrator.restore().catch((err) => {
@@ -132,23 +136,29 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "task_planning": {
 				const d = data as OrchestratorEvents["task_planning"];
 				progressState.set(d.taskId, { task: getTaskOrEmpty(d.taskId) });
+				lastWorkingTaskId = d.taskId;
 				ctx.ui.setWorkingMessage(`UC: Planning ${d.taskId.slice(0, 8)}...`);
-				statusRenderer?.setField("active", `UC: planning`);
+				// ponytail: F32 — attribute the footer field so concurrent tasks
+				// don't read as one anonymous "UC: planning".
+				statusRenderer?.setField("active", `UC: ${d.taskId.slice(0, 8)} · planning`);
 				break;
 			}
 			case "task_decomposed": {
 				const d = data as OrchestratorEvents["task_decomposed"];
+				lastWorkingTaskId = d.taskId;
 				ctx.ui.setWorkingMessage(`UC: ${d.subtaskCount} subtasks, ${d.waveCount} waves`);
 				break;
 			}
 			case "wave_start": {
 				const d = data as OrchestratorEvents["wave_start"];
 				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
+				lastWorkingTaskId = d.taskId;
 				ctx.ui.setWorkingMessage(`UC: Wave ${d.waveIdx + 1}/${d.totalWaves}`);
 				break;
 			}
 			case "subtask_start": {
 				const d = data as OrchestratorEvents["subtask_start"];
+				lastWorkingTaskId = d.taskId;
 				ctx.ui.setWorkingMessage(`UC: ${d.description.slice(0, 40)}`);
 				// ponytail: refresh the widget's task snapshot so the now-running
 				// subtask shows in the "running" list immediately. Without this, ps.task
@@ -255,14 +265,32 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				const d = data as OrchestratorEvents["task_complete"];
 				ctx.ui.setWidget(`uc-${d.taskId}`, undefined);
 				progressState.delete(d.taskId);
-				ctx.ui.setWorkingMessage(undefined);
-				statusRenderer?.setField("active", `UC: ${d.status}`);
+				// ponytail: F31 — only clear the working message if it still belongs
+				// to this task; a concurrent task's "UC: Wave 2/3" must survive.
+				if (lastWorkingTaskId === d.taskId) {
+					ctx.ui.setWorkingMessage(undefined);
+					lastWorkingTaskId = null;
+				}
+				// ponytail: F32 — attribute the terminal state, then hand the footer
+				// slot to a still-active task if one exists (else clear it — the
+				// field was never cleared before, so "UC: failed" showed all session).
+				const stillActive = orchestrator.getAllTaskStates().filter(
+					(t) => t.status === "in_progress" || t.status === "planning",
+				);
+				statusRenderer?.setField(
+					"active",
+					stillActive.length > 0
+						? `UC: ${stillActive[0].id.slice(0, 8)} · ${stillActive[0].status}`
+						: `UC: ${d.taskId.slice(0, 8)} · ${d.status}`,
+				);
 				break;
 			}
 			case "task_paused":
 			case "task_resumed":
 			case "task_cancelled": {
-				statusRenderer?.setField("active", `UC: ${type.replace("task_", "")}`);
+				// ponytail: F32 — attribute; events all carry taskId.
+				const d = data as OrchestratorEvents["task_paused"];
+				statusRenderer?.setField("active", `UC: ${d.taskId.slice(0, 8)} · ${type.replace("task_", "")}`);
 				break;
 			}
 			case "connection_state": {

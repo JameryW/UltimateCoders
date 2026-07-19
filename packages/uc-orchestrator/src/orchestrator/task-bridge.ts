@@ -99,12 +99,32 @@ export function registerTaskTools(pi: ExtensionAPI, bridge: GrpcBridge, orchestr
 								isError: true,
 							};
 						}
-						const ok = await bridge.cancelTask(p.task_id, p.subtask_id);
+						// ponytail: F30 — gRPC CancelTaskRequest has NO subtask field
+						// (the server ignores it and cancels the whole task), but the
+						// old code passed subtask_id through and then reported the
+						// *subtask* as cancelled — actively wrong. Route subtask-level
+						// cancel through the local orchestrator, which does real
+						// subtask cancel + cascade and returns a discriminated outcome.
+						if (p.subtask_id && orchestrator) {
+							const r = await orchestrator.cancelTask(p.task_id, p.subtask_id);
+							return {
+								content: [{
+									type: "text" as const,
+									text: r.ok
+										? `Cancelled subtask ${p.subtask_id} in task ${r.taskId} (cascade applied)`
+										: `Cancel failed (${r.reason})${r.candidates?.length ? `: ${r.candidates.join(", ")}` : ""}`,
+								}],
+							};
+						}
+						// Whole-task cancel stays server-side (remote tasks aren't in
+						// the local orchestrator). Don't pass subtask_id — the server
+						// ignores it; claiming subtask success here would lie.
+						const ok = await bridge.cancelTask(p.task_id);
 						return {
 							content: [{
 								type: "text" as const,
 								text: ok
-									? `Cancelled ${p.subtask_id ? `subtask ${p.subtask_id} in` : ""} task ${p.task_id}`
+									? `Cancelled task ${p.task_id}${p.subtask_id ? " (server-side whole-task cancel; subtask-level cancel needs the local orchestrator)" : ""}`
 									: `Cancel failed: task ${p.task_id} not found or not cancellable`,
 							}],
 						};
