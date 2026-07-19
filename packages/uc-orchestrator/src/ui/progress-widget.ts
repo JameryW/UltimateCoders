@@ -13,6 +13,7 @@ import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
+import { formatElapsed } from "./elapsed";
 
 // ── Progress Bar ─────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ export interface ProgressWidgetState {
 /** Real-time progress for a single subtask (phase/percent/agent). */
 export interface SubtaskProgressInfo {
 	phase: string;
+	/** -1 = worker reported no data (widget skips negatives; never shows a bogus 0%). */
 	percent: number;
 	stepIndex?: number;
 	stepTotal?: number;
@@ -49,6 +51,13 @@ export interface SubtaskProgressInfo {
 	stepSummary?: string;
 	parallelGroup?: string;
 	parallelStepCount?: number;
+	/**
+	 * ponytail: F19 — when this subtask was first seen running (seeded at
+	 * subtask_start, carried across subtask_progress updates). Drives the
+	 * elapsed tag so a hung subtask (frozen %/phase) is distinguishable from
+	 * an active one. Client-side timestamp — zero protocol change.
+	 */
+	firstSeen?: number;
 }
 
 export function createProgressWidget(state: () => ProgressWidgetState | null) {
@@ -146,6 +155,15 @@ class ProgressWidgetComponent {
 					if (prog.parallelGroup && prog.parallelStepCount && prog.parallelStepCount > 1) {
 						const plain = `↻${prog.parallelStepCount} parallel`;
 						tags.push({ plain, rendered: this.theme.fg("warning", plain) });
+					}
+					// ponytail: F19 — elapsed since firstSeen (subtask_start seed,
+					// carried across progress updates). A hung subtask's %/phase
+					// freeze; the ticking elapsed (refreshed on each event) separates
+					// "running 9m, stuck" from "running 9m, fine". Second-lowest
+					// priority: under tight budgets phase trims first, then this.
+					if (prog.firstSeen !== undefined) {
+						const plain = `(${formatElapsed(Date.now() - prog.firstSeen)})`;
+						tags.push({ plain, rendered: this.theme.fg("dim", plain) });
 					}
 					// phase LAST — lowest priority, trimmed/dropped first
 					if (prog.phase) tags.push({ plain: prog.phase, rendered: this.theme.fg("dim", prog.phase) });

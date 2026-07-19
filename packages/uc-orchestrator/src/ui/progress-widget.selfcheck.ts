@@ -272,5 +272,30 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("S8: undefined retryCount no retry line", !lines.some((l: string) => l.includes("retried")));
 }
 
+// ponytail: F19 — elapsed tag from firstSeen (seeded at subtask_start, carried
+// across progress updates); F20 — percent -1 (no data) renders no % tag.
+{
+	const lines65 = renderRunningWithProgress(
+		{ phase: "executing", percent: 42, firstSeen: Date.now() - 65_000 }, 80);
+	const progLine = lines65.find((l) => l.includes("42%")) ?? "";
+	check("F19 elapsed tag rendered (1m)", progLine.includes("(1m"));
+
+	const linesNoPct = renderRunningWithProgress(
+		{ phase: "starting", percent: -1, firstSeen: Date.now() - 5_000 }, 80);
+	check("F20 percent -1 renders no % tag", !linesNoPct.some((l) => l.includes("%")));
+	check("F19 elapsed present even without percent", linesNoPct.some((l) => l.includes("(5s)")));
+
+	// priority: under a tight budget parallel survives, elapsed drops (elapsed is
+	// second-lowest priority — only phase trims/drops before it). width 22 →
+	// budget 18: "42%" (3) + "↻3 parallel" (+12 = 15) fits, "(1m)" (+5 = 20) doesn't.
+	const tight = renderRunningWithProgress({
+		phase: "a very long phase name that will not fit", percent: 42,
+		parallelGroup: "g1", parallelStepCount: 3, firstSeen: Date.now() - 65_000,
+	}, 22);
+	const tightLine = tight.find((l) => l.includes("parallel")) ?? "";
+	check("F19 tight width keeps parallel", tightLine.length > 0);
+	check("F19 tight width drops elapsed before parallel", !tightLine.includes("(1m"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

@@ -372,8 +372,14 @@ export class UCOrchestrator {
 	private handleWatchTaskEvent(ev: TaskEvent): void {
 		if (ev.type !== "subtask_progress") return;
 		const d = ev.data;
-		const percentStr = d.percent ?? "0";
-		const percent = Number(percentStr) || 0;
+		// ponytail: F20 — missing/empty percent means "no data", not 0%. Emit -1;
+		// the progress widget's `percent >= 0` guard skips it, so a worker that
+		// never reports percent no longer shows a bogus "0%". Clamp worker-side
+		// overshoot into the bar's 0-100 range.
+		const percentStr = d.percent;
+		const percent = percentStr === undefined || percentStr === ""
+			? -1
+			: Math.max(0, Math.min(100, Number(percentStr) || 0));
 		const stepIndexStr = d.step_index;
 		const stepTotalStr = d.step_total;
 		const parallelStepCountStr = d.parallel_step_count;
