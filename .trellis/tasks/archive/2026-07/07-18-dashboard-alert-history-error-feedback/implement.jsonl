@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件错误反馈：historyError flag + 条件 empty state"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useCallback async fetch 错误处理"}
