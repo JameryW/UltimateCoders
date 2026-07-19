@@ -430,6 +430,10 @@ export class UCOrchestrator {
 			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
+			// ponytail: F13 — without this, task_planning's "UC: Planning..."
+			// working message, "UC: planning" footer field, and progressState
+			// entry stay stranded forever (only task_complete cleans them up).
+			this.events.emit("task_complete", { taskId, status: task.status, summary: task.error });
 			return taskId;
 		}
 
@@ -562,9 +566,11 @@ export class UCOrchestrator {
 		waves: SubtaskDef[][],
 		ctx: ExtensionCommandContext,
 	): Promise<void> {
-		const widgetKey = `uc-${task.id}`;
 		const startWave = task.resumeFromWave ?? 0;
-		this.updateWidget(ctx, widgetKey, task);
+		// ponytail: F11 — widget rendering is owned exclusively by extension.ts
+		// (rich progress widget on `uc-${task.id}`). The old plain-text
+		// updateWidget() here wrote the same key and clobbered the rich widget
+		// after every wave (OMP per-key map is last-writer-wins).
 
 		try {
 			for (let waveIdx = startWave; waveIdx < waves.length; waveIdx++) {
@@ -577,7 +583,6 @@ export class UCOrchestrator {
 				if (task.controlState === "paused") {
 					task.resumeFromWave = waveIdx;
 					await this.persist(task);
-					this.updateWidget(ctx, widgetKey, task);
 					ctx.ui.notify(`Task ${task.id}: paused at wave ${waveIdx + 1}`, "info");
 					this.events.emit("task_paused", { taskId: task.id, waveIdx });
 					return; // Exit without completing — resume will re-enter
@@ -626,7 +631,6 @@ export class UCOrchestrator {
 					}
 				}
 
-				this.updateWidget(ctx, widgetKey, task);
 				await this.persist(task);
 				this.syncTaskToGrpc(task);
 					this.events.emit("wave_end", { taskId: task.id, waveIdx, totalWaves: waves.length, results });
@@ -696,7 +700,9 @@ export class UCOrchestrator {
 			}
 		}
 
-		ctx.ui.setWidget(widgetKey, undefined);
+		// ponytail: F11 — widget teardown is owned by extension.ts's task_complete
+		// handler (setWidget(key, undefined)); the old setWidget(widgetKey, …) here
+		// was the last orchestrator-side write to the extension-owned key.
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
 
@@ -1943,33 +1949,6 @@ export class UCOrchestrator {
 				this.pi.logger.warn(`Resync failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
 			});
 		}
-	}
-
-	// ── UI Helpers ─────────────────────────────────────────────────
-
-	private updateWidget(
-		ctx: ExtensionCommandContext,
-		key: string,
-		task: TaskState,
-	): void {
-		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
-		const lines = [`UC Task: ${task.id}`, `Status: ${task.status}${ctrl}`, "Subtasks:"];
-		for (const st of task.subtasks) {
-			const icon =
-				st.status === "completed"
-					? "✓"
-					: st.status === "running"
-						? "●"
-						: st.status === "reviewing"
-							? "◉"
-							: st.status === "failed"
-								? "✗"
-								: st.status === "cancelled"
-									? "⊘"
-									: "○";
-			lines.push(`  ${icon} ${st.id}: ${st.description.slice(0, 50)}`);
-		}
-		ctx.ui.setWidget(key, lines);
 	}
 
 	// ── Public getters (for uc-rpc-server) ────────────────────────
