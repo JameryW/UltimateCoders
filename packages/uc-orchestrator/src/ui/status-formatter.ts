@@ -96,18 +96,27 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			const stIcon = statusIcon(st.status, theme);
 			const indent = "  ".repeat(depth + 1);
 			const prefix = depth > 0 ? "↳ " : "";
-			const deps = st.dependsOn.length > 0
-				? theme.fg("dim", ` ←${st.dependsOn.join(",")}`)
-				: "";
-			// ponytail: cap desc to the remaining width after indent+icon+prefix+id.
-			// Without width (legacy notify path), keep the 50-char cap. deps is themed
-			// and appended AFTER capping the plain desc, so it never splits the ANSI.
+			// ponytail: F25 — build deps PLAIN first so its length feeds the desc
+			// budget (previously appended after capping, unbudgeted — many/long dep
+			// ids overflowed the line). A dep list longer than half the width
+			// collapses to "←+N deps". Theming happens after the plain decision,
+			// so no themed string is ever raw-sliced.
+			let depsPlain = "";
+			if (st.dependsOn.length > 0) {
+				const joined = st.dependsOn.join(",");
+				depsPlain = width !== undefined && joined.length + 2 > width / 2
+					? ` ←+${st.dependsOn.length} deps`
+					: ` ←${joined}`;
+			}
+			const deps = depsPlain ? theme.fg("dim", depsPlain) : "";
+			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps.
+			// Without width (legacy notify path), keep the 50-char cap.
 			// F17: icon VISIBLE width is 1 — stIcon.length includes ~11 ANSI escape
 			// chars in real terminals, so the old subtraction over-truncated desc
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length)
 				: 50;
 			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}`);
 

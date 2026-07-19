@@ -132,5 +132,24 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("F16 task error root cause capped", !errLine.includes("E".repeat(100)));
 }
 
+// ponytail: F25 — deps suffix feeds the desc budget (previously unbudgeted —
+// many/long dep ids overflowed the line). Long lists collapse to "←+N deps".
+{
+	const many = Array.from({ length: 12 }, (_, i) => `dependency-${i}`);
+	const task = {
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [st("A", many)],
+	} as unknown as TaskState;
+	const aLine = formatTaskDetail(task, theme, 60).find((l) => l.includes("A:")) ?? "";
+	check("F25 collapsed deps keep line within width", aLine.length > 0 && aLine.length <= 60);
+	check("F25 long dep list collapses to +N deps", aLine.includes("←+12 deps"));
+	const task2 = {
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [st("B", ["X"])],
+	} as unknown as TaskState;
+	const bLine = formatTaskDetail(task2, theme, 60).find((l) => l.includes("B:")) ?? "";
+	check("F25 short deps listed fully", bLine.includes("←X"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
