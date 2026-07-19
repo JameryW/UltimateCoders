@@ -102,10 +102,23 @@ export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 
 				if (p.action === "status" && p.worker_id) {
 					const wid = p.worker_id;
-					const w = result.workers.find((w) => w.id === wid || w.id.startsWith(wid));
-					if (!w) {
+					// ponytail: F34 — a prefix matching multiple workers must not
+					// silently pick the first (an LLM could schedule against the
+					// wrong worker). Demand the full id when ambiguous.
+					const matches = result.workers.filter((w) => w.id === wid || w.id.startsWith(wid));
+					if (matches.length === 0) {
 						return { content: [{ type: "text" as const, text: `Worker ${p.worker_id} not found` }], useless: true };
 					}
+					if (matches.length > 1) {
+						return {
+							content: [{
+								type: "text" as const,
+								text: `Worker prefix "${p.worker_id}" matches ${matches.length} workers: ${matches.map((m) => m.id).join(", ")} — use the full id`,
+							}],
+							isError: true,
+						};
+					}
+					const w = matches[0];
 					const age = w.heartbeatAgeSeconds < 60
 						? `${Math.round(w.heartbeatAgeSeconds)}s ago`
 						: `${Math.floor(w.heartbeatAgeSeconds / 60)}m ago`;

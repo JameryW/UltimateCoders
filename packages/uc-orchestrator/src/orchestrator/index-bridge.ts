@@ -5,6 +5,7 @@
  * as an LLM-callable tool so agents can manage code indexes autonomously.
  */
 
+import { statSync } from "node:fs";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { GrpcBridge } from "./grpc-bridge";
 
@@ -36,12 +37,33 @@ export function registerIndexTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 								isError: true,
 							};
 						}
+						// ponytail: F36 — client-side path sanity covers the common
+						// failure (typo'd path) with a real reason. The bridge still
+						// collapses server/engine rejections to a bool (the true error
+						// is only console.warn'd) — propagating it needs a bridge
+						// signature change; the failure message says where to look.
+						try {
+							if (!statSync(p.local_path).isDirectory()) {
+								return {
+									content: [{ type: "text" as const, text: `Error: local_path is not a directory: ${p.local_path}` }],
+									isError: true,
+								};
+							}
+						} catch {
+							return {
+								content: [{ type: "text" as const, text: `Error: local_path not found: ${p.local_path}` }],
+								isError: true,
+							};
+						}
 						const ok = await bridge.indexRepo(p.repo_id, p.local_path, p.languages, p.workspace_id ?? "default");
 						return {
 							content: [{
 								type: "text" as const,
-								text: ok ? `Indexing started for ${p.repo_id} at ${p.local_path}` : `Indexing failed for ${p.repo_id}`,
+								text: ok
+									? `Indexing started for ${p.repo_id} at ${p.local_path}`
+									: `Indexing failed for ${p.repo_id} (server rejected or unavailable — check gateway logs)`,
 							}],
+							...(ok ? {} : { isError: true }),
 						};
 					}
 					case "list_repos": {

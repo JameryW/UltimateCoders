@@ -20,10 +20,11 @@ function makeHandler() {
 	return {
 		handler: {
 			// ponytail: F27 — handler methods return ControlOutcome (tests only
-			// record calls; the payload is unused here).
-			pauseTask: async (taskId: string) => { calls.push({ method: "pause", taskId }); return { ok: true, taskId }; },
-			resumeTask: async (taskId: string) => { calls.push({ method: "resume", taskId }); return { ok: true, taskId }; },
-			cancelTask: async (taskId: string) => { calls.push({ method: "cancel", taskId }); return { ok: true, taskId }; },
+			// record calls; the payload is unused here). `as const` keeps `ok`
+			// literal so it matches the discriminated union.
+			pauseTask: async (taskId: string) => { calls.push({ method: "pause", taskId }); return { ok: true as const, taskId }; },
+			resumeTask: async (taskId: string) => { calls.push({ method: "resume", taskId }); return { ok: true as const, taskId }; },
+			cancelTask: async (taskId: string) => { calls.push({ method: "cancel", taskId }); return { ok: true as const, taskId }; },
 			getActiveTaskIds: () => [] as string[],
 		},
 		calls,
