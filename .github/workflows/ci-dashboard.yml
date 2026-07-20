@@ -15,7 +15,7 @@ on:
 
 jobs:
   typecheck:
-    name: tsc --noEmit
+    name: typecheck (app + node)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,7 +31,12 @@ jobs:
         with:
           version: 9
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec tsc --noEmit
+      # Root tsconfig.json is a project-references shell (files:[] + references);
+      # a bare `tsc --noEmit` silently skips the referenced projects' src and
+      # exits 0 even on real type errors. Check each referenced project directly.
+      - run: |
+          pnpm exec tsc -p tsconfig.app.json --noEmit
+          pnpm exec tsc -p tsconfig.node.json --noEmit
 
   build:
     name: vite build
