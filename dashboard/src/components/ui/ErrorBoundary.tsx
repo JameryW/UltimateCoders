@@ -2,7 +2,11 @@ import { Component, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
+  /** Static fallback node. Ignored if `fallbackRender` is set. */
   fallback?: ReactNode;
+  /** Dynamic fallback: receives the error and a retry callback so it can
+   * show the message and offer recovery (e.g. a Reload button at the root). */
+  fallbackRender?: (error: Error, retry: () => void) => ReactNode;
   name?: string;
 }
 
@@ -26,6 +30,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.hasError) return this.props.children;
+
+    if (this.props.fallbackRender) {
+      return this.props.fallbackRender(this.state.error ?? new Error("Unknown error"), this.handleRetry);
+    }
 
     if (this.props.fallback) return this.props.fallback;
 
