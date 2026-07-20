@@ -479,12 +479,27 @@ fn json_to_scheduled_job(v: &serde_json::Value) -> ScheduledJobProto {
 }
 
 fn json_to_execution_history(v: &serde_json::Value) -> ExecutionHistoryProto {
+    // The Python dashboard (agent/scheduler.py -> PyExecutionHistory) serializes
+    // each history entry as {task_id, started_at, completed_at, status,
+    // result_summary}. The legacy proto fields (job_id/job_name/executed_at/
+    // success/error) were read by mismatched keys, so every entry came through
+    // with job_id="" and success=false. Map the real keys through, and populate
+    // the new started_at/completed_at/result_summary/status fields.
+    let status = json_str(v, "status").to_string();
     ExecutionHistoryProto {
-        job_id: json_str(v, "job_id").to_string(),
-        job_name: json_str(v, "job_name").to_string(),
-        executed_at: json_str(v, "executed_at").to_string(),
-        success: json_bool(v, "success"),
+        job_id: json_str(v, "task_id").to_string(),
+        job_name: String::new(),
+        executed_at: json_str(v, "started_at").to_string(),
+        success: status == "Completed",
         error: json_opt_str(v, "error"),
+        started_at: json_opt_str(v, "started_at"),
+        completed_at: json_opt_str(v, "completed_at"),
+        result_summary: json_opt_str(v, "result_summary"),
+        status: if status.is_empty() {
+            None
+        } else {
+            Some(status)
+        },
     }
 }
 

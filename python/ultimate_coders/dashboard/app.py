@@ -1345,9 +1345,12 @@ class DashboardApp:
                     execution_history.append(
                         {
                             "task_id": job_id,
-                            "started_at": str(getattr(hist, "started_at", "")),
-                            "completed_at": str(getattr(hist, "completed_at", "")),
-                            "status": str(getattr(hist, "status", "")),
+                            # PyExecutionHistory getters return str / Optional[str];
+                            # serialize None as JSON null (str(None) == "None"
+                            # previously leaked into completed_at when unset).
+                            "started_at": getattr(hist, "started_at", None),
+                            "completed_at": getattr(hist, "completed_at", None),
+                            "status": getattr(hist, "status", None),
                             "result_summary": getattr(hist, "result_summary", None),
                         }
                     )

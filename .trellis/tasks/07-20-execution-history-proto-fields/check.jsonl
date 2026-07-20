@@ -1,0 +1,1 @@
+{"file": ".trellis/tasks/07-20-execution-history-proto-fields/prd.md", "reason": "acceptance: cargo check+test, tsc 5->2, vite, ruff, CI"}

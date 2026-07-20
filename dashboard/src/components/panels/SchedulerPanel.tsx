@@ -11,11 +11,17 @@ function schedulerStatusBadge(isRunning: boolean): "ok" | "degraded" | "unavaila
 }
 
 function executionStatusColor(status: string): string {
-  switch (status) {
+  // Backend reports PascalCase ("Completed"/"Failed"/"Skipped"/"Deferred");
+  // the legacy fallback emits "success"/"failed". Normalize so both work.
+  switch (status.toLowerCase()) {
     case "completed":
+    case "success":
       return "text-green-400";
     case "failed":
       return "text-red-400";
+    case "skipped":
+    case "deferred":
+      return "text-yellow-400";
     case "in_progress":
       return "text-blue-400";
     default:
