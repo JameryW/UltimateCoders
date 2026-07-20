@@ -546,12 +546,25 @@ fn json_to_dashboard_event(v: &serde_json::Value) -> DashboardEventProto {
         timestamp: json_str(v, "timestamp").to_string(),
         r#type: json_str(v, "type").to_string(),
         task_id: json_str(v, "task_id").to_string(),
+        // proto `data` is map<string,string>. The dashboard
+        // (grpcEventProtoToDashboardEvent) parses values back to typed
+        // (Number/bool/JSON). Previously v.as_str() kept ONLY string values
+        // and silently dropped numbers/bools/objects - e.g. flush_pending's
+        // count/executed (ints) were lost and the event showed no details.
+        // Stringify non-strings (5->"5", true->"true", {...}->JSON) so they
+        // survive and round-trip back to typed values on the dashboard.
         data: v
             .get("data")
             .and_then(|v| v.as_object())
             .map(|obj| {
                 obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .map(|(k, v)| {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), s)
+                    })
                     .collect()
             })
             .unwrap_or_default(),
