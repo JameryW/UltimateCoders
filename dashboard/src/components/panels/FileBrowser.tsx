@@ -36,6 +36,15 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
   const codeBlockRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<HTMLTableRowElement>(null);
+  // ponytail: #8 - cross-repo navigation race guards.
+  // navDrivenRepoChangeRef: suppress the [selectedRepo] root-dir autoload when
+  //   the repo changed because an external nav (initialNav) set it - that nav
+  //   already loads the target file/dir, and the autoload would race+clobber it.
+  // loadSeqRef: latest-load-wins. Each load stamps a seq; stale resolutions
+  //   (superseded by a newer click/nav) are ignored so they can't overwrite the
+  //   newest view.
+  const navDrivenRepoChangeRef = useRef(false);
+  const loadSeqRef = useRef(0);
 
   // Load repos on mount
   useEffect(() => {
@@ -51,37 +60,51 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
   // Load directory when repo or path changes
   const loadDirectory = useCallback(async (repoId: string, path: string) => {
     if (!repoId) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError("");
     setFileContent(null);
     try {
       const data = await api.getRepoTree(repoId, path);
+      if (seq !== loadSeqRef.current) return; // a newer nav superseded this load
       setEntries(data.entries);
       setCurrentPath(path);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (selectedRepo) loadDirectory(selectedRepo, "");
+    if (!selectedRepo) return;
+    if (navDrivenRepoChangeRef.current) {
+      // #8: repo changed because an external nav set it - that nav already
+      // loads the target file/dir. Skip the root-dir autoload so it doesn't
+      // race and clobber the navigated file with the new repo's root listing.
+      navDrivenRepoChangeRef.current = false;
+      return;
+    }
+    loadDirectory(selectedRepo, "");
   }, [selectedRepo, loadDirectory]);
 
   // Load file content — useCallback for stable reference in initialNav effect
   const loadFile = useCallback(async (repoId: string, path: string, line?: number) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError("");
     setHighlightLine(line ?? null);
     try {
       const data = await api.getRepoFile(repoId, path);
+      if (seq !== loadSeqRef.current) return; // a newer nav superseded this load
       setFileContent(data);
       setEntries([]);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, []);
 
@@ -89,6 +112,10 @@ export const FileBrowser = memo(function FileBrowser({ initialNav, onNavConsumed
   useEffect(() => {
     if (!initialNav) return;
     if (initialNav.repoId !== selectedRepo) {
+      // #8: mark this repo change as nav-driven so the [selectedRepo] effect
+      // skips its root-dir autoload (which would race the nav's file/dir load
+      // and clobber the navigated file).
+      navDrivenRepoChangeRef.current = true;
       setSelectedRepo(initialNav.repoId);
     }
     const nav = initialNav;
