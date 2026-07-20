@@ -170,6 +170,10 @@ pub struct RepoIndexState {
     pub chunks_count: u32,
     /// Local filesystem path to the repo (for File Browser).
     pub local_path: Option<String>,
+    /// Git remote URL (populated from repo metadata/config when listing repos).
+    pub remote_url: Option<String>,
+    /// Default branch name (populated from repo metadata/config when listing repos).
+    pub default_branch: Option<String>,
     /// 工作目录 ID — 该 repo 所属的仓库集合。缺省 "default"。
     #[serde(default = "default_workspace_id")]
     pub workspace_id: String,

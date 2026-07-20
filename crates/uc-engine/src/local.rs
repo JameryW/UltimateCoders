@@ -445,6 +445,10 @@ impl EngineApi for LocalEngine {
                 symbols_count: state.symbols_count as u32,
                 chunks_count: state.chunks_count as u32,
                 local_path: None,
+                // remote_url/default_branch are overlaid by list_repos from the
+                // RepoSpec; not available from the index pipeline state alone.
+                remote_url: None,
+                default_branch: None,
                 workspace_id: state.workspace_id,
             }),
             None => Ok(RepoIndexState {
@@ -455,6 +459,8 @@ impl EngineApi for LocalEngine {
                 symbols_count: 0,
                 chunks_count: 0,
                 local_path: None,
+                remote_url: None,
+                default_branch: None,
                 workspace_id: "default".to_string(),
             }),
         }
@@ -652,7 +658,20 @@ impl EngineApi for LocalEngine {
             .await?;
         let mut states = Vec::with_capacity(repos.len());
         for repo in repos {
-            let state = self.get_index_state(&repo.repo_id).await?;
+            let mut state = self.get_index_state(&repo.repo_id).await?;
+            // get_index_state only has index stats; overlay the repo's config
+            // (remote_url/default_branch) from the metadata RepoSpec so the
+            // dashboard can display them and pass them back on reindex.
+            state.remote_url = if repo.remote_url.is_empty() {
+                None
+            } else {
+                Some(repo.remote_url)
+            };
+            state.default_branch = if repo.default_branch.is_empty() {
+                None
+            } else {
+                Some(repo.default_branch)
+            };
             states.push(state);
         }
         Ok(states)
