@@ -101,7 +101,9 @@ function grpcScheduledJobToDashboard(j: ScheduledJobProto): ScheduledJob {
 function grpcExecutionHistoryToDashboard(e: ExecutionHistoryProto): ExecutionHistory {
   return {
     task_id: e.jobId,
-    status: e.success ? "success" : "failed",
+    // Prefer the backend's real status ("Completed"/"Failed"/"Skipped"/
+    // "Deferred"); fall back to the legacy success-bool derivation.
+    status: e.status ?? (e.success ? "success" : "failed"),
     started_at: e.startedAt ?? undefined,
     completed_at: e.completedAt ?? undefined,
     result_summary: e.resultSummary ?? undefined,

@@ -540,6 +540,17 @@ message ExecutionHistoryProto {
     string executed_at = 3;
     bool success = 4;
     optional string error = 5;
+    // When the execution started (RFC 3339). The dashboard's SchedulerPanel
+    // shows this as the event time and (with completed_at) the duration.
+    optional string started_at = 6;
+    // When the execution completed (RFC 3339, absent if still running/skipped).
+    optional string completed_at = 7;
+    // Human-readable result summary (e.g. skip/defer reason or outcome).
+    optional string result_summary = 8;
+    // Execution status as reported by the backend ("Completed"/"Failed"/
+    // "Skipped"/"Deferred"). Preferred over the legacy `success` bool for
+    // display; `success` is kept as a fallback.
+    optional string status = 9;
 }
 
 message TriggerSchedulerJobRequest {
