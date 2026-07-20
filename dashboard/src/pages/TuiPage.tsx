@@ -17,6 +17,16 @@ export default function TuiPage() {
   const { theme } = useTheme();
   const [redirect, setRedirect] = useState(false);
 
+  // ponytail: F68 — the effect MUST run before any early return (React hook
+  // order: skipping it while isChecking added a 4th hook once checking
+  // finished → "Rendered more hooks than during the previous render" crash on
+  // every #/tui load). Also gate on !isChecking: isAuthenticated is false
+  // during the check, so an ungated effect redirected authenticated users to
+  // login before their token was validated.
+  useEffect(() => {
+    if (!auth.isChecking && !auth.isAuthenticated) setRedirect(true);
+  }, [auth.isChecking, auth.isAuthenticated]);
+
   // Auth gate
   if (auth.isChecking) {
     return (
@@ -25,13 +35,6 @@ export default function TuiPage() {
       </div>
     );
   }
-  // ponytail: trigger the redirect in an effect, NOT in the render body.
-  // Calling setRedirect during render is a React anti-pattern that warns under
-  // StrictMode and can loop if the condition re-evaluates each pass. The effect
-  // runs after commit, so React schedules exactly one redirect render.
-  useEffect(() => {
-    if (!auth.isAuthenticated) setRedirect(true);
-  }, [auth.isAuthenticated]);
   if (redirect) {
     return (
       <div className="flex items-center justify-center h-screen text-[var(--text-secondary)]">

@@ -41,6 +41,7 @@ import type {
   MetricsSnapshot as MetricsSnapshotType,
 } from "@/types/dashboard";
 import { getSharedTransport } from "@/hooks/useGrpcWeb";
+import { getStoredToken } from "@/hooks/useAuth";
 
 // ── gRPC-Web -> Dashboard type converters ────────────────────
 
@@ -339,7 +340,13 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     sseRef.current?.close();
     usingSseRef.current = true;
 
-    const sse = new EventSource("/dashboard/api/stream");
+    // ponytail: F69 — EventSource can't set headers, so the token goes in the
+    // query param. Without it the SSE fallback 401s and reconnect-loops forever
+    // on non-localhost deployments where DASHBOARD_PASSWORD is enforced.
+    const sseToken = getStoredToken();
+    const sse = new EventSource(
+      `/dashboard/api/stream${sseToken ? `?token=${encodeURIComponent(sseToken)}` : ""}`,
+    );
     sseRef.current = sse;
     setConnectionState("connected");
 

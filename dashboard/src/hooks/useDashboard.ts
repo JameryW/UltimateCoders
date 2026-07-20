@@ -343,7 +343,10 @@ export function useDashboard() {
       }
       // #15: Derive total from status_counts for consistency
       const status_counts = recountStatus(merged);
-      return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts };
+      // ponytail: F67 — a successful merge means tasks ARE available; without
+      // this the "Unavailable" badge stayed stuck even after a sync-driven
+      // merge delivered the list (prev.available was never touched).
+      return { ...prev, tasks: merged, total: totalFromStatusCounts(status_counts), status_counts, available: true };
     });
   }, []);
 

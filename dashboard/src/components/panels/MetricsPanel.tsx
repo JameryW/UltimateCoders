@@ -2,6 +2,7 @@ import { memo, useCallback, useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatUptime, formatNumber } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
+import { getStoredToken } from "@/hooks/useAuth";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { MetricsTrendChart } from "@/components/charts/MetricsTrendChart";
 import type { MetricsSnapshot, TaskMetrics, WorkerMetrics, EventMetrics, SystemMetrics, MetricsSample } from "@/types/dashboard";
@@ -291,7 +292,9 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
     // ponytail: reset failure state on each new fetch (range change) so a
     // later success clears the "unavailable" hint.
     setExtendedFailed(false);
-    fetch(`/dashboard/api/trend?minutes=${trendRange}`)
+    const trendToken = getStoredToken();
+    // ponytail: F69 — authenticate (backend gates /dashboard/api/* off localhost).
+    fetch(`/dashboard/api/trend?minutes=${trendRange}${trendToken ? `&token=${encodeURIComponent(trendToken)}` : ""}`)
       .then(res => {
         if (!res.ok) return null;
         return res.json();

@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import type { WorkersData, DashboardEvent, MetricsSnapshot, AlertEvent, AlertRecord } from "@/types/dashboard";
 import { cn } from "@/lib/utils";
+import { getStoredToken } from "@/hooks/useAuth";
 
 interface AlertBarProps {
   workers: WorkersData;
@@ -81,7 +82,11 @@ export const AlertBar = memo(function AlertBar({
   // Fetch alert history on first expand
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch("/dashboard/api/alerts?limit=100");
+      // ponytail: F69 — authenticate (backend gates /dashboard/api/* off localhost).
+      const alertsToken = getStoredToken();
+      const res = await fetch(
+        `/dashboard/api/alerts?limit=100${alertsToken ? `&token=${encodeURIComponent(alertsToken)}` : ""}`,
+      );
       if (res.ok) {
         const data = await res.json();
         setAlertHistory(data.alerts || []);
