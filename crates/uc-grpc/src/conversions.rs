@@ -514,6 +514,10 @@ impl From<GetIndexStateResponse> for RepoIndexState {
             symbols_count: resp.symbols_count,
             chunks_count: resp.chunks_count,
             local_path: resp.local_path,
+            // GetIndexStateResponse carries only index stats; config fields
+            // are unavailable here (populated by list_repos from RepoSpec).
+            remote_url: None,
+            default_branch: None,
             workspace_id: if resp.workspace_id.is_empty() {
                 "default".to_string()
             } else {
@@ -668,6 +672,8 @@ impl From<RepoIndexState> for RepoIndexStateProto {
             symbols_count: state.symbols_count,
             chunks_count: state.chunks_count,
             local_path: state.local_path,
+            remote_url: state.remote_url,
+            default_branch: state.default_branch,
             workspace_id: state.workspace_id,
         }
     }
@@ -683,6 +689,8 @@ impl From<RepoIndexStateProto> for RepoIndexState {
             symbols_count: proto.symbols_count,
             chunks_count: proto.chunks_count,
             local_path: proto.local_path,
+            remote_url: proto.remote_url,
+            default_branch: proto.default_branch,
             workspace_id: if proto.workspace_id.is_empty() {
                 "default".to_string()
             } else {

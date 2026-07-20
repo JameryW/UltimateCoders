@@ -437,6 +437,10 @@ message RepoIndexStateProto {
     uint32 chunks_count = 6;
     optional string local_path = 7;
     string workspace_id = 8;
+    // Git remote URL (populated from repo metadata when listing repos).
+    optional string remote_url = 9;
+    // Default branch name (populated from repo metadata when listing repos).
+    optional string default_branch = 10;
 }
 
 // ── File Browser ─────────────────────────────────────────
