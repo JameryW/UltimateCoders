@@ -563,16 +563,17 @@ impl SemanticIndexer {
                         end_line,
                         content_snippet: match &mr.entry.content {
                             uc_types::memory::MemoryContent::Text(t) => {
-                                // Truncate snippet to 200 chars
+                                // Truncate snippet to ~200 bytes (char-safe:
+                                // &t[..200] panics on a multi-byte boundary).
                                 if t.len() > 200 {
-                                    format!("{}...", &t[..200])
+                                    format!("{}...", crate::sandbox::truncate_str(t, 200))
                                 } else {
                                     t.clone()
                                 }
                             }
                             uc_types::memory::MemoryContent::Code { code, .. } => {
                                 if code.len() > 200 {
-                                    format!("{}...", &code[..200])
+                                    format!("{}...", crate::sandbox::truncate_str(code, 200))
                                 } else {
                                     code.clone()
                                 }
