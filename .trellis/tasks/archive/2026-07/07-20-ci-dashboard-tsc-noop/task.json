@@ -11,7 +11,7 @@
   "creator": "JameryW",
   "assignee": "JameryW",
   "createdAt": "2026-07-20",
-  "completedAt": null,
+  "completedAt": "2026-07-20",
   "branch": "fix/ci-dashboard-tsc-noop",
   "base_branch": "main",
   "worktree_path": null,
