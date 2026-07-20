@@ -118,10 +118,15 @@ impl HybridSearchEngine {
             results.retain(|item| query.repo_ids.contains(&item.repo_id));
         }
         if !query.languages.is_empty() {
+            // Filter by the file's programming language (derived from extension),
+            // NOT symbol_kind - symbol_kind is the symbol TYPE ("function"/"struct"/
+            // "call"), so the old check (`query.languages.contains(symbol_kind)`)
+            // dropped EVERY AST result whenever a language filter was set (no symbol
+            // type matches "rust"/"python"). The indexer stores meta.language via
+            // the same crate::git::detect_language, so this matches text search.
             results.retain(|item| {
-                item.symbol_kind
-                    .as_ref()
-                    .map(|k| query.languages.contains(k))
+                crate::git::detect_language(&item.file_path)
+                    .map(|lang| query.languages.iter().any(|l| l.as_str() == lang))
                     .unwrap_or(false)
             });
         }
