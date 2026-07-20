@@ -1462,11 +1462,15 @@ impl From<TaskEventProto> for AgentEvent {
             "subtask_completed" => {
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let summary = proto.data.get("summary").cloned().unwrap_or_default();
+                // `success` arrives stringified in the proto's string→string data
+                // map. A missing key previously defaulted to `true` (claimed
+                // success for a malformed/legacy event) — fail-safe default is
+                // `false`. Case-insensitive so "True"/"TRUE" don't read as failed.
                 let success = proto
                     .data
                     .get("success")
-                    .map(|s| s == "true")
-                    .unwrap_or(true);
+                    .map(|s| s.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
                 let modified_files: Vec<uc_types::FileChange> = proto
                     .data
                     .get("modified_files")
@@ -1911,5 +1915,54 @@ mod tests {
             event.payload,
             AgentEventPayload::SubtaskCompleted { .. }
         ));
+    }
+
+    #[test]
+    fn task_event_proto_subtask_completed_success_missing_defaults_false() {
+        // No `success` key → must NOT default to success (fail-safe).
+        let proto = TaskEventProto {
+            timestamp: "2024-01-01T00:00:00+00:00".to_string(),
+            r#type: "subtask_completed".to_string(),
+            task_id: "task-1".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data: vec![("summary".to_string(), "Done".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let event: AgentEvent = proto.into();
+        match event.payload {
+            AgentEventPayload::SubtaskCompleted { result, .. } => {
+                assert!(!result.success, "missing success key must default to false");
+            }
+            other => panic!("expected SubtaskCompleted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_event_proto_subtask_completed_success_case_insensitive() {
+        for (raw, expected) in [
+            ("true", true),
+            ("True", true),
+            ("TRUE", true),
+            ("false", false),
+            ("0", false),
+        ] {
+            let proto = TaskEventProto {
+                timestamp: "2024-01-01T00:00:00+00:00".to_string(),
+                r#type: "subtask_completed".to_string(),
+                task_id: "task-1".to_string(),
+                subtask_id: Some("st-1".to_string()),
+                data: vec![("success".to_string(), raw.to_string())]
+                    .into_iter()
+                    .collect(),
+            };
+            let event: AgentEvent = proto.into();
+            match event.payload {
+                AgentEventPayload::SubtaskCompleted { result, .. } => {
+                    assert_eq!(result.success, expected, "success={raw:?}");
+                }
+                other => panic!("expected SubtaskCompleted, got {other:?}"),
+            }
+        }
     }
 }

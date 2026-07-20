@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "AgentEvent/subtask_completed payload contract — success field semantics"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-safe defaults on missing/typed fields"}
