@@ -1,0 +1,1 @@
+{"file": ".trellis/tasks/07-20-dashboard-event-data-stringify/prd.md", "reason": "acceptance: cargo check/fmt/clippy/test, tsc 0, vite, CI"}
