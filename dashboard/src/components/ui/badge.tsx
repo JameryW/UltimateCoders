@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 const Badge = React.forwardRef<
   HTMLSpanElement,
   React.HTMLAttributes<HTMLSpanElement> & {
-    variant?: "ok" | "degraded" | "error" | "unavailable" | "closed" | "open" | "half_open";
+    variant?: "ok" | "degraded" | "error" | "unavailable" | "closed" | "open" | "half_open" | "secondary";
   }
 >(({ className, variant, ...props }, ref) => (
   <span

@@ -53,9 +53,10 @@ function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`;
 }
 
-function pctClass(pct: number, thresholds = [60, 85]): string {
-  if (pct <= thresholds[0]) return "text-green-400";
-  if (pct <= thresholds[1]) return "text-yellow-400";
+function pctClass(pct: number, thresholds: [number, number] = [60, 85]): string {
+  const [lo, hi] = thresholds;
+  if (pct <= lo) return "text-green-400";
+  if (pct <= hi) return "text-yellow-400";
   return "text-red-400";
 }
 

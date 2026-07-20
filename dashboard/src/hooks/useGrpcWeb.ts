@@ -88,7 +88,7 @@ export interface GrpcSubmitResult {
   taskId: string;
   status: string;
   subtaskCount: number;
-  subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[] }>;
+  subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string }>;
 }
 
 /** #2: Normalize a gRPC timestamp to ISO string.
@@ -324,7 +324,10 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         };
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error("gRPC submitTask timed out after 30s", { cause: err });
+          // No `{ cause }`: ErrorOptions is ES2022 and this project's lib is
+          // ES2020 (2-arg Error is a tsc error here). error.cause is never read
+          // in the dashboard. Matches unaryWithTimeout's timeout throw.
+          throw new Error("gRPC submitTask timed out after 30s");
         }
         throw err;
       } finally {

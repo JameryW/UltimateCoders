@@ -47,7 +47,7 @@ import { showToast } from "@/components/ui/toast";
 import { TaskDetail } from "@/components/panels/TaskDetail";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 import type { GrpcSubmitResult } from "@/hooks/useGrpcWeb";
-import type { TasksData, TaskEvent, SubtaskSummary } from "@/types/dashboard";
+import type { TasksData, TaskEvent, SubtaskSummary, TaskSummary } from "@/types/dashboard";
 
 function statusBorderColor(status: string): string {
   switch (status) {

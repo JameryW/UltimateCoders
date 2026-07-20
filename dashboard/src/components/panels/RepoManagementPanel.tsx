@@ -140,6 +140,7 @@ export const RepoManagementPanel = memo(function RepoManagementPanel({
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState
+            icon="folder"
             title="No repositories"
             description="Configure repos in uc.repos.yaml or add via scan_dirs."
           />
