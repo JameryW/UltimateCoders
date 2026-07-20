@@ -624,7 +624,9 @@ impl SemanticIndexer {
                     start_line: f.start_line,
                     end_line: f.end_line,
                     content_snippet: if f.content.len() > 200 {
-                        format!("{}...", &f.content[..200])
+                        // char-safe: &f.content[..200] panics on a multi-byte
+                        // boundary (non-ASCII code). See F90 (PR #343).
+                        format!("{}...", crate::sandbox::truncate_str(&f.content, 200))
                     } else {
                         f.content.clone()
                     },
