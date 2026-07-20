@@ -285,6 +285,12 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
     if (metrics) exportMetricsCsv(metrics);
   }, [metrics]);
 
+  // ponytail: F72 — depend on the null→non-null transition only. `metrics`
+  // is a fresh object on every stream snapshot, so depending on it re-fetched
+  // /trend on every snapshot (and flickered the fallback hint via the
+  // extendedFailed reset). The boolean flips only when metrics first appears
+  // or disappears.
+  const hasMetrics = metrics != null;
   // Fetch extended trend when range > 60min (SSE only provides last 1h)
   useEffect(() => {
     if (trendRange <= 60 || !metrics) return;
@@ -311,7 +317,8 @@ export const MetricsPanel = memo(function MetricsPanel({ metrics, stale }: Metri
       })
       .catch(() => { if (!cancelled) setExtendedFailed(true); });
     return () => { cancelled = true; };
-  }, [trendRange, metrics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- F72: hasMetrics (boolean transition) stands in for metrics identity; see note above
+  }, [trendRange, hasMetrics]);
 
   // Reset extended trend when switching back to 1h (SSE data is sufficient)
   const effectiveTrend = trendRange <= 60 ? null : extendedTrend;
