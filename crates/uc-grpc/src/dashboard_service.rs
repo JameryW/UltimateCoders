@@ -468,13 +468,19 @@ fn json_to_night_window(v: &serde_json::Value) -> NightWindowProto {
 }
 
 fn json_to_scheduled_job(v: &serde_json::Value) -> ScheduledJobProto {
+    // Python (_get_scheduler_data) serializes each job as {id, description,
+    // project_id, enabled, cron_expression?, execute_after?}. The legacy code
+    // read name/cron/next_run - mismatched keys, so name="" and cron="" and
+    // next_run=None always. Map the real keys onto the proto fields the
+    // dashboard already consumes (description<-name, cron_expression<-cron,
+    // execute_after<-next_run via grpcScheduledJobToDashboard).
     ScheduledJobProto {
         id: json_str(v, "id").to_string(),
-        name: json_str(v, "name").to_string(),
-        cron: json_str(v, "cron").to_string(),
+        name: json_str(v, "description").to_string(),
+        cron: json_str(v, "cron_expression").to_string(),
         enabled: json_bool(v, "enabled"),
         last_run: json_opt_str(v, "last_run"),
-        next_run: json_opt_str(v, "next_run"),
+        next_run: json_opt_str(v, "execute_after"),
     }
 }
 
