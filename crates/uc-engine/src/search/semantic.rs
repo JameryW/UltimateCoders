@@ -120,14 +120,16 @@ impl SemanticSearchEngine {
                     content_snippet: match &mr.entry.content {
                         uc_types::memory::MemoryContent::Text(t) => {
                             if t.len() > 200 {
-                                format!("{}...", &t[..200])
+                                // char-safe truncation: &t[..200] panics if byte
+                                // 200 splits a multi-byte char (non-ASCII code).
+                                format!("{}...", crate::sandbox::truncate_str(t, 200))
                             } else {
                                 t.clone()
                             }
                         }
                         uc_types::memory::MemoryContent::Code { code, .. } => {
                             if code.len() > 200 {
-                                format!("{}...", &code[..200])
+                                format!("{}...", crate::sandbox::truncate_str(code, 200))
                             } else {
                                 code.clone()
                             }
