@@ -434,3 +434,39 @@ async def test_dispatch_remote_publish_failure_resets_to_pending():
     assert st.status == SubtaskStatus.PENDING
     assert st.assigned_worker is None
     assert "st-d1" not in nw._remote_dispatched_at
+
+
+# ── _build_snapshot task timestamps ─────────────────────────────
+
+
+async def test_build_snapshot_emits_real_task_timestamps():
+    """_build_snapshot hardcoded created_at/updated_at to 0 → dashboard showed
+    epoch. Regression: must emit int(t.<field>.timestamp()) (tz-aware UTC)."""
+    from datetime import datetime, timezone
+
+    nw = _make_worker()
+    nw._dash_listworkers = AsyncMock(return_value={"workers": []})
+    nw._dash_getschedulerstatus = AsyncMock(return_value={"available": False})
+
+    created = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
+    updated = datetime(2026, 7, 20, 12, 5, 0, tzinfo=timezone.utc)
+    task = Task(
+        id="t1",
+        description="d",
+        status=TaskStatus.CREATED,
+        created_at=created,
+        updated_at=updated,
+    )
+
+    orch = MagicMock()
+    orch.engine = None
+    orch.tasks = {"t1": task}
+    orch._dashboard_app = None
+    nw._orchestrator = orch
+
+    snap = await nw._build_snapshot()
+
+    entry = snap["tasks"]["tasks"][0]
+    assert entry["created_at"] == int(created.timestamp())
+    assert entry["updated_at"] == int(updated.timestamp())
+    assert entry["created_at"] != 0

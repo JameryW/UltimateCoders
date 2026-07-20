@@ -2368,7 +2368,9 @@ class NatsWorker:
                 task_list.append({
                     "id": t.id, "description": t.description, "status": sv,
                     "project_id": t.project_id, "subtask_count": len(t.subtasks),
-                    "created_at": 0, "updated_at": 0, "subtasks": [],
+                    "created_at": int(t.created_at.timestamp()),
+                    "updated_at": int(t.updated_at.timestamp()),
+                    "subtasks": [],
                 })
             tasks = {
                 "available": True, "tasks": task_list,
