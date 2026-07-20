@@ -531,12 +531,14 @@ function App() {
                   </h2>
                 </div>
                 <div className="p-5">
-                  <TaskDetail
-                    task={selectedTask}
-                    interactionLog={dashboard.interactionLog[selectedTask.id] ?? []}
-                    onNavigateFile={(nav) => setFileBrowserNav(nav)}
-                    repoId={selectedTask.project_id || undefined}
-                  />
+                  <ErrorBoundary name="Task Detail">
+                    <TaskDetail
+                      task={selectedTask}
+                      interactionLog={dashboard.interactionLog[selectedTask.id] ?? []}
+                      onNavigateFile={(nav) => setFileBrowserNav(nav)}
+                      repoId={selectedTask.project_id || undefined}
+                    />
+                  </ErrorBoundary>
                 </div>
               </div>
             ) : (
