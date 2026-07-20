@@ -6,7 +6,7 @@ import { create } from "@bufbuild/protobuf";
 import { SearchRequestSchema } from "@/grpc/engine_pb";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { getSharedTransport, type GrpcConnectionState } from "@/hooks/useGrpcWeb";
+import { getSharedTransport, unaryWithTimeout, type GrpcConnectionState } from "@/hooks/useGrpcWeb";
 import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
 
 // ponytail: uses shared transport from useGrpcWeb — single HTTP/2 connection
@@ -62,7 +62,9 @@ export function SearchPanel({ grpcState, onNavigateFile, stale }: { grpcState?: 
         modes: modes.length > 0 ? modes : undefined,
         languages: language.trim() ? [language.trim()] : undefined,
       });
-      const resp = await client.search(req);
+      // ponytail: F74 — 30s timeout (a stalling server left "Searching…" up
+      // forever before).
+      const resp = await unaryWithTimeout((signal) => client.search(req, { signal }), "search");
       if (reqId !== latestSearchId.current) return; // stale — a newer search won
       setResults(resp.items.map(mapResult));
       setSearched(true);

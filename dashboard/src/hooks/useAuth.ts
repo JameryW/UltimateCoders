@@ -60,7 +60,10 @@ function setStoredToken(token: string | null) {
  *
  * - success (200) → true (server accepted the token, or no auth gate configured)
  * - Unauthenticated / PermissionDenied → false (auth gate rejected the token)
- * - any other error (network, unavailable) → false (can't confirm)
+ * - any other error (network, unavailable) → THROWN (F73: callers distinguish
+ *   "wrong password" from "server unreachable"; swallowing both made the
+ *   connection-error screen unreachable and reported network failures as
+ *   "Invalid password")
  */
 async function validateToken(token: string): Promise<boolean> {
   try {
@@ -80,7 +83,9 @@ async function validateToken(token: string): Promise<boolean> {
         return false;
       }
     }
-    return false;
+    // Transport-level failure — propagate so callers can surface
+    // "connection error" instead of "invalid password".
+    throw err;
   }
 }
 
@@ -144,7 +149,17 @@ export function useAuth(): AuthState {
     setLoginError(null);
     setConnectionError(false);
 
-    const valid = await validateToken(password);
+    // ponytail: F73 — a thrown validateToken is a TRANSPORT failure (server
+    // unreachable), not a wrong password: surface the connection-error state
+    // instead of "Invalid password". A returned false is a real auth
+    // rejection (Unauthenticated/PermissionDenied).
+    let valid: boolean;
+    try {
+      valid = await validateToken(password);
+    } catch {
+      setConnectionError(true);
+      return false;
+    }
     if (valid) {
       setStoredToken(password);
       setToken(password);
@@ -152,10 +167,6 @@ export function useAuth(): AuthState {
       return true;
     }
 
-    // ponytail: validateToken already distinguished auth-rejection from
-    // network failure by returning false in both cases. Treat all failures
-    // as login errors; the bare-fetch JSON probe that previously bypassed
-    // auth is gone.
     setLoginError("Invalid password");
     return false;
   }, []);

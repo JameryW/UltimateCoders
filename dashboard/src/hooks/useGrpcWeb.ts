@@ -34,6 +34,36 @@ export function getSharedTransport() {
   return _sharedTransport;
 }
 
+/** ponytail: F74 — shared 30s timeout for unary calls. Previously only
+ * submitTask had one: a server that accepts TCP but stalls left
+ * pause/resume/cancel/listTasks/search promises unsettled forever —
+ * optimistic UI state never reverted, SearchPanel spun "Searching…"
+ * eternally. AbortError becomes a descriptive timeout error. */
+export async function unaryWithTimeout<T>(
+  call: (signal: AbortSignal) => Promise<T>,
+  what: string,
+  timeoutMs = 30_000,
+): Promise<T> {
+  const ac = new AbortController();
+  const timeoutId = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await call(ac.signal);
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      // No `{ cause }`: ErrorOptions is ES2022 and this project's lib is
+      // ES2020, so the 2-arg Error constructor is a tsc error here.
+      // error.cause is never read in the dashboard (callers stringify
+      // err.message), so dropping it is lossless and keeps this new code
+      // type-clean. (submitTask's pre-existing timeout throws with
+      // `{ cause }` and carries the same pre-existing error - left as-is.)
+      throw new Error(`${what} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /** Exponential backoff intervals (ms) for reconnection.
  *  No upper limit — keeps retrying indefinitely with capped delay. */
 const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
@@ -325,7 +355,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const listTasks = useCallback(async () => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
-    const resp = await client.listTasks(create(ListTasksRequestSchema, {}));
+    const req = create(ListTasksRequestSchema, {});
+    const resp = await unaryWithTimeout((signal) => client.listTasks(req, { signal }), "listTasks");
     return {
       available: resp.available,
       tasks: resp.tasks.map((t) => ({
@@ -356,7 +387,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const pauseTask = useCallback(async (taskId: string) => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
-    const resp = await client.pauseTask(create(PauseTaskRequestSchema, { taskId }));
+    const req = create(PauseTaskRequestSchema, { taskId });
+    const resp = await unaryWithTimeout((signal) => client.pauseTask(req, { signal }), "pauseTask");
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
   }, [getTransport]);
 
@@ -364,7 +396,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const resumeTask = useCallback(async (taskId: string) => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
-    const resp = await client.resumeTask(create(ResumeTaskRequestSchema, { taskId }));
+    const req = create(ResumeTaskRequestSchema, { taskId });
+    const resp = await unaryWithTimeout((signal) => client.resumeTask(req, { signal }), "resumeTask");
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
   }, [getTransport]);
 
@@ -372,7 +405,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   const cancelTask = useCallback(async (taskId: string) => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
-    const resp = await client.cancelTask(create(CancelTaskRequestSchema, { taskId }));
+    const req = create(CancelTaskRequestSchema, { taskId });
+    const resp = await unaryWithTimeout((signal) => client.cancelTask(req, { signal }), "cancelTask");
     return { success: resp.success, taskId: resp.taskId, status: resp.status, error: resp.error ?? undefined };
   }, [getTransport]);
 

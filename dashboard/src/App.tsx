@@ -219,6 +219,15 @@ function App() {
         if (data.available) dashboard.mergeGrpcTasks(data);
       }).catch((err) => { console.warn("[Dashboard] listTasks failed (sync):", err); });
     }
+    // ponytail: F75 - reset needsSync after handling so the NEXT sync_required
+    // (true again) is a real state change and re-triggers this effect. Without
+    // this, needsSync latched true forever after the first sync: a later
+    // setNeedsSync(true) was a same-value no-op, the effect never re-ran, and
+    // pending counts piled up in needsSyncCountRef - only drained when some
+    // other dep (grpcState/listTasks/mergeGrpcTasks) happened to change. The
+    // reset schedules one extra effect run, but by then the ref is already 0
+    // so it early-returns (harmless).
+    dashboard.setNeedsSync(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render; needsSync and mergeGrpcTasks (accessed via property) are already in deps
   }, [dashboard.needsSync, grpcState, listTasks, dashboard.mergeGrpcTasks]);
 
