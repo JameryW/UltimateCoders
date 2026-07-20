@@ -184,13 +184,17 @@ function App() {
   useEffect(() => {
     if (auth.isChecking || !auth.isAuthenticated || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    const skipTasks = grpcState === "connected";
     dashboard.fetchInitial({
-      skipTasks,
       fetchWorkers: listWorkers,
       fetchScheduler: getSchedulerStatus,
       fetchEvents: listEvents,
-      fetchTasks: grpcState === "connected" ? listTasks : undefined,
+      // ponytail: F67 — always fetch the initial task list. skipTasks was tied
+      // to grpcState, which the stream hooks flip to "connected" optimistically
+      // at mount — so skipTasks was always true while fetchTasks was passed
+      // under exactly that condition: the branches were mutually exclusive,
+      // listTasks never ran, and the Tasks panel stayed "Unavailable" on
+      // healthy boots.
+      fetchTasks: listTasks,
     }).then((errors) => {
       setLoading(false);
       if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");

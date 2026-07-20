@@ -32,8 +32,10 @@ export interface AuthState {
 
 const STORAGE_KEY = "uc_dashboard_token";
 
-/** Read the stored token from localStorage (returns null if absent). */
-function getStoredToken(): string | null {
+/** Read the stored token from localStorage (returns null if absent).
+ * ponytail: F69 — exported so SSE/trend/alerts fetches can authenticate
+ * (the backend gates all /dashboard/api/* for non-localhost clients). */
+export function getStoredToken(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEY);
   } catch {
