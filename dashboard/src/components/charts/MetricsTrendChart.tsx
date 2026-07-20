@@ -167,8 +167,8 @@ export const MetricsTrendChart = memo(function MetricsTrendChart({ trend, stale 
             style={{ left: Math.min(PADDING.left + (hoveredIdx / (trend.length - 1)) * plotW, svgW - 160) }}
           >
             <p className="font-medium text-[var(--text-primary)]">{formatTime(trend[hoveredIdx].timestamp)}</p>
-            {activeLines.map(({ line }) => {
-              const raw = trend[hoveredIdx][line.key] as number;
+            {activeLines.map((line) => {
+              const raw = trend[hoveredIdx]![line.key] as number;
               return (
                 <p key={line.key} style={{ color: line.color }}>
                   {line.label}: {line.format(raw)}

@@ -48,8 +48,8 @@ function renderDetail(ev: TaskEvent): React.ReactNode {
   if (ev.type === "tool_call" && (d.input || d.tool)) {
     return (
       <div className="mt-0.5">
-        {d.tool && <p className="text-[10px] text-[var(--text-muted)]">Tool: <span className="text-blue-400">{String(d.tool)}</span></p>}
-        {d.input && <pre className="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap break-all bg-[var(--bg-primary)]/50 rounded p-1 mt-0.5 max-h-32 overflow-y-auto">{String(d.input)}</pre>}
+        {Boolean(d.tool) && <p className="text-[10px] text-[var(--text-muted)]">Tool: <span className="text-blue-400">{String(d.tool)}</span></p>}
+        {Boolean(d.input) && <pre className="text-[10px] text-[var(--text-muted)] whitespace-pre-wrap break-all bg-[var(--bg-primary)]/50 rounded p-1 mt-0.5 max-h-32 overflow-y-auto">{String(d.input)}</pre>}
       </div>
     );
   }
