@@ -38,6 +38,7 @@ import type {
   DashboardEvent,
   TaskEvent,
   TasksData,
+  AlertEvent,
   MetricsSnapshot as MetricsSnapshotType,
 } from "@/types/dashboard";
 import { getSharedTransport } from "@/hooks/useGrpcWeb";
@@ -374,11 +375,19 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
           scheduler?: SchedulerData;
           events?: DashboardEvent[];
           metrics?: MetricsSnapshotType;
+          alert_events?: AlertEvent[];
+          alert_resolved?: string[];
         } = {};
         if (snapshot.health?.available) converted.health = snapshot.health;
         if (snapshot.workers?.available) converted.workers = snapshot.workers;
         if (snapshot.scheduler?.available) converted.scheduler = snapshot.scheduler;
         if (snapshot.metrics) converted.metrics = snapshot.metrics;
+        // ponytail: F71 — the backend attaches alert_events/alert_resolved to
+        // every full snapshot and handleSnapshot consumes them, but the SSE
+        // converter dropped both — activeAlerts stayed empty and server
+        // alerts never reached the AlertBar.
+        if (snapshot.alert_events) converted.alert_events = snapshot.alert_events as AlertEvent[];
+        if (snapshot.alert_resolved) converted.alert_resolved = snapshot.alert_resolved as string[];
         if (snapshot.tasks) {
           // Merge task list from SSE snapshot
           if (optsRef.current.mergeGrpcTasks) {
@@ -403,6 +412,15 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
   connectSseRef.current = connectSse;
 
   // ── WatchDashboard stream ─────────────────────────────────
+
+  // ponytail: F70 — long-lived seen-set for snapshot-replayed task events.
+  // Every WatchDashboard snapshot re-carries the server's whole recent-event
+  // window (idle snapshots arrive every ~30s), which outlives useDashboard's
+  // 5s dedup window — the same completed/failed event re-entered
+  // handleTaskEvent and re-fired its toast every ~30s while idle. Replayed
+  // copies share the event timestamp, so one key per unique event, kept for
+  // the hook's lifetime (bounded, insertion-ordered eviction).
+  const replaySeenRef = useRef<Map<string, true>>(new Map());
 
   const connect = useCallback(() => {
     abortRef.current?.abort();
@@ -461,16 +479,28 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
 
           optsRef.current.onSnapshot?.(converted);
 
+          // ponytail: F70 — emit each unique replayed event ONCE; skip events
+          // this hook has already emitted (see replaySeenRef).
+          const seen = replaySeenRef.current;
+          const emitOnce = (taskEvent: TaskEvent) => {
+            const key = `${taskEvent.type}:${taskEvent.task_id}:${taskEvent.subtask_id ?? ""}:${taskEvent.timestamp}`;
+            if (seen.has(key)) return;
+            seen.set(key, true);
+            if (seen.size > 500) {
+              const oldest = seen.keys().next().value;
+              if (oldest !== undefined) seen.delete(oldest);
+            }
+            optsRef.current.onTaskEvent?.(taskEvent);
+          };
+
           // Also emit task events from recent_events for real-time updates
           for (const ev of snapshot.recentEvents) {
-            const taskEvent = grpcEventProtoToTaskEvent(ev);
-            optsRef.current.onTaskEvent?.(taskEvent);
+            emitOnce(grpcEventProtoToTaskEvent(ev));
           }
 
           // Emit fine-grained task events from recent_task_events (gRPC TaskEvent protos)
           for (const ev of snapshot.recentTaskEvents) {
-            const taskEvent = grpcTaskEventToTaskEvent(ev);
-            optsRef.current.onTaskEvent?.(taskEvent);
+            emitOnce(grpcTaskEventToTaskEvent(ev));
           }
         }
 
