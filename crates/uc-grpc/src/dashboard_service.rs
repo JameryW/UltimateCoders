@@ -468,44 +468,41 @@ fn json_to_night_window(v: &serde_json::Value) -> NightWindowProto {
 }
 
 fn json_to_scheduled_job(v: &serde_json::Value) -> ScheduledJobProto {
-    // Python (_get_scheduler_data) serializes each job as {id, description,
-    // project_id, enabled, cron_expression?, execute_after?}. The legacy code
-    // read name/cron/next_run - mismatched keys, so name="" and cron="" and
-    // next_run=None always. Map the real keys onto the proto fields the
-    // dashboard already consumes (description<-name, cron_expression<-cron,
-    // execute_after<-next_run via grpcScheduledJobToDashboard).
+    // The NATS responder (nats_worker._dash_getschedulerstatus) serializes each
+    // job as {id, name, cron, enabled, last_run, next_run}. (app.py's
+    // _get_scheduler_data uses description/cron_expression/execute_after, but
+    // app.py is the REST snapshot path and does NOT subscribe to uc.dashboard.>
+    // - it is not the responder for this RPC. An earlier change read app.py's
+    // keys; reverted to the responder's actual keys. The dashboard maps
+    // proto.name->description, proto.cron->cron_expression, proto.nextRun->
+    // execute_after, so the panel still shows the right fields.)
     ScheduledJobProto {
         id: json_str(v, "id").to_string(),
-        name: json_str(v, "description").to_string(),
-        cron: json_str(v, "cron_expression").to_string(),
+        name: json_str(v, "name").to_string(),
+        cron: json_str(v, "cron").to_string(),
         enabled: json_bool(v, "enabled"),
         last_run: json_opt_str(v, "last_run"),
-        next_run: json_opt_str(v, "execute_after"),
+        next_run: json_opt_str(v, "next_run"),
     }
 }
 
 fn json_to_execution_history(v: &serde_json::Value) -> ExecutionHistoryProto {
-    // The Python dashboard (agent/scheduler.py -> PyExecutionHistory) serializes
-    // each history entry as {task_id, started_at, completed_at, status,
-    // result_summary}. The legacy proto fields (job_id/job_name/executed_at/
-    // success/error) were read by mismatched keys, so every entry came through
-    // with job_id="" and success=false. Map the real keys through, and populate
-    // the new started_at/completed_at/result_summary/status fields.
-    let status = json_str(v, "status").to_string();
+    // The NATS responder (nats_worker._dash_getschedulerstatus) serializes each
+    // history entry as {job_id, job_name, executed_at, success, error}. (app.py
+    // uses task_id/started_at/status, but app.py is the REST path, not the
+    // uc.dashboard.> responder.) Read the responder's keys. The optional
+    // started_at/completed_at/result_summary/status fields (added for richer
+    // display) stay None until the responder sends them.
     ExecutionHistoryProto {
-        job_id: json_str(v, "task_id").to_string(),
-        job_name: String::new(),
-        executed_at: json_str(v, "started_at").to_string(),
-        success: status == "Completed",
+        job_id: json_str(v, "job_id").to_string(),
+        job_name: json_str(v, "job_name").to_string(),
+        executed_at: json_str(v, "executed_at").to_string(),
+        success: json_bool(v, "success"),
         error: json_opt_str(v, "error"),
         started_at: json_opt_str(v, "started_at"),
         completed_at: json_opt_str(v, "completed_at"),
         result_summary: json_opt_str(v, "result_summary"),
-        status: if status.is_empty() {
-            None
-        } else {
-            Some(status)
-        },
+        status: json_opt_str(v, "status"),
     }
 }
 
