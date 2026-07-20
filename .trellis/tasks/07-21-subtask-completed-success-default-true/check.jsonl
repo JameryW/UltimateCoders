@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Verify success round-trip bool/string/missing matches contract"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-safe default direction (false on unknown)"}
