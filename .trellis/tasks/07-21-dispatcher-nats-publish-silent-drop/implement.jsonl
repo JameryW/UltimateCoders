@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-loud on dispatch publish — no silent drop, surface as task failure"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS publish contract — uc.subtask.execute delivery must not silently fail"}

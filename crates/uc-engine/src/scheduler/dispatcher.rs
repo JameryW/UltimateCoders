@@ -205,8 +205,20 @@ impl OrchestratorDispatcher {
                 // dispatch() already runs inside block_in_place (see L78), so we must
                 // NOT nest another block_in_place here — that panics. block_on alone is
                 // legal within a block_in_place context.
-                let _ = tokio::runtime::Handle::current()
-                    .block_on(async { c.publish(subject, payload.into()).await });
+                //
+                // Do NOT swallow the publish error: a dropped publish leaves the
+                // subtask Assigned in the registry but never delivered to
+                // uc.subtask.execute, so it stalls until the stale-assigned reaper
+                // reverts it. Surface the failure so dispatch() logs it + marks the
+                // task failed (caller at dispatcher.rs:98).
+                if let Err(e) = tokio::runtime::Handle::current()
+                    .block_on(async { c.publish(subject, payload.into()).await })
+                {
+                    return Err(EngineError::ConnectionError(format!(
+                        "NATS publish failed for subtask {:?}: {e}",
+                        subtask_id
+                    )));
+                }
             }
         }
 

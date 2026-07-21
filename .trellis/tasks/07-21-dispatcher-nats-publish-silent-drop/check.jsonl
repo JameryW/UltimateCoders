@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify publish Err propagates, no silent stall"}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "Verify uc.subtask.execute delivery contract on success unchanged"}
