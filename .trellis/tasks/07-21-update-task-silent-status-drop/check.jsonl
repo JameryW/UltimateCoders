@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify Err surfaces unrecognized status, no silent updated_at refresh"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "Verify UpdateTask status-validation contract preserved on valid input"}

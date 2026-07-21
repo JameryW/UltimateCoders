@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-loud at trust boundary — unrecognized status must Err, not silent drop"}
+{"file": ".trellis/spec/backend/taskservice-grpc-spec.md", "reason": "UpdateTask RPC contract — status validation semantics"}

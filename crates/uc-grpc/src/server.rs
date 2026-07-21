@@ -699,10 +699,12 @@ impl TaskStore {
             .get_mut(task_id)
             .ok_or_else(|| format!("Task not found: {}", task_id))?;
 
-        // Update status
-        if let Ok(parsed) = proto_status_to_task_status(status) {
-            task.status = parsed;
-        }
+        // Update status — fail-loud on an unrecognized status string instead
+        // of silently keeping the old status while refreshing updated_at
+        // (which masked the rejected update as a successful no-op timestamp
+        // bump). proto_status_to_task_status returns a clear Err message.
+        let parsed = proto_status_to_task_status(status)?;
+        task.status = parsed;
         task.updated_at = chrono::Utc::now();
 
         // Collect subtask state transitions for event emission
@@ -5119,6 +5121,35 @@ mod tests {
         let mut store = TaskStore::new();
         store.submit_task_pending("t".to_string(), "p".to_string());
         assert_eq!(store.evict_completed_tasks(), 0);
+    }
+
+    #[test]
+    fn update_task_rejects_unknown_status() {
+        // Regression: update_task used `if let Ok(parsed) = ...` which silently
+        // dropped an unrecognized status string, keeping the old status while
+        // still refreshing updated_at — masked as a successful no-op. Must now
+        // return Err naming the bad status, with task untouched.
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("t".to_string(), "p".to_string());
+        let before = store.tasks.get(&task.id.0).unwrap().updated_at;
+        let result = store.update_task(
+            &task.id.0,
+            "BogusStatus",
+            vec![],
+            "", // empty description → skip create-if-not-exists
+            "",
+        );
+        let err = result.expect_err("unknown status must Err");
+        assert!(
+            err.contains("BogusStatus"),
+            "err must name the bad status: {err}"
+        );
+        let after = store.tasks.get(&task.id.0).unwrap();
+        assert_eq!(
+            after.updated_at, before,
+            "updated_at must NOT refresh on rejected status"
+        );
+        assert_eq!(after.status, uc_types::TaskStatus::Planning);
     }
 
     #[test]
