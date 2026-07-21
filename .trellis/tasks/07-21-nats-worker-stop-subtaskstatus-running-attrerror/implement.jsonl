@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Enum member must exist — fail-loud via correct variant, not AttributeError"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Worker shutdown reporting contract — in-flight subtasks must be reported"}

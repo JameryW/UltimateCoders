@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify correct enum variant, no AttributeError on shutdown"}
+{"file": ".trellis/spec/backend/local-worker-bridge-spec.md", "reason": "Verify shutdown reports IN_PROGRESS subtasks per contract"}
