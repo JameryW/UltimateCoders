@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify probe delete failure is logged, not silent"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify TiKV probe key cleanup observability"}
