@@ -122,6 +122,29 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
     }
 }
 
+/// Parse the `subtasks` array from a decomposition reply into typed `Subtask`s.
+///
+/// Returns `Err` if ANY subtask fails to deserialize — do NOT silently drop
+/// parse failures. A dropped subtask whose ID is referenced by a surviving
+/// subtask's `depends_on` would have that dependency silently ignored by
+/// `dependency::resolve_execution_order` ("Unknown dependency → ignore"),
+/// yielding wrong execution order / data corruption. Surfacing the failure
+/// marks the task failed instead of dispatching with a corrupted graph.
+fn parse_subtasks(subtasks: &[serde_json::Value]) -> Result<Vec<uc_types::Subtask>, EngineError> {
+    let mut parsed: Vec<uc_types::Subtask> = Vec::with_capacity(subtasks.len());
+    for (i, v) in subtasks.iter().enumerate() {
+        match serde_json::from_value::<uc_types::Subtask>(v.clone()) {
+            Ok(st) => parsed.push(st),
+            Err(e) => {
+                return Err(EngineError::TaskError(format!(
+                    "Failed to parse subtask at index {i} from decomposition reply: {e}"
+                )));
+            }
+        }
+    }
+    Ok(parsed)
+}
+
 #[cfg(feature = "messaging")]
 impl OrchestratorDispatcher {
     /// Process the decomposition reply from the Orchestrator.
@@ -146,16 +169,8 @@ impl OrchestratorDispatcher {
             return Ok(());
         }
 
-        // Parse subtasks into uc_types::Subtask for dependency resolution
-        let parsed: Vec<uc_types::Subtask> = subtasks
-            .iter()
-            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-            .collect();
-
-        if parsed.is_empty() {
-            warn!("Could not parse any subtasks from reply");
-            return Ok(());
-        }
+        // Parse subtasks into uc_types::Subtask for dependency resolution.
+        let parsed = parse_subtasks(subtasks)?;
 
         // Resolve dependency order
         let layers = super::dependency::resolve_execution_order(&parsed)?;
@@ -347,5 +362,72 @@ mod tests {
         assert_eq!(WindowEventType::Opened, WindowEventType::Opened);
         assert_eq!(WindowEventType::Closed, WindowEventType::Closed);
         assert_ne!(WindowEventType::Opened, WindowEventType::Closed);
+    }
+
+    #[test]
+    fn parse_subtasks_partial_drop_returns_err() {
+        // One valid + one malformed subtask (depends_on as int, not array).
+        // Previously the malformed one was silently dropped and dispatch
+        // proceeded with a corrupted dependency graph.
+        use uc_types::{Subtask, SubtaskStatus, TaskId};
+        let good = serde_json::to_value(&Subtask {
+            id: TaskId("st-a".into()),
+            parent_id: TaskId("t-1".into()),
+            description: "a".into(),
+            status: SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: vec![],
+            file_constraints: vec![],
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: vec![],
+            agent_config_json: None,
+            steps: vec![],
+            retry_count: 0,
+        })
+        .unwrap();
+        let bad = serde_json::json!({"id":"st-b","depends_on":1});
+        let subtasks = vec![good, bad];
+        let result = parse_subtasks(&subtasks);
+        assert!(result.is_err(), "partial parse failure must surface as Err");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("index 1"),
+            "err must name the failed index: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_subtasks_all_valid() {
+        use uc_types::{Subtask, SubtaskStatus, TaskId};
+        let make = |id: &str, deps: Vec<TaskId>| {
+            serde_json::to_value(&Subtask {
+                id: TaskId(id.into()),
+                parent_id: TaskId("t-1".into()),
+                description: id.into(),
+                status: SubtaskStatus::Pending,
+                assigned_worker: None,
+                depends_on: deps,
+                file_constraints: vec![],
+                expected_output: String::new(),
+                result: None,
+                dispatch_mode: uc_types::DispatchMode::default(),
+                dispatch_retry_count: 0,
+                required_capabilities: vec![],
+                agent_config_json: None,
+                steps: vec![],
+                retry_count: 0,
+            })
+            .unwrap()
+        };
+        let subtasks = vec![
+            make("st-a", vec![]),
+            make("st-b", vec![TaskId("st-a".into())]),
+        ];
+        let parsed = parse_subtasks(&subtasks).expect("valid subtasks parse");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].depends_on.len(), 1);
     }
 }

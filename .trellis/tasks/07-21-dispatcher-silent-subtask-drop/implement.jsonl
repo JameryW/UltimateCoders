@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-loud over silent partial dispatch at trust boundary"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Decomposition reply → subtask dispatch contract"}

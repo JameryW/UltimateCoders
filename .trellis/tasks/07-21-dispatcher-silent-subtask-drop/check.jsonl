@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify no silent partial dispatch — Err surfaces parse failure"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Verify decomposition→dispatch contract preserved on clean input"}
