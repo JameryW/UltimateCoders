@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "Verify nesting contract — reads from payload['data']"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Verify remote result fields round-trip into SubtaskResult"}

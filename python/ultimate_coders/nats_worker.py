@@ -1875,28 +1875,37 @@ class NatsWorker:
         if event_type == "subtask_completed" and self._orchestrator:
             # Reconstruct modified_files from the event data so remote
             # file changes flow into aggregation/merge arbitration.
+            # The result fields (summary/modified_files/error) are nested
+            # under payload["data"] by _make_task_event_payload (line 138);
+            # reading them from the top level silently dropped them — remote
+            # file changes were lost and errors always fell back. The sibling
+            # subtask_dispatch_rejected handler (line 1836) already nests
+            # correctly via data.get("data", {}).get("reason").
             from ultimate_coders.agent.types import ChangeType, FileChange
+
+            inner = data.get("data", {}) or {}
             modified_files = [
                 FileChange(
                     file_path=fc.get("path", ""),
                     change_type=ChangeType(fc.get("change_type", "modified")),
                     diff=fc.get("diff_stats", ""),
                 )
-                for fc in data.get("modified_files", [])
+                for fc in inner.get("modified_files", [])
             ]
             result = SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id="remote",
-                summary=data.get("summary", ""),
+                summary=inner.get("summary", ""),
                 success=True,
                 modified_files=modified_files,
             )
             await self._orchestrator.handle_subtask_result(result)
         elif event_type == "subtask_failed" and self._orchestrator:
+            inner = data.get("data", {}) or {}
             result = SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id="remote",
-                summary=data.get("error", "Remote subtask failed"),
+                summary=inner.get("error", "Remote subtask failed"),
                 success=False,
             )
             await self._orchestrator.handle_subtask_result(result)
