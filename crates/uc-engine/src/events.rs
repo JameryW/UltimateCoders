@@ -368,13 +368,25 @@ impl EventStore for NatsEventStore {
             match tokio::time::timeout(std::time::Duration::from_millis(100), messages.next()).await
             {
                 Ok(Some(Ok(message))) => {
-                    let event: AgentEventType = serde_json::from_slice(&message.payload)
-                        .unwrap_or_else(|_| AgentEventType::TaskCreated {
-                            task_id: TaskId::new(),
-                            description: String::new(),
-                        });
-
                     let sequence = message.info().map(|i| i.stream_sequence).unwrap_or(0);
+                    // Skip a message that fails to deserialize instead of
+                    // fabricating a synthetic TaskCreated{random id} — the old
+                    // fallback corrupted checkpoint recovery: a malformed/legacy
+                    // event became a phantom task creation, and
+                    // apply_event_to_snapshot reset snapshot.status = "created",
+                    // clobbering real recovered state. Best-effort replay: one
+                    // bad message is warned + skipped, not synthesized.
+                    let event = match serde_json::from_slice::<AgentEventType>(&message.payload) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            tracing::warn!(
+                                sequence,
+                                error = %e,
+                                "Skipping malformed AGENT_EVENTS message during replay"
+                            );
+                            continue;
+                        }
+                    };
 
                     results.push(RecordedEvent {
                         offset: sequence,
@@ -541,5 +553,22 @@ mod tests {
             }
             _ => panic!("Expected TaskCreated variant"),
         }
+    }
+
+    /// Regression: read_from used to synthesize a `TaskCreated{random id}` on
+    /// parse failure (events.rs unwrap_or_else), corrupting checkpoint replay.
+    /// The fix skips malformed messages instead — so a bad payload must parse
+    /// to Err (the condition the skip branch keys on), never silently to a
+    /// fabricated event.
+    #[test]
+    fn malformed_event_payload_parse_err() {
+        // Garbage bytes are not a valid AgentEventType.
+        let result: Result<AgentEventType, _> = serde_json::from_slice(b"not-json-at-all");
+        assert!(result.is_err(), "malformed payload must be Err (skip path)");
+
+        // A structurally-valid JSON object missing the discriminator also errs.
+        let result: Result<AgentEventType, _> =
+            serde_json::from_slice(br#"{"unknown_variant":true}"#);
+        assert!(result.is_err(), "unknown variant must be Err (skip path)");
     }
 }

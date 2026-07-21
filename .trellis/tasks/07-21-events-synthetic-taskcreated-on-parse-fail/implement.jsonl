@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "EventStore replay contract — malformed events must not corrupt snapshots"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Best-effort recovery: skip+warn over fabricate on parse failure"}
