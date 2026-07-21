@@ -563,7 +563,7 @@ class NatsWorker:
                     continue
                 for st in task.subtasks:
                     if (
-                        st.status in (SubtaskStatus.RUNNING, SubtaskStatus.ASSIGNED)
+                        st.status in (SubtaskStatus.IN_PROGRESS, SubtaskStatus.ASSIGNED)
                         and st.assigned_worker == wid
                     ):
                         try:

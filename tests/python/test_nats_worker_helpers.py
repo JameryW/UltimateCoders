@@ -470,3 +470,60 @@ async def test_build_snapshot_emits_real_task_timestamps():
     assert entry["created_at"] == int(created.timestamp())
     assert entry["updated_at"] == int(updated.timestamp())
     assert entry["created_at"] != 0
+
+
+# ── stop() shutdown reporting ──────────────────────────────────
+
+
+async def test_stop_reports_in_progress_subtask_no_attrerror():
+    """stop() referenced SubtaskStatus.RUNNING (nonexistent member) →
+    AttributeError aborted the shutdown reporting loop, leaving in-flight
+    subtasks IN_PROGRESS forever. Regression: IN_PROGRESS subtasks owned by
+    this worker must be reported as failed on shutdown, no AttributeError."""
+    from ultimate_coders.agent.orchestrator import Orchestrator
+    from ultimate_coders.agent.types import TaskStatus
+
+    nw = _make_worker()
+    nw._orchestrator = Orchestrator()
+
+    worker = MagicMock()
+    worker.worker_id = "w-1"
+    nw._worker = worker
+
+    publisher = MagicMock()
+    publisher.publish_event = AsyncMock()
+    nw._publisher = publisher
+
+    # Suppress the real handle_subtask_result side effects beyond status flip.
+    nw._orchestrator.handle_subtask_result = AsyncMock(
+        side_effect=lambda r: _flip_subtask_failed(nw._orchestrator, r.subtask_id)
+    )
+
+    st = Subtask(id="st-run", description="d", status=SubtaskStatus.IN_PROGRESS)
+    st.assigned_worker = "w-1"
+    task = Task(
+        id="t1",
+        description="d",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+    nw._orchestrator.tasks[task.id] = task
+
+    # Must not raise AttributeError (SubtaskStatus.RUNNING did).
+    await nw.stop()
+
+    publisher.publish_event.assert_awaited()
+    # The subtask was reported (handle_subtask_result called for it).
+    assert any(
+        call.args and call.args[0].subtask_id == "st-run"
+        for call in nw._orchestrator.handle_subtask_result.await_args_list
+    )
+
+
+def _flip_subtask_failed(orch, subtask_id):
+    """Test helper: flip the subtask to FAILED (mirrors real handler outcome)."""
+    for t in orch.tasks.values():
+        for st in t.subtasks:
+            if st.id == subtask_id:
+                st.status = SubtaskStatus.FAILED
+                return
