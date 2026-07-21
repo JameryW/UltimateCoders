@@ -527,3 +527,87 @@ def _flip_subtask_failed(orch, subtask_id):
             if st.id == subtask_id:
                 st.status = SubtaskStatus.FAILED
                 return
+
+
+# ── _handle_remote_subtask_result nesting ───────────────────────
+
+
+async def test_handle_remote_subtask_result_reads_nested_payload():
+    """Regression: _handle_remote_subtask_result read summary/modified_files/
+    error from the top-level payload, but _make_task_event_payload nests them
+    under payload["data"]. Remote file changes + errors were silently lost."""
+    nw = _make_worker()
+    nw._orchestrator = MagicMock()
+    captured = []
+
+    async def _capture(result):
+        captured.append(result)
+
+    nw._orchestrator.handle_subtask_result = _capture
+    nw._orchestrator.get_task_status = MagicMock(return_value=None)
+
+    payload = {
+        "v": 1,
+        "type": "subtask_completed",
+        "task_id": "t1",
+        "subtask_id": "st-1",
+        "data": {
+            "summary": "did the thing",
+            "modified_files": [
+                {"path": "src/a.py", "change_type": "modified", "diff_stats": "+1 -1"},
+            ],
+        },
+    }
+    await nw._handle_remote_subtask_result("subtask_completed", "t1", "st-1", payload)
+
+    assert len(captured) == 1
+    r = captured[0]
+    assert r.success is True
+    assert r.summary == "did the thing", "summary must come from nested data"
+    assert len(r.modified_files) == 1, "modified_files must survive nesting"
+    assert r.modified_files[0].file_path == "src/a.py"
+
+
+async def test_handle_remote_subtask_result_reads_nested_error():
+    """subtask_failed: error text must come from nested data, not fallback."""
+    nw = _make_worker()
+    nw._orchestrator = MagicMock()
+    captured = []
+
+    async def _capture(result):
+        captured.append(result)
+
+    nw._orchestrator.handle_subtask_result = _capture
+    nw._orchestrator.get_task_status = MagicMock(return_value=None)
+
+    payload = {
+        "v": 1,
+        "type": "subtask_failed",
+        "task_id": "t1",
+        "subtask_id": "st-1",
+        "data": {"error": "boom: out of disk"},
+    }
+    await nw._handle_remote_subtask_result("subtask_failed", "t1", "st-1", payload)
+
+    assert len(captured) == 1
+    r = captured[0]
+    assert r.success is False
+    assert r.summary == "boom: out of disk", "error must come from nested data"
+
+
+async def test_handle_remote_subtask_result_falls_back_when_data_missing():
+    """No nested data key → fallback summary, no crash."""
+    nw = _make_worker()
+    nw._orchestrator = MagicMock()
+    captured = []
+
+    async def _capture(result):
+        captured.append(result)
+
+    nw._orchestrator.handle_subtask_result = _capture
+    nw._orchestrator.get_task_status = MagicMock(return_value=None)
+
+    payload = {"v": 1, "type": "subtask_failed", "task_id": "t1", "subtask_id": "st-1"}
+    await nw._handle_remote_subtask_result("subtask_failed", "t1", "st-1", payload)
+
+    assert captured[0].summary == "Remote subtask failed"

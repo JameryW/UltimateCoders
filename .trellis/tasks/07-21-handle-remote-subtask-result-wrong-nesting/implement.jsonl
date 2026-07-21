@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS event payload nesting contract — data field is nested under payload['data']"}
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Remote subtask result round-trip — modified_files/summary/error must survive"}
