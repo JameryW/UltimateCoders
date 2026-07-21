@@ -56,7 +56,17 @@ impl ShortTermMemory {
                     let probe_key = format!("__uc_probe_{}", uuid::Uuid::new_v4());
                     match client_arc.put(probe_key.clone(), b"probe".to_vec()).await {
                         Ok(_) => {
-                            let _ = client_arc.delete(probe_key).await;
+                            if let Err(e) = client_arc.delete(probe_key.clone()).await {
+                                // Best-effort cleanup: a failed delete leaks the
+                                // __uc_probe_<uuid> key into TiKV. Log so the leak
+                                // is observable, not silent. Volume is one key per
+                                // startup; no retry (transient, trivial cost).
+                                tracing::warn!(
+                                    key = %probe_key,
+                                    error = %e,
+                                    "TiKV probe key delete failed — key may leak"
+                                );
+                            }
                             probe_ok = true;
                             break;
                         }
