@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Verify replay skip-on-malformed matches contract"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify no synthetic/fabricated event on failure path"}
