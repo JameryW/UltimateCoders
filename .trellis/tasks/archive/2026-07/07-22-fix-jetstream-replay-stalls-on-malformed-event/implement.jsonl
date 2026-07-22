@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/event-pipeline-spec.md", "reason": "Replay loop consumes uc.task.event; spec defines event handling + replay contract."}
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS/JetStream consumer + ack/seq semantics for replay path."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Warning vs debug log-level choice for skipped replay events."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Skip-vs-fail policy for non-fatal display-only paths."}
