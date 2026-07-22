@@ -1063,11 +1063,26 @@ class NatsWorker:
         asyncio only keeps a weak reference to tasks created via create_task — an
         unreferenced task can be collected before it runs. We add it to
         ``_bg_tasks`` and drop it via a done-callback once complete.
+
+        The done-callback also retrieves and logs any unhandled exception —
+        without it, a raised coro surfaces only as asyncio's default "Task
+        exception was never retrieved" and the dispatch/execution path dies
+        silently (subtask stalls IN_PROGRESS until the 90s heartbeat-stall
+        reaper). Cancelled tasks are skipped (expected on shutdown).
         """
         task = asyncio.create_task(coro)
         self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
+        task.add_done_callback(self._on_bg_done)
         return task
+
+    def _on_bg_done(self, task: asyncio.Task[Any]) -> None:
+        """Done-callback for _spawn_bg tasks: release the strong ref and log failures."""
+        self._bg_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("Background task failed", exc_info=exc)
 
     async def _handle_submit(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle a ``uc.task.submit`` message.
