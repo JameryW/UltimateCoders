@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-safe default policy for quality gates; never silently suppress invalid verdict."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Strict === checks on untyped JSON.parse output in TS."}

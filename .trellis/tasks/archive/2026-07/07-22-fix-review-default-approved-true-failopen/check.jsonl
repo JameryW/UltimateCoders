@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify fail-closed default aligns with policy."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify strict === on parsed JSON."}
