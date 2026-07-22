@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 104
-- **Last Active**: 2026-07-22
+- **Total Sessions**: 105
+- **Last Active**: 2026-07-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1805 | Active |
+| `journal-2.md` | ~1838 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 105 | 2026-07-23 | Fix fail-open review gate (#357) | `0b4767ab` | `main` |
 | 104 | 2026-07-22 | Log _spawn_bg background-task exceptions (#356) | `e36a57c9` | `main` |
 | 103 | 2026-07-22 | Fix JetStream replay stall on malformed event (#355) | `275b04ce` | `main` |
 | 102 | 2026-07-16 | TUI overlay interaction polish — 6 PRs (S1-S9 + remote proto) | `6b3f25e3`, `4ce1d03e`, `b7f115ea`, `36dc6942`, `bbb4a233`, `31272392` | `main` |

@@ -1803,3 +1803,36 @@ _spawn_bg done-callback only discarded the strong ref, never retrieved/logged th
 ### Next Steps
 
 - None - task complete
+
+
+## Session 105: Fix fail-open review gate (#357)
+
+**Date**: 2026-07-23
+**Task**: Fix fail-open review gate (#357)
+**Branch**: `main`
+
+### Summary
+
+Scanned TS orchestrator.ts for silent failures. reviewSubtaskLocal/Remote used parsed.approved ?? true + catch{approved:true} - fail-OPEN on supervisor-review quality gate. Missing/non-boolean approved or unparseable output silently approved a possibly-defective subtask. Same anti-pattern PR #347 fixed in gRPC. Extracted pure parseReviewOutput helper: strict === true approves, parse failure logs warning + returns approved:false + debuggable issue. 9 unit tests; 175/175 orchestrator suite green; tsc clean. PR #357 merged, CI green. Earlier rounds: #355 JetStream replay stall, #356 _spawn_bg exception logging.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0b4767ab` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
