@@ -735,16 +735,26 @@ class NatsWorker:
                 batch_size = min(gap, 500)
                 msgs = await sub.fetch(batch=batch_size, timeout=5.0)
                 for msg in msgs:
+                    # ponytail: ack + advance seq ALWAYS, even on handling
+                    # failure. Replay is display-only (dashboard event log);
+                    # a permanently-broken event (old schema, corrupt payload)
+                    # must not block replay forever — the old code swallowed
+                    # the failure without acking/advancing, so the same event
+                    # re-fetched and re-failed on every restart.
                     try:
                         await self._handle_task_event(msg)
+                    except Exception:
+                        logger.warning(
+                            "Replay event handling failed (seq=%s), skipping",
+                            msg.metadata.sequence.stream, exc_info=True,
+                        )
+                    finally:
                         await msg.ack()
                         # ponytail: F65 — nats-py Msg has no .sequence; the
                         # stream sequence lives in metadata (the old attribute
                         # raised AttributeError per message, so _js_last_seq
                         # never advanced and replay re-read the same events).
                         self._js_last_seq = msg.metadata.sequence.stream
-                    except Exception:
-                        logger.debug("Replay event handling failed", exc_info=True)
                 self._save_js_seq(self._js_last_seq)
                 logger.info("JetStream replay done (%d events)", len(msgs))
             except asyncio.TimeoutError:
