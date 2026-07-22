@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Log level (warning), exc_info usage, %s formatting for the bg-task failure log."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Retrieve-and-log vs swallow policy for fire-and-forget task exceptions."}

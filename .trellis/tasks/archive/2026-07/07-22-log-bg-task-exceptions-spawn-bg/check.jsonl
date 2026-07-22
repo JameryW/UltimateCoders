@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify warning level + exc_info + no f-string."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify not silently swallowing exceptions."}
