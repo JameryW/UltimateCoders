@@ -611,3 +611,73 @@ async def test_handle_remote_subtask_result_falls_back_when_data_missing():
     await nw._handle_remote_subtask_result("subtask_failed", "t1", "st-1", payload)
 
     assert captured[0].summary == "Remote subtask failed"
+
+
+# ── _replay_missed_events skip-on-failure ───────────────────────
+
+
+def _make_replay_msg(seq: int):
+    """Build a fake JetStream msg with metadata.sequence.stream = seq."""
+    msg = MagicMock()
+    msg.metadata.sequence.stream = seq
+    msg.ack = AsyncMock()
+    msg.nak = AsyncMock()
+    return msg
+
+
+async def test_replay_skips_malformed_event_and_advances_seq():
+    """A malformed event that raises in _handle_task_event must not stall
+    replay: ack it, advance _js_last_seq past it, log warning.
+
+    Regression: old code swallowed the failure without acking/advancing, so
+    the same broken event re-fetched and re-failed on every restart.
+    """
+    nw = _make_worker()
+    nw._load_js_seq = MagicMock(return_value=5)
+    saved: list[int] = []
+    nw._save_js_seq = lambda s: saved.append(s)
+
+    good_msg = _make_replay_msg(6)
+    bad_msg = _make_replay_msg(7)
+    acks = []
+
+    async def _handle(msg):
+        # First call (seq 6) succeeds; second (seq 7) simulates a malformed
+        # event whose handler raises.
+        if msg is bad_msg:
+            raise ValueError("malformed event payload")
+    nw._handle_task_event = _handle
+    # Record ack order to assert the broken event was still acked.
+    _orig_ack_good = good_msg.ack
+    _orig_ack_bad = bad_msg.ack
+
+    async def _ack_good():
+        acks.append(6)
+        await _orig_ack_good()
+
+    async def _ack_bad():
+        acks.append(7)
+        await _orig_ack_bad()
+
+    good_msg.ack = _ack_good
+    bad_msg.ack = _ack_bad
+
+    js = MagicMock()
+    info = MagicMock()
+    info.state.last_seq = 7
+    js.stream_info = AsyncMock(return_value=info)
+    sub = MagicMock()
+    sub.fetch = AsyncMock(return_value=[good_msg, bad_msg])
+    sub.unsubscribe = AsyncMock()
+    js.pull_subscribe = AsyncMock(return_value=sub)
+    nw._nc = MagicMock()
+    nw._nc.jetstream = MagicMock(return_value=js)
+
+    await nw._replay_missed_events()
+
+    # Both messages acked, including the one whose handler raised.
+    assert acks == [6, 7]
+    # Seq advanced past the broken event (not stuck at 6).
+    assert nw._js_last_seq == 7
+    # Persisted seq reflects progress past the broken event.
+    assert saved[-1] == 7
