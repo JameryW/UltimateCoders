@@ -13,9 +13,12 @@ Covers regression bugs fixed in the agent-deep-analysis loop:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskStatus,
@@ -681,3 +684,64 @@ async def test_replay_skips_malformed_event_and_advances_seq():
     assert nw._js_last_seq == 7
     # Persisted seq reflects progress past the broken event.
     assert saved[-1] == 7
+
+
+# ── _spawn_bg done-callback logs exceptions ─────────────────────
+
+
+def test_spawn_bg_logs_failed_task_exception(caplog: pytest.LogCaptureFixture) -> None:
+    """A bg task whose coro raises must surface a warning (with traceback), not
+    die silently as asyncio's default 'Task exception was never retrieved'.
+
+    Regression: old done-callback only discarded the strong ref.
+    """
+
+    async def _run() -> None:
+        nw = _make_worker()
+
+        async def _boom() -> None:
+            raise ValueError("dispatch exploded")
+
+        caplog.set_level(logging.WARNING, logger="ultimate_coders.nats_worker")
+        task = nw._spawn_bg(_boom())
+        try:
+            await task
+        except ValueError:
+            pass
+        # Let the done-callback run.
+        await asyncio.sleep(0)
+        return task, nw
+
+    task, nw = asyncio.run(_run())
+
+    # Strong ref released.
+    assert task not in nw._bg_tasks
+    # Warning logged with the exception.
+    assert any(
+        "Background task failed" in r.message and r.exc_info
+        for r in caplog.records
+    )
+
+
+def test_spawn_bg_cancelled_task_not_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """A cancelled bg task is expected (shutdown) — must NOT log a warning."""
+
+    async def _run() -> None:
+        nw = _make_worker()
+
+        async def _hang() -> None:
+            await asyncio.sleep(60)
+
+        caplog.set_level(logging.WARNING, logger="ultimate_coders.nats_worker")
+        task = nw._spawn_bg(_hang())
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+    assert not any("Background task failed" in r.message for r in caplog.records)

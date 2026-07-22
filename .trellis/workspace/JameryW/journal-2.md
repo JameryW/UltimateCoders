@@ -1737,3 +1737,36 @@ TUI overlay interaction polish across 6 PRs: (1) #284 onAction boolean + success
 ### Next Steps
 
 - None - task complete
+
+
+## Session 103: Fix JetStream replay stall on malformed event (#355)
+
+**Date**: 2026-07-22
+**Task**: Fix JetStream replay stall on malformed event (#355)
+**Branch**: `main`
+
+### Summary
+
+Hunted silent failures across nats_worker/worker/sandbox. Fixed _replay_missed_events: swallowed per-event handler failure without ack/seq-advance → malformed event re-fetched every restart → permanent replay stall. Moved ack+seq to finally (always run), warning-level log with seq. Test added. PR #355 merged, CI green. 3 hunter agents spawned; 24 findings, most noise/low-value; verified 4 against code.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `275b04ce` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
