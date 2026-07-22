@@ -1770,3 +1770,36 @@ Hunted silent failures across nats_worker/worker/sandbox. Fixed _replay_missed_e
 ### Next Steps
 
 - None - task complete
+
+
+## Session 104: Log _spawn_bg background-task exceptions (#356)
+
+**Date**: 2026-07-22
+**Task**: Log _spawn_bg background-task exceptions (#356)
+**Branch**: `main`
+
+### Summary
+
+_spawn_bg done-callback only discarded the strong ref, never retrieved/logged the exception — raised coros (_execute_subtasks, _execute_and_report) died silently, surfaced only as asyncio 'Task exception was never retrieved', subtask stalled IN_PROGRESS until 90s heartbeat-stall reaper. Added _on_bg_done: discard ref, skip cancelled, else log warning with exc_info. 2 tests added (raise→logged, cancelled→silent). PR #356 merged, CI green. Local main had diverged from stale #355 finish-work commits; rebased clean.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e36a57c9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
