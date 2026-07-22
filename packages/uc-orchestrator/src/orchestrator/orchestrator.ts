@@ -148,6 +148,34 @@ interface ReviewResult {
 }
 
 /**
+ * Parse a supervisor-review agent's JSON output into a ReviewResult.
+ *
+ * Fail-CLOSED: only an explicit `approved: true` approves. A missing or
+ * non-boolean `approved`, or an unparseable output, rejects the subtask
+ * (was `?? true` + `catch → approved: true` — fail-open, silently approving
+ * a possibly-defective subtask whose review couldn't be read). Same anti-
+ * pattern PR #347 fixed in gRPC (success defaulted true).
+ *
+ * Exported for unit testing.
+ */
+export function parseReviewOutput(
+	raw: unknown,
+	onParseError?: (err: unknown) => void,
+): ReviewResult {
+	try {
+		const parsed = JSON.parse(raw as string);
+		return {
+			approved: parsed.approved === true,
+			issues: parsed.issues ?? [],
+			suggestions: parsed.suggestions ?? [],
+		};
+	} catch (err) {
+		onParseError?.(err);
+		return { approved: false, issues: ["Review output could not be parsed"], suggestions: [] };
+	}
+}
+
+/**
  * ponytail: F26/F27 — discriminated result for control commands (cancel/pause/
  * resume) and id resolution. UIs only ever display TRUNCATED task ids, so the
  * plain boolean they used to get couldn't say WHY a command failed ("typo'd
@@ -1817,16 +1845,9 @@ export class UCOrchestrator {
 			throw new Error(`Supervisor agent failed: ${result.stderr.slice(0, 500)}`);
 		}
 
-		try {
-			const parsed = JSON.parse(result.output);
-			return {
-				approved: parsed.approved ?? true,
-				issues: parsed.issues ?? [],
-				suggestions: parsed.suggestions ?? [],
-			};
-		} catch {
-			return { approved: true, issues: [], suggestions: [] };
-		}
+		return parseReviewOutput(result.output, (err) =>
+			this.pi.logger.warn(`Supervisor review output unparseable — rejecting (fail-closed): ${err}`),
+		);
 	}
 
 	/**
@@ -1882,16 +1903,9 @@ export class UCOrchestrator {
 					if (st) {
 						const status = st.status.toLowerCase();
 						if (status === "completed" && st.result) {
-							try {
-								const parsed = JSON.parse(st.result);
-								return {
-									approved: parsed.approved ?? true,
-									issues: parsed.issues ?? [],
-									suggestions: parsed.suggestions ?? [],
-								};
-							} catch {
-								return { approved: true, issues: [], suggestions: [] };
-							}
+							return parseReviewOutput(st.result, (err) =>
+								this.pi.logger.warn(`Supervisor review output unparseable — rejecting (fail-closed): ${err}`),
+							);
 						} else if (status === "failed") {
 							throw new Error(st.result || "Remote review failed");
 						}
