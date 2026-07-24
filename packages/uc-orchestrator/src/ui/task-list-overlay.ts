@@ -184,7 +184,14 @@ class TaskListComponent {
 			const globalIdx = this.scrollOffset + i;
 			const isCursor = globalIdx === this.cursorIdx;
 			const cursor = isCursor ? this.theme.bold("›") : " ";
-			const badge = statusBadge(task.status, this.theme);
+			const badge = statusBadge(
+				// ponytail: pause sets controlState="paused" but leaves status as
+				// in_progress/planning — without this a paused task shows "run "
+				// (running). cancelled already flips status, so only paused needs
+				// the override. Mirrors formatTaskList's [controlState] suffix.
+				task.controlState === "paused" ? "paused" : task.status,
+				this.theme,
+			);
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const total = task.subtasks.length;
 			const age = this.formatAge(task.createdAt);

@@ -280,3 +280,16 @@ def location(self) -> str:
 3. **Forgetting `from __future__ import annotations`** -- Every Python file starts with this import to enable PEP 604 deferred annotation evaluation.
 
 4. **Not handling `None` from engine operations** -- Engine `read_memory` returns `None` when the key is not found. Always check for `None` before converting.
+
+5. **Rendering task status from `task.status` alone (OMP overlay / TypeScript)** -- `pauseTask` (`packages/uc-orchestrator/src/orchestrator/orchestrator.ts`) sets `task.controlState = "paused"` but leaves `task.status` as `in_progress`/`planning`. Any render path that derives a badge/label from `task.status` alone shows a paused task as "running". This bit `task-list-overlay.ts` (list-row `statusBadge(task.status)`) and `formatTaskDetail` (header `${task.status}`) — 70+ overlay polish rounds missed it because the status/controlState split was undocumented. `formatTaskList` had it right and is the reference.
+
+   **Rule**: render paths must use the *effective* status and surface `controlState`:
+   ```typescript
+   // badge: paused controlState overrides status (cancelled already flips status, no override needed)
+   const badge = statusBadge(task.controlState === "paused" ? "paused" : task.status, theme);
+   // label/header: append [controlState] when not running (mirror formatTaskList)
+   const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
+   ```
+   `cancelTask` sets BOTH `controlState` and `status` to `cancelled`, so cancelled needs no override (the `[cancelled]` suffix mirrors `formatTaskList`; the resulting `cancelled [cancelled]` is pre-existing, consistent, and intentionally not special-cased). `ControlState = "running" | "paused" | "cancelled"` (`orchestrator.ts:69`).
+
+   **Selfcheck must assert rendered output** (`comp.render(w)` / `formatTaskDetail(...)` return value), not just state — the codebase has a history of state-only selfchecks that miss render-layer regressions.

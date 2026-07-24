@@ -481,7 +481,26 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F5 unknown badge not 'plan'", !lines.some((l: string) => l.includes("plan")));
 }
 
-// ponytail: F6 — scroll footer arrows mark the clipped side. Bare counts don't
+// ponytail: paused task badge — pauseTask sets controlState="paused" but leaves
+// status="in_progress". The list row must render the "hold" badge (via the
+// paused entry), not "run " (running). STATUS_BADGE.paused was dead code before
+// this because statusBadge was called with task.status, which never becomes
+// "paused" (only controlState does).
+{
+	const t = makeTask("t1", "in_progress");
+	(t as any).controlState = "paused";
+	const { comp } = makeComponent([t]);
+	const lines = comp.render(80) as string[];
+	check("paused: list row shows 'hold' badge", lines.some((l: string) => l.includes("hold")));
+	check("paused: list row does NOT show 'run' badge", !lines.some((l: string) => l.includes("run ")));
+	// running controlState (normal) stays "run "
+	const t2 = makeTask("t2", "in_progress");
+	const { comp: comp2 } = makeComponent([t2]);
+	const lines2 = comp2.render(80) as string[];
+	check("running: list row shows 'run' badge", lines2.some((l: string) => l.includes("run ")));
+}
+
+
 // convey that content ABOVE is hidden once scrollOffset > 0.
 {
 	const tui = { terminal: { rows: 24 } }; // maxVisible = 12

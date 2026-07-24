@@ -151,5 +151,24 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("F25 short deps listed fully", bLine.includes("←X"));
 }
 
+// ponytail: pause sets controlState="paused" but leaves status="in_progress".
+// formatTaskDetail header must show [paused] (mirror formatTaskList), else a
+// paused task's detail reads "in_progress" with no pause indication.
+{
+	const task = {
+		id: "T1", description: "d", status: "in_progress", controlState: "paused",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState;
+	const lines = formatTaskDetail(task, theme);
+	const header = lines.find((l) => l.includes("T1")) ?? "";
+	check("paused: detail header shows [paused]", header.includes("[paused]"));
+	check("paused: detail header still names in_progress status", header.includes("in_progress"));
+
+	// running controlState → no suffix (no noise on the normal case)
+	const running = { ...task, controlState: "running" } as unknown as TaskState;
+	const runHeader = formatTaskDetail(running, theme).find((l) => l.includes("T1")) ?? "";
+	check("running: detail header has no [controlState] suffix", !runHeader.includes("["));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
