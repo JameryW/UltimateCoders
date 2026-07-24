@@ -325,6 +325,41 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── Keyboard shortcuts ──────────────────────────────────────
 
+	// ponytail: shared subtask-tree opener — used by Ctrl+T, Ctrl+Shift+F
+	// (cursorOnFailed), and the task-list detail `t` jump (cursorOnTaskId).
+	// One builder so the onRetry/onJumpToTask wiring stays identical across all
+	// three entry points; previously the tree was re-built inline twice.
+	async function openSubtaskTree(
+		ctx: ExtensionCommandContext,
+		opts?: { cursorOnFailed?: boolean; cursorOnTaskId?: string },
+	) {
+		await ctx.ui.custom(
+			createSubtaskTreeOverlay({
+				tasks: () => orchestrator.getAllTaskStates(),
+				cursorOnFailed: opts?.cursorOnFailed,
+				cursorOnTaskId: opts?.cursorOnTaskId,
+				onRetry: async (taskId, subtaskId) => {
+					// Per-subtask retry: reset + re-dispatch ONLY the cursor's failed
+					// subtask (+ its cascade-cancelled downstream), leaving other
+					// failed subtasks untouched. Distinct from task-scoped resumeTask.
+					const ok = await orchestrator.retrySubtask(taskId, subtaskId, ctx as unknown as ExtensionCommandContext);
+					if (ok) {
+						ctx.ui.notify(`Retrying subtask ${subtaskId.slice(0, 8)} — re-dispatched`, "info");
+					} else {
+						ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
+					}
+				},
+				onJumpToTask: (taskId) => {
+					// `d` — close tree (done() is called by the overlay) then open the
+					// task-list straight into that task's detail.
+					void openTaskList(ctx as unknown as ExtensionCommandContext, taskId);
+				},
+				onClose: () => {},
+			}),
+			{ overlay: true },
+		);
+	}
+
 	// ponytail: shared task-list opener — used by Ctrl+Shift+T (list) and the
 	// subtask-tree `d` jump (lands in detail via initialDetailTaskId).
 	async function openTaskList(ctx: ExtensionCommandContext, initialDetailTaskId?: string) {
@@ -347,6 +382,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					return r.ok;
 				},
 				initialDetailTaskId,
+				// ponytail: `t` in detail opens the subtask tree on this task — the
+				// reverse of the tree's `d` → detail jump. Close the list first so
+				// overlays don't stack (the overlay calls done() before onJumpToTree).
+				onJumpToTree: (taskId) => {
+					void openSubtaskTree(ctx as unknown as ExtensionCommandContext, { cursorOnTaskId: taskId });
+				},
 				onClose: () => {},
 			}),
 			{ overlay: true },
@@ -356,29 +397,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut("ctrl+t" as KeyId, {
 		description: "Open UC subtask tree",
 		handler: async (ctx) => {
-			await ctx.ui.custom(
-				createSubtaskTreeOverlay({
-					tasks: () => orchestrator.getAllTaskStates(),
-					onRetry: async (taskId, subtaskId) => {
-						// Per-subtask retry: reset + re-dispatch ONLY the cursor's failed
-						// subtask (+ its cascade-cancelled downstream), leaving other
-						// failed subtasks untouched. Distinct from task-scoped resumeTask.
-						const ok = await orchestrator.retrySubtask(taskId, subtaskId, ctx as unknown as ExtensionCommandContext);
-						if (ok) {
-							ctx.ui.notify(`Retrying subtask ${subtaskId.slice(0, 8)} — re-dispatched`, "info");
-						} else {
-							ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
-						}
-					},
-					onJumpToTask: (taskId) => {
-						// `d` — close tree (done() is called by the overlay) then open the
-						// task-list straight into that task's detail.
-						void openTaskList(ctx as unknown as ExtensionCommandContext, taskId);
-					},
-					onClose: () => {},
-				}),
-				{ overlay: true },
-			);
+			await openSubtaskTree(ctx as unknown as ExtensionCommandContext);
 		},
 	});
 
@@ -400,25 +419,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("No failed subtasks", "info");
 				return;
 			}
-			await ctx.ui.custom(
-				createSubtaskTreeOverlay({
-					tasks: () => orchestrator.getAllTaskStates(),
-					cursorOnFailed: true,
-					onRetry: async (taskId, subtaskId) => {
-						const ok = await orchestrator.retrySubtask(taskId, subtaskId, ctx as unknown as ExtensionCommandContext);
-						if (ok) {
-							ctx.ui.notify(`Retrying subtask ${subtaskId.slice(0, 8)} — re-dispatched`, "info");
-						} else {
-							ctx.ui.notify(`Cannot retry ${subtaskId.slice(0, 8)}: not a failed subtask (or deps incomplete)`, "warning");
-						}
-					},
-					onJumpToTask: (taskId) => {
-						void openTaskList(ctx as unknown as ExtensionCommandContext, taskId);
-					},
-					onClose: () => {},
-				}),
-				{ overlay: true },
-			);
+			await openSubtaskTree(ctx as unknown as ExtensionCommandContext, { cursorOnFailed: true });
 		},
 	});
 

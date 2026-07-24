@@ -57,6 +57,10 @@ export interface TaskListOptions {
 	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => boolean | Promise<boolean>;
 	/** Open straight into detail mode for this task (jump-from-subtask-tree). */
 	initialDetailTaskId?: string;
+	/** `t` in detail mode opens the subtask-tree overlay on this task
+	 * (the reverse of the tree's `d` → task detail jump). Undefined →
+	 * `t` flashes "jump unavailable" (no tree opener wired). */
+	onJumpToTree?: (taskId: string) => void;
 	/** Clipboard writer for `y` yank (default: system clipboard). Injectable
 	 * so selfchecks don't touch the real clipboard. */
 	copy?: (text: string) => boolean;
@@ -220,7 +224,7 @@ class TaskListComponent {
 	private renderDetail(width: number): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · Esc/q back"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · Esc/q back"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
@@ -310,6 +314,21 @@ class TaskListComponent {
 			}
 			if (data === "r") {
 				this.fireAction(this.detailTaskId, "resume", "resumed");
+				return;
+			}
+			// ponytail: `t` — jump from this task's detail to its subtask tree (the
+			// reverse of the tree's `d` → task detail). Close the list first so
+			// overlays don't stack; the tree opener re-opens its own overlay.
+			if (data === "t") {
+				if (!this.detailTaskId) {
+					this.setFlash("no task selected");
+				} else if (!this.opts.onJumpToTree) {
+					this.setFlash("jump unavailable");
+				} else {
+					const id = this.detailTaskId;
+					this.done();
+					this.opts.onJumpToTree(id);
+				}
 				return;
 			}
 			if (data === KEY.up || data === "k") this.detailScroll = Math.max(0, this.detailScroll - 1);
