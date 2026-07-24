@@ -508,7 +508,12 @@ class SubtaskTreeComponent {
 	// selfchecks don't touch the real clipboard; default is the system clipboard.
 	private yank(text: string): void {
 		const ok = (this.opts.copy ?? copyText)(text);
-		this.flashMsg = ok ? `copied ${text.slice(0, 8)}` : "copy failed";
+		// ponytail: show the FULL id/error copied, not a truncated prefix — the old
+		// slice(0,8) rendered `copied subtask_` for a longer id, which looked like a
+		// partial copy and hid what actually landed on the clipboard. The flashMsg
+		// line is itself width-clamped at render (slice width-2), so a long value
+		// just right-truncates there instead of misleading the user here.
+		this.flashMsg = ok ? `copied ${text}` : "copy failed";
 	}
 
 	invalidate(): void {

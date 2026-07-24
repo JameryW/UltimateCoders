@@ -489,7 +489,12 @@ class TaskListComponent {
 	// selfchecks don't touch the real clipboard; default is the system clipboard.
 	private yank(text: string): void {
 		const ok = (this.opts.copy ?? copyText)(text);
-		this.setFlash(ok ? `copied ${text.slice(0, 8)}` : "copy failed");
+		// ponytail: show the FULL id copied, not a truncated prefix — the old
+		// slice(0,8) rendered `copied task_abc` for a `task_abc123def` id, which
+		// looked like a partial copy and hid what actually landed on the clipboard.
+		// The flashMsg line is itself width-clamped at render (slice width-2), so a
+		// long id just right-truncates there instead of misleading the user here.
+		this.setFlash(ok ? `copied ${text}` : "copy failed");
 	}
 
 	private openDetail(taskId: string): void {
