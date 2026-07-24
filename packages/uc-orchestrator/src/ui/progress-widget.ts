@@ -87,6 +87,16 @@ class ProgressWidgetComponent {
 
 		// Header: task ID + status + description (what the task IS, not just a UUID)
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
+		// ponytail: paused tasks show a one-key affordance so the user doesn't have
+		// to open an overlay to discover how to resume. `r` mirrors the task-list
+		// overlay's resume quick-action. Only when controlState is paused — cancelled
+		// is terminal (resume would error), running has no such action. Gated on
+		// width ≥ 60: the hint is ~38 plain chars and would overflow a narrow header
+		// (the compositor would ANSI-truncate the description off the left side);
+		// under 60 the user still finds /uc resume via /uc help.
+		const affordance = task.controlState === "paused" && width >= 60
+			? this.theme.fg("dim", " · /uc resume <id> · r in overlay")
+			: "";
 		const statusColor = task.status === "completed" ? "success" : task.status === "failed" ? "error" : "accent";
 		const idStr = task.id.slice(0, 12);
 		// ponytail: budget the description by the PLAIN-text prefix length (ANSI is
@@ -98,7 +108,7 @@ class ProgressWidgetComponent {
 		const descBudget = Math.max(0, width - prefixPlain.length - 3); // 3 for " - "
 		const desc = task.description.slice(0, descBudget);
 		lines.push(
-			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}`,
+			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${affordance}`,
 		);
 
 		// Wave progress
