@@ -136,6 +136,7 @@ class SubtaskTreeComponent {
 		// failed subtasks existing.
 		return this.flatItems.filter(
 			(it) =>
+				it.taskId.toLowerCase().includes(q) ||
 				it.subtask.id.toLowerCase().includes(q) ||
 				it.subtask.description.toLowerCase().includes(q) ||
 				it.subtask.status.toLowerCase().includes(q),
