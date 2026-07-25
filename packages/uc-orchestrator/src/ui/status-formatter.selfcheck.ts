@@ -188,6 +188,25 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("no review → no Review line", !formatTaskDetail(noReview, theme).join("\n").includes("Review:"));
 }
 
+// ponytail: success output — /uc status <id> + task-list detail showed a subtask's
+// error + retries + review but NOT its result. The message (#374) + tree show it;
+// mirror here. Error takes priority (error OR result). First line + `…` when more.
+{
+	const withResult = (result: string) => ({
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [Object.assign(st("s1", [], "completed"), { result })],
+	} as unknown as TaskState);
+	const multi = formatTaskDetail(withResult("line one\nline two"), theme).join("\n");
+	check("detail shows success result first line", multi.includes("line one"));
+	check("detail multi-line result shows ellipsis", multi.includes("line one") && multi.includes("…"));
+	const single = formatTaskDetail(withResult("short output"), theme).join("\n");
+	check("detail single-line result no ellipsis", single.includes("short output") && !single.includes("…"));
+	// error present → no result line (error takes priority)
+	const withErr = { id: "T", description: "t", status: "failed", controlState: "running", createdAt: 0, subtasks: [Object.assign(st("s1", [], "failed"), { error: "boom", result: "should not show" })] } as unknown as TaskState;
+	const errOut = formatTaskDetail(withErr, theme).join("\n");
+	check("detail error present → no result line", !errOut.includes("should not show"));
+}
+
 // ponytail: detail header shows completed/total (mirror formatTaskList) — the
 // detail view lists subtasks but the header had no count, so the user had to
 // count rows to gauge progress. Only when there are subtasks (0 → no "0/0").
