@@ -135,6 +135,14 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			if (st.retryCount && st.retryCount > 0) {
 				lines.push(theme.fg("dim", `${indent}  Retries: ${st.retryCount}`));
 			}
+			// ponytail: review verdict — the subtask-tree overlay shows ✓/✗ approved/
+			// rejected, but /uc status <id> + the task-list detail view (both fed by
+			// formatTaskDetail) omitted it. A reviewed subtask's approval is the key
+			// outcome; surface it on its own line, colored by verdict.
+			if (st.review) {
+				const label = st.review.approved ? "✓ approved" : "✗ rejected";
+				lines.push(theme.fg(st.review.approved ? "success" : "error", `${indent}  Review: ${label}`));
+			}
 		}
 	}
 
