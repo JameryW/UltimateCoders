@@ -219,6 +219,26 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("narrow terminal header fits width", header.length <= 20);
 }
 
+// ponytail: paused task shows a resume affordance so the user doesn't have to
+// open an overlay to discover how to resume. Only at width ≥ 60 (the ~38-char
+// hint would overflow a narrow header). Cancelled/running show no hint.
+{
+	const paused = { id: "t1", description: "d", status: "paused", controlState: "paused", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const st: ProgressWidgetState = { task: paused };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const wide = (comp.render(80) as string[])[0];
+	check("paused wide shows resume affordance", wide.includes("/uc resume") && wide.includes("r in overlay"));
+	const narrow = (comp.render(40) as string[])[0];
+	check("paused narrow omits affordance (no overflow)", !narrow.includes("/uc resume"));
+}
+{
+	const running = { id: "t2", description: "d", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const st: ProgressWidgetState = { task: running };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const header = (comp.render(80) as string[])[0];
+	check("running shows no resume affordance", !header.includes("/uc resume"));
+}
+
 // ponytail: S8 — failed subtask with retryCount > 0 shows a "retried N×" dim line.
 // The retry count comes from SubtaskResult.retryCount (copied to st.retryCount by
 // the orchestrator's result→TaskState copy path). formatErrorForDisplay reads
