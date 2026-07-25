@@ -37,10 +37,12 @@ function makeComponent(subtasks: SubtaskResult[], opts?: {
 	cursorOnTaskId?: string;
 	tasks?: TaskState[]; // override the default single-task shape for multi-task tests
 }) {
-	const task = opts?.tasks ?? {
-		id: "T", description: "t", status: "failed", controlState: "running",
-		createdAt: 0, subtasks,
-	} as unknown as TaskState;
+	const task: TaskState = opts?.tasks
+		? opts.tasks[0]
+		: {
+			id: "T", description: "t", status: "failed", controlState: "running",
+			createdAt: 0, subtasks,
+		} as unknown as TaskState;
 	const tasksArr = opts?.tasks ?? [task];
 	const factory = createSubtaskTreeOverlay({
 		tasks: () => tasksArr,
@@ -187,6 +189,28 @@ const PAGEDOWN = "\x1b[6~";
 	// Only the "beta" subtask row should be present, not "alpha"
 	check("typing narrows to beta only", lines.some((l: string) => l.includes("beta")) && !lines.some((l: string) => l.includes("alpha")));
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
+}
+
+// ponytail: filter matches the parent taskId — typing a task's id surfaces ALL
+// its subtasks (the natural "show me this task's work" intent). Pre-fix the
+// filter matched only subtask id/desc/status, so a taskId with no subtask-id
+// overlap returned no matches.
+{
+	const mk = (id: string) => ({
+		id, description: id, status: "in_progress" as const, controlState: "running" as const,
+		createdAt: 0, subtasks: [makeSubtask(`${id}-s0`, { description: "work" })],
+	} as unknown as TaskState);
+	const { comp } = makeComponent([], { tasks: [mk("taskA"), mk("taskB")] });
+	comp.handleInput("/");
+	comp.handleInput("t");
+	comp.handleInput("a");
+	comp.handleInput("s");
+	comp.handleInput("k");
+	comp.handleInput("a");
+	comp.handleInput("\r");
+	const lines = comp.render(80);
+	// "taska" matches taskA's id → its subtask visible; taskB's subtask excluded
+	check("filter by parent taskId surfaces its subtask", lines.some((l: string) => l.includes("taskA-s0")) && !lines.some((l: string) => l.includes("taskB-s0")));
 }
 
 // Esc exits filter + restores full list
