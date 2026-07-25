@@ -86,6 +86,7 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 				id: st.id,
 				desc: st.description,
 				error: st.error,
+				review: st.review,
 			}))
 			: [];
 
@@ -97,6 +98,14 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 					lines.push(`  ${st.icon} ${st.id}: ${desc}`);
 					if (st.error) {
 						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
+					}
+					// ponytail: review verdict — the subtask-tree overlay + /uc status
+					// detail show ✓/✗ approved/rejected; the expanded completion message
+					// omitted it. A rejected subtask is why a "completed" task may still
+					// need attention. Mirror the label; no review → no line.
+					if (st.review) {
+						const label = st.review.approved ? "✓ approved" : "✗ rejected";
+						lines.push(theme.fg(st.review.approved ? "success" : "error", `    ${label}`));
 					}
 				}
 				return lines;

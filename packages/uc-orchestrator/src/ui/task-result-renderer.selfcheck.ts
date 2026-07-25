@@ -48,6 +48,24 @@ const renderer = createTaskResultRenderer();
 	check("expanded shows error", lines.some((l: string) => l.includes("boom err")));
 }
 
+// ponytail: review verdict in the expanded completion message — the tree overlay
+// + /uc status show ✓/✗ approved/rejected; the expanded message omitted it. A
+// rejected subtask on a "completed" task is the actionable detail.
+{
+	const approved = makeSubtask("s1", "completed", "ok") as SubtaskResult;
+	(approved as any).review = { approved: true };
+	const rejected = makeSubtask("s2", "failed", "bad", "boom err") as SubtaskResult;
+	(rejected as any).review = { approved: false };
+	const comp = renderer(makeMessage(true, [approved, rejected], "failed"), { expanded: true }, theme)!;
+	const lines = (comp as any).render(80) as string[];
+	check("expanded shows approved verdict", lines.some((l: string) => l.includes("✓ approved")));
+	check("expanded shows rejected verdict", lines.some((l: string) => l.includes("✗ rejected")));
+	// no review field → no verdict line (no noise on unreviewed subtasks)
+	const bare = makeSubtask("s3", "completed", "plain") as SubtaskResult;
+	const bareLines = (renderer(makeMessage(true, [bare]), { expanded: true }, theme)! as any).render(80) as string[];
+	check("expanded unreviewed → no verdict line", !bareLines.some((l: string) => l.includes("approved")));
+}
+
 // expanded narrow (width 30) — subtask desc lines truncated to fit
 // (summary header is a fixed message header, OMP wraps it — not in scope)
 {
