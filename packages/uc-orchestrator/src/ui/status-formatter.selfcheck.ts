@@ -170,5 +170,23 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("running: detail header has no [controlState] suffix", !runHeader.includes("["));
 }
 
+// ponytail: review verdict — formatTaskDetail must show ✓ approved / ✗ rejected
+// (the subtask-tree overlay does; /uc status <id> + task-list detail omitted it).
+// A reviewed subtask's approval is the key outcome; no review → no line.
+{
+	const withReview = (approved: boolean) => ({
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [Object.assign(st("s1"), { review: { approved } })],
+	} as unknown as TaskState);
+	const approved = formatTaskDetail(withReview(true), theme).join("\n");
+	check("review approved shown", approved.includes("✓ approved"));
+	check("review approved labeled 'Review:'", approved.includes("Review:"));
+	const rejected = formatTaskDetail(withReview(false), theme).join("\n");
+	check("review rejected shown", rejected.includes("✗ rejected"));
+	// no review field → no Review line (don't add noise to unreviewed subtasks)
+	const noReview = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [st("s1")] } as unknown as TaskState;
+	check("no review → no Review line", !formatTaskDetail(noReview, theme).join("\n").includes("Review:"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
