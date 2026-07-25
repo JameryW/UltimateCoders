@@ -161,6 +161,33 @@ const PAGEDOWN = "\x1b[6~";
 	check("onRetry receives cursor's subtaskId (s2)", args2?.subtaskId === "s2");
 }
 
+// ponytail: `n` jumps to the NEXT failed subtask after the cursor — Ctrl+Shift+F
+// lands on the first, but inside the tree there was no "next failed" key, so
+// multi-failure triage meant manual ↓. Wraps to first when past the last.
+{
+	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed
+	const subs = [
+		makeSubtask("s0", { status: "failed" }),
+		makeSubtask("s1", { status: "completed" }),
+		makeSubtask("s2", { status: "failed" }),
+		makeSubtask("s3", { status: "failed" }),
+	];
+	const { comp } = makeComponent(subs);
+	// cursor at 0 (s0) → `n` jumps to next failed = s2 (idx 2)
+	comp.handleInput("n");
+	check("n from s0 → s2 (idx 2)", comp.cursorIdx === 2);
+	// cursor at 2 (s2) → `n` jumps to s3 (idx 3)
+	comp.handleInput("n");
+	check("n from s2 → s3 (idx 3)", comp.cursorIdx === 3);
+	// cursor at 3 (s3, last failed) → `n` wraps to first failed s0 (idx 0)
+	comp.handleInput("n");
+	check("n from last failed wraps to first (idx 0)", comp.cursorIdx === 0);
+	// no failed subtasks → flashMsg, cursor unchanged
+	const { comp: comp2 } = makeComponent([makeSubtask("s0", { status: "completed" })]);
+	comp2.handleInput("n");
+	check("n with no failed flashes 'no failed subtasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed subtasks"));
+}
+
 // r on a non-failed subtask does NOT invoke onRetry, and sets a flashMsg
 {
 	let called = false;

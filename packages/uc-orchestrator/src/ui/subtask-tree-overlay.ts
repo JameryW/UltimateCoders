@@ -221,7 +221,7 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · R retry · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · R retry · n next-failed · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · R retry · Esc close",
 			)));
 		}
@@ -509,6 +509,23 @@ class SubtaskTreeComponent {
 			} else {
 				this.opts.onJumpToTask(item.taskId);
 				this.done();
+			}
+		} else if (data === "n") {
+			// ponytail: jump to the NEXT failed subtask after the cursor — Ctrl+Shift+F
+			// lands on the first, but inside the tree there was no "next failed" key,
+			// so multi-failure triage meant manual ↓ scrolling. Wraps to the first if
+			// the cursor is already past the last failed (so repeated `n` cycles).
+			const start = this.cursorIdx + 1;
+			let next = -1;
+			for (let i = 0; i < items.length; i++) {
+				const idx = (start + i) % items.length;
+				if (items[idx].subtask.status === "failed") { next = idx; break; }
+			}
+			if (next < 0) {
+				this.flashMsg = "no failed subtasks";
+			} else {
+				this.cursorIdx = next;
+				this.flashMsg = null;
 			}
 		} else if (data === "y" || data === "Y") {
 			// ponytail: F22 — `y` yanks the cursor subtask id, `Y` yanks its error
