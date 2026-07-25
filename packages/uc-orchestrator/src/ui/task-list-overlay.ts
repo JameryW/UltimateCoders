@@ -121,11 +121,16 @@ class TaskListComponent {
 	private currentTasks(): TaskState[] {
 		if (!this.query) return this.opts.tasks();
 		const q = this.query.toLowerCase();
+		// ponytail: match controlState too — a paused task keeps status="in_progress"
+		// and only flips controlState="paused", so filtering "paused" (the row badge
+		// the user sees) returned no matches despite paused tasks existing. Same for
+		// a future "cancelled" controlState if it ever diverges from status.
 		return this.opts.tasks().filter(
 			(t) =>
 				t.id.toLowerCase().includes(q) ||
 				t.description.toLowerCase().includes(q) ||
-				t.status.toLowerCase().includes(q),
+				t.status.toLowerCase().includes(q) ||
+				(t.controlState ?? "").toLowerCase().includes(q),
 		);
 	}
 

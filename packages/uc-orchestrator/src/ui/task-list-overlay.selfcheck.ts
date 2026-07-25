@@ -229,6 +229,29 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: filter matches controlState — a paused task keeps status="in_progress"
+// and only flips controlState="paused". Filtering "paused" (the row badge the user
+// sees) must surface it; pre-fix it returned no matches despite paused tasks existing.
+{
+	const paused = {
+		id: "p1", description: "paused work", status: "in_progress", controlState: "paused",
+		createdAt: 0, error: undefined,
+		subtasks: Array.from({ length: 2 }, (_, i) => ({ id: `p1-s${i}`, description: `s${i}`, status: "pending", dependsOn: [], result: undefined, error: undefined, review: undefined, retryCount: 0, dispatchMode: "prefer_remote" })),
+	} as unknown as TaskState;
+	const running = makeTask("r1", "in_progress");
+	const { comp } = makeComponent([paused, running]);
+	comp.handleInput("/");
+	comp.handleInput("p");
+	comp.handleInput("a");
+	comp.handleInput("u");
+	comp.handleInput("s");
+	comp.handleInput("e");
+	comp.handleInput("d");
+	comp.handleInput(ENTER);
+	const lines = comp.render(80);
+	check("filter 'paused' matches the paused task", lines.some((l: string) => l.includes("p1")) && !lines.some((l: string) => l.includes("r1")));
+}
+
 // Esc exits filter + restores full list
 {
 	const { comp } = makeComponent([
