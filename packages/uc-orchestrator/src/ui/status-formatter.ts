@@ -50,7 +50,14 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// sets controlState="paused"; without this the detail header reads
 	// "in_progress" for a paused task. cancelled already flips status.
 	const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
-	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}`);
+	// ponytail: mirror formatTaskList's completed/total — the detail header listed
+	// subtasks below but the header itself had no count summary, so the user had to
+	// count rows to gauge progress. Only when there are subtasks (a 0-subtask task
+	// would show a misleading "0/0").
+	const total = task.subtasks.length;
+	const completed = task.subtasks.filter((s) => s.status === "completed").length;
+	const countTag = total > 0 ? ` ${completed}/${total}` : "";
+	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).
 	// F16: budget must subtract the "  Description: " prefix (15 cols) — the old
