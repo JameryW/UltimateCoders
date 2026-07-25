@@ -34,16 +34,20 @@ function makeComponent(subtasks: SubtaskResult[], opts?: {
 	onRetry?: (taskId: string, subtaskId: string) => void;
 	onJumpToTask?: (taskId: string) => void;
 	cursorOnFailed?: boolean;
+	cursorOnTaskId?: string;
+	tasks?: TaskState[]; // override the default single-task shape for multi-task tests
 }) {
-	const task = {
+	const task = opts?.tasks ?? {
 		id: "T", description: "t", status: "failed", controlState: "running",
 		createdAt: 0, subtasks,
 	} as unknown as TaskState;
+	const tasksArr = opts?.tasks ?? [task];
 	const factory = createSubtaskTreeOverlay({
-		tasks: () => [task],
+		tasks: () => tasksArr,
 		onRetry: opts?.onRetry ?? (() => {}),
 		onJumpToTask: opts?.onJumpToTask,
 		cursorOnFailed: opts?.cursorOnFailed,
+		cursorOnTaskId: opts?.cursorOnTaskId,
 		onClose: () => {},
 	});
 	let closed = false;
@@ -305,6 +309,31 @@ const PAGEDOWN = "\x1b[6~";
 	const subs = [makeSubtask("s0", { status: "completed" }), makeSubtask("s1", { status: "running" })];
 	const { comp } = makeComponent(subs, { cursorOnFailed: true });
 	check("cursorOnFailed no-failed stays at 0", comp.cursorIdx === 0);
+}
+
+// ponytail: cursorOnTaskId (task-list detail `t` jump) — constructor pre-sets
+// cursor to the FIRST subtask of the given task, so the tree opens focused on
+// that task's work, not the top of the full multi-task list. Multi-task list
+// with the target task's subtasks starting at index 3 → cursor lands on 3.
+{
+	const mk = (id: string, n: number) => ({
+		id, description: id, status: "in_progress" as const, controlState: "running" as const,
+		createdAt: 0, subtasks: Array.from({ length: n }, (_, i) => makeSubtask(`${id}-s${i}`, { status: "completed" })),
+	} as unknown as TaskState);
+	const tasks = [mk("A", 2), mk("B", 2), mk("T", 3)]; // T's subtasks at flat idx 4..6
+	const { comp } = makeComponent([], { cursorOnTaskId: "T", tasks });
+	check("cursorOnTaskId lands on target task's first subtask (idx 4)", comp.cursorIdx === 4);
+}
+
+// ponytail: cursorOnTaskId with task NOT in list — cursor stays at 0 (no crash,
+// no phantom), findIndex returns -1.
+{
+	const mk = (id: string) => ({
+		id, description: id, status: "in_progress" as const, controlState: "running" as const,
+		createdAt: 0, subtasks: [makeSubtask(`${id}-s0`, { status: "completed" })],
+	} as unknown as TaskState);
+	const { comp } = makeComponent([], { cursorOnTaskId: "GONE", tasks: [mk("A"), mk("B")] });
+	check("cursorOnTaskId missing-task stays at 0", comp.cursorIdx === 0);
 }
 
 // `d` jump — fires onJumpToTask with the subtask's taskId, then closes the tree.

@@ -31,12 +31,16 @@ function makeTask(id: string, status: TaskState["status"], subtaskCount = 2): Ta
 function makeComponent(tasks: TaskState[], opts?: {
 	onAction?: (taskId: string, action: "cancel" | "pause" | "resume") => boolean | Promise<boolean>;
 	initialDetailTaskId?: string;
+	onJumpToTree?: (taskId: string) => void;
+	copy?: (text: string) => boolean;
 }) {
 	const factory = createTaskListOverlay({
 		tasks: () => tasks,
 		getTask: (id) => tasks.find((t) => t.id === id),
 		onAction: opts?.onAction,
 		initialDetailTaskId: opts?.initialDetailTaskId,
+		onJumpToTree: opts?.onJumpToTree,
+		copy: opts?.copy,
 		onClose: () => {},
 	});
 	let closed = false;
@@ -116,6 +120,27 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("re-enter detail", comp.detailTaskId === "t1");
 	comp.handleInput("q");
 	check("`q` returns to list from detail", comp.detailTaskId === null);
+}
+
+// ponytail: `t` in detail opens the subtask tree on this task (reverse of the
+// tree's `d` → detail jump). Verify it closes the list + fires onJumpToTree
+// with the detail task id; without an opener it flashes "jump unavailable".
+{
+	const jumped: string[] = [];
+	const { comp, closed } = makeComponent([makeTask("t1", "in_progress")], {
+		onJumpToTree: (id) => { jumped.push(id); },
+	});
+	comp.handleInput(ENTER); // open detail on t1
+	check("t-jump: detail open", comp.detailTaskId === "t1");
+	comp.handleInput("t");
+	check("t-jump: fires onJumpToTree with detail id", jumped.length === 1 && jumped[0] === "t1");
+	check("t-jump: closes the list overlay", closed() === true);
+
+	// no opener wired → flashMsg instead of silent no-op
+	const { comp: comp2 } = makeComponent([makeTask("t2", "in_progress")]);
+	comp2.handleInput(ENTER);
+	comp2.handleInput("t");
+	check("t-jump: no opener flashes 'jump unavailable'", comp2.flashMsg !== null && comp2.flashMsg.includes("jump unavailable"));
 }
 
 // detail mode must not raw-slice ANSI-themed lines: String.slice on a

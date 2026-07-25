@@ -40,6 +40,9 @@ export interface SubtaskTreeOptions {
 	onJumpToTask?: (taskId: string) => void;
 	/** Open with cursor on the first failed subtask (Ctrl+Shift+F jump-to-failed). */
 	cursorOnFailed?: boolean;
+	/** Open with cursor on the first subtask of this task (jump-from-task-detail).
+	 * Falls back to top-of-list if the task has no subtasks / isn't found. */
+	cursorOnTaskId?: string;
 	/** Clipboard writer for `y`/`Y` yank (default: system clipboard). Injectable
 	 * so selfchecks don't touch the real clipboard. */
 	copy?: (text: string) => boolean;
@@ -92,6 +95,14 @@ class SubtaskTreeComponent {
 		// subtask so the user lands on the retry target in one keystroke.
 		if (this.opts.cursorOnFailed) {
 			const idx = this.flatItems.findIndex((it) => it.subtask.status === "failed");
+			if (idx >= 0) this.cursorIdx = idx;
+			this.clampScroll();
+		}
+		// ponytail: jump-from-task-detail — pre-set cursor to the first subtask of
+		// the given task so the user lands on that task's work, not the top of the
+		// full tree. findIndex returns -1 (cursor stays 0) if the task isn't present.
+		if (this.opts.cursorOnTaskId) {
+			const idx = this.flatItems.findIndex((it) => it.taskId === this.opts.cursorOnTaskId);
 			if (idx >= 0) this.cursorIdx = idx;
 			this.clampScroll();
 		}
