@@ -296,7 +296,20 @@ class SubtaskTreeComponent {
 				if (item.subtask.error) {
 					lines.push("      " + formatErrorForDisplay(item.subtask.error, Math.max(0, width - 8), (c, t) => this.theme.fg(c, t)));
 				} else if (item.subtask.result) {
-					lines.push("      " + this.theme.fg("dim", item.subtask.result.split("\n")[0].slice(0, Math.max(0, width - 8))));
+					// ponytail: show the first line of the result, with a `…` when there
+					// is MORE to see — either additional lines (newline-truncated) or the
+					// first line itself was width-clamped. The error path already signals
+					// truncation via formatErrorForDisplay's ellipsis; the result path was
+					// a bare slice with no indicator, so a 5-line result looked complete at
+					// line 1. Reserve 1 col for the ellipsis when truncating.
+					const budget = Math.max(0, width - 8);
+					const firstLine = item.subtask.result.split("\n")[0];
+					const moreLines = item.subtask.result.includes("\n");
+					const truncated = firstLine.length > budget - 1 || moreLines;
+					const shown = truncated
+						? firstLine.slice(0, Math.max(0, budget - 1)) + "…"
+						: firstLine.slice(0, budget);
+					lines.push("      " + this.theme.fg("dim", shown));
 				}
 
 				// ponytail: meta line — secondary tags joined with " · ". Track
