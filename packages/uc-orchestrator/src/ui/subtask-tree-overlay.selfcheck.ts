@@ -288,6 +288,25 @@ const PAGEDOWN = "\x1b[6~";
 	check("backspace drops last char (query=al → 2 results)", items.length === 2);
 }
 
+// ponytail: `n` in search-edit exits editing (keep filter) then falls through to
+// next-failed — mirrors r/R. Pre-fix, `n` appended to the query (searchMode
+// swallows printable chars), so next-failed was unreachable while editing.
+{
+	const subtasks = [
+		makeSubtask("s0", { description: "alpha", status: "failed" }),
+		makeSubtask("s1", { description: "beta", status: "completed" }),
+		makeSubtask("s2", { description: "gamma", status: "failed" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	comp.handleInput("n"); // in search-edit: must NOT append "n" to query
+	// searchMode exited, cursor jumped to next failed (s0 is at idx 0; from idx 0
+	// next-failed after 0 = s2 at idx 2). query stayed empty (n was a command, not input).
+	check("n in search-edit exits searchMode", comp.searchMode === false);
+	check("n in search-edit did not append to query", comp.query === "");
+	check("n in search-edit jumped to next failed (idx 2)", comp.cursorIdx === 2);
+}
+
 // r/R on a filtered failed subtask fires onRetry with the filtered id
 {
 	const subtasks = [
