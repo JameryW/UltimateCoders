@@ -23,25 +23,63 @@ interface TaskResultDetails {
 
 // ── Renderer ─────────────────────────────────────────────────────
 
+// ── Helpers ──────────────────────────────────────────────────────
+
+// ponytail: tally subtask statuses into the 4 buckets a completion summary
+// cares about. Everything not in the map (planning/reviewing/in_progress on a
+// terminal task, unknown statuses from a newer server) falls into "other".
+type StatusCounts = { completed: number; failed: number; cancelled: number; other: number };
+function countByStatus(statuses: string[]): StatusCounts {
+	const c: StatusCounts = { completed: 0, failed: 0, cancelled: 0, other: 0 };
+	for (const s of statuses) {
+		if (s === "completed") c.completed++;
+		else if (s === "failed") c.failed++;
+		else if (s === "cancelled") c.cancelled++;
+		else c.other++;
+	}
+	return c;
+}
+
+// ponytail: build "N subtask(s) (X done, Y failed)"-style suffix. Always leads
+// with the total (preserves the old headline when all-buckets-but-done are 0),
+// then appends non-zero buckets so a failed task surfaces the actionable count.
+// Order: failed first (most actionable), then cancelled, then other, then done.
+function breakdownSuffix(c: StatusCounts, total: number): string {
+	const parts: string[] = [];
+	if (c.failed > 0) parts.push(`${c.failed} failed`);
+	if (c.cancelled > 0) parts.push(`${c.cancelled} cancelled`);
+	if (c.other > 0) parts.push(`${c.other} other`);
+	// done only when it's not the whole set (all-done = the total already says it)
+	if (c.completed > 0 && c.completed < total) parts.push(`${c.completed} done`);
+	return parts.length > 0 ? `${total} subtask(s) (${parts.join(", ")})` : `${total} subtask(s)`;
+}
+
 export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState | undefined): (message: any, options: { expanded: boolean }, theme: Theme) => Component | undefined {
 	return (message, options, theme) => {
 		const details: TaskResultDetails | undefined = message.details;
 		if (!details) return undefined;
 
 		const summaryLines: string[] = [];
-		// Summary header
-		const statusColor = details.status === "completed" ? "success" : details.status === "failed" ? "error" : "dim";
-		summaryLines.push(
-			theme.fg(statusColor, `■ Task ${details.taskId.slice(0, 12)}`) +
-			theme.fg("dim", ` — ${details.status} — ${details.subtaskCount} subtask(s)`),
-		);
-
 		// ponytail: capture raw subtask data at factory time; slice to width inside
 		// render(width) since the factory closure doesn't receive the terminal width.
 		// F15: the emitter only sends {taskId, status, subtaskCount} — details.task
 		// is never populated, so resolve live via the getter (extension passes
 		// orchestrator.getTaskState). Evicted tasks degrade to the header only.
 		const task = details.task ?? getTask?.(details.taskId);
+		// ponytail: breakdown of how the N subtasks landed — for a failed task,
+		// "failed — 5 subtask(s)" hides that 3 succeeded and 2 failed (the 2 are the
+		// actionable ones). task already resolved above; evicted → bare suffix.
+		const counts = task ? countByStatus(task.subtasks.map((s) => s.status)) : null;
+		const suffix = counts
+			? breakdownSuffix(counts, details.subtaskCount)
+			: `${details.subtaskCount} subtask(s)`;
+		// Summary header
+		const statusColor = details.status === "completed" ? "success" : details.status === "failed" ? "error" : "dim";
+		summaryLines.push(
+			theme.fg(statusColor, `■ Task ${details.taskId.slice(0, 12)}`) +
+			theme.fg("dim", ` — ${details.status} — ${suffix}`),
+		);
+
 		const expandedSubtasks = options.expanded && task
 			? task.subtasks.map((st) => ({
 				icon: statusIcon(st.status, theme),

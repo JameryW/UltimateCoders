@@ -83,10 +83,36 @@ const renderer = createTaskResultRenderer();
 	const lines = (withGetter(msg, { expanded: true }, theme) as any).render(80) as string[];
 	check("F15 getter resolves expanded subtasks", lines.some((l: string) => l.includes("s1")) && lines.some((l: string) => l.includes("s2")));
 	check("F15 getter shows subtask error", lines.some((l: string) => l.includes("kaput")));
+	// ponytail: breakdown — "failed — 2 subtask(s) (1 failed, 1 done)" surfaces the
+	// actionable count, not just the total. Was bare "2 subtask(s)".
+	check("breakdown shows failed count in summary", lines[0].includes("1 failed") && lines[0].includes("1 done"));
 	// no getter + no details.task → header only (graceful degradation for evicted tasks)
 	const bare = createTaskResultRenderer();
 	const bareLines = (bare(msg, { expanded: true }, theme) as any).render(80) as string[];
 	check("F15 no task source degrades to header only", bareLines.length === 1);
+	// ponytail: evicted task (no subtask data) → bare suffix, no breakdown.
+	// "failed" here is the task STATUS word (always present), so check the line
+	// ENDS with the bare count rather than absence of "failed".
+	check("evicted task summary keeps bare subtask count", bareLines[0].endsWith("2 subtask(s)"));
+}
+
+// ponytail: all-completed task → bare suffix (no "(N done)" — the total already
+// conveys it). Mixed-failed surfaces the failed count. Single-status tasks too.
+{
+	const mk = (subs: { id: string; status: string }[]) => subs.map((s) => makeSubtask(s.id, s.status as any, "d")) as SubtaskResult[];
+	const render = (subs: { id: string; status: string }[], status: string) => {
+		const t = { id: "T", description: "t", status, controlState: "running", createdAt: 0, subtasks: mk(subs) } as unknown as TaskState;
+		const r = createTaskResultRenderer();
+		const msg = { details: { taskId: "T-1234567890", status, subtaskCount: subs.length, task: t } };
+		return (r(msg, { expanded: false }, theme) as any).render(80) as string[];
+	};
+	const allDone = render([{ id: "s1", status: "completed" }, { id: "s2", status: "completed" }, { id: "s3", status: "completed" }], "completed");
+	// ponytail: bare suffix = "3 subtask(s)" with NOTHING after (the "(s)" plural
+	// marker always contains a paren, so !includes("(") was a false negative).
+	// Breakdown appends " (N failed…)" — detect by "subtask(s) (" with a digit.
+	check("all-completed = bare count (no breakdown)", allDone[0].endsWith("3 subtask(s)"));
+	const twoFail = render([{ id: "s1", status: "completed" }, { id: "s2", status: "failed" }, { id: "s3", status: "failed" }, { id: "s4", status: "cancelled" }], "failed");
+	check("mixed shows failed+cancelled, done only when partial", twoFail[0].includes("2 failed") && twoFail[0].includes("1 cancelled") && twoFail[0].includes("1 done"));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
