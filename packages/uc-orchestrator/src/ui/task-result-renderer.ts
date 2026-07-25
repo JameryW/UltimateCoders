@@ -86,6 +86,7 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 				id: st.id,
 				desc: st.description,
 				error: st.error,
+				result: st.result,
 				review: st.review,
 			}))
 			: [];
@@ -98,6 +99,21 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 					lines.push(`  ${st.icon} ${st.id}: ${desc}`);
 					if (st.error) {
 						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
+					}
+					// ponytail: success output — the expanded message showed a subtask's
+					// error + review but NOT its result (what it actually produced). The
+					// subtask-tree overlay shows the result; mirror it here: first line +
+					// `…` when there's more (multi-line or width-clamped). Error first
+					// (diagnostic priority); a subtask has one or the other, not both.
+					if (!st.error && st.result) {
+						const budget = Math.max(0, width - 4);
+						const firstLine = st.result.split("\n")[0];
+						const moreLines = st.result.includes("\n");
+						const truncated = firstLine.length > budget - 1 || moreLines;
+						const shown = truncated
+							? firstLine.slice(0, Math.max(0, budget - 1)) + "…"
+							: firstLine.slice(0, budget);
+						lines.push(theme.fg("dim", `    ${shown}`));
 					}
 					// ponytail: review verdict — the subtask-tree overlay + /uc status
 					// detail show ✓/✗ approved/rejected; the expanded completion message

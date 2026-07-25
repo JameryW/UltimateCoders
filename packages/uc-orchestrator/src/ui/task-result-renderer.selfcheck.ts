@@ -48,6 +48,25 @@ const renderer = createTaskResultRenderer();
 	check("expanded shows error", lines.some((l: string) => l.includes("boom err")));
 }
 
+// ponytail: success output — the expanded message showed a subtask's error +
+// review but NOT its result (what it actually produced). Now a completed subtask
+// with a result shows its first line (+ `…` when there's more). Error takes
+// priority (a subtask has one or the other, not both).
+{
+	const done = makeSubtask("s1", "completed", "did the thing") as SubtaskResult;
+	(done as any).result = "produced output line 1\nline 2";
+	const comp = renderer(makeMessage(true, [done], "completed"), { expanded: true }, theme)!;
+	const lines = (comp as any).render(80) as string[];
+	check("expanded shows success result first line", lines.some((l: string) => l.includes("produced output line 1")));
+	// multi-line result → ellipsis signals more
+	check("expanded multi-line result shows ellipsis", lines.some((l: string) => l.includes("produced output line 1") && l.includes("…")));
+	// single-line result that fits → no ellipsis
+	const one = makeSubtask("s2", "completed", "x") as SubtaskResult;
+	(one as any).result = "short output";
+	const oneLines = (renderer(makeMessage(true, [one], "completed"), { expanded: true }, theme)! as any).render(80) as string[];
+	check("expanded single-line result no ellipsis", oneLines.some((l: string) => l.includes("short output") && !l.includes("…")));
+}
+
 // ponytail: review verdict in the expanded completion message — the tree overlay
 // + /uc status show ✓/✗ approved/rejected; the expanded message omitted it. A
 // rejected subtask on a "completed" task is the actionable detail.
