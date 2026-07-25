@@ -335,5 +335,24 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("F24 long-id running row fits width", runLine.length > 0 && runLine.length <= 50);
 }
 
+// ponytail: progress bar shows WITHOUT wave info — restored/resumed tasks (or
+// single-wave tasks with missing wave data) had no bar despite completed/total
+// being computable. Now the bar + count render whenever subtasks exist; the
+// wave tag is optional trailing context.
+{
+	const st1 = { id: "s1", description: "d", status: "completed", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const st2 = { id: "s2", description: "d", status: "pending", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [st1, st2] } as unknown as TaskState;
+	// no waveIdx/totalWaves — the pre-fix gate hid the bar entirely
+	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(80) as string[];
+	const barLine = lines.find((l) => l.includes("1/2")) ?? "";
+	check("no-wave: progress bar + count shown", barLine.length > 0 && barLine.includes("1/2"));
+	check("no-wave: no wave tag (none to show)", !barLine.includes("wave"));
+	// zero subtasks → no bar row at all (no degenerate "0/0" line)
+	const emptyTask = { ...task, subtasks: [] } as unknown as TaskState;
+	const emptyLines = (createProgressWidget(() => ({ task: emptyTask }))(undefined, theme) as any).render(80) as string[];
+	check("no-subtasks: no progress bar row", !emptyLines.some((l) => l.includes("0/0")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

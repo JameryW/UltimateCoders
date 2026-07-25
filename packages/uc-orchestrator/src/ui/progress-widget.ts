@@ -111,16 +111,23 @@ class ProgressWidgetComponent {
 			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${affordance}`,
 		);
 
-		// Wave progress
-		if (waveIdx !== undefined && totalWaves !== undefined && totalWaves > 0) {
+		// ponytail: progress bar — show whenever there are subtasks, not only when
+		// wave info is present. Restored/resumed tasks (or single-wave tasks with
+		// missing wave data) had NO bar despite completed/total being computable,
+		// so the glanceable widget lost its most useful element. Wave X/Y is now
+		// optional trailing context (appended only when waveIdx/totalWaves exist).
+		const total = task.subtasks.length;
+		if (total > 0) {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
-			const total = task.subtasks.length;
 			const bar = progressBar(completed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
 			// ponytail: F24 — the bar counts TASK-wide completion; leading with
 			// "Wave X/Y" read as if the bar measured the current wave. Progress
 			// first, wave identity as trailing context.
+			const waveTag = (waveIdx !== undefined && totalWaves !== undefined && totalWaves > 0)
+				? this.theme.fg("dim", ` · wave ${waveIdx + 1}/${totalWaves}`)
+				: "";
 			lines.push(
-				`  ${bar} ${completed}/${total} ${this.theme.fg("dim", `· wave ${waveIdx + 1}/${totalWaves}`)}`,
+				`  ${bar} ${completed}/${total}${waveTag}`,
 			);
 		}
 
