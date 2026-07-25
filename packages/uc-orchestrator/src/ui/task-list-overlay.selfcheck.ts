@@ -439,6 +439,10 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
 	check("wide hint has / filter", wide.includes("/ filter"));
 	check("wide hint has Esc close", wide.includes("Esc close"));
+	// ponytail: list `c` is a double-tap confirm, not single-tap. The hint must
+	// signal "(2×)" so a first press (which arms, not cancels) isn't read as a
+	// dead key. Was bare "c cancel" — misleading.
+	check("wide hint marks cancel as 2× confirm", wide.includes("c cancel (2×)"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has c/p/r", narrow.includes("c/p/r"));

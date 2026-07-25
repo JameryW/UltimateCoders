@@ -164,7 +164,7 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel · p pause · r resume · PgUp/PgDn · g/G · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · c/p/r · Esc close",
 			)));
 		}
