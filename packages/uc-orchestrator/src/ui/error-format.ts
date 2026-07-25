@@ -39,10 +39,12 @@ const PERMANENT_MARKERS = [
 // ponytail: F23 — bare status codes match as whole tokens only. The old
 // includes() on "400"/"404"/"429"/… false-positived on "processed 400 items",
 // "port 8429" (digit-adjacent) and "404.html" (dot-adjacent). The lookarounds
-// reject digits and dots on either side; friendly string markers above keep
-// plain substring matching.
-const TRANSIENT_CODES = /(?<![.\d])(?:503|429|529)(?![.\d])/;
-const PERMANENT_CODES = /(?<![.\d])(?:400|401|403|404)(?![.\d])/;
+// reject word/digit/dot adjacency on either side (a true integer token is
+// bounded by non-alphanumeric or string edges); friendly string markers above
+// keep plain substring matching. Pre-fix the lookarounds only rejected digit/dot,
+// so "processed400" (letter-adjacent) still matched 400 — the selfcheck caught it.
+const TRANSIENT_CODES = /(?<![.\dA-Za-z])(?:503|429|529)(?![.\dA-Za-z])/;
+const PERMANENT_CODES = /(?<![.\dA-Za-z])(?:400|401|403|404)(?![.\dA-Za-z])/;
 
 export type ErrorKind = "transient" | "permanent" | "unknown";
 
