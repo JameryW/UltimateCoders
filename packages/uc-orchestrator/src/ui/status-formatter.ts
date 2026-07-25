@@ -139,6 +139,21 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 					: 60;
 				lines.push(`${indent}  ${formatErrorForDisplay(st.error, errBudget, (c, t) => theme.fg(c, t))}`);
 			}
+			// ponytail: success output — /uc status <id> + task-list detail showed a
+			// subtask's error + retries + review but NOT its result (what it produced).
+			// The task-result message (#374) + subtask-tree overlay show it; mirror here.
+			// Error takes priority (a subtask has error OR result). First line + `…`
+			// when there's more (multi-line or width-clamped), mirroring the tree.
+			if (!st.error && st.result) {
+				const rBudget = width !== undefined ? Math.max(0, width - indent.length - 2) : 60;
+				const firstLine = st.result.split("\n")[0];
+				const moreLines = st.result.includes("\n");
+				const truncated = firstLine.length > rBudget - 1 || moreLines;
+				const shown = truncated
+					? firstLine.slice(0, Math.max(0, rBudget - 1)) + "…"
+					: firstLine.slice(0, rBudget);
+				lines.push(theme.fg("dim", `${indent}  ${shown}`));
+			}
 			if (st.retryCount && st.retryCount > 0) {
 				lines.push(theme.fg("dim", `${indent}  Retries: ${st.retryCount}`));
 			}
