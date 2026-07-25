@@ -476,6 +476,13 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					if (!taskId) {
 						const tasks = orchestrator.getAllTaskStates();
 						const lines = formatTaskList(tasks, ctx.ui.theme, cols);
+						// ponytail: hint the detail path — the list shows truncated ids +
+						// a status each, but a new user has no cue that /uc status <id>
+						// expands one. Append only when there are tasks (empty list already
+						// says "No tasks"); one dim line, cheap to skip on narrow terminals.
+						if (tasks.length > 0) {
+							lines.push(ctx.ui.theme.fg("dim", "/uc status <task-id> for detail"));
+						}
 						ctx.ui.notify(lines.join("\n"), "info");
 					} else {
 						// ponytail: F26 — prefix resolution; UI only shows truncated ids.
