@@ -36,6 +36,7 @@ function makeComponent(subtasks: SubtaskResult[], opts?: {
 	cursorOnFailed?: boolean;
 	cursorOnTaskId?: string;
 	tasks?: TaskState[]; // override the default single-task shape for multi-task tests
+	copy?: (text: string) => boolean;
 }) {
 	const task: TaskState = opts?.tasks
 		? opts.tasks[0]
@@ -50,6 +51,7 @@ function makeComponent(subtasks: SubtaskResult[], opts?: {
 		onJumpToTask: opts?.onJumpToTask,
 		cursorOnFailed: opts?.cursorOnFailed,
 		cursorOnTaskId: opts?.cursorOnTaskId,
+		copy: opts?.copy,
 		onClose: () => {},
 	});
 	let closed = false;
@@ -305,6 +307,31 @@ const PAGEDOWN = "\x1b[6~";
 	check("n in search-edit exits searchMode", comp.searchMode === false);
 	check("n in search-edit did not append to query", comp.query === "");
 	check("n in search-edit jumped to next failed (idx 2)", comp.cursorIdx === 2);
+}
+
+// ponytail: d (jump to task detail) + y/Y (copy) also fall through in search-edit
+// (the #380 searchCmdKeys was ["n","r","R"] — d/y/Y were still swallowed).
+{
+	const copied: string[] = [];
+	const { comp } = makeComponent([makeSubtask("s1", { status: "completed" })], {
+		copy: (t) => { copied.push(t); return true; },
+	});
+	comp.handleInput("/");
+	comp.handleInput("y"); // copy command — must NOT append to query
+	check("y in search-edit exits searchMode", comp.searchMode === false);
+	check("y in search-edit did not append to query", comp.query === "");
+	check("y in search-edit copies cursor subtask id", copied.length === 1 && copied[0] === "s1");
+}
+{
+	let jumped: string | null = null;
+	const { comp, closed } = makeComponent([makeSubtask("s1")], {
+		onJumpToTask: (tid) => { jumped = tid; },
+	});
+	comp.handleInput("/");
+	comp.handleInput("d"); // jump command — must NOT append to query
+	check("d in search-edit exits searchMode", comp.searchMode === false);
+	check("d in search-edit did not append to query", comp.query === "");
+	check("d in search-edit fires onJumpToTask + closes", jumped === "T" && closed() === true);
 }
 
 // r/R on a filtered failed subtask fires onRetry with the filtered id
