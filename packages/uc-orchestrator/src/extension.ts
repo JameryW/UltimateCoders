@@ -110,6 +110,17 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	// resume. The old toasts were hardcoded ("task not found") whatever the
 	// cause, so a typo'd subtask id blamed the task and an ambiguous prefix
 	// gave no way forward. `candidates` are the matches or recent task ids.
+	// ponytail: recent task ids (newest-first, ≤5) for usage hints — mirrors the
+	// candidates the resolver already surfaces on a not_found/ambiguous failure,
+	// so a /uc cancel|pause|resume with NO id names what's available instead of a
+	// bare "Usage:" the user can't act on without a separate /uc status.
+	function recentTaskIds(): string[] {
+		return orchestrator.getAllTaskStates()
+			.slice()
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.slice(0, 5)
+			.map((t) => t.id);
+	}
 	function controlFailureMessage(
 		verb: string,
 		tid: string,
@@ -504,7 +515,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					const tid = cancelParts[0];
 					const subtaskId = cancelParts[1];
 					if (!tid) {
-						ctx.ui.notify("Usage: /uc cancel <task-id> [<subtask-id>]", "error");
+						const recent = recentTaskIds().join(", ") || "(none)";
+						ctx.ui.notify(`Usage: /uc cancel <task-id> [<subtask-id>]\nRecent tasks: ${recent}`, "error");
 						return;
 					}
 					const r = await orchestrator.cancelTask(tid, subtaskId, ctx);
@@ -518,7 +530,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					// resume took the whole remainder, so "/uc pause uc-1 why" failed).
 					const tid = rest.trim().split(/\s+/)[0];
 					if (!tid) {
-						ctx.ui.notify("Usage: /uc pause <task-id>", "error");
+						const recent = recentTaskIds().join(", ") || "(none)";
+						ctx.ui.notify(`Usage: /uc pause <task-id>\nRecent tasks: ${recent}`, "error");
 						return;
 					}
 					const r = await orchestrator.pauseTask(tid, ctx);
@@ -530,7 +543,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				case "resume": {
 					const tid = rest.trim().split(/\s+/)[0];
 					if (!tid) {
-						ctx.ui.notify("Usage: /uc resume <task-id>", "error");
+						const recent = recentTaskIds().join(", ") || "(none)";
+						ctx.ui.notify(`Usage: /uc resume <task-id>\nRecent tasks: ${recent}`, "error");
 						return;
 					}
 					const r = await orchestrator.resumeTask(tid, ctx);
