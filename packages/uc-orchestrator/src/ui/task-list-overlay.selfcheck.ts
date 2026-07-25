@@ -554,6 +554,22 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F22 copy failure flashes 'copy failed'", comp2.flashMsg !== null && comp2.flashMsg.includes("copy failed"));
 }
 
+// ponytail: regression guard — yank flash shows the FULL id, not a truncated
+// prefix. Was slice(0,8), which rendered `copied task_abc1` for a long id and
+// hid what actually landed on the clipboard. A long id must appear verbatim.
+{
+	const copied: string[] = [];
+	const longId = "task_01J9X4F2K7M3QZ8ABC";
+	const tasks = [makeTask(longId, "in_progress")];
+	const comp = createTaskListOverlay({
+		tasks: () => tasks, getTask: (id) => tasks.find((t) => t.id === id),
+		copy: (t) => { copied.push(t); return true; }, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput("y");
+	check("F22 long-id yank flash shows full id", comp.flashMsg === `copied ${longId}`);
+	check("F22 long-id copies full id verbatim", copied.length === 1 && copied[0] === longId);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.

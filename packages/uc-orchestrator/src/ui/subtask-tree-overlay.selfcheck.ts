@@ -548,6 +548,28 @@ const PAGEDOWN = "\x1b[6~";
 	check("F22 `Y` without error copies nothing", copied.length === 2);
 }
 
+// ponytail: regression guard — yank flash shows the FULL id, not a truncated
+// prefix. Was slice(0,8), which rendered `copied subtask_0` for a long id and
+// hid what actually landed on the clipboard. A long id must appear verbatim.
+{
+	const copied: string[] = [];
+	const longId = "subtask_01J9X4F2K7M3QZ8ABC";
+	const subtasks = [makeSubtask(longId, { status: "completed" })];
+	const task = {
+		id: "T", description: "t", status: "completed", controlState: "running",
+		createdAt: 0, subtasks,
+	} as unknown as TaskState;
+	const mockTui = { requestRender: () => {} };
+	const comp = createSubtaskTreeOverlay({
+		tasks: () => [task], onRetry: () => {},
+		copy: (t) => { copied.push(t); return true; },
+		onClose: () => {},
+	})(mockTui as any, theme, undefined, () => {}) as any;
+	comp.handleInput("y");
+	check("F22 long-id yank flash shows full id", comp.flashMsg === `copied ${longId}`);
+	check("F22 long-id copies full id verbatim", copied.length === 1 && copied[0] === longId);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.
