@@ -229,6 +229,28 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: command keys (y copy) fall through in search-edit — the printable
+// handler swallowed ALL printable chars, so `y` appended to the query instead of
+// yanking the cursor task's id. Now excluded so it exits editing + acts.
+{
+	const copied: string[] = [];
+	const { comp } = makeComponent([makeTask("t1", "in_progress")], {
+		copy: (t) => { copied.push(t); return true; },
+	});
+	comp.handleInput("/");
+	comp.handleInput("y"); // command key, must NOT append to query
+	check("y in search-edit exits searchMode", comp.searchMode === false);
+	check("y in search-edit did not append to query", comp.query === "");
+	check("y in search-edit copies cursor task id", copied.length === 1 && copied[0] === "t1");
+}
+// a plain printable char still appends (regression guard)
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	comp.handleInput("/");
+	comp.handleInput("z");
+	check("printable 'z' still appends to query", comp.query === "z" && comp.searchMode === true);
+}
+
 // ponytail: filter matches controlState — a paused task keeps status="in_progress"
 // and only flips controlState="paused". Filtering "paused" (the row badge the user
 // sees) must surface it; pre-fix it returned no matches despite paused tasks existing.
