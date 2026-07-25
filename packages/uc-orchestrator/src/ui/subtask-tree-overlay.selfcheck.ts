@@ -112,6 +112,17 @@ const PAGEDOWN = "\x1b[6~";
 	const lines = comp.render(80);
 	check("result-only expanded = 5 lines", lines.length === 5);
 	check("shows first result line", lines.some((l: string) => l.includes("first line")));
+	// ponytail: multi-line result shows `…` (more lines truncated) — was a bare
+	// first line with no indicator, so a 2-line result looked complete at line 1.
+	check("multi-line result shows ellipsis", lines.some((l: string) => l.includes("first line") && l.includes("…")));
+}
+// single-line result that fits → NO ellipsis (don't falsely signal truncation)
+{
+	const st = makeSubtask("s1", { status: "completed", result: "short result" });
+	const { comp } = makeComponent([st]);
+	comp.expanded.add("s1");
+	const lines = comp.render(80);
+	check("single-line result no ellipsis", lines.some((l: string) => l.includes("short result") && !l.includes("…")));
 }
 
 // esc closes
