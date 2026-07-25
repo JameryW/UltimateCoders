@@ -367,8 +367,15 @@ class TaskListComponent {
 				this.clampCursorAndScroll();
 				return;
 			}
+			// ponytail: command keys that fall through to normal handling even in
+			// search-edit (exit editing, keep filter, then act). Listed here so the
+			// printable-char branch below does NOT swallow them into the query — c/C
+			// (cancel), p (pause), r (resume), y (copy id) would otherwise append to
+			// the query and be unreachable while editing. Mirrors the subtask-tree fix.
+			const searchCmdKeys = ["c", "C", "p", "r", "y"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
-			if (data.length === 1 && data >= " " && data <= "~") {
+			// EXCEPT the command keys above (those fall through to normal handling).
+			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
 				this.query += data;
 				this.clampCursorAndScroll();
 				return;
@@ -378,6 +385,10 @@ class TaskListComponent {
 			// the cursor moves within the filtered set in one keystroke.
 			const navKeys = [KEY.up, KEY.down, KEY.pageUp, KEY.pageDown, KEY.home, KEY.end, "g", "G", "j", "k"];
 			if (navKeys.includes(data)) {
+				this.searchMode = false;
+				// fall through to normal handling below
+			} else if (searchCmdKeys.includes(data)) {
+				// command key in search-edit: exit editing (keep filter) then fall through
 				this.searchMode = false;
 				// fall through to normal handling below
 			} else {
