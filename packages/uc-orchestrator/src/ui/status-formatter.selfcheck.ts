@@ -188,5 +188,22 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("no review → no Review line", !formatTaskDetail(noReview, theme).join("\n").includes("Review:"));
 }
 
+// ponytail: detail header shows completed/total (mirror formatTaskList) — the
+// detail view lists subtasks but the header had no count, so the user had to
+// count rows to gauge progress. Only when there are subtasks (0 → no "0/0").
+{
+	const mk = (subs: { status: string }[]) => ({
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: subs.map((s, i) => st(`s${i}`, [], s.status as SubtaskResult["status"])),
+	} as unknown as TaskState);
+	const header = (t: TaskState) => formatTaskDetail(t, theme).find((l) => l.includes("T")) ?? "";
+	// 2 completed of 3 → "2/3"
+	const h23 = header(mk([{ status: "completed" }, { status: "completed" }, { status: "pending" }]));
+	check("detail header shows completed/total (2/3)", h23.includes("2/3"));
+	// zero subtasks → no count tag (no misleading "0/0")
+	const h0 = header(mk([]));
+	check("detail header no count for 0 subtasks", !h0.includes("0/0"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
