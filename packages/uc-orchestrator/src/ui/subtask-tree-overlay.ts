@@ -404,8 +404,16 @@ class SubtaskTreeComponent {
 				(this.tui as any)?.requestRender?.();
 				return;
 			}
+			// ponytail: command keys that fall through to normal handling even in
+			// search-edit (exit editing, keep filter, then act). Listed here so the
+			// printable-char branch below does NOT swallow them into the query — `n`
+			// (next-failed) and r/R (retry) would otherwise append to the query and be
+			// unreachable while editing. nav keys (arrows/page/home/end/g/G/j/k) are
+			// multi-byte escapes or already non-printable, so they fall through naturally.
+			const searchCmdKeys = ["n", "r", "R"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
-			if (data.length === 1 && data >= " " && data <= "~") {
+			// EXCEPT the command keys above (those fall through to normal handling).
+			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
 				this.query += data;
 				this.clampScroll();
 				(this.tui as any)?.requestRender?.();
@@ -420,6 +428,11 @@ class SubtaskTreeComponent {
 				// fall through to normal handling below
 			} else if (data === "r" || data === "R") {
 				// r/R in search-edit: exit editing (keep filter) then fall through
+				this.searchMode = false;
+				// fall through to normal handling below
+			} else if (data === "n") {
+				// ponytail: n (next-failed) in search-edit: exit editing (keep filter)
+				// then fall through, mirroring r/R.
 				this.searchMode = false;
 				// fall through to normal handling below
 			} else {
