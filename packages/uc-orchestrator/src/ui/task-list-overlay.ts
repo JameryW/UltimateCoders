@@ -169,7 +169,7 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · PgUp/PgDn · g/G · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · c/p/r · Esc close",
 			)));
 		}
@@ -372,7 +372,7 @@ class TaskListComponent {
 			// printable-char branch below does NOT swallow them into the query — c/C
 			// (cancel), p (pause), r (resume), y (copy id) would otherwise append to
 			// the query and be unreachable while editing. Mirrors the subtask-tree fix.
-			const searchCmdKeys = ["c", "C", "p", "r", "y"];
+			const searchCmdKeys = ["c", "C", "p", "r", "y", "n"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -476,6 +476,25 @@ class TaskListComponent {
 			// ponytail: F22 — yank cursor task id for pasting into chat/tickets/terminal.
 			const task = tasks[this.cursorIdx];
 			if (task) this.yank(task.id);
+		} else if (data === "n") {
+			// ponytail: jump to the NEXT failed TASK after the cursor — the subtask-tree
+			// has n/p for subtask-level; the task-list had no task-level jump, so finding
+			// the next failed task among many meant ↓ scrolling or /failed filter. `n`
+			// jumps cursor to the next task with status "failed", wrapping to the first
+			// when past the last (repeated `n` cycles). No prev (p is pause) — use
+			// /failed filter to go back. No failed → flashMsg.
+			const start = this.cursorIdx + 1;
+			let next = -1;
+			for (let i = 0; i < tasks.length; i++) {
+				const idx = (start + i) % tasks.length;
+				if (tasks[idx].status === "failed") { next = idx; break; }
+			}
+			if (next < 0) {
+				this.flashMsg = "no failed tasks";
+			} else {
+				this.cursorIdx = next;
+				this.flashMsg = null;
+			}
 		}
 		// clamp scroll to cursor
 		this.clampCursorAndScroll();

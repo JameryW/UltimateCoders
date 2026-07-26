@@ -77,6 +77,41 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp.handleInput(HOME); check("home jumps to top", comp.cursorIdx === 0);
 }
 
+// ponytail: `n` jumps to the NEXT failed TASK — the subtask-tree has n for
+// subtask-level; the task-list had no task-level jump, so finding the next
+// failed task among many meant ↓ or /failed filter. Wraps to first past last.
+{
+	// t0 failed, t1 in_progress, t2 failed, t3 failed
+	const tasks = [
+		makeTask("t0", "failed"),
+		makeTask("t1", "in_progress"),
+		makeTask("t2", "failed"),
+		makeTask("t3", "failed"),
+	];
+	const { comp } = makeComponent(tasks);
+	comp.handleInput("n"); // cursor 0 (t0) → next failed t2 (idx 2)
+	check("n from t0 → t2 (idx 2)", comp.cursorIdx === 2);
+	comp.handleInput("n"); // t2 → t3 (idx 3)
+	check("n from t2 → t3 (idx 3)", comp.cursorIdx === 3);
+	comp.handleInput("n"); // t3 (last failed) → wraps to t0 (idx 0)
+	check("n from last failed wraps to first (idx 0)", comp.cursorIdx === 0);
+	// no failed → flashMsg, cursor unchanged
+	const { comp: comp2 } = makeComponent([makeTask("t0", "in_progress")]);
+	comp2.handleInput("n");
+	check("n with no failed flashes 'no failed tasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
+}
+// n in search-edit falls through (not appended to query)
+{
+	const tasks = [makeTask("t0", "failed"), makeTask("t1", "in_progress"), makeTask("t2", "failed")];
+	const { comp } = makeComponent(tasks);
+	comp.cursorIdx = 2;
+	comp.handleInput("/");
+	comp.handleInput("n");
+	check("n in search-edit exits searchMode", comp.searchMode === false);
+	check("n in search-edit did not append to query", comp.query === "");
+	check("n in search-edit jumped to next failed (idx 0)", comp.cursorIdx === 0);
+}
+
 // paging
 {
 	const { comp } = makeComponent(Array.from({length:50},(_,i)=>makeTask(`t${i}`,"in_progress")));
