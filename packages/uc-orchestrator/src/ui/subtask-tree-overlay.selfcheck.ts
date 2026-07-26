@@ -190,6 +190,45 @@ const PAGEDOWN = "\x1b[6~";
 	check("n with no failed flashes 'no failed subtasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed subtasks"));
 }
 
+// ponytail: `p` jumps to the PREV failed subtask before the cursor — complement
+// to `n` (next-failed). Wraps to the last when at/before the first failed.
+{
+	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed
+	const subs = [
+		makeSubtask("s0", { status: "failed" }),
+		makeSubtask("s1", { status: "completed" }),
+		makeSubtask("s2", { status: "failed" }),
+		makeSubtask("s3", { status: "failed" }),
+	];
+	const { comp } = makeComponent(subs);
+	comp.cursorIdx = 3; // s3
+	comp.handleInput("p"); // prev failed before s3 = s2 (idx 2)
+	check("p from s3 → s2 (idx 2)", comp.cursorIdx === 2);
+	comp.handleInput("p"); // prev before s2 = s0 (idx 0)
+	check("p from s2 → s0 (idx 0)", comp.cursorIdx === 0);
+	comp.handleInput("p"); // at first failed s0 → wraps to last failed s3 (idx 3)
+	check("p from first failed wraps to last (idx 3)", comp.cursorIdx === 3);
+	// no failed → flashMsg, cursor unchanged
+	const { comp: comp2 } = makeComponent([makeSubtask("s0", { status: "completed" })]);
+	comp2.handleInput("p");
+	check("p with no failed flashes 'no failed subtasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed subtasks"));
+}
+// p in search-edit falls through (not appended to query) — mirrors n
+{
+	const subs = [
+		makeSubtask("s0", { status: "failed" }),
+		makeSubtask("s1", { status: "completed" }),
+		makeSubtask("s2", { status: "failed" }),
+	];
+	const { comp } = makeComponent(subs);
+	comp.cursorIdx = 2;
+	comp.handleInput("/");
+	comp.handleInput("p");
+	check("p in search-edit exits searchMode", comp.searchMode === false);
+	check("p in search-edit did not append to query", comp.query === "");
+	check("p in search-edit jumped to prev failed (idx 0)", comp.cursorIdx === 0);
+}
+
 // r on a non-failed subtask does NOT invoke onRetry, and sets a flashMsg
 {
 	let called = false;

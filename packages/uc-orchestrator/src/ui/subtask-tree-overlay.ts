@@ -221,7 +221,7 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · R retry · n next-failed · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · R retry · n next-failed · p prev-failed · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · R retry · Esc close",
 			)));
 		}
@@ -410,7 +410,7 @@ class SubtaskTreeComponent {
 			// (next-failed) and r/R (retry) would otherwise append to the query and be
 			// unreachable while editing. nav keys (arrows/page/home/end/g/G/j/k) are
 			// multi-byte escapes or already non-printable, so they fall through naturally.
-			const searchCmdKeys = ["n", "r", "R", "d", "y", "Y"];
+			const searchCmdKeys = ["n", "p", "r", "R", "d", "y", "Y"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -535,6 +535,23 @@ class SubtaskTreeComponent {
 				this.flashMsg = "no failed subtasks";
 			} else {
 				this.cursorIdx = next;
+				this.flashMsg = null;
+			}
+		} else if (data === "p") {
+			// ponytail: jump to the PREV failed subtask before the cursor — the
+			// complement of `n` (next-failed). Multi-failure triage often needs to go
+			// back to re-check a prior failure; without `p` it meant ↑ scrolling.
+			// Wraps to the last if the cursor is at/before the first failed.
+			const start = this.cursorIdx - 1;
+			let prev = -1;
+			for (let i = 0; i < items.length; i++) {
+				const idx = ((start - i) % items.length + items.length) % items.length;
+				if (items[idx].subtask.status === "failed") { prev = idx; break; }
+			}
+			if (prev < 0) {
+				this.flashMsg = "no failed subtasks";
+			} else {
+				this.cursorIdx = prev;
 				this.flashMsg = null;
 			}
 		} else if (data === "y" || data === "Y") {
