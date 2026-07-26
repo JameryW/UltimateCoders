@@ -410,7 +410,7 @@ class SubtaskTreeComponent {
 			// (next-failed) and r/R (retry) would otherwise append to the query and be
 			// unreachable while editing. nav keys (arrows/page/home/end/g/G/j/k) are
 			// multi-byte escapes or already non-printable, so they fall through naturally.
-			const searchCmdKeys = ["n", "r", "R"];
+			const searchCmdKeys = ["n", "r", "R", "d", "y", "Y"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -426,13 +426,10 @@ class SubtaskTreeComponent {
 			if (navKeys.includes(data)) {
 				this.searchMode = false;
 				// fall through to normal handling below
-			} else if (data === "r" || data === "R") {
-				// r/R in search-edit: exit editing (keep filter) then fall through
-				this.searchMode = false;
-				// fall through to normal handling below
-			} else if (data === "n") {
-				// ponytail: n (next-failed) in search-edit: exit editing (keep filter)
-				// then fall through, mirroring r/R.
+			} else if (searchCmdKeys.includes(data)) {
+				// command key (n/r/R/d/y/Y) in search-edit: exit editing (keep filter)
+				// then fall through to act. The printable branch above already excluded
+				// these from appending to the query.
 				this.searchMode = false;
 				// fall through to normal handling below
 			} else {
