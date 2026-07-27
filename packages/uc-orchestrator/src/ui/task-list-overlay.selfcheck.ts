@@ -650,6 +650,9 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 // ponytail: resume dead-key guard for terminal statuses — `r` on a completed/
 // cancelled task must NOT fire resume (the server would reject it). Flashes
 // "already <status>" instead. Mirrors the cancel terminal-status guard.
+// ponytail: pause dead-key guard for terminal statuses — `p` on a completed/
+// cancelled task must NOT fire pause (server would reject). Flashes "already
+// <status>". Mirrors the cancel/resume terminal-status guards (closes the trio).
 {
 	const calls: [string, string][] = [];
 	const { comp } = makeComponent(
@@ -727,6 +730,32 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	d2.handleInput("r");
 	check("detail r on completed does not fire", calls2.length === 0);
 	check("detail r on completed flashes 'already completed'", d2.flashMsg !== null && d2.flashMsg.includes("already completed"));
+}
+
+// ponytail: pause dead-key guard — list `p` on completed/cancelled (no fire).
+{
+	const calls3: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "completed"), makeTask("t2", "cancelled")],
+		{ onAction: (id, action) => { calls3.push([id, action]); return true; } },
+	);
+	comp.handleInput("p"); // cursor on t1 (completed)
+	check("p on completed does not fire", calls3.length === 0);
+	check("p on completed flashes 'already completed'", comp.flashMsg !== null && comp.flashMsg.includes("already completed"));
+	comp.handleInput(DOWN); // → t2 (cancelled)
+	comp.handleInput("p");
+	check("p on cancelled flashes 'already cancelled'", comp.flashMsg !== null && comp.flashMsg.includes("already cancelled"));
+	check("p on cancelled does not fire", calls3.length === 0);
+
+	// detail-mode `p` guard
+	const { comp: d3 } = makeComponent(
+		[makeTask("t1", "cancelled")],
+		{ onAction: (id, action) => { calls3.push([id, action]); return true; } },
+	);
+	d3.handleInput(ENTER);
+	d3.handleInput("p");
+	check("detail p on cancelled does not fire", calls3.length === 0);
+	check("detail p on cancelled flashes 'already cancelled'", d3.flashMsg !== null && d3.flashMsg.includes("already cancelled"));
 }
 
 // initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.
