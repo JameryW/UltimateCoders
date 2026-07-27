@@ -210,8 +210,12 @@ class TaskListComponent {
 			// past the overlay height while the footer still claimed 1-N fit.
 			const ageSuffix = this.theme.fg("dim", ` ${age}`);
 			const desc = task.description.slice(0, Math.max(0, width - 34 - age.length));
+			// ponytail: only show completed/total when the task HAS subtasks — a
+			// 0-subtask task rendered "0/0", which read as "0 completed" instead of
+			// "no subtasks". Mirrors formatTaskDetail's header countTag guard.
+			const countTag = total > 0 ? `${completed}/${total} ` : "";
 
-			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${completed}/${total} ${desc}${ageSuffix}`);
+			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${countTag}${desc}${ageSuffix}`);
 		}
 
 		if (tasks.length > this.maxVisible) {

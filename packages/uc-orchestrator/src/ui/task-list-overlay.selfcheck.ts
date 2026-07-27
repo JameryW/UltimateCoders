@@ -237,6 +237,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("empty list renders No tasks", lines.some((l: string) => l.includes("No tasks")));
 }
 
+// ponytail: a 0-subtask task must NOT render "0/0" — that read as "0 completed"
+// instead of "no subtasks". Mirrors formatTaskDetail's header countTag guard.
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress", 0)]);
+	const lines = comp.render(80);
+	const row = lines.find((l: string) => l.includes("t1")) ?? "";
+	check("0-subtask task row has no 0/0 count", !row.includes("0/0"));
+	// a task WITH subtasks still shows the count
+	const { comp: comp2 } = makeComponent([makeTask("t2", "in_progress", 3)]);
+	const row2 = comp2.render(80).find((l: string) => l.includes("t2")) ?? "";
+	check("task with subtasks shows completed/total", row2.includes("/3"));
+}
+
 // ── search/filter tests ──────────────────────────────────────────
 
 // `/` enters filter mode (render shows `/ ` input line with cursor)
