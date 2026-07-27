@@ -647,6 +647,9 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 // ponytail: cancel dead-key guard for terminal statuses — `c` on a completed/
 // cancelled task must NOT arm the double-tap (the server would reject the cancel
 // anyway). Flashes "already <status>" instead. `failed` is left to the server.
+// ponytail: resume dead-key guard for terminal statuses — `r` on a completed/
+// cancelled task must NOT fire resume (the server would reject it). Flashes
+// "already <status>" instead. Mirrors the cancel terminal-status guard.
 {
 	const calls: [string, string][] = [];
 	const { comp } = makeComponent(
@@ -698,6 +701,32 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("round-trip: pendingCancel re-armed to t1", comp.pendingCancel === "t1");
 	comp.handleInput("c"); // second c now fires
 	check("round-trip: explicit second c fires cancel t1", calls.length === 1 && calls[0][0] === "t1" && calls[0][1] === "cancel");
+}
+
+// ponytail: resume dead-key guard — list `r` on completed/cancelled (no fire).
+{
+	const calls2: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "completed"), makeTask("t2", "cancelled")],
+		{ onAction: (id, action) => { calls2.push([id, action]); return true; } },
+	);
+	comp.handleInput("r"); // cursor on t1 (completed)
+	check("r on completed does not fire", calls2.length === 0);
+	check("r on completed flashes 'already completed'", comp.flashMsg !== null && comp.flashMsg.includes("already completed"));
+	comp.handleInput(DOWN); // → t2 (cancelled)
+	comp.handleInput("r");
+	check("r on cancelled flashes 'already cancelled'", comp.flashMsg !== null && comp.flashMsg.includes("already cancelled"));
+	check("r on cancelled does not fire", calls2.length === 0);
+
+	// detail-mode `r` guard (single-tap)
+	const { comp: d2 } = makeComponent(
+		[makeTask("t1", "completed")],
+		{ onAction: (id, action) => { calls2.push([id, action]); return true; } },
+	);
+	d2.handleInput(ENTER); // open detail on t1
+	d2.handleInput("r");
+	check("detail r on completed does not fire", calls2.length === 0);
+	check("detail r on completed flashes 'already completed'", d2.flashMsg !== null && d2.flashMsg.includes("already completed"));
 }
 
 // initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.

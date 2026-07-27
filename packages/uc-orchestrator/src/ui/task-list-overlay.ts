@@ -372,6 +372,14 @@ class TaskListComponent {
 				return;
 			}
 			if (data === "r") {
+				// ponytail: mirror list-mode resume terminal-status guard — completed/
+				// cancelled can't be resumed; flash. Falls through to fireAction when
+				// getTask is unavailable.
+				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
+				if (dt && (dt.status === "completed" || dt.status === "cancelled")) {
+					this.setFlash(`already ${dt.status}`);
+					return;
+				}
 				this.fireAction(this.detailTaskId, "resume", "resumed");
 				return;
 			}
@@ -583,8 +591,14 @@ class TaskListComponent {
 			if (task && this.opts.onAction) this.fireAction(task.id, "pause", "paused");
 			else if (task) this.flashMsg = "pause unavailable";
 		} else if (data === "r") {
+			// ponytail: mirror the cancel terminal-status guard — a completed/cancelled
+			// task can't be resumed (terminal), so flash instead of firing an action
+			// the server rejects. `failed`/`paused` are the resumable statuses; left
+			// to the server when the cursor isn't terminal.
 			const task = tasks[this.cursorIdx];
-			if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
+			if (task && (task.status === "completed" || task.status === "cancelled")) {
+				this.flashMsg = `already ${task.status}`;
+			} else if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
 			else if (task) this.flashMsg = "resume unavailable";
 		} else if (data === "y") {
 			// ponytail: F22 — yank cursor task id for pasting into chat/tickets/terminal.
