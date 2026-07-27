@@ -327,6 +327,32 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("Esc clears filter (no 'filtered from')", !lines.some((l: string) => l.includes("filtered from")));
 }
 
+// ponytail: clearing the filter restores cursor to the pre-filter cursor task
+// (if still present), instead of snapping to row 0. Was cursorIdx = 0 on clear.
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "in_progress"),
+		makeTask("t1", "in_progress"),
+		makeTask("t2", "in_progress"),
+	]);
+	comp.handleInput(DOWN); // cursor → t1 (idx 1)
+	comp.handleInput(DOWN); // cursor → t2 (idx 2)
+	comp.handleInput("/"); // capture preFilterCursorTaskId = t2
+	comp.handleInput("t0"); // filter "t0" → only t0 visible, cursor clamps to 0
+	comp.handleInput(ENTER); // exit editing, keep filter
+	comp.handleInput(ESC); // clear filter → restore cursor to t2
+	check("filter clear restores cursor to pre-filter task (t2)", comp.cursorIdx === 2);
+
+	// pre-filter task no longer present (evicted mid-filter) → fall back to row 0
+	const { comp: comp2 } = makeComponent([makeTask("a", "in_progress"), makeTask("b", "in_progress")]);
+	comp2.handleInput(DOWN); // cursor → b (idx 1)
+	comp2.handleInput("/"); // capture = b
+	comp2.handleInput("a"); // filter "a" → only a
+	comp2.handleInput(ENTER);
+	comp2.handleInput(ESC); // clear filter, b still present → restore to b
+	check("filter clear restores to b (still present)", comp2.cursorIdx === 1);
+}
+
 // Backspace drops a char
 {
 	const { comp } = makeComponent([
