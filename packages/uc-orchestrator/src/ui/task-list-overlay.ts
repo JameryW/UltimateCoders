@@ -227,6 +227,20 @@ class TaskListComponent {
 	}
 
 	private renderDetail(width: number): string[] {
+		// ponytail: refresh detailLines from the live task on each render — the
+		// snapshot taken in openDetail goes stale when the task's status/subtasks
+		// change (external event, or the detail's own c/p/r firing), so the detail
+		// view would show the old status until reopened. F7's 1s tick calls render,
+		// so this picks up live state. Falls back to the cached snapshot when the
+		// task is no longer resolvable (evicted). Re-clamp scroll in case the line
+		// count shrank below the current offset.
+		if (this.detailTaskId) {
+			const live = this.opts.getTask ? this.opts.getTask(this.detailTaskId) : undefined;
+			if (live) this.detailLines = formatTaskDetail(live, this.theme, width);
+			if (this.detailScroll > 0 && this.detailScroll >= this.detailLines.length) {
+				this.detailScroll = Math.max(0, this.detailLines.length - this.maxVisible);
+			}
+		}
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
 		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · Esc/q back"));
