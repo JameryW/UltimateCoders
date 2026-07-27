@@ -705,11 +705,14 @@ class TaskListComponent {
 				(ret as Promise<boolean>).then((ok) => {
 					// ponytail: F2 — ok=false must replace the "cancelling…" flash,
 					// else it lingers until the next keypress despite the action failing.
-					if (ok) this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+					// Full id (not slice(0,8)): mirrors the cancel-armed flash — multiple
+					// tasks can share an 8-char prefix, so a truncated confirm flash is
+					// ambiguous. The flashMsg line is width-clamped at render.
+					if (ok) this.setFlash(`${verb} ${taskId}`);
 					else this.setFlash(`${action} failed`);
 				});
 			} else if (ret) {
-				this.setFlash(`${verb} ${taskId.slice(0, 8)}`);
+				this.setFlash(`${verb} ${taskId}`);
 			} else {
 				this.setFlash(`${action} failed`);
 			}
