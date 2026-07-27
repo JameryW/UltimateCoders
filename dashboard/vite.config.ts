@@ -24,6 +24,11 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
       },
+      // Dashboard REST/SSE API → FastAPI backend
+      "/dashboard/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
 });
