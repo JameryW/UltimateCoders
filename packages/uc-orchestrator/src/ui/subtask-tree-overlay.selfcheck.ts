@@ -190,6 +190,24 @@ const PAGEDOWN = "\x1b[6~";
 	check("n with no failed flashes 'no failed subtasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed subtasks"));
 }
 
+// ponytail: sole failed subtask — `n`/`p` wrap back to the cursor itself (the
+// only failed), so without feedback it's a silent no-op (cursor unmoved, flash
+// null). Now flashes "only failed subtask".
+{
+	const { comp } = makeComponent([
+		makeSubtask("s0", { status: "completed" }),
+		makeSubtask("s1", { status: "failed" }),
+		makeSubtask("s2", { status: "completed" }),
+	]);
+	comp.cursorIdx = 1; // on the sole failed (s1)
+	comp.handleInput("n");
+	check("n on sole failed flashes 'only failed subtask'", comp.flashMsg !== null && comp.flashMsg.includes("only failed subtask"));
+	check("n on sole failed cursor unchanged", comp.cursorIdx === 1);
+	comp.handleInput("p");
+	check("p on sole failed flashes 'only failed subtask'", comp.flashMsg !== null && comp.flashMsg.includes("only failed subtask"));
+	check("p on sole failed cursor unchanged", comp.cursorIdx === 1);
+}
+
 // ponytail: `p` jumps to the PREV failed subtask before the cursor — complement
 // to `n` (next-failed). Wraps to the last when at/before the first failed.
 {

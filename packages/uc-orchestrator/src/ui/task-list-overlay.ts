@@ -491,6 +491,11 @@ class TaskListComponent {
 			}
 			if (next < 0) {
 				this.flashMsg = "no failed tasks";
+			} else if (next === this.cursorIdx) {
+				// ponytail: sole failed task — `n` wrapped back to the cursor itself,
+				// so there's nowhere to jump. Flash so the user knows `n` registered
+				// (otherwise silent no-op: cursor unmoved, flash null).
+				this.flashMsg = "only failed task";
 			} else {
 				this.cursorIdx = next;
 				this.flashMsg = null;

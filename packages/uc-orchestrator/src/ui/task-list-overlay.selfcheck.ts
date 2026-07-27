@@ -100,6 +100,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp2.handleInput("n");
 	check("n with no failed flashes 'no failed tasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
 }
+// ponytail: sole failed task — `n` wraps back to the cursor itself, so without
+// feedback it's a silent no-op. Now flashes "only failed task".
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "completed"),
+		makeTask("t1", "failed"),
+		makeTask("t2", "in_progress"),
+	]);
+	comp.cursorIdx = 1; // on the sole failed (t1)
+	comp.handleInput("n");
+	check("n on sole failed flashes 'only failed task'", comp.flashMsg !== null && comp.flashMsg.includes("only failed task"));
+	check("n on sole failed cursor unchanged", comp.cursorIdx === 1);
+}
 // n in search-edit falls through (not appended to query)
 {
 	const tasks = [makeTask("t0", "failed"), makeTask("t1", "in_progress"), makeTask("t2", "failed")];
