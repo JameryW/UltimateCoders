@@ -552,7 +552,12 @@ class TaskListComponent {
 					this.pendingCancel = null;
 				} else {
 					this.pendingCancel = task.id;
-					this.flashMsg = `press c again to cancel ${task.id.slice(0, 8)} (any other key aborts)`;
+					// ponytail: show the FULL task id — cancel is destructive, a truncated
+					// prefix risks the user confirming the wrong task (multiple tasks can
+					// share an 8-char prefix). The flashMsg line is width-clamped at render
+					// (slice width-2), so a long id just right-truncates there. Mirrors the
+					// yank flash full-id fix.
+					this.flashMsg = `press c again to cancel ${task.id} (any other key aborts)`;
 				}
 			} else if (task) {
 				this.flashMsg = "cancel unavailable";
