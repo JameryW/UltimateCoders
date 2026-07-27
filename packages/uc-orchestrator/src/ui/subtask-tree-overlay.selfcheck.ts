@@ -512,6 +512,9 @@ const PAGEDOWN = "\x1b[6~";
 	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
 	check("wide hint has / filter", wide.includes("/ filter"));
 	check("wide hint has Esc close", wide.includes("Esc close"));
+	// ponytail: Enter toggles expand (no detail mode for subtasks) — hint must
+	// say "expand" not "detail", else users expect a detail view that doesn't exist.
+	check("wide hint says Enter expand (not detail)", wide.includes("Enter expand") && !wide.includes("Enter detail"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has Esc close", narrow.includes("Esc close"));
