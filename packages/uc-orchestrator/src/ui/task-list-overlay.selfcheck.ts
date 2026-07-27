@@ -326,6 +326,12 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	// render must not crash / show a phantom cursor row beyond "No tasks"
 	const lines = comp.render(80);
 	check("empty list renders No tasks", lines.some((l: string) => l.includes("No tasks")));
+	// ponytail: S6 — Enter/y on empty list must flash "no task selected" instead
+	// of silent no-op. Mirrors the subtask-tree's Enter empty-list feedback.
+	comp.handleInput(ENTER);
+	check("empty list Enter flashes 'no task selected'", comp.flashMsg !== null && comp.flashMsg.includes("no task selected"));
+	comp.handleInput("y");
+	check("empty list y flashes 'no task selected'", comp.flashMsg !== null && comp.flashMsg.includes("no task selected"));
 }
 
 // ── search/filter tests ──────────────────────────────────────────
