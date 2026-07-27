@@ -78,6 +78,10 @@ class SubtaskTreeComponent {
 	// Enter/nav exits editing but keeps the filter active, Esc clears everything.
 	private searchMode = false;
 	private query = "";
+	// ponytail: cursor subtask id captured when filter editing starts, so clearing
+	// the filter restores focus to the pre-filter cursor subtask (if still present)
+	// instead of snapping back to row 0. Null = no capture / subtask gone.
+	private preFilterCursorSubId: string | null = null;
 	// ponytail: F7 — 1s tick so time-based fields (running elapsed) re-render
 	// while the overlay sits open. Cleared in dispose(); modal overlays are
 	// short-lived, so 1fps redraw cost is negligible.
@@ -170,6 +174,26 @@ class SubtaskTreeComponent {
 			used += n;
 		}
 		return true;
+	}
+
+	// ponytail: restore cursor to the pre-filter cursor subtask (if still present
+	// in the now-unfiltered list), else row 0. Called when the filter is cleared so
+	// the user doesn't lose their place. Clears the capture.
+	private restoreCursorAfterFilter(): void {
+		const items = this.currentItems();
+		if (this.preFilterCursorSubId) {
+			const idx = items.findIndex((it) => it.subtask.id === this.preFilterCursorSubId);
+			if (idx >= 0) {
+				this.cursorIdx = idx;
+				this.scrollOffset = 0;
+				this.clampScroll();
+				this.preFilterCursorSubId = null;
+				return;
+			}
+		}
+		this.cursorIdx = 0;
+		this.scrollOffset = 0;
+		this.preFilterCursorSubId = null;
 	}
 
 	private clampScroll(): void {
@@ -403,8 +427,7 @@ class SubtaskTreeComponent {
 				// Esc in search mode: clear query + exit (full list restored)
 				this.query = "";
 				this.searchMode = false;
-				this.cursorIdx = 0;
-				this.scrollOffset = 0;
+				this.restoreCursorAfterFilter();
 				(this.tui as any)?.requestRender?.();
 				return;
 			}
@@ -460,6 +483,14 @@ class SubtaskTreeComponent {
 		// ── normal (non-search) mode ─────────────────────────────────────────
 		if (data === "/") {
 			// Enter filter mode (or resume editing an existing filter)
+			// ponytail: capture the pre-filter cursor subtask so clearing the filter
+			// restores focus to it (if still present) instead of row 0. Only capture
+			// when entering fresh (query empty) — resuming an active filter keeps the
+			// original capture.
+			if (!this.query) {
+				const it = this.currentItems()[this.cursorIdx];
+				this.preFilterCursorSubId = it ? it.subtask.id : null;
+			}
 			this.searchMode = true;
 			// ponytail: clear flashMsg when entering filter — `/` is a non-r/R key
 			this.flashMsg = null;
@@ -472,8 +503,7 @@ class SubtaskTreeComponent {
 			// only a second Esc (or Esc with no filter) closes the overlay.
 			if (this.query) {
 				this.query = "";
-				this.cursorIdx = 0;
-				this.scrollOffset = 0;
+				this.restoreCursorAfterFilter();
 				(this.tui as any)?.requestRender?.();
 				return;
 			}
