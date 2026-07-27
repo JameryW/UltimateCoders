@@ -185,6 +185,22 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("n-detail: no failed stays in detail", comp2.detailTaskId === "s1");
 }
 
+// ponytail: `n` in detail on the sole failed task flashes "only failed task"
+// and stays in detail — was silently exiting detail (detailTaskId=null) with no
+// feedback, because `n` wrapped back to the cursor itself. Mirrors list-mode fix.
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "completed"),
+		makeTask("t1", "failed"),
+		makeTask("t2", "in_progress"),
+	]);
+	comp.cursorIdx = 1; // cursor on t1 (sole failed)
+	comp.handleInput(ENTER); // open detail on t1
+	comp.handleInput("n"); // sole failed → flash, stay in detail
+	check("n-detail sole failed flashes 'only failed task'", comp.flashMsg !== null && comp.flashMsg.includes("only failed task"));
+	check("n-detail sole failed stays in detail", comp.detailTaskId === "t1");
+}
+
 // ponytail: `t` in detail opens the subtask tree on this task (reverse of the
 // tree's `d` → detail jump). Verify it closes the list + fires onJumpToTree
 // with the detail task id; without an opener it flashes "jump unavailable".

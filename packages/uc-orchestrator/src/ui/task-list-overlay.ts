@@ -349,6 +349,11 @@ class TaskListComponent {
 				}
 				if (next < 0) {
 					this.setFlash("no failed tasks");
+				} else if (next === this.cursorIdx) {
+					// ponytail: sole failed task — `n` wrapped back to the cursor itself.
+					// Flash instead of silently exiting detail (which the else branch
+					// does by clearing detailTaskId). Mirrors the list-mode sole-failed fix.
+					this.setFlash("only failed task");
 				} else {
 					this.cursorIdx = next;
 					this.detailTaskId = null;
