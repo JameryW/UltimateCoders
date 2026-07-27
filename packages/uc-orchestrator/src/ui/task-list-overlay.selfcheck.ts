@@ -199,6 +199,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("t-list: no opener flashes 'jump unavailable'", comp2.flashMsg !== null && comp2.flashMsg.includes("jump unavailable"));
 }
 
+// ponytail: `t` in list on a 0-subtask task flashes "no subtasks" — jumping
+// would open an empty tree, wasting a round-trip. Mirrors the detail-mode guard.
+{
+	const jumped: string[] = [];
+	const { comp, closed } = makeComponent([makeTask("t1", "in_progress", 0)], {
+		onJumpToTree: (id) => { jumped.push(id); },
+	});
+	comp.handleInput("t"); // 0 subtasks → flash, no jump
+	check("t-list 0-subtask flashes 'no subtasks'", comp.flashMsg !== null && comp.flashMsg.includes("no subtasks"));
+	check("t-list 0-subtask does not fire onJumpToTree", jumped.length === 0);
+	check("t-list 0-subtask does not close", closed() === false);
+}
+
 // ponytail: `t` is a letter users type into filters ("beta"), so in search-edit
 // it appends to the query (NOT a fall-through command key like c/p/r/y/n).
 // Exit editing first (Esc/Enter/nav) to use `t` as a subtask-tree jump.

@@ -509,6 +509,11 @@ class TaskListComponent {
 				this.setFlash("no task selected");
 			} else if (!this.opts.onJumpToTree) {
 				this.setFlash("jump unavailable");
+			} else if (task.subtasks.length === 0) {
+				// ponytail: guard a 0-subtask task — jumping would open an empty
+				// tree ("No tasks"), wasting a round-trip. The list row already
+				// shows the count (or omits it via the 0-subtask guard), so flash.
+				this.setFlash("no subtasks");
 			} else {
 				const id = task.id;
 				this.done();
