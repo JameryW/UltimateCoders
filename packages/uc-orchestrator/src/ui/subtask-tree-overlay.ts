@@ -556,6 +556,11 @@ class SubtaskTreeComponent {
 			}
 			if (next < 0) {
 				this.flashMsg = "no failed subtasks";
+			} else if (next === this.cursorIdx) {
+				// ponytail: sole failed subtask — `n` wrapped back to the cursor itself,
+				// so there's nowhere to jump. Flash so the user knows `n` registered
+				// (otherwise it's a silent no-op: cursor unmoved, flash null).
+				this.flashMsg = "only failed subtask";
 			} else {
 				this.cursorIdx = next;
 				this.flashMsg = null;
@@ -573,6 +578,9 @@ class SubtaskTreeComponent {
 			}
 			if (prev < 0) {
 				this.flashMsg = "no failed subtasks";
+			} else if (prev === this.cursorIdx) {
+				// ponytail: sole failed subtask — `p` wrapped back to the cursor itself.
+				this.flashMsg = "only failed subtask";
 			} else {
 				this.cursorIdx = prev;
 				this.flashMsg = null;
