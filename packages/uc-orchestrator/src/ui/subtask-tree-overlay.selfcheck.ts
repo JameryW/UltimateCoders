@@ -577,15 +577,19 @@ const PAGEDOWN = "\x1b[6~";
 }
 
 // `d` jump — fires onJumpToTask with the subtask's taskId, then closes the tree.
+// Order: done() closes the tree BEFORE onJumpToTask opens the task-list, so the
+// two overlays never overlap (was reversed — task-list opened while tree mounted).
 {
 	let jumpedTo: string | null = null;
+	let closedAtJumpTime = 0;
 	const { comp, closed } = makeComponent(
 		[makeSubtask("s0", { status: "failed" })],
-		{ onJumpToTask: (taskId) => { jumpedTo = taskId; } },
+		{ onJumpToTask: (taskId) => { jumpedTo = taskId; if (closed()) closedAtJumpTime = 1; } },
 	);
 	comp.handleInput("d");
 	check("`d` fires onJumpToTask with parent taskId", jumpedTo === "T");
 	check("`d` closes the tree (done())", closed() === true);
+	check("`d` done() before onJumpToTask (no overlap)", closedAtJumpTime === 1);
 }
 
 // `d` with no onJumpToTask wired — sets flashMsg, does NOT close.

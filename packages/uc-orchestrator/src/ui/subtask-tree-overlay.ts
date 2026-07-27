@@ -564,14 +564,17 @@ class SubtaskTreeComponent {
 			// ponytail: jump to parent task detail — open the task-list overlay on
 			// this subtask's task (close the tree first so overlays don't stack).
 			// S6: restructure so no-item case gets feedback (was silent on empty list).
+			// Order matters: done() closes this overlay BEFORE onJumpToTask opens the
+			// task-list, so the two never overlap (was reversed — task-list opened
+			// while the tree was still mounted).
 			const item = items[this.cursorIdx];
 			if (!item) {
 				this.flashMsg = "no subtask selected";
 			} else if (!this.opts.onJumpToTask) {
 				this.flashMsg = "jump unavailable";
 			} else {
-				this.opts.onJumpToTask(item.taskId);
 				this.done();
+				this.opts.onJumpToTask(item.taskId);
 			}
 		} else if (data === "n") {
 			// ponytail: jump to the NEXT failed subtask after the cursor — Ctrl+Shift+F
