@@ -486,6 +486,14 @@ class TaskListComponent {
 		if (this.flashMsg && data !== "c" && data !== "C") {
 			this.flashMsg = null;
 		}
+		// ponytail: also clear pendingCancel on any non-c/C key — the armed
+		// double-tap is for the CURRENT cursor task; if the user navs away (even
+		// back to the original task) or hits another action, the intent changed.
+		// Without this, arm t1 → nav t2 → nav t1 → `c` would re-match the stale
+		// pendingCancel===t1 and fire cancel t1 the user no longer expects.
+		if (this.pendingCancel && data !== "c" && data !== "C") {
+			this.pendingCancel = null;
+		}
 		if (data === "/") {
 			// Enter filter mode (or resume editing an existing filter)
 			// ponytail: capture the pre-filter cursor task so clearing the filter

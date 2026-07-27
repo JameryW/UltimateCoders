@@ -681,6 +681,25 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("detail c on completed flashes 'already completed'", comp.flashMsg !== null && comp.flashMsg.includes("already completed"));
 }
 
+// ponytail: armed double-tap must not survive a cursor round-trip — arm t1,
+// nav to t2, nav BACK to t1, then `c` must NOT fire (the user moved away;
+// intent changed). Stale pendingCancel===t1 would re-match and fire cancel t1.
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+	);
+	comp.handleInput("c"); // arm t1 (cursor 0)
+	comp.handleInput(DOWN); // → t2 (cursor 1), aborts armed
+	comp.handleInput(UP); // → t1 (cursor 0)
+	comp.handleInput("c"); // pendingCancel cleared by DOWN → arms t1 fresh, NOT fires
+	check("round-trip: first c back on t1 does not fire (re-arm)", calls.length === 0);
+	check("round-trip: pendingCancel re-armed to t1", comp.pendingCancel === "t1");
+	comp.handleInput("c"); // second c now fires
+	check("round-trip: explicit second c fires cancel t1", calls.length === 1 && calls[0][0] === "t1" && calls[0][1] === "cancel");
+}
+
 // initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.
 {
 	const { comp } = makeComponent(
