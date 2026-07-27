@@ -264,7 +264,10 @@ class TaskListComponent {
 	}
 
 	private formatAge(ts: number): string {
-		const diff = Date.now() - ts;
+		// ponytail: clamp negative diff to 0 — a future createdAt (clock skew
+		// between client and server, or a ts set slightly ahead) produced
+		// "-5s ago" without this. "0s ago" is the honest floor.
+		const diff = Math.max(0, Date.now() - ts);
 		if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
 		if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
 		if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
