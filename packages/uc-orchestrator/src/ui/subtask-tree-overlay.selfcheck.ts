@@ -311,6 +311,24 @@ const PAGEDOWN = "\x1b[6~";
 	check("Esc clears filter (no 'filtered from')", !lines.some((l: string) => l.includes("filtered from")));
 }
 
+// ponytail: clearing the filter restores cursor to the pre-filter cursor subtask
+// (if still present), instead of snapping to row 0. Mirrors the task-list fix.
+{
+	const subtasks = [
+		makeSubtask("s0", { description: "a" }),
+		makeSubtask("s1", { description: "b" }),
+		makeSubtask("s2", { description: "c" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("\x1b[B"); // down → s1 (idx 1)
+	comp.handleInput("\x1b[B"); // down → s2 (idx 2)
+	comp.handleInput("/"); // capture preFilterCursorSubId = s2
+	comp.handleInput("s0"); // filter "s0" → only s0, cursor clamps to 0
+	comp.handleInput("\r"); // exit editing, keep filter
+	comp.handleInput("\x1b"); // clear filter → restore cursor to s2
+	check("filter clear restores cursor to pre-filter subtask (s2)", comp.cursorIdx === 2);
+}
+
 // Backspace drops a char
 {
 	const subtasks = [
