@@ -218,8 +218,19 @@ class ProgressWidgetComponent {
 					// ponytail: stepSummary is the human-readable current-step text
 					// (populated by subtask_progress, was dead data). Show on its own
 					// dim line, truncated to width, so the tag line stays scannable.
+					// ponytail: multi-line or width-clamped stepSummary shows `…` — was a
+					// bare slice with no indicator, so a multi-line summary looked complete
+					// at line 1 (mirrors the subtask-tree result-ellipsis fix). Reserve 1
+					// col for the ellipsis when truncating.
 					if (prog.stepSummary) {
-						lines.push(this.theme.fg("dim", `      ${prog.stepSummary.slice(0, Math.max(0, width - 6))}`));
+						const budget = Math.max(0, width - 6);
+						const firstLine = prog.stepSummary.split("\n")[0];
+						const moreLines = prog.stepSummary.includes("\n");
+						const truncated = firstLine.length > budget - 1 || moreLines;
+						const shown = truncated
+							? firstLine.slice(0, Math.max(0, budget - 1)) + "…"
+							: firstLine.slice(0, budget);
+						lines.push(this.theme.fg("dim", `      ${shown}`));
 					}
 				}
 			}

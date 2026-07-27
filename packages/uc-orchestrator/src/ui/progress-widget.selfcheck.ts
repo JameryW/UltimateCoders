@@ -176,6 +176,23 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("stepSummary rendered", lines.some((l: string) => l.includes("editing auth.ts")));
 }
 
+// ponytail: multi-line or width-clamped stepSummary shows `…` — was a bare slice
+// with no indicator, so a multi-line summary looked complete at line 1. Mirrors
+// the subtask-tree result-ellipsis fix.
+{
+	const runningSt = { id: "s1", description: "work", status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [runningSt] } as unknown as TaskState;
+	const factory = createProgressWidget(() => ({ task, progressBySubtask: new Map([["s1", { phase: "executing", percent: 10, stepSummary: "line one\nline two" }]]) }));
+	const comp = factory(undefined, theme) as any;
+	const lines = comp.render(80) as string[];
+	check("multi-line stepSummary shows first line + ellipsis", lines.some((l: string) => l.includes("line one") && l.includes("…")));
+
+	// single-line that fits → NO ellipsis
+	const factory2 = createProgressWidget(() => ({ task, progressBySubtask: new Map([["s1", { phase: "executing", percent: 10, stepSummary: "short step" }]]) }));
+	const lines2 = (factory2(undefined, theme) as any).render(80) as string[];
+	check("single-line stepSummary no ellipsis", lines2.some((l: string) => l.includes("short step") && !l.includes("…")));
+}
+
 // Header shows the task description (truncated to width) so the always-visible
 // widget says what the task IS, not just a truncated UUID.
 // ponytail: header was "UC <id> <status>" with no description.
