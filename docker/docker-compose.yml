@@ -210,7 +210,7 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
-    command: ["python", "-m", "ultimate_coders.cli", "start", "--dashboard", "--host", "0.0.0.0", "--port", "8080"]
+    command: ["python", "-m", "ultimate_coders.dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
   # ── UltimateCoders Distributed Worker ────────────────────────────
   # Independent process that registers with the Gateway via gRPC
