@@ -500,10 +500,15 @@ class SubtaskTreeComponent {
 			if (item && item.subtask.status === "failed" && this.opts.onRetry) {
 				this.opts.onRetry(item.taskId, item.subtask.id);
 				this.flashMsg = null;
+			} else if (item && item.subtask.status === "failed") {
+				// ponytail: cursor IS failed but onRetry isn't wired — the generic
+				// "only failed subtasks can be retried" message would contradict the
+				// status (cursor is failed), so name the real reason: no retry handler.
+				this.flashMsg = "retry unavailable";
 			} else {
 				// ponytail: dead-key feedback — r on a non-failed subtask (or no
-				// cursor / no onRetry) sets a dim hint naming the actual status
-				// so the user knows why nothing happened.
+				// cursor) sets a dim hint naming the actual status so the user knows
+				// why nothing happened.
 				const status = item ? item.subtask.status : "no subtask selected";
 				this.flashMsg = `only failed subtasks can be retried (cursor is ${status})`;
 			}
