@@ -222,6 +222,53 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("t-jump: no opener flashes 'jump unavailable'", comp2.flashMsg !== null && comp2.flashMsg.includes("jump unavailable"));
 }
 
+// ponytail: `t` in LIST mode — jump from cursor task straight to its subtask
+// tree, mirroring detail-mode `t` (skips the Enter→detail step). Verify it
+// closes the list + fires onJumpToTree with the cursor task id; no opener /
+// no cursor task → flashMsg.
+{
+	const jumped: string[] = [];
+	const { comp, closed } = makeComponent(
+		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
+		{ onJumpToTree: (id) => { jumped.push(id); } },
+	);
+	comp.cursorIdx = 1; // cursor on t2
+	comp.handleInput("t");
+	check("t-list: fires onJumpToTree with cursor id", jumped.length === 1 && jumped[0] === "t2");
+	check("t-list: closes the list overlay", closed() === true);
+
+	// no opener wired → flashMsg instead of silent no-op
+	const { comp: comp2 } = makeComponent([makeTask("t1", "in_progress")]);
+	comp2.handleInput("t");
+	check("t-list: no opener flashes 'jump unavailable'", comp2.flashMsg !== null && comp2.flashMsg.includes("jump unavailable"));
+}
+
+// ponytail: `t` in list on a 0-subtask task flashes "no subtasks" — jumping
+// would open an empty tree, wasting a round-trip. Mirrors the detail-mode guard.
+{
+	const jumped: string[] = [];
+	const { comp, closed } = makeComponent([makeTask("t1", "in_progress", 0)], {
+		onJumpToTree: (id) => { jumped.push(id); },
+	});
+	comp.handleInput("t"); // 0 subtasks → flash, no jump
+	check("t-list 0-subtask flashes 'no subtasks'", comp.flashMsg !== null && comp.flashMsg.includes("no subtasks"));
+	check("t-list 0-subtask does not fire onJumpToTree", jumped.length === 0);
+	check("t-list 0-subtask does not close", closed() === false);
+}
+
+// ponytail: `t` is a letter users type into filters ("beta"), so in search-edit
+// it appends to the query (NOT a fall-through command key like c/p/r/y/n).
+// Exit editing first (Esc/Enter/nav) to use `t` as a subtask-tree jump.
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")], {
+		onJumpToTree: () => {},
+	});
+	comp.handleInput("/");
+	comp.handleInput("t");
+	check("t-list: search-edit appends 't' to query", comp.query === "t");
+	check("t-list: search-edit stays in searchMode", comp.searchMode === true);
+}
+
 // detail mode must not raw-slice ANSI-themed lines: String.slice on a
 // theme-colored detailLine splits escape sequences and drops the closing reset,
 // bleeding color / garbling the display. Rely on the compositor's ANSI-aware
