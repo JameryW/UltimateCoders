@@ -229,7 +229,7 @@ class TaskListComponent {
 	private renderDetail(width: number): string[] {
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · Esc/q back"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · Esc/q back"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
@@ -333,6 +333,28 @@ class TaskListComponent {
 					const id = this.detailTaskId;
 					this.done();
 					this.opts.onJumpToTree(id);
+				}
+				return;
+			}
+			// ponytail: `n` in detail — jump to the NEXT failed task (mirrors list-mode
+			// `n`), exit detail back to list with cursor on the failed task. Wraps
+			// around the (filtered) set. No failed → flashMsg, stay in detail.
+			if (data === "n") {
+				const tasks = this.currentTasks();
+				const start = this.cursorIdx + 1;
+				let next = -1;
+				for (let i = 0; i < tasks.length; i++) {
+					const idx = (start + i) % tasks.length;
+					if (tasks[idx].status === "failed") { next = idx; break; }
+				}
+				if (next < 0) {
+					this.setFlash("no failed tasks");
+				} else {
+					this.cursorIdx = next;
+					this.detailTaskId = null;
+					this.detailScroll = 0;
+					this.flashMsg = null;
+					this.clampCursorAndScroll();
 				}
 				return;
 			}
