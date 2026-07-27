@@ -106,6 +106,31 @@ const PAGEDOWN = "\x1b[6~";
 	check("meta line plain width <= 80", metaLine !== undefined && metaLine.length <= 80);
 }
 
+// ponytail: rejected review with issues shows the count in the meta tag —
+// "✗ rejected (N issues)" — so the verdict surfaces that there are N reasons
+// without expanding the row beyond the 2-line window (issues themselves are
+// listed in /uc status detail + the completion message). Approved reviews
+// and rejected-without-issues stay bare (no "0 issues" noise).
+{
+	const withIssues = makeSubtask("s1", { status: "failed", review: { approved: false, issues: ["a", "b"], suggestions: [] } as any });
+	const { comp: c1 } = makeComponent([withIssues]);
+	c1.expanded.add("s1");
+	const l1 = c1.render(80);
+	check("rejected w/ issues shows count", l1.some((l: string) => l.includes("✗ rejected (2 issues)")));
+
+	const noIssues = makeSubtask("s2", { status: "failed", review: { approved: false, issues: [], suggestions: [] } as any });
+	const { comp: c2 } = makeComponent([noIssues]);
+	c2.expanded.add("s2");
+	const l2 = c2.render(80);
+	check("rejected w/o issues stays bare", l2.some((l: string) => l.includes("✗ rejected")) && !l2.some((l: string) => l.includes("issues")));
+
+	const approved = makeSubtask("s3", { status: "completed", review: { approved: true, issues: ["x"], suggestions: [] } as any });
+	const { comp: c3 } = makeComponent([approved]);
+	c3.expanded.add("s3");
+	const l3 = c3.render(80);
+	check("approved stays bare (no count)", l3.some((l: string) => l.includes("✓ approved")) && !l3.some((l: string) => l.includes("issues")));
+}
+
 // expanded with only result → 1 line, first result line shown
 {
 	const st = makeSubtask("s1", { status: "completed", result: "first line\nsecond" });
