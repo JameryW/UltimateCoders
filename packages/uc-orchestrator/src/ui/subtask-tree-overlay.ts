@@ -336,7 +336,15 @@ class SubtaskTreeComponent {
 					metaPlain.push(tag);
 				}
 				if (item.subtask.review) {
-					const tag = item.subtask.review.approved ? "✓ approved" : "✗ rejected";
+					// ponytail: surface the issue count on rejected reviews — the verdict
+					// alone hides that there are N reasons. Approved reviews rarely carry
+					// issues, so no count there (avoids "0 issues" noise). Width guard
+					// below drops low-priority tags (dispatchMode, then review) if the
+					// joined line overflows, so the longer tag is safe.
+					const issues = item.subtask.review.issues ?? [];
+					const tag = item.subtask.review.approved
+						? "✓ approved"
+						: issues.length > 0 ? `✗ rejected (${issues.length} issues)` : "✗ rejected";
 					metaParts.push(this.theme.fg("dim", tag));
 					metaPlain.push(tag);
 				}
