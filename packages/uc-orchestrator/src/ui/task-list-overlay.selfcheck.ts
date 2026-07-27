@@ -345,6 +345,17 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("age present on task line", lines.some((l: string) => l.includes("ago")));
 }
 
+// ponytail: formatAge clamps a future createdAt (clock skew) to "0s ago" —
+// was "-5s ago" when ts > Date.now(). Verified via render (formatAge is private).
+{
+	const futureTask = makeTask("t1", "in_progress");
+	(futureTask as any).createdAt = Date.now() + 5_000; // 5s in the future
+	const { comp } = makeComponent([futureTask]);
+	const lines = comp.render(80);
+	const ageLine = lines.find((l: string) => l.includes("ago")) ?? "";
+	check("future createdAt clamps to 0s ago (not negative)", ageLine.includes("0s ago") && !ageLine.includes("-"));
+}
+
 // empty list — pageDown/end/G must not produce a negative cursorIdx (phantom cursor)
 // ponytail: Math.min(tasks.length-1, …) on empty list = Math.min(-1, …) = -1 without the floor.
 {
