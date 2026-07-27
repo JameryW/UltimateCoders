@@ -544,6 +544,43 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("nav clears flashMsg", comp.flashMsg === null);
 }
 
+// ponytail: cancel dead-key guard for terminal statuses — `c` on a completed/
+// cancelled task must NOT arm the double-tap (the server would reject the cancel
+// anyway). Flashes "already <status>" instead. `failed` is left to the server.
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "completed"), makeTask("t2", "cancelled")],
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+	);
+	comp.handleInput("c"); // cursor on t1 (completed)
+	check("c on completed does not arm", comp.pendingCancel === null);
+	check("c on completed does not fire", calls.length === 0);
+	check("c on completed flashes 'already completed'", comp.flashMsg !== null && comp.flashMsg.includes("already completed"));
+	// second c on completed still must not fire (no armed state)
+	comp.handleInput("c");
+	check("second c on completed still does not fire", calls.length === 0);
+
+	comp.handleInput(DOWN); // cursor → t2 (cancelled)
+	comp.handleInput("c");
+	check("c on cancelled flashes 'already cancelled'", comp.flashMsg !== null && comp.flashMsg.includes("already cancelled"));
+	check("c on cancelled does not fire", calls.length === 0);
+}
+
+// ponytail: detail-mode cancel guard — terminal status flashes "already <status>"
+// instead of firing. getTask wired (makeComponent wires it).
+{
+	const calls: [string, string][] = [];
+	const { comp } = makeComponent(
+		[makeTask("t1", "completed")],
+		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+	);
+	comp.handleInput(ENTER); // open detail on t1
+	comp.handleInput("c");
+	check("detail c on completed does not fire", calls.length === 0);
+	check("detail c on completed flashes 'already completed'", comp.flashMsg !== null && comp.flashMsg.includes("already completed"));
+}
+
 // initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.
 {
 	const { comp } = makeComponent(

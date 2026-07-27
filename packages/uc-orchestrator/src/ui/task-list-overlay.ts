@@ -310,6 +310,14 @@ class TaskListComponent {
 			// Single-tap (no double-tap confirm): detail is a focused single-task view,
 			// the user already chose this task. fireAction clears pendingCancel itself.
 			if (data === "c" || data === "C") {
+				// ponytail: mirror list-mode cancel guard — terminal statuses (completed/
+				// cancelled) can't be cancelled; flash instead of firing an action the
+				// server rejects. Falls through to fireAction when getTask is unavailable.
+				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
+				if (dt && (dt.status === "completed" || dt.status === "cancelled")) {
+					this.setFlash(`already ${dt.status}`);
+					return;
+				}
 				this.fireAction(this.detailTaskId, "cancel", "cancelled");
 				return;
 			}
@@ -479,7 +487,14 @@ class TaskListComponent {
 			// ponytail: double-tap cancel. First c arms (flashMsg naming the task);
 			// second c fires onAction. Any non-c key clears (handled at top of fn).
 			const task = tasks[this.cursorIdx];
-			if (task && this.opts.onAction) {
+			// ponytail: dead-key feedback for terminal statuses — a completed/cancelled
+			// task can't be cancelled, so don't arm the double-tap (which would mislead
+			// the user into a second `c` that fires an action the server will reject).
+			// `failed` is left to the server (cancel-after-fail semantics differ).
+			if (task && (task.status === "completed" || task.status === "cancelled")) {
+				this.pendingCancel = null;
+				this.flashMsg = `already ${task.status}`;
+			} else if (task && this.opts.onAction) {
 				if (this.pendingCancel === task.id) {
 					// ponytail: await result via .then (handleInput is sync, can't be async)
 					// so confirmation feedback lands after the orchestrator resolves.
