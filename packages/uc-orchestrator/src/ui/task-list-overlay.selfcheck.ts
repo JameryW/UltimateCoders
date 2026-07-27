@@ -157,6 +157,50 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("`q` returns to list from detail", comp.detailTaskId === null);
 }
 
+// ponytail: `n` in detail — jump to next failed task, exit detail back to list.
+// cursor lands on the failed task in list mode (detailTaskId cleared). Wraps
+// around the set; no failed → flashMsg, stays in detail.
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "completed"),
+		makeTask("t1", "in_progress"),
+		makeTask("t2", "failed"),
+		makeTask("t3", "failed"),
+	]);
+	comp.handleInput(ENTER); // open detail on t0 (cursor 0)
+	check("n-detail: detail open", comp.detailTaskId === "t0");
+	comp.handleInput("n"); // t0 → next failed = t2
+	check("n-detail: exits detail to list", comp.detailTaskId === null);
+	check("n-detail: cursor on t2", comp.cursorIdx === 2);
+	comp.handleInput(ENTER); // open detail on t2
+	check("n-detail: reopen detail on t2", comp.detailTaskId === "t2");
+	comp.handleInput("n"); // t2 → t3
+	check("n-detail: cursor on t3 after second n", comp.cursorIdx === 3);
+	check("n-detail: exits detail again", comp.detailTaskId === null);
+	// no failed → flashMsg, stay in detail
+	const { comp: comp2 } = makeComponent([makeTask("s1", "completed")]);
+	comp2.handleInput(ENTER);
+	comp2.handleInput("n");
+	check("n-detail: no failed flashes", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
+	check("n-detail: no failed stays in detail", comp2.detailTaskId === "s1");
+}
+
+// ponytail: `n` in detail on the sole failed task flashes "only failed task"
+// and stays in detail — was silently exiting detail (detailTaskId=null) with no
+// feedback, because `n` wrapped back to the cursor itself. Mirrors list-mode fix.
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "completed"),
+		makeTask("t1", "failed"),
+		makeTask("t2", "in_progress"),
+	]);
+	comp.cursorIdx = 1; // cursor on t1 (sole failed)
+	comp.handleInput(ENTER); // open detail on t1
+	comp.handleInput("n"); // sole failed → flash, stay in detail
+	check("n-detail sole failed flashes 'only failed task'", comp.flashMsg !== null && comp.flashMsg.includes("only failed task"));
+	check("n-detail sole failed stays in detail", comp.detailTaskId === "t1");
+}
+
 // ponytail: `t` in detail opens the subtask tree on this task (reverse of the
 // tree's `d` → detail jump). Verify it closes the list + fires onJumpToTree
 // with the detail task id; without an opener it flashes "jump unavailable".
