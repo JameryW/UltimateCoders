@@ -39,17 +39,32 @@ RUN cargo install --root /usr/local --locked rust-analyzer \
         && echo "rust-analyzer install skipped (non-fatal)")
 
 COPY . .
-RUN maturin develop --release
+# The repo root Cargo.toml is a virtual workspace (no [package]), so maturin
+# must be pointed at the actual Python extension crate. Newer maturin also
+# requires a virtualenv for `develop`; point VIRTUAL_ENV at the system prefix
+# so it installs into /usr/local/lib/python3.11/site-packages (copied in Stage 2).
+RUN VIRTUAL_ENV=/usr/local maturin develop --release --manifest-path crates/uc-python/Cargo.toml
 
 # ── Stage 2: Runtime image ─────────────────────────────────────────
 FROM python:3.11-slim
+
+# Replace the official Debian mirror with Tsinghua — deb.debian.org is
+# extremely slow (~200 kB/s) from this network, which times out apt during
+# the nodejs/npm install. trixie ships deb822 sources in debian.sources;
+# we switch to the classic one-line format and drop the old file.
+RUN { \
+      echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie main contrib non-free non-free-firmware"; \
+      echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main contrib non-free non-free-firmware"; \
+      echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security trixie-security main contrib non-free non-free-firmware"; \
+    } > /etc/apt/sources.list && rm -f /etc/apt/sources.list.d/debian.sources
 
 # Runtime deps: git is required for WorkspaceManager remote sync
 # (clone/fetch/push). openssh-client is cheap and enables SSH-based
 # remotes as an alternative to HTTPS+PAT. nodejs + npm are needed by
 # multilspy's TypeScriptLanguageServer (it shells out to node/npm to
 # install typescript-language-server into its static dir).
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 \
     bash libssl3 ca-certificates curl git openssh-client nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
@@ -82,7 +97,9 @@ RUN curl -fsSL https://x.ai/cli/install.sh | bash
 ENV PATH="/root/.local/bin:/root/.grok/bin:${PATH}"
 RUN grok --version
 
-# Copy the Python source (maturin develop links to the source tree)
-COPY python/ultimate_coders /app/python/ultimate_coders
+# Copy the full Python package from the builder stage — this includes both
+# the pure-Python source AND the compiled _uc_core*.so extension that maturin
+# develop placed into the source tree. A host-context COPY would lack the .so.
+COPY --from=builder /app/python/ultimate_coders /app/python/ultimate_coders
 
 ENV PYTHONPATH=/app
