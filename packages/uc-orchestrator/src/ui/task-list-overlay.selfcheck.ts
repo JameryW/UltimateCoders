@@ -282,6 +282,46 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("t-list: search-edit stays in searchMode", comp.searchMode === true);
 }
 
+// ponytail: `t` on a 0-subtask task flashes "no subtasks" — jumping would open
+// an empty tree, wasting a round-trip. The detail view already shows the empty
+// subtask list, so flash instead.
+{
+	const jumped: string[] = [];
+	const { comp, closed } = makeComponent([makeTask("t1", "in_progress", 0)], {
+		onJumpToTree: (id) => { jumped.push(id); },
+	});
+	comp.handleInput("t"); // 0 subtasks → flash, no jump
+	check("t-list 0-subtask flashes 'no subtasks'", comp.flashMsg !== null && comp.flashMsg.includes("no subtasks"));
+	check("t-list 0-subtask does not fire onJumpToTree", jumped.length === 0);
+	check("t-list 0-subtask does not close", closed() === false);
+}
+
+// ponytail: `t` is a letter users type into filters ("beta"), so in search-edit
+// it appends to the query (NOT a fall-through command key like c/p/r/y/n).
+// Exit editing first (Esc/Enter/nav) to use `t` as a subtask-tree jump.
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")], {
+		onJumpToTree: () => {},
+	});
+	comp.handleInput("/");
+	comp.handleInput("t");
+	check("t-list: search-edit appends 't' to query", comp.query === "t");
+	check("t-list: search-edit stays in searchMode", comp.searchMode === true);
+}
+
+// detail-mode `t` 0-subtask guard
+{
+	const jumped2: string[] = [];
+	const { comp, closed } = makeComponent([makeTask("t1", "in_progress", 0)], {
+		onJumpToTree: (id) => { jumped2.push(id); },
+	});
+	comp.handleInput(ENTER); // open detail on t1
+	comp.handleInput("t"); // 0 subtasks → flash, no jump
+	check("t-jump 0-subtask flashes 'no subtasks'", comp.flashMsg !== null && comp.flashMsg.includes("no subtasks"));
+	check("t-jump 0-subtask does not fire onJumpToTree", jumped2.length === 0);
+	check("t-jump 0-subtask stays in detail (no close)", closed() === false && comp.detailTaskId === "t1");
+}
+
 // detail mode must not raw-slice ANSI-themed lines: String.slice on a
 // theme-colored detailLine splits escape sequences and drops the closing reset,
 // bleeding color / garbling the display. Rely on the compositor's ANSI-aware

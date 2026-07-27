@@ -407,9 +407,18 @@ class TaskListComponent {
 				} else if (!this.opts.onJumpToTree) {
 					this.setFlash("jump unavailable");
 				} else {
-					const id = this.detailTaskId;
-					this.done();
-					this.opts.onJumpToTree(id);
+					// ponytail: guard a 0-subtask task — jumping to the subtask tree
+					// would open an empty tree ("No tasks"), wasting a round-trip.
+					// The detail view already shows the (empty) subtask list, so flash
+					// instead. Falls through to the jump when getTask is unavailable.
+					const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId) : undefined;
+					if (dt && dt.subtasks.length === 0) {
+						this.setFlash("no subtasks");
+					} else {
+						const id = this.detailTaskId;
+						this.done();
+						this.opts.onJumpToTree(id);
+					}
 				}
 				return;
 			}
