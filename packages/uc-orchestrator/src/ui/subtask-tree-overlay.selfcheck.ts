@@ -72,6 +72,25 @@ const PAGEDOWN = "\x1b[6~";
 	check("collapsed one subtask = 4 lines", lines.length === 4);
 }
 
+// ponytail: dep-list collapse — a subtask depending on many roots emits
+// "←+N deps" once the joined ids exceed half the width (mirrors status-formatter's
+// formatTaskDetail). Was unbounded `←d1,d2,…`, overflowing the row and truncating
+// the elapsed tag on running rows. Short dep lists still render verbatim.
+{
+	// short dep list at wide width → verbatim `←a`
+	const { comp: wide } = makeComponent([makeSubtask("s1", { dependsOn: ["a"] })]);
+	const wideLines = wide.render(80);
+	check("short deps render verbatim (←a)", wideLines.some((l: string) => l.includes("←a") && !l.includes("+1 deps")));
+
+	// long dep list at narrow width → collapse `←+3 deps` (joined "a,b,c"=5, +2=7 > 30/2=15? no)
+	// force collapse: many deps so joined exceeds width/2 even at wide width.
+	const many = Array.from({ length: 10 }, (_, i) => `dep${i}`);
+	const { comp: narrow } = makeComponent([makeSubtask("s1", { dependsOn: many })]);
+	const narrowLines = narrow.render(40); // 40/2=20, joined "dep0,dep1,...dep9" ~50 > 20 → collapse
+	check("long deps collapse to ←+10 deps", narrowLines.some((l: string) => l.includes("←+10 deps")));
+	check("collapsed deps hide the raw ids", narrowLines.every((l: string) => !l.includes("dep0,dep1")));
+}
+
 // expanded with all fields (error + result + review + retry + mode) → up to 2 lines
 // ponytail: S7 — retryCount display in the expanded detail line (retry×N) is
 // now reachable for local-exec subtasks after the orchestrator's result→TaskState
