@@ -264,9 +264,19 @@ class SubtaskTreeComponent {
 			const cursor = isCursor ? this.theme.bold("›") : " ";
 			const icon = statusIcon(item.subtask.status, this.theme);
 			const desc = item.subtask.description.slice(0, Math.max(0, width - 16));
-			const deps = item.subtask.dependsOn.length > 0
-				? this.theme.fg("dim", ` ←${item.subtask.dependsOn.join(",")}`)
-				: "";
+			// ponytail: collapse long dep lists to "←+N deps" (mirrors status-formatter's
+			// formatTaskDetail) — a subtask depending on many roots emitted `←d1,d2,d3…`
+			// unbounded, overflowing the row and letting the compositor truncate the
+			// elapsed tag (appended after deps) on running rows. Threshold: joined+2
+			// exceeds half the width → collapse.
+			let depsPlain = "";
+			if (item.subtask.dependsOn.length > 0) {
+				const joined = item.subtask.dependsOn.join(",");
+				depsPlain = joined.length + 2 > width / 2
+					? ` ←+${item.subtask.dependsOn.length} deps`
+					: ` ←${joined}`;
+			}
+			const deps = depsPlain ? this.theme.fg("dim", depsPlain) : "";
 			// ponytail: F8 — live elapsed on running rows (re-rendered by F7 timer).
 			const elapsed = item.subtask.status === "running" && item.subtask.startedAt
 				? this.theme.fg("dim", ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`)
