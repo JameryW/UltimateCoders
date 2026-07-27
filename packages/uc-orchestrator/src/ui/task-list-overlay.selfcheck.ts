@@ -440,6 +440,18 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("second `c` sets cancelled flashMsg", comp.flashMsg !== null && comp.flashMsg.includes("cancelled"));
 }
 
+// ponytail: cancel armed flash shows the FULL task id (cancel is destructive — a
+// truncated prefix risks confirming the wrong task when multiple share a prefix).
+{
+	const longId = "task_with_a_long_id_1234567890";
+	const { comp } = makeComponent(
+		[makeTask(longId, "in_progress")],
+		{ onAction: () => true },
+	);
+	comp.handleInput("c"); // arm
+	check("armed flash shows full id", comp.flashMsg !== null && comp.flashMsg.includes(longId));
+}
+
 // double-tap abort: first `c` arms, a nav key clears without firing.
 {
 	const calls: [string, string][] = [];
