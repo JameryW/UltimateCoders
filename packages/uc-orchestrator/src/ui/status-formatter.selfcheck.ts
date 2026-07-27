@@ -113,6 +113,18 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList wide: full desc kept", wideDesc.includes(longDesc));
 }
 
+// ponytail: 0-subtask task row hides completed/total (no "0/0") — mirrors the
+// task-list overlay row + formatTaskDetail guards. A task WITH subtasks shows it.
+{
+	const zeroSub = [{ id: "Z", description: "z", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] }] as unknown as TaskState[];
+	const zLines = formatTaskList(zeroSub, theme);
+	const zRow = zLines.find((l) => l.includes("Z")) ?? "";
+	check("formatTaskList 0-subtask row no 0/0", !zRow.includes("0/0"));
+	const withSub = [{ id: "W", description: "w", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [{ id: "s0", description: "s", status: "completed", dependsOn: [], files: [] } as any] }] as unknown as TaskState[];
+	const wRow = formatTaskList(withSub, theme).find((l) => l.includes("W")) ?? "";
+	check("formatTaskList task with subtasks shows 1/1", wRow.includes("1/1"));
+}
+
 // ponytail: F16 — full lines must fit the width. Old budgets subtracted 2 while
 // the prefixes are 15 ("  Description: ") and 9 ("  Error: ") cols → overflow
 // ~13/~7. Task error was also a raw slice — no ellipsis, no classification
