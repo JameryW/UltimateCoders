@@ -242,6 +242,19 @@ const PAGEDOWN = "\x1b[6~";
 	check("r on completed renders flashMsg with 'only failed'", lines.some((l: string) => l.includes("only failed")));
 }
 
+// r on a FAILED subtask when onRetry is NOT wired — must flash "retry unavailable"
+// (not the contradictory "only failed... (cursor is failed)"). makeComponent forces
+// a fallback onRetry, so build the factory directly without one.
+{
+	const task = { id: "T", description: "t", status: "failed", controlState: "running", createdAt: 0, subtasks: [makeSubtask("s1", { status: "failed" })] } as unknown as TaskState;
+	const factory = createSubtaskTreeOverlay({ tasks: () => [task], onClose: () => {} }); // no onRetry
+	const comp = factory({ requestRender: () => {} } as any, theme, undefined, () => {}) as any;
+	comp.handleInput("r");
+	check("r on failed w/o onRetry flashes 'retry unavailable'", comp.flashMsg !== null && comp.flashMsg.includes("retry unavailable"));
+	check("r on failed w/o onRetry does NOT flash 'only failed'", comp.flashMsg === null || !comp.flashMsg.includes("only failed"));
+	comp.dispose?.();
+}
+
 // ── search/filter tests ──────────────────────────────────────────
 
 // `/` enters filter mode (render shows `/ ` input line with cursor)
