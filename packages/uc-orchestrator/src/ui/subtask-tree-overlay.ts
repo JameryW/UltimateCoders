@@ -547,7 +547,12 @@ class SubtaskTreeComponent {
 			const item = items[this.cursorIdx];
 			if (item && item.subtask.status === "failed" && this.opts.onRetry) {
 				this.opts.onRetry(item.taskId, item.subtask.id);
-				this.flashMsg = null;
+				// ponytail: surface that the retry fired — the subtask status flips
+				// to running asynchronously (server round-trip), so without a flash
+				// the user sees no change and can't tell `r` registered. Mirrors the
+				// task-list fireAction "cancelling…" / "resumed" feedback. Full id
+				// (not slice(0,8)): mirrors the task-list flash full-id fixes.
+				this.flashMsg = `retrying ${item.subtask.id}…`;
 			} else if (item && item.subtask.status === "failed") {
 				// ponytail: cursor IS failed but onRetry isn't wired — the generic
 				// "only failed subtasks can be retried" message would contradict the
