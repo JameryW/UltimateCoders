@@ -188,6 +188,33 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("no review → no Review line", !formatTaskDetail(noReview, theme).join("\n").includes("Review:"));
 }
 
+// ponytail: review issues/suggestions — a rejected subtask's issues are the "why
+// rejected" diagnostic, but the verdict line showed only ✓/✗. formatTaskDetail
+// now lists each issue (•) and suggestion (↳) on its own dim line. Approved
+// reviews can carry suggestions too, so both render regardless of verdict.
+{
+	const withIssues = (approved: boolean) => ({
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [Object.assign(st("s1"), {
+			review: { approved, issues: ["missing tests", "lint error"], suggestions: ["add fixture"] },
+		})],
+	} as unknown as TaskState);
+	const rejected = formatTaskDetail(withIssues(false), theme, 80).join("\n");
+	check("review issue #1 shown", rejected.includes("• missing tests"));
+	check("review issue #2 shown", rejected.includes("• lint error"));
+	check("review suggestion shown", rejected.includes("↳ add fixture"));
+	// approved with suggestions still shows them
+	const approved = formatTaskDetail(withIssues(true), theme, 80).join("\n");
+	check("approved review shows suggestion", approved.includes("↳ add fixture"));
+	// empty issues/suggestions → no bullet/arrow lines
+	const empty = formatTaskDetail({
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [Object.assign(st("s1"), { review: { approved: false, issues: [], suggestions: [] } })],
+	} as unknown as TaskState, theme, 80).join("\n");
+	check("empty issues → no bullet line", !empty.includes("•"));
+	check("empty suggestions → no arrow line", !empty.includes("↳"));
+}
+
 // ponytail: success output — /uc status <id> + task-list detail showed a subtask's
 // error + retries + review but NOT its result. The message (#374) + tree show it;
 // mirror here. Error takes priority (error OR result). First line + `…` when more.

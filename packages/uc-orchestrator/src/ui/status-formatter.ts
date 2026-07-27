@@ -164,6 +164,22 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			if (st.review) {
 				const label = st.review.approved ? "✓ approved" : "✗ rejected";
 				lines.push(theme.fg(st.review.approved ? "success" : "error", `${indent}  Review: ${label}`));
+				// ponytail: surface review issues/suggestions — a rejected subtask's
+				// issues are the "why rejected" diagnostic the user most wants, but
+				// the verdict line showed only ✓/✗. detail view has scroll, so each
+				// issue/suggestion gets its own dim line (capped to width). Approved
+				// reviews can still carry suggestions, so show both regardless of verdict.
+				// `?? []`: older review records (and selfcheck stubs) may omit the arrays.
+				const issues = st.review.issues ?? [];
+				const suggestions = st.review.suggestions ?? [];
+				if (width !== undefined) {
+					const issueBudget = Math.max(0, width - indent.length - 4);
+					for (const issue of issues) lines.push(theme.fg("dim", `${indent}    • ${cap(issue, issueBudget, 200)}`));
+					for (const sug of suggestions) lines.push(theme.fg("dim", `${indent}    ↳ ${cap(sug, issueBudget, 200)}`));
+				} else {
+					for (const issue of issues) lines.push(theme.fg("dim", `${indent}    • ${cap(issue, 200, 200)}`));
+					for (const sug of suggestions) lines.push(theme.fg("dim", `${indent}    ↳ ${cap(sug, 200, 200)}`));
+				}
 			}
 		}
 	}
