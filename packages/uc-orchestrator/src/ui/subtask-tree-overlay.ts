@@ -579,13 +579,17 @@ class SubtaskTreeComponent {
 			}
 		} else if (data === "y" || data === "Y") {
 			// ponytail: F22 — `y` yanks the cursor subtask id, `Y` yanks its error
-			// text (the two things routinely pasted into tickets/chat).
+			// text (the two things routinely pasted into tickets/chat). `Y` falls
+			// back to the result when there's no error — a completed subtask's
+			// output is what the user wants to paste, and "no error to copy" on a
+			// successful subtask was misleading (implied nothing to yank).
 			const item = items[this.cursorIdx];
 			if (!item) {
 				this.flashMsg = "no subtask selected";
 			} else if (data === "Y") {
 				if (item.subtask.error) this.yank(item.subtask.error);
-				else this.flashMsg = "no error to copy";
+				else if (item.subtask.result) this.yank(item.subtask.result);
+				else this.flashMsg = "no error or result to copy";
 			} else {
 				this.yank(item.subtask.id);
 			}
