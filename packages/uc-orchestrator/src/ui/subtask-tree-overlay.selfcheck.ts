@@ -720,8 +720,22 @@ const PAGEDOWN = "\x1b[6~";
 	check("F22 tree `Y` copies error text", copied.length === 2 && copied[1] === "full error text here");
 	comp.handleInput("\x1b[B"); // cursor → s2 (completed, no error)
 	comp.handleInput("Y");
-	check("F22 `Y` without error flashes", comp.flashMsg !== null && comp.flashMsg.includes("no error to copy"));
-	check("F22 `Y` without error copies nothing", copied.length === 2);
+	check("F22 `Y` without error/result flashes", comp.flashMsg !== null && comp.flashMsg.includes("no error or result to copy"));
+	check("F22 `Y` without error/result copies nothing", copied.length === 2);
+
+	// ponytail: `Y` falls back to result when there's no error — a completed
+	// subtask's output is what the user wants to paste, and "no error to copy"
+	// on a successful subtask was misleading.
+	const copied2: string[] = [];
+	const doneSub = makeSubtask("s3", { status: "completed", result: "the output line" } as any);
+	const task2 = { id: "T2", description: "t", status: "completed", controlState: "running", createdAt: 0, subtasks: [doneSub] } as unknown as TaskState;
+	const comp2 = createSubtaskTreeOverlay({
+		tasks: () => [task2], onRetry: () => {},
+		copy: (t) => { copied2.push(t); return true; },
+		onClose: () => {},
+	})(mockTui as any, theme, undefined, () => {}) as any;
+	comp2.handleInput("Y");
+	check("F22 `Y` falls back to result (no error)", copied2.length === 1 && copied2[0] === "the output line");
 }
 
 // ponytail: regression guard — yank flash shows the FULL id, not a truncated
