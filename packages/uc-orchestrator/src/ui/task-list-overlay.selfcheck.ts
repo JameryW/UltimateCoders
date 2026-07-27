@@ -204,6 +204,25 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	);
 }
 
+// ponytail: detail refreshes from the live task on each render — the snapshot
+// taken in openDetail goes stale when the task's status changes (external event
+// or the detail's own c/p/r), so the detail view must reflect the new status
+// without reopening. getTask returns the same mutable object; flip its status.
+{
+	const task = makeTask("t1", "in_progress");
+	const comp = createTaskListOverlay({
+		tasks: () => [task], getTask: () => task, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	comp.handleInput(ENTER);
+	let lines: string[] = comp.render(80);
+	check("detail shows in_progress status", lines.some((l: string) => l.includes("in_progress")));
+	// mutate the live task — render must pick up the new status
+	(task as any).status = "failed";
+	lines = comp.render(80);
+	check("detail refreshes to failed status", lines.some((l: string) => l.includes("failed")));
+	check("detail no longer shows in_progress", !lines.some((l: string) => l.includes("in_progress")));
+}
+
 // esc closes from list
 {
 	const { comp, closed } = makeComponent([makeTask("t1","in_progress")]);
