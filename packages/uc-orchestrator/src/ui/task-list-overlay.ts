@@ -92,6 +92,10 @@ class TaskListComponent {
 	// Applies to LIST mode only — detail mode is a single-task view, no list to filter.
 	private searchMode = false;
 	private query = "";
+	// ponytail: cursor task id captured when filter editing starts, so clearing
+	// the filter restores focus to the pre-filter cursor task (if still present)
+	// instead of snapping back to row 0. Null = no capture / task gone.
+	private preFilterCursorTaskId: string | null = null;
 	// ponytail: double-tap cancel confirm — first `c` arms it (+ flashMsg),
 	// second `c` fires onAction; any other key clears it (mirrors retry flashMsg).
 	private pendingCancel: string | null = null;
@@ -285,6 +289,27 @@ class TaskListComponent {
 		return `${Math.floor(diff / 86400_000)}d ago`;
 	}
 
+	// ponytail: restore cursor to the pre-filter cursor task (if still present in
+	// the now-unfiltered list), else row 0. Called when the filter is cleared so
+	// the user doesn't lose their place. Clears the capture so a subsequent filter
+	// starts fresh.
+	private restoreCursorAfterFilter(): void {
+		const tasks = this.currentTasks();
+		if (this.preFilterCursorTaskId) {
+			const idx = tasks.findIndex((t) => t.id === this.preFilterCursorTaskId);
+			if (idx >= 0) {
+				this.cursorIdx = idx;
+				this.scrollOffset = 0;
+				this.clampCursorAndScroll();
+				this.preFilterCursorTaskId = null;
+				return;
+			}
+		}
+		this.cursorIdx = 0;
+		this.scrollOffset = 0;
+		this.preFilterCursorTaskId = null;
+	}
+
 	// ponytail: clamp cursor into filtered bounds — query changes can shrink
 	// the list below the current cursor, so snap it back. Also clamps scroll.
 	private clampCursorAndScroll(): void {
@@ -400,8 +425,7 @@ class TaskListComponent {
 				// Esc in search mode: clear query + exit (full list restored)
 				this.query = "";
 				this.searchMode = false;
-				this.cursorIdx = 0;
-				this.scrollOffset = 0;
+				this.restoreCursorAfterFilter();
 				return;
 			}
 			if (data === KEY.enter || data === "\n") {
@@ -457,6 +481,14 @@ class TaskListComponent {
 		}
 		if (data === "/") {
 			// Enter filter mode (or resume editing an existing filter)
+			// ponytail: capture the pre-filter cursor task so clearing the filter
+			// restores focus to it (if still present) instead of row 0. Only capture
+			// when entering fresh (query empty) — resuming an active filter keeps the
+			// original capture.
+			if (!this.query) {
+				const t = this.currentTasks()[this.cursorIdx];
+				this.preFilterCursorTaskId = t ? t.id : null;
+			}
 			this.searchMode = true;
 			return;
 		}
@@ -466,8 +498,7 @@ class TaskListComponent {
 			// only a second Esc (or Esc with no filter) closes the overlay.
 			if (this.query) {
 				this.query = "";
-				this.cursorIdx = 0;
-				this.scrollOffset = 0;
+				this.restoreCursorAfterFilter();
 				return;
 			}
 			this.done();
