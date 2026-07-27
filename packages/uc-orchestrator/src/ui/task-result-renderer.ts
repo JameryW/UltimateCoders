@@ -122,6 +122,17 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 					if (st.review) {
 						const label = st.review.approved ? "✓ approved" : "✗ rejected";
 						lines.push(theme.fg(st.review.approved ? "success" : "error", `    ${label}`));
+						// ponytail: surface review issues/suggestions — the verdict alone
+						// hides why a subtask was rejected. The completion message has no
+						// row-budget constraint (unlike the subtask-tree overlay's 2-line
+						// window), so each issue (•) / suggestion (↳) gets its own dim line,
+						// capped to width. `?? []` guards older records missing the arrays.
+						const issues = st.review.issues ?? [];
+						const suggestions = st.review.suggestions ?? [];
+						const issueBudget = Math.max(0, width - 6);
+						const fit = (t: string) => t.length > issueBudget - 1 ? t.slice(0, Math.max(0, issueBudget - 1)) + "…" : t;
+						for (const issue of issues) lines.push(theme.fg("dim", `      • ${fit(issue)}`));
+						for (const sug of suggestions) lines.push(theme.fg("dim", `      ↳ ${fit(sug)}`));
 					}
 				}
 				return lines;

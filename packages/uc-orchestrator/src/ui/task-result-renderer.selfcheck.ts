@@ -85,6 +85,31 @@ const renderer = createTaskResultRenderer();
 	check("expanded unreviewed → no verdict line", !bareLines.some((l: string) => l.includes("approved")));
 }
 
+// ponytail: review issues/suggestions in the expanded completion message —
+// the verdict alone hides why a subtask was rejected. Each issue (•) and
+// suggestion (↳) now gets its own dim line. Approved reviews can still carry
+// suggestions, so both render regardless of verdict.
+{
+	const rejected = makeSubtask("s1", "failed", "bad", "boom err") as SubtaskResult;
+	(rejected as any).review = { approved: false, issues: ["missing tests", "lint error"], suggestions: ["add fixture"] };
+	const comp = renderer(makeMessage(true, [rejected], "failed"), { expanded: true }, theme)!;
+	const lines = (comp as any).render(80) as string[];
+	check("expanded shows issue #1", lines.some((l: string) => l.includes("• missing tests")));
+	check("expanded shows issue #2", lines.some((l: string) => l.includes("• lint error")));
+	check("expanded shows suggestion", lines.some((l: string) => l.includes("↳ add fixture")));
+	// approved with suggestions still shows them
+	const approved = makeSubtask("s2", "completed", "ok") as SubtaskResult;
+	(approved as any).review = { approved: true, issues: [], suggestions: ["nice work"] };
+	const aLines = (renderer(makeMessage(true, [approved]), { expanded: true }, theme)! as any).render(80) as string[];
+	check("expanded approved shows suggestion", aLines.some((l: string) => l.includes("↳ nice work")));
+	// empty issues/suggestions → no bullet/arrow lines
+	const empty = makeSubtask("s3", "completed", "ok") as SubtaskResult;
+	(empty as any).review = { approved: true, issues: [], suggestions: [] };
+	const eLines = (renderer(makeMessage(true, [empty]), { expanded: true }, theme)! as any).render(80) as string[];
+	check("expanded empty issues → no bullet", !eLines.some((l: string) => l.includes("•")));
+	check("expanded empty suggestions → no arrow", !eLines.some((l: string) => l.includes("↳")));
+}
+
 // expanded narrow (width 30) — subtask desc lines truncated to fit
 // (summary header is a fixed message header, OMP wraps it — not in scope)
 {
