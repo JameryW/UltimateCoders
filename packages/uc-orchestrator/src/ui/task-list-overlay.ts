@@ -169,8 +169,8 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · PgUp/PgDn · g/G · y copy · / filter · Esc close",
-				"  ↑↓ nav · Enter · c/p/r · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · t tree · PgUp/PgDn · y copy · / filter · Esc close",
+				"  ↑↓ nav · Enter · c/p/r · t tree · Esc close",
 			)));
 		}
 		lines.push("");
@@ -370,8 +370,11 @@ class TaskListComponent {
 			// ponytail: command keys that fall through to normal handling even in
 			// search-edit (exit editing, keep filter, then act). Listed here so the
 			// printable-char branch below does NOT swallow them into the query — c/C
-			// (cancel), p (pause), r (resume), y (copy id) would otherwise append to
-			// the query and be unreachable while editing. Mirrors the subtask-tree fix.
+			// (cancel), p (pause), r (resume), y (copy id), n (next-failed) would
+			// otherwise append to the query and be unreachable while editing. `t` is
+			// NOT here: it's a letter users type into filters ("beta"), so in
+			// search-edit it appends to the query; exit editing (Esc/Enter/nav) first
+			// to use `t` as a jump. Mirrors the subtask-tree fix.
 			const searchCmdKeys = ["c", "C", "p", "r", "y", "n"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
@@ -494,6 +497,22 @@ class TaskListComponent {
 			} else {
 				this.cursorIdx = next;
 				this.flashMsg = null;
+			}
+		} else if (data === "t") {
+			// ponytail: `t` in list — jump from the cursor task straight to its
+			// subtask tree, mirroring detail-mode `t` (the reverse of the tree's
+			// `d` → detail). Without this, list-mode `t` was a silent no-op; the
+			// user had to Enter→detail→t (two keys). No cursor task / no opener
+			// → flashMsg instead of silent no-op.
+			const task = tasks[this.cursorIdx];
+			if (!task) {
+				this.setFlash("no task selected");
+			} else if (!this.opts.onJumpToTree) {
+				this.setFlash("jump unavailable");
+			} else {
+				const id = task.id;
+				this.done();
+				this.opts.onJumpToTree(id);
 			}
 		}
 		// clamp scroll to cursor
