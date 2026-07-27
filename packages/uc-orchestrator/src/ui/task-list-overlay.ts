@@ -443,8 +443,12 @@ class TaskListComponent {
 		} else if (data === "G") {
 			this.cursorIdx = Math.max(0, tasks.length - 1);
 		} else if (data === KEY.enter || data === "\n") {
+			// ponytail: S6 — Enter on an empty / filtered-empty list sets a flashMsg so
+			// the user knows the keystroke was received, instead of silent no-op.
+			// Mirrors the subtask-tree's Enter empty-list feedback.
 			const task = tasks[this.cursorIdx];
 			if (task) this.openDetail(task.id);
+			else this.flashMsg = "no task selected";
 		} else if (data === "c" || data === "C") {
 			// ponytail: double-tap cancel. First c arms (flashMsg naming the task);
 			// second c fires onAction. Any non-c key clears (handled at top of fn).
@@ -476,6 +480,7 @@ class TaskListComponent {
 			// ponytail: F22 — yank cursor task id for pasting into chat/tickets/terminal.
 			const task = tasks[this.cursorIdx];
 			if (task) this.yank(task.id);
+			else this.flashMsg = "no task selected";
 		} else if (data === "n") {
 			// ponytail: jump to the NEXT failed TASK after the cursor — the subtask-tree
 			// has n/p for subtask-level; the task-list had no task-level jump, so finding
