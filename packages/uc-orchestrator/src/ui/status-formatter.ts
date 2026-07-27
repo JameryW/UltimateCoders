@@ -32,8 +32,12 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		const icon = statusIcon(task.status, theme);
 		const completed = task.subtasks.filter((s) => s.status === "completed").length;
 		const total = task.subtasks.length;
+		// ponytail: only show completed/total when the task HAS subtasks — a
+		// 0-subtask task rendered "0/0", which read as "0 completed" instead of
+		// "no subtasks". Mirrors the task-list overlay row + formatTaskDetail guards.
+		const countTag = total > 0 ? `${completed}/${total} ` : "";
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
-		lines.push(`${icon} ${task.id.slice(0, 14)} ${completed}/${total} ${task.status}${ctrl}`);
+		lines.push(`${icon} ${task.id.slice(0, 14)} ${countTag}${task.status}${ctrl}`);
 		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc
 		// budget; cap the plain desc so the toast line fits the terminal.
 		lines.push(theme.fg("dim", `  ${cap(task.description, width !== undefined ? width - 2 : undefined, 60)}`));
