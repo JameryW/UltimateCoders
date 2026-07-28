@@ -173,7 +173,7 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · t tree · PgUp/PgDn · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · t tree · PgUp/PgDn · y/Y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · c/p/r · t tree · Esc close",
 			)));
 		}
@@ -347,9 +347,16 @@ class TaskListComponent {
 				this.setFlash("filter not available in detail view");
 				return;
 			}
-			// ponytail: F22 — yank the detail task's id for pasting elsewhere.
+			// ponytail: F22 — `y` yanks the detail task's id; `Y` yanks its error
+			// text (mirrors list-mode `Y` + the subtask-tree's `Y`).
 			if (data === "y") {
 				if (this.detailTaskId) this.yank(this.detailTaskId);
+				return;
+			}
+			if (data === "Y") {
+				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
+				if (dt?.error) this.yank(dt.error);
+				else this.setFlash("no error to copy");
 				return;
 			}
 			// ponytail: S3 — detail-mode quick actions fire on the detail's own task.
@@ -470,8 +477,9 @@ class TaskListComponent {
 			// otherwise append to the query and be unreachable while editing. `t` is
 			// NOT here: it's a letter users type into filters ("beta"), so in
 			// search-edit it appends to the query; exit editing (Esc/Enter/nav) first
-			// to use `t` as a jump. Mirrors the subtask-tree fix.
-			const searchCmdKeys = ["c", "C", "p", "r", "y", "n"];
+			// to use `t` as a jump. `Y` joins the fall-through set (yank error).
+			// Mirrors the subtask-tree fix.
+			const searchCmdKeys = ["c", "C", "p", "r", "y", "Y", "n"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -613,11 +621,19 @@ class TaskListComponent {
 				this.flashMsg = `already ${task.status}`;
 			} else if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
 			else if (task) this.flashMsg = "resume unavailable";
-		} else if (data === "y") {
-			// ponytail: F22 — yank cursor task id for pasting into chat/tickets/terminal.
+		} else if (data === "y" || data === "Y") {
+			// ponytail: F22 — `y` yanks cursor task id; `Y` yanks its error text
+			// (mirrors the subtask-tree's `Y`). No error → flash, so the user
+			// knows `Y` registered but nothing to copy.
 			const task = tasks[this.cursorIdx];
-			if (task) this.yank(task.id);
-			else this.flashMsg = "no task selected";
+			if (!task) {
+				this.flashMsg = "no task selected";
+			} else if (data === "Y") {
+				if (task.error) this.yank(task.error);
+				else this.flashMsg = "no error to copy";
+			} else {
+				this.yank(task.id);
+			}
 		} else if (data === "n") {
 			// ponytail: jump to the NEXT failed TASK after the cursor — the subtask-tree
 			// has n/p for subtask-level; the task-list had no task-level jump, so finding

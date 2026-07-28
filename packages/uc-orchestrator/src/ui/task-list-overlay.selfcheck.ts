@@ -968,6 +968,34 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F22 copy failure flashes 'copy failed'", comp2.flashMsg !== null && comp2.flashMsg.includes("copy failed"));
 }
 
+// ponytail: `Y` yanks the cursor task's error text (mirrors subtask-tree `Y`).
+// No error → "no error to copy" flash. Detail-mode `Y` reads via getTask.
+{
+	const copied: string[] = [];
+	const tasks = [
+		Object.assign(makeTask("t1", "failed"), { error: "task blew up" }),
+		makeTask("t2", "in_progress"),
+	] as TaskState[];
+	const mk = (copy: (t: string) => boolean) => createTaskListOverlay({
+		tasks: () => tasks,
+		getTask: (id) => tasks.find((t) => t.id === id),
+		copy, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	const comp = mk((t) => { copied.push(t); return true; });
+	comp.handleInput("Y"); // cursor on t1 (failed, has error)
+	check("F22 list `Y` copies task error", copied.length === 1 && copied[0] === "task blew up");
+	comp.handleInput(DOWN); // → t2 (no error)
+	comp.handleInput("Y");
+	check("F22 list `Y` no error flashes", comp.flashMsg !== null && comp.flashMsg.includes("no error to copy"));
+	check("F22 list `Y` no error copies nothing", copied.length === 1);
+
+	// detail-mode `Y`
+	comp.handleInput(UP); // → t1
+	comp.handleInput(ENTER);
+	comp.handleInput("Y");
+	check("F22 detail `Y` copies task error", copied.length === 2 && copied[1] === "task blew up");
+}
+
 // ponytail: regression guard — yank flash shows the FULL id, not a truncated
 // prefix. Was slice(0,8), which rendered `copied task_abc1` for a long id and
 // hid what actually landed on the clipboard. A long id must appear verbatim.
