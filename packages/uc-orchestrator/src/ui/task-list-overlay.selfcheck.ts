@@ -631,6 +631,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("armed flash shows full id", comp.flashMsg !== null && comp.flashMsg.includes(longId));
 }
 
+// ponytail: fireAction success flash shows the FULL task id (was slice(0,8)) —
+// mirrors the cancel-armed full-id fix; multiple tasks can share an 8-char prefix.
+{
+	const longId = "task_with_a_long_id_abc123";
+	const { comp } = makeComponent(
+		[makeTask(longId, "in_progress")],
+		{ onAction: () => true },
+	);
+	comp.handleInput("c"); // arm
+	comp.handleInput("c"); // fire → "cancelled <full id>"
+	check("fireAction success flash shows full id", comp.flashMsg !== null && comp.flashMsg.includes(longId));
+}
+
 // double-tap abort: first `c` arms, a nav key clears without firing.
 {
 	const calls: [string, string][] = [];
