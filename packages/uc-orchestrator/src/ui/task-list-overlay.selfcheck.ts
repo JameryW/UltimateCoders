@@ -385,6 +385,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("age present on task line", lines.some((l: string) => l.includes("ago")));
 }
 
+// ponytail: list row desc budget subtracts the ACTUAL countTag length — a task
+// with a long countTag ("10/10") overflowed width under the old fixed width-34
+// budget (assumed "2/3"=4 chars), letting the compositor truncate the desc.
+// No-ANSI theme → string.length == visible width.
+{
+	const task = makeTask("t1", "in_progress", 10);
+	task.description = "d".repeat(60);
+	const { comp } = makeComponent([task]);
+	const lines = comp.render(40);
+	const row = lines.find((l: string) => l.includes("t1")) ?? "";
+	check("row with long countTag fits width", row.length <= 40);
+}
+
 // ponytail: formatAge clamps a future createdAt (clock skew) to "0s ago" —
 // was "-5s ago" when ts > Date.now(). Verified via render (formatAge is private).
 {

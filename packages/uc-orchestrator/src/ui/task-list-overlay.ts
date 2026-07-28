@@ -213,11 +213,13 @@ class TaskListComponent {
 			// Previously the 2nd age line doubled the row count, pushing rows
 			// past the overlay height while the footer still claimed 1-N fit.
 			const ageSuffix = this.theme.fg("dim", ` ${age}`);
-			const desc = task.description.slice(0, Math.max(0, width - 34 - age.length));
-			// ponytail: only show completed/total when the task HAS subtasks — a
-			// 0-subtask task rendered "0/0", which read as "0 completed" instead of
-			// "no subtasks". Mirrors formatTaskDetail's header countTag guard.
+			// ponytail: budget desc by the ACTUAL prefix length — cursor(2)+badge(4)+
+			// space+id(14)+space+countTag(varies)+space+age(1+age.len). The old fixed
+			// width-34 assumed a 4-char countTag ("2/3 "), but "10/10 " is 6 — the
+			// row overflowed width and the compositor truncated the desc right side.
 			const countTag = total > 0 ? `${completed}/${total} ` : "";
+			const prefixLen = 2 + 4 + 1 + 14 + 1 + countTag.length + 1 + age.length + 1;
+			const desc = task.description.slice(0, Math.max(0, width - prefixLen));
 
 			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${countTag}${desc}${ageSuffix}`);
 		}
