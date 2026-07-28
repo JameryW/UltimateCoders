@@ -72,6 +72,25 @@ const PAGEDOWN = "\x1b[6~";
 	check("collapsed one subtask = 4 lines", lines.length === 4);
 }
 
+// ponytail: subtask row desc budget subtracts the ACTUAL prefix+suffix (id+deps+
+// elapsed) — a normal id + dep list overflowed width under the old fixed width-16,
+// letting the compositor truncate deps/elapsed (live elapsed on running rows was
+// the most common casualty). No-ANSI theme → string.length == visible width.
+// Use width=30 (narrow) so a long desc + deps + elapsed would overflow without
+// the budget fix.
+{
+	const st = makeSubtask("s1", {
+		status: "running",
+		dependsOn: ["dep1", "dep2", "dep3"],
+		startedAt: Date.now() - 60000,
+		description: "d".repeat(60),
+	});
+	const { comp } = makeComponent([st]);
+	const lines = comp.render(30);
+	const row = lines.find((l: string) => l.includes("s1:")) ?? "";
+	check("row with deps+elapsed fits narrow width", row.length <= 30);
+}
+
 // ponytail: dep-list collapse — a subtask depending on many roots emits
 // "←+N deps" once the joined ids exceed half the width (mirrors status-formatter's
 // formatTaskDetail). Was unbounded `←d1,d2,…`, overflowing the row and truncating

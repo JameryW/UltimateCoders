@@ -287,7 +287,6 @@ class SubtaskTreeComponent {
 			const isCursor = globalIdx === this.cursorIdx;
 			const cursor = isCursor ? this.theme.bold("›") : " ";
 			const icon = statusIcon(item.subtask.status, this.theme);
-			const desc = item.subtask.description.slice(0, Math.max(0, width - 16));
 			// ponytail: collapse long dep lists to "←+N deps" (mirrors status-formatter's
 			// formatTaskDetail) — a subtask depending on many roots emitted `←d1,d2,d3…`
 			// unbounded, overflowing the row and letting the compositor truncate the
@@ -302,9 +301,17 @@ class SubtaskTreeComponent {
 			}
 			const deps = depsPlain ? this.theme.fg("dim", depsPlain) : "";
 			// ponytail: F8 — live elapsed on running rows (re-rendered by F7 timer).
-			const elapsed = item.subtask.status === "running" && item.subtask.startedAt
-				? this.theme.fg("dim", ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`)
+			const elapsedPlain = item.subtask.status === "running" && item.subtask.startedAt
+				? ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`
 				: "";
+			const elapsed = elapsedPlain ? this.theme.fg("dim", elapsedPlain) : "";
+			// ponytail: budget desc by the ACTUAL prefix+suffix — cursor(2)+icon(1)+space+
+			// id+":"+space+depsPlain+elapsedPlain. The old fixed width-16 assumed a short
+			// id and ignored deps/elapsed, so a long id or dep list overflowed the row and
+			// the compositor truncated deps/elapsed (live elapsed on running rows suffered).
+			// 2 leading spaces + cursor(1) + space(1) + icon(1) + space(1) + id + ":"(1) + space(1)
+			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length;
+			const desc = item.subtask.description.slice(0, Math.max(0, width - prefixLen));
 
 			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}`);
 
