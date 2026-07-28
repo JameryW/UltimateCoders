@@ -368,6 +368,14 @@ class TaskListComponent {
 				return;
 			}
 			if (data === "p") {
+				// ponytail: mirror list-mode pause terminal-status guard — completed/
+				// cancelled can't be paused; flash. Falls through to fireAction when
+				// getTask is unavailable.
+				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
+				if (dt && (dt.status === "completed" || dt.status === "cancelled")) {
+					this.setFlash(`already ${dt.status}`);
+					return;
+				}
 				this.fireAction(this.detailTaskId, "pause", "paused");
 				return;
 			}
@@ -586,9 +594,14 @@ class TaskListComponent {
 				this.flashMsg = "cancel unavailable";
 			}
 		} else if (data === "p") {
+			// ponytail: mirror the cancel/resume terminal-status guards — a completed/
+			// cancelled task can't be paused, so flash instead of firing onAction(pause)
+			// the server would reject. `in_progress`/`planning` are pausable; left to server.
 			const task = tasks[this.cursorIdx];
 			// ponytail: F3 — mirror c's "cancel unavailable" so p isn't a silent dead key.
-			if (task && this.opts.onAction) this.fireAction(task.id, "pause", "paused");
+			if (task && (task.status === "completed" || task.status === "cancelled")) {
+				this.flashMsg = `already ${task.status}`;
+			} else if (task && this.opts.onAction) this.fireAction(task.id, "pause", "paused");
 			else if (task) this.flashMsg = "pause unavailable";
 		} else if (data === "r") {
 			// ponytail: mirror the cancel terminal-status guard — a completed/cancelled
