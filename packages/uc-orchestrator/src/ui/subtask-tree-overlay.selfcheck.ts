@@ -196,6 +196,9 @@ const PAGEDOWN = "\x1b[6~";
 	check("r on failed subtask invokes onRetry", args1 !== null);
 	check("onRetry receives correct taskId", args1?.taskId === "T");
 	check("onRetry receives cursor's subtaskId", args1?.subtaskId === "s1");
+	// ponytail: retry surfaces a "retrying <id>…" flash — the status flip is async,
+	// so without feedback the user can't tell `r` registered.
+	check("r sets 'retrying…' flash", comp.flashMsg !== null && comp.flashMsg.includes("retrying") && comp.flashMsg.includes("s1".slice(0, 8)));
 
 	// move cursor down to s2, retry again
 	holder.args = null;
