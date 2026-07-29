@@ -138,8 +138,12 @@ class ProgressWidgetComponent {
 			const waveTag = (waveIdx !== undefined && totalWaves !== undefined && totalWaves > 0)
 				? this.theme.fg("dim", ` · wave ${waveIdx + 1}/${totalWaves}`)
 				: "";
+			// ponytail: failed-count marker next to the count text — the bar shows the
+			// failed segment in red (#427), but the count text "3/5" didn't surface the
+			// number. Append " ·N✗" only when failed > 0 (no noise on healthy tasks).
+			const failTag = failed > 0 ? this.theme.fg("error", ` ·${failed}✗`) : "";
 			lines.push(
-				`  ${bar} ${completed}/${total}${waveTag}`,
+				`  ${bar} ${completed}/${total}${failTag}${waveTag}`,
 			);
 		}
 
