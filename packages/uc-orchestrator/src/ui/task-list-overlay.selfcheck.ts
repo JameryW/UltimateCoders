@@ -470,6 +470,42 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: filter matches subtask status too — a task stays "in_progress"
+// while a subtask fails (the common triage state), so `/failed` matched only
+// failed tasks and hid the in_progress task with a failed subtask. Now `/failed`
+// surfaces every task that HAS a failed subtask. Build a custom task whose
+// status is in_progress but one subtask is failed.
+{
+	const mkSub = (id: string, status: string) => ({
+		id, description: `sub ${id}`, status, dependsOn: [],
+		result: undefined, error: undefined, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	const inProgWithFailedSub = {
+		id: "run1", description: "running with a failed sub", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSub("run1-s0", "completed"), mkSub("run1-s1", "failed")],
+	} as unknown as TaskState;
+	const cleanRunning = makeTask("run2", "in_progress"); // subtasks: completed + pending, no failed
+	const done = makeTask("done1", "completed");
+	const { comp } = makeComponent([inProgWithFailedSub, cleanRunning, done]);
+	comp.handleInput("/");
+	comp.handleInput("f");
+	comp.handleInput("a");
+	comp.handleInput("i");
+	comp.handleInput("l");
+	comp.handleInput("e");
+	comp.handleInput("d");
+	comp.handleInput(ENTER);
+	const lines = comp.render(80);
+	// run1 (in_progress but has a failed subtask) → matched via subtask status
+	check("filter /failed shows in_progress task with failed subtask", lines.some((l: string) => l.includes("run1")));
+	// run2 (no failed subtask) → filtered out
+	check("filter /failed hides task with no failed subtask", !lines.some((l: string) => l.includes("run2")));
+	// done1 (status completed, no failed subtask) → filtered out
+	check("filter /failed hides completed task with no failed subtask", !lines.some((l: string) => l.includes("done1")));
+}
+
 // ponytail: command keys (y copy) fall through in search-edit — the printable
 // handler swallowed ALL printable chars, so `y` appended to the query instead of
 // yanking the cursor task's id. Now excluded so it exits editing + acts.
