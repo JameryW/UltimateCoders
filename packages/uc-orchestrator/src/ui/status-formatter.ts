@@ -36,7 +36,12 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 	}
 
 	const lines: string[] = [];
-	for (const task of tasks) {
+	for (const i of tasks.keys()) {
+		const task = tasks[i];
+		// ponytail: blank line between tasks (not before the first) — a /uc status
+		// toast with many tasks was a wall of text; the blank separates per-task
+		// (id+status / description) pairs so the user can visually chunk.
+		if (i > 0) lines.push("");
 		const icon = statusIcon(task.status, theme);
 		const completed = task.subtasks.filter((s) => s.status === "completed").length;
 		const failed = task.subtasks.filter((s) => s.status === "failed").length;
@@ -133,12 +138,12 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// task's "Subtasks:" hid that 3 succeeded + 2 failed until the user scanned
 	// every row. Append "(X done, Y failed, Z running)"-style counts (only non-zero
 	// buckets, error-colored for failed) so the header summarizes the breakdown.
-	const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
+	const runningCount = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 	const cancelled = task.subtasks.filter((s) => s.status === "cancelled").length;
-	const other = total - completed - failed - running - cancelled;
+	const other = total - completed - failed - runningCount - cancelled;
 	const parts: string[] = [];
 	if (failed > 0) parts.push(theme.fg("error", `${failed} failed`));
-	if (running > 0) parts.push(`${running} running`);
+	if (runningCount > 0) parts.push(`${runningCount} running`);
 	if (cancelled > 0) parts.push(`${cancelled} cancelled`);
 	if (other > 0) parts.push(`${other} other`);
 	if (completed > 0 && completed < total) parts.push(`${completed} done`);

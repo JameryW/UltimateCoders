@@ -149,6 +149,22 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("empty list hints /uc submit", lines.some((l) => l.includes("/uc submit")));
 }
 
+// ponytail: blank line separates tasks in the notify list — a /uc status toast
+// with multiple tasks was a wall of text; the blank separates per-task pairs.
+// Only between tasks (not before the first). Single task → no blank.
+{
+	const tasks = [
+		{ id: "T1", description: "first task", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState,
+		{ id: "T2", description: "second task", status: "completed", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState,
+	];
+	const lines = formatTaskList(tasks, theme);
+	// 2 tasks × 2 lines + 1 blank separator = 5 lines
+	check("formatTaskList multi-task: blank line between tasks", lines.length === 5 && lines[2] === "");
+	// single task → no blank separator
+	const single = formatTaskList([tasks[0]], theme);
+	check("formatTaskList single-task: no blank separator", single.length === 2 && !single.includes(""));
+}
+
 // ponytail: 0-subtask task row hides completed/total (no "0/0") — mirrors the
 // task-list overlay row + formatTaskDetail guards. A task WITH subtasks shows it.
 {
