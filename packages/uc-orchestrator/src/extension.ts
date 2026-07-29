@@ -634,7 +634,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"",
 							"In-overlay keys:",
 							"  ↑↓/jk nav · Enter expand/detail · / filter · Esc close",
-							"  Task list:  c cancel (2×) · p pause · r resume · n next-failed · y copy id · Y copy err · t subtask tree",
+							"  Task list:  c cancel (2×) · p pause · r resume · n next-failed · N prev-failed · y copy id · Y copy err · t subtask tree",
 							"  Subtask tree:  R retry · n next-failed · p prev-failed · d task detail · y copy id · Y copy err/result",
 						].join("\n"),
 						parts[0] && !SUBCOMMANDS.includes(parts[0]) ? "warning" : "info",

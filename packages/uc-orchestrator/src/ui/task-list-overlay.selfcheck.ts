@@ -100,6 +100,52 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp2.handleInput("n");
 	check("n with no failed flashes 'no failed tasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
 }
+// ponytail: `N` — prev-failed (complement of `n`). `p` is pause, so prev-failed
+// has no lowercase home; `N` (uppercase, unused) mirrors vim N/n. Wraps to the
+// last failed when the cursor is at/before the first.
+{
+	const tasks = [
+		makeTask("t0", "failed"),
+		makeTask("t1", "in_progress"),
+		makeTask("t2", "failed"),
+		makeTask("t3", "failed"),
+	];
+	const { comp } = makeComponent(tasks);
+	comp.cursorIdx = 2; // on t2 → prev failed = t0 (idx 0)
+	comp.handleInput("N");
+	check("N from t2 → t0 (idx 0)", comp.cursorIdx === 0);
+	comp.handleInput("N"); // t0 (first failed) → wraps to t3 (idx 3, last failed)
+	check("N from first failed wraps to last (idx 3)", comp.cursorIdx === 3);
+	comp.handleInput("N"); // t3 → t2 (idx 2)
+	check("N from t3 → t2 (idx 2)", comp.cursorIdx === 2);
+	// no failed → flashMsg, cursor unchanged
+	const { comp: comp2 } = makeComponent([makeTask("t0", "in_progress")]);
+	comp2.handleInput("N");
+	check("N with no failed flashes 'no failed tasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
+}
+// ponytail: sole failed task — `N` wraps back to the cursor itself → "only failed task".
+{
+	const { comp } = makeComponent([
+		makeTask("t0", "completed"),
+		makeTask("t1", "failed"),
+		makeTask("t2", "in_progress"),
+	]);
+	comp.cursorIdx = 1; // on the sole failed (t1)
+	comp.handleInput("N");
+	check("N on sole failed flashes 'only failed task'", comp.flashMsg !== null && comp.flashMsg.includes("only failed task"));
+	check("N on sole failed cursor unchanged", comp.cursorIdx === 1);
+}
+// N in search-edit falls through (not appended to query) — mirrors `n`.
+{
+	const tasks = [makeTask("t0", "failed"), makeTask("t1", "in_progress"), makeTask("t2", "failed")];
+	const { comp } = makeComponent(tasks);
+	comp.cursorIdx = 0;
+	comp.handleInput("/");
+	comp.handleInput("N");
+	check("N in search-edit exits searchMode", comp.searchMode === false);
+	check("N in search-edit did not append to query", comp.query === "");
+	check("N in search-edit jumped to prev failed (idx 2)", comp.cursorIdx === 2);
+}
 // ponytail: sole failed task — `n` wraps back to the cursor itself, so without
 // feedback it's a silent no-op. Now flashes "only failed task".
 {
@@ -894,9 +940,13 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	// signal "(2×)" so a first press (which arms, not cancels) isn't read as a
 	// dead key. Was bare "c cancel" — misleading.
 	check("wide hint marks cancel as 2× confirm", wide.includes("c cancel (2×)"));
+	// ponytail: N is prev-failed (complement of n next-failed). `p` is pause, so
+	// the hint must advertise N or the prev-failure path stays undiscoverable.
+	check("wide hint has N prev-failed", wide.includes("N prev-failed"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has c/p/r", narrow.includes("c/p/r"));
+	check("narrow hint has n/N failed", narrow.includes("n/N failed"));
 	check("narrow hint has Esc close", narrow.includes("Esc close"));
 	check("narrow hint does NOT have PgUp/PgDn", !narrow.includes("PgUp/PgDn"));
 }
