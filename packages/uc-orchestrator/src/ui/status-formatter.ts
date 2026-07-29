@@ -104,7 +104,22 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	}
 
 	lines.push("");
-	lines.push(theme.fg("accent", "Subtasks:"));
+	// ponytail: subtask-status breakdown in the "Subtasks:" header — the rows below
+	// show per-subtask status, but the header gave no at-a-glance tally. A failed
+	// task's "Subtasks:" hid that 3 succeeded + 2 failed until the user scanned
+	// every row. Append "(X done, Y failed, Z running)"-style counts (only non-zero
+	// buckets, error-colored for failed) so the header summarizes the breakdown.
+	const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
+	const cancelled = task.subtasks.filter((s) => s.status === "cancelled").length;
+	const other = total - completed - failed - running - cancelled;
+	const parts: string[] = [];
+	if (failed > 0) parts.push(theme.fg("error", `${failed} failed`));
+	if (running > 0) parts.push(`${running} running`);
+	if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+	if (other > 0) parts.push(`${other} other`);
+	if (completed > 0 && completed < total) parts.push(`${completed} done`);
+	const breakdown = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+	lines.push(theme.fg("accent", "Subtasks:") + theme.fg("dim", breakdown));
 
 	// ponytail: true topological depth (longest dependency chain to a root),
 	// not dependsOn.length. A subtask depending on 3 roots was indented to

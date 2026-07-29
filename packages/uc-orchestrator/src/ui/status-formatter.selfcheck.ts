@@ -417,5 +417,27 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("detail header 0-subtask has no ✗", !h0.includes("✗"));
 }
 
+// ponytail: subtask-status breakdown in the "Subtasks:" header — "(X done, Y
+// failed, Z running)" summarizes the rows below. Only non-zero buckets; failed
+// is error-colored. No breakdown when all the same bucket (all-completed = bare).
+{
+	const mkSub = (status: string) => ({ id: "s", description: "d", status, dependsOn: [], files: [] } as any);
+	const task = (subs: any[]) => ({ id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState);
+	// 2 completed, 2 failed, 1 running → "(2 failed, 1 running, 2 done)"
+	const mixed = formatTaskDetail(task([mkSub("completed"), mkSub("completed"), mkSub("failed"), mkSub("failed"), mkSub("running")]), theme, 80);
+	const hdr = mixed.find((l) => l.includes("Subtasks:")) ?? "";
+	check("Subtasks header shows failed count", hdr.includes("2 failed"));
+	check("Subtasks header shows running count", hdr.includes("1 running"));
+	check("Subtasks header shows done count", hdr.includes("2 done"));
+	// all-completed → no breakdown (the total row count already says it)
+	const allDone = formatTaskDetail(task([mkSub("completed"), mkSub("completed")]), theme, 80);
+	const hdr2 = allDone.find((l) => l.includes("Subtasks:")) ?? "";
+	check("Subtasks header no breakdown when all completed", hdr2.includes("Subtasks:") && !hdr2.includes("("));
+	// 0-subtask task → bare "Subtasks:" (no counts)
+	const empty = formatTaskDetail(task([]), theme, 80);
+	const hdr3 = empty.find((l) => l.includes("Subtasks:")) ?? "";
+	check("Subtasks header bare for 0 subtasks", hdr3.includes("Subtasks:") && !hdr3.includes("("));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
