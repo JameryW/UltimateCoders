@@ -253,6 +253,9 @@ class SubtaskTreeComponent {
 
 		if (this.flatItems.length === 0) {
 			lines.push(this.theme.fg("dim", "  No tasks"));
+			// ponytail: mirror the task-list empty-state — a tree opened to no
+			// tasks (Ctrl+T) shows "No tasks" but no cue how to add one.
+			lines.push(this.theme.fg("dim", "  /uc submit <description> to add one"));
 			return lines;
 		}
 

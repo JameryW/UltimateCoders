@@ -657,6 +657,10 @@ const PAGEDOWN = "\x1b[6~";
 	comp.handleInput("\r"); // Enter
 	check("Enter on empty list sets 'no subtask selected' flashMsg",
 		comp.flashMsg !== null && comp.flashMsg.includes("no subtask selected"));
+	// ponytail: empty tree must hint the submit path — mirror task-list empty state.
+	const lines = comp.render(80) as string[];
+	check("empty tree renders No tasks", lines.some((l: string) => l.includes("No tasks")));
+	check("empty tree hints /uc submit", lines.some((l: string) => l.includes("/uc submit")));
 }
 
 // ponytail: S6 — `d` on empty subtask list sets flashMsg, does NOT call onJumpToTask,
