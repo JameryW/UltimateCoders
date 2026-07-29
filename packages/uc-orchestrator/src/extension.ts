@@ -125,6 +125,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 		verb: string,
 		tid: string,
 		r: Extract<import("./orchestrator/orchestrator").ControlOutcome, { ok: false }>,
+		currentStatus?: string,
 	): string {
 		const list = (r.candidates ?? []).join(", ") || "(none)";
 		switch (r.reason) {
@@ -135,8 +136,27 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "subtask_not_found":
 				return `${verb} failed: no such subtask in task. Subtasks: ${list}`;
 			case "bad_state":
-				return `${verb} failed: task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
+				// ponytail: name the current state so the user knows WHY the verb was
+				// rejected (was "not in a cancel-able state" — no hint whether the task
+				// was completed/paused/failed). currentStatus is re-resolved at the call
+				// site; absent only when resolveTask itself failed (then bad_state wouldn't
+				// fire — task exists for bad_state), so the fallback stays generic.
+				return currentStatus
+					? `${verb} failed: task "${tid}" is ${currentStatus}, not ${verb.toLowerCase()}-able`
+					: `${verb} failed: task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
 		}
+	}
+
+	// ponytail: re-resolve the task's CURRENT status for the bad_state failure
+	// message — cancelTask/pauseTask/resumeTask reject on state, so the task
+	// exists; resolveTask(idOrPrefix) returns it (or a ControlOutcome if the
+	// prefix itself was ambiguous/not_found, in which case bad_state wouldn't
+	// have fired). controlState superseded by status when it differs (paused
+	// keeps status=in_progress, so prefer the badge the user sees: controlState).
+	function currentStatusFor(tid: string): string | undefined {
+		const r = orchestrator.resolveTask(tid);
+		if ("status" in r) return r.controlState && r.controlState !== "running" ? `${r.status} [${r.controlState}]` : r.status;
+		return undefined;
 	}
 
 	function handleOrchestratorEvent(
@@ -521,7 +541,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					const r = await orchestrator.cancelTask(tid, subtaskId, ctx);
 					if (!r.ok) {
-						ctx.ui.notify(controlFailureMessage("Cancel", tid, r), "error");
+						ctx.ui.notify(controlFailureMessage("Cancel", tid, r, currentStatusFor(tid)), "error");
 					}
 					return;
 				}
@@ -536,7 +556,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					const r = await orchestrator.pauseTask(tid, ctx);
 					if (!r.ok) {
-						ctx.ui.notify(controlFailureMessage("Pause", tid, r), "error");
+						ctx.ui.notify(controlFailureMessage("Pause", tid, r, currentStatusFor(tid)), "error");
 					}
 					return;
 				}
@@ -549,7 +569,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					const r = await orchestrator.resumeTask(tid, ctx);
 					if (!r.ok) {
-						ctx.ui.notify(controlFailureMessage("Resume", tid, r), "error");
+						ctx.ui.notify(controlFailureMessage("Resume", tid, r, currentStatusFor(tid)), "error");
 					}
 					return;
 				}
