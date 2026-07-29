@@ -144,6 +144,33 @@ const PAGEDOWN = "\x1b[6~";
 	check("meta line plain width <= 80", metaLine !== undefined && metaLine.length <= 80);
 }
 
+// ponytail: retry×N on a COLLAPSED failed row — retryCount only showed in the
+// expanded meta line; a hard-failed subtask (N retries) hid that until expanded.
+// Surface retry×N inline on collapsed failed rows w/ retryCount>0. No tag when
+// retryCount=0 or status≠failed (healthy/first-attempt rows stay clean).
+{
+	// failed subtask retried 3× → collapsed row shows "retry×3"
+	const st = makeSubtask("s1", { status: "failed", retryCount: 3, error: "boom" });
+	const { comp } = makeComponent([st]);
+	const row = comp.render(80).find((l: string) => l.includes("s1:")) ?? "";
+	check("collapsed failed row shows retry×N (3)", row.includes("retry×3"));
+	// first-attempt failure (retryCount=0) → no retry tag (avoid "retry×0" noise)
+	const first = makeSubtask("s2", { status: "failed", retryCount: 0, error: "boom" });
+	const { comp: c2 } = makeComponent([first]);
+	const row2 = c2.render(80).find((l: string) => l.includes("s2:")) ?? "";
+	check("collapsed failed row no retry tag when retryCount=0", !row2.includes("retry×"));
+	// non-failed (running) subtask → no retry tag even if retryCount>0
+	const running = makeSubtask("s3", { status: "running", retryCount: 2, startedAt: Date.now() - 30000 });
+	const { comp: c3 } = makeComponent([running]);
+	const row3 = c3.render(80).find((l: string) => l.includes("s3:")) ?? "";
+	check("collapsed running row no retry tag", !row3.includes("retry×"));
+	// retry budgeted: a long desc + retry tag fits a narrow width
+	const longDesc = makeSubtask("s4", { status: "failed", retryCount: 2, error: "boom", description: "d".repeat(60) });
+	const { comp: c4 } = makeComponent([longDesc]);
+	const row4 = c4.render(30).find((l: string) => l.includes("s4:")) ?? "";
+	check("collapsed failed row + long desc fits narrow width", row4.length <= 30);
+}
+
 // ponytail: `o` toggles expand-all / collapse-all — triaging a tree of N
 // subtasks (each with an error/review) meant tapping Enter on every row.
 // expand-all when fewer than all open, collapse-all otherwise. Empty → flash.

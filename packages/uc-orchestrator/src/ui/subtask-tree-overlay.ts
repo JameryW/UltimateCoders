@@ -314,15 +314,23 @@ class SubtaskTreeComponent {
 				? ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`
 				: "";
 			const elapsed = elapsedPlain ? this.theme.fg("dim", elapsedPlain) : "";
+			// ponytail: retry×N on a failed row — a subtask that failed after N retries is
+			// a "hard" failure (worth retrying differently), but retryCount only showed in
+			// the EXPANDED meta line. Surface it inline on collapsed failed rows so triage
+			// doesn't require expanding every failure. Built PLAIN so its length feeds the
+			// desc budget; appended last so the compositor drops it first on narrow widths.
+			const retryPlain = item.subtask.status === "failed" && (item.subtask.retryCount ?? 0) > 0
+				? ` retry×${item.subtask.retryCount}` : "";
+			const retry = retryPlain ? this.theme.fg("dim", retryPlain) : "";
 			// ponytail: budget desc by the ACTUAL prefix+suffix — cursor(2)+icon(1)+space+
-			// id+":"+space+depsPlain+elapsedPlain. The old fixed width-16 assumed a short
+			// id+":"+space+depsPlain+elapsedPlain+retryPlain. The old fixed width-16 assumed a short
 			// id and ignored deps/elapsed, so a long id or dep list overflowed the row and
 			// the compositor truncated deps/elapsed (live elapsed on running rows suffered).
 			// 2 leading spaces + cursor(1) + space(1) + icon(1) + space(1) + id + ":"(1) + space(1)
-			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length;
+			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length;
 			const desc = item.subtask.description.slice(0, Math.max(0, width - prefixLen));
 
-			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}`);
+			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}`);
 
 			if (this.expanded.has(item.subtask.id)) {
 				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
