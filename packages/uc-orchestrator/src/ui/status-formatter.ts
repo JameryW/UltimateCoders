@@ -26,7 +26,14 @@ function cap(text: string, budget: number | undefined, fallback: number): string
 }
 
 export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number): string[] {
-	if (tasks.length === 0) return [theme.fg("dim", "No tasks")];
+	if (tasks.length === 0) {
+		// ponytail: mirror the overlay empty-state (#422) — a /uc status to an empty
+		// store showed only "No tasks", with no cue how to add one.
+		return [
+			theme.fg("dim", "No tasks"),
+			theme.fg("dim", "/uc submit <description> to add one"),
+		];
+	}
 
 	const lines: string[] = [];
 	for (const task of tasks) {
