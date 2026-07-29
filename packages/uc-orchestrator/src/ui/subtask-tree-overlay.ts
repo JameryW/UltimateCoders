@@ -245,7 +245,7 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter expand · R retry · n next-failed · p prev-failed · d task detail · PgUp/PgDn · g/G · y/Y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter expand · o all · R retry · n next-failed · p prev-failed · d task detail · PgUp/PgDn · g/G · y/Y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · R retry · Esc close",
 			)));
 		}
@@ -461,7 +461,7 @@ class SubtaskTreeComponent {
 			// (next-failed) and r/R (retry) would otherwise append to the query and be
 			// unreachable while editing. nav keys (arrows/page/home/end/g/G/j/k) are
 			// multi-byte escapes or already non-printable, so they fall through naturally.
-			const searchCmdKeys = ["n", "p", "r", "R", "d", "y", "Y"];
+			const searchCmdKeys = ["n", "p", "r", "R", "d", "y", "Y", "o"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -552,6 +552,21 @@ class SubtaskTreeComponent {
 				}
 			} else {
 				this.flashMsg = "no subtask selected";
+			}
+		} else if (data === "o") {
+			// ponytail: expand-all / collapse-all toggle — triaging a tree of N
+			// subtasks (each with an error/review to scan) meant tapping Enter on
+			// every row. `o` (lowercase, unused; mirrors tig/less convention) flips
+			// the whole set: expand-all when fewer than all are open, collapse-all
+			// otherwise. Empty list → no-op flash (mirrors the other empty guards).
+			if (items.length === 0) {
+				this.flashMsg = "no subtasks to expand";
+			} else if (this.expanded.size >= items.length) {
+				this.expanded.clear();
+				this.flashMsg = null;
+			} else {
+				for (const it of items) this.expanded.add(it.subtask.id);
+				this.flashMsg = null;
 			}
 		} else if (data === "r" || data === "R") {
 			const item = items[this.cursorIdx];

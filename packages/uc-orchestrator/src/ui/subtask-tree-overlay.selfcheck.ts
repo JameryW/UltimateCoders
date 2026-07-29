@@ -144,6 +144,40 @@ const PAGEDOWN = "\x1b[6~";
 	check("meta line plain width <= 80", metaLine !== undefined && metaLine.length <= 80);
 }
 
+// ponytail: `o` toggles expand-all / collapse-all — triaging a tree of N
+// subtasks (each with an error/review) meant tapping Enter on every row.
+// expand-all when fewer than all open, collapse-all otherwise. Empty → flash.
+{
+	// 3 subtasks, none expanded → `o` expands all
+	const { comp } = makeComponent([makeSubtask("s1"), makeSubtask("s2"), makeSubtask("s3")]);
+	check("o: starts with 0 expanded", comp.expanded.size === 0);
+	comp.handleInput("o");
+	check("o expands all subtasks", comp.expanded.size === 3);
+	// all expanded → `o` collapses all
+	comp.handleInput("o");
+	check("o collapses all when all expanded", comp.expanded.size === 0);
+	// partial → `o` expands to all
+	comp.expanded.add("s1");
+	comp.handleInput("o");
+	check("o expands to all from partial (1/3)", comp.expanded.size === 3);
+	// empty list → flash, no throw
+	const emptyTask = { id: "T", description: "t", status: "failed", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const { comp: ec } = makeComponent([], { tasks: [emptyTask] });
+	ec.handleInput("o");
+	check("o on empty flashes 'no subtasks to expand'", ec.flashMsg !== null && ec.flashMsg.includes("no subtasks to expand"));
+	// hint advertises `o all`
+	const { comp: hc } = makeComponent([makeSubtask("s1")]);
+	const hint = hc.render(80).join("\n");
+	check("hint advertises o all", hint.includes("o all"));
+	// o in search-edit falls through (not appended to query) — mirrors n/r.
+	const { comp: sc } = makeComponent([makeSubtask("s1"), makeSubtask("s2")]);
+	sc.handleInput("/");
+	sc.handleInput("o");
+	check("o in search-edit exits searchMode", sc.searchMode === false);
+	check("o in search-edit did not append to query", sc.query === "");
+	check("o in search-edit expanded all", sc.expanded.size === 2);
+}
+
 // ponytail: rejected review with issues shows the count in the meta tag —
 // "✗ rejected (N issues)" — so the verdict surfaces that there are N reasons
 // without expanding the row beyond the 2-line window (issues themselves are
