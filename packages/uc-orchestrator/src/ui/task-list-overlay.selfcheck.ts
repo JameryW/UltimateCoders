@@ -901,6 +901,17 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("narrow hint does NOT have PgUp/PgDn", !narrow.includes("PgUp/PgDn"));
 }
 
+// ponytail: detail hint must advertise y/Y copy — the list hint shows it, and
+// detail mode implements both (y = task id, Y = error), but the detail hint
+// omitted it, so the yank path was undiscoverable in the focused view.
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	comp.handleInput(ENTER);
+	const lines = comp.render(80) as string[];
+	const detail = lines.find((l: string) => l.includes("scroll"));
+	check("detail hint advertises y/Y copy", detail !== undefined && detail.includes("y/Y copy"));
+}
+
 // ponytail: F1 — detail mode must RENDER flashMsg, not just set state. Before F1,
 // renderDetail() omitted the flashMsg line, so `/` and c/p/r feedback in detail
 // mode was invisible even though the state was set (S3/S4 selfchecks only asserted

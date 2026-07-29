@@ -253,7 +253,7 @@ class TaskListComponent {
 		}
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · Esc/q back"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · y/Y copy · Esc/q back"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;

@@ -245,7 +245,7 @@ class SubtaskTreeComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter expand · R retry · n next-failed · p prev-failed · d task detail · PgUp/PgDn · g/G · y copy · / filter · Esc close",
+				"  ↑↓/jk nav · Enter expand · R retry · n next-failed · p prev-failed · d task detail · PgUp/PgDn · g/G · y/Y copy · / filter · Esc close",
 				"  ↑↓ nav · Enter · R retry · Esc close",
 			)));
 		}
