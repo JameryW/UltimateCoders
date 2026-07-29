@@ -492,6 +492,35 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("task with subtasks shows completed/total", row2.includes("/3"));
 }
 
+// ponytail: failed-count marker — 3/5 with 2 failed read "3/5", same as 3
+// completed + 2 pending, so a stuck task hid its failures in the list. Append
+// " ·N✗" only when failed > 0 (no noise on healthy tasks). Custom task: in_progress
+// with 3 completed + 2 failed subtasks.
+{
+	const mkSub = (id: string, status: string) => ({
+		id, description: `sub ${id}`, status, dependsOn: [],
+		result: undefined, error: undefined, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	const taskWithFailed = {
+		id: "tFail", description: "stuck task", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSub("s0","completed"),mkSub("s1","completed"),mkSub("s2","completed"),mkSub("s3","failed"),mkSub("s4","failed")],
+	} as unknown as TaskState;
+	const { comp } = makeComponent([taskWithFailed]);
+	const row = comp.render(80).find((l: string) => l.includes("tFail")) ?? "";
+	check("row with failed subtasks shows completed/total", row.includes("3/5"));
+	check("row with failed subtasks shows ·N✗ marker", row.includes("·2✗"));
+	// control: a task with NO failed subtasks shows no ✗ marker
+	const { comp: comp2 } = makeComponent([makeTask("tOK", "in_progress", 3)]); // subs: completed+pending, no failed
+	const row2 = comp2.render(80).find((l: string) => l.includes("tOK")) ?? "";
+	check("row with no failed subtasks has no ✗ marker", !row2.includes("✗"));
+	// 0-subtask task still has no marker (no ✗, no 0/0)
+	const { comp: comp3 } = makeComponent([makeTask("tEmpty", "in_progress", 0)]);
+	const row3 = comp3.render(80).find((l: string) => l.includes("tEmpty")) ?? "";
+	check("0-subtask row has no ✗ marker", !row3.includes("✗"));
+}
+
 // ── search/filter tests ──────────────────────────────────────────
 
 // `/` enters filter mode (render shows `/ ` input line with cursor)
