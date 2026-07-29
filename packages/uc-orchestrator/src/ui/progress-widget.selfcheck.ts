@@ -404,5 +404,18 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("failed bar: bar width stays within 30-col cap", (barW.match(/[█░]/g) ?? []).length <= 30);
 }
 
+// ponytail: idle widget hints /uc submit — the always-visible widget is a
+// first-run user's first UC surface; "UC: idle" alone named no submit path
+// (mirrors the overlay empty-state #422). Gated on width ≥ 50.
+{
+	const factory = createProgressWidget(() => null);
+	const comp = factory(undefined, theme) as any;
+	const wide = comp.render(80) as string[];
+	check("idle widget shows /uc submit hint (wide)", wide.some((l: string) => l.includes("/uc submit")));
+	const narrow = comp.render(40) as string[];
+	check("idle widget no submit hint under 50 cols", !narrow.some((l: string) => l.includes("/uc submit")));
+	check("idle widget still shows UC: idle", wide.some((l: string) => l.includes("UC: idle")));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

@@ -90,7 +90,12 @@ class ProgressWidgetComponent {
 	render(width: number): string[] {
 		const s = this.state();
 		if (!s) {
-			return [this.theme.fg("dim", "  UC: idle")];
+			// ponytail: the always-visible widget is a first-run user's first UC surface.
+			// "UC: idle" named no submit path — mirror the overlay empty-state (#422).
+			// Gated on width ≥ 50 (the hint is ~38 plain chars); under it, stay bare so
+			// the compositor doesn't ANSI-truncate a half-hint off the left side.
+			const hint = width >= 50 ? this.theme.fg("dim", " · /uc submit <desc>") : "";
+			return [this.theme.fg("dim", "  UC: idle") + hint];
 		}
 
 		const { task, waveIdx, totalWaves } = s;
