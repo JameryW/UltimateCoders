@@ -316,9 +316,18 @@ class SubtaskTreeComponent {
 			}
 			const deps = depsPlain ? this.theme.fg("dim", depsPlain) : "";
 			// ponytail: F8 — live elapsed on running rows (re-rendered by F7 timer).
+			// A terminal subtask (completed/failed/cancelled) with completedAt shows
+			// "(done Ns ago)" instead — mirrors the detail subtask row (#433), so the
+			// tree row matches the detail view's time signal. Append " ·⏱Ns" duration
+			// (startedAt→completedAt) when both stamps present (#462). Running shows
+			// elapsed; terminal shows done-time+dur; absent stamps → none.
+			const durPlain = (item.subtask.status !== "running" && item.subtask.startedAt && item.subtask.completedAt
+				&& ["completed", "failed", "cancelled"].includes(item.subtask.status))
+				? ` ·⏱${formatElapsed(item.subtask.completedAt - item.subtask.startedAt)}` : "";
 			const elapsedPlain = item.subtask.status === "running" && item.subtask.startedAt
 				? ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`
-				: "";
+				: (item.subtask.completedAt && ["completed", "failed", "cancelled"].includes(item.subtask.status))
+					? ` (done ${formatElapsed(Date.now() - item.subtask.completedAt)} ago${durPlain})` : "";
 			const elapsed = elapsedPlain ? this.theme.fg("dim", elapsedPlain) : "";
 			// ponytail: retry×N on a failed row — a subtask that failed after N retries is
 			// a "hard" failure (worth retrying differently), but retryCount only showed in

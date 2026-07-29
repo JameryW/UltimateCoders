@@ -894,6 +894,28 @@ const PAGEDOWN = "\x1b[6~";
 	check("F8 completed row has no elapsed", !(comp2.render(80) as string[]).some((l: string) => l.includes("(1m")));
 }
 
+// ponytail: terminal subtask row shows done-time + duration — mirrors the detail
+// subtask row (#433/#462). collapsed terminal rows had no time signal (only running
+// rows did). "(done Ns ago ·⏱Ms)" when completedAt present (+ startedAt for dur).
+{
+	// completed w/ completedAt only → "(done 30s ago)", no ⏱ (no startedAt)
+	const done = makeSubtask("s1", { status: "completed", completedAt: Date.now() - 30_000 });
+	const { comp } = makeComponent([done]);
+	const row = comp.render(80).find((l: string) => l.includes("s1:")) ?? "";
+	check("terminal row shows done-time", row.includes("(done ") && row.includes("ago)"));
+	check("terminal row w/o startedAt no ⏱", !row.includes("⏱"));
+	// completed w/ startedAt+completedAt → "done 30s ago ·⏱30s" (started 60s ago, done 30s ago)
+	const withDur = makeSubtask("s2", { status: "completed", startedAt: Date.now() - 60_000, completedAt: Date.now() - 30_000 });
+	const { comp: c2 } = makeComponent([withDur]);
+	const row2 = c2.render(80).find((l: string) => l.includes("s2:")) ?? "";
+	check("terminal row shows ⏱ duration", row2.includes("⏱") && row2.includes("30s"));
+	// failed w/ completedAt → done-time
+	const failed = makeSubtask("s3", { status: "failed", completedAt: Date.now() - 30_000 });
+	const { comp: c3 } = makeComponent([failed]);
+	const row3 = c3.render(80).find((l: string) => l.includes("s3:")) ?? "";
+	check("failed terminal row shows done-time", row3.includes("(done "));
+}
+
 // ponytail: F7 — refresh timer ticks requestRender; dispose() stops it.
 {
 	let ticks = 0;
