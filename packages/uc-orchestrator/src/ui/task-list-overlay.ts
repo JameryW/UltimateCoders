@@ -134,7 +134,13 @@ class TaskListComponent {
 				t.id.toLowerCase().includes(q) ||
 				t.description.toLowerCase().includes(q) ||
 				t.status.toLowerCase().includes(q) ||
-				(t.controlState ?? "").toLowerCase().includes(q),
+				(t.controlState ?? "").toLowerCase().includes(q) ||
+				// ponytail: match any subtask status too — a task stays "in_progress"
+				// while a subtask fails (the common triage state), so `/failed` matched
+				// only failed tasks and hid the in_progress task with a failed subtask.
+				// `/failed` now surfaces every task that HAS a failed subtask. Same for
+				// `/running`, `/completed`, etc. .some() short-circuits on the first hit.
+				t.subtasks.some((s) => s.status.toLowerCase().includes(q)),
 		);
 	}
 
