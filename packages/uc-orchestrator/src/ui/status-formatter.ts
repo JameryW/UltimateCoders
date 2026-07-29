@@ -65,7 +65,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// would show a misleading "0/0").
 	const total = task.subtasks.length;
 	const completed = task.subtasks.filter((s) => s.status === "completed").length;
-	const countTag = total > 0 ? ` ${completed}/${total}` : "";
+	const failed = task.subtasks.filter((s) => s.status === "failed").length;
+	// ponytail: failed-count marker in the detail countTag — mirrors the overlay row
+	// (#429) + notify list (#436). The detail header showed only completed/total, so a
+	// 3/5 task with 2 failed read "3/5" like 3 completed + 2 pending. Append " ·N✗"
+	// only when failed > 0 (no noise on healthy tasks).
+	const failTag = failed > 0 ? ` ·${failed}✗` : "";
+	const countTag = total > 0 ? ` ${completed}/${total}${failTag}` : "";
 	// ponytail: live age on an in-flight task — mirrors the subtask-tree's running
 	// elapsed tag. createdAt is the submit time, so "how long has this been going"
 	// is now-createdAt. Only for in_progress/planning/paused (a running concern);

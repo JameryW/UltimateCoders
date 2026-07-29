@@ -380,6 +380,14 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	// zero subtasks → no count tag (no misleading "0/0")
 	const h0 = header(mk([]));
 	check("detail header no count for 0 subtasks", !h0.includes("0/0"));
+	// failed-marker: 2 completed + 2 failed of 4 → "2/4 ·2✗" (no ✗ when 0 failed)
+	const hf = header(mk([{ status: "completed" }, { status: "completed" }, { status: "failed" }, { status: "failed" }]));
+	check("detail header failed-marker shows completed/total (2/4)", hf.includes("2/4"));
+	check("detail header failed-marker shows ·2✗", hf.includes("·2✗"));
+	// no failed → no ✗ marker (control)
+	check("detail header no-failed has no ✗", !h23.includes("✗"));
+	// 0-subtask → no ✗ marker either
+	check("detail header 0-subtask has no ✗", !h0.includes("✗"));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
