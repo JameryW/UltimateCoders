@@ -132,16 +132,24 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 					: ` ←${joined}`;
 			}
 			const deps = depsPlain ? theme.fg("dim", depsPlain) : "";
-			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps.
+			// ponytail: live elapsed on a running subtask — mirrors the subtask-tree
+			// overlay's running-elapsed tag. /uc status <id> + the detail view showed a
+			// running subtask with no time signal (only the tree overlay did). Built PLAIN
+			// (before theming) so its length feeds the desc budget alongside depsPlain,
+			// matching how the tree row subtracts the elapsed suffix.
+			const elapsedPlain = st.status === "running" && st.startedAt
+				? ` (${formatElapsed(Date.now() - st.startedAt)})` : "";
+			const elapsed = elapsedPlain ? theme.fg("dim", elapsedPlain) : "";
+			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps+elapsed.
 			// Without width (legacy notify path), keep the 50-char cap.
 			// F17: icon VISIBLE width is 1 — stIcon.length includes ~11 ANSI escape
 			// chars in real terminals, so the old subtraction over-truncated desc
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - elapsedPlain.length)
 				: 50;
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}`);
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}`);
 
 			if (st.error) {
 				// ponytail: error budget = terminal width minus indent; default 60 for
