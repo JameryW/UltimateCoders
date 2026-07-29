@@ -134,7 +134,15 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	}
 
 	for (const [depth, subtasks] of [...byDeps.entries()].sort(([a], [b]) => a - b)) {
-		for (const st of subtasks) {
+		// ponytail: within a depth tier, sort by status priority (failed first, then
+		// running/reviewing, then everything else) so a failure surfaces to the top
+		// of its tier instead of being buried under completed rows. Same-status
+		// subtasks keep insertion order (stable sort). Mirrors the "failed-first"
+		// triage intent without breaking the topological depth grouping.
+		const statusRank = (s: string): number =>
+			s === "failed" ? 0 : (s === "running" || s === "reviewing") ? 1 : 2;
+		const tier = subtasks.slice().sort((a, b) => statusRank(a.status) - statusRank(b.status));
+		for (const st of tier) {
 			const stIcon = statusIcon(st.status, theme);
 			const indent = "  ".repeat(depth + 1);
 			const prefix = depth > 0 ? "↳ " : "";

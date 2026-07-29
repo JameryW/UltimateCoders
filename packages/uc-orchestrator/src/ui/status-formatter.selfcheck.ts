@@ -50,6 +50,34 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("fan-out D depth 1 (indent 4), not 3 (indent 8)", leading === 4);
 }
 
+// ponytail: within a depth tier, sort by status priority (failed first, then
+// running/reviewing, then everything else) — a failure surfaces to the top of
+// its tier instead of being buried under completed rows. Same-status keeps
+// insertion order (stable sort). Depth grouping is preserved.
+{
+	// 3 root subtasks: B (failed), A (completed), C (running) — all depth 0.
+	// Insertion order A,B,C; status sort → B (failed), C (running), A (completed).
+	const task = {
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [st("A"), st("B", [], "failed"), st("C", [], "running")],
+	} as unknown as TaskState;
+	const lines = formatTaskDetail(task, theme);
+	const bIdx = lines.findIndex((l) => l.includes("B:"));
+	const cIdx = lines.findIndex((l) => l.includes("C:"));
+	const aIdx = lines.findIndex((l) => l.includes("A:"));
+	check("status-sort: failed (B) before running (C)", bIdx < cIdx);
+	check("status-sort: running (C) before completed (A)", cIdx < aIdx);
+	// same-status keeps insertion order: A2, A3 (both completed) → A2 before A3
+	const sameStatus = {
+		id: "T2", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [st("A3"), st("A2")], // both completed, insertion A3 then A2
+	} as unknown as TaskState;
+	const sameLines = formatTaskDetail(sameStatus, theme);
+	const a3Idx = sameLines.findIndex((l) => l.includes("A3:"));
+	const a2Idx = sameLines.findIndex((l) => l.includes("A2:"));
+	check("status-sort: same-status keeps insertion order", a3Idx < a2Idx);
+}
+
 // Cycle guard: A→B→A must not infinite-loop
 {
 	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [
