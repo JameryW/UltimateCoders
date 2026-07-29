@@ -229,6 +229,19 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	const noDone = { ...task, subtasks: [mk("completed", undefined)] } as unknown as TaskState;
 	const noLine = formatTaskDetail(noDone, theme, 80).find((l) => l.includes("s0:")) ?? "";
 	check("completed subtask (no completedAt) has no done tag", !noLine.includes("(done"));
+	// ponytail: total duration on a terminal subtask w/ startedAt+completedAt — mirrors
+	// the widget (#454) + detail header (#455). startedAt=now-60s, completedAt=now-30s
+	// → ran 30s → "·⏱30s" appended to the done tag. Only when both stamps present.
+	const mkDur = (status: string, startedAt: number, completedAt: number) => ({
+		id: "s0", description: "d", status, dependsOn: [], files: [], startedAt, completedAt,
+	} as unknown as SubtaskResult);
+	const withDur = { ...task, subtasks: [mkDur("completed", Date.now() - 60_000, Date.now() - 30_000)] } as unknown as TaskState;
+	const durLine = formatTaskDetail(withDur, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("terminal subtask (startedAt+completedAt) shows ⏱ duration", durLine.includes("⏱") && durLine.includes("30s"));
+	// terminal w/ completedAt but NO startedAt → no ⏱ (can't compute duration)
+	const noStart = { ...task, subtasks: [mk("completed", Date.now() - 30_000)] } as unknown as TaskState;
+	const noStartLine = formatTaskDetail(noStart, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("terminal subtask w/o startedAt no ⏱", !noStartLine.includes("⏱"));
 	// running shows elapsed, not done tag
 	const running = { ...task, subtasks: [{ ...mk("running"), startedAt: Date.now() - 30_000, completedAt: Date.now() - 10_000 } as unknown as SubtaskResult] } as unknown as TaskState;
 	const runLine = formatTaskDetail(running, theme, 80).find((l) => l.includes("s0:")) ?? "";

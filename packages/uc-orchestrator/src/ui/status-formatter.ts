@@ -159,10 +159,16 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// A terminal subtask (completed/failed/cancelled) with completedAt shows
 			// "(done Ns ago)" instead — the subtask-level mirror of the task-level doneTag
 			// (#430). Running shows elapsed; terminal shows done-time; absent stamp → none.
+			// ponytail: total run duration on terminal subtasks — mirrors the widget ⏱
+			// (#454) + detail header (#455). Append " ·⏱Ns" (startedAt→completedAt) so a
+			// subtask answers "did this take unusually long"; only when both stamps present.
+			const durPlain = (st.status !== "running" && st.startedAt && st.completedAt
+				&& ["completed", "failed", "cancelled"].includes(st.status))
+				? ` ·⏱${formatElapsed(st.completedAt - st.startedAt)}` : "";
 			const timePlain = st.status === "running" && st.startedAt
 				? ` (${formatElapsed(Date.now() - st.startedAt)})`
 				: (st.completedAt && ["completed", "failed", "cancelled"].includes(st.status))
-					? ` (done ${formatElapsed(Date.now() - st.completedAt)} ago)` : "";
+					? ` (done ${formatElapsed(Date.now() - st.completedAt)} ago${durPlain})` : "";
 			const elapsed = timePlain ? theme.fg("dim", timePlain) : "";
 			// ponytail: retry×N on a failed subtask row — mirrors the subtask-tree's
 			// collapsed failed-row retry tag (#439). A subtask that failed after N retries
