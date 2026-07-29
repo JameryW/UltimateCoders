@@ -402,6 +402,9 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("failed bar: failed subtasks fill (more █ than no-fail control)", filledW > filledNF);
 	check("failed bar: filled+empty = bar width (no overrun)", filledW > 0 && emptyW > 0 && (filledW + emptyW) === (barW.match(/[█░]/g) ?? []).length);
 	check("failed bar: bar width stays within 30-col cap", (barW.match(/[█░]/g) ?? []).length <= 30);
+	// ponytail: failTag next to the count — "5/10 ·3✗" (3 failed). No ✗ when 0 failed.
+	check("failed bar: count text shows ·N✗ marker (3 failed)", barW.includes("5/10") && barW.includes("·3✗"));
+	check("failed bar: no-fail control has no ✗ marker", !barNF.includes("✗"));
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
