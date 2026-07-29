@@ -590,6 +590,38 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: header failed-count marker — mirrors the subtask-tree header (#441).
+// Counts tasks that are failed OR have a failed subtask (matches /failed filter
+// + the row ·N✗ marker). error-colored. No marker when 0 failed.
+{
+	// 1 failed task + 1 in_progress w/ failed subtask + 1 clean → 2 failed
+	const mkSub = (id: string, status: string) => ({
+		id, description: `sub ${id}`, status, dependsOn: [],
+		result: undefined, error: undefined, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	const tasks = [
+		makeTask("t0", "failed"),
+		{ id: "t1", description: "running w/ failed sub", status: "in_progress", controlState: "running",
+			createdAt: Date.now(), error: undefined,
+			subtasks: [mkSub("t1-s0", "completed"), mkSub("t1-s1", "failed")] } as unknown as TaskState,
+		makeTask("t2", "in_progress"), // subs: completed+pending, no failed → clean
+	];
+	const { comp } = makeComponent(tasks);
+	const header = comp.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
+	check("header shows ·2✗ (failed + in_progress w/ failed subtask)", header.includes("·2✗"));
+	// no failed → no ✗ marker
+	const { comp: c2 } = makeComponent([makeTask("c0", "in_progress"), makeTask("c1", "completed")]);
+	const header2 = c2.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
+	check("header no ✗ when no failed tasks", !header2.includes("✗"));
+	// /failed filter narrows the visible set → failedCount matches the filter (2)
+	const { comp: c3 } = makeComponent(tasks);
+	c3.handleInput("/"); c3.handleInput("f"); c3.handleInput("a"); c3.handleInput("i");
+	c3.handleInput("l"); c3.handleInput("e"); c3.handleInput("d"); c3.handleInput(ENTER);
+	const header3 = c3.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
+	check("header failed-count matches /failed filter (2)", header3.includes("·2✗"));
+}
+
 // ponytail: filter matches subtask status too — a task stays "in_progress"
 // while a subtask fails (the common triage state), so `/failed` matched only
 // failed tasks and hid the in_progress task with a failed subtask. Now `/failed`

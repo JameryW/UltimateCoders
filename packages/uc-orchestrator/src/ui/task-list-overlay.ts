@@ -165,10 +165,19 @@ class TaskListComponent {
 		const filtering = this.query.length > 0;
 		const lines: string[] = [];
 
+		// ponytail: failed-count marker in the header — mirrors the subtask-tree
+		// header (#441). A task counts as "failed" if its status is failed OR a subtask
+		// failed (matches the /failed filter semantics + the row ·N✗ marker, #429): an
+		// in_progress task with a failed subtask is the common triage target. error-
+		// colored so it reads as a warning. No marker when 0 failed (no noise).
+		const failedCount = tasks.filter(
+			(t) => t.status === "failed" || t.subtasks.some((s) => s.status === "failed"),
+		).length;
+		const failTag = failedCount > 0 ? this.theme.fg("error", ` ·${failedCount}✗`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s) (filtered from ${allTasks.length})`
 			: ` — ${allTasks.length} task(s)`;
-		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra));
+		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra) + failTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows
