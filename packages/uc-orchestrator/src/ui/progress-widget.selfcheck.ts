@@ -371,5 +371,38 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("no-subtasks: no progress bar row", !emptyLines.some((l) => l.includes("0/0")));
 }
 
+// ponytail: failed subtasks render as a distinct (error-colored) segment, not
+// empty ░ like pending. A task at 5/10 with 3 failed looked identical to one
+// still running with 5 pending — the bar hid the failure. Now failed fills its
+// own █ segment, so the bar shows MORE filled cells when subtasks failed.
+// The theme mock strips ANSI, so detect via filled-vs-empty cell counts.
+{
+	// 5 completed, 3 failed, 2 pending — 10 total
+	const mk = (id: string, status: string) => ({ id, description: "d", status, dependsOn: [], files: [] } as unknown as SubtaskResult);
+	const taskWithFailed = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mk("s0","completed"),mk("s1","completed"),mk("s2","completed"),mk("s3","completed"),mk("s4","completed"),
+			mk("s5","failed"),mk("s6","failed"),mk("s7","failed"),mk("s8","pending"),mk("s9","pending")] } as unknown as TaskState;
+	const linesW = (createProgressWidget(() => ({ task: taskWithFailed }))(undefined, theme) as any).render(80) as string[];
+	// find the bar line (has both █ and ░, plus the 5/10 count)
+	const barW = linesW.find((l) => l.includes("█") && l.includes("5/10")) ?? "";
+	// 5 completed + 3 failed = 8 filled cells; 2 pending = 2 empty. No-fail case
+	// (below) has only 5 filled. So filledW > filledNoFail proves the failed segment.
+	const filledW = (barW.match(/█/g) ?? []).length;
+	const emptyW = (barW.match(/░/g) ?? []).length;
+
+	// control: same 5 completed, 0 failed, 5 pending → only 5 filled
+	const mkC = (id: string) => ({ id, description: "d", status: "completed", dependsOn: [], files: [] } as unknown as SubtaskResult);
+	const mkP = (id: string) => ({ id, description: "d", status: "pending", dependsOn: [], files: [] } as unknown as SubtaskResult);
+	const taskNoFail = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mkC("s0"),mkC("s1"),mkC("s2"),mkC("s3"),mkC("s4"),mkP("s5"),mkP("s6"),mkP("s7"),mkP("s8"),mkP("s9")] } as unknown as TaskState;
+	const linesNF = (createProgressWidget(() => ({ task: taskNoFail }))(undefined, theme) as any).render(80) as string[];
+	const barNF = linesNF.find((l) => l.includes("█") && l.includes("5/10")) ?? "";
+	const filledNF = (barNF.match(/█/g) ?? []).length;
+
+	check("failed bar: failed subtasks fill (more █ than no-fail control)", filledW > filledNF);
+	check("failed bar: filled+empty = bar width (no overrun)", filledW > 0 && emptyW > 0 && (filledW + emptyW) === (barW.match(/[█░]/g) ?? []).length);
+	check("failed bar: bar width stays within 30-col cap", (barW.match(/[█░]/g) ?? []).length <= 30);
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

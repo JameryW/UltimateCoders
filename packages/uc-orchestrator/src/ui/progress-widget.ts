@@ -17,12 +17,23 @@ import { formatElapsed } from "./elapsed";
 
 // ── Progress Bar ─────────────────────────────────────────────────
 
-function progressBar(completed: number, total: number, width: number, theme: Theme): string {
+// ponytail: 3-segment bar — completed (success/green), failed (error/red),
+// pending (dim/empty). Previously failed subtasks rendered as empty ░ like
+// pending, so a task stuck at 3/5 with 2 failed looked identical to one still
+// running with 5 pending — the bar hid the failure at a glance. failed fills
+// between completed and pending so it's visually distinct without a legend.
+function progressBar(completed: number, failed: number, total: number, width: number, theme: Theme): string {
 	if (total === 0 || width <= 0) return "";
-	const ratio = completed / total;
-	const filled = Math.round(ratio * width);
-	const empty = width - filled;
-	return theme.fg("success", "█".repeat(filled)) + theme.fg("dim", "░".repeat(empty));
+	const done = Math.round((completed / total) * width);
+	const fail = Math.round((failed / total) * width);
+	// ponytail: cap done+fail at width — rounding on edge ratios (e.g. 2/3 each
+	// rounds to 1+1=2 on a 3-wide bar) can overrun by one; the pending slot
+	// absorbs the shortfall so the bar never exceeds `width` cols.
+	const failClamped = Math.max(0, Math.min(fail, width - done));
+	const empty = Math.max(0, width - done - failClamped);
+	return theme.fg("success", "█".repeat(done))
+		+ theme.fg("error", "█".repeat(failClamped))
+		+ theme.fg("dim", "░".repeat(empty));
 }
 
 // ── Widget Component ─────────────────────────────────────────────
@@ -119,7 +130,8 @@ class ProgressWidgetComponent {
 		const total = task.subtasks.length;
 		if (total > 0) {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
-			const bar = progressBar(completed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
+			const failed = task.subtasks.filter((s) => s.status === "failed").length;
+			const bar = progressBar(completed, failed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
 			// ponytail: F24 — the bar counts TASK-wide completion; leading with
 			// "Wave X/Y" read as if the bar measured the current wave. Progress
 			// first, wave identity as trailing context.
