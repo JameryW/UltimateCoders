@@ -32,11 +32,15 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 	for (const task of tasks) {
 		const icon = statusIcon(task.status, theme);
 		const completed = task.subtasks.filter((s) => s.status === "completed").length;
+		const failed = task.subtasks.filter((s) => s.status === "failed").length;
 		const total = task.subtasks.length;
 		// ponytail: only show completed/total when the task HAS subtasks — a
 		// 0-subtask task rendered "0/0", which read as "0 completed" instead of
 		// "no subtasks". Mirrors the task-list overlay row + formatTaskDetail guards.
-		const countTag = total > 0 ? `${completed}/${total} ` : "";
+		// failed-count marker ("·N✗") mirrors the overlay row (#429): 3/5 with 2 failed
+		// read "3/5" like 3 completed + 2 pending, hiding the failure in /uc status too.
+		const failTag = failed > 0 ? `·${failed}✗ ` : "";
+		const countTag = total > 0 ? `${completed}/${total} ${failTag}` : "";
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 		lines.push(`${icon} ${task.id.slice(0, 14)} ${countTag}${task.status}${ctrl}`);
 		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc

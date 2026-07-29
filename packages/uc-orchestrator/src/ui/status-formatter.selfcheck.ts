@@ -125,6 +125,27 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList task with subtasks shows 1/1", wRow.includes("1/1"));
 }
 
+// ponytail: failed-subtask marker in /uc status notify list — mirrors the
+// overlay row (#429). 3/5 with 2 failed read "3/5" like 3 completed + 2 pending.
+// Append "·N✗ " only when failed > 0 (no noise on healthy tasks).
+{
+	const mkSub = (status: string) => ({ id: "s", description: "d", status, dependsOn: [], files: [] } as any);
+	const withFailed = [{ id: "F", description: "d", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mkSub("completed"), mkSub("completed"), mkSub("completed"), mkSub("failed"), mkSub("failed")] }] as unknown as TaskState[];
+	const row = formatTaskList(withFailed, theme).find((l) => l.includes("F")) ?? "";
+	check("formatTaskList failed-marker shows completed/total", row.includes("3/5"));
+	check("formatTaskList failed-marker shows ·N✗", row.includes("·2✗"));
+	// no failed → no ✗ marker
+	const clean = [{ id: "C", description: "d", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mkSub("completed"), mkSub("pending")] }] as unknown as TaskState[];
+	const cRow = formatTaskList(clean, theme).find((l) => l.includes("C")) ?? "";
+	check("formatTaskList no-failed row has no ✗ marker", !cRow.includes("✗"));
+	// 0-subtask → no marker (no ✗, no 0/0)
+	const empty = [{ id: "E", description: "d", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] }] as unknown as TaskState[];
+	const eRow = formatTaskList(empty, theme).find((l) => l.includes("E")) ?? "";
+	check("formatTaskList 0-subtask row has no ✗ marker", !eRow.includes("✗"));
+}
+
 // ponytail: F16 — full lines must fit the width. Old budgets subtracted 2 while
 // the prefixes are 15 ("  Description: ") and 9 ("  Error: ") cols → overflow
 // ~13/~7. Task error was also a raw slice — no ellipsis, no classification
