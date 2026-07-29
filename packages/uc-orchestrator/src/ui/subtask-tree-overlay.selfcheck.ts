@@ -634,6 +634,9 @@ const PAGEDOWN = "\x1b[6~";
 	// ponytail: Enter toggles expand (no detail mode for subtasks) — hint must
 	// say "expand" not "detail", else users expect a detail view that doesn't exist.
 	check("wide hint says Enter expand (not detail)", wide.includes("Enter expand") && !wide.includes("Enter detail"));
+	// ponytail: tree implements both y (subtask id) and Y (error/result) yank,
+	// but the hint said only "y copy" — Y was undiscoverable. Match task-list.
+	check("wide hint advertises y/Y copy", wide.includes("y/Y copy"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has Esc close", narrow.includes("Esc close"));
