@@ -149,7 +149,14 @@ class SubtaskTreeComponent {
 				// filter matched id/desc/status/taskId but not the dep list, so typing a
 				// dep id found the dep itself but not its dependents. joined (lowercased)
 				// covers "X" and "X,Y" shapes without splitting.
-				it.subtask.dependsOn.some((d) => d.toLowerCase().includes(q)),
+				it.subtask.dependsOn.some((d) => d.toLowerCase().includes(q)) ||
+				// ponytail: match error + result text — the other triage query is "which
+				// failures mention X" (e.g. /timeout, /rate_limit). The filter matched
+				// id/desc/status/deps/taskId but not the error root cause or the success
+				// output, so a failure whose error text contains the query stayed hidden.
+				// Lowercased substring covers the friendly summary + root cause.
+				(it.subtask.error ?? "").toLowerCase().includes(q) ||
+				(it.subtask.result ?? "").toLowerCase().includes(q),
 		);
 	}
 
