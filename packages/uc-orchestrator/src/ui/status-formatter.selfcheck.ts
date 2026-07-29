@@ -235,6 +235,33 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("running subtask shows elapsed not done tag", runLine.includes("(30s)") && !runLine.includes("(done"));
 }
 
+// ponytail: retry×N on a failed subtask row — mirrors the subtask-tree's
+// collapsed failed-row retry tag (#439). /uc status <id> + detail view didn't
+// surface retryCount inline (only the expanded tree meta line did). Show
+// "retry×N" on failed rows with retryCount>0; none on first-attempt/non-failed.
+{
+	const mkSub = (status: string, retryCount?: number, completedAt?: number) => ({
+		id: "s0", description: "d", status, dependsOn: [], files: [],
+		retryCount, completedAt,
+	} as unknown as SubtaskResult);
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const withRetry = { ...task, subtasks: [mkSub("failed", 3)] } as unknown as TaskState;
+	const line = formatTaskDetail(withRetry, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("failed subtask row shows retry×N (3)", line.includes("retry×3"));
+	// first-attempt failure (retryCount=0) → no retry tag
+	const firstFail = { ...task, subtasks: [mkSub("failed", 0)] } as unknown as TaskState;
+	const firstLine = formatTaskDetail(firstFail, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("failed subtask row no retry tag when retryCount=0", !firstLine.includes("retry×"));
+	// non-failed → no retry tag even if retryCount>0
+	const running = { ...task, subtasks: [mkSub("running", 2)] as unknown as SubtaskResult[] } as unknown as TaskState;
+	const runLine = formatTaskDetail(running, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("non-failed subtask row no retry tag", !runLine.includes("retry×"));
+	// retry budgeted: long desc + retry fits narrow width
+	const longDesc = { ...task, subtasks: [{ ...mkSub("failed", 2), description: "d".repeat(60) } as unknown as SubtaskResult] } as unknown as TaskState;
+	const narrow = formatTaskDetail(longDesc, theme, 30).find((l) => l.includes("s0:")) ?? "";
+	check("failed subtask row + long desc fits narrow width", narrow.length <= 30);
+}
+
 // ponytail: pause sets controlState="paused" but leaves status="in_progress".
 // formatTaskDetail header must show [paused] (mirror formatTaskList), else a
 // paused task's detail reads "in_progress" with no pause indication.
