@@ -420,5 +420,21 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("idle widget still shows UC: idle", wide.some((l: string) => l.includes("UC: idle")));
 }
 
+// ponytail: header desc shows "…" when truncated — the slice was bare, so a long
+// description cut silently. Mirrors the overlay rows (#449/#450).
+{
+	const mkState = (desc: string) => ({
+		task: { id: "T", description: desc, status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState,
+	});
+	// long desc at narrow width → truncated → "…"
+	const comp = createProgressWidget(() => mkState("x".repeat(60)))(undefined, theme) as any;
+	const row = (comp.render(30) as string[]).find((l: string) => l.includes("UC")) ?? "";
+	check("widget truncated desc shows ellipsis", row.includes("…"));
+	// short desc at wide width → no ellipsis
+	const comp2 = createProgressWidget(() => mkState("short task"))(undefined, theme) as any;
+	const row2 = (comp2.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
+	check("widget fitting desc no ellipsis", row2.includes("short task") && !row2.includes("…"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
