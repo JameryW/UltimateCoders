@@ -237,10 +237,16 @@ class SubtaskTreeComponent {
 		const items = this.currentItems();
 		const filtering = this.query.length > 0;
 
+		// ponytail: failed-count marker in the header — the row-level ✗ icons show
+		// failures, but the header counted only tasks/subtasks. "·N✗" lets the user
+		// gauge failure density at a glance (and a filter like /failed makes the count
+		// match the filtered set). error-colored so it reads as a warning, not chrome.
+		const failedCount = items.filter((it) => it.subtask.status === "failed").length;
+		const failTag = failedCount > 0 ? this.theme.fg("error", ` ·${failedCount}✗`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s), ${items.length} subtask(s) (filtered from ${this.flatItems.length})`
 			: ` — ${tasks.length} task(s), ${this.flatItems.length} subtask(s)`;
-		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra));
+		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra) + failTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows
