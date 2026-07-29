@@ -160,7 +160,14 @@ class ProgressWidgetComponent {
 				// ponytail: F24 — budget by the actual prefix ("  " + icon visible 1
 				// + " " + id + ": "). The old width-12 assumed short st-N ids, but
 				// the planner accepts LLM-chosen ids, which overflowed the line.
-				const desc = st.description.slice(0, Math.max(0, width - 6 - st.id.length));
+				// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
+				// description cut silently. Mirrors the header + overlay rows (#449/#450/#451).
+				const budget = Math.max(0, width - 6 - st.id.length);
+				const fullDesc = st.description;
+				const truncated = fullDesc.length > budget;
+				const desc = truncated
+					? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
+					: fullDesc.slice(0, budget);
 				lines.push(`  ${icon} ${this.theme.fg("dim", st.id)}: ${desc}`);
 				// Render live step progress (agent + phase + percent + status tag) when available
 				const prog = s.progressBySubtask?.get(st.id);

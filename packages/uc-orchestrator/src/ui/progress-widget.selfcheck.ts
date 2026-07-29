@@ -350,6 +350,8 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const lLines = (createProgressWidget(() => ({ task: taskL }))(undefined, theme) as any).render(50) as string[];
 	const runLine = lLines.find((l) => l.includes(longId)) ?? "";
 	check("F24 long-id running row fits width", runLine.length > 0 && runLine.length <= 50);
+	// ponytail: a truncated running-row desc shows "…" (was a bare slice)
+	check("F24 long-id running row desc shows ellipsis", runLine.includes("…"));
 }
 
 // ponytail: progress bar shows WITHOUT wave info — restored/resumed tasks (or
