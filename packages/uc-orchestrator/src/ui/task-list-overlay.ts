@@ -248,7 +248,16 @@ class TaskListComponent {
 			// width-34 assumed a 4-char countTag ("2/3 "), but "10/10 " is 6 — the
 			// row overflowed width and the compositor truncated the desc right side.
 			const prefixLen = 2 + 4 + 1 + 14 + 1 + countTag.length + 1 + age.length + 1;
-			const desc = task.description.slice(0, Math.max(0, width - prefixLen));
+			// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
+			// description cut silently with no signal there was more. Mirrors the
+			// subtask-tree row (#449). Reserve 1 col for "…" and append only when the
+			// desc overflows the budget; a desc that fits stays verbatim.
+			const budget = Math.max(0, width - prefixLen);
+			const fullDesc = task.description;
+			const truncated = fullDesc.length > budget;
+			const desc = truncated
+				? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
+				: fullDesc.slice(0, budget);
 
 			lines.push(`  ${cursor} ${badge} ${task.id.slice(0, 14)} ${countTag}${desc}${ageSuffix}`);
 		}
