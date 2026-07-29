@@ -334,7 +334,16 @@ class SubtaskTreeComponent {
 			// the compositor truncated deps/elapsed (live elapsed on running rows suffered).
 			// 2 leading spaces + cursor(1) + space(1) + icon(1) + space(1) + id + ":"(1) + space(1)
 			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length;
-			const desc = item.subtask.description.slice(0, Math.max(0, width - prefixLen));
+			// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
+			// description cut silently with no signal there was more. Mirrors the detail
+			// view + result-renderer. Reserve 1 col for "…" and only append when the
+			// description actually overflows the budget; a desc that fits stays verbatim.
+			const budget = Math.max(0, width - prefixLen);
+			const fullDesc = item.subtask.description;
+			const truncated = fullDesc.length > budget;
+			const desc = truncated
+				? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
+				: fullDesc.slice(0, budget);
 
 			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}`);
 
