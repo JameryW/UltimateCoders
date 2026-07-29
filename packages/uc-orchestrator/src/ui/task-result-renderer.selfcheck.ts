@@ -140,6 +140,16 @@ const renderer = createTaskResultRenderer();
 	const lines = (comp as any).render(30) as string[];
 	const subtaskLines = lines.filter((l: string) => l.includes("s1:"));
 	check("narrow width: subtask line fits 30", subtaskLines.every((l: string) => l.length <= 30));
+	// ponytail: a truncated desc shows "…" (was a bare slice, no signal there was more)
+	check("narrow width: truncated desc shows ellipsis", subtaskLines.some((l: string) => l.includes("…")));
+}
+
+// ponytail: a desc that FITS the budget stays verbatim (no spurious ellipsis).
+{
+	const subs = [makeSubtask("s1", "completed", "short")];
+	const comp = renderer(makeMessage(true, subs), { expanded: true }, theme)!;
+	const row = ((comp as any).render(80) as string[]).find((l: string) => l.includes("s1:")) ?? "";
+	check("fitting desc no ellipsis", row.includes("short") && !row.includes("…"));
 }
 
 // width so small desc budget clamps to 0 — no throw, subtask id still shown

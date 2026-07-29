@@ -108,7 +108,16 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 					const retryPlain = st.status === "failed" && (st.retryCount ?? 0) > 0
 						? ` retry×${st.retryCount}` : "";
 					const retry = retryPlain ? theme.fg("dim", retryPlain) : "";
-					const desc = st.desc.slice(0, Math.max(0, width - st.id.length - 6 - retryPlain.length));
+					// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
+					// description cut silently with no signal there was more. Mirrors the
+					// overlay rows (#449/#450) + widget (#451/#452). Reserve 1 col for "…"
+					// and append only when the desc overflows; a desc that fits stays verbatim.
+					const budget = Math.max(0, width - st.id.length - 6 - retryPlain.length);
+					const fullDesc = st.desc;
+					const truncated = fullDesc.length > budget;
+					const desc = truncated
+						? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
+						: fullDesc.slice(0, budget);
 					lines.push(`  ${st.icon} ${st.id}: ${desc}${retry}`);
 					if (st.error) {
 						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
