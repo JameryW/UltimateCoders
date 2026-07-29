@@ -474,6 +474,33 @@ class TaskListComponent {
 				}
 				return;
 			}
+			if (data === "N") {
+				// ponytail: `N` in detail — prev-failed (the complement of detail `n`).
+				// list-mode has N (#420); detail-mode didn't, so `N` was a dead key here.
+				// Jump to the PREV failed task, exit detail back to list with cursor on it.
+				// Wraps around the (filtered) set. No failed → flashMsg, stay in detail.
+				const tasks = this.currentTasks();
+				const start = this.cursorIdx - 1;
+				let prev = -1;
+				for (let i = 0; i < tasks.length; i++) {
+					const idx = ((start - i) % tasks.length + tasks.length) % tasks.length;
+					if (tasks[idx].status === "failed") { prev = idx; break; }
+				}
+				if (prev < 0) {
+					this.setFlash("no failed tasks");
+				} else if (prev === this.cursorIdx) {
+					// ponytail: sole failed task — `N` wrapped back to the cursor itself.
+					// Flash instead of silently exiting detail. Mirrors list-mode N sole-failed.
+					this.setFlash("only failed task");
+				} else {
+					this.cursorIdx = prev;
+					this.detailTaskId = null;
+					this.detailScroll = 0;
+					this.flashMsg = null;
+					this.clampCursorAndScroll();
+				}
+				return;
+			}
 			if (data === KEY.up || data === "k") this.detailScroll = Math.max(0, this.detailScroll - 1);
 			else if (data === KEY.down || data === "j") this.detailScroll = Math.min(Math.max(0, this.detailLines.length - this.maxVisible), this.detailScroll + 1);
 			else if (data === KEY.pageUp) this.detailScroll = Math.max(0, this.detailScroll - this.maxVisible);
