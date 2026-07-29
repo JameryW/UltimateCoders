@@ -230,7 +230,7 @@ class TaskListComponent {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const failed = task.subtasks.filter((s) => s.status === "failed").length;
 			const total = task.subtasks.length;
-			const age = this.formatAge(task.createdAt);
+			const age = this.taskAge(task);
 			// ponytail: one line per task — age folded into a dim suffix so the
 			// visible window (maxVisible tasks) matches actual rendered rows.
 			// Previously the 2nd age line doubled the row count, pushing rows
@@ -325,6 +325,19 @@ class TaskListComponent {
 		if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
 		if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
 		return `${Math.floor(diff / 86400_000)}d ago`;
+	}
+
+	// ponytail: the list row's age suffix — a terminal task (completed/failed/
+	// cancelled) with completedAt shows "done {age}" (how long ago it finished),
+	// mirroring the detail header's doneTag (#430). The plain "{age}" (now-
+	// createdAt) read as "still going" for a task that ended 5m ago — misleading
+	// in the list. Falls back to createdAt-age when completedAt is absent or the
+	// task is in-flight (no completion to report).
+	private taskAge(task: TaskState): string {
+		if (task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)) {
+			return `done ${this.formatAge(task.completedAt)}`;
+		}
+		return this.formatAge(task.createdAt);
 	}
 
 	// ponytail: restore cursor to the pre-filter cursor task (if still present in

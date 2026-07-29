@@ -497,6 +497,37 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("future createdAt clamps to 0s ago (not negative)", ageLine.includes("0s ago") && !ageLine.includes("-"));
 }
 
+// ponytail: terminal-task row age → "done {age}" (how long ago it finished),
+// mirroring the detail header's doneTag (#430). The plain createdAt-age read as
+// "still going" for a task that ended 5m ago. in-flight stays plain.
+{
+	// completed task with completedAt=now-30s → "done 30s ago"
+	const done = makeTask("t1", "completed");
+	(done as any).completedAt = Date.now() - 30_000;
+	const { comp } = makeComponent([done]);
+	const row = comp.render(80).find((l: string) => l.includes("t1")) ?? "";
+	check("completed task row shows 'done 30s ago'", row.includes("done 30s ago"));
+	// failed task with completedAt → "done {age}"
+	const failed = makeTask("t2", "failed");
+	(failed as any).completedAt = Date.now() - 30_000;
+	const { comp: c2 } = makeComponent([failed]);
+	const row2 = c2.render(80).find((l: string) => l.includes("t2")) ?? "";
+	check("failed task row shows 'done {ago}'", row2.includes("done 30s ago"));
+	// in-flight (in_progress) → plain age, NOT "done"
+	const inFlight = makeTask("t3", "in_progress");
+	(inFlight as any).createdAt = Date.now() - 30_000;
+	const { comp: c3 } = makeComponent([inFlight]);
+	const row3 = c3.render(80).find((l: string) => l.includes("t3")) ?? "";
+	check("in_progress task row shows plain age (not done)", row3.includes("30s ago") && !row3.includes("done"));
+	// terminal task with NO completedAt → falls back to createdAt-age (no "done {age}" tag)
+	const noStamp = makeTask("t4", "completed");
+	(noStamp as any).completedAt = undefined;
+	(noStamp as any).createdAt = Date.now() - 30_000;
+	const { comp: c4 } = makeComponent([noStamp]);
+	const row4 = c4.render(80).find((l: string) => l.includes("t4")) ?? "";
+	check("terminal task w/o completedAt falls back to plain age", row4.includes("30s ago") && !row4.includes("done 30s"));
+}
+
 // empty list — pageDown/end/G must not produce a negative cursorIdx (phantom cursor)
 // ponytail: Math.min(tasks.length-1, …) on empty list = Math.min(-1, …) = -1 without the floor.
 {
