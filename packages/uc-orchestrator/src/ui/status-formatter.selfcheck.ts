@@ -229,6 +229,32 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("failed detail header has NO age tag", !failed.match(/\(\d+[smh]/));
 }
 
+// ponytail: terminal-task completion time — complement of the running age tag.
+// A completed/failed/cancelled task with completedAt shows "(done Ns ago)";
+// the running-age tests above assert completed/failed with NO completedAt stay
+// bare, so this covers the WITH-completedAt path (set by finish/cancel paths).
+{
+	const mk = (status: string, completedAt?: number) => ({
+		id: "T", description: "d", status, controlState: "running",
+		createdAt: Date.now() - 60_000, completedAt,
+		subtasks: [],
+	} as unknown as TaskState);
+	const completed = formatTaskDetail(mk("completed", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
+	check("completed (with completedAt) shows done tag", completed.includes("(done ") && completed.includes("ago)"));
+	const failed = formatTaskDetail(mk("failed", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
+	check("failed (with completedAt) shows done tag", failed.includes("(done ") && failed.includes("ago)"));
+	const cancelled = formatTaskDetail(mk("cancelled", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
+	check("cancelled (with completedAt) shows done tag", cancelled.includes("(done ") && cancelled.includes("ago)"));
+	// no completedAt → no done tag (don't fall back to createdAt, that's "submitted")
+	const noDone = formatTaskDetail(mk("completed", undefined), theme).find((l) => l.includes("T")) ?? "";
+	check("completed (no completedAt) has no done tag", !noDone.includes("(done"));
+	// running task with completedAt (shouldn't happen, but guard): shows age, not done.
+	// age derives from createdAt (60s ago → "1m"), NOT completedAt — assert the
+	// done tag is absent (a running task never shows "(done").
+	const running = formatTaskDetail(mk("in_progress", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
+	check("running shows age not done tag", running.includes("(1m)") && !running.includes("(done"));
+}
+
 // ponytail: review verdict — formatTaskDetail must show ✓ approved / ✗ rejected
 // (the subtask-tree overlay does; /uc status <id> + task-list detail omitted it).
 // A reviewed subtask's approval is the key outcome; no review → no line.

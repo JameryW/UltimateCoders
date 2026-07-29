@@ -70,7 +70,16 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// so the age is the render-time value — fine for a toast.)
 	const ageTag = ["in_progress", "planning", "paused"].includes(task.status)
 		? ` (${formatElapsed(Date.now() - task.createdAt)})` : "";
-	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${theme.fg("dim", ageTag)}`);
+	// ponytail: terminal-task completion time — the complement of ageTag. A running
+	// task shows live age; a terminal task (completed/failed/cancelled) shows when it
+	// finished ("done 5m ago"), sourced from completedAt when present. Failed/
+	// cancelled tasks also set completedAt (cancelTask/finish paths stamp it), so the
+	// same tag answers "how long ago did this break/end". Skipped when completedAt is
+	// absent (restored/older records) — no fallback to createdAt (that's "submitted",
+	// not "finished", and would misread).
+	const doneTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
+		? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago)` : "";
+	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${theme.fg("dim", ageTag || doneTag)}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).
 	// F16: budget must subtract the "  Description: " prefix (15 cols) — the old
