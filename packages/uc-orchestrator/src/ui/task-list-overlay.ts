@@ -219,6 +219,7 @@ class TaskListComponent {
 				this.theme,
 			);
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
+			const failed = task.subtasks.filter((s) => s.status === "failed").length;
 			const total = task.subtasks.length;
 			const age = this.formatAge(task.createdAt);
 			// ponytail: one line per task — age folded into a dim suffix so the
@@ -226,11 +227,17 @@ class TaskListComponent {
 			// Previously the 2nd age line doubled the row count, pushing rows
 			// past the overlay height while the footer still claimed 1-N fit.
 			const ageSuffix = this.theme.fg("dim", ` ${age}`);
+			// ponytail: failed-count marker — 3/5 with 2 failed read as "3/5", same as
+			// 3 completed + 2 pending, so a stuck task hid its failures in the list.
+			// Append " ·N✗" only when failed > 0 (no noise on healthy tasks). Mirrors
+			// the progress bar's failed segment (#427). Built plain so its length feeds
+			// the desc budget (prefixLen below).
+			const failTag = failed > 0 ? ` ·${failed}✗` : "";
+			const countTag = total > 0 ? `${completed}/${total}${failTag} ` : "";
 			// ponytail: budget desc by the ACTUAL prefix length — cursor(2)+badge(4)+
 			// space+id(14)+space+countTag(varies)+space+age(1+age.len). The old fixed
 			// width-34 assumed a 4-char countTag ("2/3 "), but "10/10 " is 6 — the
 			// row overflowed width and the compositor truncated the desc right side.
-			const countTag = total > 0 ? `${completed}/${total} ` : "";
 			const prefixLen = 2 + 4 + 1 + 14 + 1 + countTag.length + 1 + age.length + 1;
 			const desc = task.description.slice(0, Math.max(0, width - prefixLen));
 
