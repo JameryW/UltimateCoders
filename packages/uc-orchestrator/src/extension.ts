@@ -597,12 +597,19 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const repo = r.repoId ?? r.repo_id ?? "?";
 								const path = r.filePath ?? r.file_path ?? "?";
 								const score = r.score ? ` (${r.score.toFixed(2)})` : "";
+								// ponytail: line range — SearchResultItem carries start_line/end_line but
+								// the search output never showed them, so a match's location in the file
+								// was invisible. `:L42` (single line) or `:L42-50` (range) after the score.
+								const startL = r.startLine ?? r.start_line;
+								const endL = r.endLine ?? r.end_line;
+								const lineTag = (typeof startL === "number" && typeof endL === "number")
+									? (startL === endL ? ` :L${startL}` : ` :L${startL}-${endL}`) : "";
 								const snippet = (r.snippet ?? "").replace(/\s+/g, " ").trim();
 								// `  [repo] path score\n      snippet` — the path line prefix
-								// is `  [repo] ` (~6 + repo) + score; cap path so it fits.
+								// is `  [repo] ` (~6 + repo) + score + lineTag; cap path so it fits.
 								const pathPrefix = `  [${repo}] `;
 								const pathBudget = cols !== undefined
-									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0))
+									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length)
 									: 80;
 								const pathStr = path.length > pathBudget
 									? path.slice(0, Math.max(0, pathBudget - 1)) + "…"
@@ -612,7 +619,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const snip = snippet
 									? `\n      ${snippet.length > snipBudget ? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…" : snippet}`
 									: "";
-								return `${pathPrefix}${pathStr}${score}${snip}`;
+								return `${pathPrefix}${pathStr}${score}${lineTag}${snip}`;
 							},
 						);
 						// ponytail: if we truncated the result set, say so — "Found 50"
