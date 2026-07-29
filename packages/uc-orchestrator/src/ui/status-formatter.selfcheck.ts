@@ -212,7 +212,7 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 // running elapsed. createdAt=now-30s → "(30s)" (formatElapsed: <60s keeps "Ns").
 // Terminal statuses skip it (a stale age on completed/failed/cancelled is noise).
 {
-	const base = (status: TaskState["status"]) => ({
+	const base = (status: string) => ({
 		id: "T", description: "d", status, controlState: "running",
 		createdAt: Date.now() - 30_000, subtasks: [],
 	} as unknown as TaskState);
