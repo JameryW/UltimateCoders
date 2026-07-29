@@ -401,6 +401,33 @@ const PAGEDOWN = "\x1b[6~";
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: filter matches dependsOn — the DAG triage query "which subtasks
+// depend on X" (impacted downstream of a failure). Pre-fix the filter matched
+// id/desc/status/taskId but not the dep list, so typing a dep id found the dep
+// itself but not its dependents.
+{
+	// s0 (root), s1 depends on s0, s2 depends on s0 — type "s0" → s1+s2 surface
+	// (the dependents), plus s0 itself (id match). Filter by dep: typing "s0"
+	// must include s1/s2 which depend on s0.
+	const subtasks = [
+		makeSubtask("s0", { description: "root" }),
+		makeSubtask("s1", { description: "downstream one", dependsOn: ["s0"] }),
+		makeSubtask("s2", { description: "downstream two", dependsOn: ["s0"] }),
+		makeSubtask("s3", { description: "unrelated" }),
+	];
+	const { comp } = makeComponent(subtasks);
+	comp.handleInput("/");
+	comp.handleInput("s");
+	comp.handleInput("0");
+	comp.handleInput("\r"); // exit editing, keep filter
+	const lines = comp.render(80);
+	// s1 + s2 depend on s0 → both must be visible (the whole point of dep matching)
+	check("filter by dep 's0' shows dependent s1", lines.some((l: string) => l.includes("s1:")));
+	check("filter by dep 's0' shows dependent s2", lines.some((l: string) => l.includes("s2:")));
+	// s3 has no s0 dep → filtered out
+	check("filter by dep 's0' hides unrelated s3", !lines.some((l: string) => l.includes("s3:")));
+}
+
 // ponytail: filter matches the parent taskId — typing a task's id surfaces ALL
 // its subtasks (the natural "show me this task's work" intent). Pre-fix the
 // filter matched only subtask id/desc/status, so a taskId with no subtask-id

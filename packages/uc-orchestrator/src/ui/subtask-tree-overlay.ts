@@ -143,7 +143,13 @@ class SubtaskTreeComponent {
 				it.taskId.toLowerCase().includes(q) ||
 				it.subtask.id.toLowerCase().includes(q) ||
 				it.subtask.description.toLowerCase().includes(q) ||
-				it.subtask.status.toLowerCase().includes(q),
+				it.subtask.status.toLowerCase().includes(q) ||
+				// ponytail: match dependsOn too — in a DAG the common triage query is
+				// "which subtasks depend on X" (impacted downstream of a failure). The
+				// filter matched id/desc/status/taskId but not the dep list, so typing a
+				// dep id found the dep itself but not its dependents. joined (lowercased)
+				// covers "X" and "X,Y" shapes without splitting.
+				it.subtask.dependsOn.some((d) => d.toLowerCase().includes(q)),
 		);
 	}
 
