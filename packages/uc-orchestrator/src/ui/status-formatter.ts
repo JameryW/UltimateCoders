@@ -154,16 +154,25 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 				: (st.completedAt && ["completed", "failed", "cancelled"].includes(st.status))
 					? ` (done ${formatElapsed(Date.now() - st.completedAt)} ago)` : "";
 			const elapsed = timePlain ? theme.fg("dim", timePlain) : "";
-			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps+elapsed.
+			// ponytail: retry×N on a failed subtask row — mirrors the subtask-tree's
+			// collapsed failed-row retry tag (#439). A subtask that failed after N retries
+			// is a "hard" failure; surfacing retryCount inline in /uc status <id> + the
+			// detail view means the user sees it without expanding. Only when failed and
+			// retryCount>0 (no "retry×0" noise; no tag on non-failed rows). Built PLAIN
+			// so its length feeds the desc budget; appended last (dropped first on narrow).
+			const retryPlain = st.status === "failed" && (st.retryCount ?? 0) > 0
+				? ` retry×${st.retryCount}` : "";
+			const retry = retryPlain ? theme.fg("dim", retryPlain) : "";
+			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps+elapsed+retry.
 			// Without width (legacy notify path), keep the 50-char cap.
 			// F17: icon VISIBLE width is 1 — stIcon.length includes ~11 ANSI escape
 			// chars in real terminals, so the old subtraction over-truncated desc
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length)
 				: 50;
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}`);
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}`);
 
 			if (st.error) {
 				// ponytail: error budget = terminal width minus indent; default 60 for
