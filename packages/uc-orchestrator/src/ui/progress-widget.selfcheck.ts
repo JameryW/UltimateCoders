@@ -460,5 +460,20 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("widget fitting desc no ellipsis", row2.includes("short task") && !row2.includes("…"));
 }
 
+// ponytail: running-count marker on the bar row — mirrors the subtask-tree/task-list
+// headers (#458/#459). "·N▶" (accent) only when running>0; none when no running.
+{
+	const mkSub = (status: string) => ({ id: "s", description: "d", status, dependsOn: [], files: [] } as any);
+	const task = (subs: any[]) => ({ id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState);
+	// 2 running, 1 completed → bar "1/3 ·2▶" (completed=1 of 3)
+	const comp = createProgressWidget(() => ({ task: task([mkSub("running"), mkSub("running"), mkSub("completed")]) }))(undefined, theme) as any;
+	const bar = (comp.render(80) as string[]).find((l: string) => l.includes("1/3")) ?? "";
+	check("bar row shows ·N▶ with running subtasks", bar.includes("·2▶"));
+	// no running → no ▶ marker
+	const comp2 = createProgressWidget(() => ({ task: task([mkSub("completed"), mkSub("pending")]) }))(undefined, theme) as any;
+	const bar2 = (comp2.render(80) as string[]).find((l: string) => l.includes("/2")) ?? "";
+	check("bar row no ▶ when no running subtasks", !bar2.includes("▶"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
