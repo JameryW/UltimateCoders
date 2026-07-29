@@ -174,10 +174,19 @@ class TaskListComponent {
 			(t) => t.status === "failed" || t.subtasks.some((s) => s.status === "failed"),
 		).length;
 		const failTag = failedCount > 0 ? this.theme.fg("error", ` ·${failedCount}✗`) : "";
+		// ponytail: running-count marker — mirrors the subtask-tree header (#458).
+		// A task counts as "running" if it's in_progress/planning/paused (a live
+		// concern) — answers "is anything making progress" at a glance, without
+		// scanning rows. accent-colored so a live run reads as active. No marker
+		// when 0 running (no noise on an all-terminal list).
+		const runningCount = tasks.filter(
+			(t) => ["in_progress", "planning", "paused"].includes(t.status),
+		).length;
+		const runTag = runningCount > 0 ? this.theme.fg("accent", ` ·${runningCount}▶`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s) (filtered from ${allTasks.length})`
 			: ` — ${allTasks.length} task(s)`;
-		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra) + failTag);
+		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra) + failTag + runTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows
