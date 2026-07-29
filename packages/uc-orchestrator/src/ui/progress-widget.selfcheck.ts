@@ -409,6 +409,28 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("failed bar: no-fail control has no ✗ marker", !barNF.includes("✗"));
 }
 
+// ponytail: total run duration on a terminal task — "⏱ Ns" answers "how long
+// did this run". Computed createdAt→completedAt. Only terminal w/ completedAt;
+// in-flight shows the live age, no dur tag.
+{
+	const mk = (status: string, completedAt?: number) => ({
+		task: { id: "T", description: "t", status, controlState: "running",
+			createdAt: Date.now() - 60_000, completedAt, subtasks: [] } as unknown as TaskState,
+	});
+	const comp = createProgressWidget(() => mk("completed", Date.now() - 30_000))(undefined, theme) as any;
+	const row = (comp.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
+	// createdAt=now-60s, completedAt=now-30s → ran 30s
+	check("completed task shows ⏱ duration", row.includes("⏱") && row.includes("30s"));
+	// failed task w/ completedAt → duration
+	const fcomp = createProgressWidget(() => mk("failed", Date.now() - 30_000))(undefined, theme) as any;
+	const frow = (fcomp.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
+	check("failed task shows ⏱ duration", frow.includes("⏱"));
+	// in-flight → no dur tag
+	const icomp = createProgressWidget(() => mk("in_progress", undefined))(undefined, theme) as any;
+	const irow = (icomp.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
+	check("in_progress task no ⏱ duration", !irow.includes("⏱"));
+}
+
 // ponytail: idle widget hints /uc submit — the always-visible widget is a
 // first-run user's first UC surface; "UC: idle" alone named no submit path
 // (mirrors the overlay empty-state #422). Gated on width ≥ 50.

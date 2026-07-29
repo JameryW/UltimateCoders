@@ -131,8 +131,15 @@ class ProgressWidgetComponent {
 		const desc = truncated
 			? fullDesc.slice(0, Math.max(0, descBudget - 1)) + (descBudget > 0 ? "…" : "")
 			: fullDesc.slice(0, descBudget);
+		// ponytail: total run duration on a terminal task — the time-signal sweep
+		// (#421/#430/#433/#443) covered when it started/ended, but not how long it
+		// ran. "⏱ 5m" answers "did this take unusually long" at a glance, computed
+		// from createdAt→completedAt. Only terminal tasks w/ completedAt; in-flight
+		// shows the live age already. Dim so it reads as metadata, not a field.
+		const durTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
+			? this.theme.fg("dim", ` · ⏱${formatElapsed(task.completedAt - task.createdAt)}`) : "";
 		lines.push(
-			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${affordance}`,
+			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${durTag}${affordance}`,
 		);
 
 		// ponytail: progress bar — show whenever there are subtasks, not only when
