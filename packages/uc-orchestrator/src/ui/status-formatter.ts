@@ -137,9 +137,14 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// running subtask with no time signal (only the tree overlay did). Built PLAIN
 			// (before theming) so its length feeds the desc budget alongside depsPlain,
 			// matching how the tree row subtracts the elapsed suffix.
-			const elapsedPlain = st.status === "running" && st.startedAt
-				? ` (${formatElapsed(Date.now() - st.startedAt)})` : "";
-			const elapsed = elapsedPlain ? theme.fg("dim", elapsedPlain) : "";
+			// A terminal subtask (completed/failed/cancelled) with completedAt shows
+			// "(done Ns ago)" instead — the subtask-level mirror of the task-level doneTag
+			// (#430). Running shows elapsed; terminal shows done-time; absent stamp → none.
+			const timePlain = st.status === "running" && st.startedAt
+				? ` (${formatElapsed(Date.now() - st.startedAt)})`
+				: (st.completedAt && ["completed", "failed", "cancelled"].includes(st.status))
+					? ` (done ${formatElapsed(Date.now() - st.completedAt)} ago)` : "";
+			const elapsed = timePlain ? theme.fg("dim", timePlain) : "";
 			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps+elapsed.
 			// Without width (legacy notify path), keep the 50-char cap.
 			// F17: icon VISIBLE width is 1 — stIcon.length includes ~11 ANSI escape
@@ -147,7 +152,7 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - elapsedPlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length)
 				: 50;
 			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}`);
 

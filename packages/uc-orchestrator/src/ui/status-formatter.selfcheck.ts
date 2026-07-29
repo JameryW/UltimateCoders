@@ -189,6 +189,31 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("running subtask + long desc fits narrow width with elapsed", cLine.length <= 30);
 }
 
+// ponytail: terminal subtask shows done-time (subtask-level mirror of #430's
+// task doneTag). completed/failed/cancelled with completedAt → "(done Ns ago)";
+// running shows elapsed, not done; terminal without completedAt → none.
+{
+	const mk = (status: string, completedAt?: number) => ({
+		id: "s0", description: "d", status, dependsOn: [], files: [],
+		completedAt,
+	} as unknown as SubtaskResult);
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const withDone = { ...task, subtasks: [mk("completed", Date.now() - 30_000)] } as unknown as TaskState;
+	const line = formatTaskDetail(withDone, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("completed subtask (with completedAt) shows done tag", line.includes("(done ") && line.includes("ago)"));
+	const withFail = { ...task, subtasks: [mk("failed", Date.now() - 30_000)] } as unknown as TaskState;
+	const failLine = formatTaskDetail(withFail, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("failed subtask (with completedAt) shows done tag", failLine.includes("(done ") && failLine.includes("ago)"));
+	// no completedAt → no done tag (don't fall back)
+	const noDone = { ...task, subtasks: [mk("completed", undefined)] } as unknown as TaskState;
+	const noLine = formatTaskDetail(noDone, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("completed subtask (no completedAt) has no done tag", !noLine.includes("(done"));
+	// running shows elapsed, not done tag
+	const running = { ...task, subtasks: [{ ...mk("running"), startedAt: Date.now() - 30_000, completedAt: Date.now() - 10_000 } as unknown as SubtaskResult] } as unknown as TaskState;
+	const runLine = formatTaskDetail(running, theme, 80).find((l) => l.includes("s0:")) ?? "";
+	check("running subtask shows elapsed not done tag", runLine.includes("(30s)") && !runLine.includes("(done"));
+}
+
 // ponytail: pause sets controlState="paused" but leaves status="in_progress".
 // formatTaskDetail header must show [paused] (mirror formatTaskList), else a
 // paused task's detail reads "in_progress" with no pause indication.
