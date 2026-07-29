@@ -71,7 +71,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// 3/5 task with 2 failed read "3/5" like 3 completed + 2 pending. Append " ·N✗"
 	// only when failed > 0 (no noise on healthy tasks).
 	const failTag = failed > 0 ? ` ·${failed}✗` : "";
-	const countTag = total > 0 ? ` ${completed}/${total}${failTag}` : "";
+	// ponytail: running-count marker in the detail countTag — mirrors the subtask-tree
+	// header (#458) + widget bar (#460). The detail header's countTag showed
+	// completed/total/failed, but not how many subtasks are actively running. Append
+	// " ·N▶" only when running>0 (no noise on healthy/terminal tasks).
+	const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
+	const runTag = running > 0 ? ` ·${running}▶` : "";
+	const countTag = total > 0 ? ` ${completed}/${total}${failTag}${runTag}` : "";
 	// ponytail: live age on an in-flight task — mirrors the subtask-tree's running
 	// elapsed tag. createdAt is the submit time, so "how long has this been going"
 	// is now-createdAt. Only for in_progress/planning/paused (a running concern);
