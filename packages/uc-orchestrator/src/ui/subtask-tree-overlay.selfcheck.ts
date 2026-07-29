@@ -401,6 +401,32 @@ const PAGEDOWN = "\x1b[6~";
 	check("filter header shows filtered count", lines.some((l: string) => l.includes("filtered from 2")));
 }
 
+// ponytail: header failed-count marker — counts failed subtasks across the
+// (filtered) visible set, error-colored. "·N✗" only when failedCount>0. A
+// /failed filter narrows the count to the failed subset.
+{
+	// 2 failed + 1 completed → header shows "·2✗"
+	const { comp } = makeComponent([makeSubtask("s1"), makeSubtask("s2"), makeSubtask("s3", { status: "completed" })]);
+	const header = comp.render(80).find((l: string) => l.includes("UC Subtask Tree")) ?? "";
+	check("header shows ·2✗ with 2 failed subtasks", header.includes("·2✗"));
+	// no failed → no ✗ marker
+	const { comp: c2 } = makeComponent([makeSubtask("s1", { status: "completed" }), makeSubtask("s2", { status: "pending" })]);
+	const header2 = c2.render(80).find((l: string) => l.includes("UC Subtask Tree")) ?? "";
+	check("header no ✗ when no failed subtasks", !header2.includes("✗"));
+	// filter /failed narrows the visible set → failedCount matches the filter
+	const { comp: c3 } = makeComponent([makeSubtask("s1"), makeSubtask("s2"), makeSubtask("s3", { status: "completed" })]);
+	c3.handleInput("/");
+	c3.handleInput("f");
+	c3.handleInput("a");
+	c3.handleInput("i");
+	c3.handleInput("l");
+	c3.handleInput("e");
+	c3.handleInput("d");
+	c3.handleInput("\r");
+	const header3 = c3.render(80).find((l: string) => l.includes("UC Subtask Tree")) ?? "";
+	check("header failed-count matches /failed filter (2)", header3.includes("·2✗"));
+}
+
 // ponytail: filter matches dependsOn — the DAG triage query "which subtasks
 // depend on X" (impacted downstream of a failure). Pre-fix the filter matched
 // id/desc/status/taskId but not the dep list, so typing a dep id found the dep
