@@ -173,8 +173,8 @@ class TaskListComponent {
 			lines.push(this.theme.fg("dim", `  filter: "${this.query}" — / to edit · Esc to clear`));
 		} else {
 			lines.push(this.theme.fg("dim", this.hintLine(width,
-				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · t tree · PgUp/PgDn · y/Y copy · / filter · Esc close",
-				"  ↑↓ nav · Enter · c/p/r · t tree · Esc close",
+				"  ↑↓/jk nav · Enter detail · c cancel (2×) · p pause · r resume · n next-failed · N prev-failed · t tree · PgUp/PgDn · y/Y copy · / filter · Esc close",
+				"  ↑↓ nav · Enter · c/p/r · n/N failed · t tree · Esc close",
 			)));
 		}
 		lines.push("");
@@ -253,7 +253,7 @@ class TaskListComponent {
 		}
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · y/Y copy · Esc/q back"));
+		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · N prev-failed · y/Y copy · Esc/q back"));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
@@ -490,7 +490,7 @@ class TaskListComponent {
 			// search-edit it appends to the query; exit editing (Esc/Enter/nav) first
 			// to use `t` as a jump. `Y` joins the fall-through set (yank error).
 			// Mirrors the subtask-tree fix.
-			const searchCmdKeys = ["c", "C", "p", "r", "y", "Y", "n"];
+			const searchCmdKeys = ["c", "C", "p", "r", "y", "Y", "n", "N"];
 			// ponytail: printable single char (ASCII 0x20..0x7e, includes `/` itself)
 			// EXCEPT the command keys above (those fall through to normal handling).
 			if (data.length === 1 && data >= " " && data <= "~" && !searchCmdKeys.includes(data)) {
@@ -650,8 +650,8 @@ class TaskListComponent {
 			// has n/p for subtask-level; the task-list had no task-level jump, so finding
 			// the next failed task among many meant ↓ scrolling or /failed filter. `n`
 			// jumps cursor to the next task with status "failed", wrapping to the first
-			// when past the last (repeated `n` cycles). No prev (p is pause) — use
-			// /failed filter to go back. No failed → flashMsg.
+			// when past the last (repeated `n` cycles). `N` is prev-failed (below) since
+			// `p` is pause — no lowercase prev. No failed → flashMsg.
 			const start = this.cursorIdx + 1;
 			let next = -1;
 			for (let i = 0; i < tasks.length; i++) {
@@ -667,6 +667,29 @@ class TaskListComponent {
 				this.flashMsg = "only failed task";
 			} else {
 				this.cursorIdx = next;
+				this.flashMsg = null;
+			}
+		} else if (data === "N") {
+			// ponytail: jump to the PREV failed task before the cursor — the complement
+			// of `n`. The subtask-tree uses lowercase p/n for prev/next-failed, but the
+			// task-list's `p` is pause, so there was no prev path: a user who overshot
+			// a failure with `n` had to `/failed` filter or ↑ scroll. `N` (uppercase,
+			// unused) mirrors vim's N/n next-prev convention and costs nothing. Wraps to
+			// the last failed when the cursor is at/before the first. No failed → flashMsg.
+			const start = this.cursorIdx - 1;
+			let prev = -1;
+			for (let i = 0; i < tasks.length; i++) {
+				const idx = ((start - i) % tasks.length + tasks.length) % tasks.length;
+				if (tasks[idx].status === "failed") { prev = idx; break; }
+			}
+			if (prev < 0) {
+				this.flashMsg = "no failed tasks";
+			} else if (prev === this.cursorIdx) {
+				// ponytail: sole failed task — `N` wrapped back to the cursor itself.
+				// Flash so the user knows `N` registered (otherwise silent no-op).
+				this.flashMsg = "only failed task";
+			} else {
+				this.cursorIdx = prev;
 				this.flashMsg = null;
 			}
 		} else if (data === "t") {
