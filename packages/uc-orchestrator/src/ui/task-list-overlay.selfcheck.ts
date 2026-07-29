@@ -689,6 +689,44 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter /failed hides completed task with no failed subtask", !lines.some((l: string) => l.includes("done1")));
 }
 
+// ponytail: filter matches task error + subtask error/result text — mirrors the
+// subtask-tree filter (#447). `/timeout` surfaces an in_progress task whose failed
+// subtask mentions it, and a failed task whose task.error mentions it.
+{
+	const mkSub = (id: string, status: string, error?: string, result?: string) => ({
+		id, description: `sub ${id}`, status, dependsOn: [],
+		result, error, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	// in_progress task w/ a failed subtask whose error mentions "timeout"
+	const withSubErr = {
+		id: "errSub", description: "running w/ failed sub", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSub("s0", "completed"), mkSub("s1", "failed", "timeout contacting upstream")],
+	} as unknown as TaskState;
+	const { comp: c1 } = makeComponent([withSubErr]);
+	c1.handleInput("/"); for (const ch of "timeout") c1.handleInput(ch); c1.handleInput(ENTER);
+	check("filter matches subtask error text (timeout)", c1.render(80).some((l: string) => l.includes("errSub")));
+	// failed task w/ task.error mentioning "rate_limit"
+	const withTaskErr = {
+		id: "errTask", description: "failed task", status: "failed", controlState: "running",
+		createdAt: Date.now(), error: "rate_limit exceeded",
+		subtasks: [],
+	} as unknown as TaskState;
+	const { comp: c2 } = makeComponent([withTaskErr]);
+	c2.handleInput("/"); for (const ch of "rate") c2.handleInput(ch); c2.handleInput(ENTER);
+	check("filter matches task error text (rate)", c2.render(80).some((l: string) => l.includes("errTask")));
+	// subtask result text
+	const withRes = {
+		id: "resTask", description: "deploy", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSub("s0", "completed", undefined, "deployed to prod")],
+	} as unknown as TaskState;
+	const { comp: c3 } = makeComponent([withRes]);
+	c3.handleInput("/"); for (const ch of "prod") c3.handleInput(ch); c3.handleInput(ENTER);
+	check("filter matches subtask result text (prod)", c3.render(80).some((l: string) => l.includes("resTask")));
+}
+
 // ponytail: command keys (y copy) fall through in search-edit — the printable
 // handler swallowed ALL printable chars, so `y` appended to the query instead of
 // yanking the cursor task's id. Now excluded so it exits editing + acts.

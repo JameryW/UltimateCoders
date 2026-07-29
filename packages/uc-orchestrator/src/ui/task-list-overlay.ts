@@ -135,12 +135,19 @@ class TaskListComponent {
 				t.description.toLowerCase().includes(q) ||
 				t.status.toLowerCase().includes(q) ||
 				(t.controlState ?? "").toLowerCase().includes(q) ||
+				(t.error ?? "").toLowerCase().includes(q) ||
 				// ponytail: match any subtask status too — a task stays "in_progress"
 				// while a subtask fails (the common triage state), so `/failed` matched
 				// only failed tasks and hid the in_progress task with a failed subtask.
 				// `/failed` now surfaces every task that HAS a failed subtask. Same for
 				// `/running`, `/completed`, etc. .some() short-circuits on the first hit.
-				t.subtasks.some((s) => s.status.toLowerCase().includes(q)),
+				// ponytail: match subtask error + result text too — mirrors the subtask-tree
+				// filter (#447). `/timeout` surfaces an in_progress task whose failed subtask
+				// mentions it, not just tasks with a task-level error.
+				t.subtasks.some((s) =>
+					s.status.toLowerCase().includes(q) ||
+					(s.error ?? "").toLowerCase().includes(q) ||
+					(s.result ?? "").toLowerCase().includes(q)),
 		);
 	}
 
