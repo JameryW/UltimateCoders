@@ -1162,6 +1162,45 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("F22 detail `Y` copies task error", copied.length === 2 && copied[1] === "task blew up");
 }
 
+// ponytail: `Y` falls back to the first failed subtask's error when the task
+// has no task-level error — an in_progress task with a failed subtask is the
+// common triage state, and the error the user wants to paste lives on the subtask.
+// Covers list-mode `Y` AND detail-mode `Y` (both use taskErrorToYank).
+{
+	const mkSub = (id: string, status: string, error?: string) => ({
+		id, description: `sub ${id}`, status, dependsOn: [],
+		result: undefined, error, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	const tasks = [{
+		id: "tSub", description: "running w/ failed sub", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSub("s0","completed"), mkSub("s1","failed","sub blew up"), mkSub("s2","pending")],
+	} as TaskState];
+	const copied: string[] = [];
+	const comp = createTaskListOverlay({
+		tasks: () => tasks, getTask: (id) => tasks.find((t) => t.id === id),
+		copy: (t) => { copied.push(t); return true; }, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	// list-mode `Y` on the in_progress task (no task.error) → falls back to s1's error
+	comp.handleInput("Y");
+	check("list `Y` falls back to failed subtask error", copied.length === 1 && copied[0] === "sub blew up");
+	// detail-mode `Y` on the same task
+	comp.handleInput(ENTER);
+	comp.handleInput("Y");
+	check("detail `Y` falls back to failed subtask error", copied.length === 2 && copied[1] === "sub blew up");
+	// a task with NO failed subtasks AND no task.error → still flashes "no error to copy"
+	const clean = [makeTask("tClean", "in_progress")] as TaskState[];
+	const copied2: string[] = [];
+	const comp2 = createTaskListOverlay({
+		tasks: () => clean, getTask: (id) => clean.find((t) => t.id === id),
+		copy: (t) => { copied2.push(t); return true; }, onClose: () => {},
+	})(undefined, theme, undefined, () => {}) as any;
+	comp2.handleInput("Y");
+	check("list `Y` no task error + no failed subtask flashes", comp2.flashMsg !== null && comp2.flashMsg.includes("no error to copy"));
+	check("list `Y` no error anywhere copies nothing", copied2.length === 0);
+}
+
 // ponytail: regression guard — yank flash shows the FULL id, not a truncated
 // prefix. Was slice(0,8), which rendered `copied task_abc1` for a long id and
 // hid what actually landed on the clipboard. A long id must appear verbatim.
