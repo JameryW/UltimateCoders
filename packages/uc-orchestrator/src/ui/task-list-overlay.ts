@@ -181,6 +181,13 @@ class TaskListComponent {
 
 		if (allTasks.length === 0) {
 			lines.push(this.theme.fg("dim", "  No tasks"));
+			// ponytail: a new user who opens the list (Ctrl+Shift+T) to an empty
+			// store sees "No tasks" + the in-overlay key hint, but neither names
+			// how tasks get IN. One dim line pointing at /uc submit (mirrors the
+			// /uc status <task-id> hint in the status toast). Skipped when a filter
+			// is active (filtering an empty list is a user-driven no-op, not a
+			// first-run cue).
+			lines.push(this.theme.fg("dim", "  /uc submit <description> to add one"));
 			return lines;
 		}
 
