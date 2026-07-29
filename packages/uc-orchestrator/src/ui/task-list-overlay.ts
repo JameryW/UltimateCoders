@@ -377,7 +377,10 @@ class TaskListComponent {
 			}
 			if (data === "Y") {
 				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
-				if (dt?.error) this.yank(dt.error);
+				// ponytail: fall back to the first failed subtask's error when the task
+				// has none (mirrors list-mode `Y`). getTask unavailable → generic flash.
+				const err = dt ? this.taskErrorToYank(dt) : undefined;
+				if (err) this.yank(err);
 				else this.setFlash("no error to copy");
 				return;
 			}
@@ -660,7 +663,11 @@ class TaskListComponent {
 			if (!task) {
 				this.flashMsg = "no task selected";
 			} else if (data === "Y") {
-				if (task.error) this.yank(task.error);
+				// ponytail: yank the task error, falling back to the first failed
+				// subtask's error when the task itself has none (an in_progress task
+				// with a failed subtask). "no error to copy" only when neither exists.
+				const err = this.taskErrorToYank(task);
+				if (err) this.yank(err);
 				else this.flashMsg = "no error to copy";
 			} else {
 				this.yank(task.id);
@@ -790,6 +797,17 @@ class TaskListComponent {
 		// The flashMsg line is itself width-clamped at render (slice width-2), so a
 		// long id just right-truncates there instead of misleading the user here.
 		this.setFlash(ok ? `copied ${text}` : "copy failed");
+	}
+
+	// ponytail: the error text `Y` should yank for a task. Prefer the task-level
+	// error, but fall back to the FIRST failed subtask's error — a task stays
+	// in_progress while a subtask fails (the common triage state), so task.error
+	// is empty and the failure the user wants to paste lives on the subtask.
+	// Mirrors the progress-widget's "first failed subtask error" surfacing.
+	private taskErrorToYank(task: TaskState): string | undefined {
+		if (task.error) return task.error;
+		const failed = task.subtasks.find((s) => s.status === "failed" && s.error);
+		return failed?.error;
 	}
 
 	private openDetail(taskId: string): void {
