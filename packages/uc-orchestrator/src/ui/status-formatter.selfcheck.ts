@@ -163,6 +163,32 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("F25 short deps listed fully", bLine.includes("←X"));
 }
 
+// ponytail: live elapsed on a running subtask row — mirrors the subtask-tree
+// overlay's running-elapsed tag. /uc status <id> + detail view showed a running
+// subtask with no time signal. Non-running rows skip it. elapsedPlain feeds the
+// desc budget so a long desc+elapsed doesn't overflow the line.
+{
+	// running subtask, startedAt=now-30s → "(30s)" appended after desc
+	const running = { ...st("A", [], "running"), startedAt: Date.now() - 30_000 } as unknown as SubtaskResult;
+	const task = {
+		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [running],
+	} as unknown as TaskState;
+	const aLine = formatTaskDetail(task, theme, 80).find((l) => l.includes("A:")) ?? "";
+	check("running subtask row shows elapsed (30s)", aLine.includes("(30s)"));
+	// non-running subtask → no elapsed tag
+	const done = { ...st("B", [], "completed") } as unknown as SubtaskResult;
+	const task2 = { ...task, subtasks: [done] } as unknown as TaskState;
+	const bLine = formatTaskDetail(task2, theme, 80).find((l) => l.includes("B:")) ?? "";
+	check("completed subtask row has NO elapsed", !bLine.includes("30s") && !bLine.match(/\(\d+[smh]/));
+	// elapsed budgeted: a long desc + elapsed fits a narrow width (depsPlain=""
+	// here, so budget = width - head - 3 - elapsedPlain). No overflow.
+	const longRun = { ...st("C", [], "running"), startedAt: Date.now() - 30_000, description: "d".repeat(60) } as unknown as SubtaskResult;
+	const task3 = { ...task, subtasks: [longRun] } as unknown as TaskState;
+	const cLine = formatTaskDetail(task3, theme, 30).find((l) => l.includes("C:")) ?? "";
+	check("running subtask + long desc fits narrow width with elapsed", cLine.length <= 30);
+}
+
 // ponytail: pause sets controlState="paused" but leaves status="in_progress".
 // formatTaskDetail header must show [paused] (mirror formatTaskList), else a
 // paused task's detail reads "in_progress" with no pause indication.
