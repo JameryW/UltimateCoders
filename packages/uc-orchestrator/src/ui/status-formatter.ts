@@ -9,6 +9,7 @@ import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
+import { formatElapsed } from "./elapsed";
 
 // ── Task List (no task ID) ───────────────────────────────────────
 
@@ -61,7 +62,15 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	const total = task.subtasks.length;
 	const completed = task.subtasks.filter((s) => s.status === "completed").length;
 	const countTag = total > 0 ? ` ${completed}/${total}` : "";
-	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}`);
+	// ponytail: live age on an in-flight task — mirrors the subtask-tree's running
+	// elapsed tag. createdAt is the submit time, so "how long has this been going"
+	// is now-createdAt. Only for in_progress/planning/paused (a running concern);
+	// a completed/failed/cancelled task's age is stale and just noise. Dim + parens
+	// so it reads as metadata, not a status field. (notify path is a frozen snapshot,
+	// so the age is the render-time value — fine for a toast.)
+	const ageTag = ["in_progress", "planning", "paused"].includes(task.status)
+		? ` (${formatElapsed(Date.now() - task.createdAt)})` : "";
+	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${theme.fg("dim", ageTag)}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).
 	// F16: budget must subtract the "  Description: " prefix (15 cols) — the old

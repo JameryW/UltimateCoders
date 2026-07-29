@@ -182,6 +182,27 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("running: detail header has no [controlState] suffix", !runHeader.includes("["));
 }
 
+// ponytail: live age tag on an in-flight task — mirrors the subtask-tree's
+// running elapsed. createdAt=now-30s → "(30s)" (formatElapsed: <60s keeps "Ns").
+// Terminal statuses skip it (a stale age on completed/failed/cancelled is noise).
+{
+	const base = (status: TaskState["status"]) => ({
+		id: "T", description: "d", status, controlState: "running",
+		createdAt: Date.now() - 30_000, subtasks: [],
+	} as unknown as TaskState);
+	const inProg = formatTaskDetail(base("in_progress"), theme).find((l) => l.includes("T")) ?? "";
+	check("in_progress detail header has age tag", inProg.includes("(30s)"));
+	const planning = formatTaskDetail(base("planning"), theme).find((l) => l.includes("T")) ?? "";
+	check("planning detail header has age tag", planning.includes("(30s)"));
+	const paused = { ...base("paused"), status: "in_progress", controlState: "paused" } as unknown as TaskState;
+	const pausedH = formatTaskDetail(paused, theme).find((l) => l.includes("T")) ?? "";
+	check("paused detail header has age tag", pausedH.includes("(30s)"));
+	const done = formatTaskDetail(base("completed"), theme).find((l) => l.includes("T")) ?? "";
+	check("completed detail header has NO age tag", !done.match(/\(\d+[smh]/));
+	const failed = formatTaskDetail(base("failed"), theme).find((l) => l.includes("T")) ?? "";
+	check("failed detail header has NO age tag", !failed.match(/\(\d+[smh]/));
+}
+
 // ponytail: review verdict — formatTaskDetail must show ✓ approved / ✗ rejected
 // (the subtask-tree overlay does; /uc status <id> + task-list detail omitted it).
 // A reviewed subtask's approval is the key outcome; no review → no line.
