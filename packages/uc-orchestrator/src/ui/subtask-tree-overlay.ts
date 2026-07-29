@@ -118,8 +118,15 @@ class SubtaskTreeComponent {
 		if (!force && count === this.lastSubtaskCount) return;
 		this.lastSubtaskCount = count;
 		this.flatItems = [];
+		// ponytail: status-priority sort — within each task's subtasks, sort by
+		// failed → running/reviewing → else, so failures surface to the top of the
+		// tree list (mirrors the detail view's tier sort, #466). Same-status keeps
+		// insertion order (stable sort). Tasks themselves stay in getAllTaskStates order.
+		const statusRank = (s: string): number =>
+			s === "failed" ? 0 : (s === "running" || s === "reviewing") ? 1 : 2;
 		for (const task of tasks) {
-			for (const st of task.subtasks) {
+			const sorted = task.subtasks.slice().sort((a, b) => statusRank(a.status) - statusRank(b.status));
+			for (const st of sorted) {
 				this.flatItems.push({ taskId: task.id, subtask: st, depth: 0 });
 			}
 		}

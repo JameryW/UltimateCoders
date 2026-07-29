@@ -293,8 +293,10 @@ const PAGEDOWN = "\x1b[6~";
 // ponytail: `n` jumps to the NEXT failed subtask after the cursor — Ctrl+Shift+F
 // lands on the first, but inside the tree there was no "next failed" key, so
 // multi-failure triage meant manual ↓. Wraps to first when past the last.
+// NOTE: status-priority sort reorders failed first → s0, s2, s3, s1 (failed
+// group, then completed s1). So s0=idx0, s2=idx1, s3=idx2.
 {
-	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed
+	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed (sort: s0,s2,s3,s1)
 	const subs = [
 		makeSubtask("s0", { status: "failed" }),
 		makeSubtask("s1", { status: "completed" }),
@@ -302,13 +304,13 @@ const PAGEDOWN = "\x1b[6~";
 		makeSubtask("s3", { status: "failed" }),
 	];
 	const { comp } = makeComponent(subs);
-	// cursor at 0 (s0) → `n` jumps to next failed = s2 (idx 2)
+	// cursor at 0 (s0) → `n` jumps to next failed = s2 (idx 1 post-sort)
 	comp.handleInput("n");
-	check("n from s0 → s2 (idx 2)", comp.cursorIdx === 2);
-	// cursor at 2 (s2) → `n` jumps to s3 (idx 3)
+	check("n from s0 → s2 (idx 1 post-sort)", comp.cursorIdx === 1);
+	// cursor at 1 (s2) → `n` jumps to s3 (idx 2)
 	comp.handleInput("n");
-	check("n from s2 → s3 (idx 3)", comp.cursorIdx === 3);
-	// cursor at 3 (s3, last failed) → `n` wraps to first failed s0 (idx 0)
+	check("n from s2 → s3 (idx 2 post-sort)", comp.cursorIdx === 2);
+	// cursor at 2 (s3, last failed) → `n` wraps to first failed s0 (idx 0)
 	comp.handleInput("n");
 	check("n from last failed wraps to first (idx 0)", comp.cursorIdx === 0);
 	// no failed subtasks → flashMsg, cursor unchanged
@@ -320,25 +322,28 @@ const PAGEDOWN = "\x1b[6~";
 // ponytail: sole failed subtask — `n`/`p` wrap back to the cursor itself (the
 // only failed), so without feedback it's a silent no-op (cursor unmoved, flash
 // null). Now flashes "only failed subtask".
+// NOTE: status-priority sort puts the sole failed first → s1 at idx 0.
 {
 	const { comp } = makeComponent([
 		makeSubtask("s0", { status: "completed" }),
 		makeSubtask("s1", { status: "failed" }),
 		makeSubtask("s2", { status: "completed" }),
 	]);
-	comp.cursorIdx = 1; // on the sole failed (s1)
+	// sort: s1 (failed), s0 (completed), s2 (completed) → s1 at idx 0
+	comp.cursorIdx = 0; // on the sole failed (s1, now at idx 0 post-sort)
 	comp.handleInput("n");
 	check("n on sole failed flashes 'only failed subtask'", comp.flashMsg !== null && comp.flashMsg.includes("only failed subtask"));
-	check("n on sole failed cursor unchanged", comp.cursorIdx === 1);
+	check("n on sole failed cursor unchanged", comp.cursorIdx === 0);
 	comp.handleInput("p");
 	check("p on sole failed flashes 'only failed subtask'", comp.flashMsg !== null && comp.flashMsg.includes("only failed subtask"));
-	check("p on sole failed cursor unchanged", comp.cursorIdx === 1);
+	check("p on sole failed cursor unchanged", comp.cursorIdx === 0);
 }
 
 // ponytail: `p` jumps to the PREV failed subtask before the cursor — complement
 // to `n` (next-failed). Wraps to the last when at/before the first failed.
+// NOTE: status-priority sort reorders → s0,s2,s3,s1. s0=0, s2=1, s3=2.
 {
-	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed
+	// subtasks: s0 failed, s1 completed, s2 failed, s3 failed (sort: s0,s2,s3,s1)
 	const subs = [
 		makeSubtask("s0", { status: "failed" }),
 		makeSubtask("s1", { status: "completed" }),
@@ -346,19 +351,21 @@ const PAGEDOWN = "\x1b[6~";
 		makeSubtask("s3", { status: "failed" }),
 	];
 	const { comp } = makeComponent(subs);
-	comp.cursorIdx = 3; // s3
-	comp.handleInput("p"); // prev failed before s3 = s2 (idx 2)
-	check("p from s3 → s2 (idx 2)", comp.cursorIdx === 2);
-	comp.handleInput("p"); // prev before s2 = s0 (idx 0)
+	comp.cursorIdx = 2; // s3 (post-sort idx 2)
+	comp.handleInput("p"); // s3 → prev failed = s2 (idx 1)
+	check("p from s3 → s2 (idx 1 post-sort)", comp.cursorIdx === 1);
+	comp.handleInput("p"); // s2 → prev failed = s0 (idx 0)
 	check("p from s2 → s0 (idx 0)", comp.cursorIdx === 0);
-	comp.handleInput("p"); // at first failed s0 → wraps to last failed s3 (idx 3)
-	check("p from first failed wraps to last (idx 3)", comp.cursorIdx === 3);
+	comp.handleInput("p"); // s0 (first failed) → wraps to last failed = s3 (idx 2)
+	check("p from first failed wraps to last (idx 2 post-sort)", comp.cursorIdx === 2);
 	// no failed → flashMsg, cursor unchanged
 	const { comp: comp2 } = makeComponent([makeSubtask("s0", { status: "completed" })]);
 	comp2.handleInput("p");
 	check("p with no failed flashes 'no failed subtasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed subtasks"));
 }
 // p in search-edit falls through (not appended to query) — mirrors n
+// NOTE: sort puts s0,s2 (failed) before s1 (completed). s0=0, s2=1, s1=2.
+// cursor at idx 2 (s1 completed) → p jumps to prev failed = s2 (idx 1).
 {
 	const subs = [
 		makeSubtask("s0", { status: "failed" }),
@@ -366,12 +373,12 @@ const PAGEDOWN = "\x1b[6~";
 		makeSubtask("s2", { status: "failed" }),
 	];
 	const { comp } = makeComponent(subs);
-	comp.cursorIdx = 2;
+	comp.cursorIdx = 2; // s1 (post-sort idx 2)
 	comp.handleInput("/");
 	comp.handleInput("p");
 	check("p in search-edit exits searchMode", comp.searchMode === false);
 	check("p in search-edit did not append to query", comp.query === "");
-	check("p in search-edit jumped to prev failed (idx 0)", comp.cursorIdx === 0);
+	check("p in search-edit jumped to prev failed (idx 1 post-sort)", comp.cursorIdx === 1);
 }
 
 // r on a non-failed subtask does NOT invoke onRetry, and sets a flashMsg
@@ -570,11 +577,11 @@ const PAGEDOWN = "\x1b[6~";
 	const { comp } = makeComponent(subtasks);
 	comp.handleInput("/");
 	comp.handleInput("n"); // in search-edit: must NOT append "n" to query
-	// searchMode exited, cursor jumped to next failed (s0 is at idx 0; from idx 0
-	// next-failed after 0 = s2 at idx 2). query stayed empty (n was a command, not input).
+	// sort: s0 (failed), s2 (failed), s1 (completed) → s0=0, s2=1, s1=2.
+	// from idx 0 (s0) next-failed = s2 at idx 1. query stayed empty.
 	check("n in search-edit exits searchMode", comp.searchMode === false);
 	check("n in search-edit did not append to query", comp.query === "");
-	check("n in search-edit jumped to next failed (idx 2)", comp.cursorIdx === 2);
+	check("n in search-edit jumped to next failed (idx 1 post-sort)", comp.cursorIdx === 1);
 }
 
 // ponytail: d (jump to task detail) + y/Y (copy) also fall through in search-edit
@@ -666,8 +673,9 @@ const PAGEDOWN = "\x1b[6~";
 }
 
 // ponytail: cursorOnFailed (Ctrl+Shift+F) — constructor pre-sets cursor to the
-// first failed subtask so `R` retry is one keystroke away. Mixed-status list:
-// cursor must land on the failed one, not index 0.
+// first failed subtask so `R` retry is one keystroke away. With the status-priority
+// sort, failed subtasks now surface to the top of the list, so the first failed
+// is at idx 0 (was idx 2 pre-sort). cursor must land on it.
 {
 	const subs = [
 		makeSubtask("s0", { status: "completed" }),
@@ -676,7 +684,31 @@ const PAGEDOWN = "\x1b[6~";
 		makeSubtask("s3", { status: "failed" }),
 	];
 	const { comp } = makeComponent(subs, { cursorOnFailed: true });
-	check("cursorOnFailed lands on first failed (idx 2)", comp.cursorIdx === 2);
+	// status-sort puts s2, s3 (failed) first → first failed at idx 0
+	check("cursorOnFailed lands on first failed (idx 0 post-sort)", comp.cursorIdx === 0);
+}
+
+// ponytail: status-priority sort in flatItems — within a task's subtasks, failed
+// sorts first, then running/reviewing, then everything else. Same-status keeps
+// insertion order. Tasks themselves stay in getAllTaskStates order.
+{
+	// insertion: completed, failed, running, failed → sort: failed, failed, running, completed
+	const subs = [
+		makeSubtask("s0", { status: "completed" }),
+		makeSubtask("s1", { status: "failed" }),
+		makeSubtask("s2", { status: "running" }),
+		makeSubtask("s3", { status: "failed" }),
+	];
+	const { comp } = makeComponent(subs);
+	const row = comp.render(80) as string[];
+	// failed (s1, s3) first — s1 before s3 (insertion order among same status)
+	const s1Idx = row.findIndex((l: string) => l.includes("s1:"));
+	const s3Idx = row.findIndex((l: string) => l.includes("s3:"));
+	const s2Idx = row.findIndex((l: string) => l.includes("s2:"));
+	const s0Idx = row.findIndex((l: string) => l.includes("s0:"));
+	check("status-sort: failed (s1) before failed (s3) — same-status insertion", s1Idx < s3Idx);
+	check("status-sort: failed before running", s3Idx < s2Idx);
+	check("status-sort: running before completed", s2Idx < s0Idx);
 }
 
 // ponytail: cursorOnFailed with NO failed subtask — cursor stays at 0 (no crash,
