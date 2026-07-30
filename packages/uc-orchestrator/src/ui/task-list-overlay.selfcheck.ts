@@ -484,6 +484,15 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const lines = comp.render(40);
 	const row = lines.find((l: string) => l.includes("t1")) ?? "";
 	check("row with long countTag fits width", row.length <= 40);
+	// ponytail: a truncated desc shows "…" (was a bare slice, no signal there was more)
+	check("row with truncated desc shows ellipsis", row.includes("…"));
+}
+
+// ponytail: a desc that FITS the budget stays verbatim (no spurious ellipsis).
+{
+	const { comp } = makeComponent([makeTask("t1", "in_progress")]);
+	const row = comp.render(80).find((l: string) => l.includes("t1")) ?? "";
+	check("row with fitting desc no ellipsis", row.includes("task t1") && !row.includes("…"));
 }
 
 // ponytail: formatAge clamps a future createdAt (clock skew) to "0s ago" —
