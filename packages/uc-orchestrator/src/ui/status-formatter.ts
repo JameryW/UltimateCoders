@@ -94,7 +94,12 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// absent (restored/older records) — no fallback to createdAt (that's "submitted",
 	// not "finished", and would misread).
 	const doneTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
-		? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago)` : "";
+		? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago`
+			// ponytail: total run duration — mirrors the widget's ⏱ (#454). The time-signal
+			// sweep covered when it ended, but not how long it ran; "⏱ Ns" (createdAt→
+			// completedAt) answers "did this take unusually long" in /uc status <id> + detail.
+			+ ` · ⏱${formatElapsed(task.completedAt - task.createdAt)})`
+		: "";
 	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${theme.fg("dim", ageTag || doneTag)}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).

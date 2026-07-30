@@ -333,11 +333,14 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 		subtasks: [],
 	} as unknown as TaskState);
 	const completed = formatTaskDetail(mk("completed", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
-	check("completed (with completedAt) shows done tag", completed.includes("(done ") && completed.includes("ago)"));
+	check("completed (with completedAt) shows done tag", completed.includes("(done ") && completed.includes("ago"));
+	check("completed (with completedAt) shows ⏱ duration", completed.includes("⏱") && completed.includes("30s"));
 	const failed = formatTaskDetail(mk("failed", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
-	check("failed (with completedAt) shows done tag", failed.includes("(done ") && failed.includes("ago)"));
+	check("failed (with completedAt) shows done tag", failed.includes("(done ") && failed.includes("ago"));
+	check("failed (with completedAt) shows ⏱ duration", failed.includes("⏱"));
 	const cancelled = formatTaskDetail(mk("cancelled", Date.now() - 30_000), theme).find((l) => l.includes("T")) ?? "";
-	check("cancelled (with completedAt) shows done tag", cancelled.includes("(done ") && cancelled.includes("ago)"));
+	check("cancelled (with completedAt) shows done tag", cancelled.includes("(done ") && cancelled.includes("ago"));
+	check("cancelled (with completedAt) shows ⏱ duration", cancelled.includes("⏱"));
 	// no completedAt → no done tag (don't fall back to createdAt, that's "submitted")
 	const noDone = formatTaskDetail(mk("completed", undefined), theme).find((l) => l.includes("T")) ?? "";
 	check("completed (no completedAt) has no done tag", !noDone.includes("(done"));
