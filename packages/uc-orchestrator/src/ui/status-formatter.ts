@@ -294,10 +294,19 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// chars in real terminals, so the old subtraction over-truncated desc
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
+			// ponytail: declared-file count — SubtaskResult.files lists the files a
+			// subtask intends to touch; a 12-file subtask is a wider blast radius than a
+			// 1-file one. Only when files.length>0 (no noise on subtasks w/o declared
+			// files). Built plain so its length feeds the desc budget; appended last.
+			const filesPlain = (st.files?.length ?? 0) > 0
+				? ` ${st.files!.length} file${st.files!.length === 1 ? "" : "s"}` : "";
+			const files = filesPlain ? theme.fg("dim", filesPlain) : "";
+			// ponytail: cap desc to the remaining width after indent+icon+prefix+id+deps+elapsed+retry+files.
+			// Without width (legacy notify path), keep the 50-char cap.
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length - readyPlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length - readyPlain.length - filesPlain.length)
 				: 50;
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}${ready}`);
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}${ready}${files}`);
 
 			if (st.error) {
 				// ponytail: error budget = terminal width minus indent; default 60 for
