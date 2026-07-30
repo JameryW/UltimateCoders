@@ -641,7 +641,14 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const snip = snippet
 									? `\n      ${snippet.length > snipBudget ? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…" : snippet}`
 									: "";
-								return `${pathPrefix}${pathStr}${score}${lineTag}${mtTag}${snip}`;
+								// ponytail: AST symbol metadata — SearchResultItem carries symbol_name +
+								// symbol_kind (only present on Ast/Hybrid matches). Shows "fn myFunc" or
+								// "class Foo" before the snippet, so the user knows WHICH symbol matched
+								// without reading the snippet. Only when symbolName is present.
+								const symName = r.symbolName ?? r.symbol_name;
+								const symKind = r.symbolKind ?? r.symbol_kind;
+								const symTag = (symName && symKind) ? `\n      ⟦${symKind} ${symName}⟧` : (symName ? `\n      ⟦${symName}⟧` : "");
+								return `${pathPrefix}${pathStr}${score}${lineTag}${mtTag}${symTag}${snip}`;
 							},
 						);
 						// ponytail: if we truncated the result set, say so — "Found 50"
