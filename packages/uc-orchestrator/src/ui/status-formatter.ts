@@ -202,7 +202,22 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 					? ` ←+${st.dependsOn.length} deps`
 					: ` ←${joined}`;
 			}
+			// ponytail: "blocked" marker on a pending subtask whose deps aren't all
+			// completed — a pending subtask with met deps is "ready to dispatch" while
+			// one with unmet deps is "blocked". Without this, both looked identical (○
+			// pending + deps), and the user couldn't tell if the subtask was waiting on
+			// deps vs just not dispatched yet. Only on pending subtasks w/ deps; the
+			// deps are checked against the task's subtask statuses.
+			let blockedPlain = "";
+			if (st.status === "pending" && st.dependsOn.length > 0) {
+				const unmet = st.dependsOn.filter((depId) => {
+					const dep = subtaskById.get(depId);
+					return !dep || dep.status !== "completed";
+				}).length;
+				if (unmet > 0) blockedPlain = ` ⏳${unmet}`;
+			}
 			const deps = depsPlain ? theme.fg("dim", depsPlain) : "";
+			const blocked = blockedPlain ? theme.fg("dim", blockedPlain) : "";
 			// ponytail: live elapsed on a running subtask — mirrors the subtask-tree
 			// overlay's running-elapsed tag. /uc status <id> + the detail view showed a
 			// running subtask with no time signal (only the tree overlay did). Built PLAIN
@@ -238,9 +253,9 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length - blockedPlain.length)
 				: 50;
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}`);
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}${blocked}`);
 
 			if (st.error) {
 				// ponytail: error budget = terminal width minus indent; default 60 for
