@@ -516,11 +516,12 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 {
 	const mkSub = (status: string) => ({ id: "s", description: "d", status, dependsOn: [], files: [] } as any);
 	const task = (subs: any[]) => ({ id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState);
-	// 2 completed, 2 failed, 1 running → "(2 failed, 1 running, 2 done)"
-	const mixed = formatTaskDetail(task([mkSub("completed"), mkSub("completed"), mkSub("failed"), mkSub("failed"), mkSub("running")]), theme, 80);
+	// 2 completed, 2 failed, 1 running, 1 pending → "(2 failed, 1 running, 1 pending, 2 done)"
+	const mixed = formatTaskDetail(task([mkSub("completed"), mkSub("completed"), mkSub("failed"), mkSub("failed"), mkSub("running"), mkSub("pending")]), theme, 80);
 	const hdr = mixed.find((l) => l.includes("Subtasks:")) ?? "";
 	check("Subtasks header shows failed count", hdr.includes("2 failed"));
 	check("Subtasks header shows running count", hdr.includes("1 running"));
+	check("Subtasks header shows pending count", hdr.includes("1 pending"));
 	check("Subtasks header shows done count", hdr.includes("2 done"));
 	// all-completed → no breakdown (the total row count already says it)
 	const allDone = formatTaskDetail(task([mkSub("completed"), mkSub("completed")]), theme, 80);

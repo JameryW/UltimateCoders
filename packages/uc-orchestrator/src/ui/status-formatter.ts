@@ -140,10 +140,12 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// buckets, error-colored for failed) so the header summarizes the breakdown.
 	const runningCount = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 	const cancelled = task.subtasks.filter((s) => s.status === "cancelled").length;
-	const other = total - completed - failed - runningCount - cancelled;
+	const pending = task.subtasks.filter((s) => s.status === "pending").length;
+	const other = total - completed - failed - runningCount - cancelled - pending;
 	const parts: string[] = [];
 	if (failed > 0) parts.push(theme.fg("error", `${failed} failed`));
 	if (runningCount > 0) parts.push(`${runningCount} running`);
+	if (pending > 0) parts.push(`${pending} pending`);
 	if (cancelled > 0) parts.push(`${cancelled} cancelled`);
 	if (other > 0) parts.push(`${other} other`);
 	if (completed > 0 && completed < total) parts.push(`${completed} done`);
