@@ -168,8 +168,18 @@ class ProgressWidgetComponent {
 			// running-subtask rows below. accent-colored "·N▶" only when running>0.
 			const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 			const runTag = running > 0 ? this.theme.fg("accent", ` ·${running}▶`) : "";
+			// ponytail: blocked-count marker — mirrors the task-list/subtask-tree headers
+			// (#487/#486) + detail countTag (#485). The bar row showed completed/failed/
+			// running but not how many subtasks are stalled on unmet deps. dim "·N⏳" only
+			// when blocked>0. Deps checked against the task's own subtask statuses.
+			const subById = new Map(task.subtasks.map((s) => [s.id, s]));
+			const blocked = task.subtasks.filter((s) =>
+				s.status === "pending" && s.dependsOn.length > 0 &&
+				s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
+			).length;
+			const blockTag = blocked > 0 ? this.theme.fg("dim", ` ·${blocked}⏳`) : "";
 			lines.push(
-				`  ${bar} ${completed}/${total}${failTag}${runTag}${waveTag}`,
+				`  ${bar} ${completed}/${total}${failTag}${runTag}${blockTag}${waveTag}`,
 			);
 		}
 
