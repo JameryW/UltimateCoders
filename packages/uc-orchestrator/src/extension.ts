@@ -495,7 +495,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify("Subtask spawning disabled (UC_NO_SPAWN). Use /uc status to view existing tasks.", "error");
 						return;
 					}
-					await orchestrator.submitTask(rest, ctx);
+					// ponytail: immediate confirmation — submitTask returns the task id, but
+					// the call site discarded it. The user saw only the async "Planning..."
+					// footer, with no confirmation the command landed. Show the task id so the
+					// user can /uc status <id> immediately. Mirrors #469's success-notify pattern.
+					const submittedId = await orchestrator.submitTask(rest, ctx);
+					ctx.ui.notify(`Submitted task ${submittedId.slice(0, 8)} — /uc status ${submittedId.slice(0, 8)} for detail`, "info");
 					return;
 				}
 				case "status": {
