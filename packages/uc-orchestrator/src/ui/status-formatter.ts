@@ -52,7 +52,12 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		// failed-count marker ("·N✗") mirrors the overlay row (#429): 3/5 with 2 failed
 		// read "3/5" like 3 completed + 2 pending, hiding the failure in /uc status too.
 		const failTag = failed > 0 ? `·${failed}✗ ` : "";
-		const countTag = total > 0 ? `${completed}/${total} ${failTag}` : "";
+		// ponytail: running-count marker — mirrors the detail countTag (#461) + widget
+		// bar (#460). The notify row showed failed count but not how many subtasks are
+		// actively running, so "is this making progress" needed a separate /uc status <id>.
+		const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
+		const runTag = running > 0 ? `·${running}▶ ` : "";
+		const countTag = total > 0 ? `${completed}/${total} ${failTag}${runTag}` : "";
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 		// ponytail: done-time on a terminal task — mirrors the overlay row (#443). The
 		// notify toast is a frozen snapshot (no live refresh), so "done 5m ago" answers
