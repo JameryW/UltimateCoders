@@ -88,31 +88,31 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("cycle does not throw", !threw);
 }
 
-// ponytail: "blocked" marker on a pending subtask whose deps aren't all completed.
-// A pending subtask with met deps is "ready to dispatch" while one with unmet deps
-// is "blocked". Both looked identical (○ pending + deps). Now shows ⏳N (unmet count).
+// ponytail: "blocked" / "ready" markers on pending subtasks with deps.
+// A pending subtask with unmet deps is "blocked" (⏳N), while one with all
+// deps met is "ready to dispatch" (✓). Both previously looked identical to
+// a pending subtask with no deps.
 {
-	// C depends on A (completed) + B (pending) → C is blocked by 1 unmet dep (B).
+	// C depends on A (completed) + B (pending) → C blocked by 1 unmet dep (B).
 	const task = {
 		id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
 		subtasks: [st("A"), st("B", [], "pending"), st("C", ["A", "B"], "pending")],
 	} as unknown as TaskState;
 	const lines = formatTaskDetail(task, theme);
 	const cLine = lines.find((l) => l.includes("C:")) ?? "";
-	check("blocked: pending subtask with unmet dep shows ⏳", cLine.includes("⏳1"));
-	// B is pending with no deps → not blocked (ready to dispatch)
+	check("blocked: pending w/ unmet dep shows ⏳", cLine.includes("⏳1"));
+	check("blocked: pending w/ unmet dep no ✓", !cLine.includes("✓"));
+	// B pending w/o deps → no marker
 	const bLine = lines.find((l) => l.includes("B:")) ?? "";
-	check("blocked: pending subtask w/o deps no ⏳", !bLine.includes("⏳"));
-	// A is completed → no ⏳ regardless of deps
-	const aLine = lines.find((l) => l.includes("A:")) ?? "";
-	check("blocked: completed subtask no ⏳", !aLine.includes("⏳"));
-	// all deps met → not blocked
+	check("blocked: pending w/o deps no marker", !bLine.includes("⏳") && !bLine.includes("✓"));
+	// all deps met → ready (✓)
 	const task2 = {
 		id: "T2", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
 		subtasks: [st("A"), st("B"), st("C", ["A", "B"], "pending")],
 	} as unknown as TaskState;
 	const c2Line = formatTaskDetail(task2, theme).find((l) => l.includes("C:")) ?? "";
-	check("blocked: pending subtask w/ all deps met no ⏳", !c2Line.includes("⏳"));
+	check("ready: pending w/ all deps met shows ✓", c2Line.includes("✓"));
+	check("ready: pending w/ all deps met no ⏳", !c2Line.includes("⏳"));
 }
 
 // ponytail: width-aware truncation. /uc status renders via notify() (toast),

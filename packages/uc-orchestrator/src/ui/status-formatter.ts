@@ -222,7 +222,19 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 				if (unmet > 0) blockedPlain = ` ⏳${unmet}`;
 			}
 			const deps = depsPlain ? theme.fg("dim", depsPlain) : "";
-			const blocked = blockedPlain ? theme.fg("dim", blockedPlain) : "";
+			// ponytail: "blocked" / "ready" markers on pending subtasks with deps.
+			// A pending subtask with unmet deps is "blocked" (⏳N, #473), while one
+			// with all deps met is "ready to dispatch" (✓) — both previously looked
+			// identical to a pending subtask with no deps at all. Only on pending w/ deps.
+			let readyPlain = "";
+			if (st.status === "pending" && st.dependsOn.length > 0) {
+				const unmet = st.dependsOn.filter((depId) => {
+					const dep = subtaskById.get(depId);
+					return !dep || dep.status !== "completed";
+				}).length;
+				readyPlain = unmet > 0 ? ` ⏳${unmet}` : " ✓";
+			}
+			const ready = readyPlain ? theme.fg("dim", readyPlain) : "";
 			// ponytail: live elapsed on a running subtask — mirrors the subtask-tree
 			// overlay's running-elapsed tag. /uc status <id> + the detail view showed a
 			// running subtask with no time signal (only the tree overlay did). Built PLAIN
@@ -258,9 +270,9 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// by ~10 chars (the no-ANSI selfcheck theme hid it).
 			const headPlain = `${indent}${prefix}${st.id}: `;
 			const descBudget = width !== undefined
-				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length - blockedPlain.length)
+				? Math.max(0, width - headPlain.length - 1 - 2 - depsPlain.length - timePlain.length - retryPlain.length - readyPlain.length)
 				: 50;
-			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}${blocked}`);
+			lines.push(`${indent}${stIcon} ${prefix}${st.id}: ${cap(st.description, descBudget, 50)}${deps}${elapsed}${retry}${ready}`);
 
 			if (st.error) {
 				// ponytail: error budget = terminal width minus indent; default 60 for
