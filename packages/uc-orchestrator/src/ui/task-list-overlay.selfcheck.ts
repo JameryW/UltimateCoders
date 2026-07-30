@@ -650,10 +650,18 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const { comp } = makeComponent(tasks);
 	const header = comp.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
 	check("header shows ·2✗ (failed + in_progress w/ failed subtask)", header.includes("·2✗"));
+	// ponytail: running-count marker — 2 in_progress tasks → "·2▶"
+	check("header shows ·N▶ with running tasks", header.includes("·2▶"));
 	// no failed → no ✗ marker
 	const { comp: c2 } = makeComponent([makeTask("c0", "in_progress"), makeTask("c1", "completed")]);
 	const header2 = c2.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
 	check("header no ✗ when no failed tasks", !header2.includes("✗"));
+	// 1 running (c0) → ·1▶; completed not counted
+	check("header running-count excludes terminal tasks", header2.includes("·1▶"));
+	// all-terminal → no ▶ marker
+	const { comp: c4 } = makeComponent([makeTask("d0", "completed"), makeTask("d1", "failed")]);
+	const header4 = c4.render(80).find((l: string) => l.includes("UC Tasks")) ?? "";
+	check("header no ▶ when all tasks terminal", !header4.includes("▶"));
 	// /failed filter narrows the visible set → failedCount matches the filter (2)
 	const { comp: c3 } = makeComponent(tasks);
 	c3.handleInput("/"); c3.handleInput("f"); c3.handleInput("a"); c3.handleInput("i");
