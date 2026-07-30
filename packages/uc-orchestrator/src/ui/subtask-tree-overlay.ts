@@ -357,12 +357,26 @@ class SubtaskTreeComponent {
 			const retryPlain = item.subtask.status === "failed" && (item.subtask.retryCount ?? 0) > 0
 				? ` retry×${item.subtask.retryCount}` : "";
 			const retry = retryPlain ? this.theme.fg("dim", retryPlain) : "";
+			// ponytail: "blocked" / "ready" markers on pending subtasks with deps —
+			// mirrors the detail view (#473/#474). A pending subtask with unmet deps is
+			// "blocked" (⏳N), one with all deps met is "ready" (✓). Both previously
+			// looked identical to a bare pending row. Only on pending w/ deps. The deps
+			// are checked against the flatItems (same task's subtasks).
+			let readyPlain = "";
+			if (item.subtask.status === "pending" && item.subtask.dependsOn.length > 0) {
+				const unmet = item.subtask.dependsOn.filter((depId) => {
+					const dep = this.flatItems.find((fi) => fi.subtask.id === depId);
+					return !dep || dep.subtask.status !== "completed";
+				}).length;
+				readyPlain = unmet > 0 ? ` ⏳${unmet}` : " ✓";
+			}
+			const ready = readyPlain ? this.theme.fg("dim", readyPlain) : "";
 			// ponytail: budget desc by the ACTUAL prefix+suffix — cursor(2)+icon(1)+space+
-			// id+":"+space+depsPlain+elapsedPlain+retryPlain. The old fixed width-16 assumed a short
+			// id+":"+space+depsPlain+elapsedPlain+retryPlain+readyPlain. The old fixed width-16 assumed a short
 			// id and ignored deps/elapsed, so a long id or dep list overflowed the row and
 			// the compositor truncated deps/elapsed (live elapsed on running rows suffered).
 			// 2 leading spaces + cursor(1) + space(1) + icon(1) + space(1) + id + ":"(1) + space(1)
-			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length;
+			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length + readyPlain.length;
 			// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
 			// description cut silently with no signal there was more. Mirrors the detail
 			// view + result-renderer. Reserve 1 col for "…" and only append when the
@@ -374,7 +388,7 @@ class SubtaskTreeComponent {
 				? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
 				: fullDesc.slice(0, budget);
 
-			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}`);
+			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}${ready}`);
 
 			if (this.expanded.has(item.subtask.id)) {
 				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
