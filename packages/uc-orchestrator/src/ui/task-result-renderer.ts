@@ -28,13 +28,15 @@ interface TaskResultDetails {
 // ponytail: tally subtask statuses into the 4 buckets a completion summary
 // cares about. Everything not in the map (planning/reviewing/in_progress on a
 // terminal task, unknown statuses from a newer server) falls into "other".
-type StatusCounts = { completed: number; failed: number; cancelled: number; other: number };
+type StatusCounts = { completed: number; failed: number; cancelled: number; pending: number; running: number; other: number };
 function countByStatus(statuses: string[]): StatusCounts {
-	const c: StatusCounts = { completed: 0, failed: 0, cancelled: 0, other: 0 };
+	const c: StatusCounts = { completed: 0, failed: 0, cancelled: 0, pending: 0, running: 0, other: 0 };
 	for (const s of statuses) {
 		if (s === "completed") c.completed++;
 		else if (s === "failed") c.failed++;
 		else if (s === "cancelled") c.cancelled++;
+		else if (s === "pending") c.pending++;
+		else if (s === "running" || s === "reviewing") c.running++;
 		else c.other++;
 	}
 	return c;
@@ -43,10 +45,13 @@ function countByStatus(statuses: string[]): StatusCounts {
 // ponytail: build "N subtask(s) (X done, Y failed)"-style suffix. Always leads
 // with the total (preserves the old headline when all-buckets-but-done are 0),
 // then appends non-zero buckets so a failed task surfaces the actionable count.
-// Order: failed first (most actionable), then cancelled, then other, then done.
+// Order: failed first (most actionable), then running, then pending, then
+// cancelled, then other, then done. Mirrors the detail Subtasks header (#457/#479).
 function breakdownSuffix(c: StatusCounts, total: number): string {
 	const parts: string[] = [];
 	if (c.failed > 0) parts.push(`${c.failed} failed`);
+	if (c.running > 0) parts.push(`${c.running} running`);
+	if (c.pending > 0) parts.push(`${c.pending} pending`);
 	if (c.cancelled > 0) parts.push(`${c.cancelled} cancelled`);
 	if (c.other > 0) parts.push(`${c.other} other`);
 	// done only when it's not the whole set (all-done = the total already says it)
