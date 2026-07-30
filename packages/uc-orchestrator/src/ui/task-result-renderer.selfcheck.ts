@@ -110,6 +110,28 @@ const renderer = createTaskResultRenderer();
 	check("expanded empty suggestions → no arrow", !eLines.some((l: string) => l.includes("↳")));
 }
 
+// ponytail: retry×N inline on a failed expanded subtask — mirrors subtask-tree
+// #439 + detail #440. A "hard" failure (N retries) is visible in the completion
+// message without opening the tree. Only failed + retryCount>0; none otherwise.
+{
+	const retried = makeSubtask("s1", "failed", "bad", "boom") as SubtaskResult;
+	(retried as any).retryCount = 3;
+	const lines = (renderer(makeMessage(true, [retried], "failed"), { expanded: true }, theme)! as any).render(80) as string[];
+	const row = lines.find((l: string) => l.includes("s1:")) ?? "";
+	check("expanded failed row shows retry×N (3)", row.includes("retry×3"));
+	// first-attempt failure (retryCount=0) → no retry tag
+	const first = makeSubtask("s2", "failed", "bad", "boom") as SubtaskResult;
+	const fLines = (renderer(makeMessage(true, [first], "failed"), { expanded: true }, theme)! as any).render(80) as string[];
+	const fRow = fLines.find((l: string) => l.includes("s2:")) ?? "";
+	check("expanded failed row no retry tag when retryCount=0", !fRow.includes("retry×"));
+	// non-failed → no retry tag even with retryCount>0
+	const done = makeSubtask("s3", "completed", "ok") as SubtaskResult;
+	(done as any).retryCount = 2;
+	const dLines = (renderer(makeMessage(true, [done]), { expanded: true }, theme)! as any).render(80) as string[];
+	const dRow = dLines.find((l: string) => l.includes("s3:")) ?? "";
+	check("expanded non-failed row no retry tag", !dRow.includes("retry×"));
+}
+
 // expanded narrow (width 30) — subtask desc lines truncated to fit
 // (summary header is a fixed message header, OMP wraps it — not in scope)
 {

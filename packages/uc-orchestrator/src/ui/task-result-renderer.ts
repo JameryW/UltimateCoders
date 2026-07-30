@@ -88,6 +88,11 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 				error: st.error,
 				result: st.result,
 				review: st.review,
+				// ponytail: retryCount — surfaced inline on failed rows (mirrors
+				// subtask-tree #439 + detail #440) so a "hard" failure (N retries) is
+				// visible in the expanded completion message without opening the tree.
+				retryCount: st.retryCount,
+				status: st.status,
 			}))
 			: [];
 
@@ -95,8 +100,16 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 			render: (width: number): string[] => {
 				const lines = [...summaryLines];
 				for (const st of expandedSubtasks) {
-					const desc = st.desc.slice(0, Math.max(0, width - st.id.length - 6));
-					lines.push(`  ${st.icon} ${st.id}: ${desc}`);
+					// ponytail: retry×N inline on a failed subtask — mirrors subtask-tree #439
+					// + detail #440. A subtask that failed after N retries is a "hard" failure;
+					// the completion message showed no retry signal inline. Only when failed
+					// and retryCount>0 (no "retry×0" noise; no tag on non-failed). Built plain
+					// so its length feeds the desc budget; appended last (dropped first on narrow).
+					const retryPlain = st.status === "failed" && (st.retryCount ?? 0) > 0
+						? ` retry×${st.retryCount}` : "";
+					const retry = retryPlain ? theme.fg("dim", retryPlain) : "";
+					const desc = st.desc.slice(0, Math.max(0, width - st.id.length - 6 - retryPlain.length));
+					lines.push(`  ${st.icon} ${st.id}: ${desc}${retry}`);
 					if (st.error) {
 						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
 					}
