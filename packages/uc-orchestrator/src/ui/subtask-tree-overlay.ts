@@ -263,10 +263,22 @@ class SubtaskTreeComponent {
 		// (not dim) so a live run reads as active, not chrome. Only when runningCount>0.
 		const runningCount = items.filter((it) => it.subtask.status === "running" || it.subtask.status === "reviewing").length;
 		const runTag = runningCount > 0 ? this.theme.fg("accent", ` ·${runningCount}▶`) : "";
+		// ponytail: blocked-count marker — mirrors the detail countTag (#485) + notify
+		// row (#480). The header showed failed+running but not how many subtasks are
+		// stalled on unmet deps. dim "·N⏳" only when blocked>0. Deps checked against
+		// flatItems (same task's subtasks), matching the collapsed-row logic (#475).
+		const blockedCount = items.filter((it) =>
+			it.subtask.status === "pending" && it.subtask.dependsOn.length > 0 &&
+			it.subtask.dependsOn.some((depId) => {
+				const dep = this.flatItems.find((fi) => fi.subtask.id === depId);
+				return !dep || dep.subtask.status !== "completed";
+			})
+		).length;
+		const blockTag = blockedCount > 0 ? this.theme.fg("dim", ` ·${blockedCount}⏳`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s), ${items.length} subtask(s) (filtered from ${this.flatItems.length})`
 			: ` — ${tasks.length} task(s), ${this.flatItems.length} subtask(s)`;
-		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra) + failTag + runTag);
+		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra) + failTag + runTag + blockTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows
