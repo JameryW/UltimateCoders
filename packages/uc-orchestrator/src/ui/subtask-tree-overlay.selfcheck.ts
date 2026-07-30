@@ -89,6 +89,16 @@ const PAGEDOWN = "\x1b[6~";
 	const lines = comp.render(30);
 	const row = lines.find((l: string) => l.includes("s1:")) ?? "";
 	check("row with deps+elapsed fits narrow width", row.length <= 30);
+	// ponytail: a truncated desc shows "…" (was a bare slice, no signal there was more)
+	check("row with truncated desc shows ellipsis", row.includes("…"));
+}
+
+// ponytail: a desc that FITS the budget stays verbatim (no spurious ellipsis).
+{
+	const st = makeSubtask("s1", { description: "short" });
+	const { comp } = makeComponent([st]);
+	const row = comp.render(80).find((l: string) => l.includes("s1:")) ?? "";
+	check("row with fitting desc no ellipsis", row.includes("short") && !row.includes("…"));
 }
 
 // ponytail: dep-list collapse — a subtask depending on many roots emits
