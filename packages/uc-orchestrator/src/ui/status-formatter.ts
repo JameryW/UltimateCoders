@@ -62,7 +62,17 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		// actively running, so "is this making progress" needed a separate /uc status <id>.
 		const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 		const runTag = running > 0 ? `·${running}▶ ` : "";
-		const countTag = total > 0 ? `${completed}/${total} ${failTag}${runTag}` : "";
+		// ponytail: blocked-count marker — a pending subtask with unmet deps is
+		// "blocked" (mirrors the detail view's ⏳N, #473). Showing the aggregate count
+		// at the task level answers "is this task stalled on deps" without opening
+		// the detail. Only when blocked > 0 (no noise on healthy tasks).
+		const subById = new Map(task.subtasks.map((s) => [s.id, s]));
+		const blocked = task.subtasks.filter((s) =>
+			s.status === "pending" && s.dependsOn.length > 0 &&
+			s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
+		).length;
+		const blockTag = blocked > 0 ? `·${blocked}⏳ ` : "";
+		const countTag = total > 0 ? `${completed}/${total} ${failTag}${runTag}${blockTag}` : "";
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
 		// ponytail: done-time on a terminal task — mirrors the overlay row (#443). The
 		// notify toast is a frozen snapshot (no live refresh), so "done 5m ago" answers
