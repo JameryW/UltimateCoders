@@ -250,10 +250,16 @@ class SubtaskTreeComponent {
 		// match the filtered set). error-colored so it reads as a warning, not chrome.
 		const failedCount = items.filter((it) => it.subtask.status === "failed").length;
 		const failTag = failedCount > 0 ? this.theme.fg("error", ` ·${failedCount}✗`) : "";
+		// ponytail: running-count marker — mirrors the detail Subtasks breakdown (#457).
+		// The header showed failures but not how many subtasks are actively running, so
+		// "is this task making progress or stalled" needed scanning rows. accent-colored
+		// (not dim) so a live run reads as active, not chrome. Only when runningCount>0.
+		const runningCount = items.filter((it) => it.subtask.status === "running" || it.subtask.status === "reviewing").length;
+		const runTag = runningCount > 0 ? this.theme.fg("accent", ` ·${runningCount}▶`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s), ${items.length} subtask(s) (filtered from ${this.flatItems.length})`
 			: ` — ${tasks.length} task(s), ${this.flatItems.length} subtask(s)`;
-		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra) + failTag);
+		lines.push(this.theme.fg("accent", "  UC Subtask Tree") + this.theme.fg("dim", headerExtra) + failTag + runTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows

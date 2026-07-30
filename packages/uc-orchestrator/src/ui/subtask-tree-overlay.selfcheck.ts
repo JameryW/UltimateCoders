@@ -464,6 +464,19 @@ const PAGEDOWN = "\x1b[6~";
 	check("header failed-count matches /failed filter (2)", header3.includes("·2✗"));
 }
 
+// ponytail: running-count marker — mirrors the detail Subtasks breakdown (#457).
+// "·N▶" (accent-colored) only when runningCount>0; none when no running subtasks.
+{
+	// 2 running + 1 failed → "·2▶" + "·1✗"
+	const { comp } = makeComponent([makeSubtask("s1", { status: "running" }), makeSubtask("s2", { status: "running" }), makeSubtask("s3", { status: "failed" })]);
+	const header = comp.render(80).find((l: string) => l.includes("UC Subtask Tree")) ?? "";
+	check("header shows ·N▶ with running subtasks", header.includes("·2▶"));
+	// no running → no ▶ marker
+	const { comp: c2 } = makeComponent([makeSubtask("s1", { status: "completed" }), makeSubtask("s2", { status: "failed" })]);
+	const header2 = c2.render(80).find((l: string) => l.includes("UC Subtask Tree")) ?? "";
+	check("header no ▶ when no running subtasks", !header2.includes("▶"));
+}
+
 // ponytail: filter matches dependsOn — the DAG triage query "which subtasks
 // depend on X" (impacted downstream of a failure). Pre-fix the filter matched
 // id/desc/status/taskId but not the dep list, so typing a dep id found the dep
