@@ -146,6 +146,26 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList 0-subtask row has no ✗ marker", !eRow.includes("✗"));
 }
 
+// ponytail: done-time on a terminal notify-list row — mirrors the overlay row
+// (#443). The toast is a frozen snapshot, so "(done {age})" answers when it
+// ended/broke at render time. in-flight stays plain; absent completedAt → none.
+{
+	const mk = (status: string, completedAt?: number) => ({
+		id: "D", description: "d", status, controlState: "running",
+		createdAt: 0, completedAt, subtasks: [],
+	} as unknown as TaskState);
+	const done = formatTaskList([mk("completed", Date.now() - 30_000)], theme).find((l) => l.includes("D")) ?? "";
+	check("formatTaskList terminal row shows done-time", done.includes("(done 30s ago)"));
+	const failed = formatTaskList([mk("failed", Date.now() - 30_000)], theme).find((l) => l.includes("D")) ?? "";
+	check("formatTaskList failed row shows done-time", failed.includes("(done 30s ago)"));
+	// in-flight → no done tag
+	const inFlight = formatTaskList([mk("in_progress", undefined)], theme).find((l) => l.includes("D")) ?? "";
+	check("formatTaskList in-flight row no done-time", !inFlight.includes("(done"));
+	// terminal w/o completedAt → falls back to no done tag
+	const noStamp = formatTaskList([mk("completed", undefined)], theme).find((l) => l.includes("D")) ?? "";
+	check("formatTaskList terminal w/o completedAt no done-time", !noStamp.includes("(done"));
+}
+
 // ponytail: F16 — full lines must fit the width. Old budgets subtracted 2 while
 // the prefixes are 15 ("  Description: ") and 9 ("  Error: ") cols → overflow
 // ~13/~7. Task error was also a raw slice — no ellipsis, no classification
