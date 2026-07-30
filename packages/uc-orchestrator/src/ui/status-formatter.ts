@@ -69,7 +69,12 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		// "when did this end/break" at render time. Skipped when completedAt is absent
 		// (restored/older records) or the task is in-flight (no completion to report).
 		const doneTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
-			? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago)` : "";
+			? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago`
+				// ponytail: total run duration — mirrors the widget ⏱ (#454) + detail
+				// header (#455). Append " ·⏱Ns" (createdAt→completedAt) so the notify
+				// row answers "did this take unusually long" without opening the detail.
+				+ ` ·⏱${formatElapsed(task.completedAt - task.createdAt)})`
+			: "";
 		lines.push(`${icon} ${task.id.slice(0, 14)} ${countTag}${task.status}${ctrl}${theme.fg("dim", doneTag)}`);
 		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc
 		// budget; cap the plain desc so the toast line fits the terminal.
