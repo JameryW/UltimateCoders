@@ -481,6 +481,23 @@ const PAGEDOWN = "\x1b[6~";
 	check("filter by dep 's0' hides unrelated s3", !lines.some((l: string) => l.includes("s3:")));
 }
 
+// ponytail: filter matches subtask error + result text — the triage query "which
+// failures mention X" (e.g. /timeout, /rate_limit) didn't work pre-fix: the filter
+// matched id/desc/status/deps/taskId but not the error root cause or success output.
+{
+	// isolated single-subtask assertions: each subtask is the SOLE item, so the
+	// filter matching it proves the field matched (no cross-item confusion).
+	const mkErr = makeSubtask("only", { description: "call api", error: "timeout contacting upstream" });
+	const eComp = makeComponent([mkErr]).comp;
+	eComp.handleInput("/"); for (const ch of "timeout") eComp.handleInput(ch); eComp.handleInput("\r");
+	check("filter matches error text (timeout)", eComp.render(80).some((l: string) => l.includes("only:")));
+
+	const mkRes = makeSubtask("only", { description: "deploy", status: "completed", result: "deployed to prod" });
+	const rComp = makeComponent([mkRes]).comp;
+	rComp.handleInput("/"); for (const ch of "prod") rComp.handleInput(ch); rComp.handleInput("\r");
+	check("filter matches result text (prod)", rComp.render(80).some((l: string) => l.includes("only:")));
+}
+
 // ponytail: filter matches the parent taskId — typing a task's id surfaces ALL
 // its subtasks (the natural "show me this task's work" intent). Pre-fix the
 // filter matched only subtask id/desc/status, so a taskId with no subtask-id
