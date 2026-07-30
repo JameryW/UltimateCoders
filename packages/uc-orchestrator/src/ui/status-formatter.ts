@@ -74,10 +74,13 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		const blockTag = blocked > 0 ? `·${blocked}⏳ ` : "";
 		const countTag = total > 0 ? `${completed}/${total} ${failTag}${runTag}${blockTag}` : "";
 		const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
-		// ponytail: done-time on a terminal task — mirrors the overlay row (#443). The
-		// notify toast is a frozen snapshot (no live refresh), so "done 5m ago" answers
-		// "when did this end/break" at render time. Skipped when completedAt is absent
-		// (restored/older records) or the task is in-flight (no completion to report).
+		// ponytail: age tag for in-flight tasks — mirrors the overlay row's taskAge
+		// (#443) + detail header's ageTag (#421). The notify row showed done-time
+		// for terminal tasks but no time signal for in-flight ones, so "how long has
+		// this been running" needed opening the detail. Show "(Ns)" (now-createdAt)
+		// for in_progress/planning/paused. Done-time stays for terminal tasks.
+		const ageTag = ["in_progress", "planning", "paused"].includes(task.status)
+			? ` (${formatElapsed(Date.now() - task.createdAt)})` : "";
 		const doneTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
 			? ` (done ${formatElapsed(Date.now() - task.completedAt)} ago`
 				// ponytail: total run duration — mirrors the widget ⏱ (#454) + detail
@@ -85,7 +88,7 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 				// row answers "did this take unusually long" without opening the detail.
 				+ ` ·⏱${formatElapsed(task.completedAt - task.createdAt)})`
 			: "";
-		lines.push(`${icon} ${task.id.slice(0, 14)} ${countTag}${task.status}${ctrl}${theme.fg("dim", doneTag)}`);
+		lines.push(`${icon} ${task.id.slice(0, 14)} ${countTag}${task.status}${ctrl}${theme.fg("dim", ageTag || doneTag)}`);
 		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc
 		// budget; cap the plain desc so the toast line fits the terminal.
 		lines.push(theme.fg("dim", `  ${cap(task.description, width !== undefined ? width - 2 : undefined, 60)}`));
