@@ -181,6 +181,35 @@ const PAGEDOWN = "\x1b[6~";
 	check("collapsed failed row + long desc fits narrow width", row4.length <= 30);
 }
 
+// ponytail: "blocked" / "ready" markers on pending subtasks with deps —
+// mirrors the detail view (#473/#474). ⏳N for blocked, ✓ for ready.
+{
+	// C depends on A (completed) + B (pending) → C blocked by 1 unmet dep (B).
+	const subs = [
+		makeSubtask("s0", { status: "completed", description: "root A" }),
+		makeSubtask("s1", { status: "pending", description: "root B" }),
+		makeSubtask("s2", { status: "pending", description: "dep C", dependsOn: ["s0", "s1"] }),
+	];
+	const { comp } = makeComponent(subs);
+	const lines = comp.render(80);
+	const cRow = lines.find((l: string) => l.includes("s2:")) ?? "";
+	check("tree blocked: pending w/ unmet dep shows ⏳", cRow.includes("⏳1"));
+	check("tree blocked: pending w/ unmet dep no ✓", !cRow.includes("✓"));
+	// B pending w/o deps → no marker
+	const bRow = lines.find((l: string) => l.includes("s1:")) ?? "";
+	check("tree blocked: pending w/o deps no marker", !bRow.includes("⏳") && !bRow.includes("✓"));
+	// all deps met → ready ✓
+	const subs2 = [
+		makeSubtask("s0", { status: "completed", description: "root A" }),
+		makeSubtask("s1", { status: "completed", description: "root B" }),
+		makeSubtask("s2", { status: "pending", description: "dep C", dependsOn: ["s0", "s1"] }),
+	];
+	const { comp: c2 } = makeComponent(subs2);
+	const c2Row = c2.render(80).find((l: string) => l.includes("s2:")) ?? "";
+	check("tree ready: pending w/ all deps met shows ✓", c2Row.includes("✓"));
+	check("tree ready: pending w/ all deps met no ⏳", !c2Row.includes("⏳"));
+}
+
 // ponytail: `o` toggles expand-all / collapse-all — triaging a tree of N
 // subtasks (each with an error/review) meant tapping Enter on every row.
 // expand-all when fewer than all open, collapse-all otherwise. Empty → flash.
