@@ -204,12 +204,12 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 {
 	const mk = (status: string, completedAt?: number) => ({
 		id: "D", description: "d", status, controlState: "running",
-		createdAt: 0, completedAt, subtasks: [],
+		createdAt: Date.now() - 60_000, completedAt, subtasks: [],
 	} as unknown as TaskState);
 	const done = formatTaskList([mk("completed", Date.now() - 30_000)], theme).find((l) => l.includes("D")) ?? "";
-	check("formatTaskList terminal row shows done-time", done.includes("(done 30s ago)"));
+	check("formatTaskList terminal row shows done-time", done.includes("(done 30s ago") && done.includes("⏱30s"));
 	const failed = formatTaskList([mk("failed", Date.now() - 30_000)], theme).find((l) => l.includes("D")) ?? "";
-	check("formatTaskList failed row shows done-time", failed.includes("(done 30s ago)"));
+	check("formatTaskList failed row shows done-time", failed.includes("(done 30s ago") && failed.includes("⏱30s"));
 	// in-flight → no done tag
 	const inFlight = formatTaskList([mk("in_progress", undefined)], theme).find((l) => l.includes("D")) ?? "";
 	check("formatTaskList in-flight row no done-time", !inFlight.includes("(done"));
