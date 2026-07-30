@@ -620,12 +620,18 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const endL = r.endLine ?? r.end_line;
 								const lineTag = (typeof startL === "number" && typeof endL === "number")
 									? (startL === endL ? ` :L${startL}` : ` :L${startL}-${endL}`) : "";
+								// ponytail: match-type tag — shows how the match was found (text/semantic/
+								// ast/hybrid). A hybrid search producing a text match vs a semantic match
+								// reads differently; the tag answers "why did this rank here?". Short
+								// single-letter labels to keep the line short. Only when matchType present.
+								const mt = r.matchType ?? r.match_type ?? "";
+								const mtTag = mt ? ` ${mt.charAt(0).toUpperCase()}${mt.slice(1)}` : "";
 								const snippet = (r.snippet ?? "").replace(/\s+/g, " ").trim();
 								// `  [repo] path score\n      snippet` — the path line prefix
-								// is `  [repo] ` (~6 + repo) + score + lineTag; cap path so it fits.
+								// is `  [repo] ` (~6 + repo) + score + lineTag + mtTag; cap path so it fits.
 								const pathPrefix = `  [${repo}] `;
 								const pathBudget = cols !== undefined
-									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length)
+									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length - mtTag.length)
 									: 80;
 								const pathStr = path.length > pathBudget
 									? path.slice(0, Math.max(0, pathBudget - 1)) + "…"
@@ -635,7 +641,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const snip = snippet
 									? `\n      ${snippet.length > snipBudget ? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…" : snippet}`
 									: "";
-								return `${pathPrefix}${pathStr}${score}${lineTag}${snip}`;
+								return `${pathPrefix}${pathStr}${score}${lineTag}${mtTag}${snip}`;
 							},
 						);
 						// ponytail: if we truncated the result set, say so — "Found 50"
