@@ -122,7 +122,15 @@ class ProgressWidgetComponent {
 		// was about; /uc status showed it but the glanceable view did not.
 		const prefixPlain = `  UC ${idStr} ${task.status}${ctrl}`;
 		const descBudget = Math.max(0, width - prefixPlain.length - 3); // 3 for " - "
-		const desc = task.description.slice(0, descBudget);
+		// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
+		// description cut silently with no signal there was more. Mirrors the overlay
+		// rows (#449/#450). Reserve 1 col for "…" and append only when the desc
+		// overflows the budget; a desc that fits stays verbatim.
+		const fullDesc = task.description;
+		const truncated = fullDesc.length > descBudget;
+		const desc = truncated
+			? fullDesc.slice(0, Math.max(0, descBudget - 1)) + (descBudget > 0 ? "…" : "")
+			: fullDesc.slice(0, descBudget);
 		lines.push(
 			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${affordance}`,
 		);
