@@ -162,8 +162,14 @@ class ProgressWidgetComponent {
 			// failed segment in red (#427), but the count text "3/5" didn't surface the
 			// number. Append " ·N✗" only when failed > 0 (no noise on healthy tasks).
 			const failTag = failed > 0 ? this.theme.fg("error", ` ·${failed}✗`) : "";
+			// ponytail: running-count marker — mirrors the subtask-tree/task-list headers
+			// (#458/#459). The bar row showed completed/failed but not how many subtasks
+			// are actively running, so "is this making progress" needed scanning the
+			// running-subtask rows below. accent-colored "·N▶" only when running>0.
+			const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
+			const runTag = running > 0 ? this.theme.fg("accent", ` ·${running}▶`) : "";
 			lines.push(
-				`  ${bar} ${completed}/${total}${failTag}${waveTag}`,
+				`  ${bar} ${completed}/${total}${failTag}${runTag}${waveTag}`,
 			);
 		}
 
