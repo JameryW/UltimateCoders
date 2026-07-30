@@ -190,10 +190,23 @@ class TaskListComponent {
 			(t) => ["in_progress", "planning", "paused"].includes(t.status),
 		).length;
 		const runTag = runningCount > 0 ? this.theme.fg("accent", ` ·${runningCount}▶`) : "";
+		// ponytail: blocked-count marker — mirrors the subtask-tree header (#486) +
+		// detail countTag (#485) + notify row (#480). The header showed failed+running
+		// but not how many tasks have blocked subtasks. dim "·N⏳" only when blocked>0.
+		const blockedCount = tasks.filter((t) =>
+			t.subtasks.some((s) =>
+				s.status === "pending" && s.dependsOn.length > 0 &&
+				s.dependsOn.some((depId) => {
+					const dep = t.subtasks.find((d) => d.id === depId);
+					return !dep || dep.status !== "completed";
+				})
+			)
+		).length;
+		const blockTag = blockedCount > 0 ? this.theme.fg("dim", ` ·${blockedCount}⏳`) : "";
 		const headerExtra = filtering
 			? ` — ${tasks.length} task(s) (filtered from ${allTasks.length})`
 			: ` — ${allTasks.length} task(s)`;
-		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra) + failTag + runTag);
+		lines.push(this.theme.fg("accent", "  UC Tasks") + this.theme.fg("dim", headerExtra) + failTag + runTag + blockTag);
 
 		// ponytail: filter input line replaces the hint when searchMode or filter
 		// active. Editing shows a cursor block; filter-active-not-editing shows
