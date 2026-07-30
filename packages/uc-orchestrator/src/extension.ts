@@ -542,6 +542,13 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					const r = await orchestrator.cancelTask(tid, subtaskId, ctx);
 					if (!r.ok) {
 						ctx.ui.notify(controlFailureMessage("Cancel", tid, r, currentStatusFor(tid)), "error");
+					} else {
+						// ponytail: success feedback — without this, /uc cancel was silent on
+						// success. The task_cancelled event fires later (async footer update),
+						// but the user had no immediate confirmation the command landed.
+						ctx.ui.notify(subtaskId
+							? `Cancelled subtask ${subtaskId.slice(0, 8)} in task ${tid.slice(0, 8)}`
+							: `Cancelled task ${tid.slice(0, 8)}`, "info");
 					}
 					return;
 				}
@@ -557,6 +564,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					const r = await orchestrator.pauseTask(tid, ctx);
 					if (!r.ok) {
 						ctx.ui.notify(controlFailureMessage("Pause", tid, r, currentStatusFor(tid)), "error");
+					} else {
+						ctx.ui.notify(`Paused task ${tid.slice(0, 8)}`, "info");
 					}
 					return;
 				}
@@ -570,6 +579,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					const r = await orchestrator.resumeTask(tid, ctx);
 					if (!r.ok) {
 						ctx.ui.notify(controlFailureMessage("Resume", tid, r, currentStatusFor(tid)), "error");
+					} else {
+						ctx.ui.notify(`Resumed task ${tid.slice(0, 8)}`, "info");
 					}
 					return;
 				}
