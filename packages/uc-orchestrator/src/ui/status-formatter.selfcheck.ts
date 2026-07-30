@@ -113,6 +113,14 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList wide: full desc kept", wideDesc.includes(longDesc));
 }
 
+// ponytail: empty list hints /uc submit — mirrors the overlay empty-state (#422).
+// A /uc status to an empty store showed only "No tasks", with no cue how to add one.
+{
+	const lines = formatTaskList([], theme);
+	check("empty list shows No tasks", lines.some((l) => l.includes("No tasks")));
+	check("empty list hints /uc submit", lines.some((l) => l.includes("/uc submit")));
+}
+
 // ponytail: 0-subtask task row hides completed/total (no "0/0") — mirrors the
 // task-list overlay row + formatTaskDetail guards. A task WITH subtasks shows it.
 {
