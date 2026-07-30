@@ -158,11 +158,11 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 		{ id: "T2", description: "second task", status: "completed", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState,
 	];
 	const lines = formatTaskList(tasks, theme);
-	// 2 tasks × 2 lines + 1 blank separator = 5 lines
-	check("formatTaskList multi-task: blank line between tasks", lines.length === 5 && lines[2] === "");
-	// single task → no blank separator
+	// 1 count header + 2 tasks × 2 lines + 1 blank separator = 6 lines
+	check("formatTaskList multi-task: blank line between tasks", lines.length === 6 && lines[3] === "");
+	// single task → no blank separator (1 header + 2 lines = 3)
 	const single = formatTaskList([tasks[0]], theme);
-	check("formatTaskList single-task: no blank separator", single.length === 2 && !single.includes(""));
+	check("formatTaskList single-task: no blank separator", single.length === 3 && !single.slice(1).includes(""));
 }
 
 // ponytail: 0-subtask task row hides completed/total (no "0/0") — mirrors the
