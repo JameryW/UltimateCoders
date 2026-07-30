@@ -264,7 +264,16 @@ class TaskListComponent {
 			// the detail. Append " ·N▶" only when running>0 (no noise on terminal tasks).
 			const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 			const runTag = running > 0 ? ` ·${running}▶` : "";
-			const countTag = total > 0 ? `${completed}/${total}${failTag}${runTag} ` : "";
+			// ponytail: blocked-count marker — mirrors the notify row (#480) + detail
+			// view's ⏳N (#473). A pending subtask w/ unmet deps is "blocked"; the list
+			// row showed failed but not how many are stalled on deps. Only when blocked > 0.
+			const subById = new Map(task.subtasks.map((s) => [s.id, s]));
+			const blocked = task.subtasks.filter((s) =>
+				s.status === "pending" && s.dependsOn.length > 0 &&
+				s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
+			).length;
+			const blockTag = blocked > 0 ? ` ·${blocked}⏳` : "";
+			const countTag = total > 0 ? `${completed}/${total}${failTag}${runTag}${blockTag} ` : "";
 			// ponytail: budget desc by the ACTUAL prefix length — cursor(2)+badge(4)+
 			// space+id(14)+space+countTag(varies)+space+age(1+age.len). The old fixed
 			// width-34 assumed a 4-char countTag ("2/3 "), but "10/10 " is 6 — the
