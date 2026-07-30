@@ -446,6 +446,11 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("detail header no-failed has no ✗", !h23.includes("✗"));
 	// 0-subtask → no ✗ marker either
 	check("detail header 0-subtask has no ✗", !h0.includes("✗"));
+	// running-marker: 2 running + 1 failed → "·2▶" + "·1✗"
+	const hr = header(mk([{ status: "running" }, { status: "running" }, { status: "failed" }]));
+	check("detail header running-marker shows ·N▶", hr.includes("·2▶"));
+	// no running → no ▶ marker (control = the failed-marker test above)
+	check("detail header no-running has no ▶", !hf.includes("▶"));
 }
 
 // ponytail: subtask-status breakdown in the "Subtasks:" header — "(X done, Y
