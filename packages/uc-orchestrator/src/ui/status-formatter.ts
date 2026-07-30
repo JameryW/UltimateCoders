@@ -36,6 +36,11 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 	}
 
 	const lines: string[] = [];
+	// ponytail: count header — a /uc status toast listed tasks with no heading,
+	// so the user didn't know how many to expect at a glance. One dim line (mirrors
+	// the overlay's "N task(s)" headerExtra). Skipped when 0 (the empty-state path
+	// above already returns).
+	lines.push(theme.fg("dim", `${tasks.length} task(s):`));
 	for (const i of tasks.keys()) {
 		const task = tasks[i];
 		// ponytail: blank line between tasks (not before the first) — a /uc status
