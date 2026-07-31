@@ -144,10 +144,14 @@ class TaskListComponent {
 				// ponytail: match subtask error + result text too — mirrors the subtask-tree
 				// filter (#447). `/timeout` surfaces an in_progress task whose failed subtask
 				// mentions it, not just tasks with a task-level error.
+				// ponytail: match subtask declared files too — typing a path (e.g. "foo.ts")
+				// surfaces tasks with a subtask touching it. Mirrors the tree filter; the row
+				// shows "N file(s)" (#484/#493) but the filter previously couldn't find them.
 				t.subtasks.some((s) =>
 					s.status.toLowerCase().includes(q) ||
 					(s.error ?? "").toLowerCase().includes(q) ||
-					(s.result ?? "").toLowerCase().includes(q)),
+					(s.result ?? "").toLowerCase().includes(q) ||
+					(s.files ?? []).some((f) => f.toLowerCase().includes(q))),
 		);
 	}
 

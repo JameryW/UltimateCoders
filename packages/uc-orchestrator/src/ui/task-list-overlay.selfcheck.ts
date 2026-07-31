@@ -758,6 +758,34 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("filter matches subtask result text (prod)", c3.render(80).some((l: string) => l.includes("resTask")));
 }
 
+// ponytail: filter matches declared files — #484/#493 surface the file count on
+// the row, but typing a path (e.g. "auth.ts") didn't surface tasks with a
+// subtask touching it. Now matches subtask files[] by path substring.
+{
+	const mkSubFiles = (id: string, status: string, files: string[]) => ({
+		id, description: `sub ${id}`, status, dependsOn: [], files,
+		result: undefined, error: undefined, review: undefined,
+		retryCount: 0, dispatchMode: "prefer_remote",
+	} as any);
+	// task w/ a subtask touching "auth.ts", + a task that doesn't
+	const touchAuth = {
+		id: "authTask", description: "auth work", status: "in_progress", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSubFiles("s0", "completed", ["src/auth.ts"]), mkSubFiles("s1", "running", ["src/util.ts"])],
+	} as unknown as TaskState;
+	const noAuth = {
+		id: "otherTask", description: "docs", status: "completed", controlState: "running",
+		createdAt: Date.now(), error: undefined,
+		subtasks: [mkSubFiles("s0", "completed", ["docs/readme.md"])],
+	} as unknown as TaskState;
+	const { comp } = makeComponent([noAuth, touchAuth]);
+	comp.handleInput("/"); for (const ch of "auth.ts") comp.handleInput(ch); comp.handleInput(ENTER);
+	const shown = comp.render(80).some((l: string) => l.includes("authTask"));
+	const hidden = comp.render(80).every((l: string) => !l.includes("otherTask"));
+	check("filter matches subtask file path (auth.ts)", shown);
+	check("filter by file excludes non-matching tasks", hidden);
+}
+
 // ponytail: command keys (y copy) fall through in search-edit — the printable
 // handler swallowed ALL printable chars, so `y` appended to the query instead of
 // yanking the cursor task's id. Now excluded so it exits editing + acts.

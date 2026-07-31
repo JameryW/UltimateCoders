@@ -175,7 +175,12 @@ class SubtaskTreeComponent {
 				// output, so a failure whose error text contains the query stayed hidden.
 				// Lowercased substring covers the friendly summary + root cause.
 				(it.subtask.error ?? "").toLowerCase().includes(q) ||
-				(it.subtask.result ?? "").toLowerCase().includes(q),
+				(it.subtask.result ?? "").toLowerCase().includes(q) ||
+				// ponytail: match declared files — the row shows "N file(s)" (#493) but
+				// typing a path (e.g. "foo.ts") didn't surface subtasks touching it. The
+				// common triage query "which subtasks edited X" was unreachable from the
+				// filter. Lowercased substring over the files list covers it.
+				(it.subtask.files ?? []).some((f) => f.toLowerCase().includes(q)),
 		);
 	}
 

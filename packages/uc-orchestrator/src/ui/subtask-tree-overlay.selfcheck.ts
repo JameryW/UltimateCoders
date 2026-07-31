@@ -520,6 +520,32 @@ const PAGEDOWN = "\x1b[6~";
 	check("header failed-count matches /failed filter (2)", header3.includes("·2✗"));
 }
 
+// ponytail: / filter matches declared files — typing a path surfaces subtasks
+// touching it. #493 surfaces the file count on the row; the filter now finds
+// them by path substring (lowercased, like the other matchers).
+{
+	const subs = [
+		makeSubtask("s1", { status: "failed", files: ["src/auth.ts", "src/util.ts"] }),
+		makeSubtask("s2", { status: "failed", files: ["src/util.ts"] }),
+		makeSubtask("s3", { status: "completed", files: ["docs/readme.md"] }),
+	];
+	const { comp } = makeComponent(subs);
+	// filter "auth" → only s1
+	comp.handleInput("/");
+	for (const ch of "auth") comp.handleInput(ch);
+	comp.handleInput("\r");
+	const rows = (comp.render(80) as string[]).filter((l: string) => l.includes("s") && l.includes(":"));
+	check("filter by file path matches the touching subtask", rows.some((l: string) => l.includes("s1:")));
+	check("filter by file path excludes non-matching subtasks", !rows.some((l: string) => l.includes("s2:")));
+	// filter "util.ts" → both s1 and s2 (both touch util.ts)
+	const { comp: c2 } = makeComponent(subs);
+	c2.handleInput("/");
+	for (const ch of "util.ts") c2.handleInput(ch);
+	c2.handleInput("\r");
+	const rows2 = (c2.render(80) as string[]).filter((l: string) => l.includes("s") && l.includes(":"));
+	check("filter by shared file matches both subtasks", rows2.some((l: string) => l.includes("s1:")) && rows2.some((l: string) => l.includes("s2:")));
+}
+
 // ponytail: running-count marker — mirrors the detail Subtasks breakdown (#457).
 // "·N▶" (accent-colored) only when runningCount>0; none when no running subtasks.
 {
