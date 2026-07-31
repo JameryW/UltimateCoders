@@ -87,6 +87,12 @@ class SubtaskTreeComponent {
 	// the filter restores focus to the pre-filter cursor subtask (if still present)
 	// instead of snapping back to row 0. Null = no capture / subtask gone.
 	private preFilterCursorSubId: string | null = null;
+	// ponytail: retry-follow — when `r`/`R` retries the cursor subtask, capture its id.
+	// The status flips failed→running asynchronously (server round-trip); the failed-
+	// first sort then MOVES it down the list, leaving the cursor (index-based) on a
+	// different subtask. On the next rebuild after the flip, re-point the cursor to the
+	// retried subtask's NEW position so the user stays on it. Cleared once consumed.
+	private retryFollowSubId: string | null = null;
 	// ponytail: F7 — 1s tick so time-based fields (running elapsed) re-render
 	// while the overlay sits open. Cleared in dispose(); modal overlays are
 	// short-lived, so 1fps redraw cost is negligible.
@@ -145,6 +151,20 @@ class SubtaskTreeComponent {
 		if (this.cursorIdx >= this.flatItems.length) {
 			this.cursorIdx = Math.max(0, this.flatItems.length - 1);
 			this.clampScroll();
+		}
+		// ponytail: retry-follow restore — a retried subtask's status flipped failed→
+		// running (the sig change that triggered this rebuild), so the failed-first sort
+		// moved it down. Re-point the cursor to its NEW position so the user stays on
+		// the subtask they just retried (was: cursor stayed at the old index, now on a
+		// different subtask). Only restore once the flip landed (status ≠ failed); if
+		// the rebuild ran before the flip, leave the capture for the next rebuild.
+		if (this.retryFollowSubId) {
+			const idx = this.flatItems.findIndex((fi) => fi.subtask.id === this.retryFollowSubId);
+			if (idx >= 0 && this.flatItems[idx].subtask.status !== "failed") {
+				this.cursorIdx = idx;
+				this.clampScroll();
+				this.retryFollowSubId = null;
+			}
 		}
 	}
 
@@ -682,6 +702,11 @@ class SubtaskTreeComponent {
 			const item = items[this.cursorIdx];
 			if (item && item.subtask.status === "failed" && this.opts.onRetry) {
 				this.opts.onRetry(item.taskId, item.subtask.id);
+				// ponytail: capture the retried subtask id so the next rebuild (after the
+				// async failed→running flip) re-points the cursor to its new sort position
+				// — the failed-first sort would otherwise leave the cursor on a different
+				// subtask. Cleared once the flip lands (status ≠ failed) in rebuildItems.
+				this.retryFollowSubId = item.subtask.id;
 				// ponytail: surface that the retry fired — the subtask status flips
 				// to running asynchronously (server round-trip), so without a flash
 				// the user sees no change and can't tell `r` registered. Mirrors the

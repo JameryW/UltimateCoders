@@ -349,6 +349,26 @@ const PAGEDOWN = "\x1b[6~";
 	check("onRetry receives cursor's subtaskId (s2)", args2?.subtaskId === "s2");
 }
 
+// ponytail: retry-follow — after `r` retries the cursor subtask, the status flips
+// failed→running asynchronously; the failed-first sort moves it down, which left
+// the (index-based) cursor on a DIFFERENT subtask. On the rebuild after the flip,
+// re-point the cursor to the retried subtask's new position so the user stays on it.
+{
+	const s1 = makeSubtask("s1", { status: "failed" });
+	const s2 = makeSubtask("s2", { status: "failed" });
+	const { comp } = makeComponent([s1, s2], { onRetry: () => {} });
+	// both failed → sort keeps s1, s2 (insertion). cursor 0 = s1. retry s1.
+	comp.handleInput("r");
+	// simulate the async flip: s1 failed→running. count unchanged (2 subtasks),
+	// but the status sig changes → rebuild re-sorts (s2 failed first, s1 running after).
+	s1.status = "running";
+	comp.render(80); // triggers rebuildItems
+	// s1 moved to idx 1 (s2 failed first); cursor must follow s1, not stay at 0 (s2).
+	check("retry-follow re-points cursor to retried subtask", comp.cursorIdx === 1);
+	// capture consumed (a second status change must NOT re-jump)
+	comp.retryFollowSubId = null;
+}
+
 // ponytail: `n` jumps to the NEXT failed subtask after the cursor — Ctrl+Shift+F
 // lands on the first, but inside the tree there was no "next failed" key, so
 // multi-failure triage meant manual ↓. Wraps to first when past the last.
