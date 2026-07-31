@@ -395,12 +395,21 @@ class SubtaskTreeComponent {
 				readyPlain = unmet > 0 ? ` ⏳${unmet}` : " ✓";
 			}
 			const ready = readyPlain ? this.theme.fg("dim", readyPlain) : "";
+			// ponytail: declared-file count — mirrors the detail subtask row (#484).
+			// SubtaskResult.files lists the files a subtask touches; the count distinguishes
+			// a broad multi-file change from a focused 1-file one at a glance in the tree
+			// (the primary triage surface). Only when files.length>0 (no noise otherwise).
+			// Built plain + appended last so its length feeds the desc budget and the
+			// compositor drops it first on narrow widths (lowest-priority suffix).
+			const filesPlain = (item.subtask.files?.length ?? 0) > 0
+				? ` ${item.subtask.files!.length} file${item.subtask.files!.length === 1 ? "" : "s"}` : "";
+			const files = filesPlain ? this.theme.fg("dim", filesPlain) : "";
 			// ponytail: budget desc by the ACTUAL prefix+suffix — cursor(2)+icon(1)+space+
-			// id+":"+space+depsPlain+elapsedPlain+retryPlain+readyPlain. The old fixed width-16 assumed a short
+			// id+":"+space+depsPlain+elapsedPlain+retryPlain+readyPlain+filesPlain. The old fixed width-16 assumed a short
 			// id and ignored deps/elapsed, so a long id or dep list overflowed the row and
 			// the compositor truncated deps/elapsed (live elapsed on running rows suffered).
 			// 2 leading spaces + cursor(1) + space(1) + icon(1) + space(1) + id + ":"(1) + space(1)
-			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length + readyPlain.length;
+			const prefixLen = 2 + 1 + 1 + 1 + 1 + item.subtask.id.length + 1 + 1 + depsPlain.length + elapsedPlain.length + retryPlain.length + readyPlain.length + filesPlain.length;
 			// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
 			// description cut silently with no signal there was more. Mirrors the detail
 			// view + result-renderer. Reserve 1 col for "…" and only append when the
@@ -412,7 +421,7 @@ class SubtaskTreeComponent {
 				? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
 				: fullDesc.slice(0, budget);
 
-			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}${ready}`);
+			lines.push(`  ${cursor} ${icon} ${item.subtask.id}: ${desc}${deps}${elapsed}${retry}${ready}${files}`);
 
 			if (this.expanded.has(item.subtask.id)) {
 				// ponytail: up to 2 detail lines per expanded subtask — line 1 is
