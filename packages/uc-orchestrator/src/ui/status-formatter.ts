@@ -123,7 +123,17 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	// " ·N▶" only when running>0 (no noise on healthy/terminal tasks).
 	const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 	const runTag = running > 0 ? ` ·${running}▶` : "";
-	const countTag = total > 0 ? ` ${completed}/${total}${failTag}${runTag}` : "";
+	// ponytail: blocked-count marker in the detail countTag — mirrors the notify
+	// row (#480) + detail subtask row's ⏳N (#473). The detail header's countTag
+	// showed completed/total/failed/running, but not how many subtasks are stalled
+	// on unmet deps. Append " ·N⏳" only when blocked > 0.
+	const subById = new Map(task.subtasks.map((s) => [s.id, s]));
+	const blocked = task.subtasks.filter((s) =>
+		s.status === "pending" && s.dependsOn.length > 0 &&
+		s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
+	).length;
+	const blockTag = blocked > 0 ? ` ·${blocked}⏳` : "";
+	const countTag = total > 0 ? ` ${completed}/${total}${failTag}${runTag}${blockTag}` : "";
 	// ponytail: live age on an in-flight task — mirrors the subtask-tree's running
 	// elapsed tag. createdAt is the submit time, so "how long has this been going"
 	// is now-createdAt. Only for in_progress/planning/paused (a running concern);
