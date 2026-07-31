@@ -69,8 +69,13 @@ class SubtaskTreeComponent {
 	private get maxVisible(): number {
 		return overlayPageSize(this.tui);
 	}
-	// ponytail: stamp flatItems only when task count changes, not every render
+	// ponytail: stamp flatItems only when task count OR status mix changes, not
+	// every render. The status signature (per-bucket counts) catches a subtask
+	// flipping status without the count changing (pending→running, running→failed,
+	// running→completed+new-pending) — without it the cached sort order went stale
+	// and a newly-failed subtask didn't float to the top until the count changed.
 	private lastSubtaskCount = -1;
+	private lastStatusSig = "";
 	// ponytail: transient in-overlay hint for dead keys (e.g. r on non-failed).
 	// Cleared on the next non-r/R keypress so any nav/enter/esc dismisses it.
 	private flashMsg: string | null = null;
@@ -115,8 +120,15 @@ class SubtaskTreeComponent {
 	private rebuildItems(force = false): void {
 		const tasks = this.opts.tasks();
 		const count = tasks.reduce((n, t) => n + t.subtasks.length, 0);
-		if (!force && count === this.lastSubtaskCount) return;
+		// ponytail: status signature — counts per status bucket across all subtasks.
+		// A change here means a subtask flipped status (even if total count held), so
+		// the failed-first sort must re-run. Cheap: one pass, small string compare.
+		const sig = tasks.map((t) =>
+			t.subtasks.reduce((acc: Record<string, number>, s) => { acc[s.status] = (acc[s.status] ?? 0) + 1; return acc; }, {}),
+		).map((b) => Object.entries(b).sort().map(([k, v]) => `${k}:${v}`).join(",")).join("|");
+		if (!force && count === this.lastSubtaskCount && sig === this.lastStatusSig) return;
 		this.lastSubtaskCount = count;
+		this.lastStatusSig = sig;
 		this.flatItems = [];
 		// ponytail: status-priority sort — within each task's subtasks, sort by
 		// failed → running/reviewing → else, so failures surface to the top of the
