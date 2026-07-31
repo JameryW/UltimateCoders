@@ -181,6 +181,26 @@ const PAGEDOWN = "\x1b[6~";
 	check("collapsed failed row + long desc fits narrow width", row4.length <= 30);
 }
 
+// ponytail: declared-file count on the collapsed row — mirrors the detail
+// subtask row (#484). SubtaskResult.files lists touched files; the count
+// distinguishes a multi-file change from a focused 1-file one at a glance.
+// Only when files.length>0; "1 file" (singular) vs "2 files".
+{
+	const multi = makeSubtask("s1", { status: "failed", files: ["a.ts", "b.ts", "c.ts"] });
+	const { comp } = makeComponent([multi]);
+	const row = comp.render(80).find((l: string) => l.includes("s1:")) ?? "";
+	check("collapsed row shows file count (3 files)", row.includes("3 files"));
+	const one = makeSubtask("s2", { status: "failed", files: ["a.ts"] });
+	const { comp: c2 } = makeComponent([one]);
+	const row2 = c2.render(80).find((l: string) => l.includes("s2:")) ?? "";
+	check("collapsed row singular '1 file'", row2.includes("1 file") && !row2.includes("1 files"));
+	// no declared files → no tag (avoid "0 files" noise)
+	const none = makeSubtask("s3", { status: "failed", files: [] });
+	const { comp: c3 } = makeComponent([none]);
+	const row3 = c3.render(80).find((l: string) => l.includes("s3:")) ?? "";
+	check("collapsed row no file tag when files empty", !row3.includes("file"));
+}
+
 // ponytail: "blocked" / "ready" markers on pending subtasks with deps —
 // mirrors the detail view (#473/#474). ⏳N for blocked, ✓ for ready.
 {
