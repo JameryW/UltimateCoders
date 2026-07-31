@@ -52,13 +52,21 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 	}
 
 	const lines: string[] = [];
+	// ponytail: cap the toast — /uc status renders via notify() (a fixed-height
+	// toast), so a store with many tasks overflowed the toast and the tail (often
+	// the active task, even after the active-first sort) got clipped silently.
+	// Show the first TASKS_SHOWN (the sort already put active/failed first) and a
+	// dim "... +N more" line naming the rest, mirroring the search-result cap.
+	const TASKS_SHOWN = 10;
+	const shown = tasks.slice(0, TASKS_SHOWN);
+	const truncated = tasks.length - shown.length;
 	// ponytail: count header — a /uc status toast listed tasks with no heading,
 	// so the user didn't know how many to expect at a glance. One dim line (mirrors
 	// the overlay's "N task(s)" headerExtra). Skipped when 0 (the empty-state path
 	// above already returns).
 	lines.push(theme.fg("dim", `${tasks.length} task(s):`));
-	for (const i of tasks.keys()) {
-		const task = tasks[i];
+	for (const i of shown.keys()) {
+		const task = shown[i];
 		// ponytail: blank line between tasks (not before the first) — a /uc status
 		// toast with many tasks was a wall of text; the blank separates per-task
 		// (id+status / description) pairs so the user can visually chunk.
@@ -108,6 +116,13 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 		// ponytail: `  ` indent + "Description" label eat ~14 cols of the desc
 		// budget; cap the plain desc so the toast line fits the terminal.
 		lines.push(theme.fg("dim", `  ${cap(task.description, width !== undefined ? width - 2 : undefined, 60)}`));
+	}
+	// ponytail: name the truncated tail — without this the count header ("N task(s)")
+	// lied: it claimed N but showed fewer, and the user couldn't tell whether the rest
+	// were clipped or gone. Active-first sort means the tail is the less-actionable
+	// terminal tasks, so clipping there is the honest trade-off; just say so.
+	if (truncated > 0) {
+		lines.push(theme.fg("dim", `  …+${truncated} more (Ctrl+Shift+T for the list)`));
 	}
 	return lines;
 }

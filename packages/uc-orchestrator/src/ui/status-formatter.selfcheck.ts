@@ -192,6 +192,26 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("formatTaskList single-task: no blank separator", single.length === 3 && !single.slice(1).includes(""));
 }
 
+// ponytail: formatTaskList caps at 10 tasks + names the tail — /uc status renders
+// via notify() (fixed-height toast), so a store with many tasks overflowed and the
+// tail (often the active task, even post-sort) clipped silently. Count header stays
+// honest; the "+N more" line points to the overlay for the full list.
+{
+	const mk = (i: number) => ({
+		id: `T${i}`, description: `task ${i}`, status: "completed", controlState: "running",
+		createdAt: 0, subtasks: [],
+	} as unknown as TaskState);
+	const tasks = Array.from({ length: 13 }, (_, i) => mk(i));
+	const lines = formatTaskList(tasks, theme);
+	// count header names all 13
+	check("cap: count header shows full total", lines[0].includes("13 task(s)"));
+	// only T0..T9 rendered (10 tasks)
+	check("cap: shows first 10 tasks", lines.some((l) => l.includes("T0 ")) && lines.some((l) => l.includes("T9 ")));
+	check("cap: does NOT show the 11th task", !lines.some((l) => l.includes("T10") || l.includes("T11") || l.includes("T12")));
+	// tail named — 3 more
+	check("cap: names the truncated tail", lines.some((l) => l.includes("+3 more")));
+}
+
 // ponytail: 0-subtask task row hides completed/total (no "0/0") — mirrors the
 // task-list overlay row + formatTaskDetail guards. A task WITH subtasks shows it.
 {
