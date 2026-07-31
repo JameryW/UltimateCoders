@@ -780,6 +780,27 @@ const PAGEDOWN = "\x1b[6~";
 	check("status-sort: running before completed", s2Idx < s0Idx);
 }
 
+// ponytail: stale-sort on status flip — flatItems is cached by count, but a
+// subtask flipping status WITHOUT the count changing (running→failed) must still
+// re-sort so the newly-failed subtask floats to the top. Before the status-
+// signature fix, the cached order held and the failed subtask stayed buried.
+{
+	// start: completed (s0), running (s1) → sort: running, completed
+	const subs = [
+		makeSubtask("s0", { status: "completed" }),
+		makeSubtask("s1", { status: "running" }),
+	];
+	const { comp } = makeComponent(subs);
+	comp.render(80);
+	// flip s1 running→failed (count unchanged: still 2 subtasks)
+	subs[1].status = "failed";
+	const row = comp.render(80) as string[];
+	const s1Idx = row.findIndex((l: string) => l.includes("s1:"));
+	const s0Idx = row.findIndex((l: string) => l.includes("s0:"));
+	// failed (s1) must now sort before completed (s0)
+	check("status flip re-sorts: failed surfaces above completed", s1Idx < s0Idx);
+}
+
 // ponytail: cursorOnFailed with NO failed subtask — cursor stays at 0 (no crash,
 // no phantom). The toast is the caller's job (extension.ts checks hasFailed first).
 {
