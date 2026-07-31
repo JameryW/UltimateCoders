@@ -172,7 +172,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			// completedAt) answers "did this take unusually long" in /uc status <id> + detail.
 			+ ` · ⏱${formatElapsed(task.completedAt - task.createdAt)})`
 		: "";
-	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${theme.fg("dim", ageTag || doneTag)}`);
+	// ponytail: re-decomposed badge — tryRedecompose splits a task's failed subtasks
+	// into new ones and re-runs (orchestrator.ts:718). A one-time notify fires, but the
+	// signal was lost on the persistent task — a task that looks fresh is actually a
+	// recovered one with restructured subtasks. Surface a warning-colored ↻ badge in the
+	// detail header so the recovery history stays visible. Only when task.redecomposed.
+	const redecompTag = task.redecomposed ? theme.fg("warning", " ↻ re-decomposed") : "";
+	lines.push(`${icon} ${theme.bold(task.id)} — ${task.status}${ctrl}${countTag}${redecompTag}${theme.fg("dim", ageTag || doneTag)}`);
 	// ponytail: cap plain desc before theming — notify() toast has no ANSI-aware
 	// truncation backstop (overlay detail does, but this fn feeds both paths).
 	// F16: budget must subtract the "  Description: " prefix (15 cols) — the old

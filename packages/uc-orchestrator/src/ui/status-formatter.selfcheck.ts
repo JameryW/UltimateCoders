@@ -414,6 +414,20 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("failed detail header has NO age tag", !failed.match(/\(\d+[smh]/));
 }
 
+// ponytail: re-decomposed badge — task.redecomposed persists after tryRedecompose
+// splits failed subtasks into new ones and re-runs. The one-time notify is gone,
+// but the detail header surfaces a ↻ badge so the recovery history stays visible.
+{
+	const base = (redecomposed?: boolean) => ({
+		id: "T", description: "d", status: "in_progress", controlState: "running",
+		createdAt: Date.now() - 30_000, subtasks: [], redecomposed,
+	} as unknown as TaskState);
+	const rd = formatTaskDetail(base(true), theme).find((l) => l.includes("T")) ?? "";
+	check("redecomposed detail header shows ↻ badge", rd.includes("↻ re-decomposed"));
+	const plain = formatTaskDetail(base(false), theme).find((l) => l.includes("T")) ?? "";
+	check("non-redecomposed detail header has no ↻ badge", !plain.includes("re-decomposed"));
+}
+
 // ponytail: terminal-task completion time — complement of the running age tag.
 // A completed/failed/cancelled task with completedAt shows "(done Ns ago)";
 // the running-age tests above assert completed/failed with NO completedAt stay
