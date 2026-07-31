@@ -560,5 +560,23 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("Subtasks header bare for 0 subtasks", hdr3.includes("Subtasks:") && !hdr3.includes("("));
 }
 
+// ponytail: blocked split out of pending in the breakdown — a pending subtask
+// stalled on an unmet dep reads "blocked" (warning-colored), not lumped into
+// "pending". Mirrors the countTag's ⏳ marker. 2 pending: C blocked on B (also
+// pending), B ready (no deps) → "(1 blocked, 1 pending)".
+{
+	const mkSub = (id: string, dependsOn: string[] = [], status = "pending") =>
+		({ id, description: "d", status, dependsOn, files: [] } as any);
+	const task = (subs: any[]) => ({ id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState);
+	const t = formatTaskDetail(task([mkSub("A", [], "completed"), mkSub("B"), mkSub("C", ["A", "B"])]), theme, 80);
+	const hdr = t.find((l) => l.includes("Subtasks:")) ?? "";
+	// C depends on A (completed) + B (pending) → C blocked by 1 unmet dep (B).
+	check("breakdown shows blocked count", hdr.includes("1 blocked"));
+	// B pending w/ no deps → ready, counted as pending (not blocked).
+	check("breakdown shows ready pending count", hdr.includes("1 pending"));
+	// blocked is a subset of pending; total pending (blocked+ready) = 2, never "2 pending".
+	check("breakdown does not lump blocked into pending", !hdr.includes("2 pending"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);
