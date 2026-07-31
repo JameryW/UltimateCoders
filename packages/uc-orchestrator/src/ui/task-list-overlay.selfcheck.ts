@@ -100,6 +100,20 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp2.handleInput("n");
 	check("n with no failed flashes 'no failed tasks'", comp2.flashMsg !== null && comp2.flashMsg.includes("no failed tasks"));
 }
+// ponytail: `n` lands on an in_progress task WITH a failed subtask — the row
+// ·N✗ marker, /failed filter, and header count all treat that as "failed" for
+// triage (the common state: task running, one subtask failed). The jump used to
+// match status==="failed" only, skipping exactly the task the markers point at.
+{
+	// t0 in_progress w/ a failed subtask, t1 clean in_progress (no failed)
+	const t0 = makeTask("t0", "in_progress");
+	t0.subtasks[1].status = "failed";
+	const t1 = makeTask("t1", "in_progress");
+	const { comp } = makeComponent([t1, t0]); // cursor 0 (t1, clean)
+	comp.handleInput("n");
+	check("n lands on in_progress task w/ failed subtask", comp.cursorIdx === 1);
+	check("n did not skip the in_progress+failed-subtask task", comp.flashMsg === null);
+}
 // ponytail: `N` — prev-failed (complement of `n`). `p` is pause, so prev-failed
 // has no lowercase home; `N` (uppercase, unused) mirrors vim N/n. Wraps to the
 // last failed when the cursor is at/before the first.

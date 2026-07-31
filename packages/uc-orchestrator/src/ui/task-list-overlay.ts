@@ -178,7 +178,7 @@ class TaskListComponent {
 		// in_progress task with a failed subtask is the common triage target. error-
 		// colored so it reads as a warning. No marker when 0 failed (no noise).
 		const failedCount = tasks.filter(
-			(t) => t.status === "failed" || t.subtasks.some((s) => s.status === "failed"),
+			(t) => this.isTaskFailed(t),
 		).length;
 		const failTag = failedCount > 0 ? this.theme.fg("error", ` ·${failedCount}✗`) : "";
 		// ponytail: running-count marker — mirrors the subtask-tree header (#458).
@@ -531,7 +531,7 @@ class TaskListComponent {
 				let next = -1;
 				for (let i = 0; i < tasks.length; i++) {
 					const idx = (start + i) % tasks.length;
-					if (tasks[idx].status === "failed") { next = idx; break; }
+					if (this.isTaskFailed(tasks[idx])) { next = idx; break; }
 				}
 				if (next < 0) {
 					this.setFlash("no failed tasks");
@@ -559,7 +559,7 @@ class TaskListComponent {
 				let prev = -1;
 				for (let i = 0; i < tasks.length; i++) {
 					const idx = ((start - i) % tasks.length + tasks.length) % tasks.length;
-					if (tasks[idx].status === "failed") { prev = idx; break; }
+					if (this.isTaskFailed(tasks[idx])) { prev = idx; break; }
 				}
 				if (prev < 0) {
 					this.setFlash("no failed tasks");
@@ -785,7 +785,7 @@ class TaskListComponent {
 			let next = -1;
 			for (let i = 0; i < tasks.length; i++) {
 				const idx = (start + i) % tasks.length;
-				if (tasks[idx].status === "failed") { next = idx; break; }
+				if (this.isTaskFailed(tasks[idx])) { next = idx; break; }
 			}
 			if (next < 0) {
 				this.flashMsg = "no failed tasks";
@@ -809,7 +809,7 @@ class TaskListComponent {
 			let prev = -1;
 			for (let i = 0; i < tasks.length; i++) {
 				const idx = ((start - i) % tasks.length + tasks.length) % tasks.length;
-				if (tasks[idx].status === "failed") { prev = idx; break; }
+				if (this.isTaskFailed(tasks[idx])) { prev = idx; break; }
 			}
 			if (prev < 0) {
 				this.flashMsg = "no failed tasks";
@@ -910,6 +910,15 @@ class TaskListComponent {
 		if (task.error) return task.error;
 		const failed = task.subtasks.find((s) => s.status === "failed" && s.error);
 		return failed?.error;
+	}
+
+	// ponytail: a task counts as "failed" for triage when its status is failed OR a
+	// subtask failed — an in_progress task with a failed subtask is the common triage
+	// target (the ·N✗ row marker, /failed filter, and header count all use this).
+	// Shared so n/N next/prev-failed jumps land on the SAME set the markers advertise
+	// (was status==="failed" only, skipping in_progress tasks with failed subtasks).
+	private isTaskFailed(task: TaskState): boolean {
+		return task.status === "failed" || task.subtasks.some((s) => s.status === "failed");
 	}
 
 	private openDetail(taskId: string): void {
