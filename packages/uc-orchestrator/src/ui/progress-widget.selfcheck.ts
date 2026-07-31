@@ -475,5 +475,53 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("bar row no ▶ when no running subtasks", !bar2.includes("▶"));
 }
 
+// ponytail: blocked subtasks render a dim "⏳ N blocked: <ids>" line (mirrors the
+// failed summary). A task with 0 running + N blocked showed nothing below the bar
+// (only the ·N⏳ marker); the IDs tell which subtasks are stalled.
+{
+	const mk = (id: string, status: string, dependsOn: string[] = []) =>
+		({ id, description: `d-${id}`, status, dependsOn, files: [] } as unknown as SubtaskResult);
+	const task = (subs: any[]) => ({ id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState);
+	// s3 pending + unmet dep (s1 pending) → blocked; s4 pending w/o deps → not blocked
+	const subs = [mk("s1", "pending"), mk("s2", "completed"), mk("s3", "pending", ["s1"]), mk("s4", "pending")];
+	const lines = (createProgressWidget(() => ({ task: task(subs) }))(undefined, theme) as any).render(80) as string[];
+	const blockLine = lines.find((l) => l.includes("blocked:")) ?? "";
+	check("blocked line lists blocked IDs", blockLine.includes("s3"));
+	check("blocked line omits non-blocked", !blockLine.includes("s4"));
+	check("blocked line fits width", blockLine.length <= 80);
+}
+
+// many blocked on a narrow terminal — truncate with ellipsis, fit width
+{
+	const mk = (i: number) => ({ id: `blocked-${i}`, description: "d", status: "pending", dependsOn: ["missing"], files: [] } as unknown as SubtaskResult);
+	const subs = Array.from({ length: 12 }, (_, i) => mk(i));
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState;
+	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(30) as string[];
+	const blockLine = lines.find((l) => l.includes("blocked:")) ?? "";
+	check("narrow: blocked line has ellipsis", blockLine.includes("…"));
+	check("narrow: blocked line fits width", blockLine.length <= 30);
+}
+
+// no blocked subtasks → no blocked line
+{
+	const mk = (id: string, status: string, dependsOn: string[] = []) =>
+		({ id, description: "d", status, dependsOn, files: [] } as unknown as SubtaskResult);
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mk("s1", "completed"), mk("s2", "pending")] } as unknown as TaskState;
+	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(80) as string[];
+	check("no blocked subtasks → no blocked line", !lines.some((l: string) => l.includes("blocked:")));
+}
+
+// width so small only the prefix fits — no throw; no raw IDs beyond the prefix
+{
+	const mk = (id: string) => ({ id, description: "d", status: "pending", dependsOn: ["missing"], files: [] } as unknown as SubtaskResult);
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0,
+		subtasks: [mk("s1"), mk("s2")] } as unknown as TaskState;
+	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(10) as string[];
+	const blockLine = lines.find((l) => l.includes("blocked:")) ?? "";
+	check("tiny width no throw", typeof blockLine === "string");
+	check("tiny width appends no raw IDs", !blockLine.includes("s1"));
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 if (failures > 0) process.exit(1);

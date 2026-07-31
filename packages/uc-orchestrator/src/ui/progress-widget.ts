@@ -148,6 +148,14 @@ class ProgressWidgetComponent {
 		// so the glanceable widget lost its most useful element. Wave X/Y is now
 		// optional trailing context (appended only when waveIdx/totalWaves exist).
 		const total = task.subtasks.length;
+		// ponytail: blocked-subtask detection shared by the bar tag (·N⏳, #488)
+		// and the blocked summary line below. Deps checked against the task's own
+		// subtask statuses (pending w/ unmet deps = blocked).
+		const subById = new Map(task.subtasks.map((s) => [s.id, s]));
+		const blockedSubs = task.subtasks.filter((s) =>
+			s.status === "pending" && s.dependsOn.length > 0 &&
+			s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
+		);
 		if (total > 0) {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const failed = task.subtasks.filter((s) => s.status === "failed").length;
@@ -171,13 +179,8 @@ class ProgressWidgetComponent {
 			// ponytail: blocked-count marker — mirrors the task-list/subtask-tree headers
 			// (#487/#486) + detail countTag (#485). The bar row showed completed/failed/
 			// running but not how many subtasks are stalled on unmet deps. dim "·N⏳" only
-			// when blocked>0. Deps checked against the task's own subtask statuses.
-			const subById = new Map(task.subtasks.map((s) => [s.id, s]));
-			const blocked = task.subtasks.filter((s) =>
-				s.status === "pending" && s.dependsOn.length > 0 &&
-				s.dependsOn.some((depId) => { const dep = subById.get(depId); return !dep || dep.status !== "completed"; })
-			).length;
-			const blockTag = blocked > 0 ? this.theme.fg("dim", ` ·${blocked}⏳`) : "";
+			// when blocked>0.
+			const blockTag = blockedSubs.length > 0 ? this.theme.fg("dim", ` ·${blockedSubs.length}⏳`) : "";
 			lines.push(
 				`  ${bar} ${completed}/${total}${failTag}${runTag}${blockTag}${waveTag}`,
 			);
@@ -296,6 +299,22 @@ class ProgressWidgetComponent {
 			if (running.length > 3) {
 				lines.push(`  ${this.theme.fg("dim", `  ...+${running.length - 3} more`)}`);
 			}
+		}
+
+		// Blocked subtasks summary — the bar shows "·N⏳" (#488) but not WHICH
+		// subtasks are stalled; a task with 0 running + N blocked shows nothing
+		// below the bar. Mirror the failed summary: one dim line with the IDs,
+		// capped to width. Only when blocked > 0 (no noise on healthy tasks).
+		// ponytail: prefix eats ~17 cols (`  ⏳ N blocked: `); truncate the ID list
+		// to the remaining width so a long stalled set doesn't wrap the line.
+		if (blockedSubs.length > 0) {
+			const prefix = `  ⏳ ${blockedSubs.length} blocked: `;
+			const idBudget = Math.max(0, width - prefix.length - 2);
+			let idList = blockedSubs.map((s) => s.id).join(", ");
+			if (idList.length > idBudget) {
+				idList = idBudget > 0 ? idList.slice(0, idBudget - 1) + "…" : "";
+			}
+			lines.push(`${this.theme.fg("dim", prefix)}${idList}`);
 		}
 
 		// Failed subtasks summary — show IDs plus first error for quick diagnosis
