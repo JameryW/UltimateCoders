@@ -46,7 +46,7 @@ import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
 import { createTaskResultRenderer } from "./ui/task-result-renderer";
 import { FooterStatusRenderer, type StatusRenderer } from "./ui/status-renderer";
-import { formatTaskList, formatTaskDetail } from "./ui/status-formatter";
+import { formatTaskList, formatTaskDetail, sortTasksForStatus } from "./ui/status-formatter";
 import type { OrchestratorEventType, OrchestratorEvents } from "./orchestrator/events";
 
 export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
@@ -510,7 +510,13 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					// lines to the actual width instead of fixed 50/60/100.
 					const cols = (ctx.ui as any)?.terminal?.columns;
 					if (!taskId) {
-						const tasks = orchestrator.getAllTaskStates();
+						// ponytail: sort active/failed tasks first — getAllTaskStates returns
+						// Map insertion order (oldest first), so a /uc status toast with many
+						// completed tasks buried the live/failed tasks a user is watching at
+						// the bottom of a fixed toast. Toast is fixed-height, so surfacing
+						// the actionable tasks up top is the difference between seen and
+						// scrolled-off. sortTasksForStatus is shared w/ the selfcheck.
+						const tasks = sortTasksForStatus(orchestrator.getAllTaskStates());
 						const lines = formatTaskList(tasks, ctx.ui.theme, cols);
 						// ponytail: hint the detail path — the list shows truncated ids +
 						// a status each, but a new user has no cue that /uc status <id>

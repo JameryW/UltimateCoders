@@ -11,6 +11,22 @@ import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
 import { formatElapsed } from "./elapsed";
 
+// ponytail: sort tasks for the /uc status toast — active (non-terminal) tasks
+// first, then failed (triage), then cancelled, then completed. getAllTaskStates
+// returns Map insertion order (oldest first), so without this a toast with many
+// completed tasks buries the live/failed task a user is watching at the bottom
+// of a fixed toast. Stable: same-priority keeps insertion order. Exported so the
+// extension call site and selfchecks share one source of truth.
+const taskStatusRank = (s: string): number =>
+	s === "in_progress" || s === "planning" || s === "paused" ? 0
+		: s === "failed" ? 1
+		: s === "cancelled" ? 2
+		: 3;
+export function sortTasksForStatus(tasks: TaskState[]): TaskState[] {
+	return tasks.slice().sort((a, b) => taskStatusRank(a.status) - taskStatusRank(b.status));
+}
+
+
 // ── Task List (no task ID) ───────────────────────────────────────
 
 // ponytail: width budget helpers. /uc status renders via notify() (toast),
