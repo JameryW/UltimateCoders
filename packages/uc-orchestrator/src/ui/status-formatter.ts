@@ -129,7 +129,7 @@ export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number)
 
 // ── Task Detail (with task ID) ───────────────────────────────────
 
-export function formatTaskDetail(task: TaskState, theme: Theme, width?: number): string[] {
+export function formatTaskDetail(task: TaskState, theme: Theme, width?: number, maxSubtasks?: number): string[] {
 	const lines: string[] = [];
 	const icon = statusIcon(task.status, theme);
 	// ponytail: mirror formatTaskList — pause leaves status as in_progress but
@@ -262,6 +262,8 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 		byDeps.get(depth)!.push(st);
 	}
 
+	let renderedSubs = 0;
+	let hitCap = false;
 	for (const [depth, subtasks] of [...byDeps.entries()].sort(([a], [b]) => a - b)) {
 		// ponytail: within a depth tier, sort by status priority (failed first, then
 		// running/reviewing, then everything else) so a failure surfaces to the top
@@ -272,6 +274,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 			s === "failed" ? 0 : (s === "running" || s === "reviewing") ? 1 : 2;
 		const tier = subtasks.slice().sort((a, b) => statusRank(a.status) - statusRank(b.status));
 		for (const st of tier) {
+			// ponytail: cap rendered subtask rows for the /uc status <id> toast path —
+			// notify() is a fixed-height toast, so a task with many subtasks overflowed
+			// and the tail (often the failure rows, even after the failed-first tier
+			// sort) clipped silently. The overlay detail path passes no cap (undefined)
+			// and scrolls instead. Hit the cap → break both loops + emit a tail line.
+			if (maxSubtasks !== undefined && renderedSubs >= maxSubtasks) { hitCap = true; break; }
+			renderedSubs++;
 			const stIcon = statusIcon(st.status, theme);
 			const indent = "  ".repeat(depth + 1);
 			const prefix = depth > 0 ? "↳ " : "";
@@ -414,6 +423,18 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 					for (const sug of suggestions) lines.push(theme.fg("dim", `${indent}    ↳ ${cap(sug, 200, 200)}`));
 				}
 			}
+		}
+		if (hitCap) break;
+	}
+
+	// ponytail: name the clipped subtask tail for the toast path (overlay path has no
+	// cap → hitCap stays false). The "Subtasks:" breakdown header above already gives
+	// the per-status counts, so the user knows WHAT got clipped; this line says HOW MANY
+	// and points to the overlay (Ctrl+Shift+T → Enter) for the scrollable full list.
+	if (hitCap) {
+		const remaining = task.subtasks.length - renderedSubs;
+		if (remaining > 0) {
+			lines.push(theme.fg("dim", `  …+${remaining} subtask(s) — Enter in task list for all`));
 		}
 	}
 
