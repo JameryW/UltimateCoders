@@ -245,6 +245,9 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
 	const wide = (comp.render(80) as string[])[0];
 	check("paused wide shows resume affordance", wide.includes("/uc resume") && wide.includes("r in overlay"));
+	// ponytail: the affordance fills the ACTUAL (prefix-resolvable) id, not a `<id>`
+	// placeholder — copy-paste runnable, no lookup needed.
+	check("paused affordance shows the task id (not <id> placeholder)", wide.includes("/uc resume t1") && !wide.includes("<id>"));
 	const narrow = (comp.render(40) as string[])[0];
 	check("paused narrow omits affordance (no overflow)", !narrow.includes("/uc resume"));
 }

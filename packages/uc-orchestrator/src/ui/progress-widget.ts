@@ -110,8 +110,12 @@ class ProgressWidgetComponent {
 		// width ≥ 60: the hint is ~38 plain chars and would overflow a narrow header
 		// (the compositor would ANSI-truncate the description off the left side);
 		// under 60 the user still finds /uc resume via /uc help.
+		// ponytail: fill the ACTUAL task id (prefix-resolvable) so the affordance is
+		// copy-paste runnable, not a `<id>` placeholder the user still has to look up.
+		// `r in overlay` is the one-key path; the /uc command covers users who prefer it.
+		const resumeId = task.id.slice(0, 8);
 		const affordance = task.controlState === "paused" && width >= 60
-			? this.theme.fg("dim", " · /uc resume <id> · r in overlay")
+			? this.theme.fg("dim", ` · /uc resume ${resumeId} · r in overlay`)
 			: "";
 		const statusColor = task.status === "completed" ? "success" : task.status === "failed" ? "error" : "accent";
 		const idStr = task.id.slice(0, 12);
