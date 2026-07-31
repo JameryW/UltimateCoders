@@ -6,7 +6,7 @@
  * A subtask depending on 3 roots must be depth 1 (was 3 pre-fix).
  */
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
-import { formatTaskDetail, formatTaskList } from "./status-formatter";
+import { formatTaskDetail, formatTaskList, sortTasksForStatus } from "./status-formatter";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 
 const theme: Theme = {
@@ -576,6 +576,34 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("breakdown shows ready pending count", hdr.includes("1 pending"));
 	// blocked is a subset of pending; total pending (blocked+ready) = 2, never "2 pending".
 	check("breakdown does not lump blocked into pending", !hdr.includes("2 pending"));
+}
+
+// ponytail: sortTasksForStatus — /uc status toast surfaces active/failed tasks
+// first (getAllTaskStates is insertion-order = oldest first, burying live tasks
+// under completed ones). Active (in_progress/planning/paused) → failed → cancelled
+// → completed; stable within a priority tier.
+{
+	const mk = (id: string, status: string) =>
+		({ id, description: "d", status, controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState);
+	// insertion order: completed, failed, in_progress, cancelled, planning
+	const tasks = [
+		mk("c1", "completed"),
+		mk("f1", "failed"),
+		mk("a1", "in_progress"),
+		mk("x1", "cancelled"),
+		mk("a2", "planning"),
+	];
+	const sorted = sortTasksForStatus(tasks).map((t) => t.id);
+	// active (a1, a2) first — insertion order within tier: a1 before a2
+	check("sort: active tasks first", sorted[0] === "a1" && sorted[1] === "a2");
+	// failed next
+	check("sort: failed after active", sorted[2] === "f1");
+	// cancelled before completed
+	check("sort: cancelled before completed", sorted.indexOf("x1") < sorted.indexOf("c1"));
+	// completed last
+	check("sort: completed last", sorted[sorted.length - 1] === "c1");
+	// original array untouched (sort returns a copy)
+	check("sort: does not mutate input", tasks[0].id === "c1");
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
