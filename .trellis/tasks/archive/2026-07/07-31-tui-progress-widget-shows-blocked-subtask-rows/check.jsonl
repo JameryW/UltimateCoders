@@ -1,0 +1,3 @@
+{"file": "packages/uc-orchestrator/src/ui/progress-widget.selfcheck.ts", "reason": "bun run src/ui/progress-widget.selfcheck.ts — ALL PASS"}
+{"file": "packages/uc-orchestrator/src/ui/task-result-renderer.selfcheck.ts", "reason": "Sibling selfchecks still pass (regression)"}
+{"file": "packages/uc-orchestrator/src/ui/subtask-tree-overlay.selfcheck.ts", "reason": "Sibling selfchecks still pass (regression)"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/tui-grpc-spec.md", "reason": "TUI rendering constraints (no pi-tui value imports; plain-slice before theming)"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Component style and ponytail comment conventions"}
