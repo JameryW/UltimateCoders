@@ -179,11 +179,19 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number):
 	const runningCount = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing").length;
 	const cancelled = task.subtasks.filter((s) => s.status === "cancelled").length;
 	const pending = task.subtasks.filter((s) => s.status === "pending").length;
+	// ponytail: split blocked out of pending — `blocked` (computed above for the
+	// countTag's ⏳ marker) is a subset of pending. The breakdown lumped them, so a
+	// task with 2 stalled-on-deps subtasks read "2 pending" hiding that both are
+	// blocked (the countTag already said ·2⏳). Show "N blocked" (warning-colored,
+	// mirrors the ⏳ marker's stall semantics) and reduce pending by that count so
+	// the buckets still sum to total. Only when blocked > 0 (no noise otherwise).
+	const ready = pending - blocked;
 	const other = total - completed - failed - runningCount - cancelled - pending;
 	const parts: string[] = [];
 	if (failed > 0) parts.push(theme.fg("error", `${failed} failed`));
 	if (runningCount > 0) parts.push(`${runningCount} running`);
-	if (pending > 0) parts.push(`${pending} pending`);
+	if (blocked > 0) parts.push(theme.fg("warning", `${blocked} blocked`));
+	if (ready > 0) parts.push(`${ready} pending`);
 	if (cancelled > 0) parts.push(`${cancelled} cancelled`);
 	if (other > 0) parts.push(`${other} other`);
 	if (completed > 0 && completed < total) parts.push(`${completed} done`);
