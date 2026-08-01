@@ -245,6 +245,7 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
 	const wide = (comp.render(80) as string[])[0];
 	check("paused wide shows resume affordance", wide.includes("/uc resume") && wide.includes("r in task list"));
+	check("paused affordance names the overlay shortcut", wide.includes("Ctrl+Shift+T"));
 	// ponytail: the affordance fills the ACTUAL (prefix-resolvable) id, not a `<id>`
 	// placeholder — copy-paste runnable, no lookup needed.
 	check("paused affordance shows the task id (not <id> placeholder)", wide.includes("/uc resume t1") && !wide.includes("<id>"));

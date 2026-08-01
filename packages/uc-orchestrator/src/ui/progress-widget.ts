@@ -121,12 +121,13 @@ class ProgressWidgetComponent {
 		// the paused affordance exactly. Cancelled is terminal (resume errors) → skip.
 		const resumeId = task.id.slice(0, 8);
 		const showResumeAffordance = (task.controlState === "paused" || task.status === "failed") && width >= 60;
-		// ponytail: "r in task list" — the resume key (`r`) lives in the TASK-LIST overlay
-		// (Ctrl+Shift+T), NOT the subtask-tree (Ctrl+T) — the tree's `r`/`R` RETRIES a
-		// subtask, a different action. The bare "r in overlay" was ambiguous: a user who
-		// opened the tree hit retry instead of resume. Name the right surface.
+		// ponytail: name the RIGHT overlay + how to open it — `r` (resume) lives in the
+		// task-list overlay (Ctrl+Shift+T), NOT the subtask-tree (Ctrl+T, whose `r`/`R`
+		// RETRIES a subtask). The bare "r in overlay" was ambiguous; "r in task list"
+		// (#506) named the surface but a new user still had to find Ctrl+Shift+T. Add
+		// the shortcut so the overlay path is reachable without /uc help.
 		const affordance = showResumeAffordance
-			? this.theme.fg("dim", ` · /uc resume ${resumeId} · r in task list`)
+			? this.theme.fg("dim", ` · /uc resume ${resumeId} · r in task list (Ctrl+Shift+T)`)
 			: "";
 		const statusColor = task.status === "completed" ? "success" : task.status === "failed" ? "error" : "accent";
 		const idStr = task.id.slice(0, 12);
