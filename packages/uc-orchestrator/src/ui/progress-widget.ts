@@ -136,7 +136,17 @@ class ProgressWidgetComponent {
 		// imports are available for ANSI-aware truncation. Without the description,
 		// the always-visible widget showed only a truncated UUID, not what the task
 		// was about; /uc status showed it but the glanceable view did not.
-		const prefixPlain = `  UC ${idStr} ${task.status}${ctrl}`;
+		// ponytail: compute the tag PLAIN text BEFORE the desc budget so the suffixes
+		// (durTag/ageTag) are subtracted from the desc width — without this, a long
+		// run age (" · (5h 30m)") ate into the desc and the header overflowed width.
+		// Gated on width ≥ 50 (mirrors the affordance gate): on a narrow terminal the
+		// tags would push the prefix past width, so omit them there (status + id fit).
+		const showTags = width >= 50;
+		const durPlain = showTags && task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
+			? ` · ⏱${formatElapsed(task.completedAt - task.createdAt)}` : "";
+		const agePlain = showTags && ["in_progress", "planning", "paused"].includes(task.status)
+			? ` · (${formatElapsed(Date.now() - task.createdAt)})` : "";
+		const prefixPlain = `  UC ${idStr} ${task.status}${ctrl}${durPlain}${agePlain}`;
 		const descBudget = Math.max(0, width - prefixPlain.length - 3); // 3 for " - "
 		// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
 		// description cut silently with no signal there was more. Mirrors the overlay
@@ -147,15 +157,14 @@ class ProgressWidgetComponent {
 		const desc = truncated
 			? fullDesc.slice(0, Math.max(0, descBudget - 1)) + (descBudget > 0 ? "…" : "")
 			: fullDesc.slice(0, descBudget);
-		// ponytail: total run duration on a terminal task — the time-signal sweep
-		// (#421/#430/#433/#443) covered when it started/ended, but not how long it
-		// ran. "⏱ 5m" answers "did this take unusually long" at a glance, computed
-		// from createdAt→completedAt. Only terminal tasks w/ completedAt; in-flight
-		// shows the live age already. Dim so it reads as metadata, not a field.
-		const durTag = task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)
-			? this.theme.fg("dim", ` · ⏱${formatElapsed(task.completedAt - task.createdAt)}`) : "";
+		// ponytail: durTag (terminal, ⏱) / ageTag (in-flight, (Ns)) — themed from the
+		// plain text computed above so the desc budget already accounts for their width.
+		// Total run duration (createdAt→completedAt) for terminal; live age (now-
+		// createdAt) for in_progress/planning/paused. Mirrors the detail header's tags.
+		const durTag = durPlain ? this.theme.fg("dim", durPlain) : "";
+		const ageTag = agePlain ? this.theme.fg("dim", agePlain) : "";
 		lines.push(
-			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${durTag}${affordance}`,
+			`  ${this.theme.fg("accent", "UC")} ${this.theme.fg("dim", idStr)} ${this.theme.fg(statusColor, task.status)}${ctrl}${desc ? this.theme.fg("dim", ` - ${desc}`) : ""}${durTag}${ageTag}${affordance}`,
 		);
 
 		// ponytail: progress bar — show whenever there are subtasks, not only when
