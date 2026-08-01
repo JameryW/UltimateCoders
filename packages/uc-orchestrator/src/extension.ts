@@ -443,11 +443,21 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 		description: "Jump to first failed subtask",
 		handler: async (ctx) => {
 			// ponytail: open the subtask tree with the cursor pre-set to the first
-			// failed subtask — fastest path to the `R` retry key. No failed → toast.
-			const hasFailed = orchestrator.getAllTaskStates().some((t) =>
+			// failed subtask — fastest path to the `R` retry key. No failed subtask →
+			// but distinguish: a task-level failure with NO subtasks (decompose failed
+			// before any ran) reads as "failed" to the user, so "No failed subtasks" alone
+			// was confusing — the user saw a failed task and a toast denying any. Point
+			// them at the task-level recovery path (/uc resume, or the list's `r`) instead.
+			const hasFailedSub = orchestrator.getAllTaskStates().some((t) =>
 				t.subtasks.some((s) => s.status === "failed"));
-			if (!hasFailed) {
-				ctx.ui.notify("No failed subtasks", "info");
+			if (!hasFailedSub) {
+				const hasFailedTask = orchestrator.getAllTaskStates().some((t) => t.status === "failed");
+				ctx.ui.notify(
+					hasFailedTask
+						? "No failed subtasks — use /uc resume <task-id> (or `r` in the task list) for a task-level failure"
+						: "No failed subtasks",
+					"info",
+				);
 				return;
 			}
 			await openSubtaskTree(ctx as unknown as ExtensionCommandContext, { cursorOnFailed: true });
