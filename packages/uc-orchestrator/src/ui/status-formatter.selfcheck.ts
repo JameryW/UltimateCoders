@@ -97,11 +97,11 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("detail cap: drops subtasks past the cap", !capped.some((l) => l.includes("S5")));
 	check("detail cap: does NOT render the last subtask", !capped.some((l) => l.includes("S12")));
 	// tail names the 8 clipped (13 - 5)
-	check("detail cap: names the clipped tail", capped.some((l) => l.includes("+8 subtask") && l.includes("for all")));
+	check("detail cap: names the clipped tail", capped.some((l) => l.includes("+8 subtask") && l.includes("Ctrl+T for all")));
 	// undefined cap → all rendered (overlay path), no tail
 	const uncapped = formatTaskDetail(task, theme);
 	check("detail uncapped: renders all subtasks", uncapped.some((l) => l.includes("S0")) && uncapped.some((l) => l.includes("S12")));
-	check("detail uncapped: no clip tail", !uncapped.some((l) => l.includes("for all")));
+	check("detail uncapped: no clip tail", !uncapped.some((l) => l.includes("Ctrl+T for all")));
 }
 
 // Cycle guard: A→B→A must not infinite-loop
