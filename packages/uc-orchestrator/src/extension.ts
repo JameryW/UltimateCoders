@@ -673,7 +673,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								// without reading the snippet. Only when symbolName is present.
 								const symName = r.symbolName ?? r.symbol_name;
 								const symKind = r.symbolKind ?? r.symbol_kind;
-								const symTag = (symName && symKind) ? `\n      ⟦${symKind} ${symName}⟧` : (symName ? `\n      ⟦${symName}⟧` : "");
+								// ponytail: highlight the query in the symbol NAME (not the kind — that's a type
+								// keyword, not the query). A search for a symbol by name showed ⟦fn myFunc⟧ raw;
+								// the match in the name was as invisible as the snippet was pre-#519.
+								const symNameHi = symName ? highlightQuery(symName, rest, (c, t) => ctx.ui.theme.fg(c, t)) : "";
+								const symTag = (symNameHi && symKind) ? `\n      ⟦${symKind} ${symNameHi}⟧` : (symNameHi ? `\n      ⟦${symNameHi}⟧` : "");
 								return `${pathPrefix}${pathStr}${score}${lineTag}${mtTag}${symTag}${snip}`;
 							},
 						);
