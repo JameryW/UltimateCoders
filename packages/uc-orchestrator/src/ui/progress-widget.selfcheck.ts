@@ -213,7 +213,7 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 {
 	const task = {
 		id: "t1", description: "x".repeat(200), status: "in_progress", controlState: "running",
-		createdAt: 0, subtasks: [],
+		createdAt: Date.now() - 30_000, subtasks: [],
 	} as unknown as TaskState;
 	const st: ProgressWidgetState = { task };
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
@@ -227,7 +227,7 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 {
 	const task = {
 		id: "t1", description: "y".repeat(50), status: "in_progress", controlState: "running",
-		createdAt: 0, subtasks: [],
+		createdAt: Date.now() - 30_000, subtasks: [],
 	} as unknown as TaskState;
 	const st: ProgressWidgetState = { task };
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
@@ -445,10 +445,12 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const fcomp = createProgressWidget(() => mk("failed", Date.now() - 30_000))(undefined, theme) as any;
 	const frow = (fcomp.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
 	check("failed task shows ⏱ duration", frow.includes("⏱"));
-	// in-flight → no dur tag
+	// in-flight → no ⏱ dur tag (terminal-only), but a live age tag ·(Ns) instead.
+	// createdAt=now-60s → 60s → formatElapsed "1m" (≥60s rolls to minutes).
 	const icomp = createProgressWidget(() => mk("in_progress", undefined))(undefined, theme) as any;
 	const irow = (icomp.render(80) as string[]).find((l: string) => l.includes("UC")) ?? "";
 	check("in_progress task no ⏱ duration", !irow.includes("⏱"));
+	check("in_progress task shows live age (Nm)", irow.includes("(1m)"));
 }
 
 // ponytail: idle widget hints /uc submit — the always-visible widget is a
