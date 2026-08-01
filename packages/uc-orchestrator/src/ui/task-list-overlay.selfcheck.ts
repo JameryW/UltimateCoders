@@ -547,13 +547,16 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 // mirroring the detail header's doneTag (#430). The plain createdAt-age read as
 // "still going" for a task that ended 5m ago. in-flight stays plain.
 {
-	// completed task with completedAt=now-30s → "done 30s ago"
+	// completed task with completedAt=now-30s → age suffix is just "{ago}" (the row
+	// BADGE already says "done", so a bare "done 30s ago" would duplicate the badge:
+	// "done … done 30s ago"). The age lands as "... 30s ago" next to the "done" badge.
 	const done = makeTask("t1", "completed");
 	(done as any).completedAt = Date.now() - 30_000;
 	const { comp } = makeComponent([done]);
 	const row = comp.render(80).find((l: string) => l.includes("t1")) ?? "";
-	check("completed task row shows 'done 30s ago'", row.includes("done 30s ago"));
-	// failed task with completedAt → "done {age}"
+	check("completed task row shows age (30s ago)", row.includes("30s ago"));
+	check("completed task row does NOT duplicate 'done' in the age", !row.includes("done 30s ago"));
+	// failed task with completedAt → "done {age}" (badge is "fail", so "done" disambiguates)
 	const failed = makeTask("t2", "failed");
 	(failed as any).completedAt = Date.now() - 30_000;
 	const { comp: c2 } = makeComponent([failed]);
