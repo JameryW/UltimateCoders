@@ -623,7 +623,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						// keeps the legacy fixed caps (80 path / 120 snippet).
 						const cols = (ctx.ui as any)?.terminal?.columns as number | undefined;
 						const SHOWN = 20;
-						const shown = results.slice(0, SHOWN);
+						// ponytail: sort by score DESC before capping — the server usually returns
+						// relevance-sorted, but a defensive client sort guarantees the top-20 slice
+						// holds the highest-score results (a server that didn't sort would otherwise
+						// bury the best matches past the cap). Missing score sorts last (0 fallback).
+						const sorted = results.slice().sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+						const shown = sorted.slice(0, SHOWN);
 						const lines = shown.map(
 							(r: any) => {
 								const repo = r.repoId ?? r.repo_id ?? "?";
