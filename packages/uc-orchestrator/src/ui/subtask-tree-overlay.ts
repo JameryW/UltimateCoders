@@ -277,8 +277,13 @@ class SubtaskTreeComponent {
 	// that keeps the essential keys (nav, Enter, retry, Esc close) under 60
 	// columns. Only applied to the normal (non-search, non-filtering) hint —
 	// searchMode/filtering lines are short or user-typed.
+	// ponytail: switch to the compact hint when the FULL hint won't fit (not a fixed
+	// 60-col threshold). The full hint is ~110 chars; at the common 80-col terminal it
+	// was returned anyway and the compositor right-truncated it — dropping `/ filter`
+	// and `Esc close` (both load-bearing: the close path + the filter entry). Compact
+	// keeps nav + R retry + Esc visible.
 	private hintLine(width: number, full: string, compact: string): string {
-		return width < 60 ? compact : full;
+		return full.length + 2 <= width ? full : compact;
 	}
 
 	render(width: number): string[] {

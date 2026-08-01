@@ -251,9 +251,10 @@ const PAGEDOWN = "\x1b[6~";
 	const { comp: ec } = makeComponent([], { tasks: [emptyTask] });
 	ec.handleInput("o");
 	check("o on empty flashes 'no subtasks to expand'", ec.flashMsg !== null && ec.flashMsg.includes("no subtasks to expand"));
-	// hint advertises `o all`
+	// hint advertises `o all` (on a wide-enough terminal; the compact hint at 80 cols
+	// drops it to keep Esc visible)
 	const { comp: hc } = makeComponent([makeSubtask("s1")]);
-	const hint = hc.render(80).join("\n");
+	const hint = hc.render(160).join("\n");
 	check("hint advertises o all", hint.includes("o all"));
 	// o in search-edit falls through (not appended to query) — mirrors n/r.
 	const { comp: sc } = makeComponent([makeSubtask("s1"), makeSubtask("s2")]);
@@ -923,13 +924,16 @@ const PAGEDOWN = "\x1b[6~";
 	check("`d` no-jump-handler does not close", closed() === false);
 }
 
-// ponytail: S5 — narrow-screen hint. Full hint (~73 chars) gets ANSI-truncated
-// on terminals < ~73 cols, losing the right side (Esc close, / filter). The
-// render hint uses a compact version under 60 cols. Only the NORMAL (non-search,
-// non-filtering) hint branch is affected.
+// ponytail: S5 — hint switches to compact when the FULL hint won't fit (not a fixed
+// 60-col threshold). The full hint is ~115 chars; at the common 80-col terminal it
+// was returned anyway and the compositor right-truncated it — dropping `/ filter`
+// and `Esc close` (both load-bearing). Compact keeps nav + R retry + Esc visible.
+// Only the NORMAL (non-search, non-filtering) hint branch is affected.
 {
 	const { comp } = makeComponent([makeSubtask("s1")]);
-	const wide = comp.render(80).join("\n");
+	// a wide-enough terminal shows the full hint (all keys advertised). The full hint
+	// is ~144 cols, so use 160 to clear the fit threshold (full.length+2 <= width).
+	const wide = comp.render(160).join("\n");
 	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
 	check("wide hint has / filter", wide.includes("/ filter"));
 	check("wide hint has Esc close", wide.includes("Esc close"));
@@ -939,6 +943,12 @@ const PAGEDOWN = "\x1b[6~";
 	// ponytail: tree implements both y (subtask id) and Y (error/result) yank,
 	// but the hint said only "y copy" — Y was undiscoverable. Match task-list.
 	check("wide hint advertises y/Y copy", wide.includes("y/Y copy"));
+
+	// 80-col terminal: full hint (~115) doesn't fit → compact, which KEEPS Esc close
+	// (the old behavior returned full + let the compositor truncate Esc off the right).
+	const mid = comp.render(80).join("\n");
+	check("mid hint keeps Esc close (no truncation)", mid.includes("Esc close"));
+	check("mid hint drops PgUp/PgDn (compact)", !mid.includes("PgUp/PgDn"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has Esc close", narrow.includes("Esc close"));

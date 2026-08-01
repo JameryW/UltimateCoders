@@ -1218,14 +1218,17 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("detail `c` does not arm pendingCancel", comp.pendingCancel === null);
 }
 
-// ponytail: S5 — narrow-screen hint. Full hint (~78 chars) gets ANSI-truncated
-// on terminals < 78 cols, losing the right side (Esc close, / filter). The
-// renderList hint uses a compact version under 60 cols. Detail hint (~50 chars)
-// is left as-is (fits most widths). Only the NORMAL (non-search, non-filtering)
-// hint branch is affected.
+// ponytail: S5 — hint switches to compact when the FULL hint won't fit (not a fixed
+// 60-col threshold). The full hint is ~100 chars; at the common 80-col terminal it
+// was returned anyway and the compositor right-truncated it — dropping `/ filter`
+// and `Esc close` (both load-bearing). Compact keeps nav + actions + Esc visible.
+// Detail hint is left as-is (fits most widths). Only the NORMAL (non-search,
+// non-filtering) hint branch is affected.
 {
 	const { comp } = makeComponent([makeTask("t1", "in_progress"), makeTask("t2", "in_progress")]);
-	const wide = comp.render(80).join("\n");
+	// a wide-enough terminal shows the full hint (all keys advertised). The full hint
+	// is ~150 cols, so use 160 to clear the fit threshold (full.length+2 <= width).
+	const wide = comp.render(160).join("\n");
 	check("wide hint has PgUp/PgDn", wide.includes("PgUp/PgDn"));
 	check("wide hint has / filter", wide.includes("/ filter"));
 	check("wide hint has Esc close", wide.includes("Esc close"));
@@ -1236,6 +1239,12 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	// ponytail: N is prev-failed (complement of n next-failed). `p` is pause, so
 	// the hint must advertise N or the prev-failure path stays undiscoverable.
 	check("wide hint has N prev-failed", wide.includes("N prev-failed"));
+
+	// 80-col terminal: full hint (~100) doesn't fit → compact, which KEEPS Esc close
+	// (old behavior returned full + let the compositor truncate Esc off the right).
+	const mid = comp.render(80).join("\n");
+	check("mid hint keeps Esc close (no truncation)", mid.includes("Esc close"));
+	check("mid hint drops PgUp/PgDn (compact)", !mid.includes("PgUp/PgDn"));
 
 	const narrow = comp.render(50).join("\n");
 	check("narrow hint has c/p/r", narrow.includes("c/p/r"));
