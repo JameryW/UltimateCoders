@@ -89,6 +89,27 @@ describe("control command id resolution + outcomes", () => {
 		if (!c3.ok) expect(c3.reason).toBe("not_found");
 	});
 
+	it("cancel resolves a subtask-id PREFIX (UIs only show truncated ids)", async () => {
+		const orch = await makeOrchestrator();
+		const tid = await orch.submitTask("task w/ subtasks"); // fails (terminal), but
+		// inject two non-terminal subtasks directly — UIs display slice(0,8/14), so a
+		// copy-pasted id is a prefix, not the full id. cancelTask must resolve the prefix.
+		const t = orch.resolveTask(tid);
+		if (!("id" in t)) throw new Error("task not resolved");
+		t.subtasks = [
+			{ id: "st-abc-123", description: "a", status: "pending", dependsOn: [], files: [] } as any,
+			{ id: "st-xyz-456", description: "b", status: "pending", dependsOn: [], files: [] } as any,
+		];
+		// a unique prefix of st-abc-123 → resolves + cancels that subtask
+		const r = await orch.cancelTask(tid, "st-abc");
+		expect(r.ok).toBe(true);
+		const again = orch.resolveTask(tid);
+		if ("id" in again) {
+			const st = again.subtasks.find((s) => s.id === "st-abc-123");
+			expect(st?.status).toBe("cancelled");
+		}
+	});
+
 	it("resume resolves prefixes and pause guards state", async () => {
 		const orch = await makeOrchestrator();
 		const tid = await orch.submitTask("doomed task"); // failed → resumable

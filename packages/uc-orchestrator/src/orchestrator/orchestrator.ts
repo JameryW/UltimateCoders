@@ -1040,8 +1040,20 @@ export class UCOrchestrator {
 		const task = resolved;
 
 		if (subtaskId) {
-			// Subtask-level cancel
-			const st = task.subtasks.find((s) => s.id === subtaskId);
+			// Subtask-level cancel. ponytail: resolve the subtask id as a prefix too —
+			// every UI surface (tree row, detail row) shows a TRUNCATED subtask id
+			// (slice 0,8/14), so an exact-match here rejected a copy-pasted id the user
+			// couldn't have typed in full. Mirrors resolveTask: exact wins, then a UNIQUE
+			// prefix, else subtask_not_found. A non-unique prefix is left to the exact
+			// fallthrough (subtask_not_found w/ candidates) — ambiguous subtask cancel is
+			// rare (subtask ids are unique per task) and the candidate list disambiguates.
+			const exactSt = task.subtasks.find((s) => s.id === subtaskId);
+			let st = exactSt;
+			let matchedId = subtaskId;
+			if (!st) {
+				const prefixMatches = task.subtasks.filter((s) => s.id.startsWith(subtaskId));
+				if (prefixMatches.length === 1) { st = prefixMatches[0]; matchedId = st.id; }
+			}
 			// ponytail: F27 — name the real failure: a typo'd subtask id used to
 			// surface as "task not found".
 			if (!st) {
@@ -1050,7 +1062,7 @@ export class UCOrchestrator {
 
 			st.status = "cancelled";
 			st.completedAt = Date.now();
-			this.cascadeCancel(task, [subtaskId]);
+			this.cascadeCancel(task, [matchedId]);
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
 			ctx?.ui.notify(`Subtask ${subtaskId} cancelled (cascade applied)`, "info");
