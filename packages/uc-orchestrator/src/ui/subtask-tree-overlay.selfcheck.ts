@@ -1090,6 +1090,12 @@ const PAGEDOWN = "\x1b[6~";
 	const done = makeSubtask("s2", { status: "completed", startedAt: Date.now() - 65_000 });
 	const { comp: comp2 } = makeComponent([done]);
 	check("F8 completed row has no elapsed", !(comp2.render(80) as string[]).some((l: string) => l.includes("(1m")));
+	// ponytail: reviewing rows show live elapsed too — reviewing is counted as running
+	// (running-count ·N▶, sort rank), so the elapsed tag must match or a reviewing
+	// subtask showed NO time signal despite counting as active.
+	const reviewing = makeSubtask("s3", { status: "reviewing", startedAt: Date.now() - 65_000 });
+	const { comp: comp3 } = makeComponent([reviewing]);
+	check("F8 reviewing row shows elapsed (1m)", (comp3.render(80) as string[]).some((l: string) => l.includes("(1m)")));
 }
 
 // ponytail: terminal subtask row shows done-time + duration — mirrors the detail

@@ -401,10 +401,15 @@ class SubtaskTreeComponent {
 			// tree row matches the detail view's time signal. Append " ·⏱Ns" duration
 			// (startedAt→completedAt) when both stamps present (#462). Running shows
 			// elapsed; terminal shows done-time+dur; absent stamps → none.
-			const durPlain = (item.subtask.status !== "running" && item.subtask.startedAt && item.subtask.completedAt
+			const durPlain = (item.subtask.status !== "running" && item.subtask.status !== "reviewing" && item.subtask.startedAt && item.subtask.completedAt
 				&& ["completed", "failed", "cancelled"].includes(item.subtask.status))
 				? ` ·⏱${formatElapsed(item.subtask.completedAt - item.subtask.startedAt)}` : "";
-			const elapsedPlain = item.subtask.status === "running" && item.subtask.startedAt
+			// ponytail: elapsed on running AND reviewing — reviewing is treated as running
+			// elsewhere (running-count marker ·N▶, failed-first sort rank), so the live-
+			// elapsed tag must match or a reviewing subtask showed NO time signal despite
+			// counting as active. The elapsed answers "how long has this been waiting on
+			// review" (a long wait hints a stuck review). Mirrors the detail subtask row.
+			const elapsedPlain = (item.subtask.status === "running" || item.subtask.status === "reviewing") && item.subtask.startedAt
 				? ` (${formatElapsed(Date.now() - item.subtask.startedAt)})`
 				: (item.subtask.completedAt && ["completed", "failed", "cancelled"].includes(item.subtask.status))
 					? ` (done ${formatElapsed(Date.now() - item.subtask.completedAt)} ago${durPlain})` : "";

@@ -335,10 +335,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number, 
 			// ponytail: total run duration on terminal subtasks — mirrors the widget ⏱
 			// (#454) + detail header (#455). Append " ·⏱Ns" (startedAt→completedAt) so a
 			// subtask answers "did this take unusually long"; only when both stamps present.
-			const durPlain = (st.status !== "running" && st.startedAt && st.completedAt
+			const durPlain = (st.status !== "running" && st.status !== "reviewing" && st.startedAt && st.completedAt
 				&& ["completed", "failed", "cancelled"].includes(st.status))
 				? ` ·⏱${formatElapsed(st.completedAt - st.startedAt)}` : "";
-			const timePlain = st.status === "running" && st.startedAt
+			// ponytail: elapsed on running AND reviewing — reviewing is counted as running
+			// elsewhere (running-count, sort), so the live-elapsed tag must match or a
+			// reviewing subtask showed no time signal despite counting as active.
+			const timePlain = (st.status === "running" || st.status === "reviewing") && st.startedAt
 				? ` (${formatElapsed(Date.now() - st.startedAt)})`
 				: (st.completedAt && ["completed", "failed", "cancelled"].includes(st.status))
 					? ` (done ${formatElapsed(Date.now() - st.completedAt)} ago${durPlain})` : "";
