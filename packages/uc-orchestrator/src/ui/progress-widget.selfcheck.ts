@@ -244,7 +244,7 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const st: ProgressWidgetState = { task: paused };
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
 	const wide = (comp.render(80) as string[])[0];
-	check("paused wide shows resume affordance", wide.includes("/uc resume") && wide.includes("r in overlay"));
+	check("paused wide shows resume affordance", wide.includes("/uc resume") && wide.includes("r in task list"));
 	// ponytail: the affordance fills the ACTUAL (prefix-resolvable) id, not a `<id>`
 	// placeholder — copy-paste runnable, no lookup needed.
 	check("paused affordance shows the task id (not <id> placeholder)", wide.includes("/uc resume t1") && !wide.includes("<id>"));
@@ -253,14 +253,14 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 }
 // ponytail: a FAILED task shows the resume affordance too — it's resumable (resumeTask
 // re-runs the failed wave), so the recovery path shouldn't hide behind opening an
-// overlay. Mirrors the paused affordance exactly (same id + "r in overlay"). Cancelled
+// overlay. Mirrors the paused affordance exactly (same id + "r in task list"). Cancelled
 // is terminal → no hint.
 {
 	const failed = { id: "t9", description: "d", status: "failed", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
 	const st: ProgressWidgetState = { task: failed };
 	const comp = createProgressWidget(() => st)(undefined, theme) as any;
 	const wide = (comp.render(80) as string[])[0];
-	check("failed wide shows resume affordance", wide.includes("/uc resume t9") && wide.includes("r in overlay"));
+	check("failed wide shows resume affordance", wide.includes("/uc resume t9") && wide.includes("r in task list"));
 	const cancelled = { id: "tC", description: "d", status: "cancelled", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
 	const st2: ProgressWidgetState = { task: cancelled };
 	const comp2 = createProgressWidget(() => st2)(undefined, theme) as any;
