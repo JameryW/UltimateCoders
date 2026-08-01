@@ -511,11 +511,18 @@ class TaskListComponent {
 			}
 			if (data === "r") {
 				// ponytail: mirror list-mode resume terminal-status guard — completed/
-				// cancelled can't be resumed; flash. Falls through to fireAction when
-				// getTask is unavailable.
+				// cancelled can't be resumed; flash. Also guard an in-flight task
+				// (in_progress not-paused, or planning) — resumeTask only accepts
+				// paused/failed, so firing here hit bad_state + a generic "resume failed".
+				// Falls through to fireAction when getTask is unavailable.
 				const dt = this.opts.getTask ? this.opts.getTask(this.detailTaskId!) : undefined;
 				if (dt && (dt.status === "completed" || dt.status === "cancelled")) {
 					this.setFlash(`already ${dt.status}`);
+					return;
+				}
+				if (dt && (dt.status === "in_progress" || dt.status === "planning")
+					&& (dt.controlState ?? "running") !== "paused") {
+					this.setFlash("already running");
 					return;
 				}
 				this.fireAction(this.detailTaskId, "resume", "resumed");
@@ -779,6 +786,13 @@ class TaskListComponent {
 			const task = tasks[this.cursorIdx];
 			if (task && (task.status === "completed" || task.status === "cancelled")) {
 				this.flashMsg = `already ${task.status}`;
+			} else if (task && (task.status === "in_progress" || task.status === "planning")
+				&& (task.controlState ?? "running") !== "paused") {
+				// ponytail: an in-flight task (in_progress not-paused, or planning) is
+				// already running — resumeTask only accepts paused/failed, so firing here
+				// hit a server bad_state + a generic "resume failed" flash. Name the real
+				// state so the user knows it's a no-op, not a failed action.
+				this.flashMsg = "already running";
 			} else if (task && this.opts.onAction) this.fireAction(task.id, "resume", "resumed");
 			else if (task) this.flashMsg = "resume unavailable";
 		} else if (data === "y" || data === "Y") {

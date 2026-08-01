@@ -978,12 +978,24 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 }
 
 // ponytail: c/p/r quick actions — pause/resume fire immediately; cancel needs a
-// double-tap (first arms via flashMsg, second fires onAction).
+// double-tap (first arms via flashMsg, second fires onAction). The `r` resume path
+// only fires for a PAUSED task (resumeTask accepts paused/failed, not a running
+// in_progress); the optimistic mock flips controlState to "paused" on `p` so `r`
+// has something to resume (mirrors the real pauseTask mutation).
 {
 	const calls: [string, string][] = [];
+	const tasks = [makeTask("t1", "in_progress"), makeTask("t2", "in_progress")];
 	const { comp } = makeComponent(
-		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
-		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+		tasks,
+		{ onAction: (id, action) => {
+			calls.push([id, action]);
+			// ponytail: mirror the real pause/resume state flip so the overlay's
+			// terminal-status guards see the updated controlState (the r-on-in_progress
+			// guard fires only when NOT paused).
+			const t = tasks.find((x) => x.id === id);
+			if (t) (t as any).controlState = action === "pause" ? "paused" : "running";
+			return true;
+		} },
 	);
 	comp.handleInput(DOWN); // cursor on t2
 	comp.handleInput("p");
@@ -1126,6 +1138,18 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("r on cancelled flashes 'already cancelled'", comp.flashMsg !== null && comp.flashMsg.includes("already cancelled"));
 	check("r on cancelled does not fire", calls2.length === 0);
 
+	// ponytail: r on an in-flight (in_progress, not paused) task — resumeTask only
+	// accepts paused/failed, so this is a no-op. Guard it: flash "already running"
+	// instead of firing a server-rejected action ("resume failed"). makeTask sets
+	// controlState="running", so this is the live-run case.
+	const { comp: r1 } = makeComponent(
+		[makeTask("tr", "in_progress")],
+		{ onAction: (id, action) => { calls2.push([id, action]); return true; } },
+	);
+	r1.handleInput("r");
+	check("r on in_progress does not fire", calls2.length === 0);
+	check("r on in_progress flashes 'already running'", r1.flashMsg !== null && r1.flashMsg.includes("already running"));
+
 	// detail-mode `r` guard (single-tap)
 	const { comp: d2 } = makeComponent(
 		[makeTask("t1", "completed")],
@@ -1135,6 +1159,16 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	d2.handleInput("r");
 	check("detail r on completed does not fire", calls2.length === 0);
 	check("detail r on completed flashes 'already completed'", d2.flashMsg !== null && d2.flashMsg.includes("already completed"));
+
+	// detail-mode r on an in-flight (in_progress, not paused) task — same no-op guard
+	const { comp: dr } = makeComponent(
+		[makeTask("tr", "in_progress")],
+		{ onAction: (id, action) => { calls2.push([id, action]); return true; } },
+	);
+	dr.handleInput(ENTER);
+	dr.handleInput("r");
+	check("detail r on in_progress does not fire", calls2.length === 0);
+	check("detail r on in_progress flashes 'already running'", dr.flashMsg !== null && dr.flashMsg.includes("already running"));
 }
 
 // ponytail: pause dead-key guard — list `p` on completed/cancelled (no fire).
@@ -1217,12 +1251,20 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 }
 
 // ponytail: S3 — detail-mode quick actions (c/p/r) fire on the detail's own task.
-// Single-tap (no double-tap confirm): detail is a focused single-task view.
+// Single-tap (no double-tap confirm): detail is a focused single-task view. The
+// mock flips controlState on p/r so the resume terminal-status guard (r fires only
+// for paused/failed, not a running in_progress) sees the updated state.
 {
 	const calls: [string, string][] = [];
+	const tasks = [makeTask("t1", "in_progress"), makeTask("t2", "in_progress")];
 	const { comp } = makeComponent(
-		[makeTask("t1", "in_progress"), makeTask("t2", "in_progress")],
-		{ onAction: (id, action) => { calls.push([id, action]); return true; } },
+		tasks,
+		{ onAction: (id, action) => {
+			calls.push([id, action]);
+			const t = tasks.find((x) => x.id === id);
+			if (t) (t as any).controlState = action === "pause" ? "paused" : "running";
+			return true;
+		} },
 	);
 	comp.handleInput(ENTER); // open detail for t1 (cursor at index 0)
 	check("detail open for t1", comp.detailTaskId === "t1");
@@ -1341,7 +1383,11 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	comp.handleInput("p");
 	check("F3 list `p` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("pause unavailable"));
 	comp.handleInput("r");
-	check("F3 list `r` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("resume unavailable"));
+	// ponytail: r on an in_progress (not-paused) task is a no-op (resumeTask rejects),
+	// so the terminal-status guard fires "already running" BEFORE the onAction check —
+	// state reason, not the handler reason. (No way to reach "resume unavailable" for a
+	// running task; it's only reachable for a paused/failed task w/o onAction.)
+	check("F3 list `r` w/o onAction flashes 'already running'", comp.flashMsg !== null && comp.flashMsg.includes("already running"));
 	comp.handleInput(ENTER); // detail mode, still no onAction
 	comp.handleInput("c");
 	check("F3 detail `c` w/o onAction flashes unavailable", comp.flashMsg !== null && comp.flashMsg.includes("cancel unavailable"));
