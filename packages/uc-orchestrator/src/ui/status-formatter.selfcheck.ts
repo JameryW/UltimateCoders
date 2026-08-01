@@ -347,6 +347,13 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	const task2 = { ...task, subtasks: [done] } as unknown as TaskState;
 	const bLine = formatTaskDetail(task2, theme, 80).find((l) => l.includes("B:")) ?? "";
 	check("completed subtask row has NO elapsed", !bLine.includes("30s") && !bLine.match(/\(\d+[smh]/));
+	// ponytail: reviewing subtask shows elapsed too — reviewing is counted as running
+	// (running-count, sort), so the elapsed tag must match or a reviewing subtask
+	// showed NO time signal despite counting as active.
+	const reviewing = { ...st("D", [], "reviewing"), startedAt: Date.now() - 30_000 } as unknown as SubtaskResult;
+	const taskR = { ...task, subtasks: [reviewing] } as unknown as TaskState;
+	const dLine = formatTaskDetail(taskR, theme, 80).find((l) => l.includes("D:")) ?? "";
+	check("reviewing subtask row shows elapsed (30s)", dLine.includes("(30s)"));
 	// elapsed budgeted: a long desc + elapsed fits a narrow width (depsPlain=""
 	// here, so budget = width - head - 3 - elapsedPlain). No overflow.
 	const longRun = { ...st("C", [], "running"), startedAt: Date.now() - 30_000, description: "d".repeat(60) } as unknown as SubtaskResult;
