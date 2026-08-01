@@ -649,9 +649,13 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const pathBudget = cols !== undefined
 									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length - mtTag.length)
 									: 80;
-								const pathStr = path.length > pathBudget
+								// ponytail: slice the PLAIN path, then highlight the query match — a search for a
+								// filename or symbol whose name is in the path (e.g. "auth" → src/auth.ts) showed
+								// the path raw, so the match in the path was as invisible as the snippet was pre-#519.
+								const plainPath = path.length > pathBudget
 									? path.slice(0, Math.max(0, pathBudget - 1)) + "…"
 									: path;
+								const pathStr = highlightQuery(plainPath, rest, (c, t) => ctx.ui.theme.fg(c, t));
 								// snippet line prefix is 6 spaces; cap the snippet body.
 								const snipBudget = cols !== undefined ? Math.max(0, cols - 6) : 120;
 								// ponytail: highlight the query match IN the snippet — the result just dumped the
