@@ -430,11 +430,13 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number, 
 	// ponytail: name the clipped subtask tail for the toast path (overlay path has no
 	// cap → hitCap stays false). The "Subtasks:" breakdown header above already gives
 	// the per-status counts, so the user knows WHAT got clipped; this line says HOW MANY
-	// and points to the overlay (Ctrl+Shift+T → Enter) for the scrollable full list.
+	// and points to the SUBTASK TREE (Ctrl+T) — that's where the full subtask list lives,
+	// NOT the task list (Ctrl+Shift+T lists tasks; Enter opens a task detail, not the
+	// subtask set). The old "Enter in task list" pointed at the wrong surface.
 	if (hitCap) {
 		const remaining = task.subtasks.length - renderedSubs;
 		if (remaining > 0) {
-			lines.push(theme.fg("dim", `  …+${remaining} subtask(s) — Enter in task list for all`));
+			lines.push(theme.fg("dim", `  …+${remaining} subtask(s) — Ctrl+T for all`));
 		}
 	}
 
