@@ -283,6 +283,12 @@ class SubtaskTreeComponent {
 
 	render(width: number): string[] {
 		this.rebuildItems();
+		// ponytail: re-clamp on render — a terminal height shrink (maxVisible drops)
+		// can leave the cursor outside the scroll window (last clamped in handleInput,
+		// but render runs on the 1s tick + resize without an input event). Without this
+		// the cursor row left the viewport and the `›` marker rendered nowhere — the
+		// user lost their place until the next keystroke. Mirrors the task-list fix.
+		this.clampScroll();
 		const lines: string[] = [];
 		const tasks = this.opts.tasks();
 		const items = this.currentItems();

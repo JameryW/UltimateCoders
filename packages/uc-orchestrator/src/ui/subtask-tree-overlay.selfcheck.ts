@@ -1213,6 +1213,25 @@ const PAGEDOWN = "\x1b[6~";
 	check("F22 long-id copies full id verbatim", copied.length === 1 && copied[0] === longId);
 }
 
+// ponytail: render re-clamps scroll after a height shrink — the cursor was last
+// clamped in handleInput, but render runs on the 1s tick + resize without an input
+// event. A shrink leaving the cursor past scrollOffset+maxVisible rendered the `›`
+// nowhere. Verify render pulls it back into view. Mirrors the task-list test.
+{
+	const tui: any = { terminal: { rows: 36 } }; // mv = 24
+	const subs = Array.from({length:30},(_,i)=>makeSubtask(`s${i}`,{status:"completed"}));
+	const task = { id: "T", description: "t", status: "completed", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState;
+	const factory = createSubtaskTreeOverlay({ tasks: () => [task], onClose: () => {} });
+	const comp = factory(tui, theme, undefined, () => {}) as any;
+	comp.cursorIdx = 20; // within 0..23 viewport, scrollOffset 0
+	comp.render(80);
+	check("tree render keeps cursor visible (no clamp needed)", comp.scrollOffset === 0);
+	// shrink to 24 rows → mv = 12. cursor 20 now past 0+12 → render must re-clamp.
+	tui.terminal.rows = 24;
+	comp.render(80);
+	check("tree render re-clamps scroll after shrink", comp.scrollOffset === 9); // 20-12+1
+}
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 // ponytail: explicit exit — overlay components start 1s refresh timers; without
 // exit(0) the pending intervals keep the script alive after ALL PASS.

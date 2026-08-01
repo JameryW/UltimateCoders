@@ -173,6 +173,12 @@ class TaskListComponent {
 	private renderList(width: number): string[] {
 		const allTasks = this.opts.tasks();
 		const tasks = this.currentTasks();
+		// ponytail: re-clamp on render — a terminal height shrink (maxVisible drops) can
+		// leave the cursor outside the scrollOffset..maxVisible window (it was last
+		// clamped in handleInput, but render runs on the 1s tick + resize without an
+		// input event). Without this, the cursor row left the viewport and the `›`
+		// marker rendered nowhere — the user lost their place until the next keystroke.
+		this.clampCursorAndScroll();
 		const filtering = this.query.length > 0;
 		const lines: string[] = [];
 
