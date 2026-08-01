@@ -113,8 +113,15 @@ class ProgressWidgetComponent {
 		// ponytail: fill the ACTUAL task id (prefix-resolvable) so the affordance is
 		// copy-paste runnable, not a `<id>` placeholder the user still has to look up.
 		// `r in overlay` is the one-key path; the /uc command covers users who prefer it.
+		// ponytail: surface resume for FAILED tasks too — a failed task is resumable
+		// (the orchestrator's resumeTask re-runs the failed wave / subtask), so the user
+		// watching the widget sees the same one-key hint a paused task gets. Without it,
+		// the only signal was the red status + failed-summary; the recovery path (which
+		// IS available) stayed undiscovered until the user opened an overlay. Mirrors
+		// the paused affordance exactly. Cancelled is terminal (resume errors) → skip.
 		const resumeId = task.id.slice(0, 8);
-		const affordance = task.controlState === "paused" && width >= 60
+		const showResumeAffordance = (task.controlState === "paused" || task.status === "failed") && width >= 60;
+		const affordance = showResumeAffordance
 			? this.theme.fg("dim", ` · /uc resume ${resumeId} · r in overlay`)
 			: "";
 		const statusColor = task.status === "completed" ? "success" : task.status === "failed" ? "error" : "accent";
