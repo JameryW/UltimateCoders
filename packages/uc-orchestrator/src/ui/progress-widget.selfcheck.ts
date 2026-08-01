@@ -251,6 +251,22 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	const narrow = (comp.render(40) as string[])[0];
 	check("paused narrow omits affordance (no overflow)", !narrow.includes("/uc resume"));
 }
+// ponytail: a FAILED task shows the resume affordance too — it's resumable (resumeTask
+// re-runs the failed wave), so the recovery path shouldn't hide behind opening an
+// overlay. Mirrors the paused affordance exactly (same id + "r in overlay"). Cancelled
+// is terminal → no hint.
+{
+	const failed = { id: "t9", description: "d", status: "failed", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const st: ProgressWidgetState = { task: failed };
+	const comp = createProgressWidget(() => st)(undefined, theme) as any;
+	const wide = (comp.render(80) as string[])[0];
+	check("failed wide shows resume affordance", wide.includes("/uc resume t9") && wide.includes("r in overlay"));
+	const cancelled = { id: "tC", description: "d", status: "cancelled", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
+	const st2: ProgressWidgetState = { task: cancelled };
+	const comp2 = createProgressWidget(() => st2)(undefined, theme) as any;
+	const header2 = (comp2.render(80) as string[])[0];
+	check("cancelled shows no resume affordance", !header2.includes("/uc resume"));
+}
 {
 	const running = { id: "t2", description: "d", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [] } as unknown as TaskState;
 	const st: ProgressWidgetState = { task: running };
