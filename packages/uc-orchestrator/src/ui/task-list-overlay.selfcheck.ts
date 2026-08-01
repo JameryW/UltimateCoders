@@ -565,13 +565,15 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	const { comp: c3 } = makeComponent([inFlight]);
 	const row3 = c3.render(80).find((l: string) => l.includes("t3")) ?? "";
 	check("in_progress task row shows plain age (not done)", row3.includes("30s ago") && !row3.includes("done"));
-	// terminal task with NO completedAt → falls back to createdAt-age (no "done {age}" tag)
+	// terminal task with NO completedAt → no age suffix (skip, don't fall back to
+	// createdAt-age — that reads as "still going" for a task that ended). Mirrors the
+	// detail header's doneTag, which skips rather than mislead. (in_progress keeps age.)
 	const noStamp = makeTask("t4", "completed");
 	(noStamp as any).completedAt = undefined;
 	(noStamp as any).createdAt = Date.now() - 30_000;
 	const { comp: c4 } = makeComponent([noStamp]);
 	const row4 = c4.render(80).find((l: string) => l.includes("t4")) ?? "";
-	check("terminal task w/o completedAt falls back to plain age", row4.includes("30s ago") && !row4.includes("done 30s"));
+	check("terminal task w/o completedAt has NO age (no misleading 'ago')", !row4.includes("ago"));
 }
 
 // empty list — pageDown/end/G must not produce a negative cursorIdx (phantom cursor)

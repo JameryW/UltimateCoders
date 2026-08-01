@@ -280,7 +280,8 @@ class TaskListComponent {
 			// visible window (maxVisible tasks) matches actual rendered rows.
 			// Previously the 2nd age line doubled the row count, pushing rows
 			// past the overlay height while the footer still claimed 1-N fit.
-			const ageSuffix = this.theme.fg("dim", ` ${age}`);
+			// Empty age (terminal w/o completedAt) → no suffix, no stray space.
+			const ageSuffix = age ? this.theme.fg("dim", ` ${age}`) : "";
 			// ponytail: failed-count marker — 3/5 with 2 failed read as "3/5", same as
 			// 3 completed + 2 pending, so a stuck task hid its failures in the list.
 			// Append " ·N✗" only when failed > 0 (no noise on healthy tasks). Mirrors
@@ -307,7 +308,7 @@ class TaskListComponent {
 			// space+id(14)+space+countTag(varies)+space+age(1+age.len). The old fixed
 			// width-34 assumed a 4-char countTag ("2/3 "), but "10/10 " is 6 — the
 			// row overflowed width and the compositor truncated the desc right side.
-			const prefixLen = 2 + 4 + 1 + 14 + 1 + countTag.length + 1 + age.length + 1;
+			const prefixLen = 2 + 4 + 1 + 14 + 1 + countTag.length + (age ? 1 + age.length : 0) + 1;
 			// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
 			// description cut silently with no signal there was more. Mirrors the
 			// subtask-tree row (#449). Reserve 1 col for "…" and append only when the
@@ -406,11 +407,16 @@ class TaskListComponent {
 	// cancelled) with completedAt shows "done {age}" (how long ago it finished),
 	// mirroring the detail header's doneTag (#430). The plain "{age}" (now-
 	// createdAt) read as "still going" for a task that ended 5m ago — misleading
-	// in the list. Falls back to createdAt-age when completedAt is absent or the
-	// task is in-flight (no completion to report).
+	// in the list. For a terminal task WITHOUT completedAt (restored/older record),
+	// return "" — no age at all — mirroring the detail header, which skips rather
+	// than fall back to createdAt (that's "submitted", not "finished", and would
+	// read as running). An in-flight task keeps the createdAt-age (live concern).
 	private taskAge(task: TaskState): string {
 		if (task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)) {
 			return `done ${this.formatAge(task.completedAt)}`;
+		}
+		if (["completed", "failed", "cancelled"].includes(task.status)) {
+			return ""; // ponytail: terminal w/o completedAt — no suffix (don't misread as running)
 		}
 		return this.formatAge(task.createdAt);
 	}
