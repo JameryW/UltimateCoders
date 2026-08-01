@@ -46,7 +46,7 @@ import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
 import { createTaskResultRenderer } from "./ui/task-result-renderer";
 import { FooterStatusRenderer, type StatusRenderer } from "./ui/status-renderer";
-import { formatTaskList, formatTaskDetail, sortTasksForStatus } from "./ui/status-formatter";
+import { formatTaskList, formatTaskDetail, sortTasksForStatus, highlightQuery } from "./ui/status-formatter";
 import type { OrchestratorEventType, OrchestratorEvents } from "./orchestrator/events";
 
 export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
@@ -654,9 +654,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 									: path;
 								// snippet line prefix is 6 spaces; cap the snippet body.
 								const snipBudget = cols !== undefined ? Math.max(0, cols - 6) : 120;
-								const snip = snippet
-									? `\n      ${snippet.length > snipBudget ? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…" : snippet}`
-									: "";
+								// ponytail: highlight the query match IN the snippet — the result just dumped the
+								// raw snippet, so the user had to eyeball-scan to find where the query landed. Slice
+								// the PLAIN snippet first (never a themed string — ANSI splits on slice), THEN wrap
+								// query occurrences via highlightQuery (shared w/ the selfcheck). Warning-colored span.
+								const plainSnip = snippet.length > snipBudget
+									? snippet.slice(0, Math.max(0, snipBudget - 1)) + "…"
+									: snippet;
+								const highlightedSnip = highlightQuery(plainSnip, rest, (c, t) => ctx.ui.theme.fg(c, t));
+								const snip = snippet ? `\n      ${highlightedSnip}` : "";
 								// ponytail: AST symbol metadata — SearchResultItem carries symbol_name +
 								// symbol_kind (only present on Ast/Hybrid matches). Shows "fn myFunc" or
 								// "class Foo" before the snippet, so the user knows WHICH symbol matched
