@@ -212,7 +212,13 @@ class ProgressWidgetComponent {
 		}
 
 		// Running subtasks
-		const running = task.subtasks.filter((s) => s.status === "running" || s.status === "reviewing");
+		const running = task.subtasks
+			.filter((s) => s.status === "running" || s.status === "reviewing")
+			// ponytail: sort by startedAt DESCENDING so the most-recently-started subtasks
+			// show in the first-3 slice — the cap would otherwise show the oldest running
+			// ones (insertion order) and a user watching a freshly-started subtask saw it
+			// under "...+N more". Missing startedAt sorts last (stable-ish via 0 fallback).
+			.slice().sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
 		if (running.length > 0) {
 			for (const st of running.slice(0, 3)) {
 				const icon = statusIcon(st.status, this.theme);

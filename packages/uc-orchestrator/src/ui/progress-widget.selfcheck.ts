@@ -497,6 +497,27 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("bar row no ▶ when no running subtasks", !bar2.includes("▶"));
 }
 
+// ponytail: running-subtask slice shows the most-recently-started first — the cap (3)
+// would otherwise show the oldest running ones (insertion order) and a user watching a
+// freshly-started subtask saw it under "...+N more". Sort by startedAt DESC.
+{
+	const mk = (id: string, startedAt: number) =>
+		({ id, description: `d-${id}`, status: "running", dependsOn: [], files: [], startedAt } as unknown as SubtaskResult);
+	// insertion order s1 (oldest) → s5 (newest); cap 3 should show s5, s4, s3 (DESC)
+	const subs = [mk("s1", 1_000), mk("s2", 2_000), mk("s3", 3_000), mk("s4", 4_000), mk("s5", 5_000)];
+	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: subs } as unknown as TaskState;
+	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(80) as string[];
+	// the rendered running rows (id appears before ": desc") — first 3 should be s5, s4, s3
+	const rowsWithId = lines.filter((l: string) => /s[1-5]:/.test(l));
+	// newest-first: s5 line comes before s4 before s3; s1/s2 only in "...+N more"
+	const s5Idx = rowsWithId.findIndex((l) => l.includes("s5:"));
+	const s4Idx = rowsWithId.findIndex((l) => l.includes("s4:"));
+	const s3Idx = rowsWithId.findIndex((l) => l.includes("s3:"));
+	const s1Idx = rowsWithId.findIndex((l) => l.includes("s1:"));
+	check("running slice newest-first (s5 before s4 before s3)", s5Idx >= 0 && s4Idx > s5Idx && s3Idx > s4Idx);
+	check("running slice drops oldest (s1 not in rendered rows)", s1Idx < 0);
+}
+
 // ponytail: blocked subtasks render a dim "⏳ N blocked: <ids>" line (mirrors the
 // failed summary). A task with 0 running + N blocked showed nothing below the bar
 // (only the ·N⏳ marker); the IDs tell which subtasks are stalled.
