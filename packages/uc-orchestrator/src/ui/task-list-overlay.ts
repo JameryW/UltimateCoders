@@ -161,8 +161,14 @@ class TaskListComponent {
 	// that keeps the essential keys (nav, Enter, quick actions, Esc close) under
 	// 60 columns. Only applied to the normal (non-search, non-filtering) hint —
 	// searchMode/filtering lines are short or user-typed.
+	// ponytail: switch to the compact hint when the FULL hint won't fit (not a fixed
+	// 60-col threshold). The full hint is ~100 chars; at the common 80-col terminal it
+	// was returned anyway and the compositor right-truncated it — dropping `/ filter`
+	// and `Esc close` (both load-bearing: the close path + the filter entry). Compact
+	// keeps nav + actions + Esc visible. ANSI-stripped length check (plain strings,
+	// no theme codes here — the hint is themed by the caller AFTER this returns).
 	private hintLine(width: number, full: string, compact: string): string {
-		return width < 60 ? compact : full;
+		return full.length + 2 <= width ? full : compact;
 	}
 
 	render(width: number): string[] {
