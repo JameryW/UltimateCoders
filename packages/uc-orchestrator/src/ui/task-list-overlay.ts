@@ -404,19 +404,20 @@ class TaskListComponent {
 	}
 
 	// ponytail: the list row's age suffix — a terminal task (completed/failed/
-	// cancelled) with completedAt shows "done {age}" (how long ago it finished),
-	// mirroring the detail header's doneTag (#430). The plain "{age}" (now-
-	// createdAt) read as "still going" for a task that ended 5m ago — misleading
-	// in the list. For a terminal task WITHOUT completedAt (restored/older record),
-	// return "" — no age at all — mirroring the detail header, which skips rather
-	// than fall back to createdAt (that's "submitted", not "finished", and would
-	// read as running). An in-flight task keeps the createdAt-age (live concern).
+	// cancelled) with completedAt shows how long ago it finished. The row BADGE already
+	// names the status (completed→"done", failed→"fail", cancelled→"stop"), so:
+	// - completed: the badge says "done", so the age suffix is just "{age}" (a bare
+	//   "done {age}" would duplicate the badge — "done … done 5m ago").
+	// - failed/cancelled: the badge is "fail"/"stop", so "done {age}" disambiguates
+	//   (the row reads "fail … done 5m ago" — ended 5m ago).
+	// A terminal task WITHOUT completedAt (restored/older record) → "" — no age at all,
+	// mirroring the detail header's doneTag skip (don't fall back to createdAt, which
+	// would read as running). An in-flight task keeps the createdAt-age (live concern).
 	private taskAge(task: TaskState): string {
-		if (task.completedAt && ["completed", "failed", "cancelled"].includes(task.status)) {
-			return `done ${this.formatAge(task.completedAt)}`;
-		}
 		if (["completed", "failed", "cancelled"].includes(task.status)) {
-			return ""; // ponytail: terminal w/o completedAt — no suffix (don't misread as running)
+			if (!task.completedAt) return "";
+			const age = this.formatAge(task.completedAt);
+			return task.status === "completed" ? age : `done ${age}`;
 		}
 		return this.formatAge(task.createdAt);
 	}
