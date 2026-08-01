@@ -213,6 +213,29 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("24-row terminal pageDown +12 (not +20)", comp.cursorIdx === 12);
 }
 
+// ponytail: render re-clamps scroll after a height shrink — the cursor was last
+// clamped in handleInput, but render runs on the 1s tick + resize without an input
+// event. A shrink that left the cursor past scrollOffset+maxVisible rendered the `›`
+// nowhere (cursor row off-screen). Verify render pulls it back into view.
+{
+	const tui: any = { terminal: { rows: 36 } }; // mv = 24
+	const tasks = Array.from({length:50},(_,i)=>makeTask(`t${i}`,"in_progress"));
+	const factory = createTaskListOverlay({
+		tasks: () => tasks, getTask: () => undefined, onClose: () => {},
+	});
+	const comp = factory(tui, theme, undefined, () => {}) as any;
+	comp.cursorIdx = 20; // within 0..23 viewport, scrollOffset 0
+	comp.render(80);
+	check("render keeps cursor visible (no clamp needed)", comp.scrollOffset === 0);
+	// shrink to 24 rows → mv = 12. cursor 20 now past 0+12 → render must re-clamp.
+	tui.terminal.rows = 24;
+	comp.render(80);
+	check("render re-clamps scroll after shrink", comp.scrollOffset === 9); // 20-12+1
+	// cursor row is now in the rendered viewport (scrollOffset..scrollOffset+mv)
+	const lines: string[] = comp.render(80);
+	check("cursor marker visible after shrink", lines.some((l: string) => l.startsWith("  ›")));
+}
+
 // detail mode
 {
 	const { comp } = makeComponent([makeTask("t1","in_progress")]);
