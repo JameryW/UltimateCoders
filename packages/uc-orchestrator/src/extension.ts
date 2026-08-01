@@ -536,7 +536,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							}
 							return;
 						}
-						const lines = formatTaskDetail(resolved, ctx.ui.theme, cols);
+						const lines = formatTaskDetail(resolved, ctx.ui.theme, cols, 10);
 						ctx.ui.notify(lines.join("\n"), "info");
 					}
 					return;

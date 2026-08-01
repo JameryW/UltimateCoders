@@ -78,6 +78,32 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("status-sort: same-status keeps insertion order", a3Idx < a2Idx);
 }
 
+// ponytail: maxSubtasks cap for the /uc status <id> toast path — notify() is a
+// fixed-height toast, so a task with many subtasks overflowed and the tail clipped
+// silently. Pass maxSubtasks=N → render N rows + a "…+M more" tail line. The overlay
+// detail path passes no cap (undefined) and renders all (verified by the tier tests
+// above, which use >3 subtasks uncapped). Failed-first tier sort means the clip falls
+// on less-actionable rows when failures are few.
+{
+	const subs = Array.from({ length: 13 }, (_, i) => st(`S${i}`)); // all completed
+	const task = {
+		id: "T", description: "t", status: "completed", controlState: "running", createdAt: 0,
+		subtasks: subs,
+	} as unknown as TaskState;
+	const capped = formatTaskDetail(task, theme, undefined, 5);
+	// first 5 rendered (S0..S4)
+	check("detail cap: renders first N subtasks", capped.some((l) => l.includes("S0")) && capped.some((l) => l.includes("S4")));
+	// 6th+ NOT rendered
+	check("detail cap: drops subtasks past the cap", !capped.some((l) => l.includes("S5")));
+	check("detail cap: does NOT render the last subtask", !capped.some((l) => l.includes("S12")));
+	// tail names the 8 clipped (13 - 5)
+	check("detail cap: names the clipped tail", capped.some((l) => l.includes("+8 subtask") && l.includes("for all")));
+	// undefined cap → all rendered (overlay path), no tail
+	const uncapped = formatTaskDetail(task, theme);
+	check("detail uncapped: renders all subtasks", uncapped.some((l) => l.includes("S0")) && uncapped.some((l) => l.includes("S12")));
+	check("detail uncapped: no clip tail", !uncapped.some((l) => l.includes("for all")));
+}
+
 // Cycle guard: A→B→A must not infinite-loop
 {
 	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [
