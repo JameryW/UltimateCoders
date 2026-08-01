@@ -5,7 +5,7 @@
  * using Theme colors for status icons, progress, and DAG visualization.
  */
 
-import type { Theme } from "@oh-my-pi/pi-coding-agent";
+import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 import { formatErrorForDisplay } from "./error-format";
 import { statusIcon } from "./status-icons";
@@ -39,6 +39,22 @@ export function sortTasksForStatus(tasks: TaskState[]): TaskState[] {
 function cap(text: string, budget: number | undefined, fallback: number): string {
 	const b = typeof budget === "number" && budget > 0 ? budget : fallback;
 	return text.length > b ? text.slice(0, Math.max(0, b - 1)) + "…" : text;
+}
+
+// ponytail: wrap occurrences of `query` (case-insensitive) in a warning-colored span
+// inside `text` — /uc search dumped the raw snippet, so the user had to eyeball-scan to
+// find where the query landed. Splits on the query (capture group keeps the match) and
+// themes the odd segments; non-matching segments stay verbatim. The query is regex-
+// escaped first. No-op when the query is empty (split would be a no-op anyway). Exported
+// so the /uc search renderer + the selfcheck share one source of truth.
+export function highlightQuery(text: string, query: string, fg: (color: ThemeColor, t: string) => string): string {
+	if (!query) return text;
+	const esc = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	if (!esc) return text;
+	const lower = query.toLowerCase();
+	return text.split(new RegExp(`(${esc})`, "gi"))
+		.map((seg, i) => i % 2 === 1 && seg.toLowerCase() === lower ? fg("warning", seg) : seg)
+		.join("");
 }
 
 export function formatTaskList(tasks: TaskState[], theme: Theme, width?: number): string[] {

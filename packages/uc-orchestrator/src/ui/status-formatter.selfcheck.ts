@@ -6,7 +6,7 @@
  * A subtask depending on 3 roots must be depth 1 (was 3 pre-fix).
  */
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent";
-import { formatTaskDetail, formatTaskList, sortTasksForStatus } from "./status-formatter";
+import { formatTaskDetail, formatTaskList, sortTasksForStatus, highlightQuery } from "./status-formatter";
 import type { TaskState, SubtaskResult } from "../orchestrator/orchestrator";
 
 const theme: Theme = {
@@ -671,6 +671,24 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("sort: completed last", sorted[sorted.length - 1] === "c1");
 	// original array untouched (sort returns a copy)
 	check("sort: does not mutate input", tasks[0].id === "c1");
+}
+
+// ponytail: highlightQuery — wrap query occurrences in a themed span so /uc search
+// results mark the match in the snippet, not dump raw text. Use a MARKING fg (wraps
+// warning-colored segments in ⟦⟧) since the no-ANSI theme.fg returns text verbatim
+// (can't observe the wrap). Case-insensitive; regex-special query chars escaped.
+{
+	const markFg = (c: ThemeColor, t: string) => c === "warning" ? `⟦${t}⟧` : t;
+	// single match, mixed case → wraps the matching span (case-insensitive)
+	const r1 = highlightQuery("the Foo function does foo things", "foo", markFg);
+	check("highlightQuery wraps the query match (case-insensitive)", r1.includes("⟦Foo⟧") && r1.includes("⟦foo⟧"));
+	// non-matching text unchanged
+	check("highlightQuery leaves non-matching text as-is", r1.includes("the ") && r1.includes(" function does ") && r1.includes(" things"));
+	// regex-special query char (.) is escaped — matches the literal ".", not "any char"
+	const r2 = highlightQuery("a.b.c and aXbXc", "a.b", markFg);
+	check("highlightQuery escapes regex-special chars", r2.includes("⟦a.b⟧") && !r2.includes("⟦aXb⟧"));
+	// empty query → text unchanged (no split)
+	check("highlightQuery empty query is a no-op", highlightQuery("plain text", "", markFg) === "plain text");
 }
 
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
