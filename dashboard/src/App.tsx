@@ -1,29 +1,13 @@
-import { useEffect, useRef, useMemo, useState, useCallback } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useDashboardGrpc } from "@/hooks/useDashboardGrpc";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import { Header } from "@/components/layout/Header";
-import { HealthPanel } from "@/components/panels/HealthPanel";
-import { WorkersPanel } from "@/components/panels/WorkersPanel";
-import { TasksPanel } from "@/components/panels/TasksPanel";
-import { SchedulerPanel } from "@/components/panels/SchedulerPanel";
-import { EventLogPanel } from "@/components/panels/EventLogPanel";
-import { SearchPanel } from "@/components/panels/SearchPanel";
-import { FileBrowser } from "@/components/panels/FileBrowser";
-import type { FileBrowserNavigateEvent } from "@/components/panels/FileBrowser";
-import { TaskDetail } from "@/components/panels/TaskDetail";
-import { StatsBar } from "@/components/panels/StatsBar";
-import { MetricsPanel } from "@/components/panels/MetricsPanel";
-import { RepoManagementPanel } from "@/components/panels/RepoManagementPanel";
-import { TaskTrendChart } from "@/components/charts/TaskTrendChart";
-import { SidebarPanel } from "@/components/ui/sidebar-panel";
+import { TerminalDashboard } from "@/components/terminal/TerminalDashboard";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
-import { AlertBar } from "@/components/ui/alert-bar";
 import { confirmAction } from "@/components/ui/confirm-dialog";
-import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
 import type { TaskEvent, HealthData, TaskSummary } from "@/types/dashboard";
 
@@ -128,17 +112,8 @@ function App() {
 
   // Track last update timestamp for Header display
   const [lastUpdate, setLastUpdate] = useState<string | undefined>();
-  // Track newly submitted task for highlight + auto-scroll
-  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(null);
-  // Track file browser navigation from SearchPanel/OutputFiles
-  const [fileBrowserNav, setFileBrowserNav] = useState<FileBrowserNavigateEvent | null>(null);
-
-  // ── Sidebar state ─────────────────────────────────────────
+  // ── Task selection ────────────────────────────────────────
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
-  const togglePanel = useCallback((key: string) => {
-    setCollapsedPanels((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
 
   // ── gRPC-Web hooks ─────────────────────────────────────────
 
@@ -160,7 +135,6 @@ function App() {
     disconnect: _dashGrpcDisconnect,
     listWorkers,
     getSchedulerStatus,
-    triggerSchedulerJob: grpcTriggerSchedulerJob,
     flushPendingTasks: grpcFlushPendingTasks,
     listEvents,
   } = useDashboardGrpc({
@@ -327,11 +301,6 @@ function App() {
       showToast(`Cancel failed: ${String(e)}`, "error");
     }
   };
-  const handleTriggerJob = async (jobId: string) => {
-    const ok = await confirmAction("Trigger Job", `Trigger scheduled job?`);
-    if (!ok) return;
-    try { const r = await grpcTriggerSchedulerJob(jobId); if (r.success) showToast("Job triggered", "success"); else showToast(`Trigger failed: ${r.error ?? "unknown"}`, "error"); } catch (e) { showToast(`Trigger failed: ${String(e)}`, "error"); }
-  };
   const handleFlush = async () => {
     const ok = await confirmAction("Flush Pending Tasks", "Execute all queued tasks?");
     if (!ok) return;
@@ -419,17 +388,12 @@ function App() {
 
   const grpcStale = grpcState !== "connected" && dashGrpcState !== "connected";
 
-  // Sidebar panel summaries for collapsed state
-  const workersSummary = dashboard.workers.available ? `${dashboard.workers.available_count}/${dashboard.workers.total} online` : undefined;
-  const healthSummary = healthWithGrpc.available ? healthWithGrpc.status : undefined;
-  const schedulerSummary = dashboard.scheduler.available ? (dashboard.scheduler.is_running ? "Running" : "Stopped") : undefined;
-
   return (
-    <div className="text-[var(--text-primary)] min-h-screen">
+    <>
       <ToastContainer />
       <ConfirmDialog />
       <KeyboardShortcuts />
-      <Header
+      <TerminalDashboard
         connected={dashGrpcState === "connected" || grpcState === "connected"}
         grpcState={grpcState}
         grpcExhausted={grpcExhausted}
@@ -441,159 +405,26 @@ function App() {
         onReconnectGrpc={grpcConnect}
         onReconnectDashGrpc={dashGrpcConnect}
         fetchErrors={dashboard.fetchErrors}
+        grpcStale={grpcStale}
+        health={healthWithGrpc}
+        workers={dashboard.workers}
+        tasks={dashboard.tasks}
+        scheduler={dashboard.scheduler}
+        eventLog={dashboard.eventLog}
+        metrics={dashboard.metrics}
+        interactionLog={dashboard.interactionLog}
+        selectedTask={selectedTask}
+        selectedTaskId={selectedTaskId}
+        onSelectTask={setSelectedTaskId}
+        onPauseTask={handlePauseTask}
+        onResumeTask={handleResumeTask}
+        onCancelTask={handleCancelTask}
+        onFlush={handleFlush}
+        grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined}
+        onTaskCreated={(taskId) => setSelectedTaskId(taskId)}
+        onOptimisticAdd={dashboard.optimisticAddTask}
       />
-      <main className="max-w-[1440px] mx-auto px-6 py-6">
-        <StatsBar tasks={dashboard.tasks} workers={dashboard.workers} eventLog={dashboard.eventLog} metrics={dashboard.metrics} stale={grpcStale} />
-        <AlertBar
-          workers={dashboard.workers}
-          eventLog={dashboard.eventLog}
-          metrics={dashboard.metrics}
-          activeAlerts={dashboard.activeAlerts}
-          onJumpWorkers={() => document.getElementById("workers")?.scrollIntoView({ behavior: "smooth" })}
-        />
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
-          {/* ── Left column (8/12): Core panels ────────────── */}
-          <div className="lg:col-span-8 space-y-6">
-            <ErrorBoundary name="Tasks">
-              <div id="tasks" className="scroll-mt-20">
-                <TasksPanel
-                  data={dashboard.tasks}
-                  interactionLog={dashboard.interactionLog}
-                  onFlush={handleFlush}
-                  onPauseTask={handlePauseTask}
-                  onResumeTask={handleResumeTask}
-                  onCancelTask={handleCancelTask}
-                  stale={grpcStale}
-                  highlightTaskId={highlightTaskId}
-                  onHighlightShown={() => setHighlightTaskId(null)}
-                  onNavigateFile={(nav) => setFileBrowserNav(nav)}
-                  grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined}
-                  onTaskCreated={setHighlightTaskId}
-                  onOptimisticAdd={dashboard.optimisticAddTask}
-                  onSelectTask={setSelectedTaskId}
-                  selectedTaskId={selectedTaskId}
-                />
-              </div>
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Event Log">
-              <div id="events" className="scroll-mt-20">
-                <EventLogPanel events={dashboard.eventLog} stale={grpcStale} onSelectTask={setSelectedTaskId} />
-              </div>
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Task Activity">
-              <div id="chart" className="scroll-mt-20">
-                <TaskTrendChart tasks={dashboard.tasks} eventLog={dashboard.eventLog} stale={grpcStale} />
-              </div>
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Metrics">
-              <MetricsPanel metrics={dashboard.metrics} stale={grpcStale} />
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Code Search">
-              <div id="search" className="scroll-mt-20">
-                <SearchPanel grpcState={grpcState} onNavigateFile={(nav) => setFileBrowserNav(nav)} stale={grpcStale} />
-              </div>
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Files">
-              <div id="files" className="scroll-mt-20">
-                <FileBrowser initialNav={fileBrowserNav} onNavConsumed={() => setFileBrowserNav(null)} stale={grpcStale} />
-              </div>
-            </ErrorBoundary>
-
-            <ErrorBoundary name="Repos">
-              <div id="repos" className="scroll-mt-20">
-                <RepoManagementPanel />
-              </div>
-            </ErrorBoundary>
-          </div>
-
-          {/* ── Right column (4/12): Sidebar ────────────── */}
-          <div className="lg:col-span-4 space-y-4">
-            {selectedTask ? (
-              /* Task Detail view */
-              <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-surface)] shadow-sm">
-                <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--border-color)]">
-                  <button
-                    onClick={() => setSelectedTaskId(null)}
-                    className="p-1 rounded-md hover:bg-[var(--bg-surface-alt)] transition-colors"
-                    aria-label="Back to panels"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[var(--text-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-                  <h2 className="text-base font-semibold text-[var(--text-primary)] truncate">
-                    Task Detail
-                  </h2>
-                </div>
-                <div className="p-5">
-                  <ErrorBoundary name="Task Detail">
-                    <TaskDetail
-                      task={selectedTask}
-                      interactionLog={dashboard.interactionLog[selectedTask.id] ?? []}
-                      onNavigateFile={(nav) => setFileBrowserNav(nav)}
-                      repoId={selectedTask.project_id || undefined}
-                    />
-                  </ErrorBoundary>
-                </div>
-              </div>
-            ) : (
-              /* Collapsible sidebar panels */
-              <>
-                <ErrorBoundary name="Workers">
-                  <SidebarPanel
-                    title="Workers"
-                    id="workers"
-                    className="scroll-mt-20"
-                    summary={workersSummary}
-                    summaryVariant="ok"
-                    collapsed={collapsedPanels.workers}
-                    onToggle={() => togglePanel("workers")}
-                    stale={grpcStale}
-                  >
-                    <WorkersPanel workers={dashboard.workers} tasks={dashboard.tasks} stale={grpcStale} onJumpTask={setSelectedTaskId} embedded />
-                  </SidebarPanel>
-                </ErrorBoundary>
-
-                <ErrorBoundary name="Health">
-                  <SidebarPanel
-                    title="Engine Health"
-                    id="health"
-                    className="scroll-mt-20"
-                    summary={healthSummary}
-                    summaryVariant={healthSummary === "ok" ? "ok" : healthSummary === "degraded" ? "degraded" : healthSummary === "error" ? "error" : "unavailable"}
-                    collapsed={collapsedPanels.health}
-                    onToggle={() => togglePanel("health")}
-                    stale={grpcStale}
-                  >
-                    <HealthPanel data={healthWithGrpc} stale={grpcStale} embedded />
-                  </SidebarPanel>
-                </ErrorBoundary>
-
-                <ErrorBoundary name="Scheduler">
-                  <SidebarPanel
-                    title="Scheduler"
-                    id="scheduler"
-                    className="scroll-mt-20"
-                    summary={schedulerSummary}
-                    summaryVariant={dashboard.scheduler.available ? (dashboard.scheduler.is_running ? "ok" : "degraded") : "unavailable"}
-                    collapsed={collapsedPanels.scheduler}
-                    onToggle={() => togglePanel("scheduler")}
-                    stale={grpcStale}
-                  >
-                    <SchedulerPanel data={dashboard.scheduler} onTriggerJob={handleTriggerJob} stale={grpcStale} embedded />
-                  </SidebarPanel>
-                </ErrorBoundary>
-              </>
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
+    </>
   );
 }
 export default App;
