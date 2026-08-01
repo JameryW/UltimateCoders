@@ -1152,6 +1152,17 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("p on cancelled flashes 'already cancelled'", comp.flashMsg !== null && comp.flashMsg.includes("already cancelled"));
 	check("p on cancelled does not fire", calls3.length === 0);
 
+	// ponytail: p on a FAILED task is terminal-for-pause (pauseTask only accepts
+	// in_progress/planning) — guard it like completed/cancelled instead of firing an
+	// action the server rejects ("pause failed"). `r` still resumes a failed task.
+	const { comp: f1 } = makeComponent(
+		[makeTask("tf", "failed")],
+		{ onAction: (id, action) => { calls3.push([id, action]); return true; } },
+	);
+	f1.handleInput("p");
+	check("p on failed does not fire", calls3.length === 0);
+	check("p on failed flashes 'already failed'", f1.flashMsg !== null && f1.flashMsg.includes("already failed"));
+
 	// detail-mode `p` guard
 	const { comp: d3 } = makeComponent(
 		[makeTask("t1", "cancelled")],
@@ -1161,6 +1172,16 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	d3.handleInput("p");
 	check("detail p on cancelled does not fire", calls3.length === 0);
 	check("detail p on cancelled flashes 'already cancelled'", d3.flashMsg !== null && d3.flashMsg.includes("already cancelled"));
+
+	// detail-mode p on failed — same terminal-for-pause guard
+	const { comp: d4 } = makeComponent(
+		[makeTask("tf", "failed")],
+		{ onAction: (id, action) => { calls3.push([id, action]); return true; } },
+	);
+	d4.handleInput(ENTER);
+	d4.handleInput("p");
+	check("detail p on failed does not fire", calls3.length === 0);
+	check("detail p on failed flashes 'already failed'", d4.flashMsg !== null && d4.flashMsg.includes("already failed"));
 }
 
 // initialDetailTaskId (jump-from-subtask-tree) — opens straight into detail mode.
