@@ -15,17 +15,9 @@ const RECONNECT_BASE_DELAY = 1_000;
 export default function TuiPage() {
   const auth = useAuth();
   const { theme } = useTheme();
-  const [redirect, setRedirect] = useState(false);
-
-  // ponytail: F68 — the effect MUST run before any early return (React hook
-  // order: skipping it while isChecking added a 4th hook once checking
-  // finished → "Rendered more hooks than during the previous render" crash on
-  // every #/tui load). Also gate on !isChecking: isAuthenticated is false
-  // during the check, so an ungated effect redirected authenticated users to
-  // login before their token was validated.
-  useEffect(() => {
-    if (!auth.isChecking && !auth.isAuthenticated) setRedirect(true);
-  }, [auth.isChecking, auth.isAuthenticated]);
+  // Derive the auth redirect instead of setting state inside an effect. This
+  // keeps the hook order stable and avoids a cascading render during auth.
+  const redirect = !auth.isChecking && !auth.isAuthenticated;
 
   // Auth gate
   if (auth.isChecking) {
@@ -76,16 +68,29 @@ function TuiTerminal({ auth, theme }: { auth: { token: string | null }; theme: s
     setConnState("connecting");
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       reconnectAttemptRef.current = 0;
       setConnState("connected");
     };
     ws.onclose = () => {
+      // React StrictMode and a reconnect can leave an older socket closing
+      // after a newer one has already taken its place. That stale close must
+      // not make the live TUI look disconnected.
+      if (wsRef.current !== ws) return;
       setConnState("disconnected");
       wsRef.current = null;
     };
-    ws.onerror = () => setConnState("error");
+    ws.onerror = () => {
+      if (wsRef.current === ws) setConnState("error");
+    };
 
     ws.onmessage = (ev) => {
+      if (wsRef.current !== ws) return;
+      // Some reverse proxies deliver the first PTY frame before the browser
+      // surfaces onopen. A real PTY frame is authoritative proof that the
+      // current WebSocket is live, so never leave the status stuck at
+      // "Connecting..." once output has arrived.
+      setConnState("connected");
       const term = xtermRef.current;
       if (!term) return;
       if (ev.data instanceof ArrayBuffer) {
