@@ -351,7 +351,13 @@ class TaskListComponent {
 		}
 		const lines: string[] = [];
 		lines.push(this.theme.fg("accent", `  Task ${this.detailTaskId?.slice(0, 14) ?? ""}`));
-		lines.push(this.theme.fg("dim", "  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · N prev-failed · y/Y copy · Esc/q back"));
+		// ponytail: detail hint uses hintLine too — the full hint (~78) fits an 80-col
+		// terminal but truncates on narrower ones, dropping Esc/q back (the close path).
+		// Compact keeps the scroll + action keys + Esc visible. Mirrors list/tree (#507).
+		lines.push(this.theme.fg("dim", this.hintLine(width,
+			"  ↑↓/jk scroll · c cancel · p pause · r resume · t subtask tree · n next-failed · N prev-failed · y/Y copy · Esc/q back",
+			"  ↑↓/jk scroll · c/p/r · n/N failed · y/Y copy · Esc back",
+		)));
 		lines.push("");
 		const maxVisible = this.maxVisible;
 		const start = this.detailScroll;
