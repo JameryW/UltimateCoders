@@ -98,6 +98,10 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 				// visible in the expanded completion message without opening the tree.
 				retryCount: st.retryCount,
 				status: st.status,
+				// ponytail: files — declared-file count surfaced inline (mirrors detail #484
+				// + subtask-tree #493); without it the completion message hid a multi-file
+				// subtask's blast radius.
+				files: st.files,
 			}))
 			: [];
 
@@ -105,25 +109,26 @@ export function createTaskResultRenderer(getTask?: (taskId: string) => TaskState
 			render: (width: number): string[] => {
 				const lines = [...summaryLines];
 				for (const st of expandedSubtasks) {
-					// ponytail: retry×N inline on a failed subtask — mirrors subtask-tree #439
-					// + detail #440. A subtask that failed after N retries is a "hard" failure;
-					// the completion message showed no retry signal inline. Only when failed
-					// and retryCount>0 (no "retry×0" noise; no tag on non-failed). Built plain
-					// so its length feeds the desc budget; appended last (dropped first on narrow).
 					const retryPlain = st.status === "failed" && (st.retryCount ?? 0) > 0
 						? ` retry×${st.retryCount}` : "";
 					const retry = retryPlain ? theme.fg("dim", retryPlain) : "";
+					// ponytail: declared-file count — mirrors the detail row (#484) + subtask-tree
+					// row (#493). The expanded completion message omitted it, so a multi-file subtask
+					// was indistinguishable from a 1-file one in the completion breakdown. Only when
+					// files.length>0; appended last (dropped first on narrow), built plain for budget.
+					const filesPlain = (st.files?.length ?? 0) > 0
+						? ` ${st.files!.length} file${st.files!.length === 1 ? "" : "s"}` : "";
+					const files = filesPlain ? theme.fg("dim", filesPlain) : "";
 					// ponytail: ellipsis on a truncated desc — the slice was bare, so a long
 					// description cut silently with no signal there was more. Mirrors the
-					// overlay rows (#449/#450) + widget (#451/#452). Reserve 1 col for "…"
-					// and append only when the desc overflows; a desc that fits stays verbatim.
-					const budget = Math.max(0, width - st.id.length - 6 - retryPlain.length);
+					// overlay rows (#449/#450) + widget (#451/#452). Reserve 1 col for "…" and append only when the desc overflows; a desc that fits stays verbatim.
+					const budget = Math.max(0, width - st.id.length - 6 - retryPlain.length - filesPlain.length);
 					const fullDesc = st.desc;
 					const truncated = fullDesc.length > budget;
 					const desc = truncated
 						? fullDesc.slice(0, Math.max(0, budget - 1)) + (budget > 0 ? "…" : "")
 						: fullDesc.slice(0, budget);
-					lines.push(`  ${st.icon} ${st.id}: ${desc}${retry}`);
+					lines.push(`  ${st.icon} ${st.id}: ${desc}${retry}${files}`);
 					if (st.error) {
 						lines.push(`    ${formatErrorForDisplay(st.error, Math.max(0, width - 4), (c, t) => theme.fg(c, t))}`);
 					}
