@@ -642,7 +642,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							(r: any) => {
 								const repo = r.repoId ?? r.repo_id ?? "?";
 								const path = r.filePath ?? r.file_path ?? "?";
-								const score = r.score ? ` (${r.score.toFixed(2)})` : "";
+								// ponytail: show the score when it's a real number (incl. 0) — a 0-score result
+								// is the lowest-relevance hit, not an unscored one. The old truthy check
+								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest
+								// rank looked indistinguishable from "no score". Use a numeric-type check.
+								const score = typeof r.score === "number" ? ` (${r.score.toFixed(2)})` : "";
 								// ponytail: line range — SearchResultItem carries start_line/end_line but
 								// the search output never showed them, so a match's location in the file
 								// was invisible. `:L42` (single line) or `:L42-50` (range) after the score.
