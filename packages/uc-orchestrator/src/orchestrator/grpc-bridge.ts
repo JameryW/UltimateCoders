@@ -828,10 +828,15 @@ export class GrpcBridge {
 			status: resp.status,
 			projectId: "",
 			subtasks: resp.subtasks.map((st) => ({
-				id: st.id,
-				description: st.description,
+				// ponytail: sanitize remote subtask fields the same way the local decomposer
+				// path does (#527/#528/#529) — a remote worker's decomposer can return a
+				// multi-line description / whitespace id / stray-space deps just as easily;
+				// without this the incoming path bypassed the parse-boundary sanitization
+				// and a \n in a remote description broke the same row-layout surfaces.
+				id: String(st.id ?? "").replace(/\s+/g, "").trim(),
+				description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
 				status: st.status,
-				dependsOn: [...st.dependsOn],
+				dependsOn: (st.dependsOn ?? []).map((d: string) => String(d).trim()).filter(Boolean),
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				retryCount: st.retryCount,
