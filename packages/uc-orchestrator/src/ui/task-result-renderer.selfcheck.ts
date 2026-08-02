@@ -132,6 +132,27 @@ const renderer = createTaskResultRenderer();
 	check("expanded non-failed row no retry tag", !dRow.includes("retry×"));
 }
 
+// ponytail: declared-file count on expanded subtask rows — mirrors detail (#484) +
+// subtask-tree (#493). The completion message omitted it, so a multi-file subtask was
+// indistinguishable from a 1-file one. Only when files.length>0; singular/plural-aware.
+{
+	const multi = makeSubtask("s1", "completed", "touch several") as SubtaskResult;
+	(multi as any).files = ["a.ts", "b.ts", "c.ts"];
+	const lines = (renderer(makeMessage(true, [multi]), { expanded: true }, theme)! as any).render(80) as string[];
+	const row = lines.find((l: string) => l.includes("s1:")) ?? "";
+	check("expanded row shows file count (3 files)", row.includes("3 files"));
+	const one = makeSubtask("s2", "completed", "touch one") as SubtaskResult;
+	(one as any).files = ["a.ts"];
+	const oLines = (renderer(makeMessage(true, [one]), { expanded: true }, theme)! as any).render(80) as string[];
+	const oRow = oLines.find((l: string) => l.includes("s2:")) ?? "";
+	check("expanded row singular '1 file'", oRow.includes("1 file") && !oRow.includes("1 files"));
+	const none = makeSubtask("s3", "completed", "no declared scope") as SubtaskResult; // files: []
+	const nLines = (renderer(makeMessage(true, [none]), { expanded: true }, theme)! as any).render(80) as string[];
+	const nRow = nLines.find((l: string) => l.includes("s3:")) ?? "";
+	// no "N file(s)" count tag (the desc avoids the word "file" so includes() won't false-positive)
+	check("expanded row no file-count tag when files empty", !nRow.match(/\d+\s+files?\b/));
+}
+
 // expanded narrow (width 30) — subtask desc lines truncated to fit
 // (summary header is a fixed message header, OMP wraps it — not in scope)
 {
