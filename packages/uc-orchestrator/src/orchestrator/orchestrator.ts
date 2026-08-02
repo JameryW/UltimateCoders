@@ -217,7 +217,7 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 		if (parsed.subtasks && Array.isArray(parsed.subtasks)) {
 			return parsed.subtasks.map((st: Record<string, unknown>, i: number) => {
 				const def: SubtaskDef = {
-					id: (st.id as string) || `st-${i + 1}`,
+					id: (String(st.id ?? "").replace(/\s+/g, "").trim() || `st-${i + 1}`),
 					description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
 					dependsOn: (st.depends_on as string[]) || [],
 					files: (st.files as string[]) || [],
