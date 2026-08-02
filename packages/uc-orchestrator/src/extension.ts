@@ -650,10 +650,15 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								// ponytail: line range — SearchResultItem carries start_line/end_line but
 								// the search output never showed them, so a match's location in the file
 								// was invisible. `:L42` (single line) or `:L42-50` (range) after the score.
+								// Fallback: endLine is optional for a single-line match (some sources omit
+								// it), so show `:L{start}` when only start is present (was: dropped entirely).
 								const startL = r.startLine ?? r.start_line;
 								const endL = r.endLine ?? r.end_line;
-								const lineTag = (typeof startL === "number" && typeof endL === "number")
-									? (startL === endL ? ` :L${startL}` : ` :L${startL}-${endL}`) : "";
+								const lineTag = typeof startL === "number"
+									? (typeof endL === "number" && endL !== startL
+										? ` :L${startL}-${endL}`
+										: ` :L${startL}`)
+									: "";
 								// ponytail: match-type tag — shows how the match was found (text/semantic/
 								// ast/hybrid). A hybrid search producing a text match vs a semantic match
 								// reads differently; the tag answers "why did this rank here?". Short
@@ -664,8 +669,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								// `  [repo] path score\n      snippet` — the path line prefix
 								// is `  [repo] ` (~6 + repo) + score + lineTag + mtTag; cap path so it fits.
 								const pathPrefix = `  [${repo}] `;
+								// ponytail: account for the score tag's length — use the tag's actual length
+								// (score is "" when unscored), not a truthy check on r.score (which would
+								// under-budget the path when score is 0, the case #525 fixed for display).
 								const pathBudget = cols !== undefined
-									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length - mtTag.length)
+									? Math.max(0, cols - pathPrefix.length - score.length - lineTag.length - mtTag.length)
 									: 80;
 								// ponytail: slice the PLAIN path, then highlight the query match — a search for a
 								// filename or symbol whose name is in the path (e.g. "auth" → src/auth.ts) showed
