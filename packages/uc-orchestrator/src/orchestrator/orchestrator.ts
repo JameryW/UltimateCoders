@@ -265,7 +265,7 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 		if (match) {
 			subtasks.push({
 				id: `st-${i + 1}`,
-				description: match[1].trim(),
+				description: match[1].replace(/\s+/g, " ").trim(),
 				dependsOn: i > 0 ? [`st-${i}`] : [],
 				files: [],
 			});
