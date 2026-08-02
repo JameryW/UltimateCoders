@@ -218,7 +218,7 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 			return parsed.subtasks.map((st: Record<string, unknown>, i: number) => {
 				const def: SubtaskDef = {
 					id: (st.id as string) || `st-${i + 1}`,
-					description: st.description as string,
+					description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
 					dependsOn: (st.depends_on as string[]) || [],
 					files: (st.files as string[]) || [],
 				};
