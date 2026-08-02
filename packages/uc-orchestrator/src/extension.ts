@@ -509,8 +509,17 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					// the call site discarded it. The user saw only the async "Planning..."
 					// footer, with no confirmation the command landed. Show the task id so the
 					// user can /uc status <id> immediately. Mirrors #469's success-notify pattern.
-					const submittedId = await orchestrator.submitTask(rest, ctx);
-					ctx.ui.notify(`Submitted task ${submittedId.slice(0, 8)} — /uc status ${submittedId.slice(0, 8)} for detail`, "info");
+					// ponytail: submitTask can THROW on decomposition failure ("Decomposer returned
+					// no subtasks"), and the call site had no try/catch — the error was an uncaught
+					// rejection with no user feedback. Mirror /uc search's try/catch: surface the
+					// failure as an error toast. (submitTask persists the task before decomposing,
+					// so a failed decompose leaves a planning task the user can still /uc status.)
+					try {
+						const submittedId = await orchestrator.submitTask(rest, ctx);
+						ctx.ui.notify(`Submitted task ${submittedId.slice(0, 8)} — /uc status ${submittedId.slice(0, 8)} for detail`, "info");
+					} catch (e) {
+						ctx.ui.notify(`Submit failed: ${e}`, "error");
+					}
 					return;
 				}
 				case "status": {
