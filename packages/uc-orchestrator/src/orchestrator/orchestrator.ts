@@ -219,8 +219,13 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 				const def: SubtaskDef = {
 					id: (String(st.id ?? "").replace(/\s+/g, "").trim() || `st-${i + 1}`),
 					description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
-					dependsOn: (st.depends_on as string[]) || [],
-					files: (st.files as string[]) || [],
+					// ponytail: trim each dep + file entry — the decomposer can return stray
+					// whitespace ("st-1 " / " src/a.ts "), which would mismatch the sanitized
+					// ids above (deps unmet → blocked-forever subtasks) and produce noisy file
+					// paths. Map over the arrays so the entry shape is normalized, not the
+					// array reference. Non-string entries coerced via String().
+					dependsOn: ((st.depends_on as unknown[]) ?? []).map((d) => String(d).trim()).filter(Boolean),
+					files: ((st.files as unknown[]) ?? []).map((f) => String(f).trim()).filter(Boolean),
 				};
 				// ponytail: read optional steps array from decomposer JSON —
 				// unknown fields ignored, missing steps key = undefined (backward compat)
