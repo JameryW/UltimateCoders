@@ -312,20 +312,6 @@ export function formatTaskDetail(task: TaskState, theme: Theme, width?: number, 
 					? ` ←+${st.dependsOn.length} deps`
 					: ` ←${joined}`;
 			}
-			// ponytail: "blocked" marker on a pending subtask whose deps aren't all
-			// completed — a pending subtask with met deps is "ready to dispatch" while
-			// one with unmet deps is "blocked". Without this, both looked identical (○
-			// pending + deps), and the user couldn't tell if the subtask was waiting on
-			// deps vs just not dispatched yet. Only on pending subtasks w/ deps; the
-			// deps are checked against the task's subtask statuses.
-			let blockedPlain = "";
-			if (st.status === "pending" && st.dependsOn.length > 0) {
-				const unmet = st.dependsOn.filter((depId) => {
-					const dep = subtaskById.get(depId);
-					return !dep || dep.status !== "completed";
-				}).length;
-				if (unmet > 0) blockedPlain = ` ⏳${unmet}`;
-			}
 			const deps = depsPlain ? theme.fg("dim", depsPlain) : "";
 			// ponytail: "blocked" / "ready" markers on pending subtasks with deps.
 			// A pending subtask with unmet deps is "blocked" (⏳N, #473), while one
