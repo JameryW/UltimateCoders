@@ -661,8 +661,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								// it), so show `:L{start}` when only start is present (was: dropped entirely).
 								const startL = r.startLine ?? r.start_line;
 								const endL = r.endLine ?? r.end_line;
-								const lineTag = typeof startL === "number"
-									? (typeof endL === "number" && endL !== startL
+								// ponytail: guard with Number.isFinite — typeof NaN === "number", so the old
+								// check would render ":LNaN" / ":LNaN-NaN" (and NaN !== NaN made the range
+								// branch fire). Finite numbers only; NaN/Infinity → no tag.
+								const lineTag = Number.isFinite(startL)
+									? (Number.isFinite(endL) && endL !== startL
 										? ` :L${startL}-${endL}`
 										: ` :L${startL}`)
 									: "";
