@@ -635,8 +635,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						// ponytail: sort by score DESC before capping — the server usually returns
 						// relevance-sorted, but a defensive client sort guarantees the top-20 slice
 						// holds the highest-score results (a server that didn't sort would otherwise
-						// bury the best matches past the cap). Missing score sorts last (0 fallback).
-						const sorted = results.slice().sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+						// bury the best matches past the cap). Missing/NaN/non-finite score sorts last
+						// (0 fallback); NaN would otherwise make the comparator return NaN (unstable sort).
+						const scoreOf = (r: any): number =>
+							typeof r.score === "number" && Number.isFinite(r.score) ? r.score : 0;
+						const sorted = results.slice().sort((a: any, b: any) => scoreOf(b) - scoreOf(a));
 						const shown = sorted.slice(0, SHOWN);
 						const lines = shown.map(
 							(r: any) => {
@@ -645,11 +648,12 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								const orQ = (v: unknown) => (typeof v === "string" && v.trim() ? v : "?");
 								const repo = orQ(r.repoId ?? r.repo_id);
 								const path = orQ(r.filePath ?? r.file_path);
-								// ponytail: show the score when it's a real number (incl. 0) — a 0-score result
-								// is the lowest-relevance hit, not an unscored one. The old truthy check
-								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest
-								// rank looked indistinguishable from "no score". Use a numeric-type check.
-								const score = typeof r.score === "number" ? ` (${r.score.toFixed(2)})` : "";
+								// ponytail: show the score when it's a real finite number (incl. 0) — a 0-score
+								// result is the lowest-relevance hit, not an unscored one. The old truthy check
+								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest rank
+								// looked indistinguishable from "no score". Use a numeric-type check that excludes
+								// NaN (typeof NaN === "number", so it'd otherwise render "(NaN)").
+								const score = typeof r.score === "number" && Number.isFinite(r.score) ? ` (${r.score.toFixed(2)})` : "";
 								// ponytail: line range — SearchResultItem carries start_line/end_line but
 								// the search output never showed them, so a match's location in the file
 								// was invisible. `:L42` (single line) or `:L42-50` (range) after the score.
