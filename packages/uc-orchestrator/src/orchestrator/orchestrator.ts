@@ -1992,7 +1992,10 @@ export class UCOrchestrator {
 	private fromPersisted(p: PersistedTask): TaskState {
 		return {
 			id: p.id,
-			description: p.description,
+			// ponytail: collapse whitespace in the task description on restore — /uc submit
+			// normalizes (split on \s+), but a legacy/manually-edited persisted task could
+			// carry a \n that breaks the notify/detail row. Mirror the subtask-field heal.
+			description: String(p.description ?? "").replace(/\s+/g, " ").trim(),
 			status: p.status as TaskState["status"],
 			controlState: p.controlState,
 			error: p.error,
