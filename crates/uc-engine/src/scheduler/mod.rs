@@ -10,6 +10,7 @@
 //! - `PostgresScheduleStore`: PostgreSQL-backed store for production (requires `storage` feature)
 //! - Migration functions for scheduler database tables (requires `storage` feature)
 
+pub mod config;
 pub mod dependency;
 pub mod dispatcher;
 pub mod migration;
