@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
+use uc_engine::scheduler::config::SchedulerFileConfig;
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
 use uc_grpc::AuthInterceptor;
@@ -127,6 +128,165 @@ async fn index_workspace_repos(engine: &LocalEngine) {
     );
 }
 
+/// Load `uc.scheduler.yaml` (if present), wire the scheduler dispatcher to
+/// `engine.submit_task`, add configured jobs + night window, and start the
+/// scheduler service.
+///
+/// Resolution order: `UC_SCHEDULER_CONFIG` env, then `./uc.scheduler.yaml`,
+/// then skip (no error — scheduler stays idle). Per-job failures log a warning
+/// but do not abort startup (tolerant, mirrors `index_workspace_repos`).
+///
+/// This must NOT block `Server::serve` — the config load is sync and fast,
+/// but `start()` is async. We call it here before `Server::serve` (which is
+/// the main `await` point). The `start()` call completes quickly (creates the
+/// `JobScheduler` and registers jobs); actual cron-fires happen later in
+/// background tasks managed by `tokio-cron-scheduler`.
+async fn start_scheduler(engine: &LocalEngine) {
+    // Wire the dispatcher: EngineSubmitDispatcher calls engine.submit_task
+    // when a cron/one-shot fires. Must happen before start() so the scheduler
+    // uses the real dispatcher from the first fire.
+    engine.init_scheduler_dispatcher().await;
+
+    // Resolve config path: UC_SCHEDULER_CONFIG env, then ./uc.scheduler.yaml
+    let path = match std::env::var("UC_SCHEDULER_CONFIG") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => {
+            let default = std::path::Path::new("uc.scheduler.yaml");
+            if default.exists() {
+                default.to_path_buf()
+            } else {
+                tracing::info!(
+                    "No uc.scheduler.yaml found; scheduler stays idle (no jobs configured)"
+                );
+                return;
+            }
+        }
+    };
+
+    let file_config = match SchedulerFileConfig::load(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "Failed to load uc.scheduler.yaml; scheduler stays idle"
+            );
+            return;
+        }
+    };
+
+    let parsed = match file_config.resolve() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "Failed to resolve uc.scheduler.yaml; scheduler stays idle"
+            );
+            return;
+        }
+    };
+
+    let scheduler = engine.scheduler_service();
+
+    // Set the default night window ONLY if the user explicitly declared one
+    // at the top level. When absent, no window is set → jobs fire any time
+    // (opt-in, no behavior change for deploys without uc.scheduler.yaml).
+    if let Some(ref nw) = parsed.default_night_window {
+        if let Err(e) = scheduler.set_night_window(nw).await {
+            tracing::warn!(error = %e, "Failed to set default night window");
+        }
+    }
+
+    // Add each configured job
+    let mut added = 0usize;
+    let total = parsed.jobs.len();
+    for job in &parsed.jobs {
+        // The per-task night_window_start/end/timezone fields are metadata
+        // stored on the ScheduledTask. The actual guard uses the service-level
+        // night_window (set above from the top-level config). When no per-job
+        // window is specified, use placeholder values (00:00-23:59 UTC) — the
+        // service-level window (if any) is what governs dispatch.
+        let default_nw = uc_types::NightWindowConfig::default_utc();
+        let (nw_start, nw_end, nw_tz) = match &job.night_window {
+            Some(nw) => (nw.start, nw.end, nw.timezone.clone()),
+            None => (
+                default_nw.start,
+                default_nw.end,
+                default_nw.timezone.clone(),
+            ),
+        };
+
+        let task = if let Some(cron) = &job.cron_expression {
+            uc_types::ScheduledTask::cron(
+                job.description.clone(),
+                job.project_id.clone(),
+                cron.clone(),
+                nw_start,
+                nw_end,
+                nw_tz,
+            )
+        } else if let Some(execute_after) = job.execute_after {
+            uc_types::ScheduledTask::one_shot(
+                job.description.clone(),
+                job.project_id.clone(),
+                execute_after,
+                nw_start,
+                nw_end,
+                nw_tz,
+            )
+        } else {
+            // Should not happen — resolve() validates this, but be defensive
+            tracing::warn!(
+                description = %job.description,
+                "Job has neither cron nor execute_after (skipping)"
+            );
+            continue;
+        };
+
+        // Respect the enabled flag
+        let mut task = task;
+        task.enabled = job.enabled;
+
+        let result = if task.is_cron() {
+            scheduler.add_cron_job(task).await
+        } else {
+            scheduler.add_one_shot_job(task).await
+        };
+
+        match result {
+            Ok(r) => {
+                added += 1;
+                tracing::info!(
+                    task_id = %r.task_id,
+                    description = %job.description,
+                    "Scheduler job added"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    description = %job.description,
+                    error = %e,
+                    "Failed to add scheduler job"
+                );
+            }
+        }
+    }
+
+    // Start the scheduler (creates JobScheduler, registers jobs, begins firing)
+    if let Err(e) = scheduler.start().await {
+        tracing::warn!(error = %e, "Failed to start scheduler service");
+        return;
+    }
+
+    tracing::info!(
+        config_path = %path.display(),
+        jobs_added = added,
+        jobs_total = total,
+        "Scheduler service started"
+    );
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -175,6 +335,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         index_workspace_repos(&index_engine).await;
         tracing::info!("Background workspace indexing finished");
     });
+
+    // Load uc.scheduler.yaml (if present), wire the dispatcher to
+    // engine.submit_task, add configured jobs + night window, and start
+    // the scheduler service. The config load is sync and fast; start()
+    // creates the JobScheduler and returns quickly (cron-fires happen in
+    // background tasks). If no uc.scheduler.yaml exists, the scheduler
+    // stays idle (no-op). Failures log warnings but don't abort startup.
+    start_scheduler(&engine).await;
 
     // Create task store backend (in-memory or PostgreSQL)
     let (task_backend, event_store) = create_task_backend().await;

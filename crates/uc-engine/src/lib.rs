@@ -61,8 +61,9 @@ pub use sandbox::{
 
 // Scheduler module re-exports
 pub use scheduler::{
-    AddJobResult, InMemoryScheduleStore, LoggingDispatcher, NightWindow, NightWindowError,
-    OrchestratorDispatcher, ScheduleDispatcher, ScheduleStore, SchedulerService, WindowEventType,
+    AddJobResult, EngineSubmitDispatcher, InMemoryScheduleStore, LoggingDispatcher, NightWindow,
+    NightWindowError, OrchestratorDispatcher, ScheduleDispatcher, ScheduleStore, SchedulerService,
+    WindowEventType,
 };
 
 #[cfg(feature = "storage")]

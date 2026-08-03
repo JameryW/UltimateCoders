@@ -74,14 +74,20 @@ pub struct ParsedJob {
     pub project_id: String,
     pub cron_expression: Option<String>,
     pub execute_after: Option<DateTime<Utc>>,
-    pub night_window: NightWindowConfig,
+    /// Per-job night window. `None` when neither a per-job nor top-level
+    /// window was declared — the job fires any time.
+    pub night_window: Option<NightWindowConfig>,
     pub enabled: bool,
 }
 
 /// Parsed `uc.scheduler.yaml` — jobs + a default night window.
+///
+/// `default_night_window` is `None` when the user did not specify a top-level
+/// `night_window` in the YAML — in that case jobs fire any time (no constraint).
+/// When `Some`, it applies to all jobs that don't override it per-job.
 #[derive(Debug, Clone, Default)]
 pub struct ParsedSchedulerConfig {
-    pub default_night_window: NightWindowConfig,
+    pub default_night_window: Option<NightWindowConfig>,
     pub jobs: Vec<ParsedJob>,
 }
 
@@ -101,12 +107,15 @@ impl SchedulerFileConfig {
     /// Resolve into typed config: parse HH:MM times + RFC-3339 timestamps,
     /// apply the default night window to jobs without their own.
     pub fn resolve(self) -> Result<ParsedSchedulerConfig, SchedulerConfigError> {
+        // Only set a default night window if the user explicitly declared one
+        // at the top level. When absent, default_night_window is None → jobs
+        // fire any time (no constraint). This matches the PRD requirement:
+        // "default-off (opt-in via config), no behavior change for existing deploys".
         let default_nw = self
             .night_window
             .as_ref()
             .map(parse_night_window)
-            .transpose()?
-            .unwrap_or_else(NightWindowConfig::default);
+            .transpose()?;
 
         let mut jobs = Vec::with_capacity(self.jobs.len());
         for j in self.jobs {
@@ -126,8 +135,10 @@ impl SchedulerFileConfig {
                 ),
                 None => None,
             };
+            // Per-job window overrides the default; if neither is set, use None
+            // (fire any time). Only fall back to default_nw if it's Some.
             let nw = match j.night_window.as_ref() {
-                Some(n) => parse_night_window(n)?,
+                Some(n) => Some(parse_night_window(n)?),
                 None => default_nw.clone(),
             };
             jobs.push(ParsedJob {
@@ -206,7 +217,20 @@ mod tests {
         let yaml = "night_window:\n  start: \"22:00\"\n  end: \"06:00\"\n  timezone: \"Asia/Shanghai\"\njobs: []\n";
         let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
         assert!(cfg.jobs.is_empty());
-        assert_eq!(cfg.default_night_window.timezone, "Asia/Shanghai");
+        let nw = cfg
+            .default_night_window
+            .expect("night window should be set");
+        assert_eq!(nw.timezone, "Asia/Shanghai");
+    }
+
+    #[test]
+    fn no_night_window_means_none() {
+        // When no top-level night_window is specified, default_night_window
+        // is None (jobs fire any time). This is the "opt-in" behavior.
+        let yaml = "jobs:\n  - description: any-time\n    cron: \"0 12 * * *\"\n";
+        let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
+        assert!(cfg.default_night_window.is_none());
+        assert!(cfg.jobs[0].night_window.is_none());
     }
 
     #[test]
@@ -244,6 +268,20 @@ mod tests {
         let yaml = "night_window:\n  start: \"22:00\"\n  end: \"06:00\"\njobs:\n  - description: any-time\n    cron: \"0 12 * * *\"\n    night_window:\n      start: \"12:00\"\n      end: \"13:00\"\n";
         let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
         // per-job window is 12:00-13:00, not the default 22:00-06:00
-        assert_eq!(cfg.jobs[0].night_window.start.hour(), 12);
+        let nw = cfg.jobs[0]
+            .night_window
+            .as_ref()
+            .expect("per-job window set");
+        assert_eq!(nw.start.hour(), 12);
+    }
+
+    #[test]
+    fn job_inherits_top_level_window() {
+        // When a top-level night_window is set and the job has no per-job
+        // override, the job inherits the top-level window.
+        let yaml = "night_window:\n  start: \"22:00\"\n  end: \"06:00\"\njobs:\n  - description: inherit\n    cron: \"0 23 * * *\"\n";
+        let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
+        let nw = cfg.jobs[0].night_window.as_ref().expect("inherited window");
+        assert_eq!(nw.start.hour(), 22);
     }
 }
