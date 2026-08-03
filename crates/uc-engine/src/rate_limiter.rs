@@ -79,6 +79,14 @@ impl TokenBucket {
         *tokens
     }
 
+    /// Refund tokens (e.g. when a multi-bucket acquire fails after one bucket
+    /// already consumed). Capped at capacity so a refund can't exceed burst.
+    /// Does NOT touch last_refill — the refill clock keeps running.
+    pub fn refund(&self, amount: f64) {
+        let mut tokens = self.tokens.lock().unwrap();
+        *tokens = (*tokens + amount).min(self.capacity);
+    }
+
     /// Get the time until `amount` tokens will be available.
     pub fn wait_time(&self, amount: f64) -> Duration {
         self.refill();
@@ -186,7 +194,10 @@ impl LlmRateLimiter {
         // Check TPM
         if !self.tpm_bucket.try_consume(estimated_tokens) {
             let wait = self.tpm_bucket.wait_time(estimated_tokens);
-            // Refund the RPM token we just consumed
+            // Refund the RPM token we just consumed — without this, every
+            // TPM-rejection leaked one RPM token, slowly starving the RPM
+            // bucket below its configured rate even though no request ran.
+            self.rpm_bucket.refund(1.0);
             return Err(EngineError::RateLimited(wait.as_secs() + 1));
         }
 
@@ -441,6 +452,28 @@ mod tests {
 
         limiter.release();
         assert!(limiter.try_acquire(100.0).is_ok()); // Now has a slot
+    }
+
+    #[test]
+    fn rate_limiter_tpm_failure_refunds_rpm() {
+        // RPM=2, TPM=100 → a 101-token request consumes 1 RPM then fails TPM.
+        // The RPM token MUST be refunded, or a second request would see
+        // only 1 RPM left (leak). Post-fix, the second request still succeeds.
+        let config = LlmRateLimiterConfig {
+            rpm: 2.0,
+            tpm: 100.0,
+            max_concurrent: 5,
+        };
+        let limiter = LlmRateLimiter::new(&config);
+
+        // First acquire: 101 tokens > 100 TPM cap → Err, refunds the RPM.
+        assert!(limiter.try_acquire(101.0).is_err());
+
+        // RPM was refunded: both remaining RPM tokens available.
+        assert!(limiter.try_acquire(50.0).is_ok());
+        assert!(limiter.try_acquire(50.0).is_ok());
+        // Now RPM is exhausted (2/2 used) without having leaked on the TPM fail.
+        assert!(limiter.try_acquire(50.0).is_err());
     }
 
     #[test]
