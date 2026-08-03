@@ -2268,7 +2268,14 @@ class NatsWorker:
         }
 
     async def _dash_getschedulerstatus(self, _payload: dict) -> dict:
-        """Return scheduler status from Orchestrator."""
+        """Return scheduler status from Orchestrator.
+
+        DEAD PATH: The gRPC DashboardService now routes GetSchedulerStatus
+        directly to the Rust SchedulerService (not via NATS). This responder
+        is unreachable for scheduler RPCs but kept for safety — a stale
+        dashboard or older gateway could still reach it. Returns
+        available=False since orch.scheduler is always None (Rust owns it).
+        """
         orch = self._orchestrator
         if orch is None or orch.scheduler is None:
             return {"available": False, "is_running": False, "jobs": [], "execution_history": []}
@@ -2299,7 +2306,10 @@ class NatsWorker:
         }
 
     async def _dash_triggerschedulerjob(self, payload: dict) -> dict:
-        """Trigger a scheduled job."""
+        """Trigger a scheduled job.
+
+        DEAD PATH: See _dash_getschedulerstatus — Rust owns scheduling now.
+        """
         orch = self._orchestrator
         if orch is None or orch.scheduler is None:
             return {

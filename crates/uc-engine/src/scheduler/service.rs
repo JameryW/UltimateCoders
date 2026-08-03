@@ -72,6 +72,12 @@ pub struct AddJobResult {
 /// Manages cron-based and one-shot scheduled tasks, with an optional
 /// night-window guard that prevents execution outside configured hours.
 /// Supports persistence via a `ScheduleStore` backend.
+///
+/// All fields are `Arc`-shared, so cloning a `SchedulerService` is a cheap
+/// refcount bump. The clone shares the same state (jobs, dispatcher, store)
+/// and is used to pass a handle into cron-scheduler callbacks (which need
+/// `'static` ownership).
+#[derive(Clone)]
 pub struct SchedulerService {
     /// Night window configuration (if any).
     night_window: Arc<RwLock<Option<NightWindow>>>,
@@ -297,6 +303,19 @@ impl SchedulerService {
     pub async fn get_job(&self, task_id: &Uuid) -> Option<ScheduledTask> {
         let metadata = self.job_metadata.read().await;
         metadata.get(task_id).map(|m| m.task.clone())
+    }
+
+    /// Get the configured night window, if any.
+    ///
+    /// Returns the `NightWindowConfig` (start, end, timezone) that was set via
+    /// `set_night_window`. Returns `None` if no night window is configured
+    /// (execution allowed at any time). Used by `EngineApi::get_scheduler_status`
+    /// to report the service-level window to the dashboard.
+    pub async fn get_night_window_config(&self) -> Option<uc_types::NightWindowConfig> {
+        let nw = self.night_window.read().await;
+        nw.as_ref().map(|window| {
+            uc_types::NightWindowConfig::new(window.start, window.end, window.tz.to_string())
+        })
     }
 
     /// Check if a task should be executed now based on the night window guard.
@@ -568,20 +587,31 @@ impl SchedulerService {
 
         let task_id = task.id;
         let task_description = task.description.clone();
+        // Clone the service handle into the closure so it can call
+        // dispatch_with_guard on fire. All fields are Arc, so this is cheap.
+        let svc = self.clone();
 
         let job = tokio_cron_scheduler::Job::new_async(cron_6field, move |uuid, _l| {
             let task_id = task_id;
             let description = task_description.clone();
+            let svc = svc.clone();
             Box::pin(async move {
                 tracing::info!(
                     job_uuid = %uuid,
                     task_id = %task_id,
                     description = %description,
-                    "Cron job triggered by scheduler"
+                    "Cron job triggered by scheduler — dispatching"
                 );
-                // The actual dispatch happens via dispatch_with_guard
-                // which is called externally. This callback serves as
-                // the trigger notification.
+                // Dispatch with night-window guard. This calls the
+                // EngineSubmitDispatcher (or whatever dispatcher is set),
+                // which spawns engine.submit_task as fire-and-forget.
+                if let Err(e) = svc.dispatch_with_guard(&task_id).await {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "Cron dispatch_with_guard failed (deferred or error)"
+                    );
+                }
             })
         })
         .map_err(|e| EngineError::InternalError(format!("Failed to create cron job: {:?}", e)))?;
@@ -622,19 +652,29 @@ impl SchedulerService {
         let duration_std = std::time::Duration::from_secs(duration.num_seconds().max(0) as u64);
         let task_id = task.id;
         let task_description = task.description.clone();
+        // Clone the service handle into the closure so it can call
+        // dispatch_with_guard on fire. All fields are Arc, so this is cheap.
+        let svc = self.clone();
 
         let job = tokio_cron_scheduler::Job::new_one_shot_async(duration_std, move |uuid, _l| {
             let task_id = task_id;
             let description = task_description.clone();
+            let svc = svc.clone();
             Box::pin(async move {
                 tracing::info!(
                     job_uuid = %uuid,
                     task_id = %task_id,
                     description = %description,
-                    "One-shot job triggered by scheduler"
+                    "One-shot job triggered by scheduler — dispatching"
                 );
-                // The actual dispatch happens via dispatch_with_guard
-                // which is called externally.
+                // Dispatch with night-window guard.
+                if let Err(e) = svc.dispatch_with_guard(&task_id).await {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "One-shot dispatch_with_guard failed (deferred or error)"
+                    );
+                }
             })
         })
         .map_err(|e| {
@@ -830,6 +870,27 @@ mod tests {
         let service = SchedulerService::new();
         // No night window configured — should always allow
         assert!(service.check_night_window().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_night_window_config_returns_configured_window() {
+        let service = SchedulerService::new();
+        // No window set initially
+        assert!(service.get_night_window_config().await.is_none());
+
+        let config = uc_types::NightWindowConfig::new(
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "Asia/Shanghai".to_string(),
+        );
+        service.set_night_window(&config).await.unwrap();
+
+        let retrieved = service.get_night_window_config().await;
+        assert!(retrieved.is_some());
+        let nw = retrieved.unwrap();
+        assert_eq!(nw.start, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
+        assert_eq!(nw.end, NaiveTime::from_hms_opt(6, 0, 0).unwrap());
+        assert_eq!(nw.timezone, "Asia/Shanghai");
     }
 
     #[tokio::test]
@@ -1056,5 +1117,154 @@ mod tests {
         } else {
             assert_eq!(executions[0].status, ExecutionStatus::Completed);
         }
+    }
+
+    // ── Cron-callback dispatch wiring tests ───────────────────────
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn cron_callback_calls_dispatch_with_guard() {
+        // Verify that when a cron job fires, the callback calls
+        // dispatch_with_guard (which records ExecutionHistory).
+        // We use a very short interval cron expression and wait for it
+        // to fire. The LoggingDispatcher is used (default), so dispatch
+        // succeeds and records Completed.
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        // Create a cron job that fires every second
+        let task = ScheduledTask::cron(
+            "Callback test".to_string(),
+            "test-project".to_string(),
+            "* * * * * *".to_string(), // 6-field: every second
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_cron_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the cron to fire (2 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Check that dispatch_with_guard was called (execution history recorded)
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history.is_empty(),
+            "Cron callback should have called dispatch_with_guard, recording execution history"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn one_shot_callback_calls_dispatch_with_guard() {
+        // Verify that when a one-shot job fires, the callback calls
+        // dispatch_with_guard (which records ExecutionHistory).
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        // Create a one-shot job that fires in 2 seconds
+        let execute_after = Utc::now() + chrono::Duration::seconds(2);
+        let task = ScheduledTask::one_shot(
+            "One-shot callback test".to_string(),
+            "test-project".to_string(),
+            execute_after,
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_one_shot_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the one-shot to fire (3 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Check that dispatch_with_guard was called
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history.is_empty(),
+            "One-shot callback should have called dispatch_with_guard, recording execution history"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    // ── EngineApi scheduler trait method tests ────────────────────
+
+    #[tokio::test]
+    async fn local_engine_get_scheduler_status() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let status = engine.get_scheduler_status().await.unwrap();
+
+        assert!(
+            status.available,
+            "LocalEngine scheduler should be available"
+        );
+        assert!(
+            !status.is_running,
+            "Scheduler should not be running until started"
+        );
+        assert!(status.jobs.is_empty(), "No jobs configured");
+        assert!(
+            status.night_window.is_none(),
+            "No night window configured by default"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_get_scheduler_status_with_night_window() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let config = uc_types::NightWindowConfig::new(
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        engine
+            .scheduler_service()
+            .set_night_window(&config)
+            .await
+            .unwrap();
+
+        let status = engine.get_scheduler_status().await.unwrap();
+        assert!(status.night_window.is_some(), "Night window should be set");
+        let nw = status.night_window.unwrap();
+        assert_eq!(nw.start, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
+        assert_eq!(nw.end, NaiveTime::from_hms_opt(6, 0, 0).unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_engine_trigger_scheduler_job_not_found() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let result = engine.trigger_scheduler_job("nonexistent-uuid").await;
+
+        // Invalid UUID string should return an error
+        assert!(result.is_err(), "Invalid UUID should return Err");
+    }
+
+    #[tokio::test]
+    async fn local_engine_trigger_scheduler_job_valid_uuid_not_found() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let result = engine.trigger_scheduler_job(&valid_uuid).await.unwrap();
+
+        assert!(!result.success, "Triggering a non-existent job should fail");
+        assert!(result.error.is_some(), "Error message should be present");
     }
 }

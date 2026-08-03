@@ -244,6 +244,37 @@ impl Default for NightWindowConfig {
     }
 }
 
+/// Status snapshot of the scheduler, returned by `EngineApi::get_scheduler_status`.
+///
+/// Aggregates jobs, night-window state, running flag, and recent execution
+/// history so the gRPC `DashboardService` can build a proto response in one
+/// call without exposing the `SchedulerService` type across the trait boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerStatus {
+    /// Whether the scheduler is available (feature enabled + service initialized).
+    pub available: bool,
+    /// Whether the scheduler is currently running (started and not stopped).
+    pub is_running: bool,
+    /// Active night window configuration, if any.
+    pub night_window: Option<NightWindowConfig>,
+    /// All registered scheduled jobs.
+    pub jobs: Vec<ScheduledTask>,
+    /// Recent execution history entries (across all jobs).
+    pub execution_history: Vec<ExecutionHistory>,
+}
+
+/// Result of manually triggering a scheduled job, returned by
+/// `EngineApi::trigger_scheduler_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerTriggerResult {
+    /// Whether the trigger succeeded (dispatch was invoked).
+    pub success: bool,
+    /// The job ID that was triggered.
+    pub job_id: String,
+    /// Error message if the trigger failed.
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

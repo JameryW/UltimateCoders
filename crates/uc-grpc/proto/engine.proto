@@ -47,6 +47,7 @@ service DashboardService {
     rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
     rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse);
     rpc TriggerSchedulerJob(TriggerSchedulerJobRequest) returns (TriggerSchedulerJobResponse);
+    rpc AddCronJob(AddCronJobRequest) returns (AddCronJobResponse);
     rpc FlushPendingTasks(FlushPendingTasksRequest) returns (FlushPendingTasksResponse);
     rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
     rpc WatchDashboard(WatchDashboardRequest) returns (stream DashboardSnapshot);
@@ -562,6 +563,25 @@ message TriggerSchedulerJobRequest {
 }
 
 message TriggerSchedulerJobResponse {
+    bool success = 1;
+    string job_id = 2;
+    optional string error = 3;
+}
+
+// AddCronJob — reserved for future runtime job creation via dashboard UI.
+// Currently returns UNIMPLEMENTED; jobs are declared in uc.scheduler.yaml.
+
+message AddCronJobRequest {
+    string description = 1;
+    string cron_expression = 2;
+    string project_id = 3;
+    optional string night_window_start = 4;  // HH:MM
+    optional string night_window_end = 5;    // HH:MM
+    string timezone = 6;                      // IANA, default "UTC"
+    bool enabled = 7;
+}
+
+message AddCronJobResponse {
     bool success = 1;
     string job_id = 2;
     optional string error = 3;

@@ -108,7 +108,14 @@ class Orchestrator:
         self.tasks: dict[str, Task] = {}
         self.workers: dict[str, WorkerEntry] = {}
 
-        # ponytail: scheduler stub — nats_worker checks orch.scheduler is not None
+        # DEAD: scheduler stub — Rust SchedulerService now owns scheduling.
+        # The gRPC DashboardService routes GetSchedulerStatus/TriggerSchedulerJob
+        # directly to the Rust engine (not via NATS). This field is kept as None
+        # for backward compat with stale NATS responders that may still check it;
+        # nats_worker._dash_getschedulerstatus / _dash_triggerschedulerjob guard
+        # on `orch.scheduler is None` and return available=False.
+        # Do NOT instantiate a real scheduler here — the Rust gateway is the
+        # single source of truth (see crates/uc-engine/src/scheduler/).
         self.scheduler = None
 
     # ── Worker registration ────────────────────────────────────
