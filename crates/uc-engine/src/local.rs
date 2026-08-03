@@ -275,6 +275,28 @@ impl LocalEngine {
         }
     }
 
+    /// Resolve a client-supplied relative `path` against a repo's `local_path`,
+    /// rejecting traversal/escape attempts.
+    ///
+    /// Rejects any `..` component (which could escape the repo root via `join`)
+    /// and absolute paths (which `join` silently substitutes for the base). A
+    /// legitimate in-repo path never needs either — subpaths are relative and
+    /// dot-free. Returns NotFound on rejection (don't leak that it's a guard).
+    fn resolve_repo_path(local_path: &str, path: &str) -> Result<std::path::PathBuf, EngineError> {
+        let p = std::path::Path::new(path);
+        // Absolute path: Path::join would discard local_path entirely.
+        if p.is_absolute() {
+            return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
+        }
+        // Any ParentDir component can escape the repo root after join.
+        if p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
+        }
+        Ok(std::path::Path::new(local_path).join(path))
+    }
+
     /// Get the memory store (for direct access from tests or other components).
     pub fn memory_store(&self) -> &Arc<MemoryStore> {
         &self.memory_store
@@ -695,7 +717,7 @@ impl EngineApi for LocalEngine {
                 .to_string_lossy()
                 .to_string()
         });
-        let dir = std::path::Path::new(&local_path).join(path);
+        let dir = Self::resolve_repo_path(&local_path, path)?;
 
         if !dir.exists() {
             return Err(EngineError::NotFound(format!(
@@ -763,7 +785,7 @@ impl EngineApi for LocalEngine {
                 .to_string_lossy()
                 .to_string()
         });
-        let full_path = std::path::Path::new(&local_path).join(path);
+        let full_path = Self::resolve_repo_path(&local_path, path)?;
 
         if !full_path.exists() {
             return Err(EngineError::NotFound(format!(
@@ -1377,6 +1399,22 @@ fn load_index() -> Index { Index::new() }"#,
         assert!(!EngineError::ConnectionError("x".into()).is_not_found());
         assert!(!EngineError::TimeoutError("x".into()).is_not_found());
         assert!(!EngineError::RateLimited(5).is_not_found());
+    }
+
+    #[test]
+    fn resolve_repo_path_rejects_traversal() {
+        // `..` in the path would escape the repo root after join.
+        let r = LocalEngine::resolve_repo_path("/repo", "src/../etc/passwd");
+        assert!(r.is_err());
+        // Absolute path would make join discard the base.
+        let r = LocalEngine::resolve_repo_path("/repo", "/etc/passwd");
+        assert!(r.is_err());
+        // Relative dot-free path resolves under the repo root.
+        let r = LocalEngine::resolve_repo_path("/repo", "src/main.rs").unwrap();
+        assert_eq!(r, std::path::PathBuf::from("/repo/src/main.rs"));
+        // Empty path is allowed (lists the repo root).
+        let r = LocalEngine::resolve_repo_path("/repo", "").unwrap();
+        assert_eq!(r, std::path::PathBuf::from("/repo"));
     }
 
     #[tokio::test]
