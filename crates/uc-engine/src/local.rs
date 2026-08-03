@@ -932,6 +932,59 @@ impl EngineApi for LocalEngine {
         let mut store = self.task_store_locked();
         store.resume_task(task_id).map_err(EngineError::TaskError)
     }
+
+    async fn get_scheduler_status(&self) -> Result<uc_types::SchedulerStatus, EngineError> {
+        let svc = &self.scheduler_service;
+        let is_running = svc.is_running().await;
+        let jobs = svc.list_jobs().await;
+        let night_window = svc.get_night_window_config().await;
+        let execution_history = svc.get_execution_history(None).await;
+
+        Ok(uc_types::SchedulerStatus {
+            available: true,
+            is_running,
+            night_window,
+            jobs,
+            execution_history,
+        })
+    }
+
+    async fn trigger_scheduler_job(
+        &self,
+        job_id: &str,
+    ) -> Result<uc_types::SchedulerTriggerResult, EngineError> {
+        let task_id = uuid::Uuid::parse_str(job_id)
+            .map_err(|e| EngineError::ConfigError(format!("Invalid job ID '{}': {}", job_id, e)))?;
+
+        let svc = &self.scheduler_service;
+
+        // Verify the job exists
+        if svc.get_job(&task_id).await.is_none() {
+            return Ok(uc_types::SchedulerTriggerResult {
+                success: false,
+                job_id: job_id.to_string(),
+                error: Some(format!("Job not found: {}", job_id)),
+            });
+        }
+
+        // Dispatch with night-window guard
+        match svc.dispatch_with_guard(&task_id).await {
+            Ok(()) => Ok(uc_types::SchedulerTriggerResult {
+                success: true,
+                job_id: job_id.to_string(),
+                error: None,
+            }),
+            Err(e) => {
+                // Night-window defer is not a "failure" per se, but the trigger
+                // didn't execute. Return success=false with the reason.
+                Ok(uc_types::SchedulerTriggerResult {
+                    success: false,
+                    job_id: job_id.to_string(),
+                    error: Some(e.to_string()),
+                })
+            }
+        }
+    }
 }
 
 impl LocalEngine {

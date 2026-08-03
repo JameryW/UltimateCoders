@@ -157,6 +157,41 @@ pub trait EngineApi: Send + Sync {
 
     /// Resume a paused task.
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError>;
+
+    // ── Scheduler ───────────────────────────────────────────
+
+    /// Get the scheduler status (jobs, night window, execution history).
+    ///
+    /// Returns `available: false` when the scheduler feature is disabled
+    /// or the engine does not implement scheduling. The gRPC
+    /// `DashboardService::get_scheduler_status` delegates here instead of
+    /// routing through NATS to the Python Orchestrator.
+    async fn get_scheduler_status(&self) -> Result<crate::SchedulerStatus, EngineError> {
+        Ok(crate::SchedulerStatus {
+            available: false,
+            is_running: false,
+            night_window: None,
+            jobs: vec![],
+            execution_history: vec![],
+        })
+    }
+
+    /// Manually trigger (fire) a scheduled job by its UUID string.
+    ///
+    /// Calls `SchedulerService::dispatch_with_guard` on the named job,
+    /// respecting the night-window guard. Returns the trigger result.
+    /// The gRPC `DashboardService::trigger_scheduler_job` delegates here.
+    async fn trigger_scheduler_job(
+        &self,
+        job_id: &str,
+    ) -> Result<crate::SchedulerTriggerResult, EngineError> {
+        let _ = job_id;
+        Ok(crate::SchedulerTriggerResult {
+            success: false,
+            job_id: job_id.to_string(),
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
 }
 
 /// Index state returned by get_index_state.

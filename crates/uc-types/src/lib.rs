@@ -27,5 +27,8 @@ pub use memory::{
     MemorySearchRequest, MemorySearchResponse, MemorySearchResult, MemorySearchScope,
     MemoryWriteRequest,
 };
-pub use scheduler::{ExecutionHistory, ExecutionStatus, NightWindowConfig, ScheduledTask};
+pub use scheduler::{
+    ExecutionHistory, ExecutionStatus, NightWindowConfig, ScheduledTask, SchedulerStatus,
+    SchedulerTriggerResult,
+};
 pub use search::{AstQuery, SearchMode, SearchQuery, SearchResult, SearchResultItem, SymbolKind};
