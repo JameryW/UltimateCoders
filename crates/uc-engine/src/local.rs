@@ -29,6 +29,7 @@ use crate::metadata::postgres::PostgresMetadataStore;
 use crate::rate_limiter::LlmRateLimiter;
 use crate::sandbox::subprocess::SubprocessSandbox;
 use crate::sandbox::{ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle};
+use crate::scheduler::SchedulerService;
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
 
@@ -58,6 +59,9 @@ pub struct LocalEngine {
     sandbox: Arc<dyn Sandbox>,
     /// Task store for task orchestration methods.
     task_store: Arc<Mutex<crate::task_store::TaskStore>>,
+    /// Scheduler service for cron/one-shot job scheduling with night-window guard.
+    /// The dispatcher is wired to call `submit_task` on this engine when a job fires.
+    scheduler_service: Arc<SchedulerService>,
     start_time: Instant,
 }
 
@@ -148,6 +152,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service: Arc::new(SchedulerService::new()),
             start_time: Instant::now(),
         })
     }
@@ -213,6 +218,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service: Arc::new(SchedulerService::new()),
             start_time: Instant::now(),
         }
     }
@@ -271,6 +277,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service: Arc::new(SchedulerService::new()),
             start_time: Instant::now(),
         }
     }
@@ -442,6 +449,32 @@ impl LocalEngine {
     /// Useful for switching from subprocess to Docker mode at runtime.
     pub fn set_sandbox(&mut self, sandbox: Arc<dyn Sandbox>) {
         self.sandbox = sandbox;
+    }
+
+    // ── Scheduler Operations ─────────────────────────────────────
+
+    /// Get the scheduler service (for direct access).
+    ///
+    /// The scheduler service manages cron/one-shot jobs with night-window guard.
+    /// By default it uses a `LoggingDispatcher` (no-op). Call
+    /// [`init_scheduler_dispatcher`](Self::init_scheduler_dispatcher) after
+    /// construction to wire it to `engine.submit_task` via `EngineSubmitDispatcher`.
+    pub fn scheduler_service(&self) -> &Arc<SchedulerService> {
+        &self.scheduler_service
+    }
+
+    /// Wire the scheduler service to dispatch via `engine.submit_task`.
+    ///
+    /// This replaces the default `LoggingDispatcher` with an `EngineSubmitDispatcher`
+    /// that calls `self.submit_task(description, project_id)` when a scheduled
+    /// job fires. Must be called after construction (chicken-and-egg: the
+    /// dispatcher needs `Arc<LocalEngine>`, which the engine doesn't have until
+    /// it's fully built). Should be called before `scheduler_service.start()`.
+    ///
+    /// This is a no-op if called more than once (the dispatcher is simply replaced).
+    pub async fn init_scheduler_dispatcher(&self) {
+        let dispatcher = Arc::new(crate::scheduler::EngineSubmitDispatcher::new(self.clone()));
+        self.scheduler_service.set_dispatcher(dispatcher).await;
     }
 }
 

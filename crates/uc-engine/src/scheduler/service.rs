@@ -80,7 +80,14 @@ pub struct SchedulerService {
     /// Execution history records (in-memory cache; store is source of truth).
     execution_history: Arc<RwLock<Vec<ExecutionHistory>>>,
     /// The dispatcher for executing tasks.
-    dispatcher: Arc<dyn ScheduleDispatcher>,
+    ///
+    /// Wrapped in `RwLock` to allow late binding: the `EngineSubmitDispatcher`
+    /// needs an `Arc<LocalEngine>`, but `LocalEngine` owns the
+    /// `SchedulerService` — a chicken-and-egg. The engine constructs the
+    /// service with a `LoggingDispatcher` placeholder, then calls
+    /// `set_dispatcher` to swap in the real `EngineSubmitDispatcher` once
+    /// the engine itself is fully constructed.
+    dispatcher: Arc<RwLock<Arc<dyn ScheduleDispatcher>>>,
     /// The persistence store for scheduled tasks and execution history.
     store: Arc<dyn ScheduleStore>,
     /// Whether the scheduler has been started.
@@ -108,7 +115,7 @@ impl SchedulerService {
             night_window: Arc::new(RwLock::new(None)),
             job_metadata: Arc::new(RwLock::new(HashMap::new())),
             execution_history: Arc::new(RwLock::new(Vec::new())),
-            dispatcher,
+            dispatcher: Arc::new(RwLock::new(dispatcher)),
             store,
             started: Arc::new(RwLock::new(false)),
             #[cfg(feature = "scheduler")]
@@ -127,6 +134,22 @@ impl SchedulerService {
     /// Create a new scheduler service with a custom store (logging dispatcher).
     pub fn with_store(store: Arc<dyn ScheduleStore>) -> Self {
         Self::with_store_and_dispatcher(store, Arc::new(LoggingDispatcher))
+    }
+
+    /// Replace the dispatcher after construction.
+    ///
+    /// This enables late binding for `EngineSubmitDispatcher`, which needs
+    /// an `Arc<LocalEngine>` — but `LocalEngine` owns the `SchedulerService`.
+    /// The engine constructs the service with a `LoggingDispatcher` placeholder,
+    /// then calls `set_dispatcher` to swap in the real dispatcher.
+    ///
+    /// Should be called before `start()` — if called after, existing
+    /// tokio-cron-scheduler callbacks will pick up the new dispatcher on
+    /// their next `dispatch_with_guard` call (the RwLock read is per-dispatch).
+    pub async fn set_dispatcher(&self, dispatcher: Arc<dyn ScheduleDispatcher>) {
+        let mut d = self.dispatcher.write().await;
+        *d = dispatcher;
+        info!("Scheduler dispatcher replaced");
     }
 
     /// Set the night window configuration.
@@ -321,7 +344,8 @@ impl SchedulerService {
             Ok(()) => {
                 // Within window — dispatch the task
                 let started_at = Utc::now();
-                match self.dispatcher.dispatch(&task) {
+                let dispatcher = self.dispatcher.read().await.clone();
+                match dispatcher.dispatch(&task) {
                     Ok(()) => {
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
@@ -369,7 +393,13 @@ impl SchedulerService {
     }
 
     /// Record an execution history entry (both in-memory and to the store).
-    async fn record_execution(&self, history: &ExecutionHistory) {
+    ///
+    /// Public so that late-binding dispatchers (e.g., `EngineSubmitDispatcher`)
+    /// can append a `Failed` entry when a fire-and-forget `submit_task` fails
+    /// asynchronously — `dispatch_with_guard` will have already recorded a
+    /// `Completed` entry (spawn succeeded), and this appends the failure
+    /// outcome so the history is not misleading.
+    pub async fn record_execution(&self, history: &ExecutionHistory) {
         // Save to store (best-effort; log errors but don't fail the dispatch)
         if let Err(e) = self.store.save_execution(history).await {
             warn!(error = %e, "Failed to persist execution history to store");
