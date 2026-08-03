@@ -9,6 +9,11 @@
 
 /** Compact elapsed: "42s" / "3m" / "1h 05m". Negative input clamps to 0. */
 export function formatElapsed(ms: number): string {
+	// ponytail: guard non-finite input — a restored/older record missing a stamp
+	// (createdAt/startedAt/completedAt undefined despite the `number` type) makes the
+	// caller's subtraction yield NaN, and `Math.max(0, NaN)` is NaN → "NaNs" (mirrors
+	// the #536/#537 NaN-display class). Fall back to "0s" rather than render "NaNs".
+	if (!Number.isFinite(ms)) return "0s";
 	const s = Math.max(0, Math.floor(ms / 1000));
 	if (s < 60) return `${s}s`;
 	const m = Math.floor(s / 60);
