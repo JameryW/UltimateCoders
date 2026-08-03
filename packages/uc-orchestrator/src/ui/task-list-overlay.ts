@@ -393,6 +393,11 @@ class TaskListComponent {
 	}
 
 	private formatAge(ts: number): string {
+		// ponytail: guard non-finite input — a restored/older record missing createdAt
+		// (undefined despite the `number` type) makes Date.now() - undefined = NaN, and
+		// Math.max(0, NaN) is NaN → "NaNd ago" (mirrors the #536/#537 NaN-display class).
+		// Fall back to "0s ago" rather than render "NaNd ago".
+		if (!Number.isFinite(ts)) return "0s ago";
 		// ponytail: clamp negative diff to 0 — a future createdAt (clock skew
 		// between client and server, or a ts set slightly ahead) produced
 		// "-5s ago" without this. "0s ago" is the honest floor.

@@ -579,6 +579,19 @@ const UP = "\x1b[A", DOWN = "\x1b[B", PAGEUP = "\x1b[5~", PAGEDOWN = "\x1b[6~",
 	check("terminal task w/o completedAt has NO age (no misleading 'ago')", !row4.includes("ago"));
 }
 
+// ponytail: formatAge guards non-finite createdAt — a restored/older record missing
+// createdAt (undefined despite the `number` type) made Date.now()-undefined = NaN, and
+// Math.max(0, NaN) = NaN → "NaNd ago" (mirrors the #536/#537 NaN-display class). An
+// in_flight task has no completedAt path, so it hits formatAge(createdAt) directly.
+{
+	const noCreated = makeTask("t1", "in_progress");
+	(noCreated as any).createdAt = undefined;
+	const { comp } = makeComponent([noCreated]);
+	const row = comp.render(80).find((l: string) => l.includes("t1")) ?? "";
+	check("missing createdAt shows no NaN age", !row.includes("NaN"));
+	check("missing createdAt falls back to 0s ago", row.includes("0s ago"));
+}
+
 // empty list — pageDown/end/G must not produce a negative cursorIdx (phantom cursor)
 // ponytail: Math.min(tasks.length-1, …) on empty list = Math.min(-1, …) = -1 without the floor.
 {
