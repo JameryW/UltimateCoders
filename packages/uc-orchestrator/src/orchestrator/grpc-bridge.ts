@@ -799,10 +799,14 @@ export class GrpcBridge {
 			status: task.status,
 			projectId: task.projectId,
 			subtasks: task.subtasks.map((st) => ({
-				id: st.id,
-				description: st.description,
+				// ponytail: sanitize remote subtask fields here too — parseTaskProto (#531) fixed
+				// the SubmitTaskResponse path, but getTask/listTasks go through parseTaskFromProto,
+				// which had the same raw-field gap. A remote \n in a description breaks the same
+				// row-layout surfaces. Mirror the sanitization.
+				id: String(st.id ?? "").replace(/\s+/g, "").trim(),
+				description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
 				status: st.status,
-				dependsOn: [...st.dependsOn],
+				dependsOn: (st.dependsOn ?? []).map((d: string) => String(d).trim()).filter(Boolean),
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				retryCount: st.retryCount,
