@@ -292,7 +292,14 @@ impl TextSearchIndex {
 
     /// Regex search: match the query pattern against indexed tokens.
     fn search_regex(&self, query: &SearchQuery) -> Result<SearchResult, EngineError> {
-        let pattern = if query.query.starts_with('/') && query.query.ends_with('/') {
+        // ponytail: strip surrounding slashes to treat "/pattern/" as regex. A
+        // lone "/" or "//" would slice to an empty range (start > end) and
+        // panic; guard on len > 2 so the slice stays valid, else use the raw
+        // query (an empty/1-char pattern is a harmless regex either way).
+        let pattern = if query.query.len() > 2
+            && query.query.starts_with('/')
+            && query.query.ends_with('/')
+        {
             &query.query[1..query.query.len() - 1]
         } else {
             &query.query
@@ -921,6 +928,30 @@ impl Config {
 
         let result = index.search(&query).unwrap();
         assert!(!result.items.is_empty());
+    }
+
+    #[cfg(feature = "indexing")]
+    #[test]
+    fn test_regex_search_lone_slash_no_panic() {
+        // A query of "/" or "//" used to slice to an empty range (start > end)
+        // and panic in search_regex's slash-stripping. The guard keeps the raw
+        // query; an empty/1-char regex is harmless (matches nothing or everything).
+        let mut index = TextSearchIndex::new();
+        index
+            .index_file("repo1", "main.rs", "rust", "fn main() {}")
+            .unwrap();
+        for q in ["/", "//"] {
+            let query = SearchQuery {
+                query: q.to_string(),
+                modes: vec![SearchMode::Text],
+                repo_ids: vec![],
+                languages: vec![],
+                path_patterns: vec![],
+                max_results: 10,
+            };
+            // Must not panic.
+            let _ = index.search(&query).unwrap();
+        }
     }
 
     #[cfg(feature = "indexing")]
