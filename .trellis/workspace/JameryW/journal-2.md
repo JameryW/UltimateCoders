@@ -1836,3 +1836,45 @@ Scanned TS orchestrator.ts for silent failures. reviewSubtaskLocal/Remote used p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 106: Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard)
+
+**Date**: 2026-08-03
+**Task**: Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard)
+**Branch**: `main`
+
+### Summary
+
+Two-track session: (1) full cross-stack audit — TUI (8 modules, 2 bugs #538/#539), Python worker (8 files, 1 bug #540), Rust uc-engine (3 bugs #541/#542/#543), Dashboard React + PyO3 + grpc-server (clean); (2) activated the dormant Rust SchedulerService end-to-end via Trellis B-flow — config loader (#544), engine wiring + EngineSubmitDispatcher + late-binding dispatcher + boot load (#545), gRPC routes-to-engine + cron-callback dispatch + AddCronJob stub + Python stub cleanup (#547), scheduler-spec update (#546). End-to-end: uc.scheduler.yaml cron jobs fire via engine.submit_task with night-window guard; dashboard GetSchedulerStatus returns available:true. ADR: Rust owns scheduling, fire-and-forget dispatch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aea778f7` | (see git log) |
+| `67530dad` | (see git log) |
+| `f2f2d37e` | (see git log) |
+| `eccbc322` | (see git log) |
+| `95b2fb2a` | (see git log) |
+| `57ef0e9b` | (see git log) |
+| `2ed02372` | (see git log) |
+| `3cdd7fc5` | (see git log) |
+| `0a176b56` | (see git log) |
+| `9ec97ca8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
