@@ -640,8 +640,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						const shown = sorted.slice(0, SHOWN);
 						const lines = shown.map(
 							(r: any) => {
-								const repo = r.repoId ?? r.repo_id ?? "?";
-								const path = r.filePath ?? r.file_path ?? "?";
+								// ponytail: fall back to "?" when the field is empty (not just null/undefined) —
+								// `??` leaves "" as-is, so an empty repoId/path rendered "[ ]" / bare " — ".
+								const orQ = (v: unknown) => (typeof v === "string" && v.trim() ? v : "?");
+								const repo = orQ(r.repoId ?? r.repo_id);
+								const path = orQ(r.filePath ?? r.file_path);
 								// ponytail: show the score when it's a real number (incl. 0) — a 0-score result
 								// is the lowest-relevance hit, not an unscored one. The old truthy check
 								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest
