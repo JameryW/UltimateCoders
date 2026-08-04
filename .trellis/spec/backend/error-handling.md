@@ -309,3 +309,35 @@ gRPC health reflection (`tonic-health`) is also registered, allowing standard `g
 2. **Forgetting to format the original error** -- Just `EngineError::ConnectionError("error")` loses the actual cause. Always include the original error: `format!("TiKV read error: {}", e)`.
 
 3. **Using `IndexError` or `SearchError` for "not found" semantics** -- New code should use `EngineError::NotFound(msg)` instead. `IndexError` maps to `PyKeyError` and gRPC `NOT_FOUND` for backward compatibility, but `NotFound` is the canonical variant. Empty search results are NOT errors — only single-key lookups that fail should return `NotFound`.
+---
+
+## ResultAggregator (post-wave conflict surfacing)
+
+The `ResultAggregator` (`python/ultimate_coders/agent/aggregator.py`) runs at task completion (`orchestrator._update_task_status`), BEFORE `MergeArbiter`. It's **advisory only** — surfaces same-file conflicts via in-memory 3-way merge, does NOT write merged content (`MergeArbiter` remains the sole writer).
+
+### Empty-diff data-loss class
+
+`FileChange.diff` is commonly `""` (the worker's `_parse_agent_file_changes` sets `diff=""` at sandbox.py:1007/1546 — it records the path + change_type but not a diff). The aggregator's `_merge_file` must NOT fall back to `base` for an empty diff (the pre-fix `changes[0].diff if changes[0].diff else base` did, silently dropping both changes when two modifiers had empty diffs). Multi-modifier merges with ANY empty diff → `MergeResult(success=False)` → `conflict_files` (surfaced, not hidden). Single-modifier empty diffs pass through (no merge call).
+
+### Fire-and-forget + advisory
+
+- `_schedule_aggregation` mirrors `_schedule_arbitration`: `asyncio.create_task` + strong-ref (`_pending_aggregation` set) + `done_callback` discard. `RuntimeError` (no event loop) handled.
+- `_aggregate_results` is `try/except`-wrapped — aggregate errors never propagate, never crash task completion.
+- `base_files` sourced from `merge_arbiter._project_path` (read-only); `{}` if no arbiter (first-modifier-wins).
+
+### Wrong vs Correct
+
+#### Wrong: writing merged content
+```python
+# aggregator writes merged files → double-write race with MergeArbiter
+for fc in result.merged_files:
+    open(os.path.join(workspace, fc.file_path), 'w').write(fc.diff)
+```
+
+#### Correct: advisory only
+```python
+# log only; MergeArbiter is the writer
+if result.conflict_files:
+    logger.warning("aggregation conflicts: %s", result.conflict_files)
+# merged_files logged, NOT written
+```
