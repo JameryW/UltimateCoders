@@ -137,3 +137,36 @@ Wired the defined-but-unemitted night-window events. Gateway-layer window_watche
 ### Next Steps
 
 - None - task complete
+
+
+## Session 114: Distributed scheduler locking for multi-instance gateways
+
+**Date**: 2026-08-05
+**Task**: Distributed scheduler locking for multi-instance gateways
+**Branch**: `main`
+
+### Summary
+
+NATS KV lease distributed lock — only one gateway instance fires each cron tick. LockProvider trait (uc-engine, NoOp default) + NatsKvLockProvider (uc-grpc, kv.create acquire-or-skip). 387+142 tests pass (8 new). PR #558 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abcf2c1e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
