@@ -14,6 +14,8 @@
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
+mod window_watcher;
+
 use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
 use uc_engine::scheduler::config::SchedulerFileConfig;
@@ -424,6 +426,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     start_scheduler(grpc_server.engine(), grpc_server.nats_client()).await;
     #[cfg(not(feature = "messaging"))]
     start_scheduler(grpc_server.engine()).await;
+
+    // Start the night-window transition watcher (publishes schedule.window.opened/closed
+    // to NATS when the configured window transitions inside↔outside). Only started when
+    // messaging is enabled AND NATS is connected AND a night window is configured.
+    // The watcher itself is a no-op (does not spawn) when no night window is set.
+    #[cfg(feature = "messaging")]
+    {
+        if let Some(nats_client) = grpc_server.nats_client() {
+            let scheduler = grpc_server.engine().scheduler_service().clone();
+            window_watcher::start_window_watcher(scheduler, nats_client);
+        }
+    }
     // Create health reporter (marks EngineService as serving)
     let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
 
