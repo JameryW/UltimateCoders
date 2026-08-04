@@ -10,9 +10,9 @@ Provides:
 - Event emission (via TaskEventEmitter or NATS publisher)
 - Subtask selection (simple DAG-ordered ready check)
 - Pause/resume/cancel
+- LLM-based task decomposition (when llm_client available; newline-split fallback)
 
 NOT provided (was in full Orchestrator, now handled by OMP extension):
-- LLM-based task decomposition
 - Scheduler (cron jobs)
 - Dashboard snapshot (nats_worker builds its own)
 """
@@ -78,8 +78,9 @@ class WorkerEntry:
 class Orchestrator:
     """Lightweight orchestrator for nats_worker.
 
-    Provides just enough state management to run tasks through Workers
-    without the full LLM decomposition / scheduler / dashboard stack.
+    Provides just enough state management to run tasks through Workers.
+    LLM decomposition is wired via ``llm_client`` (stored at init);
+    when unavailable or on failure, falls back to newline-split.
     """
 
     def __init__(
@@ -153,33 +154,39 @@ class Orchestrator:
         task_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
     ) -> Task:
-        """Submit a task with simple newline-split decomposition.
+        """Submit a task with LLM decomposition (newline-split fallback).
 
-        The full Orchestrator used LLM decomposition; this minimal version
-        splits by newlines (same as mock mode).
+        When ``self.llm_client`` is available, the description is sent to
+        the LLM for decomposition into ordered subtasks (with dependencies,
+        file constraints, and expected output). The LLM's JSON output is
+        parsed by ``parse_decomposition_output`` (reused from sandbox.py).
+
+        If ``llm_client`` is None, the LLM call raises, or parsing fails,
+        the task falls back to newline-split decomposition (graceful,
+        non-fatal — the task still runs).
 
         Args:
-            description: Task description (newline-separated subtasks).
+            description: Task description (natural language or newline-separated).
             project_id: Project identifier.
             task_id: Optional explicit task ID.
             agent_config: Per-subtask agent config overrides (applied to all subtasks).
         """
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
-        lines = [line.strip() for line in description.split("\n") if line.strip()]
-        if not lines:
-            lines = [description]
 
-        subtasks = []
-        for i, line in enumerate(lines):
-            subtasks.append(Subtask(
-                id=f"{tid}-s{i}",
-                parent_id=tid,
-                description=line,
-                status=SubtaskStatus.PENDING,
-                depends_on=[] if i == 0 else [],  # ponytail: no deps for simple split
-                agent_config=agent_config or {},
-                project_id=project_id,
-            ))
+        # Try LLM decomposition first; fall back to newline-split on any
+        # failure (llm_client None, complete() raises, parse fails, empty).
+        subtasks: list[Subtask] | None = None
+        try:
+            subtasks = await self._decompose_task(description, tid, project_id, agent_config)
+        except Exception:
+            logger.exception(
+                "LLM decomposition failed for task %s, falling back to newline-split",
+                tid,
+            )
+            subtasks = None
+
+        if not subtasks:
+            subtasks = self._newline_split_subtasks(description, tid, project_id, agent_config)
 
         task = Task(
             id=tid,
@@ -191,6 +198,156 @@ class Orchestrator:
         self.tasks[tid] = task
         logger.info("Task %s submitted (%d subtasks)", tid, len(subtasks))
         return task
+
+    # ── Decomposition ─────────────────────────────────────────
+
+    #: System prompt for LLM decomposition. Instructs the LLM to output a
+    #: JSON array matching the schema that ``parse_decomposition_output``
+    #: (sandbox.py:689) expects.
+    _DECOMPOSE_SYSTEM = (
+        "You are a task decomposition agent. Break the given task into "
+        "ordered subtasks that can be executed independently (or with "
+        "dependencies). Output ONLY a JSON array — no prose, no markdown "
+        "fences.\n\n"
+        "Each element must be an object with these keys:\n"
+        '  "description": string — a clear, self-contained subtask description\n'
+        '  "depends_on": array of integers — 1-based indices of subtasks '
+        "this one depends on (empty array if none)\n"
+        '  "file_constraints": array of strings — file paths the subtask '
+        "may read or modify (empty array if unknown)\n"
+        '  "expected_output": string — what a successful result looks like\n'
+        "\nExample:\n"
+        '[\n'
+        '  {"description": "Add foo() to bar.py", "depends_on": [], '
+        '"file_constraints": ["bar.py"], "expected_output": "foo() defined"},\n'
+        '  {"description": "Call foo() from main", "depends_on": [1], '
+        '"file_constraints": ["main.py"], "expected_output": "main calls foo()"}\n'
+        "]"
+    )
+
+    async def _decompose_task(
+        self,
+        description: str,
+        task_id: str,
+        project_id: str,
+        agent_config: dict[str, Any] | None,
+    ) -> list[Subtask] | None:
+        """Decompose a task description via LLM into Subtask objects.
+
+        Returns ``None`` if ``llm_client`` is not available or the LLM
+        returns no usable subtasks. Any exception (network error, parse
+        failure) propagates to the caller (``submit_task``), which catches
+        it and falls back to newline-split.
+
+        The returned subtasks have:
+        - ``id``: ``"{task_id}-s{i}"`` (0-based index)
+        - ``depends_on``: list of ``"{task_id}-s{idx-1}"`` (converting
+          1-based LLM indices to 0-based subtask IDs)
+        - ``file_constraints`` and ``expected_output`` from the LLM output
+        """
+        if self.llm_client is None:
+            return None
+
+        prompt = (
+            f"Decompose this task into ordered subtasks as a JSON array.\n"
+            f"Output ONLY the JSON array, no prose.\n\n"
+            f"Task: {description}"
+        )
+        result = await self.llm_client.complete(
+            messages=[{"role": "user", "content": prompt}],
+            system=self._DECOMPOSE_SYSTEM,
+            max_tokens=2048,
+        )
+
+        # LLMClient.complete returns LLMResponse (has .text). Be defensive
+        # — duck-type for .text, fall back to str() for unknown shapes.
+        if hasattr(result, "text"):
+            raw_text = result.text
+        elif isinstance(result, str):
+            raw_text = result
+        else:
+            raw_text = str(result) if result else ""
+
+        if not raw_text.strip():
+            logger.warning("LLM decomposition returned empty text for task %s", task_id)
+            return None
+
+        from ultimate_coders.agent.sandbox import parse_decomposition_output
+
+        items = parse_decomposition_output(raw_text)
+        if not items:
+            logger.warning("LLM decomposition produced 0 subtasks for task %s", task_id)
+            return None
+
+        subtasks: list[Subtask] = []
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            desc = item.get("description", "").strip()
+            if not desc:
+                continue
+            # Convert 1-based depends_on indices to subtask IDs.
+            raw_deps = item.get("depends_on", [])
+            depends_on: list[str] = []
+            if isinstance(raw_deps, list):
+                for dep in raw_deps:
+                    try:
+                        idx = int(dep) - 1  # 1-based → 0-based
+                        if 0 <= idx < len(items):
+                            depends_on.append(f"{task_id}-s{idx}")
+                    except (ValueError, TypeError):
+                        logger.debug(
+                            "Ignoring invalid depends_on entry %r in subtask %d",
+                            dep, i,
+                        )
+            subtasks.append(Subtask(
+                id=f"{task_id}-s{i}",
+                parent_id=task_id,
+                description=desc,
+                status=SubtaskStatus.PENDING,
+                depends_on=depends_on,
+                file_constraints=item.get("file_constraints", []) or [],
+                expected_output=item.get("expected_output", "") or "",
+                agent_config=agent_config or {},
+                project_id=project_id,
+            ))
+
+        if not subtasks:
+            logger.warning(
+                "LLM decomposition produced no valid subtasks for task %s "
+                "(all items missing description)", task_id,
+            )
+            return None
+
+        logger.info(
+            "LLM decomposition for task %s: %d subtasks",
+            task_id, len(subtasks),
+        )
+        return subtasks
+
+    @staticmethod
+    def _newline_split_subtasks(
+        description: str,
+        task_id: str,
+        project_id: str,
+        agent_config: dict[str, Any] | None,
+    ) -> list[Subtask]:
+        """Fallback: split description by newlines into subtasks."""
+        lines = [line.strip() for line in description.split("\n") if line.strip()]
+        if not lines:
+            lines = [description]
+        return [
+            Subtask(
+                id=f"{task_id}-s{i}",
+                parent_id=task_id,
+                description=line,
+                status=SubtaskStatus.PENDING,
+                depends_on=[],  # no deps for simple split
+                agent_config=agent_config or {},
+                project_id=project_id,
+            )
+            for i, line in enumerate(lines)
+        ]
 
     # ── Subtask lifecycle ──────────────────────────────────────
 
