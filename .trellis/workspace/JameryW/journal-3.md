@@ -104,3 +104,36 @@ Replaced UNIMPLEMENTED stub with real routing — runtime job creation via gRPC.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 113: Emit night-window open/close events on transition
+
+**Date**: 2026-08-05
+**Task**: Emit night-window open/close events on transition
+**Branch**: `main`
+
+### Summary
+
+Wired the defined-but-unemitted night-window events. Gateway-layer window_watcher (mirrors #553 layering) polls is_within_window every 60s, publishes schedule.window.opened/closed on transition via existing publish_window_event. Triple-gated (messaging+NATS+window). No-op when no window. 12 tests, trellis-check verified all 8 criteria. PR #557 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e3e5e2f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

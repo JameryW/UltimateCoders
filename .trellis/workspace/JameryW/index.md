@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 112
-- **Last Active**: 2026-08-04
+- **Total Sessions**: 113
+- **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~106 | Active |
+| `journal-3.md` | ~139 | Active |
 | `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 113 | 2026-08-05 | Emit night-window open/close events on transition | `2e3e5e2f` | `main` |
 | 112 | 2026-08-04 | Implement AddCronJob runtime API | `b4c48173` | `main` |
 | 111 | 2026-08-04 | Fix aggregator _synthesize LLM param bug | `c8c4c66b` | `main` |
 | 110 | 2026-08-04 | Wire LLM decomposition into orchestrator | `c11e6f05` | `main` |
