@@ -104,3 +104,36 @@ Reused #558 NatsKvLockProvider in window_watcher (#557) to dedup multi-instance 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 113: Remove dead Python rate_limiter.py
+
+**Date**: 2026-08-05
+**Task**: Remove dead Python rate_limiter.py
+**Branch**: `main`
+
+### Summary
+
+Deleted orphaned Python RateLimiter. Rust LlmRateLimiter is the real one. 757 tests pass. PR #560 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8c6f9e2b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

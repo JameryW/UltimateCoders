@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 112
+- **Total Sessions**: 113
 - **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~106 | Active |
+| `journal-3.md` | ~139 | Active |
 | `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 113 | 2026-08-05 | Remove dead Python rate_limiter.py | `8c6f9e2b` | `main` |
 | 112 | 2026-08-05 | Deduplicate window events via distributed lock | `d2fd61ef` | `main` |
 | 111 | 2026-08-04 | Fix aggregator _synthesize LLM param bug | `c8c4c66b` | `main` |
 | 110 | 2026-08-04 | Wire LLM decomposition into orchestrator | `c11e6f05` | `main` |
