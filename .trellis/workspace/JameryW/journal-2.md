@@ -1913,3 +1913,36 @@ Activated the dormant ResultAggregator — advisory in-memory 3-way merge at tas
 ### Next Steps
 
 - None - task complete
+
+
+## Session 108: Migrate uc.subtask.execute to JetStream durable consumer
+
+**Date**: 2026-08-04
+**Task**: Migrate uc.subtask.execute to JetStream durable consumer
+**Branch**: `main`
+
+### Summary
+
+Migrated subtask dispatch from core NATS (no redelivery) to JetStream shared durable pull consumer — cross-host crash recovery. 3 ADRs: shared durable + ack-after-execution (ack in finally, all exit paths), max_deliver=5→Failed+term (poison guard), graceful fallback+coexist. trellis-check fixed 2 critical ACK-timing bugs (publish-failure path skipped ack → would re-run completed subtask) + stop() race. 20 new tests, 274 total pass. PR #552 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e74d74c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
