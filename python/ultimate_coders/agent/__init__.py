@@ -1,4 +1,4 @@
-"""Agent subsystem — Worker, Sandbox, Scheduler, Conflict Detection, Aggregation."""
+"""Agent subsystem — Worker, Sandbox, Conflict Detection, Aggregation."""
 
 from ultimate_coders.agent.aggregator import AggregatedResult, AggregationStatus, ResultAggregator
 from ultimate_coders.agent.conflict import (
@@ -16,7 +16,6 @@ from ultimate_coders.agent.distributed_conflict import (
     MergeVerifier,
 )
 from ultimate_coders.agent.sandbox import AgentOutput, SandboxConfig, SandboxManager
-from ultimate_coders.agent.scheduler import Scheduler
 from ultimate_coders.agent.state_sync import (
     ContextInjector,
     FileChangeEvent,
@@ -61,8 +60,6 @@ __all__ = [
     "AgentOutput",
     "SandboxConfig",
     "SandboxManager",
-    # Scheduler
-    "Scheduler",
     # State Sync
     "ContextInjector",
     "FileChangeEvent",
