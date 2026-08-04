@@ -71,3 +71,36 @@ Fixed _synthesize calling complete(prompt=) instead of complete(messages=) — p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 112: Implement AddCronJob runtime API
+
+**Date**: 2026-08-04
+**Task**: Implement AddCronJob runtime API
+**Branch**: `main`
+
+### Summary
+
+Replaced UNIMPLEMENTED stub with real routing — runtime job creation via gRPC. EngineApi::add_cron_job (default impl error, proto-free AddCronJobApiRequest/AddCronJobResult), LocalEngine builds ScheduledTask + delegates to SchedulerService::add_cron_job, DashboardService parses proto + routes + invalid_argument on bad HH:MM. 3 engine + 2 serialization tests, 383+19+138 pass. trellis-check verified all 7 criteria. PR #556 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b4c48173` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
