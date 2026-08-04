@@ -7,8 +7,8 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-2.md`
-- **Total Sessions**: 109
+- **Active File**: `journal-3.md`
+- **Total Sessions**: 110
 - **Last Active**: 2026-08-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1981 | Active |
+| `journal-3.md` | ~40 | Active |
+| `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 110 | 2026-08-04 | Wire LLM decomposition into orchestrator | `c11e6f05` | `main` |
 | 109 | 2026-08-04 | Fix scheduler dispatch: NATS submit (cross-feature audit gap) | `8b649a58` | `main` |
 | 108 | 2026-08-04 | Migrate uc.subtask.execute to JetStream durable consumer | `8e74d74c` | `main` |
 | 107 | 2026-08-04 | Activate ResultAggregator (advisory in-memory merge) | `5e894bfa`, `09e6a433`, `15b5ae3d` | `main` |
