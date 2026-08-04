@@ -190,11 +190,29 @@ class ResultAggregator:
         """
         base = (base_files or {}).get(file_path, "")
 
+        # Data-loss guard: if ANY modifier recorded an empty diff, we cannot
+        # auto-merge — the empty diff carries no mergeable content.  Falling
+        # back to ``base`` here (the original bug) silently dropped that
+        # subtask's changes when merged against another modifier.  Surface
+        # the conflict instead so it is visible rather than hidden.
+        if any(not c.diff for c in changes):
+            logger.warning(
+                "Cannot auto-merge %s: %d of %d changes have an empty diff",
+                file_path,
+                sum(1 for c in changes if not c.diff),
+                len(changes),
+            )
+            return MergeResult(
+                merged=None,
+                success=False,
+                tier=ResolutionTier.AUTO_MERGE,
+            )
+
         # ponytail: merge first two changes, then merge result with next, etc.
         # This is O(n) merge passes. For 2-3 changes per file this is fine.
-        current = changes[0].diff if changes[0].diff else base
+        current = changes[0].diff
         for i in range(1, len(changes)):
-            theirs = changes[i].diff if changes[i].diff else base
+            theirs = changes[i].diff
             merge_result = self._resolver.resolve(base, current, theirs)
             if not merge_result.success:
                 # Escalate through tiers
