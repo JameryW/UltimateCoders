@@ -11,10 +11,12 @@ pub mod auth;
 pub mod client;
 pub mod conversions;
 pub mod dashboard_service;
+pub mod scheduler_dispatch;
 pub mod server;
 pub mod worker_service;
 
 pub use auth::AuthInterceptor;
+pub use scheduler_dispatch::NatsSubmitDispatcher;
 pub use server::TaskStore;
 pub use server::{
     NatsHeartbeat, NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate,

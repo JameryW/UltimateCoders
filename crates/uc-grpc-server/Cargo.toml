@@ -12,7 +12,7 @@ path = "src/main.rs"
 default = ["storage", "indexing", "messaging"]
 storage = ["uc-engine/storage"]
 indexing = ["uc-engine/indexing"]
-messaging = ["uc-grpc/messaging"]
+messaging = ["uc-grpc/messaging", "async-nats"]
 scheduler = ["uc-engine/scheduler"]
 
 [dependencies]
@@ -27,3 +27,6 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
+# async-nats is needed for start_scheduler's nats_client parameter (Option<async_nats::Client>).
+# Feature-gated behind messaging (same as uc-grpc's async-nats).
+async-nats = { workspace = true, optional = true }
