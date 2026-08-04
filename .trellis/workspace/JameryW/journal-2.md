@@ -1878,3 +1878,38 @@ Two-track session: (1) full cross-stack audit — TUI (8 modules, 2 bugs #538/#5
 ### Next Steps
 
 - None - task complete
+
+
+## Session 107: Activate ResultAggregator (advisory in-memory merge)
+
+**Date**: 2026-08-04
+**Task**: Activate ResultAggregator (advisory in-memory merge)
+**Branch**: `main`
+
+### Summary
+
+Activated the dormant ResultAggregator — advisory in-memory 3-way merge at task completion, before MergeArbiter. Fixed the empty-diff data-loss bug in _merge_file (multi-modifier empty diffs surfaced as conflict_files instead of silently falling back to base). Wired into orchestrator._update_task_status (fire-and-forget, mirrors MergeArbiter pattern, advisory-only ADR — AST-verified no writes, MergeArbiter is sole writer). 13 new tests, 716 total pass. PRs #549 (bug fix) + #550 (wiring) merged, #551 (spec) open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e894bfa` | (see git log) |
+| `09e6a433` | (see git log) |
+| `15b5ae3d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
