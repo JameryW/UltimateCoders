@@ -325,7 +325,7 @@ self._app.add_event_handler("startup", self._subscribe_nats_events)
 
 1. **Task ID mismatch**: Orchestrator creates its own task_id, ignoring the one from NATS submit. The gRPC TaskStore's placeholder task stays in Planning forever. Fix requires Orchestrator accepting external task IDs.
 2. **Subtask result type mismatch**: Python sends `result` as `Option<String>`, Rust expects `Option<SubtaskResult>` (a struct). Summary is silently discarded.
-3. **No JetStream persistence**: Core NATS only (at-most-once delivery). If subscriber disconnects, updates are lost.
+3. **uc.subtask.execute now uses JetStream**: Work-queue retention stream `UC_SUBTASKS` + shared durable pull consumer `subtask-workers` (ack-after-execution, max_deliver=5). Worker crash mid-subtask → redelivery to another worker. Falls back to core NATS queue group if JetStream unavailable (mixed-mode coexistence).
 4. **No auto-reconnect**: If NATS connection breaks, gRPC subscriber exits. Requires server restart.
 5. **Heartbeat is coarse**: 30-second heartbeat, 10-minute timeout. No per-task progress tracking.
 
