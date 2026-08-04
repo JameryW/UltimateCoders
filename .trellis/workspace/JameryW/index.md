@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 108
+- **Total Sessions**: 109
 - **Last Active**: 2026-08-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1948 | Active |
+| `journal-2.md` | ~1981 | Active |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 109 | 2026-08-04 | Fix scheduler dispatch: NATS submit (cross-feature audit gap) | `8b649a58` | `main` |
 | 108 | 2026-08-04 | Migrate uc.subtask.execute to JetStream durable consumer | `8e74d74c` | `main` |
 | 107 | 2026-08-04 | Activate ResultAggregator (advisory in-memory merge) | `5e894bfa`, `09e6a433`, `15b5ae3d` | `main` |
 | 106 | 2026-08-03 | Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard) | `aea778f7`, `67530dad`, `f2f2d37e`, `eccbc322`, `95b2fb2a`, `57ef0e9b`, `2ed02372`, `3cdd7fc5`, `0a176b56`, `9ec97ca8` | `main` |

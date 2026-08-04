@@ -1946,3 +1946,36 @@ Migrated subtask dispatch from core NATS (no redelivery) to JetStream shared dur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 109: Fix scheduler dispatch: NATS submit (cross-feature audit gap)
+
+**Date**: 2026-08-04
+**Task**: Fix scheduler dispatch: NATS submit (cross-feature audit gap)
+**Branch**: `main`
+
+### Summary
+
+Cross-feature integration audit found the scheduler cron-fire gap: EngineSubmitDispatcher called Rust engine.submit_task (insert-only, no decompose) → scheduler-created tasks never reached the Python orchestrator → JetStream never fired for them. Fix: NatsSubmitDispatcher (uc-grpc, new) publishes {task_id, description, project_id} to uc.task.submit (Python decompose path), fresh task_id, fire-and-forget + Failed history. Gateway injects it via set_dispatcher when NATS connected; EngineSubmitDispatcher fallback when not. trellis-check verified all 7 points (no key drift, fresh id, injection ordering, layering, feature-gating). 144+380 tests pass. PR #553 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8b649a58` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
