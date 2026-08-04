@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "LLM call convention — the complete(messages=, system=, max_tokens=) signature; the prompt= misuse pattern."}
