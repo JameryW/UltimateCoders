@@ -128,24 +128,57 @@ async fn index_workspace_repos(engine: &LocalEngine) {
     );
 }
 
-/// Load `uc.scheduler.yaml` (if present), wire the scheduler dispatcher to
-/// `engine.submit_task`, add configured jobs + night window, and start the
-/// scheduler service.
+/// Load `uc.scheduler.yaml` (if present), wire the scheduler dispatcher,
+/// add configured jobs + night window, and start the scheduler service.
 ///
 /// Resolution order: `UC_SCHEDULER_CONFIG` env, then `./uc.scheduler.yaml`,
 /// then skip (no error — scheduler stays idle). Per-job failures log a warning
 /// but do not abort startup (tolerant, mirrors `index_workspace_repos`).
+///
+/// # Dispatcher selection
+///
+/// - **NATS connected** (`nats_client = Some`): wires `NatsSubmitDispatcher`,
+///   which publishes cron-fires to `uc.task.submit` — the Python orchestrator's
+///   consume path. This routes scheduler-created tasks through the normal
+///   decompose → JetStream dispatch → worker execution chain.
+/// - **No NATS** (`nats_client = None`): falls back to `EngineSubmitDispatcher`,
+///   which calls `engine.submit_task` directly (insert-only, no decompose).
+///   Graceful degradation for standalone/no-NATS deployments.
 ///
 /// This must NOT block `Server::serve` — the config load is sync and fast,
 /// but `start()` is async. We call it here before `Server::serve` (which is
 /// the main `await` point). The `start()` call completes quickly (creates the
 /// `JobScheduler` and registers jobs); actual cron-fires happen later in
 /// background tasks managed by `tokio-cron-scheduler`.
-async fn start_scheduler(engine: &LocalEngine) {
-    // Wire the dispatcher: EngineSubmitDispatcher calls engine.submit_task
-    // when a cron/one-shot fires. Must happen before start() so the scheduler
-    // uses the real dispatcher from the first fire.
-    engine.init_scheduler_dispatcher().await;
+async fn start_scheduler(
+    engine: &LocalEngine,
+    #[cfg(feature = "messaging")] nats_client: Option<async_nats::Client>,
+) {
+    // Wire the dispatcher. When NATS is connected, use NatsSubmitDispatcher
+    // (publishes to uc.task.submit → Python orchestrator decomposes + dispatches
+    // subtasks via JetStream). Otherwise fall back to EngineSubmitDispatcher
+    // (engine.submit_task — insert-only, no decompose; graceful degradation).
+    #[cfg(feature = "messaging")]
+    {
+        if let Some(client) = nats_client {
+            let scheduler = engine.scheduler_service().clone();
+            let dispatcher = Arc::new(uc_grpc::NatsSubmitDispatcher::new(client, scheduler))
+                as Arc<dyn uc_engine::scheduler::ScheduleDispatcher>;
+            engine.scheduler_service().set_dispatcher(dispatcher).await;
+            tracing::info!(
+                "Scheduler dispatcher wired: NatsSubmitDispatcher (uc.task.submit → Python orchestrator)"
+            );
+        } else {
+            engine.init_scheduler_dispatcher().await;
+            tracing::info!(
+                "Scheduler dispatcher wired: EngineSubmitDispatcher (fallback, no NATS)"
+            );
+        }
+    }
+    #[cfg(not(feature = "messaging"))]
+    {
+        engine.init_scheduler_dispatcher().await;
+    }
 
     // Resolve config path: UC_SCHEDULER_CONFIG env, then ./uc.scheduler.yaml
     let path = match std::env::var("UC_SCHEDULER_CONFIG") {
@@ -336,18 +369,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Background workspace indexing finished");
     });
 
-    // Load uc.scheduler.yaml (if present), wire the dispatcher to
-    // engine.submit_task, add configured jobs + night window, and start
-    // the scheduler service. The config load is sync and fast; start()
-    // creates the JobScheduler and returns quickly (cron-fires happen in
-    // background tasks). If no uc.scheduler.yaml exists, the scheduler
-    // stays idle (no-op). Failures log warnings but don't abort startup.
-    start_scheduler(&engine).await;
-
     // Create task store backend (in-memory or PostgreSQL)
     let (task_backend, event_store) = create_task_backend().await;
 
-    // Create gRPC server, optionally with NATS integration
+    // Create gRPC server, optionally with NATS integration.
+    // NOTE: GrpcServer is created BEFORE start_scheduler so we can extract
+    // the NATS client and pass it to the scheduler dispatcher. When NATS is
+    // connected, the scheduler uses NatsSubmitDispatcher (publishes to
+    // uc.task.submit → Python orchestrator decomposes + dispatches subtasks).
+    // Without NATS, it falls back to EngineSubmitDispatcher (engine.submit_task).
     let grpc_server = match std::env::var("UC_NATS_URL") {
         Ok(nats_url) => {
             tracing::info!(nats_url = %nats_url, "Attempting NATS connection for TaskService");
@@ -358,6 +388,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
+
+    // Load uc.scheduler.yaml (if present), wire the dispatcher, add configured
+    // jobs + night window, and start the scheduler service. The config load is
+    // sync and fast; start() creates the JobScheduler and returns quickly
+    // (cron-fires happen in background tasks). If no uc.scheduler.yaml exists,
+    // the scheduler stays idle (no-op). Failures log warnings but don't abort
+    // startup.
+    //
+    // Extract the NATS client from the GrpcServer (if connected) so the
+    // scheduler can route cron-fires through uc.task.submit. The GrpcServer
+    // holds an Arc<LocalEngine> internally — engine() returns a &LocalEngine
+    // reference valid for the server's lifetime.
+    #[cfg(feature = "messaging")]
+    start_scheduler(grpc_server.engine(), grpc_server.nats_client()).await;
+    #[cfg(not(feature = "messaging"))]
+    start_scheduler(grpc_server.engine()).await;
     // Create health reporter (marks EngineService as serving)
     let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
 
