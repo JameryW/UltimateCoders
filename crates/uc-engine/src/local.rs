@@ -985,6 +985,45 @@ impl EngineApi for LocalEngine {
             }
         }
     }
+
+    async fn add_cron_job(
+        &self,
+        request: uc_types::AddCronJobApiRequest,
+    ) -> Result<uc_types::AddCronJobResult, EngineError> {
+        // Build a ScheduledTask from the API request. When night-window times
+        // are absent, fall back to the default UTC window (22:00-06:00). The
+        // actual guard check uses the service-level night window; the per-task
+        // fields are stored metadata.
+        let default_nw = uc_types::NightWindowConfig::default_utc();
+        let night_window_start = request.night_window_start.unwrap_or(default_nw.start);
+        let night_window_end = request.night_window_end.unwrap_or(default_nw.end);
+
+        let mut task = uc_types::ScheduledTask::cron(
+            request.description,
+            request.project_id,
+            request.cron_expression,
+            night_window_start,
+            night_window_end,
+            request.timezone,
+        );
+
+        // Apply the enabled flag (ScheduledTask::cron defaults to true).
+        task.enabled = request.enabled;
+
+        let svc = &self.scheduler_service;
+        match svc.add_cron_job(task).await {
+            Ok(result) => Ok(uc_types::AddCronJobResult {
+                success: true,
+                job_id: result.task_id.to_string(),
+                error: None,
+            }),
+            Err(e) => Ok(uc_types::AddCronJobResult {
+                success: false,
+                job_id: String::new(),
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 }
 
 impl LocalEngine {

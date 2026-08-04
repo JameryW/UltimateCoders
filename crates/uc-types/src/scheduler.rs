@@ -275,6 +275,39 @@ pub struct SchedulerTriggerResult {
     pub error: Option<String>,
 }
 
+/// Trait-level request for creating a cron job at runtime, passed to
+/// `EngineApi::add_cron_job`. Decoupled from the proto so the trait stays
+/// proto-free (mirrors `SchedulerStatus` / `SchedulerTriggerResult`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCronJobApiRequest {
+    /// Human-readable description of the task.
+    pub description: String,
+    /// Cron expression for recurring tasks (e.g., "0 22 * * *").
+    pub cron_expression: String,
+    /// The project/repository context for the task.
+    pub project_id: String,
+    /// Start of the night execution window (HH:MM), if any.
+    pub night_window_start: Option<NaiveTime>,
+    /// End of the night execution window (HH:MM), if any.
+    pub night_window_end: Option<NaiveTime>,
+    /// IANA timezone name (e.g., "Asia/Shanghai", "UTC").
+    pub timezone: String,
+    /// Whether this scheduled task is enabled.
+    pub enabled: bool,
+}
+
+/// Result of creating a cron job at runtime, returned by
+/// `EngineApi::add_cron_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCronJobResult {
+    /// Whether the job was created successfully.
+    pub success: bool,
+    /// The UUID (string) of the newly created scheduled task.
+    pub job_id: String,
+    /// Error message if creation failed.
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +391,39 @@ mod tests {
         let history = ExecutionHistory::skipped(task_id, "Task disabled".to_string());
         assert_eq!(history.status, ExecutionStatus::Skipped);
         assert_eq!(history.result_summary, Some("Task disabled".to_string()));
+    }
+
+    #[test]
+    fn add_cron_job_api_request_serialization() {
+        let request = AddCronJobApiRequest {
+            description: "Nightly build".to_string(),
+            cron_expression: "0 22 * * *".to_string(),
+            project_id: "proj".to_string(),
+            night_window_start: Some(NaiveTime::from_hms_opt(22, 0, 0).unwrap()),
+            night_window_end: Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()),
+            timezone: "Asia/Shanghai".to_string(),
+            enabled: true,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: AddCronJobApiRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.description, "Nightly build");
+        assert_eq!(parsed.cron_expression, "0 22 * * *");
+        assert_eq!(parsed.timezone, "Asia/Shanghai");
+        assert!(parsed.night_window_start.is_some());
+        assert!(parsed.enabled);
+    }
+
+    #[test]
+    fn add_cron_job_result_serialization() {
+        let result = AddCronJobResult {
+            success: true,
+            job_id: Uuid::new_v4().to_string(),
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: AddCronJobResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.success);
+        assert!(!parsed.job_id.is_empty());
+        assert!(parsed.error.is_none());
     }
 }

@@ -192,6 +192,24 @@ pub trait EngineApi: Send + Sync {
             error: Some("Scheduler not available".to_string()),
         })
     }
+
+    /// Create a cron job at runtime (instead of declaring it in
+    /// `uc.scheduler.yaml` at boot). The gRPC `DashboardService::add_cron_job`
+    /// delegates here. Returns the new job's UUID on success.
+    ///
+    /// Default impl returns an error — only `LocalEngine` (with the scheduler
+    /// feature) implements this.
+    async fn add_cron_job(
+        &self,
+        request: crate::AddCronJobApiRequest,
+    ) -> Result<crate::AddCronJobResult, EngineError> {
+        let _ = request;
+        Ok(crate::AddCronJobResult {
+            success: false,
+            job_id: String::new(),
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
 }
 
 /// Index state returned by get_index_state.
