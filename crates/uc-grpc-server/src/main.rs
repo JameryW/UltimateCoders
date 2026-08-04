@@ -162,22 +162,42 @@ async fn start_scheduler(
     {
         if let Some(client) = nats_client {
             let scheduler = engine.scheduler_service().clone();
-            let dispatcher = Arc::new(uc_grpc::NatsSubmitDispatcher::new(client, scheduler))
-                as Arc<dyn uc_engine::scheduler::ScheduleDispatcher>;
+            let dispatcher = Arc::new(uc_grpc::NatsSubmitDispatcher::new(
+                client.clone(),
+                scheduler,
+            )) as Arc<dyn uc_engine::scheduler::ScheduleDispatcher>;
             engine.scheduler_service().set_dispatcher(dispatcher).await;
             tracing::info!(
                 "Scheduler dispatcher wired: NatsSubmitDispatcher (uc.task.submit → Python orchestrator)"
+            );
+
+            // Wire the distributed lock provider so only one gateway instance
+            // fires each cron tick. NatsKvLockProvider uses a NATS KV lease
+            // (create-or-fail + TTL auto-release). Without this, N instances
+            // would each fire → N duplicate task submissions.
+            let lock_provider =
+                Arc::new(uc_grpc::NatsKvLockProvider::with_random_instance_id(client))
+                    as Arc<dyn uc_engine::scheduler::LockProvider>;
+            engine
+                .scheduler_service()
+                .set_lock_provider(lock_provider)
+                .await;
+            tracing::info!(
+                "Scheduler lock provider wired: NatsKvLockProvider (multi-instance coordination)"
             );
         } else {
             engine.init_scheduler_dispatcher().await;
             tracing::info!(
                 "Scheduler dispatcher wired: EngineSubmitDispatcher (fallback, no NATS)"
             );
+            // No NATS → NoOpLockProvider (default, always acquire).
+            // Single-instance = no coordination needed.
         }
     }
     #[cfg(not(feature = "messaging"))]
     {
         engine.init_scheduler_dispatcher().await;
+        // No messaging → NoOpLockProvider (default, always acquire).
     }
 
     // Resolve config path: UC_SCHEDULER_CONFIG env, then ./uc.scheduler.yaml
