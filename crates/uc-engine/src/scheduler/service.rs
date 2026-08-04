@@ -1267,4 +1267,107 @@ mod tests {
         assert!(!result.success, "Triggering a non-existent job should fail");
         assert!(result.error.is_some(), "Error message should be present");
     }
+
+    #[tokio::test]
+    async fn local_engine_add_cron_job_creates_job() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+
+        let request = uc_types::AddCronJobApiRequest {
+            description: "Nightly rebuild".to_string(),
+            cron_expression: "0 22 * * *".to_string(),
+            project_id: "project-1".to_string(),
+            night_window_start: Some(NaiveTime::from_hms_opt(22, 0, 0).unwrap()),
+            night_window_end: Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()),
+            timezone: "UTC".to_string(),
+            enabled: true,
+        };
+
+        let result = engine.add_cron_job(request).await.unwrap();
+
+        assert!(result.success, "add_cron_job should succeed");
+        assert!(
+            !result.job_id.is_empty(),
+            "job_id should be a non-empty UUID string"
+        );
+        assert!(result.error.is_none(), "No error on success");
+
+        // Verify the job was registered in the scheduler service
+        let job_uuid = uuid::Uuid::parse_str(&result.job_id).expect("job_id is a valid UUID");
+        let job = engine.scheduler_service().get_job(&job_uuid).await;
+        assert!(job.is_some(), "Job should be retrievable after creation");
+        let job = job.unwrap();
+        assert_eq!(job.description, "Nightly rebuild");
+        assert_eq!(job.cron_expression, Some("0 22 * * *".to_string()));
+        assert_eq!(job.project_id, "project-1");
+        assert!(job.enabled, "Job should be enabled");
+        assert_eq!(job.timezone, "UTC");
+    }
+
+    #[tokio::test]
+    async fn local_engine_add_cron_job_invalid_cron_returns_error() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+
+        let request = uc_types::AddCronJobApiRequest {
+            description: "Bad cron".to_string(),
+            cron_expression: "not a cron".to_string(),
+            project_id: "project-1".to_string(),
+            night_window_start: None,
+            night_window_end: None,
+            timezone: "UTC".to_string(),
+            enabled: true,
+        };
+
+        let result = engine.add_cron_job(request).await.unwrap();
+
+        assert!(
+            !result.success,
+            "Invalid cron expression should return success=false"
+        );
+        assert!(
+            result.error.is_some(),
+            "Error message should be present on failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_add_cron_job_without_night_window_uses_default() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+
+        let request = uc_types::AddCronJobApiRequest {
+            description: "No window job".to_string(),
+            cron_expression: "0 3 * * *".to_string(),
+            project_id: "".to_string(),
+            night_window_start: None,
+            night_window_end: None,
+            timezone: "UTC".to_string(),
+            enabled: false,
+        };
+
+        let result = engine.add_cron_job(request).await.unwrap();
+
+        assert!(result.success, "Job without night window should succeed");
+
+        let job_uuid = uuid::Uuid::parse_str(&result.job_id).expect("job_id is a valid UUID");
+        let job = engine.scheduler_service().get_job(&job_uuid).await.unwrap();
+        assert!(
+            !job.enabled,
+            "enabled flag should be respected (false here)"
+        );
+        // When no night window is provided, the default UTC window (22:00-06:00)
+        // is used as the stored per-task metadata.
+        assert_eq!(
+            job.night_window_start,
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap()
+        );
+        assert_eq!(
+            job.night_window_end,
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap()
+        );
+    }
 }

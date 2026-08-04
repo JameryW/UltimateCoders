@@ -144,15 +144,65 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
 
     async fn add_cron_job(
         &self,
-        _request: Request<AddCronJobRequest>,
+        request: Request<AddCronJobRequest>,
     ) -> Result<Response<AddCronJobResponse>, Status> {
-        // Stub: runtime job creation is not yet supported. Jobs are declared
-        // declaratively in uc.scheduler.yaml (loaded at gateway startup).
-        // This RPC reserves the proto for a future dashboard UI that creates
-        // jobs at runtime.
-        Err(Status::unimplemented(
-            "AddCronJob not yet supported; use uc.scheduler.yaml",
-        ))
+        let req = request.into_inner();
+
+        // Parse optional night-window HH:MM strings → NaiveTime.
+        // Reuses the same "%H:%M" format as scheduler config.rs::parse_hhmm.
+        let night_window_start = req
+            .night_window_start
+            .as_deref()
+            .map(|s| chrono::NaiveTime::parse_from_str(s, "%H:%M"))
+            .transpose()
+            .map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Invalid night_window_start (expected HH:MM): {}",
+                    e
+                ))
+            })?;
+
+        let night_window_end = req
+            .night_window_end
+            .as_deref()
+            .map(|s| chrono::NaiveTime::parse_from_str(s, "%H:%M"))
+            .transpose()
+            .map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Invalid night_window_end (expected HH:MM): {}",
+                    e
+                ))
+            })?;
+
+        let api_request = uc_types::AddCronJobApiRequest {
+            description: req.description,
+            cron_expression: req.cron_expression,
+            project_id: req.project_id,
+            night_window_start,
+            night_window_end,
+            timezone: if req.timezone.is_empty() {
+                "UTC".to_string()
+            } else {
+                req.timezone
+            },
+            enabled: req.enabled,
+        };
+
+        match self.engine().add_cron_job(api_request).await {
+            Ok(result) => Ok(Response::new(AddCronJobResponse {
+                success: result.success,
+                job_id: result.job_id,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to add cron job");
+                Ok(Response::new(AddCronJobResponse {
+                    success: false,
+                    job_id: String::new(),
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
     }
 
     async fn flush_pending_tasks(
