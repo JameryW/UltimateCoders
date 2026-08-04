@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "ScheduleDispatcher trait + add_cron_job signature + ScheduledTask construction — mirror the #547 EngineApi pattern (default impl + LocalEngine delegation)."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Default impl returns error when scheduler feature off; night-window parse HH:MM validation."}
