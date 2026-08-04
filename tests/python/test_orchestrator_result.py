@@ -10,10 +10,14 @@ arbitration — two concurrent MergeArbiter runs merging into main.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
+from ultimate_coders.agent.aggregator import AggregatedResult, AggregationStatus
 from ultimate_coders.agent.orchestrator import Orchestrator, WorkerEntry
 from ultimate_coders.agent.types import (
+    ChangeType,
+    FileChange,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -41,6 +45,24 @@ def _result(subtask_id: str, worker_id: str = "w-1", success: bool = True) -> Su
         summary="done" if success else "boom",
         success=success,
     )
+
+
+def _result_with_files(
+    subtask_id: str,
+    files: list[FileChange],
+    worker_id: str = "w-1",
+) -> SubtaskResult:
+    return SubtaskResult(
+        subtask_id=subtask_id,
+        worker_id=worker_id,
+        modified_files=files,
+        summary=f"{subtask_id} done",
+        success=True,
+    )
+
+
+def _change(path: str, diff: str = "diff content") -> FileChange:
+    return FileChange(file_path=path, change_type=ChangeType.MODIFIED, diff=diff)
 
 
 async def test_duplicate_result_does_not_double_decrement_load():
@@ -96,3 +118,307 @@ async def test_retry_after_failure_still_applies_new_result():
     await orch.handle_subtask_result(_result("st-1"))
     assert st.status == SubtaskStatus.COMPLETED
     assert st.result is not None and st.result.success is True
+
+
+# ── ResultAggregator wiring tests ──────────────────────────────
+
+
+class TestAggregatorWiring:
+    """Verify the ResultAggregator is instantiated and called at task completion."""
+
+    def test_aggregator_instantiated_in_init(self):
+        """Orchestrator must create a ResultAggregator in __init__."""
+        orch = Orchestrator()
+        assert orch.aggregator is not None
+        assert hasattr(orch, "_pending_aggregation")
+        assert orch._pending_aggregation == set()
+
+    async def test_aggregation_scheduled_on_task_completion(self):
+        """When all subtasks complete, _schedule_aggregation is called."""
+        orch = Orchestrator()
+        task = _make_task("t-agg", ["st-a", "st-b"])
+        orch.tasks["t-agg"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=2)
+
+        orch._schedule_aggregation = MagicMock()
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff-a")],
+        ))
+        await orch.handle_subtask_result(_result_with_files(
+            "st-b", [_change("f.py", "diff-b")],
+        ))
+
+        assert task.status == TaskStatus.COMPLETED
+        orch._schedule_aggregation.assert_called_once_with(task)
+
+    async def test_aggregation_not_scheduled_on_failure(self):
+        """If a subtask fails (task -> FAILED), aggregation should NOT fire."""
+        orch = Orchestrator()
+        task = _make_task("t-fail", ["st-a", "st-b"])
+        orch.tasks["t-fail"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=2)
+        orch._schedule_aggregation = MagicMock()
+
+        await orch.handle_subtask_result(_result("st-a", success=False))
+        await orch.handle_subtask_result(_result("st-b"))
+
+        assert task.status == TaskStatus.FAILED
+        orch._schedule_aggregation.assert_not_called()
+
+    async def test_aggregation_runs_before_arbitration(self):
+        """Both fire on completion; aggregation is scheduled first."""
+        orch = Orchestrator()
+        task = _make_task("t-ord", ["st-a"])
+        orch.tasks["t-ord"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+        orch.merge_arbiter = MagicMock()
+
+        call_order: list[str] = []
+
+        def mock_schedule_agg(task_arg):
+            call_order.append("aggregation")
+
+        def mock_schedule_arb(task_arg):
+            call_order.append("arbitration")
+
+        orch._schedule_aggregation = mock_schedule_agg
+        orch._schedule_arbitration = mock_schedule_arb
+
+        await orch.handle_subtask_result(_result("st-a"))
+
+        assert task.status == TaskStatus.COMPLETED
+        assert call_order == ["aggregation", "arbitration"]
+
+
+class TestAggregationAdvisoryBehavior:
+    """Verify aggregation is advisory — conflicts logged, task still completes, no writes."""
+
+    async def test_aggregation_called_with_subtask_results(self):
+        """The aggregator.aggregate() method is called with the collected results."""
+        orch = Orchestrator()
+        task = _make_task("t-call", ["st-a", "st-b"])
+        orch.tasks["t-call"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=2)
+
+        # Mock the aggregator's aggregate to track the call.
+        mock_result = AggregatedResult(
+            status=AggregationStatus.SUCCESS,
+            merged_files=[],
+            conflict_files=[],
+        )
+        orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff-a")],
+        ))
+        await orch.handle_subtask_result(_result_with_files(
+            "st-b", [_change("g.py", "diff-b")],
+        ))
+
+        # Wait for the fire-and-forget task to complete.
+        await asyncio.sleep(0.05)
+
+        orch.aggregator.aggregate.assert_called_once()
+        call_args = orch.aggregator.aggregate.call_args
+        results_arg = call_args[0][0]
+        assert len(results_arg) == 2
+        assert {r.subtask_id for r in results_arg} == {"st-a", "st-b"}
+
+    async def test_conflict_does_not_abort_task(self):
+        """Aggregation surfacing conflicts does NOT change task status."""
+        orch = Orchestrator()
+        task = _make_task("t-conf", ["st-a", "st-b"])
+        orch.tasks["t-conf"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=2)
+
+        # Mock aggregator to return a conflict result.
+        conflict_result = AggregatedResult(
+            status=AggregationStatus.CONFLICT,
+            merged_files=[],
+            conflict_files=["f.py"],
+        )
+        orch.aggregator.aggregate = AsyncMock(return_value=conflict_result)
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff-a")],
+        ))
+        await orch.handle_subtask_result(_result_with_files(
+            "st-b", [_change("f.py", "diff-b")],
+        ))
+
+        # Task should still be COMPLETED despite conflict.
+        assert task.status == TaskStatus.COMPLETED
+
+    async def test_aggregation_exception_is_non_fatal(self):
+        """If aggregate() raises, the task still completes (non-fatal)."""
+        orch = Orchestrator()
+        task = _make_task("t-exc", ["st-a"])
+        orch.tasks["t-exc"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        orch.aggregator.aggregate = AsyncMock(side_effect=RuntimeError("boom"))
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff-a")],
+        ))
+
+        # Wait for fire-and-forget to complete.
+        await asyncio.sleep(0.05)
+
+        # Task still completed despite aggregation failure.
+        assert task.status == TaskStatus.COMPLETED
+
+    async def test_aggregation_does_not_write_merged_content(self):
+        """Advisory only — merged content is NOT written to disk."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set up a fake merge_arbiter with a project_path so base_files
+            # can be sourced.
+            fake_arbiter = MagicMock()
+            fake_arbiter._project_path = tmpdir
+
+            orch = Orchestrator(merge_arbiter=fake_arbiter)
+            task = _make_task("t-write", ["st-a", "st-b"])
+            orch.tasks["t-write"] = task
+            orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=2)
+
+            # Both subtasks modify the same file — aggregator returns merged
+            # content, but it must NOT be written.
+            merged_content = "MERGED CONTENT THAT SHOULD NOT BE WRITTEN"
+            mock_result = AggregatedResult(
+                status=AggregationStatus.SUCCESS,
+                merged_files=[FileChange(
+                    file_path="f.py", diff=merged_content,
+                )],
+                conflict_files=[],
+            )
+            orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
+
+            await orch.handle_subtask_result(_result_with_files(
+                "st-a", [_change("f.py", "diff-a")],
+            ))
+            await orch.handle_subtask_result(_result_with_files(
+                "st-b", [_change("f.py", "diff-b")],
+            ))
+
+            await asyncio.sleep(0.05)
+
+            # Verify no file was written with the merged content.
+            import os
+
+            for root, _dirs, files in os.walk(tmpdir):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    with open(fpath, encoding="utf-8") as f:
+                        content = f.read()
+                    assert merged_content not in content, (
+                        f"Merged content was written to {fpath} — "
+                        "aggregation must be advisory (no writes)"
+                    )
+
+
+class TestAggregationBaseFilesSourcing:
+    """Verify base_files sourcing from the MergeArbiter's project path."""
+
+    async def test_base_files_empty_without_merge_arbiter(self):
+        """No merge_arbiter → base_files = {} (empty base)."""
+        orch = Orchestrator()
+        results = [_result_with_files("s1", [_change("f.py", "diff")])]
+
+        base_files = orch._collect_base_files(results)
+        assert base_files == {}
+
+    async def test_base_files_read_from_project_path(self):
+        """base_files sourced from merge_arbiter._project_path."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a file in the project path.
+            import os
+
+            fpath = os.path.join(tmpdir, "main.py")
+            with open(fpath, "w") as f:
+                f.write("original content\n")
+
+            fake_arbiter = MagicMock()
+            fake_arbiter._project_path = tmpdir
+
+            orch = Orchestrator(merge_arbiter=fake_arbiter)
+            results = [
+                _result_with_files("s1", [_change("main.py", "changed")]),
+            ]
+
+            base_files = orch._collect_base_files(results)
+            assert "main.py" in base_files
+            assert base_files["main.py"] == "original content\n"
+
+    async def test_base_files_skips_missing_files(self):
+        """Files that don't exist in the project path are skipped (not error)."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_arbiter = MagicMock()
+            fake_arbiter._project_path = tmpdir
+
+            orch = Orchestrator(merge_arbiter=fake_arbiter)
+            results = [
+                _result_with_files(
+                    "s1",
+                    [_change("nonexistent.py", "diff"), _change("other.py", "diff")],
+                ),
+            ]
+
+            base_files = orch._collect_base_files(results)
+            # Neither file exists → empty dict, no errors.
+            assert base_files == {}
+
+
+class TestAggregationFireAndForget:
+    """Verify the fire-and-forget pattern doesn't block and cleans up."""
+
+    async def test_pending_aggregation_cleared_after_completion(self):
+        """The _pending_aggregation set is cleared after the task completes."""
+        orch = Orchestrator()
+        task = _make_task("t-ff", ["st-a"])
+        orch.tasks["t-ff"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        orch.aggregator.aggregate = AsyncMock(return_value=AggregatedResult())
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff")],
+        ))
+
+        # Wait for the fire-and-forget task to complete.
+        await asyncio.sleep(0.05)
+
+        # The set should be empty (done_callback discards).
+        assert len(orch._pending_aggregation) == 0
+
+    async def test_aggregation_does_not_block_task_completion(self):
+        """Task status is set to COMPLETED before aggregation finishes."""
+        orch = Orchestrator()
+        task = _make_task("t-nb", ["st-a"])
+        orch.tasks["t-nb"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        # Make aggregate slow — if it blocked, task completion would hang.
+        async def slow_aggregate(*args, **kwargs):
+            await asyncio.sleep(1.0)
+            return AggregatedResult()
+
+        orch.aggregator.aggregate = slow_aggregate
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff")],
+        ))
+
+        # Task is already COMPLETED — aggregation is fire-and-forget.
+        assert task.status == TaskStatus.COMPLETED
+
+        # Clean up the pending task to avoid warnings.
+        for t in orch._pending_aggregation:
+            t.cancel()
+        orch._pending_aggregation.clear()
