@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from ultimate_coders.agent.aggregator import ResultAggregator
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.types import (
@@ -96,6 +98,16 @@ class Orchestrator:
         # external remote is configured (UC_REPO_URL). When None, the
         # Orchestrator behaves exactly as before (local-only, no remote sync).
         self.merge_arbiter = merge_arbiter
+        # Advisory in-memory result aggregator. Runs at task completion
+        # (before MergeArbiter) to surface same-file conflicts between
+        # concurrent subtasks early. Advisory only — does NOT write merged
+        # content; MergeArbiter remains the writer. LLM synthesis is
+        # out-of-scope (llm_client=None) per PRD.
+        self.aggregator = ResultAggregator(llm_client=None)
+        # Hold strong refs to fire-and-forget aggregation tasks so the event
+        # loop's weak references don't GC them mid-flight (mirrors
+        # _pending_arbitration).
+        self._pending_aggregation: set[asyncio.Task[Any]] = set()
         # Hold strong refs to fire-and-forget arbitration tasks so the event
         # loop's weak references don't GC them mid-flight (CPython asyncio
         # warns/finalizes unreferenced tasks). Cleared as each completes.
@@ -236,6 +248,13 @@ class Orchestrator:
         """Update task status based on subtask states."""
         if all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
             task.status = TaskStatus.COMPLETED
+            # Advisory in-memory aggregation — surfaces same-file conflicts
+            # between concurrent subtasks early (non-fatal, does NOT write).
+            # Runs before MergeArbiter so conflicts are visible in logs
+            # before git-level merge is attempted. Fire-and-forget via
+            # asyncio.create_task so the sync _update_task_status path is
+            # not blocked (mirrors _schedule_arbitration below).
+            self._schedule_aggregation(task)
             # Phase 2: fire git-level merge arbitration when all subtasks
             # complete. Opt-in — only when a MergeArbiter is configured.
             # Non-fatal: arbitration failures are logged, never crash task
@@ -275,6 +294,121 @@ class Orchestrator:
         for tid, _ in terminal[:to_evict]:
             del self.tasks[tid]
         return to_evict
+
+    def _schedule_aggregation(self, task: Task) -> None:
+        """Schedule advisory result aggregation as a background task.
+
+        Collects ``SubtaskResult`` objects from completed subtasks, sources
+        ``base_files`` from the MergeArbiter's project path (if available),
+        and runs the ``ResultAggregator`` to surface same-file conflicts.
+        Advisory only — does NOT write merged content; MergeArbiter remains
+        the writer. Non-fatal: aggregation failures are logged, never crash
+        task completion.
+
+        Mirrors ``_schedule_arbitration``: fire-and-forget via
+        ``asyncio.create_task`` so the sync ``_update_task_status`` path is
+        not blocked.
+        """
+        # Collect results from subtasks that have one (completed subtasks).
+        subtask_results = [
+            st.result for st in task.subtasks
+            if st.result is not None
+        ]
+        if not subtask_results:
+            return
+        try:
+            agg_task = asyncio.create_task(
+                self._aggregate_results(task.id, subtask_results)
+            )
+        except RuntimeError:
+            # No running event loop — cannot schedule. Log and skip.
+            logger.warning(
+                "Cannot schedule result aggregation for task %s "
+                "(no running event loop)", task.id,
+            )
+            return
+        # Hold a strong reference so the task is not GC'd mid-flight.
+        self._pending_aggregation.add(agg_task)
+        agg_task.add_done_callback(self._pending_aggregation.discard)
+
+    async def _aggregate_results(
+        self,
+        task_id: str,
+        subtask_results: list[SubtaskResult],
+    ) -> None:
+        """Run advisory result aggregation for a completed task (non-fatal).
+
+        Sources ``base_files`` from the MergeArbiter's project path if
+        available; if no MergeArbiter or no project path, ``base_files``
+        is empty (first-modifier-wins semantics). Logs the aggregation
+        result — conflicts are warned about but never abort the task.
+        Wrapped in try/except so aggregation failures never propagate.
+        """
+        try:
+            base_files = self._collect_base_files(subtask_results)
+            result = await self.aggregator.aggregate(
+                subtask_results, base_files,
+            )
+            if result.conflict_files:
+                logger.warning(
+                    "Result aggregation for task %s: status=%s, "
+                    "conflicts=%d (%s), merged=%d",
+                    task_id, result.status.value,
+                    len(result.conflict_files),
+                    ", ".join(result.conflict_files),
+                    len(result.merged_files),
+                )
+            else:
+                logger.info(
+                    "Result aggregation for task %s: status=%s, "
+                    "merged=%d files",
+                    task_id, result.status.value,
+                    len(result.merged_files),
+                )
+        except Exception:
+            logger.exception(
+                "Result aggregation failed for task %s (non-fatal)",
+                task_id,
+            )
+
+    def _collect_base_files(
+        self, subtask_results: list[SubtaskResult],
+    ) -> dict[str, str]:
+        """Source original file contents for the three-way merge base.
+
+        Reads from the MergeArbiter's project path (if configured). Only
+        files that appear in the subtask results' ``modified_files`` are
+        read — avoids reading the entire workspace. If no MergeArbiter or
+        no project path, returns ``{}`` (empty base — first-modifier-wins).
+        """
+        if self.merge_arbiter is None:
+            return {}
+        project_path = getattr(self.merge_arbiter, "_project_path", None)
+        if not project_path:
+            return {}
+
+        # Collect all modified file paths across all subtask results.
+        modified_paths: set[str] = set()
+        for sr in subtask_results:
+            for fc in sr.modified_files:
+                if fc.file_path:
+                    modified_paths.add(fc.file_path)
+
+        base_files: dict[str, str] = {}
+        for fpath in modified_paths:
+            full_path = os.path.join(project_path, fpath)
+            try:
+                with open(full_path, encoding="utf-8") as f:
+                    base_files[fpath] = f.read()
+            except (OSError, UnicodeDecodeError):
+                # File may not exist yet (created by a subtask) or be
+                # binary — skip it. An empty/missing base is acceptable
+                # (first-modifier-wins).
+                logger.debug(
+                    "Could not read base for %s (skipping): %s",
+                    fpath, full_path,
+                )
+        return base_files
 
     def _schedule_arbitration(self, task: Task) -> None:
         """Schedule merge arbitration as a background task (non-blocking).
