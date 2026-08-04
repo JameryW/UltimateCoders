@@ -247,7 +247,10 @@ class ResultAggregator:
         prompt += "\nProvide a concise synthesis (max 500 words):"
 
         try:
-            result = await self._llm_client.complete(prompt=prompt, max_tokens=1024)
+            result = await self._llm_client.complete(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1024,
+            )
             if result and hasattr(result, "text"):
                 return result.text
             if isinstance(result, str):

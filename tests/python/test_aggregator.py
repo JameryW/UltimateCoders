@@ -8,6 +8,8 @@ verify_command outcome. The LLM synthesis path is exercised via a stub.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ultimate_coders.agent.aggregator import (
     AggregationStatus,
     ResultAggregator,
@@ -223,11 +225,17 @@ class TestAggregatorPartialAndVerify:
 
 class TestAggregatorLLMSynthesis:
     async def test_llm_synthesis_called_when_client_present(self):
-        calls: list[str] = []
+        calls: list[dict] = []
 
         class _StubLLM:
-            async def complete(self, *, prompt: str, max_tokens: int = 0) -> str:
-                calls.append(prompt)
+            async def complete(
+                self,
+                *,
+                messages: list[dict],
+                max_tokens: int = 0,
+                **kwargs: Any,
+            ) -> str:
+                calls.append({"messages": messages, "max_tokens": max_tokens, "kwargs": kwargs})
                 return "SYNTHESIS"
 
         agg = ResultAggregator(llm_client=_StubLLM())
@@ -236,7 +244,19 @@ class TestAggregatorLLMSynthesis:
             _result("s2", [_change("b.py", "y")], "did B"),
         ])
         assert result.llm_synthesis == "SYNTHESIS"
-        assert calls and "did A" in calls[0] and "did B" in calls[0]
+        # Must be called with messages= (NOT prompt=), mirroring the
+        # LLMClient.complete(messages, ...) signature.  The old bug passed
+        # prompt= which fell into **kwargs and was silently ignored.
+        assert len(calls) == 1
+        call = calls[0]
+        assert "messages" in call
+        assert "prompt" not in call["kwargs"]
+        assert call["max_tokens"] == 1024
+        msgs = call["messages"]
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "user"
+        content = msgs[0]["content"]
+        assert "did A" in content and "did B" in content
 
     async def test_no_llm_client_leaves_synthesis_empty(self):
         agg = ResultAggregator(llm_client=None)
