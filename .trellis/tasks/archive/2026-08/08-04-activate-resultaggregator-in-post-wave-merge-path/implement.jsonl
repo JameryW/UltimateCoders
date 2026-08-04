@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "ConflictResolver escalation tiers + EngineError conventions for the aggregator's merge-failure path."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test coverage + lint bar for the aggregator activation PRs."}
