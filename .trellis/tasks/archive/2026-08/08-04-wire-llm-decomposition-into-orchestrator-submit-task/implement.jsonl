@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "LLM decomposition failure → newline-split fallback (graceful); EngineError conventions for the decompose path."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test coverage bar — decompose path, fallback, subtask mapping."}
