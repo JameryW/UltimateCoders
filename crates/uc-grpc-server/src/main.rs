@@ -431,11 +431,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // to NATS when the configured window transitions inside↔outside). Only started when
     // messaging is enabled AND NATS is connected AND a night window is configured.
     // The watcher itself is a no-op (does not spawn) when no night window is set.
+    //
+    // A NatsKvLockProvider is passed so that in multi-instance deployments, only one
+    // gateway publishes each transition event (dedup via distributed lock). The lock
+    // key is per-transition (`window:{opened|closed}:{tick}`), TTL 60s.
     #[cfg(feature = "messaging")]
     {
         if let Some(nats_client) = grpc_server.nats_client() {
             let scheduler = grpc_server.engine().scheduler_service().clone();
-            window_watcher::start_window_watcher(scheduler, nats_client);
+            let lock_provider = Arc::new(uc_grpc::NatsKvLockProvider::with_random_instance_id(
+                nats_client.clone(),
+            )) as Arc<dyn uc_engine::scheduler::LockProvider>;
+            window_watcher::start_window_watcher(scheduler, nats_client, lock_provider);
         }
     }
     // Create health reporter (marks EngineService as serving)
