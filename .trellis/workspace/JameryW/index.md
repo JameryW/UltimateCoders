@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 115
+- **Total Sessions**: 116
 - **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~205 | Active |
+| `journal-3.md` | ~238 | Active |
 | `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 116 | 2026-08-05 | Wire night_window_active exclusive mode from events | `f5a3b2c1` | `main` |
 | 115 | 2026-08-05 | Add RemoveJob runtime gRPC API | `eb82b28c` | `main` |
 | 114 | 2026-08-05 | Wire verify_command through scheduler config to aggregator | `d13ef10c` | `main` |
 | 113 | 2026-08-05 | Remove dead Python rate_limiter.py | `8c6f9e2b` | `main` |

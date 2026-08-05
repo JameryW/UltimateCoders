@@ -203,3 +203,36 @@ RemoveJob RPC — mirror #556 AddCronJob. Proto + EngineApi + LocalEngine + Dash
 ### Next Steps
 
 - None - task complete
+
+
+## Session 116: Wire night_window_active exclusive mode from events
+
+**Date**: 2026-08-05
+**Task**: Wire night_window_active exclusive mode from events
+**Branch**: `main`
+
+### Summary
+
+Exclusive mode: night window active → scheduled tasks bypass, real-time defer to _pending_tasks. Window events (#557) consumed. Payload scheduled flag (skip_serializing_if). Orchestrator flag + flush. 19 new tests, 776 Python pass. PR #563 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f5a3b2c1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
