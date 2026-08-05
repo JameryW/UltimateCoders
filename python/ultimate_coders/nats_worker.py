@@ -57,6 +57,10 @@ NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
 NATS_SUBJECT_FILE_CHANGED: str = "uc.file.changed"
 NATS_SUBJECT_MEMORY_CHANGED: str = "uc.memory.changed"
+# Night-window exclusive mode events (published by the Rust window watcher,
+# #557/#559). Driven the Python Orchestrator's night_window_active flag.
+NATS_SUBJECT_WINDOW_OPENED: str = "schedule.window.opened"
+NATS_SUBJECT_WINDOW_CLOSED: str = "schedule.window.closed"
 
 # ── Payload types ───────────────────────────────────────────────
 
@@ -514,6 +518,29 @@ class NatsWorker:
             )
             self._subscriptions.append(file_change_sub)
             logger.info("Subscribed to %s (distributed state sync)", NATS_SUBJECT_FILE_CHANGED)
+
+            # Night-window exclusive mode: subscribe to schedule.window.opened/closed.
+            # On opened → orch.set_night_window_active(True) (defer real-time tasks).
+            # On closed  → orch.set_night_window_active(False) + flush_pending_tasks().
+            window_opened_sub = await self._nc.subscribe(
+                NATS_SUBJECT_WINDOW_OPENED,
+                cb=self._handle_window_opened,
+            )
+            self._subscriptions.append(window_opened_sub)
+            logger.info(
+                "Subscribed to %s (night-window exclusive mode)",
+                NATS_SUBJECT_WINDOW_OPENED,
+            )
+
+            window_closed_sub = await self._nc.subscribe(
+                NATS_SUBJECT_WINDOW_CLOSED,
+                cb=self._handle_window_closed,
+            )
+            self._subscriptions.append(window_closed_sub)
+            logger.info(
+                "Subscribed to %s (night-window exclusive mode)",
+                NATS_SUBJECT_WINDOW_CLOSED,
+            )
 
             # Start dashboard snapshot publisher
             self._snapshot_task = asyncio.create_task(self._snapshot_loop())
@@ -1299,6 +1326,10 @@ class NatsWorker:
         task_id = payload.get("task_id", "")
         description = payload.get("description", "")
         project_id = payload.get("project_id", "")
+        # `scheduled` flag: True = scheduler-fired (NatsSubmitDispatcher),
+        # absent/False = real-time gRPC submission. Drives night-window
+        # exclusive mode deferral in Orchestrator.submit_task.
+        scheduled = bool(payload.get("scheduled", False))
 
         if not description:
             logger.warning(
@@ -1308,10 +1339,11 @@ class NatsWorker:
             return
 
         logger.info(
-            "Received task submit: task_id=%s description=%.80s project_id=%s",
+            "Received task submit: task_id=%s description=%.80s project_id=%s scheduled=%s",
             task_id,
             description,
             project_id,
+            scheduled,
         )
 
         try:
@@ -1320,6 +1352,7 @@ class NatsWorker:
                 project_id=project_id,
                 task_id=task_id or None,
                 agent_config=payload.get("agent_config"),
+                _scheduled=scheduled,
             )
             logger.info(
                 "Task %s submitted to Orchestrator (status=%s, subtasks=%d)",
@@ -1350,8 +1383,19 @@ class NatsWorker:
                     len(task.subtasks),
                 )
 
-            # Assign and execute subtasks in background
-            self._spawn_bg(self._execute_subtasks(task))
+            # Assign and execute subtasks in background — but only if the
+            # task was actually decomposed. Deferred tasks (night-window
+            # exclusive mode, status PAUSED, no subtasks) skip execution;
+            # they'll be re-submitted on flush_pending_tasks() when the
+            # window closes.
+            if task.subtasks:
+                self._spawn_bg(self._execute_subtasks(task))
+            else:
+                logger.info(
+                    "Task %s has no subtasks (deferred or empty) — skipping "
+                    "execution dispatch",
+                    task.id,
+                )
 
         except Exception:
             logger.error(
@@ -2353,6 +2397,50 @@ class NatsWorker:
             "Remote worker heartbeat: %s (total remote: %d)",
             worker_id[:8],
             len(self._known_remote_workers),
+        )
+
+    # ── Night-window exclusive mode handlers ──────────────────────
+
+    async def _handle_window_opened(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``schedule.window.opened`` — enter exclusive mode.
+
+        Sets ``orch.night_window_active=True`` so real-time (non-scheduled)
+        task submissions defer to ``_pending_tasks``. Scheduled tasks
+        (from NatsSubmitDispatcher, ``scheduled=True``) bypass the deferral.
+        """
+        orch = self._orchestrator
+        if orch is None:
+            logger.warning("Window opened but Orchestrator not initialized — ignoring")
+            return
+        orch.set_night_window_active(True)
+        logger.info(
+            "Night window opened — exclusive mode active (pending backlog=%d)",
+            len(orch._pending_tasks),
+        )
+
+    async def _handle_window_closed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Handle ``schedule.window.closed`` — exit exclusive mode + flush.
+
+        Sets ``orch.night_window_active=False`` then drains the pending
+        backlog via ``flush_pending_tasks()``. Each deferred task is
+        re-submitted through the normal decompose + dispatch path.
+        """
+        orch = self._orchestrator
+        if orch is None:
+            logger.warning("Window closed but Orchestrator not initialized — ignoring")
+            return
+        backlog = len(orch._pending_tasks)
+        orch.set_night_window_active(False)
+        logger.info("Night window closed — flushing %d deferred task(s)", backlog)
+        executed = await orch.flush_pending_tasks()
+        # Re-dispatch execution for each flushed task that now has subtasks.
+        for task in executed:
+            if task.subtasks:
+                self._spawn_bg(self._execute_subtasks(task))
+        logger.info(
+            "Night window flush complete — re-dispatched %d/%d task(s)",
+            len([t for t in executed if t.subtasks]),
+            len(executed),
         )
 
     async def _handle_file_changed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]

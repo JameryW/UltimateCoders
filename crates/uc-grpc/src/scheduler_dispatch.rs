@@ -93,6 +93,10 @@ impl NatsSubmitDispatcher {
             task_id: Uuid::new_v4().to_string(),
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            // Scheduler-fired task — bypasses night-window deferral in the
+            // Python Orchestrator (exclusive mode: scheduled tasks run
+            // immediately even when the night window is active).
+            scheduled: Some(true),
         }
     }
 
@@ -447,7 +451,7 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        // Must have exactly these three fields (matches Python _handle_submit).
+        // Must have these three core fields (matches Python _handle_submit).
         assert!(parsed.get("task_id").is_some(), "payload must have task_id");
         assert!(
             parsed.get("description").is_some(),
@@ -464,6 +468,12 @@ mod tests {
         assert_eq!(
             parsed["project_id"], "test-project",
             "project_id must match the scheduled task"
+        );
+        // NatsSubmitDispatcher sets scheduled: true (scheduler-fired).
+        assert_eq!(
+            parsed.get("scheduled").and_then(|v| v.as_bool()),
+            Some(true),
+            "scheduler-dispatched payload must have scheduled: true"
         );
     }
 
@@ -494,10 +504,12 @@ mod tests {
         let dispatcher_payload = NatsSubmitDispatcher::build_payload(&task);
 
         // Simulate what TaskService does (server.rs:3092-3096):
+        // (real-time gRPC path — scheduled is None / absent)
         let existing_publisher_payload = NatsTaskSubmit {
             task_id: Uuid::new_v4().to_string(), // TaskId::new()
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            scheduled: None,
         };
 
         // Both must serialize to the same JSON shape (field names + types).

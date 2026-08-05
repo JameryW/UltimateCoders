@@ -121,6 +121,14 @@ class Orchestrator:
         self.tasks: dict[str, Task] = {}
         self.workers: dict[str, WorkerEntry] = {}
 
+        # Night-window exclusive mode (scheduler-spec.md §"Orchestrator
+        # Night-Window Exclusive Mode"). When True, real-time (non-scheduled)
+        # task submissions defer to ``_pending_tasks`` instead of immediate
+        # decomposition/dispatch; scheduled tasks bypass the queue. Driven by
+        # NATS ``schedule.window.opened``/``closed`` events (see nats_worker).
+        self._night_window_active: bool = False
+        self._pending_tasks: list[dict[str, Any]] = []
+
         # Kept as None — Rust SchedulerService owns scheduling (see
         # crates/uc-engine/src/scheduler/). nats_worker + dashboard guard
         # on `orch.scheduler is None` and return available=False.
@@ -153,6 +161,7 @@ class Orchestrator:
         project_id: str = "",
         task_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
+        _scheduled: bool = False,
     ) -> Task:
         """Submit a task with LLM decomposition (newline-split fallback).
 
@@ -165,12 +174,52 @@ class Orchestrator:
         the task falls back to newline-split decomposition (graceful,
         non-fatal — the task still runs).
 
+        Night-window exclusive mode: when ``night_window_active`` is True
+        and this submission is NOT scheduler-fired (``_scheduled=False``),
+        the task is deferred to ``_pending_tasks`` with status PAUSED
+        instead of being decomposed/dispatched immediately. Scheduled tasks
+        (``_scheduled=True``) bypass the deferral and execute normally.
+        See scheduler-spec.md §"Orchestrator Night-Window Exclusive Mode".
+
         Args:
             description: Task description (natural language or newline-separated).
             project_id: Project identifier.
             task_id: Optional explicit task ID.
             agent_config: Per-subtask agent config overrides (applied to all subtasks).
+            _scheduled: Internal — True if this submit originated from the
+                scheduler (cron/one-shot fire). Must NEVER be set by external
+                callers; only the scheduler dispatch path sets it. Setting it
+                incorrectly will bypass the night-window queue for real-time
+                tasks.
         """
+        # Night-window exclusive mode: defer real-time tasks to the pending
+        # backlog. Scheduled tasks (from NatsSubmitDispatcher) bypass.
+        if self._night_window_active and not _scheduled:
+            tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
+            task = Task(
+                id=tid,
+                description=description,
+                project_id=project_id,
+                status=TaskStatus.PAUSED,
+                subtasks=[],
+            )
+            self.tasks[tid] = task
+            self._pending_tasks.append(
+                {
+                    "task_id": tid,
+                    "description": description,
+                    "project_id": project_id,
+                    "agent_config": agent_config,
+                }
+            )
+            logger.info(
+                "Task %s deferred to _pending_tasks (night window active, "
+                "real-time submit) — backlog size=%d",
+                tid,
+                len(self._pending_tasks),
+            )
+            return task
+
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
 
         # Try LLM decomposition first; fall back to newline-split on any
@@ -684,6 +733,39 @@ class Orchestrator:
         task.status = TaskStatus.FAILED
         return True
 
+    # ── Night-window exclusive mode ─────────────────────────────
+
+    @property
+    def night_window_active(self) -> bool:
+        """Whether the night window is active (exclusive mode).
+
+        When True, real-time (non-scheduled) task submissions defer to
+        ``_pending_tasks``; scheduled tasks bypass the queue. Driven by
+        NATS ``schedule.window.opened``/``closed`` events.
+        """
+        return self._night_window_active
+
+    def set_night_window_active(self, active: bool) -> None:
+        """Toggle night-window exclusive mode.
+
+        Called by nats_worker on ``schedule.window.opened`` (True) /
+        ``schedule.window.closed`` (False) events. The ``closed`` handler
+        also calls ``flush_pending_tasks()`` to drain the backlog.
+
+        Args:
+            active: True to enter exclusive mode (defer real-time tasks);
+                False to exit (real-time tasks execute normally).
+        """
+        if self._night_window_active == active:
+            return
+        self._night_window_active = active
+        logger.info(
+            "Night window %s (exclusive mode %s, pending backlog=%d)",
+            "opened" if active else "closed",
+            "active" if active else "inactive",
+            len(self._pending_tasks),
+        )
+
     # ── Convenience properties ─────────────────────────────────
 
     @property
@@ -697,5 +779,42 @@ class Orchestrator:
         )
 
     async def flush_pending_tasks(self) -> list[Task]:
-        """Flush pending tasks — stub for nats_worker dashboard handler."""
-        return []
+        """Flush the night-window pending backlog.
+
+        Drains ``_pending_tasks`` — each deferred task is re-submitted via
+        the normal ``submit_task`` path (decomposition + dispatch), with
+        ``_scheduled=False`` (they are real-time tasks that were deferred).
+        The list is cleared before re-submission so a re-entrant defer (if
+        the window reopens mid-flush) starts fresh.
+
+        Called by nats_worker on ``schedule.window.closed`` (after setting
+        ``night_window_active=False``) and by the dashboard
+        ``flushpendingtasks`` RPC.
+
+        Returns:
+            The list of re-submitted Task objects (may be shorter than the
+            backlog if some fail to decompose).
+        """
+        if not self._pending_tasks:
+            return []
+        backlog = self._pending_tasks
+        self._pending_tasks = []
+        logger.info("Flushing %d deferred task(s) from _pending_tasks", len(backlog))
+        executed: list[Task] = []
+        for entry in backlog:
+            try:
+                task = await self.submit_task(
+                    entry["description"],
+                    project_id=entry["project_id"],
+                    task_id=entry["task_id"],
+                    agent_config=entry.get("agent_config"),
+                    _scheduled=False,
+                )
+                executed.append(task)
+            except Exception:
+                logger.exception(
+                    "Failed to re-submit deferred task %s during flush",
+                    entry.get("task_id"),
+                )
+        logger.info("Flushed %d/%d deferred task(s)", len(executed), len(backlog))
+        return executed

@@ -56,11 +56,24 @@ pub const NATS_SUBJECT_FILE_CHANGED: &str = "uc.file.changed";
 ///
 /// Published by gRPC server when a task is submitted. The Python NATS
 /// consumer subscribes to this subject and calls Orchestrator.submit_task().
+///
+/// `scheduled` is set to `true` by `NatsSubmitDispatcher` (scheduler-fired
+/// tasks) and absent when `false` (real-time gRPC submissions). The Python
+/// consumer reads `payload.get("scheduled", False)` — absent means real-time.
+/// This drives the night-window exclusive mode: when the night window is
+/// active, real-time tasks defer to `_pending_tasks` while scheduled tasks
+/// bypass the queue (see scheduler-spec.md §"Orchestrator Night-Window
+/// Exclusive Mode").
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskSubmit {
     pub task_id: String,
     pub description: String,
     pub project_id: String,
+    /// Whether this submit originated from the scheduler (cron/one-shot fire).
+    /// `true` = scheduler-fired (bypasses night-window deferral).
+    /// Absent/`false` = real-time gRPC submission (subject to deferral).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scheduled: Option<bool>,
 }
 
 /// Payload for `uc.task.update` messages.
@@ -3093,6 +3106,10 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.0.clone(),
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
+                        // Real-time gRPC submission — no `scheduled` flag.
+                        // The Python consumer treats absent as `False`
+                        // (subject to night-window deferral).
+                        scheduled: None,
                     };
                     (task.id.0.clone(), payload, events)
                 };
@@ -3842,12 +3859,20 @@ mod tests {
             task_id: "abc-123".to_string(),
             description: "Fix the login bug".to_string(),
             project_id: "proj-1".to_string(),
+            scheduled: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
+        // `scheduled: None` must be absent from serialized JSON (skip_serializing_if).
+        assert!(
+            !json.contains("scheduled"),
+            "scheduled=None must not appear in JSON: {}",
+            json
+        );
         let parsed: NatsTaskSubmit = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.description, "Fix the login bug");
         assert_eq!(parsed.project_id, "proj-1");
+        assert_eq!(parsed.scheduled, None);
     }
 
     #[test]
