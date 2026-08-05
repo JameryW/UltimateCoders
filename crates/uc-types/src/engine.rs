@@ -210,6 +210,19 @@ pub trait EngineApi: Send + Sync {
             error: Some("Scheduler not available".to_string()),
         })
     }
+
+    /// Remove a scheduled job at runtime by its UUID string. The gRPC
+    /// `DashboardService::remove_job` delegates here.
+    ///
+    /// Default impl returns `success: false` — only `LocalEngine` (with the
+    /// scheduler feature) implements this.
+    async fn remove_job(&self, job_id: &str) -> Result<crate::RemoveJobResult, EngineError> {
+        let _ = job_id;
+        Ok(crate::RemoveJobResult {
+            success: false,
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
 }
 
 /// Index state returned by get_index_state.

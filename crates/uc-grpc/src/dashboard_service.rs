@@ -1,7 +1,7 @@
 //! DashboardService implementation — NATS passthrough to Python Orchestrator.
 //!
-//! Scheduler RPCs (GetSchedulerStatus, TriggerSchedulerJob, AddCronJob) route
-//! directly to the Rust engine's SchedulerService. All other DashboardService
+//! Scheduler RPCs (GetSchedulerStatus, TriggerSchedulerJob, AddCronJob,
+//! RemoveJob) route directly to the Rust engine's SchedulerService. All other DashboardService
 //! RPCs forward via NATS request-reply to the Python Orchestrator. When NATS
 //! is unavailable, those RPCs return UNAVAILABLE status.
 
@@ -199,6 +199,26 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                 Ok(Response::new(AddCronJobResponse {
                     success: false,
                     job_id: String::new(),
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
+    }
+
+    async fn remove_job(
+        &self,
+        request: Request<RemoveJobRequest>,
+    ) -> Result<Response<RemoveJobResponse>, Status> {
+        let req = request.into_inner();
+        match self.engine().remove_job(&req.job_id).await {
+            Ok(result) => Ok(Response::new(RemoveJobResponse {
+                success: result.success,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to remove job");
+                Ok(Response::new(RemoveJobResponse {
+                    success: false,
                     error: Some(e.to_string()),
                 }))
             }

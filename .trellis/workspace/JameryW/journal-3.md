@@ -137,3 +137,36 @@ Deleted orphaned Python RateLimiter. Rust LlmRateLimiter is the real one. 757 te
 ### Next Steps
 
 - None - task complete
+
+
+## Session 114: Wire verify_command through scheduler config to aggregator
+
+**Date**: 2026-08-05
+**Task**: Wire verify_command through scheduler config to aggregator
+**Branch**: `main`
+
+### Summary
+
+Full chain wired: config → ScheduledTask → NATS payload (skip_serializing_if) → Python → orchestrator → aggregate → verification_passed. 389+144+22+762 tests pass. PR #561 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d13ef10c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
