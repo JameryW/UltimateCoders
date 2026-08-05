@@ -1299,6 +1299,7 @@ class NatsWorker:
         task_id = payload.get("task_id", "")
         description = payload.get("description", "")
         project_id = payload.get("project_id", "")
+        verify_command = payload.get("verify_command")
 
         if not description:
             logger.warning(
@@ -1320,6 +1321,7 @@ class NatsWorker:
                 project_id=project_id,
                 task_id=task_id or None,
                 agent_config=payload.get("agent_config"),
+                verify_command=verify_command,
             )
             logger.info(
                 "Task %s submitted to Orchestrator (status=%s, subtasks=%d)",

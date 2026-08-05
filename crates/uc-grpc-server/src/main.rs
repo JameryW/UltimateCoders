@@ -302,6 +302,8 @@ async fn start_scheduler(
         // Respect the enabled flag
         let mut task = task;
         task.enabled = job.enabled;
+        // Thread verify_command from config → ScheduledTask → NatsSubmitDispatcher
+        task.verify_command = job.verify_command.clone();
 
         let result = if task.is_cron() {
             scheduler.add_cron_job(task).await

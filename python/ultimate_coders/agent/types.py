@@ -223,6 +223,10 @@ class Task:
     result: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Optional verification command (e.g. "cargo check") threaded from the
+    # scheduler → aggregator. When set, _aggregate_results passes it to
+    # aggregate(verify_command=) → AggregatedResult.verification_passed.
+    verify_command: str | None = None
 
     def update_timestamp(self) -> None:
         """Update the updated_at timestamp."""
