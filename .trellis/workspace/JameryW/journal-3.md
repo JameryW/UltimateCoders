@@ -71,3 +71,36 @@ Fixed _synthesize calling complete(prompt=) instead of complete(messages=) — p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 112: Deduplicate window events via distributed lock
+
+**Date**: 2026-08-05
+**Task**: Deduplicate window events via distributed lock
+**Branch**: `main`
+
+### Summary
+
+Reused #558 NatsKvLockProvider in window_watcher (#557) to dedup multi-instance window events. Per-transition lock before publish; on lock-failure skip + update last_inside (no re-attempt). 9 new tests, 21 total pass. Also merged #555/#556/#557/#558 this session. PR #559 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d2fd61ef` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

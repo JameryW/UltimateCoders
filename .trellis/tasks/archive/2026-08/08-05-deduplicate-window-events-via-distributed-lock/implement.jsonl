@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "LockProvider trait + NatsKvLockProvider (#558) — the lock primitive to reuse for window-event dedup."}
