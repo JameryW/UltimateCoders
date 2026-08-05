@@ -9,7 +9,7 @@
 ### 1. Scope / Trigger
 
 - Trigger: Any time a `ScheduledTask` is created (cron or one-shot), the scheduler must evaluate the night window before dispatching.
-- Cross-layer: Rust `SchedulerService` → PyO3 → Python `Scheduler` → `Orchestrator.submit_task()`
+- Cross-layer: Rust `SchedulerService` (cron-fire) → `NatsSubmitDispatcher` publishes to `uc.task.submit` NATS → Python `_handle_submit` → `Orchestrator.submit_task()` (the Python `Scheduler` class was removed in #548; Rust owns scheduling, dispatch via NATS per the #553 ADR).
 
 ### 2. Signatures
 
