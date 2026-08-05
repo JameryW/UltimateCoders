@@ -33,7 +33,7 @@ mod messaging_impl {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use uc_engine::scheduler::{NightWindow, SchedulerService};
+    use uc_engine::scheduler::{LockProvider, NightWindow, SchedulerService};
     use uc_types::NightWindowConfig;
 
     /// Poll interval for the window watcher.
@@ -41,6 +41,14 @@ mod messaging_impl {
     /// Night windows are HH:MM granularity; 60s polling detects transitions
     /// within one minute of the boundary, which is acceptable.
     const POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+    /// TTL for the per-transition distributed lock.
+    ///
+    /// Window transitions are coarse (minute granularity), so 60s is plenty
+    /// for one instance to publish the event before the lock auto-expires.
+    /// The lock only deduplicates the one-time transition publish — it is not
+    /// held for the duration of any task execution.
+    const WINDOW_LOCK_TTL: Duration = Duration::from_secs(60);
 
     /// Start the night-window transition watcher.
     ///
@@ -59,7 +67,17 @@ mod messaging_impl {
     /// # Arguments
     /// * `scheduler` - The scheduler service (Arc — cheap clone).
     /// * `nats_client` - The NATS client for publishing events.
-    pub fn start_window_watcher(scheduler: Arc<SchedulerService>, nats_client: async_nats::Client) {
+    /// * `lock_provider` - Distributed lock provider for deduplicating transition
+    ///   events across multi-instance gateways. Before publishing a transition,
+    ///   the watcher acquires a per-transition lock (`window:{event_type}:{tick}`);
+    ///   if another instance holds it, this instance skips the publish. Pass
+    ///   [`NoOpLockProvider`](uc_engine::scheduler::NoOpLockProvider) for
+    ///   single-instance deployments (always acquires — no dedup, no regression).
+    pub fn start_window_watcher(
+        scheduler: Arc<SchedulerService>,
+        nats_client: async_nats::Client,
+        lock_provider: Arc<dyn LockProvider>,
+    ) {
         // We need to check the night window config asynchronously to decide
         // whether to spawn. Spawn a helper that does the async read + conditionally
         // starts the polling loop.
@@ -118,6 +136,35 @@ mod messaging_impl {
                         // inside → outside = window closed
                         uc_engine::scheduler::WindowEventType::Closed
                     };
+
+                    // Distributed lock: in multi-instance deployments, all N
+                    // gateways detect the same transition and would each publish
+                    // a duplicate event. Acquire a per-transition lock so only
+                    // one instance publishes. The lock key includes the tick
+                    // timestamp so each transition gets a fresh lock.
+                    //
+                    // On lock-failure (another instance holds it): skip the
+                    // publish but STILL update last_inside — another instance is
+                    // handling the publish, and we don't want to re-attempt the
+                    // same transition on the next tick.
+                    let event_name = match event_type {
+                        uc_engine::scheduler::WindowEventType::Opened => "opened",
+                        uc_engine::scheduler::WindowEventType::Closed => "closed",
+                    };
+                    let tick_ts = chrono::Utc::now().timestamp();
+                    let lock_key = format!("window:{}:{}", event_name, tick_ts);
+
+                    if !lock_provider.try_acquire(&lock_key, WINDOW_LOCK_TTL) {
+                        tracing::info!(
+                            event = ?event_type,
+                            lock_key = %lock_key,
+                            "Window watcher: lock held by another instance — skipping publish (dedup)"
+                        );
+                        // Update last_inside so we don't re-attempt this
+                        // transition next tick (another instance is publishing).
+                        last_inside = now_inside;
+                        continue;
+                    }
 
                     tracing::info!(
                         event = ?event_type,
@@ -362,6 +409,201 @@ mod messaging_impl {
             let nw_config = scheduler.get_night_window_config().await.unwrap();
             let window = NightWindow::from_config(&nw_config);
             assert!(window.is_ok(), "NightWindow::from_config should succeed");
+        }
+
+        // ── Distributed lock dedup tests ──────────────────────────────
+        //
+        // The watcher's transition-publish path acquires a per-transition lock
+        // before publishing. These tests verify the lock-decision logic:
+        // - Lock acquired → publish proceeds (existing behavior)
+        // - Lock failed → publish skipped, last_inside still updated (no re-attempt)
+        // - NoOpLockProvider → always acquires (single-instance fallback)
+        //
+        // We test the decision logic directly (not the spawned task) to avoid
+        // needing a real NATS server. The logic mirrors the watcher's loop:
+        // on transition, try_acquire; if false, skip publish + update last_inside.
+
+        /// Build the lock key for a window transition, mirroring the watcher's loop.
+        fn build_window_lock_key(event_name: &str, tick_ts: i64) -> String {
+            format!("window:{}:{}", event_name, tick_ts)
+        }
+
+        /// A mock lock provider that returns a configurable result.
+        struct MockLockProvider {
+            acquire_result: bool,
+            /// Records the keys passed to try_acquire for assertion.
+            acquired_keys: std::sync::Mutex<Vec<String>>,
+        }
+
+        impl MockLockProvider {
+            fn new(acquire_result: bool) -> Self {
+                Self {
+                    acquire_result,
+                    acquired_keys: std::sync::Mutex::new(Vec::new()),
+                }
+            }
+
+            fn keys(&self) -> Vec<String> {
+                self.acquired_keys.lock().unwrap().clone()
+            }
+        }
+
+        impl LockProvider for MockLockProvider {
+            fn try_acquire(&self, key: &str, _ttl: Duration) -> bool {
+                self.acquired_keys.lock().unwrap().push(key.to_string());
+                self.acquire_result
+            }
+        }
+
+        /// Simulate the watcher's transition-publish decision.
+        ///
+        /// Returns (published, new_last_inside) — mirrors the watcher loop:
+        /// if transition detected → try_acquire → if true, publish; if false,
+        /// skip publish but update last_inside (no re-attempt next tick).
+        fn simulate_transition(
+            last_inside: bool,
+            now_inside: bool,
+            lock_provider: &dyn LockProvider,
+            event_name: &str,
+            tick_ts: i64,
+        ) -> (bool, bool) {
+            if now_inside == last_inside {
+                // No transition — no publish, no change.
+                return (false, last_inside);
+            }
+
+            let lock_key = build_window_lock_key(event_name, tick_ts);
+            if !lock_provider.try_acquire(&lock_key, WINDOW_LOCK_TTL) {
+                // Lock failed — skip publish, but update last_inside (no re-attempt).
+                return (false, now_inside);
+            }
+
+            // Lock acquired — publish proceeds.
+            (true, now_inside)
+        }
+
+        #[test]
+        fn lock_acquired_publishes_transition() {
+            // When the lock is acquired, the publish proceeds (existing behavior).
+            let provider = MockLockProvider::new(true);
+            let (published, new_last_inside) =
+                simulate_transition(false, true, &provider, "opened", 1722873600);
+
+            assert!(published, "Lock acquired → publish should proceed");
+            assert!(
+                new_last_inside,
+                "last_inside should update to now_inside after transition"
+            );
+            assert_eq!(provider.keys().len(), 1, "try_acquire called once");
+            assert_eq!(
+                provider.keys()[0],
+                "window:opened:1722873600",
+                "lock key format: window:{{event}}:{{tick}}"
+            );
+        }
+
+        #[test]
+        fn lock_failed_skips_publish_but_updates_last_inside() {
+            // When the lock is NOT acquired (another instance holds it), the
+            // publish is skipped BUT last_inside is still updated — this prevents
+            // re-attempting the same transition on the next tick.
+            let provider = MockLockProvider::new(false);
+            let (published, new_last_inside) =
+                simulate_transition(false, true, &provider, "opened", 1722873600);
+
+            assert!(
+                !published,
+                "Lock failed → publish should be skipped (dedup)"
+            );
+            assert!(
+                new_last_inside,
+                "last_inside must still update — no re-attempt next tick"
+            );
+            assert_eq!(provider.keys().len(), 1, "try_acquire called once");
+        }
+
+        #[test]
+        fn lock_failed_closed_transition_skips_publish() {
+            // Same as above but for the Closed transition (inside → outside).
+            let provider = MockLockProvider::new(false);
+            let (published, new_last_inside) =
+                simulate_transition(true, false, &provider, "closed", 1722873600);
+
+            assert!(!published, "Lock failed → publish skipped (dedup)");
+            assert!(
+                !new_last_inside,
+                "last_inside must update to false — no re-attempt next tick"
+            );
+        }
+
+        #[test]
+        fn noop_lock_provider_always_acquires_for_window_events() {
+            // NoOpLockProvider is the single-instance fallback — it always
+            // acquires, so the publish always proceeds (no dedup, no regression).
+            let noop = uc_engine::scheduler::NoOpLockProvider;
+            let (published, new_last_inside) =
+                simulate_transition(false, true, &noop, "opened", 1722873600);
+
+            assert!(published, "NoOp always acquires → publish proceeds");
+            assert!(new_last_inside, "last_inside updates normally");
+        }
+
+        #[test]
+        fn no_transition_no_lock_attempt() {
+            // When there's no transition (now_inside == last_inside), the lock
+            // is never acquired — no unnecessary KV operations.
+            let provider = MockLockProvider::new(true);
+            let (published, new_last_inside) =
+                simulate_transition(true, true, &provider, "opened", 1722873600);
+
+            assert!(!published, "No transition → no publish");
+            assert!(new_last_inside, "last_inside unchanged");
+            assert_eq!(
+                provider.keys().len(),
+                0,
+                "No lock attempt when no transition"
+            );
+        }
+
+        #[test]
+        fn window_lock_key_format() {
+            // Verify the lock key format: window:{opened|closed}:{timestamp}
+            assert_eq!(
+                build_window_lock_key("opened", 1722873600),
+                "window:opened:1722873600"
+            );
+            assert_eq!(
+                build_window_lock_key("closed", 1722873601),
+                "window:closed:1722873601"
+            );
+        }
+
+        #[test]
+        fn window_lock_key_per_transition_distinct() {
+            // Opened and Closed at the same tick get distinct keys.
+            let opened_key = build_window_lock_key("opened", 1722873600);
+            let closed_key = build_window_lock_key("closed", 1722873600);
+            assert_ne!(opened_key, closed_key, "opened vs closed keys are distinct");
+        }
+
+        #[test]
+        fn window_lock_key_per_tick_distinct() {
+            // Same event type at different ticks gets distinct keys.
+            let k1 = build_window_lock_key("opened", 1722873600);
+            let k2 = build_window_lock_key("opened", 1722873601);
+            assert_ne!(k1, k2, "different ticks → different keys");
+        }
+
+        #[tokio::test]
+        async fn noop_lock_provider_trait_object_works() {
+            // Verify NoOpLockProvider can be used as Arc<dyn LockProvider> —
+            // this is how start_window_watcher receives it (the param type).
+            use uc_engine::scheduler::NoOpLockProvider;
+            let provider: Arc<dyn LockProvider> = Arc::new(NoOpLockProvider);
+            assert!(
+                provider.try_acquire("window:opened:123", WINDOW_LOCK_TTL),
+                "NoOp via trait object always acquires"
+            );
         }
     }
 }
