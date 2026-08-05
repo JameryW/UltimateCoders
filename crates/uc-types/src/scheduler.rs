@@ -308,6 +308,16 @@ pub struct AddCronJobResult {
     pub error: Option<String>,
 }
 
+/// Result of removing a scheduled job at runtime, returned by
+/// `EngineApi::remove_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveJobResult {
+    /// Whether the job was removed successfully.
+    pub success: bool,
+    /// Error message if removal failed.
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,5 +435,26 @@ mod tests {
         assert!(parsed.success);
         assert!(!parsed.job_id.is_empty());
         assert!(parsed.error.is_none());
+    }
+
+    #[test]
+    fn remove_job_result_serialization() {
+        let result = RemoveJobResult {
+            success: true,
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: RemoveJobResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.success);
+        assert!(parsed.error.is_none());
+
+        let result_err = RemoveJobResult {
+            success: false,
+            error: Some("Job not found".to_string()),
+        };
+        let json = serde_json::to_string(&result_err).unwrap();
+        let parsed: RemoveJobResult = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.success);
+        assert_eq!(parsed.error.unwrap(), "Job not found");
     }
 }

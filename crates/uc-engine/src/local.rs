@@ -1024,6 +1024,23 @@ impl EngineApi for LocalEngine {
             }),
         }
     }
+
+    async fn remove_job(&self, job_id: &str) -> Result<uc_types::RemoveJobResult, EngineError> {
+        let task_id = uuid::Uuid::parse_str(job_id)
+            .map_err(|e| EngineError::ConfigError(format!("Invalid job ID '{}': {}", job_id, e)))?;
+
+        let svc = &self.scheduler_service;
+        match svc.remove_job(&task_id).await {
+            Ok(()) => Ok(uc_types::RemoveJobResult {
+                success: true,
+                error: None,
+            }),
+            Err(e) => Ok(uc_types::RemoveJobResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 }
 
 impl LocalEngine {

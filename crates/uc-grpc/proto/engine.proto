@@ -48,6 +48,7 @@ service DashboardService {
     rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse);
     rpc TriggerSchedulerJob(TriggerSchedulerJobRequest) returns (TriggerSchedulerJobResponse);
     rpc AddCronJob(AddCronJobRequest) returns (AddCronJobResponse);
+    rpc RemoveJob(RemoveJobRequest) returns (RemoveJobResponse);
     rpc FlushPendingTasks(FlushPendingTasksRequest) returns (FlushPendingTasksResponse);
     rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
     rpc WatchDashboard(WatchDashboardRequest) returns (stream DashboardSnapshot);
@@ -585,6 +586,15 @@ message AddCronJobResponse {
     bool success = 1;
     string job_id = 2;
     optional string error = 3;
+}
+
+message RemoveJobRequest {
+    string job_id = 1;
+}
+
+message RemoveJobResponse {
+    bool success = 1;
+    optional string error = 2;
 }
 
 message FlushPendingTasksRequest {}
