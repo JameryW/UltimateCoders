@@ -93,6 +93,10 @@ impl NatsSubmitDispatcher {
             task_id: Uuid::new_v4().to_string(),
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            // Scheduler-fired task — bypasses night-window deferral in the
+            // Python Orchestrator (exclusive mode: scheduled tasks run
+            // immediately even when the night window is active).
+            scheduled: Some(true),
             verify_command: task.verify_command.clone(),
         }
     }
@@ -467,6 +471,12 @@ mod tests {
             parsed["project_id"], "test-project",
             "project_id must match the scheduled task"
         );
+        // NatsSubmitDispatcher sets scheduled: true (scheduler-fired).
+        assert_eq!(
+            parsed.get("scheduled").and_then(|v| v.as_bool()),
+            Some(true),
+            "scheduler-dispatched payload must have scheduled: true"
+        );
     }
 
     #[cfg(feature = "messaging")]
@@ -529,10 +539,12 @@ mod tests {
         let dispatcher_payload = NatsSubmitDispatcher::build_payload(&task);
 
         // Simulate what TaskService does (server.rs:3092-3096):
+        // (real-time gRPC path — scheduled is None / absent)
         let existing_publisher_payload = NatsTaskSubmit {
             task_id: Uuid::new_v4().to_string(), // TaskId::new()
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            scheduled: None,
             verify_command: None,
         };
 

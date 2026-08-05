@@ -8,7 +8,11 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
+<<<<<<< HEAD
+- **Total Sessions**: 115
+=======
 - **Total Sessions**: 114
+>>>>>>> origin/main
 - **Last Active**: 2026-08-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +23,11 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
+<<<<<<< HEAD
+| `journal-3.md` | ~205 | Active |
+=======
 | `journal-3.md` | ~172 | Active |
+>>>>>>> origin/main
 | `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +39,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+<<<<<<< HEAD
+| 115 | 2026-08-05 | Add RemoveJob runtime gRPC API | `eb82b28c` | `main` |
+=======
+>>>>>>> origin/main
 | 114 | 2026-08-05 | Wire verify_command through scheduler config to aggregator | `d13ef10c` | `main` |
 | 113 | 2026-08-05 | Remove dead Python rate_limiter.py | `8c6f9e2b` | `main` |
 | 112 | 2026-08-05 | Deduplicate window events via distributed lock | `d2fd61ef` | `main` |
