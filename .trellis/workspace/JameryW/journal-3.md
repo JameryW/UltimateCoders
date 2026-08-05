@@ -206,3 +206,36 @@ RemoveJob RPC — mirror #556 AddCronJob. Proto + EngineApi + LocalEngine + Dash
 - None - task complete
 =======
 >>>>>>> origin/main
+
+
+## Session 116: Add uc_schedule OMP TUI command + LLM tools
+
+**Date**: 2026-08-05
+**Task**: Add uc_schedule OMP TUI command + LLM tools
+**Branch**: `main`
+
+### Summary
+
+Scheduler RPCs existed but no OMP TUI. engine_pb regen, grpc-bridge, scheduler-bridge, /uc schedule. 176 tests pass. PR #565.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4a2b1c3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
