@@ -41,6 +41,7 @@ import { registerTaskTools, isSpawnDisabled } from "./orchestrator/task-bridge";
 import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
 import { registerWorkerTools } from "./orchestrator/worker-bridge";
+import { registerSchedulerTools } from "./orchestrator/scheduler-bridge";
 import { createProgressWidget, type ProgressWidgetState, type SubtaskProgressInfo } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
@@ -466,7 +467,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── /uc command ─────────────────────────────────────────────
 
-	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "search", "help"];
+	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "search", "schedule", "help"];
 
 	pi.registerCommand("uc", {
 		description: "UltimateCoders task orchestration",
@@ -729,6 +730,116 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					return;
 				}
+				case "schedule": {
+					// ponytail: /uc schedule — scheduler status / actions.
+					// Sub-actions: trigger <id>, add <desc> <cron> [flags], remove <id>.
+					// No args → show scheduler status (toast, mirrors /uc status).
+					const subParts = rest.trim().split(/\s+/).filter(Boolean);
+					const subAction = subParts[0] ?? "";
+					try {
+						if (subAction === "trigger") {
+							const jobId = subParts[1];
+							if (!jobId) {
+								ctx.ui.notify("Usage: /uc schedule trigger <job-id>", "error");
+								return;
+							}
+							const r = await bridge.triggerSchedulerJob(jobId);
+							if (!r.success) {
+								ctx.ui.notify(`Trigger failed: ${r.error ?? "unknown error"}`, "error");
+							} else {
+								ctx.ui.notify(`Triggered job ${r.jobId.slice(0, 14)}`, "info");
+							}
+							return;
+						}
+						if (subAction === "remove") {
+							const jobId = subParts[1];
+							if (!jobId) {
+								ctx.ui.notify("Usage: /uc schedule remove <job-id>", "error");
+								return;
+							}
+							const r = await bridge.removeJob(jobId);
+							if (!r.ok) {
+								ctx.ui.notify(`Remove failed: ${r.error}`, "error");
+							} else {
+								ctx.ui.notify(`Removed job ${jobId.slice(0, 14)}`, "info");
+							}
+							return;
+						}
+						if (subAction === "add") {
+							// /uc schedule add <description> <cron> [--project <id>] [--night-start HH:MM --night-end HH:MM] [--tz <zone>]
+							const args = subParts.slice(1);
+							if (args.length < 2) {
+								ctx.ui.notify(
+									"Usage: /uc schedule add <description> <cron> [--project <id>] [--night-start HH:MM --night-end HH:MM] [--tz <zone>]",
+									"error",
+								);
+								return;
+							}
+							const description = args[0];
+							const cron = args[1];
+							let projectId = "";
+							let nightStart: string | undefined;
+							let nightEnd: string | undefined;
+							let timezone: string | undefined;
+							for (let i = 2; i < args.length; i++) {
+								if (args[i] === "--project" && args[i + 1]) { projectId = args[++i]; }
+								else if (args[i] === "--night-start" && args[i + 1]) { nightStart = args[++i]; }
+								else if (args[i] === "--night-end" && args[i + 1]) { nightEnd = args[++i]; }
+								else if (args[i] === "--tz" && args[i + 1]) { timezone = args[++i]; }
+							}
+							const r = await bridge.addCronJob({
+								description,
+								cronExpression: cron,
+								projectId,
+								nightWindowStart: nightStart,
+								nightWindowEnd: nightEnd,
+								timezone,
+							});
+							if (!r.ok) {
+								ctx.ui.notify(`Add cron job failed: ${r.error}`, "error");
+							} else {
+								ctx.ui.notify(`Added cron job ${r.jobId.slice(0, 14)} (${cron})`, "info");
+							}
+							return;
+						}
+						// No sub-action (or unknown) → show scheduler status
+						const status = await bridge.getSchedulerStatus();
+						if (!status.available) {
+							ctx.ui.notify("(scheduler service unavailable — gRPC server may be down)", "info");
+							return;
+						}
+						const lines: string[] = [];
+						lines.push(`Scheduler: ${status.isRunning ? "running" : "stopped"}`);
+						if (status.nightWindow) {
+							const nw = status.nightWindow;
+							lines.push(`Night window: ${nw.start}-${nw.end} (${nw.enabled ? "enabled" : "disabled"})`);
+						}
+						if (status.jobs.length === 0) {
+							lines.push("Jobs: (none)");
+						} else {
+							lines.push("Jobs:");
+							for (const j of status.jobs) {
+								const en = j.enabled ? "on" : "off";
+								const last = j.lastRun ? ` last=${j.lastRun}` : "";
+								const next = j.nextRun ? ` next=${j.nextRun}` : "";
+								lines.push(`  [${en}] ${j.id.slice(0, 14)}: ${j.name} (${j.cron})${last}${next}`);
+							}
+						}
+						if (status.executionHistory.length > 0) {
+							lines.push("Recent executions:");
+							for (const h of status.executionHistory.slice(0, 10)) {
+								const tag = h.status ?? (h.success ? "ok" : "fail");
+								const err = h.error ? ` — ${h.error}` : "";
+								lines.push(`  [${tag}] ${h.jobName} @ ${h.executedAt}${err}`);
+							}
+						}
+						lines.push(ctx.ui.theme.fg("dim", "/uc schedule trigger|add|remove <args> for actions"));
+						ctx.ui.notify(lines.join("\n"), "info");
+					} catch (e) {
+						ctx.ui.notify(`Schedule failed: ${e}`, "error");
+					}
+					return;
+				}
 					default:
 					// ponytail: F28 — "/uc submti" used to dump help identically to
 					// "/uc help", so typos looked like success. Flag unknown input.
@@ -747,6 +858,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"  /uc pause <task-id>            Pause after current wave",
 							"  /uc resume <task-id>           Resume a paused or failed task",
 							"  /uc search <query>             Search across indexed repos",
+							"  /uc schedule [trigger|add|remove] Scheduler status / actions",
 							"  /uc help                       Show this help",
 							"",
 							"Shortcuts:",
@@ -773,4 +885,5 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	registerIndexTools(pi, bridge);
 	registerFileTools(pi, bridge);
 	registerWorkerTools(pi, bridge);
+	registerSchedulerTools(pi, bridge);
 }

@@ -37,6 +37,10 @@ import {
 	ListWorkersRequestSchema,
 	ScaleWorkersRequestSchema,
 	WatchTaskRequestSchema,
+	GetSchedulerStatusRequestSchema,
+	TriggerSchedulerJobRequestSchema,
+	AddCronJobRequestSchema,
+	RemoveJobRequestSchema,
 	type SubmitTaskResponse,
 	type TaskEvent,
 } from "../grpc/engine_pb.js";
@@ -102,6 +106,55 @@ export interface WorkerListResult {
 	/** True when data comes from Health RPC fallback (approximate, no load/capacity details). */
 	degraded?: boolean;
 }
+
+/** A scheduled job from GetSchedulerStatus (mirrors ScheduledJobProto in engine.proto). */
+export interface ScheduledJob {
+	id: string;
+	name: string;
+	cron: string;
+	enabled: boolean;
+	lastRun?: string;
+	nextRun?: string;
+}
+
+/** A scheduler execution-history entry (mirrors ExecutionHistoryProto). */
+export interface SchedulerExecutionHistory {
+	jobId: string;
+	jobName: string;
+	executedAt: string;
+	success: boolean;
+	error?: string;
+	startedAt?: string;
+	completedAt?: string;
+	resultSummary?: string;
+	status?: string;
+}
+
+/** Night-window config (mirrors NightWindowProto). */
+export interface SchedulerNightWindow {
+	start: string;
+	end: string;
+	enabled: boolean;
+}
+
+/** Result of getSchedulerStatus() — full scheduler snapshot. */
+export interface SchedulerStatus {
+	available: boolean;
+	isRunning: boolean;
+	nightWindow?: SchedulerNightWindow;
+	jobs: ScheduledJob[];
+	executionHistory: SchedulerExecutionHistory[];
+}
+
+/** Result of addCronJob() — the new job's id on success, an error message on failure. */
+export type AddCronJobResult =
+	| { ok: true; jobId: string }
+	| { ok: false; error: string };
+
+/** Result of removeJob() — success flag + optional error. */
+export type RemoveJobResult =
+	| { ok: true }
+	| { ok: false; error: string };
 
 /** Structured error from GrpcBridge operations. */
 export type BridgeError =
@@ -782,6 +835,113 @@ export class GrpcBridge {
 			actualCount: 0,
 			message: "worker service unavailable",
 		});
+	}
+
+	// ── Scheduler Operations ───────────────────────────────────
+
+	/**
+	 * Get the scheduler status — running flag, night window, jobs, and recent
+	 * execution history. All four scheduler RPCs live on DashboardService.
+	 * Returns { available: false } when the server is unreachable.
+	 */
+	async getSchedulerStatus(): Promise<SchedulerStatus> {
+		return this.withReconnect(async () => {
+			const resp = await this.dashboardClient.getSchedulerStatus(
+				create(GetSchedulerStatusRequestSchema),
+			);
+			this.connected = true;
+			return {
+				available: resp.available,
+				isRunning: resp.isRunning,
+				nightWindow: resp.nightWindow
+					? { start: resp.nightWindow.start, end: resp.nightWindow.end, enabled: resp.nightWindow.enabled }
+					: undefined,
+				jobs: resp.jobs.map((j) => ({
+					id: j.id,
+					name: j.name,
+					cron: j.cron,
+					enabled: j.enabled,
+					lastRun: j.lastRun,
+					nextRun: j.nextRun,
+				})),
+				executionHistory: resp.executionHistory.map((h) => ({
+					jobId: h.jobId,
+					jobName: h.jobName,
+					executedAt: h.executedAt,
+					success: h.success,
+					error: h.error,
+					startedAt: h.startedAt,
+					completedAt: h.completedAt,
+					resultSummary: h.resultSummary,
+					status: h.status,
+				})),
+			};
+		}, { available: false, isRunning: false, nightWindow: undefined, jobs: [], executionHistory: [] });
+	}
+
+	/**
+	 * Trigger a scheduled job to run immediately by ID.
+	 * Returns success flag + the job ID the server acted on.
+	 */
+	async triggerSchedulerJob(jobId: string): Promise<{ success: boolean; jobId: string; error?: string }> {
+		return this.withReconnect(async () => {
+			const resp = await this.dashboardClient.triggerSchedulerJob(
+				create(TriggerSchedulerJobRequestSchema, { jobId }),
+			);
+			this.connected = true;
+			return { success: resp.success, jobId: resp.jobId, error: resp.error ?? undefined };
+		}, { success: false, jobId, error: "gRPC server unavailable — start with ./run-omp.sh" });
+	}
+
+	/**
+	 * Add a cron job at runtime. NOTE: the Rust server currently returns
+	 * UNIMPLEMENTED for AddCronJob (jobs are declared in uc.scheduler.yaml),
+	 * but the RPC + proto messages exist so this wires the client side now.
+	 */
+	async addCronJob(request: {
+		description: string;
+		cronExpression: string;
+		projectId?: string;
+		nightWindowStart?: string;
+		nightWindowEnd?: string;
+		timezone?: string;
+		enabled?: boolean;
+	}): Promise<AddCronJobResult> {
+		return this.withReconnect(async () => {
+			const resp = await this.dashboardClient.addCronJob(
+				create(AddCronJobRequestSchema, {
+					description: request.description,
+					cronExpression: request.cronExpression,
+					projectId: request.projectId ?? "",
+					nightWindowStart: request.nightWindowStart,
+					nightWindowEnd: request.nightWindowEnd,
+					timezone: request.timezone ?? "UTC",
+					enabled: request.enabled ?? true,
+				}),
+			);
+			this.connected = true;
+			if (!resp.success) {
+				return { ok: false, error: resp.error ?? "addCronJob rejected" };
+			}
+			return { ok: true, jobId: resp.jobId };
+		}, { ok: false, error: "gRPC server unavailable — start with ./run-omp.sh" });
+	}
+
+	/**
+	 * Remove a scheduled job by ID. Like addCronJob, may return UNIMPLEMENTED
+	 * on older servers; the client surfaces the error string.
+	 */
+	async removeJob(jobId: string): Promise<RemoveJobResult> {
+		return this.withReconnect(async () => {
+			const resp = await this.dashboardClient.removeJob(
+				create(RemoveJobRequestSchema, { jobId }),
+			);
+			this.connected = true;
+			if (!resp.success) {
+				return { ok: false, error: resp.error ?? "removeJob rejected" };
+			}
+			return { ok: true };
+		}, { ok: false, error: "gRPC server unavailable — start with ./run-omp.sh" });
 	}
 
 	// ── Connection ─────────────────────────────────────────────
