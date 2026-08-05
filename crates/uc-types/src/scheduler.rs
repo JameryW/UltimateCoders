@@ -44,6 +44,11 @@ pub struct ScheduledTask {
     pub created_at: DateTime<Utc>,
     /// When this scheduled task was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Optional verification command (e.g. "cargo check") run after result
+    /// aggregation. Threaded from `JobFile.verify_command` through the
+    /// scheduler → NATS → Python → aggregator chain. None = no verification.
+    #[serde(default)]
+    pub verify_command: Option<String>,
 }
 
 impl ScheduledTask {
@@ -70,6 +75,7 @@ impl ScheduledTask {
             next_execution: None,
             created_at: now,
             updated_at: now,
+            verify_command: None,
         }
     }
 
@@ -342,6 +348,72 @@ mod tests {
         assert!(!task.is_cron());
         assert!(task.is_one_shot());
         assert!(task.execute_after.is_some());
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_defaults_to_none() {
+        // Both cron and one_shot constructors must default verify_command to None.
+        let cron_task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        assert!(cron_task.verify_command.is_none());
+
+        let later = Utc::now() + chrono::Duration::hours(8);
+        let one_shot_task = ScheduledTask::one_shot(
+            "Run review".to_string(),
+            "project-1".to_string(),
+            later,
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        assert!(one_shot_task.verify_command.is_none());
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_serialization_roundtrip() {
+        // verify_command must serialize + deserialize (serde default = None
+        // when absent in JSON, so old payloads still parse).
+        let mut task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        task.verify_command = Some("cargo check".to_string());
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: ScheduledTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.verify_command.as_deref(), Some("cargo check"));
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_absent_in_json_defaults_none() {
+        // A JSON payload without verify_command (old format) must still
+        // deserialize with verify_command = None (serde default).
+        let task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        let json = serde_json::to_string(&task).unwrap();
+        // Remove verify_command from JSON to simulate old format.
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        if let Some(obj) = val.as_object_mut() {
+            obj.remove("verify_command");
+        }
+        let old_json = serde_json::to_string(&val).unwrap();
+        let parsed: ScheduledTask = serde_json::from_str(&old_json).unwrap();
+        assert!(parsed.verify_command.is_none());
     }
 
     #[test]

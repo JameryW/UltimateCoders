@@ -61,6 +61,12 @@ pub struct JobFile {
     /// Enabled flag (default true).
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Optional verification command (e.g. "cargo check") run after result
+    /// aggregation. When set, the command is threaded through the scheduler →
+    /// NATS → Python → aggregator chain so `AggregatedResult.verification_passed`
+    /// is populated. None (default) = no verification.
+    #[serde(default)]
+    pub verify_command: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -78,6 +84,8 @@ pub struct ParsedJob {
     /// window was declared — the job fires any time.
     pub night_window: Option<NightWindowConfig>,
     pub enabled: bool,
+    /// Optional verification command threaded to the aggregator.
+    pub verify_command: Option<String>,
 }
 
 /// Parsed `uc.scheduler.yaml` — jobs + a default night window.
@@ -148,6 +156,7 @@ impl SchedulerFileConfig {
                 execute_after,
                 night_window: nw,
                 enabled: j.enabled,
+                verify_command: j.verify_command,
             });
         }
 
@@ -283,5 +292,29 @@ mod tests {
         let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
         let nw = cfg.jobs[0].night_window.as_ref().expect("inherited window");
         assert_eq!(nw.start.hour(), 22);
+    }
+
+    #[test]
+    fn parse_verify_command() {
+        let yaml = "jobs:\n  - description: nightly build\n    cron: \"0 22 * * *\"\n    verify_command: \"cargo check\"\n";
+        let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
+        assert_eq!(cfg.jobs.len(), 1);
+        assert_eq!(
+            cfg.jobs[0].verify_command.as_deref(),
+            Some("cargo check"),
+            "verify_command must parse from YAML"
+        );
+    }
+
+    #[test]
+    fn verify_command_defaults_to_none() {
+        // When verify_command is absent, it defaults to None (no verification).
+        let yaml = "jobs:\n  - description: no verify\n    cron: \"0 22 * * *\"\n";
+        let cfg = SchedulerFileConfig::parse(yaml).unwrap().resolve().unwrap();
+        assert_eq!(cfg.jobs.len(), 1);
+        assert!(
+            cfg.jobs[0].verify_command.is_none(),
+            "verify_command must default to None when absent"
+        );
     }
 }

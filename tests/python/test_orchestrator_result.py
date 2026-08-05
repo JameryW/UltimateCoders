@@ -422,3 +422,90 @@ class TestAggregationFireAndForget:
         for t in orch._pending_aggregation:
             t.cancel()
         orch._pending_aggregation.clear()
+
+
+class TestVerifyCommandThreading:
+    """Verify verify_command flows submit_task → Task → _aggregate_results → aggregate()."""
+
+    async def test_submit_task_stores_verify_command_on_task(self):
+        """submit_task(verify_command=...) stores it on the returned Task."""
+        orch = Orchestrator()
+        task = await orch.submit_task(
+            "do thing",
+            task_id="t-vc-1",
+            verify_command="cargo check",
+        )
+        assert task.verify_command == "cargo check"
+        assert orch.tasks["t-vc-1"].verify_command == "cargo check"
+
+    async def test_submit_task_defaults_verify_command_none(self):
+        """Without verify_command, the Task field is None (no verification)."""
+        orch = Orchestrator()
+        task = await orch.submit_task("do thing", task_id="t-vc-2")
+        assert task.verify_command is None
+
+    async def test_aggregate_called_with_verify_command(self):
+        """_aggregate_results passes the task's verify_command to aggregate()."""
+        orch = Orchestrator()
+        task = _make_task("t-vc-3", ["st-a"])
+        task.verify_command = "cargo test"
+        orch.tasks["t-vc-3"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        mock_result = AggregatedResult(
+            status=AggregationStatus.SUCCESS,
+            verification_passed=True,
+        )
+        orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff")],
+        ))
+        await asyncio.sleep(0.05)
+
+        orch.aggregator.aggregate.assert_called_once()
+        kwargs = orch.aggregator.aggregate.call_args.kwargs
+        assert kwargs.get("verify_command") == "cargo test"
+
+    async def test_aggregate_called_without_verify_command_when_none(self):
+        """When task.verify_command is None, aggregate gets verify_command=None."""
+        orch = Orchestrator()
+        task = _make_task("t-vc-4", ["st-a"])
+        orch.tasks["t-vc-4"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        mock_result = AggregatedResult(status=AggregationStatus.SUCCESS)
+        orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff")],
+        ))
+        await asyncio.sleep(0.05)
+
+        orch.aggregator.aggregate.assert_called_once()
+        kwargs = orch.aggregator.aggregate.call_args.kwargs
+        assert kwargs.get("verify_command") is None
+
+    async def test_verification_passed_logged_on_success(self):
+        """When verify_command is set and aggregate returns verification_passed,
+        the result is logged (no crash)."""
+        orch = Orchestrator()
+        task = _make_task("t-vc-5", ["st-a"])
+        task.verify_command = "true"
+        orch.tasks["t-vc-5"] = task
+        orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+        mock_result = AggregatedResult(
+            status=AggregationStatus.SUCCESS,
+            verification_passed=True,
+        )
+        orch.aggregator.aggregate = AsyncMock(return_value=mock_result)
+
+        await orch.handle_subtask_result(_result_with_files(
+            "st-a", [_change("f.py", "diff")],
+        ))
+        await asyncio.sleep(0.05)
+
+        # Task completed, no crash.
+        assert task.status == TaskStatus.COMPLETED
+

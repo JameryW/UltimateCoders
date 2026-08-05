@@ -93,6 +93,7 @@ impl NatsSubmitDispatcher {
             task_id: Uuid::new_v4().to_string(),
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            verify_command: task.verify_command.clone(),
         }
     }
 
@@ -447,7 +448,8 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        // Must have exactly these three fields (matches Python _handle_submit).
+        // Must have these fields (matches Python _handle_submit). verify_command
+        // is optional (skip_serializing_if = None) so it's absent here.
         assert!(parsed.get("task_id").is_some(), "payload must have task_id");
         assert!(
             parsed.get("description").is_some(),
@@ -486,6 +488,39 @@ mod tests {
 
     #[cfg(feature = "messaging")]
     #[test]
+    fn nats_submit_dispatcher_payload_includes_verify_command_when_set() {
+        // When the ScheduledTask has a verify_command, the payload must
+        // include it so the Python aggregator runs verification.
+        let mut task = make_cron_task();
+        task.verify_command = Some("cargo check".to_string());
+        let payload = NatsSubmitDispatcher::build_payload(&task);
+        assert_eq!(
+            payload.verify_command.as_deref(),
+            Some("cargo check"),
+            "payload must carry verify_command from the scheduled task"
+        );
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn nats_submit_dispatcher_payload_omits_verify_command_when_none() {
+        // When verify_command is None, skip_serializing_if omits it from JSON
+        // so the payload stays backward-compatible (no extra key for old
+        // Python consumers that don't know about verify_command).
+        let task = make_cron_task();
+        assert!(task.verify_command.is_none());
+        let payload = NatsSubmitDispatcher::build_payload(&task);
+        assert!(payload.verify_command.is_none());
+        let json = serde_json::to_string(&payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parsed.get("verify_command").is_none(),
+            "verify_command must be absent from JSON when None"
+        );
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
     fn nats_submit_dispatcher_payload_matches_existing_publisher() {
         // The payload shape must match what TaskService::submit_task publishes
         // (server.rs:3092) — same NatsTaskSubmit struct, same fields. This is
@@ -498,6 +533,7 @@ mod tests {
             task_id: Uuid::new_v4().to_string(), // TaskId::new()
             description: task.description.clone(),
             project_id: task.project_id.clone(),
+            verify_command: None,
         };
 
         // Both must serialize to the same JSON shape (field names + types).

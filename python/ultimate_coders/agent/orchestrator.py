@@ -153,6 +153,7 @@ class Orchestrator:
         project_id: str = "",
         task_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
+        verify_command: str | None = None,
     ) -> Task:
         """Submit a task with LLM decomposition (newline-split fallback).
 
@@ -170,6 +171,8 @@ class Orchestrator:
             project_id: Project identifier.
             task_id: Optional explicit task ID.
             agent_config: Per-subtask agent config overrides (applied to all subtasks).
+            verify_command: Optional verification command threaded to the
+                result aggregator (``aggregate(verify_command=)``).
         """
         tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
 
@@ -194,6 +197,7 @@ class Orchestrator:
             project_id=project_id,
             status=TaskStatus.IN_PROGRESS,
             subtasks=subtasks,
+            verify_command=verify_command,
         )
         self.tasks[tid] = task
         logger.info("Task %s submitted (%d subtasks)", tid, len(subtasks))
@@ -500,27 +504,38 @@ class Orchestrator:
         is empty (first-modifier-wins semantics). Logs the aggregation
         result — conflicts are warned about but never abort the task.
         Wrapped in try/except so aggregation failures never propagate.
+
+        If the task has a ``verify_command``, it is passed to
+        ``aggregate(verify_command=)`` so ``AggregatedResult.verification_passed``
+        is populated (True/False — None means not verified).
         """
         try:
             base_files = self._collect_base_files(subtask_results)
+            # Thread verify_command from the task (set by submit_task from
+            # the scheduler config → NatsTaskSubmit payload).
+            task = self.tasks.get(task_id)
+            verify_command = task.verify_command if task is not None else None
             result = await self.aggregator.aggregate(
                 subtask_results, base_files,
+                verify_command=verify_command,
             )
             if result.conflict_files:
                 logger.warning(
                     "Result aggregation for task %s: status=%s, "
-                    "conflicts=%d (%s), merged=%d",
+                    "conflicts=%d (%s), merged=%d, verification=%s",
                     task_id, result.status.value,
                     len(result.conflict_files),
                     ", ".join(result.conflict_files),
                     len(result.merged_files),
+                    result.verification_passed,
                 )
             else:
                 logger.info(
                     "Result aggregation for task %s: status=%s, "
-                    "merged=%d files",
+                    "merged=%d files, verification=%s",
                     task_id, result.status.value,
                     len(result.merged_files),
+                    result.verification_passed,
                 )
         except Exception:
             logger.exception(

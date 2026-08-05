@@ -61,6 +61,11 @@ pub struct NatsTaskSubmit {
     pub task_id: String,
     pub description: String,
     pub project_id: String,
+    /// Optional verification command threaded from `ScheduledTask.verify_command`.
+    /// The Python consumer passes it to `Orchestrator.submit_task(verify_command=)`,
+    /// which threads it to `aggregate(verify_command=)`. None = no verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_command: Option<String>,
 }
 
 /// Payload for `uc.task.update` messages.
@@ -3093,6 +3098,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.0.clone(),
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
+                        verify_command: None,
                     };
                     (task.id.0.clone(), payload, events)
                 };
@@ -3842,6 +3848,7 @@ mod tests {
             task_id: "abc-123".to_string(),
             description: "Fix the login bug".to_string(),
             project_id: "proj-1".to_string(),
+            verify_command: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsTaskSubmit = serde_json::from_str(&json).unwrap();
