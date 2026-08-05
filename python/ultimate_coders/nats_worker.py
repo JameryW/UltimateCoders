@@ -1330,6 +1330,7 @@ class NatsWorker:
         # absent/False = real-time gRPC submission. Drives night-window
         # exclusive mode deferral in Orchestrator.submit_task.
         scheduled = bool(payload.get("scheduled", False))
+        verify_command = payload.get("verify_command")
 
         if not description:
             logger.warning(
@@ -1353,6 +1354,7 @@ class NatsWorker:
                 task_id=task_id or None,
                 agent_config=payload.get("agent_config"),
                 _scheduled=scheduled,
+                verify_command=verify_command,
             )
             logger.info(
                 "Task %s submitted to Orchestrator (status=%s, subtasks=%d)",

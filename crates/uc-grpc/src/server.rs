@@ -74,6 +74,11 @@ pub struct NatsTaskSubmit {
     /// Absent/`false` = real-time gRPC submission (subject to deferral).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub scheduled: Option<bool>,
+    /// Optional verification command threaded from `ScheduledTask.verify_command`.
+    /// The Python consumer passes it to `Orchestrator.submit_task(verify_command=)`,
+    /// which threads it to `aggregate(verify_command=)`. None = no verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_command: Option<String>,
 }
 
 /// Payload for `uc.task.update` messages.
@@ -3110,6 +3115,7 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         // The Python consumer treats absent as `False`
                         // (subject to night-window deferral).
                         scheduled: None,
+                        verify_command: None,
                     };
                     (task.id.0.clone(), payload, events)
                 };
@@ -3860,6 +3866,7 @@ mod tests {
             description: "Fix the login bug".to_string(),
             project_id: "proj-1".to_string(),
             scheduled: None,
+            verify_command: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         // `scheduled: None` must be absent from serialized JSON (skip_serializing_if).

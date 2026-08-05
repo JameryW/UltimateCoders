@@ -245,6 +245,7 @@ mod postgres {
                 next_execution: r.10,
                 created_at: r.11,
                 updated_at: r.12,
+                verify_command: None,
             }))
         }
 
@@ -326,6 +327,7 @@ mod postgres {
                     next_execution: r.10,
                     created_at: r.11,
                     updated_at: r.12,
+                    verify_command: None,
                 })
                 .collect())
         }

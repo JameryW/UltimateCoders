@@ -170,6 +170,7 @@ Full chain wired: config → ScheduledTask → NATS payload (skip_serializing_if
 ### Next Steps
 
 - None - task complete
+<<<<<<< HEAD
 
 
 ## Session 115: Add RemoveJob runtime gRPC API
@@ -203,3 +204,5 @@ RemoveJob RPC — mirror #556 AddCronJob. Proto + EngineApi + LocalEngine + Dash
 ### Next Steps
 
 - None - task complete
+=======
+>>>>>>> origin/main

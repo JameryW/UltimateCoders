@@ -1333,6 +1333,208 @@ mod tests {
         assert!(result.error.is_some(), "Error message should be present");
     }
 
+    #[tokio::test]
+    async fn local_engine_remove_job_invalid_uuid() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let result = engine.remove_job("not-a-uuid").await;
+
+        // Invalid UUID string should return an error (ConfigError)
+        assert!(result.is_err(), "Invalid UUID should return Err, not Ok");
+    }
+
+    #[tokio::test]
+    async fn local_engine_remove_job_nonexistent() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let result = engine.remove_job(&valid_uuid).await.unwrap();
+
+        // Valid UUID but job doesn't exist — remove_job calls store.delete_task
+        // which returns Err for nonexistent. The engine converts to success=false.
+        assert!(
+            !result.success,
+            "Removing a non-existent job should return success=false"
+        );
+        assert!(
+            result.error.is_some(),
+            "Error message should be present for non-existent job"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_remove_job_success() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+
+        // First add a job via the engine API so it exists in the scheduler.
+        let add_result = engine
+            .add_cron_job(uc_types::AddCronJobApiRequest {
+                description: "To be removed".to_string(),
+                cron_expression: "0 22 * * *".to_string(),
+                project_id: "test-project".to_string(),
+                night_window_start: None,
+                night_window_end: None,
+                timezone: "UTC".to_string(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(add_result.success, "Job should be created successfully");
+        let job_id = add_result.job_id.clone();
+        assert!(!job_id.is_empty(), "Job ID should not be empty");
+
+        // Verify the job exists
+        assert_eq!(
+            engine.scheduler_service().job_count().await,
+            1,
+            "Should have 1 job after adding"
+        );
+
+        // Now remove it
+        let remove_result = engine.remove_job(&job_id).await.unwrap();
+
+        assert!(
+            remove_result.success,
+            "Removing an existing job should succeed"
+        );
+        assert!(
+            remove_result.error.is_none(),
+            "No error should be present on success"
+        );
+
+        // Verify the job is gone
+        assert_eq!(
+            engine.scheduler_service().job_count().await,
+            0,
+            "Should have 0 jobs after removal"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_remove_job_returns_false() {
+        use uc_types::EngineApi;
+
+        /// Minimal engine that uses all default scheduler trait impls.
+        struct NoSchedulerEngine;
+
+        #[async_trait::async_trait]
+        impl EngineApi for NoSchedulerEngine {
+            async fn search(
+                &self,
+                _query: uc_types::SearchQuery,
+            ) -> Result<uc_types::SearchResult, EngineError> {
+                unreachable!()
+            }
+            async fn index_repo(
+                &self,
+                _request: uc_types::IndexRequest,
+            ) -> Result<uc_types::IndexResponse, EngineError> {
+                unreachable!()
+            }
+            async fn get_index_state(
+                &self,
+                _repo_id: &str,
+            ) -> Result<uc_types::RepoIndexState, EngineError> {
+                unreachable!()
+            }
+            async fn remove_index(&self, _repo_id: &str) -> Result<(), EngineError> {
+                unreachable!()
+            }
+            async fn read_memory(
+                &self,
+                _request: uc_types::MemoryReadRequest,
+            ) -> Result<Option<uc_types::MemoryEntry>, EngineError> {
+                unreachable!()
+            }
+            async fn write_memory(
+                &self,
+                _request: uc_types::MemoryWriteRequest,
+            ) -> Result<uc_types::MemoryEntry, EngineError> {
+                unreachable!()
+            }
+            async fn delete_memory(&self, _key: &uc_types::MemoryKey) -> Result<(), EngineError> {
+                unreachable!()
+            }
+            async fn search_memory(
+                &self,
+                _request: uc_types::MemorySearchRequest,
+            ) -> Result<uc_types::MemorySearchResponse, EngineError> {
+                unreachable!()
+            }
+            async fn health(&self) -> Result<uc_types::HealthStatus, EngineError> {
+                unreachable!()
+            }
+            async fn batch_write_memory(
+                &self,
+                _requests: Vec<uc_types::MemoryWriteRequest>,
+            ) -> Result<Vec<uc_types::MemoryEntry>, EngineError> {
+                unreachable!()
+            }
+            async fn list_repos(
+                &self,
+                _workspace_id: Option<&str>,
+            ) -> Result<Vec<uc_types::RepoIndexState>, EngineError> {
+                unreachable!()
+            }
+            async fn list_dir(
+                &self,
+                _repo_id: &str,
+                _path: &str,
+            ) -> Result<uc_types::agent::DirListing, EngineError> {
+                unreachable!()
+            }
+            async fn get_file(
+                &self,
+                _repo_id: &str,
+                _path: &str,
+            ) -> Result<uc_types::agent::FileContent, EngineError> {
+                unreachable!()
+            }
+            async fn search_stream(
+                &self,
+                _query: uc_types::SearchQuery,
+            ) -> Result<uc_types::SearchStream, EngineError> {
+                unreachable!()
+            }
+            async fn submit_task(
+                &self,
+                _description: String,
+                _project_id: String,
+            ) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn get_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn list_tasks(&self) -> Result<Vec<uc_types::Task>, EngineError> {
+                unreachable!()
+            }
+            async fn pause_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn resume_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+        }
+
+        let engine = NoSchedulerEngine;
+        let result = engine.remove_job("any-id").await.unwrap();
+
+        assert!(
+            !result.success,
+            "Default remove_job impl should return success=false"
+        );
+        assert!(
+            result.error.is_some(),
+            "Default remove_job impl should return an error message"
+        );
+    }
+
     // ── LockProvider tests ─────────────────────────────────────────
 
     /// A mock lock provider whose acquire result can be controlled in tests.
