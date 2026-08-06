@@ -30,6 +30,11 @@ service TaskService {
     rpc ResumeTask(ResumeTaskRequest) returns (ResumeTaskResponse);
     rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
     rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+    // Create a checkpoint (snapshot) of a task's current state by replaying
+    // its event stream. Returns the snapshot id.
+    rpc CreateCheckpoint(CreateCheckpointRequest) returns (CreateCheckpointResponse);
+    // Recover a task's state from the latest snapshot + event replay.
+    rpc RecoverTask(RecoverTaskRequest) returns (RecoverTaskResponse);
 }
 
 // ── Worker Service (Worker registration + lifecycle) ──
@@ -329,6 +334,45 @@ message UpdateTaskResponse {
     string task_id = 2;
     string status = 3;
     optional string error = 4;
+}
+
+// ── Checkpoint / Recovery ───────────────────────────────
+
+message CreateCheckpointRequest {
+    string task_id = 1;
+}
+
+message CreateCheckpointResponse {
+    bool success = 1;
+    string task_id = 2;
+    string snapshot_id = 3;
+    optional string error = 4;
+}
+
+message RecoverTaskRequest {
+    string task_id = 1;
+}
+
+message RecoverTaskResponse {
+    bool success = 1;
+    string task_id = 2;
+    optional TaskSnapshotProto snapshot = 3;
+    optional string error = 4;
+}
+
+message TaskSnapshotProto {
+    string task_id = 1;
+    string status = 2;
+    repeated SubtaskSnapshotProto subtasks = 3;
+    uint64 last_event_offset = 4;
+    int64 timestamp = 5;
+}
+
+message SubtaskSnapshotProto {
+    string subtask_id = 1;
+    string status = 2;
+    optional string assigned_worker = 3;
+    optional string result_summary = 4;
 }
 
 message WatchTaskRequest {
