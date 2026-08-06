@@ -158,6 +158,32 @@ pub trait EngineApi: Send + Sync {
     /// Resume a paused task.
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError>;
 
+    // ── Checkpoint / Recovery ───────────────────────────────
+
+    /// Create a checkpoint (snapshot) of a task's current state by replaying
+    /// its event stream. Returns the snapshot id.
+    ///
+    /// The gRPC `TaskService::create_checkpoint` delegates here. Default impl
+    /// returns an error — only engines with a `CheckpointManager` implement it.
+    async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
+        let _ = task_id;
+        Err(EngineError::InvalidOperation(
+            "checkpoint not available".to_string(),
+        ))
+    }
+
+    /// Recover a task's state from the latest snapshot + event replay.
+    /// Returns the reconstructed [`TaskSnapshot`].
+    ///
+    /// The gRPC `TaskService::recover_task` delegates here. Default impl
+    /// returns an error — only engines with a `CheckpointManager` implement it.
+    async fn recover_task(&self, task_id: &str) -> Result<crate::TaskSnapshot, EngineError> {
+        let _ = task_id;
+        Err(EngineError::InvalidOperation(
+            "recovery not available".to_string(),
+        ))
+    }
+
     // ── Scheduler ───────────────────────────────────────────
 
     /// Get the scheduler status (jobs, night window, execution history).

@@ -353,16 +353,6 @@ impl LocalEngine {
         self.checkpoint_manager.record_event(subject, event).await
     }
 
-    /// Create a checkpoint (snapshot) of a task's current state.
-    pub async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
-        self.checkpoint_manager.create_snapshot(task_id).await
-    }
-
-    /// Recover a task from the latest checkpoint + event replay.
-    pub async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
-        self.checkpoint_manager.recover(task_id).await
-    }
-
     /// Declare an edit intent for conflict detection.
     ///
     /// Workers should call this before modifying a file to declare
@@ -931,6 +921,14 @@ impl EngineApi for LocalEngine {
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
         let mut store = self.task_store_locked();
         store.resume_task(task_id).map_err(EngineError::TaskError)
+    }
+
+    async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
+        self.checkpoint_manager.create_snapshot(task_id).await
+    }
+
+    async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
+        self.checkpoint_manager.recover(task_id).await
     }
 
     async fn get_scheduler_status(&self) -> Result<uc_types::SchedulerStatus, EngineError> {

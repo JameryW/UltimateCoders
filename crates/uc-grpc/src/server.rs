@@ -1339,6 +1339,9 @@ where
 struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     engine: E,
     task_store: Arc<Mutex<TaskStore>>,
+    /// Checkpoint manager sharing TaskStore's EventStore — the activated
+    /// event-sourcing recovery path.
+    checkpoint_manager: Arc<uc_engine::CheckpointManager>,
     /// Worker registry — source of truth for WorkerService and capability-aware dispatch.
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     /// NATS client for task submission and status subscriptions.
@@ -1382,19 +1385,36 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     pub fn new(engine: E) -> Self {
         let (event_tx, _) = broadcast::channel(256);
 
-        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let task_store = Arc::new(Mutex::new(TaskStore::with_event_store(event_store.clone())));
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                checkpoint_manager,
                 worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
             }),
         }
+    }
+
+    /// Build a CheckpointManager sharing an EventStore.
+    /// `subject_prefix = "task."` matches TaskStore's event-recording subjects
+    /// so recover() reads the same stream production events land in.
+    fn build_checkpoint_manager(
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Arc<uc_engine::CheckpointManager> {
+        let config = uc_engine::CheckpointConfig {
+            subject_prefix: "task.".to_string(),
+            ..Default::default()
+        };
+        Arc::new(uc_engine::CheckpointManager::new(event_store, config))
     }
 
     /// Create a new gRPC server with custom task and event backends.
@@ -1408,14 +1428,16 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let (event_tx, _) = broadcast::channel(256);
         let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
             task_backend,
-            event_store,
+            event_store.clone(),
         )));
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                checkpoint_manager,
                 worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
@@ -1482,15 +1504,17 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
             task_backend,
-            event_store,
+            event_store.clone(),
         )));
 
         let (event_tx, _) = broadcast::channel(256);
 
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            checkpoint_manager,
             worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
@@ -1538,14 +1562,18 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             }
         };
 
-        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let task_store = Arc::new(Mutex::new(TaskStore::with_event_store(event_store.clone())));
 
         let (event_tx, _) = broadcast::channel(256);
 
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            checkpoint_manager,
             worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
@@ -1646,6 +1674,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Access the shared TaskStore.
     pub fn task_store(&self) -> &Arc<Mutex<TaskStore>> {
         &self.inner.task_store
+    }
+
+    /// Access the CheckpointManager (event-sourcing snapshot/recover).
+    pub fn checkpoint_manager(&self) -> &Arc<uc_engine::CheckpointManager> {
+        &self.inner.checkpoint_manager
     }
 
     /// Access the shared WorkerRegistry.
@@ -4115,6 +4148,105 @@ mod tests {
         });
 
         assert_eq!(store.event_count(), initial_count + 1);
+    }
+
+    /// PR1: CheckpointManager attached to TaskStore's EventStore recovers
+    /// state from events recorded under TaskStore's `task.{id}` subject.
+    /// Proves the subject-prefix alignment (`task.`) is correct — without it,
+    /// recover() would read `agent.events.{id}` and find nothing.
+    #[tokio::test]
+    async fn checkpoint_manager_recovers_taskstore_events() {
+        use std::sync::Arc;
+
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let store = TaskStore::with_event_store(event_store.clone());
+
+        let task_id = "ck-task-1";
+        let subtask_id = uc_types::TaskId::new();
+        let worker_id = uc_types::WorkerId::new();
+        let subject = format!("task.{}", task_id);
+
+        // Simulate production event recording (TaskStore.record_event_with_subject
+        // appends under `task.{id}` via a spawned task; here we append directly
+        // to avoid the fire-and-forget race in a unit test).
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::TaskCreated {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    description: "Checkpoint test".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    worker_id: worker_id.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskCompleted {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    summary: "Done".to_string(),
+                    success: true,
+                    modified_files: Vec::new(),
+                    output: String::new(),
+                    simulated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Build CheckpointManager the same way GrpcServer does.
+        let config = uc_engine::CheckpointConfig {
+            subject_prefix: "task.".to_string(),
+            ..Default::default()
+        };
+        let ckpt = uc_engine::CheckpointManager::new(event_store.clone(), config);
+
+        // Recover from scratch (no snapshot yet) — replays all 3 events.
+        let state = ckpt.recover(task_id).await.unwrap();
+        assert_eq!(state.task_id, task_id);
+        assert_eq!(state.subtasks.len(), 1);
+        assert_eq!(state.subtasks[0].status, "completed");
+        assert_eq!(state.subtasks[0].result_summary.as_deref(), Some("Done"));
+
+        // Create a snapshot, record one more event, recover → post-snapshot
+        // event must be replayed on top of the snapshot.
+        let snapshot_id = ckpt.create_snapshot(task_id).await.unwrap();
+        assert!(!snapshot_id.is_empty());
+
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: uc_types::TaskId::new(),
+                    worker_id: uc_types::WorkerId::new(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let state2 = ckpt.recover(task_id).await.unwrap();
+        assert_eq!(
+            state2.subtasks.len(),
+            2,
+            "post-snapshot event should be replayed"
+        );
+
+        // Touch store so with_event_store path is exercised.
+        assert_eq!(store.event_count(), 0);
     }
 
     #[test]
