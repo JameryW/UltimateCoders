@@ -272,3 +272,36 @@ Scheduler RPCs existed but no OMP TUI. engine_pb regen, grpc-bridge, scheduler-b
 ### Next Steps
 
 - None - task complete
+
+
+## Session 118: Add event_emitter.py test coverage
+
+**Date**: 2026-08-06
+**Task**: Add event_emitter.py test coverage
+**Branch**: `main`
+
+### Summary
+
+36 tests for TaskEventEmitter. Was wired but untested. 36 pass. PR #568 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b2c3d4e5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
