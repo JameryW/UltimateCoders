@@ -239,3 +239,36 @@ Scheduler RPCs existed but no OMP TUI. engine_pb regen, grpc-bridge, scheduler-b
 ### Next Steps
 
 - None - task complete
+
+
+## Session 117: Add search_cache.py test coverage
+
+**Date**: 2026-08-06
+**Task**: Add search_cache.py test coverage
+**Branch**: `main`
+
+### Summary
+
+16 tests for WorkerLocalCache. Was wired but untested. PR #567 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a1b2c3d4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
