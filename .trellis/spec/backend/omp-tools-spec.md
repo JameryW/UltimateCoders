@@ -302,7 +302,7 @@ gRPC server heartbeat timeout: **120s** (was 600s). Worker crash detected in 2 m
 
 | Tool | Reason |
 |------|--------|
-| `uc_schedule` | Phase 2, needs Python RPC bridge for SchedulerService |
+| `uc_schedule` | ✅ Implemented (#565) — `/uc schedule` command + `uc_scheduler` LLM tool (status/trigger/add/remove) |
 | `uc_checkpoint` | Auto wave-boundary checkpoint sufficient; explicit low-frequency |
 | `uc_rate_limiter` | Monitoring only |
 | Edit intent / conflict tools | Worker-internal coordination, not LLM-driven |
