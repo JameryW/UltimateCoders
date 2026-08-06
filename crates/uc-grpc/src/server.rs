@@ -287,8 +287,8 @@ pub struct TaskStore {
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
     /// Optional async backend for task persistence (PostgreSQL, etc.).
-    /// ponytail: stored for future wiring; sync methods still use HashMap
-    #[allow(dead_code)]
+    /// Write-ahead: fire-and-forget upsert on every mutation (HashMap stays
+    /// the read source of truth). Activated in PR1; read-path delegation is PR3.
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
@@ -481,6 +481,49 @@ impl TaskStore {
         proto
     }
 
+    /// Fire-and-forget upsert to the task backend via `update_task`.
+    ///
+    /// Mirrors the `record_event_with_subject` spawn pattern: spawns the
+    /// async backend call on the current tokio runtime, logging failures via
+    /// `tracing::warn`. No-op when `task_backend` is `None` or no runtime is
+    /// running (e.g. sync unit tests). The HashMap remains the read source of
+    /// truth; PG is write-ahead for future restart recovery (PR3 adds reads).
+    fn persist_task(&self, task: &uc_types::Task) {
+        if let Some(backend) = &self.task_backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let backend = backend.clone();
+                let task = task.clone();
+                handle.spawn(async move {
+                    if let Err(e) = backend.update_task(task).await {
+                        tracing::warn!("task_backend update_task failed: {}", e);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Fire-and-forget INSERT of a newly-created task to the backend via
+    /// `submit_task`.
+    ///
+    /// Used at the two submit points (`submit_task`, `submit_task_pending`)
+    /// and the create-if-not-exists path in `update_task`. The backend's
+    /// `update_task` is currently a plain UPDATE (PR2 will make it upsert), so
+    /// the first persist must go through `submit_task` (INSERT) to ensure the
+    /// row exists before subsequent `update_task` calls hit it.
+    fn persist_new_task(&self, task: &uc_types::Task) {
+        if let Some(backend) = &self.task_backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let backend = backend.clone();
+                let task = task.clone();
+                handle.spawn(async move {
+                    if let Err(e) = backend.submit_task(task).await {
+                        tracing::warn!("task_backend submit_task failed: {}", e);
+                    }
+                });
+            }
+        }
+    }
+
     /// Submit a new task: create it with a single subtask (InProgress status), store, and return.
     /// Production code uses `submit_task_pending` (Planning, no subtasks) and lets
     /// the Python Orchestrator handle decomposition.
@@ -541,6 +584,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_new_task(&task);
         task
     }
 
@@ -578,6 +622,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_new_task(&task);
         (task, vec![proto])
     }
 
@@ -601,7 +646,9 @@ impl TaskStore {
             uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
                 task.status = uc_types::TaskStatus::Paused;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot pause task in {} status (expected InProgress or Planning)",
@@ -620,7 +667,9 @@ impl TaskStore {
             uc_types::TaskStatus::Paused => {
                 task.status = uc_types::TaskStatus::InProgress;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot resume task in {} status (expected Paused)",
@@ -659,7 +708,9 @@ impl TaskStore {
                         st.status = uc_types::SubtaskStatus::Failed;
                     }
                 }
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             uc_types::TaskStatus::Failed => Err("Task is already failed".to_string()),
             uc_types::TaskStatus::Completed => {
@@ -689,7 +740,9 @@ impl TaskStore {
         // Create-if-not-exists: when description is non-empty and task not found,
         // insert a new task with the client-provided task_id (preserving the
         // orchestrator's original ID — no new ID generation).
+        let mut is_new_task = false;
         if !self.tasks.contains_key(task_id) && !description.is_empty() {
+            is_new_task = true;
             let now = chrono::Utc::now();
             let task = uc_types::Task {
                 id: uc_types::TaskId(task_id.to_string()),
@@ -820,6 +873,15 @@ impl TaskStore {
         // Record all events to EventStore
         for event in &events {
             self.record_event(event.clone());
+        }
+
+        // Persist to backend: submit_task (INSERT) for newly-created tasks,
+        // update_task (UPDATE) for existing ones. PR2 will make update_task
+        // an upsert, collapsing these into one path.
+        if is_new_task {
+            self.persist_new_task(&updated);
+        } else {
+            self.persist_task(&updated);
         }
 
         Ok((updated, events))
@@ -1004,8 +1066,11 @@ impl TaskStore {
         }
 
         task.updated_at = chrono::Utc::now();
+        let task_snapshot = task.clone();
         // Bound the in-memory task map (terminal tasks may have just appeared).
         self.evict_completed_tasks();
+        // Persist the updated task to the backend (fire-and-forget upsert).
+        self.persist_task(&task_snapshot);
     }
 
     /// Record an event from NATS (`uc.task.event`).
@@ -1100,7 +1165,9 @@ impl TaskStore {
     ) -> (Vec<String>, Vec<String>) {
         let mut affected_tasks = Vec::new();
         let mut reassigned = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for task in self.tasks.values_mut() {
+            let mut task_changed = false;
             for st in &mut task.subtasks {
                 if matches!(
                     st.status,
@@ -1120,10 +1187,18 @@ impl TaskStore {
                             if !affected_tasks.contains(&task.id.0) {
                                 affected_tasks.push(task.id.0.clone());
                             }
+                            task_changed = true;
                         }
                     }
                 }
             }
+            if task_changed {
+                task.updated_at = chrono::Utc::now();
+                snapshots.push(task.clone());
+            }
+        }
+        for task in &snapshots {
+            self.persist_task(task);
         }
         (affected_tasks, reassigned)
     }
@@ -1175,21 +1250,30 @@ impl TaskStore {
         subtask_id: &str,
         new_status: uc_types::SubtaskStatus,
     ) {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
-                // Track Assigned-at so stale Assigned subtasks (no worker ever
-                // picked them up) can be reverted to Pending by the heartbeat
-                // monitor. Clear on any transition out of Assigned.
-                if new_status == uc_types::SubtaskStatus::Assigned {
-                    self.assigned_subtask_times
-                        .insert(subtask_id.to_string(), chrono::Utc::now());
-                } else if st.status == uc_types::SubtaskStatus::Assigned {
-                    self.assigned_subtask_times.remove(subtask_id);
-                }
-                st.status = new_status;
-                task.updated_at = chrono::Utc::now();
+        let task = match self.tasks.get_mut(task_id) {
+            Some(t) => t,
+            None => return,
+        };
+        {
+            let st = match task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                Some(s) => s,
+                None => return,
+            };
+            // Track Assigned-at so stale Assigned subtasks (no worker ever
+            // picked them up) can be reverted to Pending by the heartbeat
+            // monitor. Clear on any transition out of Assigned.
+            if new_status == uc_types::SubtaskStatus::Assigned {
+                self.assigned_subtask_times
+                    .insert(subtask_id.to_string(), chrono::Utc::now());
+            } else if st.status == uc_types::SubtaskStatus::Assigned {
+                self.assigned_subtask_times.remove(subtask_id);
             }
+            st.status = new_status;
+            task.updated_at = chrono::Utc::now();
         }
+        // st borrow dropped — safe to clone task for persist.
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
     }
 
     /// Revert Assigned subtasks that have been stuck (no worker picked them up)
@@ -1216,7 +1300,9 @@ impl TaskStore {
             return Vec::new();
         }
         let mut affected = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for task in self.tasks.values_mut() {
+            let mut task_changed = false;
             for st in &mut task.subtasks {
                 if stale_ids.contains(&st.id.0) && st.status == uc_types::SubtaskStatus::Assigned {
                     st.status = uc_types::SubtaskStatus::Pending;
@@ -1230,11 +1316,19 @@ impl TaskStore {
                         retry_count = st.dispatch_retry_count,
                         "Reverting stale Assigned subtask to Pending (no worker picked it up)"
                     );
+                    task_changed = true;
                 }
+            }
+            if task_changed {
+                task.updated_at = chrono::Utc::now();
+                snapshots.push(task.clone());
             }
         }
         for id in &stale_ids {
             self.assigned_subtask_times.remove(id);
+        }
+        for task in &snapshots {
+            self.persist_task(task);
         }
         affected
     }
@@ -1242,14 +1336,16 @@ impl TaskStore {
     /// Increment a subtask's dispatch_retry_count within a task.
     /// Returns the new retry count, or None if task/subtask not found.
     pub fn increment_dispatch_retry(&mut self, task_id: &str, subtask_id: &str) -> Option<u32> {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
-                st.dispatch_retry_count += 1;
-                task.updated_at = chrono::Utc::now();
-                return Some(st.dispatch_retry_count);
-            }
-        }
-        None
+        let task = self.tasks.get_mut(task_id)?;
+        let retry_count = {
+            let st = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id)?;
+            st.dispatch_retry_count += 1;
+            task.updated_at = chrono::Utc::now();
+            st.dispatch_retry_count
+        };
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
+        Some(retry_count)
     }
 
     /// Update the status of a task by ID.
@@ -1265,6 +1361,8 @@ impl TaskStore {
         let old = task.status.clone();
         task.status = new_status;
         task.updated_at = chrono::Utc::now();
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
         Some(old)
     }
 
@@ -1287,15 +1385,21 @@ impl TaskStore {
 
         // Consumer is stale — mark all InProgress/Planning tasks as Failed
         let mut failed_ids = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for (id, task) in &mut self.tasks {
             match task.status {
                 uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
                     task.status = uc_types::TaskStatus::Failed;
                     task.updated_at = now;
                     failed_ids.push(id.clone());
+                    snapshots.push(task.clone());
                 }
                 _ => {}
             }
+        }
+
+        for task in &snapshots {
+            self.persist_task(task);
         }
 
         if !failed_ids.is_empty() {
@@ -3717,6 +3821,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TaskStoreBackend trait methods (get_task, etc.) are needed for backend
+    // write-path persistence tests.
+    use uc_engine::TaskStoreBackend;
 
     #[test]
     fn error_mapping_search() {
@@ -5710,5 +5817,191 @@ mod tests {
         assert!(parsed.steps.is_empty());
         assert_eq!(parsed.agent_config_json, None);
         assert_eq!(parsed.message_id, None);
+    }
+
+    // ── task_backend write-path persistence tests ──────────────
+
+    /// Helper: build a TaskStore backed by InMemoryTaskBackend + InMemoryEventStore.
+    fn make_store_with_backend() -> (
+        TaskStore,
+        Arc<uc_engine::InMemoryTaskBackend>,
+        Arc<uc_engine::InMemoryEventStore>,
+    ) {
+        let backend = Arc::new(uc_engine::InMemoryTaskBackend::new());
+        let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+        let store = TaskStore::with_backend(backend.clone(), event_store.clone());
+        (store, backend, event_store)
+    }
+
+    /// submit_task persists the new task to the backend via submit_task (INSERT).
+    #[tokio::test]
+    async fn task_backend_persists_submit_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Yield so the fire-and-forget spawn completes.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.description, "Test task");
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(got.subtasks.len(), 1);
+    }
+
+    /// submit_task_pending persists the new task to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_submit_task_pending() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let (task, _) = store.submit_task_pending("Pending task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.description, "Pending task");
+        assert_eq!(got.status, uc_types::TaskStatus::Planning);
+        assert!(got.subtasks.is_empty());
+    }
+
+    /// pause_task persists the status change to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_pause_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Yield for submit_task persist.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.pause_task(&task_id).unwrap();
+
+        // Yield for pause_task persist.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::Paused);
+    }
+
+    /// resume_task persists the status change to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_resume_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.pause_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.resume_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+    }
+
+    /// cancel_task persists the status change (Failed) to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_cancel_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.cancel_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::Failed);
+        // Subtask should also be Failed in the persisted copy.
+        assert_eq!(got.subtasks.len(), 1);
+        assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Failed);
+    }
+
+    /// update_task persists both create-if-not-exists (INSERT) and update (UPDATE) paths.
+    #[tokio::test]
+    async fn task_backend_persists_update_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        // Create-if-not-exists path: task doesn't exist, description non-empty.
+        let subtask = uc_types::Subtask {
+            id: uc_types::TaskId("st-1".to_string()),
+            parent_id: uc_types::TaskId("t-1".to_string()),
+            description: "do thing".to_string(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
+            retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+        };
+        store
+            .update_task(
+                "t-1",
+                "InProgress",
+                vec![subtask],
+                "New task via update",
+                "p1",
+            )
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task("t-1").await.unwrap().unwrap();
+        assert_eq!(got.description, "New task via update");
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+
+        // Update path: task exists, change status.
+        store
+            .update_task("t-1", "Paused", Vec::new(), "", "p1")
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got2 = backend.get_task("t-1").await.unwrap().unwrap();
+        assert_eq!(got2.status, uc_types::TaskStatus::Paused);
+    }
+
+    /// apply_update persists the mutated task to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_apply_update() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let (task, _) = store.submit_task_pending("Task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "in_progress".to_string(),
+            subtasks: vec![],
+            result: None,
+        };
+        store.apply_update(&update);
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+    }
+
+    /// When task_backend is None (default TaskStore::new), persist is a no-op —
+    /// no panic, no error. Existing behavior unchanged.
+    #[tokio::test]
+    async fn task_backend_none_is_noop() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        // Should not panic.
+        store.pause_task(&task.id.0).unwrap();
+        store.cancel_task(&task.id.0).unwrap();
     }
 }
