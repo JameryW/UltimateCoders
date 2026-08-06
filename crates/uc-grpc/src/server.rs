@@ -21,7 +21,7 @@ use uc_types::EngineApi;
 
 use crate::conversions::{
     memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str,
-    task_status_to_proto,
+    task_snapshot_to_proto, task_status_to_proto,
 };
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
@@ -3489,6 +3489,55 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 task_id: req.task_id,
                 status: String::new(),
                 error: Some(e),
+            })),
+        }
+    }
+
+    async fn create_checkpoint(
+        &self,
+        request: Request<CreateCheckpointRequest>,
+    ) -> Result<Response<CreateCheckpointResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        match self
+            .inner
+            .checkpoint_manager
+            .create_snapshot(&task_id)
+            .await
+        {
+            Ok(snapshot_id) => Ok(Response::new(CreateCheckpointResponse {
+                success: true,
+                task_id,
+                snapshot_id,
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(CreateCheckpointResponse {
+                success: false,
+                task_id,
+                snapshot_id: String::new(),
+                error: Some(e.to_string()),
+            })),
+        }
+    }
+
+    async fn recover_task(
+        &self,
+        request: Request<RecoverTaskRequest>,
+    ) -> Result<Response<RecoverTaskResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        match self.inner.checkpoint_manager.recover(&task_id).await {
+            Ok(snapshot) => Ok(Response::new(RecoverTaskResponse {
+                success: true,
+                task_id,
+                snapshot: Some(task_snapshot_to_proto(&snapshot)),
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(RecoverTaskResponse {
+                success: false,
+                task_id,
+                snapshot: None,
+                error: Some(e.to_string()),
             })),
         }
     }

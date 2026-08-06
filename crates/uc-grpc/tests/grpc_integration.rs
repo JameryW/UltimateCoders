@@ -240,3 +240,35 @@ async fn grpc_index_state_not_found() {
     assert_eq!(state.repo_id, "nonexistent-repo");
     assert!(!state.indexed);
 }
+
+/// PR2: CreateCheckpoint + RecoverTask RPCs round-trip via the gRPC client.
+/// submit_task records TaskCreated/SubtaskAssigned events to the EventStore;
+/// recover_task replays them and reconstructs subtask state.
+#[tokio::test]
+async fn grpc_checkpoint_create_and_recover() {
+    let endpoint = start_server().await;
+    let client = GrpcEngineClient::connect(&endpoint).await.unwrap();
+
+    let task = client
+        .submit_task("checkpoint RPC test", "proj-ckpt")
+        .await
+        .unwrap();
+    let task_id = task.id.0.clone();
+
+    // record_event_with_subject appends to the EventStore via a spawned task
+    // (fire-and-forget). Yield to let those appends land before snapshotting.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Create a checkpoint — replays the event stream into a snapshot.
+    let snapshot_id = client.create_checkpoint(&task_id).await.unwrap();
+    assert!(!snapshot_id.is_empty());
+
+    // Recover — should reconstruct the task by replaying the TaskCreated event.
+    // submit_task_pending creates a Planning task with no subtasks, so the
+    // snapshot has 0 subtasks but a non-trivial status from event replay.
+    let snapshot = client.recover_task(&task_id).await.unwrap();
+    assert_eq!(snapshot.task_id, task_id);
+    assert_eq!(snapshot.subtasks.len(), 0);
+    assert!(snapshot.last_event_offset > 0);
+    assert!(!snapshot.status.is_empty());
+}
