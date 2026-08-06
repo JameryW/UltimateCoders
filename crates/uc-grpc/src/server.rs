@@ -21,7 +21,7 @@ use uc_types::EngineApi;
 
 use crate::conversions::{
     memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str,
-    task_snapshot_to_proto, task_status_to_proto,
+    subtask_status_to_proto, task_snapshot_to_proto, task_status_to_proto,
 };
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
@@ -3474,6 +3474,34 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         };
         match result {
             Ok(task) => {
+                // Best-effort: recover from the event log and log any drift
+                // between the in-memory TaskStore and the reconstructed state.
+                // ponytail: recover is advisory here — full state reconciliation
+                // from TaskSnapshot is lossy (no depends_on/file_constraints),
+                // so we surface drift via logs rather than rewriting TaskStore.
+                // Upgrade path: reconstruct Task from snapshot when TaskStore
+                // loses a task on restart (needs richer snapshot fields).
+                if let Ok(snapshot) = self.inner.checkpoint_manager.recover(&task_id).await {
+                    let drift = snapshot
+                        .subtasks
+                        .iter()
+                        .filter(|s| {
+                            !task.subtasks.iter().any(|t| {
+                                t.id.0 == s.subtask_id
+                                    && subtask_status_to_proto(&t.status)
+                                        .eq_ignore_ascii_case(&s.status)
+                            })
+                        })
+                        .count();
+                    if drift > 0 {
+                        tracing::warn!(
+                            task_id = %task_id,
+                            drift_count = drift,
+                            recovered_subtasks = snapshot.subtasks.len(),
+                            "resume: recovered subtask state drifted from TaskStore"
+                        );
+                    }
+                }
                 // Publish NATS event for Python side
                 self.publish_task_status_event(&task_id, "task_resumed")
                     .await;
