@@ -272,3 +272,29 @@ async fn grpc_checkpoint_create_and_recover() {
     assert!(snapshot.last_event_offset > 0);
     assert!(!snapshot.status.is_empty());
 }
+
+/// PR3: resume_task runs the recover path (best-effort drift check) without
+/// error. submit → pause → resume; resume triggers checkpoint_manager.recover
+/// internally and must not fail the resume even if events are sparse.
+#[tokio::test]
+async fn grpc_resume_runs_recover_path() {
+    let endpoint = start_server().await;
+    let client = GrpcEngineClient::connect(&endpoint).await.unwrap();
+
+    let task = client
+        .submit_task("resume recover test", "proj-r")
+        .await
+        .unwrap();
+    let task_id = task.id.0.clone();
+
+    // Pause then resume — resume_task calls checkpoint_manager.recover
+    // (best-effort) before broadcasting. Must succeed.
+    client.pause_task(&task_id).await.unwrap();
+
+    // Yield so the pause event append (spawned) lands in the EventStore
+    // before resume's recover reads it.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resumed = client.resume_task(&task_id).await.unwrap();
+    assert_eq!(resumed.status, uc_types::TaskStatus::InProgress);
+}
