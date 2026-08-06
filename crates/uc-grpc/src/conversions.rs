@@ -22,8 +22,8 @@ use crate::ultimate_coders::{
     ReplayMemoryWriteRequest, ReplayMemoryWriteResponse, RepoIndexStateProto, ResumeTaskResponse,
     SearchMemoryRequest, SearchMemoryResponse, SearchRequest, SearchResponse,
     SearchResultItem as ProtoSearchResultItem, SearchStreamRequest, SubmitTaskResponse,
-    SubtaskProto, TaskEvent as TaskEventProto, TaskProto, WorkflowStepProto, WriteMemoryRequest,
-    WriteMemoryResponse,
+    SubtaskProto, SubtaskSnapshotProto, TaskEvent as TaskEventProto, TaskProto, TaskSnapshotProto,
+    WorkflowStepProto, WriteMemoryRequest, WriteMemoryResponse,
 };
 
 // ── Search conversions ────────────────────────────────────
@@ -809,6 +809,26 @@ pub fn task_status_to_proto(status: &TaskStatus) -> &'static str {
         TaskStatus::Completed => "Completed",
         TaskStatus::Failed => "Failed",
         TaskStatus::Paused => "Paused",
+    }
+}
+
+/// Convert a recovered `TaskSnapshot` to its proto representation.
+pub fn task_snapshot_to_proto(snapshot: &uc_types::TaskSnapshot) -> TaskSnapshotProto {
+    TaskSnapshotProto {
+        task_id: snapshot.task_id.clone(),
+        status: snapshot.status.clone(),
+        subtasks: snapshot
+            .subtasks
+            .iter()
+            .map(|s| SubtaskSnapshotProto {
+                subtask_id: s.subtask_id.clone(),
+                status: s.status.clone(),
+                assigned_worker: s.assigned_worker.clone(),
+                result_summary: s.result_summary.clone(),
+            })
+            .collect(),
+        last_event_offset: snapshot.last_event_offset,
+        timestamp: snapshot.timestamp,
     }
 }
 
