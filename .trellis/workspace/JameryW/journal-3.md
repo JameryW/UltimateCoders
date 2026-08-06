@@ -305,3 +305,36 @@ Scheduler RPCs existed but no OMP TUI. engine_pb regen, grpc-bridge, scheduler-b
 ### Next Steps
 
 - None - task complete
+
+
+## Session 119: Add types.py test coverage
+
+**Date**: 2026-08-06
+**Task**: Add types.py test coverage
+**Branch**: `main`
+
+### Summary
+
+63 tests for Task/WorkflowStep serialization (to_dict/from_dict roundtrip, verify_command exclusion invariant #561, agent_config_json wire format, enums, edge cases, JSON serializability). Was untested. 63 pass, ruff clean. PR #569 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c3d4e5f6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
