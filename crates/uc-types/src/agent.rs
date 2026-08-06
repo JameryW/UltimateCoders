@@ -317,6 +317,32 @@ pub struct FileContent {
     pub lines: u32,
 }
 
+/// Snapshot of a single subtask's state for checkpoint/recovery.
+///
+/// Reconstructed by replaying the task's event stream.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubtaskSnapshot {
+    pub subtask_id: String,
+    pub status: String,
+    pub assigned_worker: Option<String>,
+    pub result_summary: Option<String>,
+}
+
+/// Snapshot of a task's state for checkpoint/recovery.
+///
+/// Produced by `CheckpointManager::create_snapshot` (latest subtask states +
+/// last event offset) and consumed by `recover` (load snapshot, replay events
+/// after `last_event_offset`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TaskSnapshot {
+    pub task_id: String,
+    pub status: String,
+    pub subtasks: Vec<SubtaskSnapshot>,
+    pub last_event_offset: u64,
+    /// Unix timestamp (milliseconds).
+    pub timestamp: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

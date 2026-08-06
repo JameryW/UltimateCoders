@@ -164,24 +164,8 @@ pub struct RecordedEvent {
 }
 
 /// Snapshot of a task's state for checkpoint/recovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskSnapshot {
-    pub task_id: String,
-    pub status: String,
-    pub subtasks: Vec<SubtaskSnapshot>,
-    pub last_event_offset: u64,
-    /// Unix timestamp (milliseconds).
-    pub timestamp: i64,
-}
-
-/// Snapshot of a single subtask's state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubtaskSnapshot {
-    pub subtask_id: String,
-    pub status: String,
-    pub assigned_worker: Option<String>,
-    pub result_summary: Option<String>,
-}
+/// Defined in `uc_types` (shared with the `EngineApi` trait + proto).
+pub use uc_types::{SubtaskSnapshot, TaskSnapshot};
 
 /// Trait for event storage backends.
 ///

@@ -20,6 +20,11 @@ pub struct CheckpointConfig {
     pub snapshot_interval: u64,
     /// Memory key prefix for snapshots.
     pub snapshot_prefix: String,
+    /// EventStore subject prefix for a task's event stream.
+    /// CheckpointManager reads/writes events at `{subject_prefix}{task_id}`.
+    /// Defaults to `agent.events.` (LocalEngine path); TaskStore passes `task.`
+    /// so recover() reads the same stream production events are appended to.
+    pub subject_prefix: String,
 }
 
 impl Default for CheckpointConfig {
@@ -27,6 +32,7 @@ impl Default for CheckpointConfig {
         Self {
             snapshot_interval: 100,
             snapshot_prefix: "snapshot".to_string(),
+            subject_prefix: "agent.events.".to_string(),
         }
     }
 }
@@ -58,6 +64,11 @@ impl CheckpointManager {
             config,
             event_count: AtomicU64::new(0),
         }
+    }
+
+    /// Build the EventStore subject for a task's event stream.
+    fn subject_for(&self, task_id: &str) -> String {
+        format!("{}{}", self.config.subject_prefix, task_id)
     }
 
     /// Record an event to the event store.
@@ -92,7 +103,7 @@ impl CheckpointManager {
     /// last event offset. It is stored in the memory store for efficient
     /// recovery.
     pub async fn create_snapshot(&self, task_id: &str) -> Result<String, EngineError> {
-        let subject = format!("agent.events.{}", task_id);
+        let subject = self.subject_for(task_id);
         let latest_offset = self.event_store.latest_offset(&subject).await?;
 
         let snapshot_id = format!(
@@ -148,7 +159,7 @@ impl CheckpointManager {
         match snapshot {
             Some(snap) => {
                 let from_offset = snap.last_event_offset + 1;
-                let subject = format!("agent.events.{}", task_id);
+                let subject = self.subject_for(task_id);
 
                 // Replay events after snapshot
                 let events = self.event_store.read_from(&subject, from_offset).await?;
@@ -173,7 +184,7 @@ impl CheckpointManager {
             }
             None => {
                 // No snapshot exists, replay from the beginning
-                let subject = format!("agent.events.{}", task_id);
+                let subject = self.subject_for(task_id);
                 let events = self.event_store.read_from(&subject, 0).await?;
 
                 let mut state = TaskSnapshot {
@@ -207,7 +218,7 @@ impl CheckpointManager {
         task_id: &str,
         from_offset: u64,
     ) -> Result<Vec<RecordedEvent>, EngineError> {
-        let subject = format!("agent.events.{}", task_id);
+        let subject = self.subject_for(task_id);
         self.event_store.read_from(&subject, from_offset).await
     }
 
@@ -216,7 +227,7 @@ impl CheckpointManager {
         &self,
         task_id: &str,
     ) -> Result<Vec<SubtaskSnapshot>, EngineError> {
-        let subject = format!("agent.events.{}", task_id);
+        let subject = self.subject_for(task_id);
         let events = self.event_store.read_from(&subject, 0).await?;
 
         let mut subtasks: Vec<SubtaskSnapshot> = Vec::new();
@@ -492,6 +503,7 @@ mod tests {
         let config = CheckpointConfig {
             snapshot_interval: 100,
             snapshot_prefix: "snapshot".to_string(),
+            ..Default::default()
         };
         let manager = CheckpointManager::new(store, config);
 
@@ -582,6 +594,7 @@ mod tests {
         let config = CheckpointConfig {
             snapshot_interval: 3, // Snapshot every 3 events
             snapshot_prefix: "snap".to_string(),
+            ..Default::default()
         };
         let manager = CheckpointManager::new(store, config);
 
