@@ -524,6 +524,28 @@ impl TaskStore {
         }
     }
 
+    /// Load all tasks from the backend into the in-memory HashMap (startup
+    /// recovery). No-op when `task_backend` is None. Called once at server
+    /// startup before serving, so subsequent sync reads see the recovered state.
+    ///
+    /// ponytail: one-shot load, not per-read delegation. Single-gateway
+    /// deployments (the current architecture — workers scale, gateway doesn't)
+    /// stay consistent via the write-path. Multi-gateway live-read consistency
+    /// is out of scope (would need per-read backend delegation + async sigs).
+    pub async fn load_from_backend(&mut self) -> Result<usize, uc_types::EngineError> {
+        if let Some(backend) = &self.task_backend {
+            let tasks = backend.list_tasks().await?;
+            let count = tasks.len();
+            for task in tasks {
+                self.tasks.insert(task.id.0.clone(), task);
+            }
+            tracing::info!("Recovered {} tasks from backend", count);
+            Ok(count)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Submit a new task: create it with a single subtask (InProgress status), store, and return.
     /// Production code uses `submit_task_pending` (Planning, no subtasks) and lets
     /// the Python Orchestrator handle decomposition.
@@ -1783,6 +1805,14 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Access the CheckpointManager (event-sourcing snapshot/recover).
     pub fn checkpoint_manager(&self) -> &Arc<uc_engine::CheckpointManager> {
         &self.inner.checkpoint_manager
+    }
+
+    /// Load all tasks from the backend into TaskStore's in-memory HashMap.
+    /// Call once at startup (after construction, before serving) to recover
+    /// tasks persisted by prior runs. No-op if no backend is configured.
+    pub async fn load_tasks_from_backend(&self) -> Result<usize, uc_types::EngineError> {
+        let mut store = self.inner.task_store.lock().await;
+        store.load_from_backend().await
     }
 
     /// Access the shared WorkerRegistry.
@@ -6003,5 +6033,52 @@ mod tests {
         // Should not panic.
         store.pause_task(&task.id.0).unwrap();
         store.cancel_task(&task.id.0).unwrap();
+    }
+
+    /// PR3: load_from_backend recovers tasks persisted by a prior run into
+    /// the in-memory HashMap (startup recovery). Simulates restart: backend
+    /// has tasks, a fresh TaskStore loads them.
+    #[tokio::test]
+    async fn task_backend_load_from_backend_recovers_tasks() {
+        let backend = Arc::new(uc_engine::InMemoryTaskBackend::new());
+
+        // Simulate a prior run: submit tasks directly to the backend.
+        let t1 = uc_types::Task {
+            id: uc_types::TaskId("recover-1".to_string()),
+            description: "prior task 1".to_string(),
+            project_id: "p".to_string(),
+            status: uc_types::TaskStatus::Paused,
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        backend.submit_task(t1.clone()).await.unwrap();
+
+        // Fresh TaskStore (empty HashMap) sharing the populated backend.
+        let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+        let mut store = TaskStore::with_backend(backend, event_store);
+        assert!(
+            store.get_task("recover-1").is_none(),
+            "HashMap empty before load"
+        );
+
+        let count = store.load_from_backend().await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            store.get_task("recover-1").unwrap().description,
+            "prior task 1"
+        );
+        assert_eq!(
+            store.get_task("recover-1").unwrap().status,
+            uc_types::TaskStatus::Paused
+        );
+    }
+
+    /// PR3: load_from_backend is a no-op (returns 0) when no backend is set.
+    #[tokio::test]
+    async fn task_backend_load_from_backend_none_is_noop() {
+        let mut store = TaskStore::new();
+        let count = store.load_from_backend().await.unwrap();
+        assert_eq!(count, 0);
     }
 }

@@ -413,6 +413,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Recover tasks persisted by prior runs from the backend (PG/in-memory)
+    // into TaskStore's in-memory HashMap. No-op when no backend is configured.
+    // ponytail: one-shot startup load; write-path (PR1) keeps PG in sync
+    // going forward. Multi-gateway live-read consistency is out of scope.
+    match grpc_server.load_tasks_from_backend().await {
+        Ok(n) if n > 0 => tracing::info!("Recovered {} tasks from backend", n),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Failed to load tasks from backend: {}", e),
+    }
+
     // Load uc.scheduler.yaml (if present), wire the dispatcher, add configured
     // jobs + night window, and start the scheduler service. The config load is
     // sync and fast; start() creates the JobScheduler and returns quickly
