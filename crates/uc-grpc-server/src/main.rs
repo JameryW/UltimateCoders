@@ -11,6 +11,10 @@
 //! - `memory` (default): in-memory HashMap, no persistence across restarts
 //! - `postgres`: PostgreSQL-backed, requires `UC_DATABASE_URL`
 //!
+//! Event persistence can be configured via `UC_EVENT_BACKEND`:
+//! - `memory` (default): in-memory, events lost on restart
+//! - `nats`: NATS JetStream (durable), requires `UC_NATS_URL`
+//!
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
@@ -29,15 +33,63 @@ use tonic_web::GrpcWebLayer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-/// Create a TaskStoreBackend based on environment configuration.
+/// Create a TaskStoreBackend and EventStore based on environment configuration.
 ///
-/// - `UC_TASK_BACKEND=postgres` + `UC_DATABASE_URL`: PostgreSQL persistence
+/// # Task backend (`UC_TASK_BACKEND`)
+/// - `postgres` + `UC_DATABASE_URL`: PostgreSQL persistence
 /// - Default: in-memory (no persistence across restarts)
+///
+/// # Event store (`UC_EVENT_BACKEND`)
+/// - `nats` + `UC_NATS_URL`: NATS JetStream (durable, survives restart)
+/// - Default: in-memory (events lost on restart)
+///
+/// The event store is constructed first (it may be shared across task
+/// backend variants) and then threaded into the selected task backend.
 async fn create_task_backend() -> (
     Arc<dyn uc_engine::TaskStoreBackend>,
     Arc<dyn uc_engine::EventStore>,
 ) {
-    let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+    // Event store: NATS JetStream (durable) when UC_EVENT_BACKEND=nats,
+    // else in-memory (lost on restart). Mirrors the UC_TASK_BACKEND pattern.
+    let event_store: Arc<dyn uc_engine::EventStore> = match std::env::var("UC_EVENT_BACKEND")
+        .as_deref()
+    {
+        #[cfg(feature = "messaging")]
+        Ok("nats") => {
+            let nats_url = std::env::var("UC_NATS_URL").unwrap_or_else(|_| {
+                tracing::warn!(
+                    "UC_EVENT_BACKEND=nats but UC_NATS_URL not set, falling back to in-memory event store"
+                );
+                String::new()
+            });
+            if nats_url.is_empty() {
+                tracing::warn!("Empty UC_NATS_URL, using in-memory event store");
+                Arc::new(uc_engine::InMemoryEventStore::new())
+            } else {
+                match uc_engine::NatsEventStore::new(&nats_url).await {
+                    Ok(store) => {
+                        tracing::info!("EventStore using NATS JetStream (durable)");
+                        Arc::new(store)
+                    }
+                    Err(e) => {
+                        tracing::warn!("NATS event store failed: {}, using in-memory", e);
+                        Arc::new(uc_engine::InMemoryEventStore::new())
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "messaging"))]
+        Ok("nats") => {
+            tracing::warn!(
+                "UC_EVENT_BACKEND=nats but messaging feature not enabled, using in-memory event store"
+            );
+            Arc::new(uc_engine::InMemoryEventStore::new())
+        }
+        _ => {
+            tracing::info!("EventStore using in-memory (events lost on restart)");
+            Arc::new(uc_engine::InMemoryEventStore::new())
+        }
+    };
 
     match std::env::var("UC_TASK_BACKEND").as_deref() {
         #[cfg(feature = "storage")]

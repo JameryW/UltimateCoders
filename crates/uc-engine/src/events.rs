@@ -278,11 +278,20 @@ impl NatsEventStore {
 
         let jetstream = async_nats::jetstream::new(client.clone());
 
-        // Ensure the agent events stream exists
+        // Ensure the agent events stream exists.
+        //
+        // Subject filter is `>` (all subjects) because the EventStore is
+        // shared: TaskStore appends under `task.{id}` subjects while
+        // LocalEngine appends under `agent.events.{id}`. A narrow
+        // `agent.events.>` filter would silently drop TaskStore events,
+        // breaking checkpoint replay (CheckpointManager reads `task.`
+        // prefix per PR #570). The stream is dedicated (own client
+        // connection), so `>` only captures subjects published via this
+        // EventStore — not unrelated NATS traffic.
         jetstream
             .create_stream(async_nats::jetstream::stream::Config {
                 name: "AGENT_EVENTS".to_string(),
-                subjects: vec!["agent.events.>".to_string()],
+                subjects: vec![">".to_string()],
                 ..Default::default()
             })
             .await
@@ -387,6 +396,18 @@ impl EventStore for NatsEventStore {
         Ok(results)
     }
 
+    /// Get the latest offset for a subject.
+    ///
+    /// # Known limitation
+    ///
+    /// Returns the **global** stream `last_sequence`, ignoring `subject`.
+    /// JetStream does not expose a per-subject last sequence without a
+    /// scan, so this is an accepted approximation. `CheckpointManager`
+    /// uses this for `last_event_offset` in snapshots — a too-high offset
+    /// means `recover` replays from a position past the snapshot, which
+    /// is **safe**: `apply_event_to_snapshot` is idempotent for status
+    /// events (re-applying the same event is a no-op), so over-replay
+    /// just reprocesses already-applied events without corrupting state.
     async fn latest_offset(&self, _subject: &str) -> Result<u64, EngineError> {
         let mut stream = self
             .jetstream
