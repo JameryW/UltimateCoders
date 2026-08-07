@@ -29,9 +29,9 @@ use crate::metadata::postgres::PostgresMetadataStore;
 use crate::rate_limiter::LlmRateLimiter;
 use crate::sandbox::subprocess::SubprocessSandbox;
 use crate::sandbox::{ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle};
-use crate::scheduler::SchedulerService;
 #[cfg(feature = "storage")]
 use crate::scheduler::ScheduleStore;
+use crate::scheduler::SchedulerService;
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
 
