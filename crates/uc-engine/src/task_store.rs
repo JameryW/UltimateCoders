@@ -361,18 +361,30 @@ impl TaskStoreBackend for PostgresTaskBackend {
         if let Some(pool) = &self.pool {
             let subtasks_json = serde_json::to_value(&task.subtasks)
                 .map_err(|e| EngineError::StorageError(format!("Subtask serialization: {}", e)))?;
+            // Upsert (INSERT ON CONFLICT) so update_task is safe to call even if
+            // the row was never INSERTed via submit_task — eliminates the
+            // fire-and-forget race between persist_new_task (INSERT) and a
+            // subsequent persist_task (UPDATE) landing first.
             sqlx::query(
-                "UPDATE tasks SET description = $2, project_id = $3, status = $4, subtasks = $5, updated_at = $6 WHERE id = $1"
+                "INSERT INTO tasks (id, description, project_id, status, subtasks, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    description = EXCLUDED.description, \
+                    project_id = EXCLUDED.project_id, \
+                    status = EXCLUDED.status, \
+                    subtasks = EXCLUDED.subtasks, \
+                    updated_at = EXCLUDED.updated_at"
             )
                 .bind(&task.id.0)
                 .bind(&task.description)
                 .bind(&task.project_id)
                 .bind(Self::task_status_str(&task.status))
                 .bind(&subtasks_json)
+                .bind(task.created_at)
                 .bind(task.updated_at)
                 .execute(pool.as_ref())
                 .await
-                .map_err(|e| EngineError::StorageError(format!("Task update failed: {}", e)))?;
+                .map_err(|e| EngineError::StorageError(format!("Task upsert failed: {}", e)))?;
             Ok(task)
         } else {
             self.fallback.update_task(task).await
@@ -978,5 +990,28 @@ mod tests {
         assert_eq!(subs.len(), 2);
         assert!(subs[0].steps.is_empty(), "unmarked line stays single-agent");
         assert_eq!(subs[1].steps.len(), 2, "marked line gets the chain");
+    }
+
+    /// PR2: update_task is an upsert — inserts the task if it doesn't exist,
+    /// eliminating the fire-and-forget race between persist_new_task (INSERT)
+    /// and a subsequent persist_task (UPDATE) landing first.
+    #[tokio::test]
+    async fn backend_update_task_upserts_when_absent() {
+        let backend = InMemoryTaskBackend::new();
+        let task = Task {
+            id: TaskId("upsert-1".to_string()),
+            description: "never submitted".to_string(),
+            project_id: "p".to_string(),
+            status: TaskStatus::InProgress,
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // update_task WITHOUT a prior submit_task — must insert, not no-op.
+        backend.update_task(task.clone()).await.unwrap();
+
+        let got = backend.get_task("upsert-1").await.unwrap();
+        assert_eq!(got.unwrap().id.0, "upsert-1");
     }
 }
