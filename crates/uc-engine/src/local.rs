@@ -30,6 +30,8 @@ use crate::rate_limiter::LlmRateLimiter;
 use crate::sandbox::subprocess::SubprocessSandbox;
 use crate::sandbox::{ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle};
 use crate::scheduler::SchedulerService;
+#[cfg(feature = "storage")]
+use crate::scheduler::ScheduleStore;
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
 
@@ -70,8 +72,30 @@ impl LocalEngine {
     ///
     /// Connects to TiKV, Qdrant, and PostgreSQL using the configured endpoints.
     /// If any storage backend is unavailable, falls back to in-memory storage.
+    ///
+    /// The scheduler uses an in-memory store (jobs lost on restart). For
+    /// schedule persistence across restarts, use [`new_with_scheduler_store`]
+    /// with a `PostgresScheduleStore` (activated via `UC_SCHEDULE_BACKEND=postgres`
+    /// in the gateway binary).
+    ///
+    /// [`new_with_scheduler_store`]: LocalEngine::new_with_scheduler_store
     #[cfg(feature = "storage")]
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
+        Self::new_with_scheduler_store(config, None).await
+    }
+
+    /// Create a new local engine with an injected scheduler store.
+    ///
+    /// When `schedule_store` is `Some`, the scheduler persists jobs to that
+    /// store and recovers them on `SchedulerService::start()` (survives
+    /// restart). `None` falls back to the in-memory store (no persistence).
+    /// Mirrors the `UC_TASK_BACKEND` activation pattern. The store must be set
+    /// before `start()` runs — it is not hot-swappable.
+    #[cfg(feature = "storage")]
+    pub async fn new_with_scheduler_store(
+        config: EngineConfig,
+        schedule_store: Option<Arc<dyn ScheduleStore>>,
+    ) -> Result<Self, EngineError> {
         // Initialize short-term memory (TiKV)
         let short_term = Arc::new(
             ShortTermMemory::new(
@@ -133,6 +157,16 @@ impl LocalEngine {
         let conflict_detector = Arc::new(ConflictDetector::new());
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
 
+        // Scheduler service: use the injected store (e.g. PostgresScheduleStore
+        // for persistence across restarts) or fall back to in-memory. The
+        // dispatcher is late-bound via `set_dispatcher` after construction
+        // (chicken-and-egg with LocalEngine), so a LoggingDispatcher placeholder
+        // is used here regardless of store.
+        let scheduler_service = Arc::new(match schedule_store {
+            Some(store) => SchedulerService::with_store(store),
+            None => SchedulerService::new(),
+        });
+
         // Restore the in-memory text index from source (AST/semantic already
         // persist in Postgres/Qdrant; text index is rebuilt on startup).
         if let Err(e) = index_pipeline.restore_text_index().await {
@@ -152,7 +186,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
-            scheduler_service: Arc::new(SchedulerService::new()),
+            scheduler_service,
             start_time: Instant::now(),
         })
     }
