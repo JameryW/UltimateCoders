@@ -2362,14 +2362,29 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
                                 if fc.content.is_empty()
                                     || fc.change_type == "deleted"
                                 {
-                                    // ponytail: delete reindex not wired —
-                                    // reindex_file only handles content. Stale
-                                    // entries are cleaned on next full reindex.
-                                    tracing::debug!(
-                                        repo_id = %fc.repo_id,
-                                        file_path = %fc.file_path,
-                                        "Skipping file-changed (empty/delete)"
-                                    );
+                                    // File deleted (or emptied) — remove its
+                                    // symbols/embeddings from the shared index
+                                    // so searches don't return stale hits.
+                                    match inner.engine.delete_file_from_index(
+                                        &fc.repo_id,
+                                        &fc.file_path,
+                                    ).await {
+                                        Ok(()) => {
+                                            tracing::info!(
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Removed deleted file from index"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Failed to remove deleted file from index"
+                                            );
+                                        }
+                                    }
                                     continue;
                                 }
                                 match inner.engine.reindex_file(

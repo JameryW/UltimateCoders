@@ -526,6 +526,16 @@ impl EngineApi for LocalEngine {
             .await
     }
 
+    async fn delete_file_from_index(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
+        self.index_pipeline
+            .remove_file_from_index(repo_id, file_path)
+            .await
+    }
+
     async fn read_memory(
         &self,
         request: MemoryReadRequest,
