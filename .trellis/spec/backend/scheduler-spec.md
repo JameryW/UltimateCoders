@@ -176,6 +176,35 @@ jobs:
 - `default_night_window` + per-job `night_window` are `Option<NightWindowConfig>` — when no top-level window is declared, `None` (NOT 22:00-06:00 UTC). `main.rs` only calls `set_night_window` when `Some`.
 - A per-job `night_window` overrides the top-level default for that job only.
 
+#### Schedule Persistence (`UC_SCHEDULE_BACKEND`)
+
+The scheduler persists jobs + execution history via the `ScheduleStore` trait
+(`InMemoryScheduleStore` for tests, `PostgresScheduleStore` for production,
+the latter behind the `storage` feature). Activation is env-gated in the
+gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
+`UC_TASK_BACKEND` / `UC_EVENT_BACKEND`:
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `UC_SCHEDULE_BACKEND` | _(unset = in-memory)_ | `postgres` → `PostgresScheduleStore`; unset/`memory` → in-memory (jobs lost on restart) |
+| `UC_DATABASE_URL` | _(empty)_ | PostgreSQL URL. Required when `UC_SCHEDULE_BACKEND=postgres`; empty/missing → warn + in-memory fallback |
+
+- **Construction**: `PostgresScheduleStore::connect(url)` builds a dedicated
+  pool (`max_connections(5)`) and runs idempotent migrations
+  (`scheduled_tasks` + `execution_history` tables + indexes, `scheduler/migration.rs`).
+  Injected into `LocalEngine::new_with_scheduler_store(config, Some(store))`
+  BEFORE `SchedulerService::start()` runs. The store is set-once-at-construction
+  (not hot-swappable) — no RwLock.
+- **Write path** (already wired in `service.rs`): `add_cron_job`/`add_one_shot_job`
+  → `save_task`; `remove_job` → `delete_task`; `record_execution` → `save_execution`.
+- **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(true)`
+  → re-register each persisted cron/one-shot job with the `JobScheduler` + load
+  into `job_metadata`. With the PG backend, jobs survive a gateway restart.
+- **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
+  feature disabled → warn + in-memory (no crash). Default (unset) = zero
+  behavior change for existing deploys.
+- **Out of scope**: multi-gateway live-read consistency (one-shot startup load;
+  write-path keeps PG in sync going forward — same model as `UC_TASK_BACKEND`).
 
 ### 4. Validation & Error Matrix
 

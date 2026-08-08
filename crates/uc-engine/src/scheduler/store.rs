@@ -163,6 +163,29 @@ mod postgres {
         pub fn new(pool: Arc<PgPool>) -> Self {
             Self { pool }
         }
+
+        /// Connect to PostgreSQL, run scheduler migrations, and return a store.
+        ///
+        /// Mirrors `PostgresTaskBackend::new`: builds a dedicated pool
+        /// (`max_connections(5)`), runs `scheduled_tasks` + `execution_history`
+        /// migrations (idempotent), then wraps the pool. The caller decides
+        /// fallback policy on `Err` (typically: warn + in-memory).
+        pub async fn connect(database_url: &str) -> Result<Self, EngineError> {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(database_url)
+                .await
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!(
+                        "Failed to connect to PostgreSQL for schedule store: {}",
+                        e
+                    ))
+                })?;
+            let pool = Arc::new(pool);
+            crate::scheduler::migration::run_migrations(&pool).await?;
+            tracing::info!("Connected to PostgreSQL for schedule storage");
+            Ok(Self { pool })
+        }
     }
 
     #[async_trait]
