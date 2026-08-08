@@ -2480,6 +2480,14 @@ fn spawn_heartbeat_monitor(
                         "Removed stale workers from registry (no active subtasks to reassign)"
                     );
                 }
+            } else {
+                // No stale workers — still must release the lock before the
+                // reassign_stale_assigned_subtasks call below re-acquires it.
+                // tokio::sync::Mutex is not reentrant: without this drop, the
+                // second `task_store.lock().await` deadlocks forever on the
+                // first clean tick (no stale workers), freezing the entire
+                // heartbeat monitor — stale-task/worker detection stops.
+                drop(store);
             }
 
             // Revert Assigned subtasks no worker ever picked up (queue group had
