@@ -72,11 +72,7 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
     gRPC server can parse it with ``serde_json::from_slice``.
     Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
-    import time
-
-    ts_ms = int(time.time() * 1000)
-    # ponytail: bucket by 5s for NATS dedup (same as event payloads)
-    bucket = ts_ms // 5000
+    import hashlib
     subtasks = []
     for st in task.subtasks:
         entry: dict[str, Any] = {
@@ -100,13 +96,20 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
-        "message_id": f"{task.id}:update:{bucket}",
         "task_id": task.id,
         "status": _task_status_to_nats(task.status),
         "subtasks": subtasks,
     }
     if task.result is not None:
         payload["result"] = task.result
+
+    # The previous time bucket ID collapsed distinct snapshots emitted within
+    # five seconds (for example InProgress followed by Failed) into one NATS
+    # dedup key. Hash the snapshot instead: identical retries remain
+    # idempotent, while every actual state change reaches the Rust TaskStore.
+    snapshot = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:16]
+    payload["message_id"] = f"{task.id}:update:{digest}"
     return payload
 
 
@@ -124,12 +127,17 @@ def _make_task_event_payload(
     import time
 
     ts_ms = int(time.time() * 1000)
-    # ponytail: semantic key with 5s bucket — NATS JetStream deduplicates
-    # identical message_ids within duplicate_window. Bucketing by 5s means
-    # two events with the same (task, subtask, type) within 5s get the same
-    # message_id and JetStream drops the duplicate.
-    bucket = ts_ms // 5000
-    message_id = f"{task_id}:{event_type}:{subtask_id}:{bucket}"
+    # message_id must be unique per *distinct* event. A coarse 5s bucket
+    # collided two same-type events for one subtask within 5s (e.g. two
+    # subtask_progress phase transitions) → the Rust-side dedup
+    # (check_and_record_message_id, 5min TTL) dropped the second as a
+    # duplicate, losing real state transitions. Use ms precision instead:
+    # NATS redeliveries resend the identical payload (same message_id) so
+    # they still dedup; two genuinely distinct events land at different ms.
+    # Re-publishes after a worker retry get a new ms and may double-record,
+    # but the event-store replay is idempotent (SubtaskProgress is a no-op,
+    # SubtaskCompleted/Failed overwrite in place).
+    message_id = f"{task_id}:{event_type}:{subtask_id}:{ts_ms}"
     payload: dict[str, Any] = {
         "v": 1,
         "message_id": message_id,
@@ -427,7 +435,8 @@ class NatsWorker:
                 cfg = self._engine.load_repos_config(config_path)
                 logger.info(
                     "Loaded workspace repos: %d repos (workspace_id=%s)",
-                    len(cfg.repos), cfg.workspace_id,
+                    len(cfg.repos),
+                    cfg.workspace_id,
                 )
         except Exception:
             logger.warning("Failed to load repos config", exc_info=True)
@@ -652,7 +661,8 @@ class NatsWorker:
                         except Exception:
                             logger.debug(
                                 "Failed to report abandoned subtask %s",
-                                st.id[:8], exc_info=True,
+                                st.id[:8],
+                                exc_info=True,
                             )
 
         # Unsubscribe
@@ -704,7 +714,7 @@ class NatsWorker:
                 subjects=["uc.task.event"],
                 retention="interest",
                 max_age=7 * 24 * 3600,  # 7 days in seconds
-                duplicate_window=120,     # 2 min dedup window
+                duplicate_window=120,  # 2 min dedup window
             )
             logger.info("JetStream stream UC_TASK_EVENTS created")
         except Exception as e:
@@ -714,7 +724,8 @@ class NatsWorker:
                 logger.debug("JetStream stream UC_TASK_EVENTS already exists")
             else:
                 logger.warning(
-                    "JetStream stream setup failed (non-fatal): %s", err_msg,
+                    "JetStream stream setup failed (non-fatal): %s",
+                    err_msg,
                 )
 
     async def _ensure_jetstream_consumer(self) -> None:
@@ -746,7 +757,8 @@ class NatsWorker:
                     logger.debug("JetStream consumer dashboard-replay already exists")
                 else:
                     logger.warning(
-                        "JetStream consumer setup failed (non-fatal): %s", e,
+                        "JetStream consumer setup failed (non-fatal): %s",
+                        e,
                     )
         except Exception as e:
             logger.warning("JetStream consumer setup failed (non-fatal): %s", e)
@@ -773,15 +785,15 @@ class NatsWorker:
                 subjects=[NATS_SUBJECT_SUBTASK_EXECUTE],
                 retention="workqueue",  # RetentionPolicy.WORK_QUEUE value
                 max_age=7 * 24 * 3600,  # 7 days in seconds
-                duplicate_window=120,    # 2 min dedup window
+                duplicate_window=120,  # 2 min dedup window
             )
-            logger.info("JetStream stream %s created (work-queue retention)",
-                        self._SUBTASK_STREAM_NAME)
+            logger.info(
+                "JetStream stream %s created (work-queue retention)", self._SUBTASK_STREAM_NAME
+            )
         except Exception as e:
             err_msg = str(e)
             if "stream already exists" in err_msg.lower():
-                logger.debug("JetStream stream %s already exists",
-                             self._SUBTASK_STREAM_NAME)
+                logger.debug("JetStream stream %s already exists", self._SUBTASK_STREAM_NAME)
             else:
                 logger.warning(
                     "JetStream subtask stream setup failed (non-fatal): %s",
@@ -825,12 +837,13 @@ class NatsWorker:
                     )
                 else:
                     logger.warning(
-                        "JetStream subtask consumer setup failed "
-                        "(non-fatal): %s", e,
+                        "JetStream subtask consumer setup failed (non-fatal): %s",
+                        e,
                     )
         except Exception as e:
             logger.warning(
-                "JetStream subtask consumer setup failed (non-fatal): %s", e,
+                "JetStream subtask consumer setup failed (non-fatal): %s",
+                e,
             )
 
     async def _start_subtask_consumer(self) -> bool:
@@ -854,9 +867,7 @@ class NatsWorker:
                 stream=self._SUBTASK_STREAM_NAME,
             )
             self._subtask_js_available = True
-            self._subtask_fetch_task = asyncio.create_task(
-                self._subtask_fetch_loop()
-            )
+            self._subtask_fetch_task = asyncio.create_task(self._subtask_fetch_loop())
             logger.info(
                 "Subscribed to %s via JetStream durable consumer '%s' "
                 "(ack-after-execution, redelivery on crash, max_deliver=%d)",
@@ -868,7 +879,8 @@ class NatsWorker:
         except Exception as e:
             logger.warning(
                 "JetStream subtask pull_subscribe failed (falling back to "
-                "core NATS queue group): %s", e,
+                "core NATS queue group): %s",
+                e,
             )
             self._subtask_js_available = False
             self._subtask_pull_sub = None
@@ -892,7 +904,8 @@ class NatsWorker:
                     break
                 # Fetch a batch — timeout so we can re-check _running
                 msgs = await self._subtask_pull_sub.fetch(
-                    batch=batch_size, timeout=5.0,
+                    batch=batch_size,
+                    timeout=5.0,
                 )
                 for js_msg in msgs:
                     self._spawn_bg(self._handle_subtask_execute_js(js_msg))
@@ -903,7 +916,8 @@ class NatsWorker:
                 break
             except Exception:
                 logger.warning(
-                    "Subtask fetch loop error", exc_info=True,
+                    "Subtask fetch loop error",
+                    exc_info=True,
                 )
                 await asyncio.sleep(1.0)  # back off on repeated errors
 
@@ -939,14 +953,17 @@ class NatsWorker:
             if current_seq <= self._js_last_seq:
                 logger.debug(
                     "JetStream no new events (seq %d ≤ %d)",
-                    current_seq, self._js_last_seq,
+                    current_seq,
+                    self._js_last_seq,
                 )
                 return
 
             gap = current_seq - self._js_last_seq
             logger.info(
                 "JetStream replaying %d missed events (seq %d→%d)",
-                gap, self._js_last_seq, current_seq,
+                gap,
+                self._js_last_seq,
+                current_seq,
             )
 
             # Fetch missed messages via pull consumer
@@ -967,7 +984,8 @@ class NatsWorker:
                     except Exception:
                         logger.warning(
                             "Replay event handling failed (seq=%s), skipping",
-                            msg.metadata.sequence.stream, exc_info=True,
+                            msg.metadata.sequence.stream,
+                            exc_info=True,
                         )
                     finally:
                         await msg.ack()
@@ -1051,6 +1069,7 @@ class NatsWorker:
         llm_client = None
         try:
             from ultimate_coders.agent.llm import LLMClient
+
             llm_client = LLMClient()
             logger.info("LLMClient initialized (provider=%s)", llm_client.provider)
         except Exception:
@@ -1060,6 +1079,7 @@ class NatsWorker:
         codegraph_client = None
         try:
             from ultimate_coders.agent.codegraph import CodegraphClient
+
             project_path = self._project_path or os.getcwd()
             codegraph_client = CodegraphClient(project_path)
             if codegraph_client.is_available():
@@ -1095,7 +1115,8 @@ class NatsWorker:
                 )
                 logger.info(
                     "MergeArbiter initialized (remote=%s, base=%s)",
-                    repo_url, repo_base_branch,
+                    repo_url,
+                    repo_base_branch,
                 )
                 # Ensure the clone exists for arbitration. Non-fatal: if
                 # clone fails, arbitration will be skipped at runtime.
@@ -1103,8 +1124,8 @@ class NatsWorker:
                     await merge_arbiter.ensure_clone()
                 except Exception as clone_err:
                     logger.warning(
-                        "MergeArbiter.ensure_clone failed, arbitration "
-                        "disabled: %s", clone_err,
+                        "MergeArbiter.ensure_clone failed, arbitration disabled: %s",
+                        clone_err,
                     )
                     merge_arbiter = None
             except Exception:
@@ -1137,12 +1158,16 @@ class NatsWorker:
 
             repo_url = os.environ.get("UC_REPO_URL", "")
             repo_base_branch = os.environ.get("UC_REPO_BASE_BRANCH", "main")
-            fetch_on_acquire = os.environ.get(
-                "UC_GIT_FETCH_ON_ACQUIRE", ""
-            ).lower() in ("1", "true", "yes")
-            push_on_release = os.environ.get(
-                "UC_GIT_PUSH_ON_RELEASE", ""
-            ).lower() in ("1", "true", "yes")
+            fetch_on_acquire = os.environ.get("UC_GIT_FETCH_ON_ACQUIRE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            push_on_release = os.environ.get("UC_GIT_PUSH_ON_RELEASE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
 
             workspace_manager = WorkspaceManager(
                 project_path=self._project_path or os.getcwd(),
@@ -1154,7 +1179,8 @@ class NatsWorker:
             logger.info(
                 "WorkspaceManager initialized (remote=%s, fetch=%s, push=%s)",
                 "on" if repo_url else "off",
-                fetch_on_acquire, push_on_release,
+                fetch_on_acquire,
+                push_on_release,
             )
             # Ensure the remote clone exists (no-op in local-only mode).
             # Non-fatal: if clone fails, continue in local/fallback mode so
@@ -1173,6 +1199,7 @@ class NatsWorker:
         distributed_detector = None
         try:
             from ultimate_coders.agent.distributed_conflict import DistributedConflictDetector
+
             distributed_detector = DistributedConflictDetector(
                 nats_publisher=self._publisher,
                 worker_id="",  # set after worker init
@@ -1262,8 +1289,7 @@ class NatsWorker:
                 last_error = e
                 wait = retry_delay * (2 ** (attempt - 1))
                 logger.warning(
-                    "NATS connection attempt %d/%d failed: %s. "
-                    "Retrying in %.1fs",
+                    "NATS connection attempt %d/%d failed: %s. Retrying in %.1fs",
                     attempt,
                     max_retries,
                     e,
@@ -1272,8 +1298,7 @@ class NatsWorker:
                 await asyncio.sleep(wait)
 
         raise ConnectionError(
-            f"Failed to connect to NATS after {max_retries} attempts: "
-            f"{last_error}"
+            f"Failed to connect to NATS after {max_retries} attempts: {last_error}"
         )
 
     # ── Message handlers ─────────────────────────────────────────
@@ -1365,20 +1390,22 @@ class NatsWorker:
 
             # Reply with decomposed task if this is a request-reply message
             if msg.reply:
-                reply_data = json.dumps({
-                    "task_id": task.id,
-                    "status": task.status.value,
-                    "subtask_count": len(task.subtasks),
-                    "subtasks": [
-                        {
-                            "id": st.id,
-                            "description": st.description,
-                            "depends_on": st.depends_on,
-                            "status": st.status.value,
-                        }
-                        for st in task.subtasks
-                    ],
-                }).encode()
+                reply_data = json.dumps(
+                    {
+                        "task_id": task.id,
+                        "status": task.status.value,
+                        "subtask_count": len(task.subtasks),
+                        "subtasks": [
+                            {
+                                "id": st.id,
+                                "description": st.description,
+                                "depends_on": st.depends_on,
+                                "status": st.status.value,
+                            }
+                            for st in task.subtasks
+                        ],
+                    }
+                ).encode()
                 await msg.respond(reply_data)
                 logger.info(
                     "Replied to schedule trigger with %d subtasks",
@@ -1394,8 +1421,7 @@ class NatsWorker:
                 self._spawn_bg(self._execute_subtasks(task))
             else:
                 logger.info(
-                    "Task %s has no subtasks (deferred or empty) — skipping "
-                    "execution dispatch",
+                    "Task %s has no subtasks (deferred or empty) — skipping execution dispatch",
                     task.id,
                 )
 
@@ -1449,7 +1475,8 @@ class NatsWorker:
                     next_st.status = SubtaskStatus.FAILED
                     logger.warning(
                         "Subtask %s exceeded max retries (%d), marking Failed",
-                        next_st.id[:8], max_retries,
+                        next_st.id[:8],
+                        max_retries,
                     )
                     # Drive task-status advancement — without this the task
                     # sticks IN_PROGRESS when all remaining subtasks hit
@@ -1461,18 +1488,14 @@ class NatsWorker:
 
             if not ready_ids:
                 # No more ready subtasks -- either all done or blocked
-                in_progress = any(
-                    st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks
-                )
+                in_progress = any(st.status == SubtaskStatus.IN_PROGRESS for st in task.subtasks)
                 if not in_progress:
                     break
                 # Event-driven wait: wake immediately when a subtask completes/fails
                 # ponytail: 30s safety timeout prevents deadlock
                 self._dispatch_event.clear()
                 try:
-                    await asyncio.wait_for(
-                        self._dispatch_event.wait(), timeout=30.0
-                    )
+                    await asyncio.wait_for(self._dispatch_event.wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass  # Safety check: re-evaluate ready subtasks
                 updated_task = self._orchestrator.get_task_status(task.id)
@@ -1507,8 +1530,7 @@ class NatsWorker:
                 elif st.dispatch_mode == DispatchMode.REMOTE:
                     # Remote mode: no matching worker → keep Pending, don't execute locally
                     logger.info(
-                        "Subtask %s requires remote but no capable worker,"
-                        " keeping Pending",
+                        "Subtask %s requires remote but no capable worker, keeping Pending",
                         sid[:8],
                     )
                 else:
@@ -1529,6 +1551,7 @@ class NatsWorker:
                 # → _handle_task_event → _dispatch_event.set() → next iteration
             # Local execution for local_batch subtasks
             if local_batch:
+
                 async def _run_one(subtask_id: str) -> SubtaskResult:
                     """Assign, execute, and report a single subtask locally."""
                     st = None
@@ -1544,7 +1567,8 @@ class NatsWorker:
                             success=False,
                         )
                     wid = await self._orchestrator.assign_subtask(
-                        st, self._worker.worker_id,
+                        st,
+                        self._worker.worker_id,
                     )
                     if wid is None:
                         logger.warning("Failed to assign subtask %s", st.id)
@@ -1559,6 +1583,7 @@ class NatsWorker:
                     # Declare edit intent for conflict tracking
                     if st.file_constraints:
                         from ultimate_coders.agent.conflict import EditIntent
+
                         for fp in st.file_constraints:
                             self._orchestrator.conflict_detector.declare_intent(
                                 EditIntent(
@@ -1571,7 +1596,8 @@ class NatsWorker:
                     if st.file_constraints:
                         for fp in st.file_constraints:
                             self._orchestrator.conflict_detector.remove_intent(
-                                fp, self._worker.worker_id,
+                                fp,
+                                self._worker.worker_id,
                             )
                     await self._orchestrator.handle_subtask_result(result)
                     if self._publisher is not None:
@@ -1594,7 +1620,9 @@ class NatsWorker:
                         sid = local_batch[i]
                         logger.error(
                             "Subtask %s raised exception: %s",
-                            sid, r, exc_info=True,
+                            sid,
+                            r,
+                            exc_info=True,
                         )
                         # ponytail: F60 — record a failure result. Without this,
                         # a raising subtask stayed RUNNING/ASSIGNED forever and
@@ -1636,25 +1664,28 @@ class NatsWorker:
         # Declare edit intent for conflict tracking
         if subtask.file_constraints:
             from ultimate_coders.agent.conflict import EditIntent
+
             for fp in subtask.file_constraints:
                 self._orchestrator.conflict_detector.declare_intent(
                     EditIntent(worker_id="remote", file_path=fp)
                 )
 
-        msg = json.dumps({
-            "task_id": subtask.parent_id,
-            "subtask_id": subtask.id,
-            "description": subtask.description,
-            "depends_on": subtask.depends_on,
-            "file_constraints": subtask.file_constraints,
-            "expected_output": subtask.expected_output,
-            "timeout_seconds": subtask.timeout_seconds or 600,
-            "dispatch_mode": subtask.dispatch_mode.value,
-            "required_capabilities": subtask.required_capabilities,
-            "agent_config": subtask.agent_config,
-            "steps": [s.to_dict() for s in subtask.steps],
-            "project_id": subtask.project_id,
-        }).encode()
+        msg = json.dumps(
+            {
+                "task_id": subtask.parent_id,
+                "subtask_id": subtask.id,
+                "description": subtask.description,
+                "depends_on": subtask.depends_on,
+                "file_constraints": subtask.file_constraints,
+                "expected_output": subtask.expected_output,
+                "timeout_seconds": subtask.timeout_seconds or 600,
+                "dispatch_mode": subtask.dispatch_mode.value,
+                "required_capabilities": subtask.required_capabilities,
+                "agent_config": subtask.agent_config,
+                "steps": [s.to_dict() for s in subtask.steps],
+                "project_id": subtask.project_id,
+            }
+        ).encode()
 
         try:
             await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
@@ -1667,7 +1698,8 @@ class NatsWorker:
             self._reset_subtask_to_pending(subtask.id)
             logger.warning(
                 "Remote dispatch publish failed for subtask %s, reset to Pending: %s",
-                subtask.id[:8], e,
+                subtask.id[:8],
+                e,
             )
             return
         logger.info(
@@ -1709,8 +1741,7 @@ class NatsWorker:
                     if self._orchestrator is not None:
                         for task in self._orchestrator.tasks.values():
                             pending_count += sum(
-                                1 for st in task.subtasks
-                                if st.status == SubtaskStatus.PENDING
+                                1 for st in task.subtasks if st.status == SubtaskStatus.PENDING
                             )
                         if w_info is not None:
                             w_info["pending_subtask_count"] = pending_count
@@ -1749,9 +1780,7 @@ class NatsWorker:
                                     "forcing re-registration"
                                 )
                                 self._grpc_reg_engine = None
-                    logger.debug(
-                        "Heartbeat sent (consumer_id=%s)", self._consumer_id
-                    )
+                    logger.debug("Heartbeat sent (consumer_id=%s)", self._consumer_id)
             except Exception:
                 logger.warning("Heartbeat publish failed", exc_info=True)
 
@@ -1789,7 +1818,8 @@ class NatsWorker:
             if success:
                 logger.info(
                     "Registered with gateway (worker_id=%s, capabilities=%s)",
-                    worker_id, capabilities,
+                    worker_id,
+                    capabilities,
                 )
             else:
                 logger.warning("Gateway registration returned failure")
@@ -1845,9 +1875,13 @@ class NatsWorker:
             # Capability miss — publish rejection event (core NATS has no
             # nak/redelivery; the rejection event lets the orchestrator keep
             # the subtask Pending for re-dispatch).
-            self._spawn_bg(self._publish_capability_rejection(
-                task_id, subtask_id, missing_caps,
-            ))
+            self._spawn_bg(
+                self._publish_capability_rejection(
+                    task_id,
+                    subtask_id,
+                    missing_caps,
+                )
+            )
             return
 
         subtask = self._build_subtask_from_data(task_id, subtask_id, data)
@@ -1905,7 +1939,8 @@ class NatsWorker:
             logger.warning(
                 "Subtask %s hit max_deliver cap (%d), term-acking + "
                 "publishing subtask_failed (poison subtask)",
-                subtask_id[:8], num_delivered,
+                subtask_id[:8],
+                num_delivered,
             )
             if self._publisher is not None:
                 await self._publisher.publish_event(
@@ -1914,7 +1949,7 @@ class NatsWorker:
                     subtask_id=subtask_id,
                     data={
                         "error": "max redelivery exceeded "
-                                 f"({num_delivered}/{self._SUBTASK_MAX_DELIVER})",
+                        f"({num_delivered}/{self._SUBTASK_MAX_DELIVER})",
                         "worker_id": self._worker.worker_id,
                         "max_delivered": True,
                     },
@@ -1930,10 +1965,14 @@ class NatsWorker:
             # publish rejection event for orchestrator visibility.
             logger.info(
                 "NACK subtask %s (delivered %d): missing capabilities %s",
-                subtask_id[:8], num_delivered, missing_caps,
+                subtask_id[:8],
+                num_delivered,
+                missing_caps,
             )
             await self._publish_capability_rejection(
-                task_id, subtask_id, missing_caps,
+                task_id,
+                subtask_id,
+                missing_caps,
             )
             await self._js_ack_safe(js_msg, nak=True)
             return
@@ -1949,7 +1988,8 @@ class NatsWorker:
         self._spawn_bg(self._execute_and_report(subtask, js_msg=js_msg))
 
     def _parse_subtask_message(
-        self, raw_data: bytes,
+        self,
+        raw_data: bytes,
     ) -> tuple[str, str, dict[str, Any]] | None:
         """Parse a uc.subtask.execute message payload.
 
@@ -1979,7 +2019,10 @@ class NatsWorker:
         return task_id, subtask_id, data
 
     def _check_capabilities(
-        self, data: dict[str, Any], task_id: str, subtask_id: str,
+        self,
+        data: dict[str, Any],
+        task_id: str,
+        subtask_id: str,
     ) -> set[str] | None:
         """Check if the worker has all required capabilities.
 
@@ -2016,7 +2059,10 @@ class NatsWorker:
         )
 
     def _build_subtask_from_data(
-        self, task_id: str, subtask_id: str, data: dict[str, Any],
+        self,
+        task_id: str,
+        subtask_id: str,
+        data: dict[str, Any],
     ) -> Subtask | None:
         """Build a Subtask object from a parsed uc.subtask.execute payload."""
         if self._worker is None:
@@ -2044,7 +2090,10 @@ class NatsWorker:
         )
 
     async def _js_ack_safe(
-        self, js_msg: Any, ack: bool = False, nak: bool = False,
+        self,
+        js_msg: Any,
+        ack: bool = False,
+        nak: bool = False,
         term: bool = False,
     ) -> None:
         """Safely ack/nak/term a JetStream message (swallows errors).
@@ -2064,7 +2113,9 @@ class NatsWorker:
             logger.debug("JetStream ack/nak/term failed", exc_info=True)
 
     async def _execute_and_report(
-        self, subtask: Subtask, js_msg: Any | None = None,
+        self,
+        subtask: Subtask,
+        js_msg: Any | None = None,
     ) -> None:
         """Run one subtask (semaphore-bounded) and publish its result.
 
@@ -2094,7 +2145,10 @@ class NatsWorker:
                 result = await self._worker.execute_subtask(subtask)
         except Exception as e:
             logger.error(
-                "Subtask %s execution failed: %s", subtask_id, e, exc_info=True,
+                "Subtask %s execution failed: %s",
+                subtask_id,
+                e,
+                exc_info=True,
             )
             # Report failure via uc.task.event (consumed by default mode NatsWorker).
             # Wrap in try/except so a publish failure doesn't skip the JS ack.
@@ -2108,8 +2162,9 @@ class NatsWorker:
                     )
             except Exception:
                 logger.error(
-                    "Subtask %s publish failed in exception path (acking "
-                    "JS msg anyway)", subtask_id, exc_info=True,
+                    "Subtask %s publish failed in exception path (acking JS msg anyway)",
+                    subtask_id,
+                    exc_info=True,
                 )
             finally:
                 # JetStream: ack the message (execution completed, just failed —
@@ -2163,13 +2218,17 @@ class NatsWorker:
                 summary = result.summary[:200] if result.summary else ""
                 await self._publisher.publish_update(
                     self._make_subtask_result_task(
-                        task_id, subtask_id, status, summary,
+                        task_id,
+                        subtask_id,
+                        status,
+                        summary,
                     ),
                 )
         except Exception:
             logger.error(
-                "Subtask %s publish failed (acking JS msg anyway — "
-                "subtask already executed)", subtask_id, exc_info=True,
+                "Subtask %s publish failed (acking JS msg anyway — subtask already executed)",
+                subtask_id,
+                exc_info=True,
             )
         finally:
             logger.info(
@@ -2184,7 +2243,11 @@ class NatsWorker:
                 await self._js_ack_safe(js_msg, ack=True)
 
     def _make_subtask_result_task(
-        self, task_id: str, subtask_id: str, status: str, summary: str,
+        self,
+        task_id: str,
+        subtask_id: str,
+        status: str,
+        summary: str,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -2209,7 +2272,9 @@ class NatsWorker:
                 modified_files=[],
                 summary=summary,
                 success=status == "Completed",
-            ) if summary else None,
+            )
+            if summary
+            else None,
         )
         return Task(
             id=task_id,
@@ -2295,7 +2360,8 @@ class NatsWorker:
                 self._reset_subtask_to_pending(subtask_id)
             logger.info(
                 "Subtask %s dispatch rejected (%s), reset to Pending",
-                subtask_id[:8] if subtask_id else "?", reason,
+                subtask_id[:8] if subtask_id else "?",
+                reason,
             )
             self._dispatch_event.set()
         else:
@@ -2322,7 +2388,8 @@ class NatsWorker:
                     if st.id == subtask_id and st.file_constraints:
                         for fp in st.file_constraints:
                             self._orchestrator.conflict_detector.remove_intent(
-                                fp, "remote",
+                                fp,
+                                "remote",
                             )
                         break
 
@@ -2366,6 +2433,16 @@ class NatsWorker:
                 success=False,
             )
             await self._orchestrator.handle_subtask_result(result)
+
+        # The remote Worker also emits a minimal uc.task.update for the Rust
+        # TaskStore. That update contains only the one subtask and keeps the
+        # parent status at InProgress. Publish the authoritative Orchestrator
+        # snapshot after applying the result so the Dashboard sees the parent
+        # converge to Completed/Failed as well.
+        if self._publisher is not None and self._orchestrator is not None:
+            current = self._orchestrator.get_task_status(task_id)
+            if current is not None:
+                await self._publisher.publish_update(current)
 
     # ── Remote worker discovery ─────────────────────────────────────
 
@@ -2467,17 +2544,21 @@ class NatsWorker:
 
         logger.debug(
             "File changed: %s by %s (%s)",
-            file_path, worker_id[:8] if worker_id else "?", change_type,
+            file_path,
+            worker_id[:8] if worker_id else "?",
+            change_type,
         )
 
         # Feed into distributed conflict detector
         if self._distributed_detector is not None:
-            self._distributed_detector.receive_remote_intent({
-                "worker_id": worker_id,
-                "file_path": file_path,
-                "edit_type": change_type,
-                "timestamp": data.get("timestamp", 0),
-            })
+            self._distributed_detector.receive_remote_intent(
+                {
+                    "worker_id": worker_id,
+                    "file_path": file_path,
+                    "edit_type": change_type,
+                    "timestamp": data.get("timestamp", 0),
+                }
+            )
 
     async def _handle_memory_changed(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle ``uc.memory.changed`` messages for cross-Worker cache invalidation.
@@ -2506,7 +2587,8 @@ class NatsWorker:
 
         logger.debug(
             "Memory changed: project=%s by %s, invalidating cache",
-            project_id, source_worker[:8] if source_worker else "?",
+            project_id,
+            source_worker[:8] if source_worker else "?",
         )
 
         # Invalidate search cache — stale memory may affect search results
@@ -2547,7 +2629,9 @@ class NatsWorker:
         reclaimed = False
         for task in self._orchestrator.tasks.values():
             if task.status in (
-                TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.PAUSED,
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.PAUSED,
             ):
                 continue
             for st in task.subtasks:
@@ -2566,7 +2650,9 @@ class NatsWorker:
                 logger.warning(
                     "Remote subtask %s timed out after %.0fs with no result, "
                     "reset to Pending (retry %d)",
-                    st.id[:8], elapsed, st.retry_count,
+                    st.id[:8],
+                    elapsed,
+                    st.retry_count,
                 )
                 if self._publisher is not None:
                     await self._publisher.publish_event(
@@ -2608,17 +2694,17 @@ class NatsWorker:
                 if self._orchestrator is not None:
                     for task in self._orchestrator.tasks.values():
                         for st in task.subtasks:
-                            if (
-                                st.assigned_worker == wid
-                                and st.status
-                                in (SubtaskStatus.IN_PROGRESS, SubtaskStatus.ASSIGNED)
+                            if st.assigned_worker == wid and st.status in (
+                                SubtaskStatus.IN_PROGRESS,
+                                SubtaskStatus.ASSIGNED,
                             ):
                                 st.status = SubtaskStatus.PENDING
                                 st.assigned_worker = None
                                 st.retry_count += 1
                                 logger.info(
                                     "Reassigned subtask %s from dead worker %s",
-                                    st.id[:8], wid[:8],
+                                    st.id[:8],
+                                    wid[:8],
                                 )
                                 # Publish reassignment event for Dashboard/TUI visibility
                                 if self._publisher is not None:
@@ -2649,7 +2735,8 @@ class NatsWorker:
                     st = self._worker.current_task
                     logger.warning(
                         "Local worker heartbeat stall (%.0fs), releasing subtask %s",
-                        stall_gap, st.id[:8],
+                        stall_gap,
+                        st.id[:8],
                     )
                     st.status = SubtaskStatus.PENDING
                     st.assigned_worker = None
@@ -2696,9 +2783,7 @@ class NatsWorker:
         if handler is None:
             if msg.reply:
                 await msg.respond(
-                    json.dumps(
-                        {"available": False, "error": f"unknown RPC: {rpc_name}"}
-                    ).encode()
+                    json.dumps({"available": False, "error": f"unknown RPC: {rpc_name}"}).encode()
                 )
             return
 
@@ -2721,21 +2806,21 @@ class NatsWorker:
         for wid, w in orch.workers.items():
             now = datetime.now(timezone.utc)
             age = (now - w.last_heartbeat).total_seconds()
-            workers.append({
-                "id": w.id,
-                "capabilities": list(w.capabilities),
-                "current_load": w.current_load,
-                "max_capacity": w.max_capacity,
-                "load_percent": (
-                    round(w.current_load / w.max_capacity * 100)
-                    if w.max_capacity > 0
-                    else 0
-                ),
-                "last_heartbeat": w.last_heartbeat.isoformat(),
-                "heartbeat_age_seconds": round(age, 1),
-                "heartbeat_stale": age > heartbeat_timeout,
-                "is_available": w.is_available,
-            })
+            workers.append(
+                {
+                    "id": w.id,
+                    "capabilities": list(w.capabilities),
+                    "current_load": w.current_load,
+                    "max_capacity": w.max_capacity,
+                    "load_percent": (
+                        round(w.current_load / w.max_capacity * 100) if w.max_capacity > 0 else 0
+                    ),
+                    "last_heartbeat": w.last_heartbeat.isoformat(),
+                    "heartbeat_age_seconds": round(age, 1),
+                    "heartbeat_stale": age > heartbeat_timeout,
+                    "is_available": w.is_available,
+                }
+            )
         return {
             "available": True,
             "workers": workers,
@@ -2762,22 +2847,32 @@ class NatsWorker:
             night_window = {"start": nw.start, "end": nw.end, "enabled": nw.enabled}
         jobs = []
         for j in sched.jobs.values():
-            jobs.append({
-                "id": j.id, "name": j.name, "cron": j.cron,
-                "enabled": j.enabled,
-                "last_run": j.last_run.isoformat() if j.last_run else None,
-                "next_run": j.next_run.isoformat() if j.next_run else None,
-            })
+            jobs.append(
+                {
+                    "id": j.id,
+                    "name": j.name,
+                    "cron": j.cron,
+                    "enabled": j.enabled,
+                    "last_run": j.last_run.isoformat() if j.last_run else None,
+                    "next_run": j.next_run.isoformat() if j.next_run else None,
+                }
+            )
         history = []
         for h in sched.execution_history[-50:]:
-            history.append({
-                "job_id": h.job_id, "job_name": h.job_name,
-                "executed_at": h.executed_at.isoformat() if h.executed_at else "",
-                "success": h.success, "error": h.error,
-            })
+            history.append(
+                {
+                    "job_id": h.job_id,
+                    "job_name": h.job_name,
+                    "executed_at": h.executed_at.isoformat() if h.executed_at else "",
+                    "success": h.success,
+                    "error": h.error,
+                }
+            )
         return {
-            "available": True, "is_running": sched.is_running,
-            "night_window": night_window, "jobs": jobs,
+            "available": True,
+            "is_running": sched.is_running,
+            "night_window": night_window,
+            "jobs": jobs,
             "execution_history": history,
         }
 
@@ -2826,10 +2921,13 @@ class NatsWorker:
             events = [e for e in events if e.get("task_id") == task_id]
         offset = payload.get("offset", 0)
         limit = min(payload.get("limit", 100), 500)
-        paginated = events[offset:offset + limit]
+        paginated = events[offset : offset + limit]
         return {
-            "available": True, "events": paginated,
-            "total": len(events), "offset": offset, "limit": limit,
+            "available": True,
+            "events": paginated,
+            "total": len(events),
+            "offset": offset,
+            "limit": limit,
         }
 
     # ── Dashboard snapshot publisher ───────────────────────────────
@@ -2845,9 +2943,7 @@ class NatsWorker:
                 if self._nc is not None and self._orchestrator is not None:
                     snapshot = await self._build_snapshot()
                     payload = json.dumps(snapshot).encode()
-                    await self._nc.publish(
-                        self.NATS_SUBJECT_DASHBOARD_SNAPSHOT, payload
-                    )
+                    await self._nc.publish(self.NATS_SUBJECT_DASHBOARD_SNAPSHOT, payload)
                     # Persist JetStream seq every 12 snapshots (~60s)
                     snapshot_count += 1
                     if snapshot_count % 12 == 0 and self._js_last_seq > 0:
@@ -2868,8 +2964,10 @@ class NatsWorker:
             try:
                 h = orch.engine.health()
                 health = {
-                    "available": True, "status": h.status,
-                    "version": h.version, "uptime_seconds": h.uptime_seconds,
+                    "available": True,
+                    "status": h.status,
+                    "version": h.version,
+                    "uptime_seconds": h.uptime_seconds,
                 }
             except Exception:
                 logger.warning("Health check failed", exc_info=True)
@@ -2885,16 +2983,23 @@ class NatsWorker:
             for tid, t in orch.tasks.items():
                 sv = t.status.value if hasattr(t.status, "value") else str(t.status)
                 status_counts[sv] = status_counts.get(sv, 0) + 1
-                task_list.append({
-                    "id": t.id, "description": t.description, "status": sv,
-                    "project_id": t.project_id, "subtask_count": len(t.subtasks),
-                    "created_at": int(t.created_at.timestamp()),
-                    "updated_at": int(t.updated_at.timestamp()),
-                    "subtasks": [],
-                })
+                task_list.append(
+                    {
+                        "id": t.id,
+                        "description": t.description,
+                        "status": sv,
+                        "project_id": t.project_id,
+                        "subtask_count": len(t.subtasks),
+                        "created_at": int(t.created_at.timestamp()),
+                        "updated_at": int(t.updated_at.timestamp()),
+                        "subtasks": [],
+                    }
+                )
             tasks = {
-                "available": True, "tasks": task_list,
-                "total": len(task_list), "status_counts": status_counts,
+                "available": True,
+                "tasks": task_list,
+                "total": len(task_list),
+                "status_counts": status_counts,
             }
 
         # Scheduler

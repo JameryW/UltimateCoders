@@ -50,13 +50,10 @@ export async function unaryWithTimeout<T>(
     return await call(ac.signal);
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      // No `{ cause }`: ErrorOptions is ES2022 and this project's lib is
-      // ES2020, so the 2-arg Error constructor is a tsc error here.
-      // error.cause is never read in the dashboard (callers stringify
-      // err.message), so dropping it is lossless and keeps this new code
-      // type-clean. (submitTask's pre-existing timeout throws with
-      // `{ cause }` and carries the same pre-existing error - left as-is.)
-      throw new Error(`${what} timed out after ${Math.round(timeoutMs / 1000)}s`);
+      throw Object.assign(
+        new Error(`${what} timed out after ${Math.round(timeoutMs / 1000)}s`),
+        { cause: err },
+      );
     }
     throw err;
   } finally {
@@ -324,10 +321,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
         };
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          // No `{ cause }`: ErrorOptions is ES2022 and this project's lib is
-          // ES2020 (2-arg Error is a tsc error here). error.cause is never read
-          // in the dashboard. Matches unaryWithTimeout's timeout throw.
-          throw new Error("gRPC submitTask timed out after 30s");
+          throw Object.assign(new Error("gRPC submitTask timed out after 30s"), { cause: err });
         }
         throw err;
       } finally {

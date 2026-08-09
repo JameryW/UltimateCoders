@@ -36,6 +36,7 @@ function Root() {
  * isolate most crashes to a single panel; this catches anything that escapes
  * (an unwrapped component, a hook error) so the dashboard shows a recoverable
  * error screen + reload instead of a white screen. */
+// eslint-disable-next-line react-refresh/only-export-components -- entry file with router and root boundary
 function RootErrorFallback(error: Error, retry: () => void) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)] p-4" role="alert">
