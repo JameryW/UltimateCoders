@@ -177,7 +177,7 @@ is used).
 3. **Push** — on release, the worker (when `UC_GIT_PUSH_ON_RELEASE=true`)
    pushes its branch `uc/subtask/<id>` to the remote. Workers **never**
    touch `main`.
-4. **Merge arbitration** — the Orchestrator's `MergeArbiter` (Phase 2,
+4. **Merge arbitration** — the Orchestrator's `MergeArbiter` (opt-in,
    when `UC_GIT_MERGE_ARBITRATE` is set) fetches each `uc/subtask/<id>`
    branch, merges it into `origin/main` (escalating to the in-memory
    `ConflictResolver` on git conflict), and pushes `main`. The arbiter is

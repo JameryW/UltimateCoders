@@ -44,6 +44,11 @@ pub struct ScheduledTask {
     pub created_at: DateTime<Utc>,
     /// When this scheduled task was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Optional verification command (e.g. "cargo check") run after result
+    /// aggregation. Threaded from `JobFile.verify_command` through the
+    /// scheduler → NATS → Python → aggregator chain. None = no verification.
+    #[serde(default)]
+    pub verify_command: Option<String>,
 }
 
 impl ScheduledTask {
@@ -70,6 +75,7 @@ impl ScheduledTask {
             next_execution: None,
             created_at: now,
             updated_at: now,
+            verify_command: None,
         }
     }
 
@@ -244,6 +250,80 @@ impl Default for NightWindowConfig {
     }
 }
 
+/// Status snapshot of the scheduler, returned by `EngineApi::get_scheduler_status`.
+///
+/// Aggregates jobs, night-window state, running flag, and recent execution
+/// history so the gRPC `DashboardService` can build a proto response in one
+/// call without exposing the `SchedulerService` type across the trait boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerStatus {
+    /// Whether the scheduler is available (feature enabled + service initialized).
+    pub available: bool,
+    /// Whether the scheduler is currently running (started and not stopped).
+    pub is_running: bool,
+    /// Active night window configuration, if any.
+    pub night_window: Option<NightWindowConfig>,
+    /// All registered scheduled jobs.
+    pub jobs: Vec<ScheduledTask>,
+    /// Recent execution history entries (across all jobs).
+    pub execution_history: Vec<ExecutionHistory>,
+}
+
+/// Result of manually triggering a scheduled job, returned by
+/// `EngineApi::trigger_scheduler_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerTriggerResult {
+    /// Whether the trigger succeeded (dispatch was invoked).
+    pub success: bool,
+    /// The job ID that was triggered.
+    pub job_id: String,
+    /// Error message if the trigger failed.
+    pub error: Option<String>,
+}
+
+/// Trait-level request for creating a cron job at runtime, passed to
+/// `EngineApi::add_cron_job`. Decoupled from the proto so the trait stays
+/// proto-free (mirrors `SchedulerStatus` / `SchedulerTriggerResult`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCronJobApiRequest {
+    /// Human-readable description of the task.
+    pub description: String,
+    /// Cron expression for recurring tasks (e.g., "0 22 * * *").
+    pub cron_expression: String,
+    /// The project/repository context for the task.
+    pub project_id: String,
+    /// Start of the night execution window (HH:MM), if any.
+    pub night_window_start: Option<NaiveTime>,
+    /// End of the night execution window (HH:MM), if any.
+    pub night_window_end: Option<NaiveTime>,
+    /// IANA timezone name (e.g., "Asia/Shanghai", "UTC").
+    pub timezone: String,
+    /// Whether this scheduled task is enabled.
+    pub enabled: bool,
+}
+
+/// Result of creating a cron job at runtime, returned by
+/// `EngineApi::add_cron_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCronJobResult {
+    /// Whether the job was created successfully.
+    pub success: bool,
+    /// The UUID (string) of the newly created scheduled task.
+    pub job_id: String,
+    /// Error message if creation failed.
+    pub error: Option<String>,
+}
+
+/// Result of removing a scheduled job at runtime, returned by
+/// `EngineApi::remove_job`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveJobResult {
+    /// Whether the job was removed successfully.
+    pub success: bool,
+    /// Error message if removal failed.
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +358,72 @@ mod tests {
         assert!(!task.is_cron());
         assert!(task.is_one_shot());
         assert!(task.execute_after.is_some());
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_defaults_to_none() {
+        // Both cron and one_shot constructors must default verify_command to None.
+        let cron_task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        assert!(cron_task.verify_command.is_none());
+
+        let later = Utc::now() + chrono::Duration::hours(8);
+        let one_shot_task = ScheduledTask::one_shot(
+            "Run review".to_string(),
+            "project-1".to_string(),
+            later,
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        assert!(one_shot_task.verify_command.is_none());
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_serialization_roundtrip() {
+        // verify_command must serialize + deserialize (serde default = None
+        // when absent in JSON, so old payloads still parse).
+        let mut task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        task.verify_command = Some("cargo check".to_string());
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: ScheduledTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.verify_command.as_deref(), Some("cargo check"));
+    }
+
+    #[test]
+    fn scheduled_task_verify_command_absent_in_json_defaults_none() {
+        // A JSON payload without verify_command (old format) must still
+        // deserialize with verify_command = None (serde default).
+        let task = ScheduledTask::cron(
+            "Rebuild index".to_string(),
+            "project-1".to_string(),
+            "0 22 * * *".to_string(),
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        let json = serde_json::to_string(&task).unwrap();
+        // Remove verify_command from JSON to simulate old format.
+        let mut val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        if let Some(obj) = val.as_object_mut() {
+            obj.remove("verify_command");
+        }
+        let old_json = serde_json::to_string(&val).unwrap();
+        let parsed: ScheduledTask = serde_json::from_str(&old_json).unwrap();
+        assert!(parsed.verify_command.is_none());
     }
 
     #[test]
@@ -327,5 +473,60 @@ mod tests {
         let history = ExecutionHistory::skipped(task_id, "Task disabled".to_string());
         assert_eq!(history.status, ExecutionStatus::Skipped);
         assert_eq!(history.result_summary, Some("Task disabled".to_string()));
+    }
+
+    #[test]
+    fn add_cron_job_api_request_serialization() {
+        let request = AddCronJobApiRequest {
+            description: "Nightly build".to_string(),
+            cron_expression: "0 22 * * *".to_string(),
+            project_id: "proj".to_string(),
+            night_window_start: Some(NaiveTime::from_hms_opt(22, 0, 0).unwrap()),
+            night_window_end: Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()),
+            timezone: "Asia/Shanghai".to_string(),
+            enabled: true,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: AddCronJobApiRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.description, "Nightly build");
+        assert_eq!(parsed.cron_expression, "0 22 * * *");
+        assert_eq!(parsed.timezone, "Asia/Shanghai");
+        assert!(parsed.night_window_start.is_some());
+        assert!(parsed.enabled);
+    }
+
+    #[test]
+    fn add_cron_job_result_serialization() {
+        let result = AddCronJobResult {
+            success: true,
+            job_id: Uuid::new_v4().to_string(),
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: AddCronJobResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.success);
+        assert!(!parsed.job_id.is_empty());
+        assert!(parsed.error.is_none());
+    }
+
+    #[test]
+    fn remove_job_result_serialization() {
+        let result = RemoveJobResult {
+            success: true,
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: RemoveJobResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.success);
+        assert!(parsed.error.is_none());
+
+        let result_err = RemoveJobResult {
+            success: false,
+            error: Some("Job not found".to_string()),
+        };
+        let json = serde_json::to_string(&result_err).unwrap();
+        let parsed: RemoveJobResult = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.success);
+        assert_eq!(parsed.error.unwrap(), "Job not found");
     }
 }

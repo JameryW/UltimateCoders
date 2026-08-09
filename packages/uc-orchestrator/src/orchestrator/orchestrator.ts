@@ -217,10 +217,15 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 		if (parsed.subtasks && Array.isArray(parsed.subtasks)) {
 			return parsed.subtasks.map((st: Record<string, unknown>, i: number) => {
 				const def: SubtaskDef = {
-					id: (st.id as string) || `st-${i + 1}`,
-					description: st.description as string,
-					dependsOn: (st.depends_on as string[]) || [],
-					files: (st.files as string[]) || [],
+					id: (String(st.id ?? "").replace(/\s+/g, "").trim() || `st-${i + 1}`),
+					description: String(st.description ?? "").replace(/\s+/g, " ").trim(),
+					// ponytail: trim each dep + file entry — the decomposer can return stray
+					// whitespace ("st-1 " / " src/a.ts "), which would mismatch the sanitized
+					// ids above (deps unmet → blocked-forever subtasks) and produce noisy file
+					// paths. Map over the arrays so the entry shape is normalized, not the
+					// array reference. Non-string entries coerced via String().
+					dependsOn: ((st.depends_on as unknown[]) ?? []).map((d) => String(d).trim()).filter(Boolean),
+					files: ((st.files as unknown[]) ?? []).map((f) => String(f).trim()).filter(Boolean),
 				};
 				// ponytail: read optional steps array from decomposer JSON —
 				// unknown fields ignored, missing steps key = undefined (backward compat)
@@ -260,7 +265,7 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 		if (match) {
 			subtasks.push({
 				id: `st-${i + 1}`,
-				description: match[1].trim(),
+				description: match[1].replace(/\s+/g, " ").trim(),
 				dependsOn: i > 0 ? [`st-${i}`] : [],
 				files: [],
 			});
@@ -1987,7 +1992,10 @@ export class UCOrchestrator {
 	private fromPersisted(p: PersistedTask): TaskState {
 		return {
 			id: p.id,
-			description: p.description,
+			// ponytail: collapse whitespace in the task description on restore — /uc submit
+			// normalizes (split on \s+), but a legacy/manually-edited persisted task could
+			// carry a \n that breaks the notify/detail row. Mirror the subtask-field heal.
+			description: String(p.description ?? "").replace(/\s+/g, " ").trim(),
 			status: p.status as TaskState["status"],
 			controlState: p.controlState,
 			error: p.error,
@@ -1995,11 +2003,11 @@ export class UCOrchestrator {
 			redecomposed: p.redecomposed,
 			projectId: p.projectId,
 			subtasks: p.subtasks.map((s) => ({
-				id: s.id,
-				description: s.description,
+				id: String(s.id ?? "").replace(/\s+/g, "").trim(),
+				description: String(s.description ?? "").replace(/\s+/g, " ").trim(),
 				status: s.status as SubtaskResult["status"],
-				dependsOn: s.dependsOn,
-				files: s.files ?? [],
+				dependsOn: (s.dependsOn ?? []).map((d) => String(d).trim()).filter(Boolean),
+				files: (s.files ?? []).map((f) => String(f).trim()).filter(Boolean),
 				result: s.result,
 				error: s.error,
 				review: s.review,

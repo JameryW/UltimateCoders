@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 async-stream = "0.3"
 tokio-stream = "0.1"
 futures = { workspace = true }
+uuid = { workspace = true }
 
 # NATS (feature-gated)
 async-nats = { workspace = true, optional = true }

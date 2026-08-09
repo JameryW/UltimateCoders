@@ -32,7 +32,8 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
             last_execution TIMESTAMPTZ,
             next_execution TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            verify_command TEXT
         )
         "#,
     )
@@ -40,6 +41,23 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
     .await
     .map_err(|e| {
         EngineError::ConnectionError(format!("Migration error (scheduled_tasks): {}", e))
+    })?;
+
+    // Add verify_command column to pre-existing tables (created before the
+    // column existed). ADD COLUMN IF NOT EXISTS is a no-op on fresh tables
+    // that already have it from CREATE TABLE above.
+    sqlx::query(
+        r#"
+        ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS verify_command TEXT
+        "#,
+    )
+    .execute(pool.as_ref())
+    .await
+    .map_err(|e| {
+        EngineError::ConnectionError(format!(
+            "Migration error (scheduled_tasks.verify_command): {}",
+            e
+        ))
     })?;
 
     // Create execution_history table

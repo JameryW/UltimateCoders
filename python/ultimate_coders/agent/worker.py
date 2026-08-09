@@ -904,7 +904,12 @@ class Worker:
                         "subtask_failed",
                         task_id=subtask.parent_id,
                         subtask_id=subtask.id,
-                        data={"error": str(e), "worker_id": self.worker_id},
+                        # ponytail: truncate the event payload's error to [:200],
+                        # matching the retry path (line ~872) — the final-failure
+                        # branch sent the raw str(e) while the retry branch capped
+                        # it. A multi-KB traceback could exceed NATS max_payload;
+                        # the SubtaskResult below keeps the full [-2000:] for stderr.
+                        data={"error": str(e)[:200], "worker_id": self.worker_id},
                     )
                     friendly_summary, error_field = _build_friendly_error(e)
                     return SubtaskResult(

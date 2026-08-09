@@ -41,6 +41,7 @@ import { registerTaskTools, isSpawnDisabled } from "./orchestrator/task-bridge";
 import { registerIndexTools } from "./orchestrator/index-bridge";
 import { registerFileTools } from "./orchestrator/file-bridge";
 import { registerWorkerTools } from "./orchestrator/worker-bridge";
+import { registerSchedulerTools } from "./orchestrator/scheduler-bridge";
 import { createProgressWidget, type ProgressWidgetState, type SubtaskProgressInfo } from "./ui/progress-widget";
 import { createSubtaskTreeOverlay } from "./ui/subtask-tree-overlay";
 import { createTaskListOverlay } from "./ui/task-list-overlay";
@@ -466,7 +467,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 	// ── /uc command ─────────────────────────────────────────────
 
-	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "search", "help"];
+	const SUBCOMMANDS = ["submit", "status", "cancel", "pause", "resume", "search", "schedule", "help"];
 
 	pi.registerCommand("uc", {
 		description: "UltimateCoders task orchestration",
@@ -635,25 +636,40 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						// ponytail: sort by score DESC before capping — the server usually returns
 						// relevance-sorted, but a defensive client sort guarantees the top-20 slice
 						// holds the highest-score results (a server that didn't sort would otherwise
-						// bury the best matches past the cap). Missing score sorts last (0 fallback).
-						const sorted = results.slice().sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0));
+						// bury the best matches past the cap). Missing/NaN/non-finite score sorts last
+						// (0 fallback); NaN would otherwise make the comparator return NaN (unstable sort).
+						const scoreOf = (r: any): number =>
+							typeof r.score === "number" && Number.isFinite(r.score) ? r.score : 0;
+						const sorted = results.slice().sort((a: any, b: any) => scoreOf(b) - scoreOf(a));
 						const shown = sorted.slice(0, SHOWN);
 						const lines = shown.map(
 							(r: any) => {
-								const repo = r.repoId ?? r.repo_id ?? "?";
-								const path = r.filePath ?? r.file_path ?? "?";
-								// ponytail: show the score when it's a real number (incl. 0) — a 0-score result
-								// is the lowest-relevance hit, not an unscored one. The old truthy check
-								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest
-								// rank looked indistinguishable from "no score". Use a numeric-type check.
-								const score = typeof r.score === "number" ? ` (${r.score.toFixed(2)})` : "";
+								// ponytail: fall back to "?" when the field is empty (not just null/undefined) —
+								// `??` leaves "" as-is, so an empty repoId/path rendered "[ ]" / bare " — ".
+								const orQ = (v: unknown) => (typeof v === "string" && v.trim() ? v : "?");
+								const repo = orQ(r.repoId ?? r.repo_id);
+								const path = orQ(r.filePath ?? r.file_path);
+								// ponytail: show the score when it's a real finite number (incl. 0) — a 0-score
+								// result is the lowest-relevance hit, not an unscored one. The old truthy check
+								// (`r.score ?`) hid 0-score results alongside unscored ones, so the lowest rank
+								// looked indistinguishable from "no score". Use a numeric-type check that excludes
+								// NaN (typeof NaN === "number", so it'd otherwise render "(NaN)").
+								const score = typeof r.score === "number" && Number.isFinite(r.score) ? ` (${r.score.toFixed(2)})` : "";
 								// ponytail: line range — SearchResultItem carries start_line/end_line but
 								// the search output never showed them, so a match's location in the file
 								// was invisible. `:L42` (single line) or `:L42-50` (range) after the score.
+								// Fallback: endLine is optional for a single-line match (some sources omit
+								// it), so show `:L{start}` when only start is present (was: dropped entirely).
 								const startL = r.startLine ?? r.start_line;
 								const endL = r.endLine ?? r.end_line;
-								const lineTag = (typeof startL === "number" && typeof endL === "number")
-									? (startL === endL ? ` :L${startL}` : ` :L${startL}-${endL}`) : "";
+								// ponytail: guard with Number.isFinite — typeof NaN === "number", so the old
+								// check would render ":LNaN" / ":LNaN-NaN" (and NaN !== NaN made the range
+								// branch fire). Finite numbers only; NaN/Infinity → no tag.
+								const lineTag = Number.isFinite(startL)
+									? (Number.isFinite(endL) && endL !== startL
+										? ` :L${startL}-${endL}`
+										: ` :L${startL}`)
+									: "";
 								// ponytail: match-type tag — shows how the match was found (text/semantic/
 								// ast/hybrid). A hybrid search producing a text match vs a semantic match
 								// reads differently; the tag answers "why did this rank here?". Short
@@ -664,8 +680,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								// `  [repo] path score\n      snippet` — the path line prefix
 								// is `  [repo] ` (~6 + repo) + score + lineTag + mtTag; cap path so it fits.
 								const pathPrefix = `  [${repo}] `;
+								// ponytail: account for the score tag's length — use the tag's actual length
+								// (score is "" when unscored), not a truthy check on r.score (which would
+								// under-budget the path when score is 0, the case #525 fixed for display).
 								const pathBudget = cols !== undefined
-									? Math.max(0, cols - pathPrefix.length - (r.score ? score.length : 0) - lineTag.length - mtTag.length)
+									? Math.max(0, cols - pathPrefix.length - score.length - lineTag.length - mtTag.length)
 									: 80;
 								// ponytail: slice the PLAIN path, then highlight the query match — a search for a
 								// filename or symbol whose name is in the path (e.g. "auth" → src/auth.ts) showed
@@ -711,6 +730,116 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 					}
 					return;
 				}
+				case "schedule": {
+					// ponytail: /uc schedule — scheduler status / actions.
+					// Sub-actions: trigger <id>, add <desc> <cron> [flags], remove <id>.
+					// No args → show scheduler status (toast, mirrors /uc status).
+					const subParts = rest.trim().split(/\s+/).filter(Boolean);
+					const subAction = subParts[0] ?? "";
+					try {
+						if (subAction === "trigger") {
+							const jobId = subParts[1];
+							if (!jobId) {
+								ctx.ui.notify("Usage: /uc schedule trigger <job-id>", "error");
+								return;
+							}
+							const r = await bridge.triggerSchedulerJob(jobId);
+							if (!r.success) {
+								ctx.ui.notify(`Trigger failed: ${r.error ?? "unknown error"}`, "error");
+							} else {
+								ctx.ui.notify(`Triggered job ${r.jobId.slice(0, 14)}`, "info");
+							}
+							return;
+						}
+						if (subAction === "remove") {
+							const jobId = subParts[1];
+							if (!jobId) {
+								ctx.ui.notify("Usage: /uc schedule remove <job-id>", "error");
+								return;
+							}
+							const r = await bridge.removeJob(jobId);
+							if (!r.ok) {
+								ctx.ui.notify(`Remove failed: ${r.error}`, "error");
+							} else {
+								ctx.ui.notify(`Removed job ${jobId.slice(0, 14)}`, "info");
+							}
+							return;
+						}
+						if (subAction === "add") {
+							// /uc schedule add <description> <cron> [--project <id>] [--night-start HH:MM --night-end HH:MM] [--tz <zone>]
+							const args = subParts.slice(1);
+							if (args.length < 2) {
+								ctx.ui.notify(
+									"Usage: /uc schedule add <description> <cron> [--project <id>] [--night-start HH:MM --night-end HH:MM] [--tz <zone>]",
+									"error",
+								);
+								return;
+							}
+							const description = args[0];
+							const cron = args[1];
+							let projectId = "";
+							let nightStart: string | undefined;
+							let nightEnd: string | undefined;
+							let timezone: string | undefined;
+							for (let i = 2; i < args.length; i++) {
+								if (args[i] === "--project" && args[i + 1]) { projectId = args[++i]; }
+								else if (args[i] === "--night-start" && args[i + 1]) { nightStart = args[++i]; }
+								else if (args[i] === "--night-end" && args[i + 1]) { nightEnd = args[++i]; }
+								else if (args[i] === "--tz" && args[i + 1]) { timezone = args[++i]; }
+							}
+							const r = await bridge.addCronJob({
+								description,
+								cronExpression: cron,
+								projectId,
+								nightWindowStart: nightStart,
+								nightWindowEnd: nightEnd,
+								timezone,
+							});
+							if (!r.ok) {
+								ctx.ui.notify(`Add cron job failed: ${r.error}`, "error");
+							} else {
+								ctx.ui.notify(`Added cron job ${r.jobId.slice(0, 14)} (${cron})`, "info");
+							}
+							return;
+						}
+						// No sub-action (or unknown) → show scheduler status
+						const status = await bridge.getSchedulerStatus();
+						if (!status.available) {
+							ctx.ui.notify("(scheduler service unavailable — gRPC server may be down)", "info");
+							return;
+						}
+						const lines: string[] = [];
+						lines.push(`Scheduler: ${status.isRunning ? "running" : "stopped"}`);
+						if (status.nightWindow) {
+							const nw = status.nightWindow;
+							lines.push(`Night window: ${nw.start}-${nw.end} (${nw.enabled ? "enabled" : "disabled"})`);
+						}
+						if (status.jobs.length === 0) {
+							lines.push("Jobs: (none)");
+						} else {
+							lines.push("Jobs:");
+							for (const j of status.jobs) {
+								const en = j.enabled ? "on" : "off";
+								const last = j.lastRun ? ` last=${j.lastRun}` : "";
+								const next = j.nextRun ? ` next=${j.nextRun}` : "";
+								lines.push(`  [${en}] ${j.id.slice(0, 14)}: ${j.name} (${j.cron})${last}${next}`);
+							}
+						}
+						if (status.executionHistory.length > 0) {
+							lines.push("Recent executions:");
+							for (const h of status.executionHistory.slice(0, 10)) {
+								const tag = h.status ?? (h.success ? "ok" : "fail");
+								const err = h.error ? ` — ${h.error}` : "";
+								lines.push(`  [${tag}] ${h.jobName} @ ${h.executedAt}${err}`);
+							}
+						}
+						lines.push(ctx.ui.theme.fg("dim", "/uc schedule trigger|add|remove <args> for actions"));
+						ctx.ui.notify(lines.join("\n"), "info");
+					} catch (e) {
+						ctx.ui.notify(`Schedule failed: ${e}`, "error");
+					}
+					return;
+				}
 					default:
 					// ponytail: F28 — "/uc submti" used to dump help identically to
 					// "/uc help", so typos looked like success. Flag unknown input.
@@ -729,6 +858,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 							"  /uc pause <task-id>            Pause after current wave",
 							"  /uc resume <task-id>           Resume a paused or failed task",
 							"  /uc search <query>             Search across indexed repos",
+							"  /uc schedule [trigger|add|remove] Scheduler status / actions",
 							"  /uc help                       Show this help",
 							"",
 							"Shortcuts:",
@@ -755,4 +885,5 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 	registerIndexTools(pi, bridge);
 	registerFileTools(pi, bridge);
 	registerWorkerTools(pi, bridge);
+	registerSchedulerTools(pi, bridge);
 }

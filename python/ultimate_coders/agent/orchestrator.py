@@ -10,9 +10,9 @@ Provides:
 - Event emission (via TaskEventEmitter or NATS publisher)
 - Subtask selection (simple DAG-ordered ready check)
 - Pause/resume/cancel
+- LLM-based task decomposition (when llm_client available; newline-split fallback)
 
 NOT provided (was in full Orchestrator, now handled by OMP extension):
-- LLM-based task decomposition
 - Scheduler (cron jobs)
 - Dashboard snapshot (nats_worker builds its own)
 """
@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from ultimate_coders.agent.aggregator import ResultAggregator
 from ultimate_coders.agent.conflict import ConflictDetector
 from ultimate_coders.agent.event_emitter import TaskEventEmitter
 from ultimate_coders.agent.types import (
@@ -76,8 +78,9 @@ class WorkerEntry:
 class Orchestrator:
     """Lightweight orchestrator for nats_worker.
 
-    Provides just enough state management to run tasks through Workers
-    without the full LLM decomposition / scheduler / dashboard stack.
+    Provides just enough state management to run tasks through Workers.
+    LLM decomposition is wired via ``llm_client`` (stored at init);
+    when unavailable or on failure, falls back to newline-split.
     """
 
     def __init__(
@@ -96,6 +99,16 @@ class Orchestrator:
         # external remote is configured (UC_REPO_URL). When None, the
         # Orchestrator behaves exactly as before (local-only, no remote sync).
         self.merge_arbiter = merge_arbiter
+        # Advisory in-memory result aggregator. Runs at task completion
+        # (before MergeArbiter) to surface same-file conflicts between
+        # concurrent subtasks early. Advisory only — does NOT write merged
+        # content; MergeArbiter remains the writer. LLM synthesis is
+        # out-of-scope (llm_client=None) per PRD.
+        self.aggregator = ResultAggregator(llm_client=None)
+        # Hold strong refs to fire-and-forget aggregation tasks so the event
+        # loop's weak references don't GC them mid-flight (mirrors
+        # _pending_arbitration).
+        self._pending_aggregation: set[asyncio.Task[Any]] = set()
         # Hold strong refs to fire-and-forget arbitration tasks so the event
         # loop's weak references don't GC them mid-flight (CPython asyncio
         # warns/finalizes unreferenced tasks). Cleared as each completes.
@@ -108,7 +121,17 @@ class Orchestrator:
         self.tasks: dict[str, Task] = {}
         self.workers: dict[str, WorkerEntry] = {}
 
-        # ponytail: scheduler stub — nats_worker checks orch.scheduler is not None
+        # Night-window exclusive mode (scheduler-spec.md §"Orchestrator
+        # Night-Window Exclusive Mode"). When True, real-time (non-scheduled)
+        # task submissions defer to ``_pending_tasks`` instead of immediate
+        # decomposition/dispatch; scheduled tasks bypass the queue. Driven by
+        # NATS ``schedule.window.opened``/``closed`` events (see nats_worker).
+        self._night_window_active: bool = False
+        self._pending_tasks: list[dict[str, Any]] = []
+
+        # Kept as None — Rust SchedulerService owns scheduling (see
+        # crates/uc-engine/src/scheduler/). nats_worker + dashboard guard
+        # on `orch.scheduler is None` and return available=False.
         self.scheduler = None
 
     # ── Worker registration ────────────────────────────────────
@@ -138,34 +161,84 @@ class Orchestrator:
         project_id: str = "",
         task_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
+        _scheduled: bool = False,
+        verify_command: str | None = None,
     ) -> Task:
-        """Submit a task with simple newline-split decomposition.
+        """Submit a task with LLM decomposition (newline-split fallback).
 
-        The full Orchestrator used LLM decomposition; this minimal version
-        splits by newlines (same as mock mode).
+        When ``self.llm_client`` is available, the description is sent to
+        the LLM for decomposition into ordered subtasks (with dependencies,
+        file constraints, and expected output). The LLM's JSON output is
+        parsed by ``parse_decomposition_output`` (reused from sandbox.py).
+
+        If ``llm_client`` is None, the LLM call raises, or parsing fails,
+        the task falls back to newline-split decomposition (graceful,
+        non-fatal — the task still runs).
+
+        Night-window exclusive mode: when ``night_window_active`` is True
+        and this submission is NOT scheduler-fired (``_scheduled=False``),
+        the task is deferred to ``_pending_tasks`` with status PAUSED
+        instead of being decomposed/dispatched immediately. Scheduled tasks
+        (``_scheduled=True``) bypass the deferral and execute normally.
+        See scheduler-spec.md §"Orchestrator Night-Window Exclusive Mode".
 
         Args:
-            description: Task description (newline-separated subtasks).
+            description: Task description (natural language or newline-separated).
             project_id: Project identifier.
             task_id: Optional explicit task ID.
             agent_config: Per-subtask agent config overrides (applied to all subtasks).
+            _scheduled: Internal — True if this submit originated from the
+                scheduler (cron/one-shot fire). Must NEVER be set by external
+                callers; only the scheduler dispatch path sets it. Setting it
+                incorrectly will bypass the night-window queue for real-time
+                tasks.
+            verify_command: Optional verification command threaded to the
+                result aggregator (``aggregate(verify_command=)``).
         """
-        tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
-        lines = [line.strip() for line in description.split("\n") if line.strip()]
-        if not lines:
-            lines = [description]
-
-        subtasks = []
-        for i, line in enumerate(lines):
-            subtasks.append(Subtask(
-                id=f"{tid}-s{i}",
-                parent_id=tid,
-                description=line,
-                status=SubtaskStatus.PENDING,
-                depends_on=[] if i == 0 else [],  # ponytail: no deps for simple split
-                agent_config=agent_config or {},
+        # Night-window exclusive mode: defer real-time tasks to the pending
+        # backlog. Scheduled tasks (from NatsSubmitDispatcher) bypass.
+        if self._night_window_active and not _scheduled:
+            tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
+            task = Task(
+                id=tid,
+                description=description,
                 project_id=project_id,
-            ))
+                status=TaskStatus.PAUSED,
+                subtasks=[],
+            )
+            self.tasks[tid] = task
+            self._pending_tasks.append(
+                {
+                    "task_id": tid,
+                    "description": description,
+                    "project_id": project_id,
+                    "agent_config": agent_config,
+                }
+            )
+            logger.info(
+                "Task %s deferred to _pending_tasks (night window active, "
+                "real-time submit) — backlog size=%d",
+                tid,
+                len(self._pending_tasks),
+            )
+            return task
+
+        tid = task_id or f"t-{uuid.uuid4().hex[:8]}"
+
+        # Try LLM decomposition first; fall back to newline-split on any
+        # failure (llm_client None, complete() raises, parse fails, empty).
+        subtasks: list[Subtask] | None = None
+        try:
+            subtasks = await self._decompose_task(description, tid, project_id, agent_config)
+        except Exception:
+            logger.exception(
+                "LLM decomposition failed for task %s, falling back to newline-split",
+                tid,
+            )
+            subtasks = None
+
+        if not subtasks:
+            subtasks = self._newline_split_subtasks(description, tid, project_id, agent_config)
 
         task = Task(
             id=tid,
@@ -173,10 +246,161 @@ class Orchestrator:
             project_id=project_id,
             status=TaskStatus.IN_PROGRESS,
             subtasks=subtasks,
+            verify_command=verify_command,
         )
         self.tasks[tid] = task
         logger.info("Task %s submitted (%d subtasks)", tid, len(subtasks))
         return task
+
+    # ── Decomposition ─────────────────────────────────────────
+
+    #: System prompt for LLM decomposition. Instructs the LLM to output a
+    #: JSON array matching the schema that ``parse_decomposition_output``
+    #: (sandbox.py:689) expects.
+    _DECOMPOSE_SYSTEM = (
+        "You are a task decomposition agent. Break the given task into "
+        "ordered subtasks that can be executed independently (or with "
+        "dependencies). Output ONLY a JSON array — no prose, no markdown "
+        "fences.\n\n"
+        "Each element must be an object with these keys:\n"
+        '  "description": string — a clear, self-contained subtask description\n'
+        '  "depends_on": array of integers — 1-based indices of subtasks '
+        "this one depends on (empty array if none)\n"
+        '  "file_constraints": array of strings — file paths the subtask '
+        "may read or modify (empty array if unknown)\n"
+        '  "expected_output": string — what a successful result looks like\n'
+        "\nExample:\n"
+        '[\n'
+        '  {"description": "Add foo() to bar.py", "depends_on": [], '
+        '"file_constraints": ["bar.py"], "expected_output": "foo() defined"},\n'
+        '  {"description": "Call foo() from main", "depends_on": [1], '
+        '"file_constraints": ["main.py"], "expected_output": "main calls foo()"}\n'
+        "]"
+    )
+
+    async def _decompose_task(
+        self,
+        description: str,
+        task_id: str,
+        project_id: str,
+        agent_config: dict[str, Any] | None,
+    ) -> list[Subtask] | None:
+        """Decompose a task description via LLM into Subtask objects.
+
+        Returns ``None`` if ``llm_client`` is not available or the LLM
+        returns no usable subtasks. Any exception (network error, parse
+        failure) propagates to the caller (``submit_task``), which catches
+        it and falls back to newline-split.
+
+        The returned subtasks have:
+        - ``id``: ``"{task_id}-s{i}"`` (0-based index)
+        - ``depends_on``: list of ``"{task_id}-s{idx-1}"`` (converting
+          1-based LLM indices to 0-based subtask IDs)
+        - ``file_constraints`` and ``expected_output`` from the LLM output
+        """
+        if self.llm_client is None:
+            return None
+
+        prompt = (
+            f"Decompose this task into ordered subtasks as a JSON array.\n"
+            f"Output ONLY the JSON array, no prose.\n\n"
+            f"Task: {description}"
+        )
+        result = await self.llm_client.complete(
+            messages=[{"role": "user", "content": prompt}],
+            system=self._DECOMPOSE_SYSTEM,
+            max_tokens=2048,
+        )
+
+        # LLMClient.complete returns LLMResponse (has .text). Be defensive
+        # — duck-type for .text, fall back to str() for unknown shapes.
+        if hasattr(result, "text"):
+            raw_text = result.text
+        elif isinstance(result, str):
+            raw_text = result
+        else:
+            raw_text = str(result) if result else ""
+
+        if not raw_text.strip():
+            logger.warning("LLM decomposition returned empty text for task %s", task_id)
+            return None
+
+        from ultimate_coders.agent.sandbox import parse_decomposition_output
+
+        items = parse_decomposition_output(raw_text)
+        if not items:
+            logger.warning("LLM decomposition produced 0 subtasks for task %s", task_id)
+            return None
+
+        subtasks: list[Subtask] = []
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            desc = item.get("description", "").strip()
+            if not desc:
+                continue
+            # Convert 1-based depends_on indices to subtask IDs.
+            raw_deps = item.get("depends_on", [])
+            depends_on: list[str] = []
+            if isinstance(raw_deps, list):
+                for dep in raw_deps:
+                    try:
+                        idx = int(dep) - 1  # 1-based → 0-based
+                        if 0 <= idx < len(items):
+                            depends_on.append(f"{task_id}-s{idx}")
+                    except (ValueError, TypeError):
+                        logger.debug(
+                            "Ignoring invalid depends_on entry %r in subtask %d",
+                            dep, i,
+                        )
+            subtasks.append(Subtask(
+                id=f"{task_id}-s{i}",
+                parent_id=task_id,
+                description=desc,
+                status=SubtaskStatus.PENDING,
+                depends_on=depends_on,
+                file_constraints=item.get("file_constraints", []) or [],
+                expected_output=item.get("expected_output", "") or "",
+                agent_config=agent_config or {},
+                project_id=project_id,
+            ))
+
+        if not subtasks:
+            logger.warning(
+                "LLM decomposition produced no valid subtasks for task %s "
+                "(all items missing description)", task_id,
+            )
+            return None
+
+        logger.info(
+            "LLM decomposition for task %s: %d subtasks",
+            task_id, len(subtasks),
+        )
+        return subtasks
+
+    @staticmethod
+    def _newline_split_subtasks(
+        description: str,
+        task_id: str,
+        project_id: str,
+        agent_config: dict[str, Any] | None,
+    ) -> list[Subtask]:
+        """Fallback: split description by newlines into subtasks."""
+        lines = [line.strip() for line in description.split("\n") if line.strip()]
+        if not lines:
+            lines = [description]
+        return [
+            Subtask(
+                id=f"{task_id}-s{i}",
+                parent_id=task_id,
+                description=line,
+                status=SubtaskStatus.PENDING,
+                depends_on=[],  # no deps for simple split
+                agent_config=agent_config or {},
+                project_id=project_id,
+            )
+            for i, line in enumerate(lines)
+        ]
 
     # ── Subtask lifecycle ──────────────────────────────────────
 
@@ -234,6 +458,13 @@ class Orchestrator:
         """Update task status based on subtask states."""
         if all(st.status == SubtaskStatus.COMPLETED for st in task.subtasks):
             task.status = TaskStatus.COMPLETED
+            # Advisory in-memory aggregation — surfaces same-file conflicts
+            # between concurrent subtasks early (non-fatal, does NOT write).
+            # Runs before MergeArbiter so conflicts are visible in logs
+            # before git-level merge is attempted. Fire-and-forget via
+            # asyncio.create_task so the sync _update_task_status path is
+            # not blocked (mirrors _schedule_arbitration below).
+            self._schedule_aggregation(task)
             # Phase 2: fire git-level merge arbitration when all subtasks
             # complete. Opt-in — only when a MergeArbiter is configured.
             # Non-fatal: arbitration failures are logged, never crash task
@@ -273,6 +504,132 @@ class Orchestrator:
         for tid, _ in terminal[:to_evict]:
             del self.tasks[tid]
         return to_evict
+
+    def _schedule_aggregation(self, task: Task) -> None:
+        """Schedule advisory result aggregation as a background task.
+
+        Collects ``SubtaskResult`` objects from completed subtasks, sources
+        ``base_files`` from the MergeArbiter's project path (if available),
+        and runs the ``ResultAggregator`` to surface same-file conflicts.
+        Advisory only — does NOT write merged content; MergeArbiter remains
+        the writer. Non-fatal: aggregation failures are logged, never crash
+        task completion.
+
+        Mirrors ``_schedule_arbitration``: fire-and-forget via
+        ``asyncio.create_task`` so the sync ``_update_task_status`` path is
+        not blocked.
+        """
+        # Collect results from subtasks that have one (completed subtasks).
+        subtask_results = [
+            st.result for st in task.subtasks
+            if st.result is not None
+        ]
+        if not subtask_results:
+            return
+        try:
+            agg_task = asyncio.create_task(
+                self._aggregate_results(task.id, subtask_results)
+            )
+        except RuntimeError:
+            # No running event loop — cannot schedule. Log and skip.
+            logger.warning(
+                "Cannot schedule result aggregation for task %s "
+                "(no running event loop)", task.id,
+            )
+            return
+        # Hold a strong reference so the task is not GC'd mid-flight.
+        self._pending_aggregation.add(agg_task)
+        agg_task.add_done_callback(self._pending_aggregation.discard)
+
+    async def _aggregate_results(
+        self,
+        task_id: str,
+        subtask_results: list[SubtaskResult],
+    ) -> None:
+        """Run advisory result aggregation for a completed task (non-fatal).
+
+        Sources ``base_files`` from the MergeArbiter's project path if
+        available; if no MergeArbiter or no project path, ``base_files``
+        is empty (first-modifier-wins semantics). Logs the aggregation
+        result — conflicts are warned about but never abort the task.
+        Wrapped in try/except so aggregation failures never propagate.
+
+        If the task has a ``verify_command``, it is passed to
+        ``aggregate(verify_command=)`` so ``AggregatedResult.verification_passed``
+        is populated (True/False — None means not verified).
+        """
+        try:
+            base_files = self._collect_base_files(subtask_results)
+            # Thread verify_command from the task (set by submit_task from
+            # the scheduler config → NatsTaskSubmit payload).
+            task = self.tasks.get(task_id)
+            verify_command = task.verify_command if task is not None else None
+            result = await self.aggregator.aggregate(
+                subtask_results, base_files,
+                verify_command=verify_command,
+            )
+            if result.conflict_files:
+                logger.warning(
+                    "Result aggregation for task %s: status=%s, "
+                    "conflicts=%d (%s), merged=%d, verification=%s",
+                    task_id, result.status.value,
+                    len(result.conflict_files),
+                    ", ".join(result.conflict_files),
+                    len(result.merged_files),
+                    result.verification_passed,
+                )
+            else:
+                logger.info(
+                    "Result aggregation for task %s: status=%s, "
+                    "merged=%d files, verification=%s",
+                    task_id, result.status.value,
+                    len(result.merged_files),
+                    result.verification_passed,
+                )
+        except Exception:
+            logger.exception(
+                "Result aggregation failed for task %s (non-fatal)",
+                task_id,
+            )
+
+    def _collect_base_files(
+        self, subtask_results: list[SubtaskResult],
+    ) -> dict[str, str]:
+        """Source original file contents for the three-way merge base.
+
+        Reads from the MergeArbiter's project path (if configured). Only
+        files that appear in the subtask results' ``modified_files`` are
+        read — avoids reading the entire workspace. If no MergeArbiter or
+        no project path, returns ``{}`` (empty base — first-modifier-wins).
+        """
+        if self.merge_arbiter is None:
+            return {}
+        project_path = getattr(self.merge_arbiter, "_project_path", None)
+        if not project_path:
+            return {}
+
+        # Collect all modified file paths across all subtask results.
+        modified_paths: set[str] = set()
+        for sr in subtask_results:
+            for fc in sr.modified_files:
+                if fc.file_path:
+                    modified_paths.add(fc.file_path)
+
+        base_files: dict[str, str] = {}
+        for fpath in modified_paths:
+            full_path = os.path.join(project_path, fpath)
+            try:
+                with open(full_path, encoding="utf-8") as f:
+                    base_files[fpath] = f.read()
+            except (OSError, UnicodeDecodeError):
+                # File may not exist yet (created by a subtask) or be
+                # binary — skip it. An empty/missing base is acceptable
+                # (first-modifier-wins).
+                logger.debug(
+                    "Could not read base for %s (skipping): %s",
+                    fpath, full_path,
+                )
+        return base_files
 
     def _schedule_arbitration(self, task: Task) -> None:
         """Schedule merge arbitration as a background task (non-blocking).
@@ -391,6 +748,39 @@ class Orchestrator:
         task.status = TaskStatus.FAILED
         return True
 
+    # ── Night-window exclusive mode ─────────────────────────────
+
+    @property
+    def night_window_active(self) -> bool:
+        """Whether the night window is active (exclusive mode).
+
+        When True, real-time (non-scheduled) task submissions defer to
+        ``_pending_tasks``; scheduled tasks bypass the queue. Driven by
+        NATS ``schedule.window.opened``/``closed`` events.
+        """
+        return self._night_window_active
+
+    def set_night_window_active(self, active: bool) -> None:
+        """Toggle night-window exclusive mode.
+
+        Called by nats_worker on ``schedule.window.opened`` (True) /
+        ``schedule.window.closed`` (False) events. The ``closed`` handler
+        also calls ``flush_pending_tasks()`` to drain the backlog.
+
+        Args:
+            active: True to enter exclusive mode (defer real-time tasks);
+                False to exit (real-time tasks execute normally).
+        """
+        if self._night_window_active == active:
+            return
+        self._night_window_active = active
+        logger.info(
+            "Night window %s (exclusive mode %s, pending backlog=%d)",
+            "opened" if active else "closed",
+            "active" if active else "inactive",
+            len(self._pending_tasks),
+        )
+
     # ── Convenience properties ─────────────────────────────────
 
     @property
@@ -404,5 +794,42 @@ class Orchestrator:
         )
 
     async def flush_pending_tasks(self) -> list[Task]:
-        """Flush pending tasks — stub for nats_worker dashboard handler."""
-        return []
+        """Flush the night-window pending backlog.
+
+        Drains ``_pending_tasks`` — each deferred task is re-submitted via
+        the normal ``submit_task`` path (decomposition + dispatch), with
+        ``_scheduled=False`` (they are real-time tasks that were deferred).
+        The list is cleared before re-submission so a re-entrant defer (if
+        the window reopens mid-flush) starts fresh.
+
+        Called by nats_worker on ``schedule.window.closed`` (after setting
+        ``night_window_active=False``) and by the dashboard
+        ``flushpendingtasks`` RPC.
+
+        Returns:
+            The list of re-submitted Task objects (may be shorter than the
+            backlog if some fail to decompose).
+        """
+        if not self._pending_tasks:
+            return []
+        backlog = self._pending_tasks
+        self._pending_tasks = []
+        logger.info("Flushing %d deferred task(s) from _pending_tasks", len(backlog))
+        executed: list[Task] = []
+        for entry in backlog:
+            try:
+                task = await self.submit_task(
+                    entry["description"],
+                    project_id=entry["project_id"],
+                    task_id=entry["task_id"],
+                    agent_config=entry.get("agent_config"),
+                    _scheduled=False,
+                )
+                executed.append(task)
+            except Exception:
+                logger.exception(
+                    "Failed to re-submit deferred task %s during flush",
+                    entry.get("task_id"),
+                )
+        logger.info("Flushed %d/%d deferred task(s)", len(executed), len(backlog))
+        return executed

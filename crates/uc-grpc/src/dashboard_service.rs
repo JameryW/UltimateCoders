@@ -1,9 +1,11 @@
 //! DashboardService implementation — NATS passthrough to Python Orchestrator.
 //!
-//! All DashboardService RPCs forward via NATS request-reply to the Python
-//! Orchestrator, which holds workers/scheduler state in memory.
-//! When NATS is unavailable, RPCs return UNAVAILABLE status.
+//! Scheduler RPCs (GetSchedulerStatus, TriggerSchedulerJob, AddCronJob,
+//! RemoveJob) route directly to the Rust engine's SchedulerService. All other DashboardService
+//! RPCs forward via NATS request-reply to the Python Orchestrator. When NATS
+//! is unavailable, those RPCs return UNAVAILABLE status.
 
+use chrono::Timelike;
 #[cfg(feature = "messaging")]
 use futures::StreamExt;
 #[cfg(not(feature = "messaging"))]
@@ -101,18 +103,20 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         &self,
         _request: Request<GetSchedulerStatusRequest>,
     ) -> Result<Response<GetSchedulerStatusResponse>, Status> {
-        match self
-            .nats_dashboard_request("GetSchedulerStatus", serde_json::json!({}))
-            .await
-        {
-            Ok(json) => Ok(Response::new(json_to_scheduler_status_response(&json))),
-            Err(_) => Ok(Response::new(GetSchedulerStatusResponse {
-                available: false,
-                is_running: false,
-                night_window: None,
-                jobs: vec![],
-                execution_history: vec![],
-            })),
+        // Route directly to the Rust engine's SchedulerService (not NATS).
+        // The engine is the single source of truth for scheduler state.
+        match self.engine().get_scheduler_status().await {
+            Ok(status) => Ok(Response::new(scheduler_status_to_proto(&status))),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to get scheduler status from engine");
+                Ok(Response::new(GetSchedulerStatusResponse {
+                    available: false,
+                    is_running: false,
+                    night_window: None,
+                    jobs: vec![],
+                    execution_history: vec![],
+                }))
+            }
         }
     }
 
@@ -121,13 +125,104 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         request: Request<TriggerSchedulerJobRequest>,
     ) -> Result<Response<TriggerSchedulerJobResponse>, Status> {
         let req = request.into_inner();
-        let json = self
-            .nats_dashboard_request(
-                "TriggerSchedulerJob",
-                serde_json::json!({ "job_id": req.job_id }),
-            )
-            .await?;
-        Ok(Response::new(json_to_trigger_scheduler_job_response(&json)))
+        match self.engine().trigger_scheduler_job(&req.job_id).await {
+            Ok(result) => Ok(Response::new(TriggerSchedulerJobResponse {
+                success: result.success,
+                job_id: result.job_id,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to trigger scheduler job");
+                Ok(Response::new(TriggerSchedulerJobResponse {
+                    success: false,
+                    job_id: req.job_id,
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
+    }
+
+    async fn add_cron_job(
+        &self,
+        request: Request<AddCronJobRequest>,
+    ) -> Result<Response<AddCronJobResponse>, Status> {
+        let req = request.into_inner();
+
+        // Parse optional night-window HH:MM strings → NaiveTime.
+        // Reuses the same "%H:%M" format as scheduler config.rs::parse_hhmm.
+        let night_window_start = req
+            .night_window_start
+            .as_deref()
+            .map(|s| chrono::NaiveTime::parse_from_str(s, "%H:%M"))
+            .transpose()
+            .map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Invalid night_window_start (expected HH:MM): {}",
+                    e
+                ))
+            })?;
+
+        let night_window_end = req
+            .night_window_end
+            .as_deref()
+            .map(|s| chrono::NaiveTime::parse_from_str(s, "%H:%M"))
+            .transpose()
+            .map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Invalid night_window_end (expected HH:MM): {}",
+                    e
+                ))
+            })?;
+
+        let api_request = uc_types::AddCronJobApiRequest {
+            description: req.description,
+            cron_expression: req.cron_expression,
+            project_id: req.project_id,
+            night_window_start,
+            night_window_end,
+            timezone: if req.timezone.is_empty() {
+                "UTC".to_string()
+            } else {
+                req.timezone
+            },
+            enabled: req.enabled,
+        };
+
+        match self.engine().add_cron_job(api_request).await {
+            Ok(result) => Ok(Response::new(AddCronJobResponse {
+                success: result.success,
+                job_id: result.job_id,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to add cron job");
+                Ok(Response::new(AddCronJobResponse {
+                    success: false,
+                    job_id: String::new(),
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
+    }
+
+    async fn remove_job(
+        &self,
+        request: Request<RemoveJobRequest>,
+    ) -> Result<Response<RemoveJobResponse>, Status> {
+        let req = request.into_inner();
+        match self.engine().remove_job(&req.job_id).await {
+            Ok(result) => Ok(Response::new(RemoveJobResponse {
+                success: result.success,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to remove job");
+                Ok(Response::new(RemoveJobResponse {
+                    success: false,
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
     }
 
     async fn flush_pending_tasks(
@@ -397,6 +492,63 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 // ── JSON → Proto conversion helpers ────────────────────────────
 // ponytail: manual field mapping — no extra deps, each function is small and explicit
 
+// ── Rust engine types → Proto conversion helpers ──────────────
+// These convert from uc_types::SchedulerStatus / SchedulerTriggerResult
+// (returned by EngineApi::get_scheduler_status / trigger_scheduler_job)
+// directly to proto responses, bypassing the old NATS JSON path.
+
+fn scheduler_status_to_proto(status: &uc_types::SchedulerStatus) -> GetSchedulerStatusResponse {
+    let night_window = status.night_window.as_ref().map(|nw| NightWindowProto {
+        start: format!("{:02}:{:02}", nw.start.hour(), nw.start.minute()),
+        end: format!("{:02}:{:02}", nw.end.hour(), nw.end.minute()),
+        enabled: true,
+    });
+
+    let jobs = status
+        .jobs
+        .iter()
+        .map(|task| ScheduledJobProto {
+            id: task.id.to_string(),
+            name: task.description.clone(),
+            cron: task.cron_expression.clone().unwrap_or_default(),
+            enabled: task.enabled,
+            last_run: task.last_execution.map(|dt| dt.to_rfc3339()),
+            next_run: task.next_execution.map(|dt| dt.to_rfc3339()),
+        })
+        .collect();
+
+    let execution_history = status
+        .execution_history
+        .iter()
+        .map(|h| ExecutionHistoryProto {
+            job_id: h.scheduled_task_id.to_string(),
+            job_name: String::new(), // Not tracked in ExecutionHistory
+            executed_at: h.started_at.to_rfc3339(),
+            success: h.status == uc_types::ExecutionStatus::Completed,
+            error: h
+                .result_summary
+                .as_ref()
+                .filter(|_s| {
+                    h.status == uc_types::ExecutionStatus::Failed
+                        || h.status == uc_types::ExecutionStatus::Skipped
+                })
+                .cloned(),
+            started_at: Some(h.started_at.to_rfc3339()),
+            completed_at: h.completed_at.map(|dt| dt.to_rfc3339()),
+            result_summary: h.result_summary.clone(),
+            status: Some(format!("{:?}", h.status)),
+        })
+        .collect();
+
+    GetSchedulerStatusResponse {
+        available: status.available,
+        is_running: status.is_running,
+        night_window,
+        jobs,
+        execution_history,
+    }
+}
+
 fn json_bool(v: &serde_json::Value, key: &str) -> bool {
     v.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
@@ -524,6 +676,11 @@ fn json_to_scheduler_status_response(v: &serde_json::Value) -> GetSchedulerStatu
     }
 }
 
+/// Formerly used by the NATS-routed `trigger_scheduler_job` path.
+/// Now dead code — `trigger_scheduler_job` routes directly to the Rust engine
+/// and builds the response inline. Kept for the `json_to_dashboard_snapshot`
+/// path which may still encounter scheduler JSON from the Python snapshot.
+#[allow(dead_code)]
 fn json_to_trigger_scheduler_job_response(v: &serde_json::Value) -> TriggerSchedulerJobResponse {
     TriggerSchedulerJobResponse {
         success: json_bool(v, "success"),

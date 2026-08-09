@@ -62,6 +62,24 @@ pub trait EngineApi: Send + Sync {
         ))
     }
 
+    /// Remove a single file from all indexes (text + AST + semantic).
+    ///
+    /// Used by the `uc.file.changed` subscriber when a worker reports a file
+    /// deletion (`change_type == "deleted"` or empty content). Without this,
+    /// deleted files leave stale symbols/embeddings in the shared index until
+    /// a full repo reindex. Default impl returns an error — only the
+    /// gateway-side LocalEngine implements this.
+    async fn delete_file_from_index(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
+        let _ = (repo_id, file_path);
+        Err(EngineError::IndexingError(
+            "delete_file_from_index not supported by this engine".into(),
+        ))
+    }
+
     // ── Memory ──────────────────────────────────────────────
 
     /// Read a memory entry.
@@ -157,6 +175,98 @@ pub trait EngineApi: Send + Sync {
 
     /// Resume a paused task.
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError>;
+
+    // ── Checkpoint / Recovery ───────────────────────────────
+
+    /// Create a checkpoint (snapshot) of a task's current state by replaying
+    /// its event stream. Returns the snapshot id.
+    ///
+    /// The gRPC `TaskService::create_checkpoint` delegates here. Default impl
+    /// returns an error — only engines with a `CheckpointManager` implement it.
+    async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
+        let _ = task_id;
+        Err(EngineError::InvalidOperation(
+            "checkpoint not available".to_string(),
+        ))
+    }
+
+    /// Recover a task's state from the latest snapshot + event replay.
+    /// Returns the reconstructed [`TaskSnapshot`].
+    ///
+    /// The gRPC `TaskService::recover_task` delegates here. Default impl
+    /// returns an error — only engines with a `CheckpointManager` implement it.
+    async fn recover_task(&self, task_id: &str) -> Result<crate::TaskSnapshot, EngineError> {
+        let _ = task_id;
+        Err(EngineError::InvalidOperation(
+            "recovery not available".to_string(),
+        ))
+    }
+
+    // ── Scheduler ───────────────────────────────────────────
+
+    /// Get the scheduler status (jobs, night window, execution history).
+    ///
+    /// Returns `available: false` when the scheduler feature is disabled
+    /// or the engine does not implement scheduling. The gRPC
+    /// `DashboardService::get_scheduler_status` delegates here instead of
+    /// routing through NATS to the Python Orchestrator.
+    async fn get_scheduler_status(&self) -> Result<crate::SchedulerStatus, EngineError> {
+        Ok(crate::SchedulerStatus {
+            available: false,
+            is_running: false,
+            night_window: None,
+            jobs: vec![],
+            execution_history: vec![],
+        })
+    }
+
+    /// Manually trigger (fire) a scheduled job by its UUID string.
+    ///
+    /// Calls `SchedulerService::dispatch_with_guard` on the named job,
+    /// respecting the night-window guard. Returns the trigger result.
+    /// The gRPC `DashboardService::trigger_scheduler_job` delegates here.
+    async fn trigger_scheduler_job(
+        &self,
+        job_id: &str,
+    ) -> Result<crate::SchedulerTriggerResult, EngineError> {
+        let _ = job_id;
+        Ok(crate::SchedulerTriggerResult {
+            success: false,
+            job_id: job_id.to_string(),
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
+
+    /// Create a cron job at runtime (instead of declaring it in
+    /// `uc.scheduler.yaml` at boot). The gRPC `DashboardService::add_cron_job`
+    /// delegates here. Returns the new job's UUID on success.
+    ///
+    /// Default impl returns an error — only `LocalEngine` (with the scheduler
+    /// feature) implements this.
+    async fn add_cron_job(
+        &self,
+        request: crate::AddCronJobApiRequest,
+    ) -> Result<crate::AddCronJobResult, EngineError> {
+        let _ = request;
+        Ok(crate::AddCronJobResult {
+            success: false,
+            job_id: String::new(),
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
+
+    /// Remove a scheduled job at runtime by its UUID string. The gRPC
+    /// `DashboardService::remove_job` delegates here.
+    ///
+    /// Default impl returns `success: false` — only `LocalEngine` (with the
+    /// scheduler feature) implements this.
+    async fn remove_job(&self, job_id: &str) -> Result<crate::RemoveJobResult, EngineError> {
+        let _ = job_id;
+        Ok(crate::RemoveJobResult {
+            success: false,
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
 }
 
 /// Index state returned by get_index_state.

@@ -14,6 +14,7 @@ use uc_types::{
     async_trait, AgentEvent, EngineApi, EngineError, HealthStatus, IndexRequest, IndexResponse,
     MemoryEntry, MemoryKey, MemoryReadRequest, MemorySearchRequest, MemorySearchResponse,
     MemoryWriteRequest, RepoIndexState, SearchQuery, SearchResult, SearchStream, Task,
+    TaskSnapshot,
 };
 
 use crate::conversions::memory_key_to_parts;
@@ -150,6 +151,58 @@ impl GrpcEngineClient {
         };
         let response = client.resume_task(req).await.map_err(from_status)?;
         Ok(response.into_inner().into())
+    }
+
+    /// Create a checkpoint (snapshot) of a task's current state.
+    /// Returns the snapshot id.
+    pub async fn create_checkpoint(&self, task_id: &str) -> Result<String, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = CreateCheckpointRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.create_checkpoint(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(EngineError::TaskError(
+                resp.error
+                    .unwrap_or_else(|| "checkpoint failed".to_string()),
+            ));
+        }
+        Ok(resp.snapshot_id)
+    }
+
+    /// Recover a task's state from the latest snapshot + event replay.
+    pub async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = RecoverTaskRequest {
+            task_id: task_id.to_string(),
+        };
+        let response = client.recover_task(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        if !resp.success {
+            return Err(EngineError::TaskError(
+                resp.error.unwrap_or_else(|| "recover failed".to_string()),
+            ));
+        }
+        let proto = resp
+            .snapshot
+            .ok_or_else(|| EngineError::InternalError("recover returned no snapshot".into()))?;
+        Ok(TaskSnapshot {
+            task_id: proto.task_id,
+            status: proto.status,
+            subtasks: proto
+                .subtasks
+                .into_iter()
+                .map(|s| uc_types::SubtaskSnapshot {
+                    subtask_id: s.subtask_id,
+                    status: s.status,
+                    assigned_worker: s.assigned_worker,
+                    result_summary: s.result_summary,
+                })
+                .collect(),
+            last_event_offset: proto.last_event_offset,
+            timestamp: proto.timestamp,
+        })
     }
 }
 

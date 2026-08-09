@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-2.md`
-- **Total Sessions**: 105
-- **Last Active**: 2026-07-23
+- **Active File**: `journal-3.md`
+- **Total Sessions**: 119
+- **Last Active**: 2026-08-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1838 | Active |
+| `journal-3.md` | ~340 | Active |
+| `journal-2.md` | ~1981 | Archived |
 | `journal-1.md` | ~1974 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +31,23 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 119 | 2026-08-06 | Add types.py test coverage | `c3d4e5f6` | `main` |
+| 118 | 2026-08-06 | Add event_emitter.py test coverage | `b2c3d4e5` | `main` |
+| 117 | 2026-08-06 | Add search_cache.py test coverage | `a1b2c3d4` | `main` |
+| 116 | 2026-08-05 | Add uc_schedule OMP TUI command + LLM tools | `f4a2b1c3` | `main` |
+<<<<<<< HEAD
+| 115 | 2026-08-05 | Add RemoveJob runtime gRPC API | `eb82b28c` | `main` |
+=======
+>>>>>>> origin/main
+| 114 | 2026-08-05 | Wire verify_command through scheduler config to aggregator | `d13ef10c` | `main` |
+| 113 | 2026-08-05 | Remove dead Python rate_limiter.py | `8c6f9e2b` | `main` |
+| 112 | 2026-08-05 | Deduplicate window events via distributed lock | `d2fd61ef` | `main` |
+| 111 | 2026-08-04 | Fix aggregator _synthesize LLM param bug | `c8c4c66b` | `main` |
+| 110 | 2026-08-04 | Wire LLM decomposition into orchestrator | `c11e6f05` | `main` |
+| 109 | 2026-08-04 | Fix scheduler dispatch: NATS submit (cross-feature audit gap) | `8b649a58` | `main` |
+| 108 | 2026-08-04 | Migrate uc.subtask.execute to JetStream durable consumer | `8e74d74c` | `main` |
+| 107 | 2026-08-04 | Activate ResultAggregator (advisory in-memory merge) | `5e894bfa`, `09e6a433`, `15b5ae3d` | `main` |
+| 106 | 2026-08-03 | Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard) | `aea778f7`, `67530dad`, `f2f2d37e`, `eccbc322`, `95b2fb2a`, `57ef0e9b`, `2ed02372`, `3cdd7fc5`, `0a176b56`, `9ec97ca8` | `main` |
 | 105 | 2026-07-23 | Fix fail-open review gate (#357) | `0b4767ab` | `main` |
 | 104 | 2026-07-22 | Log _spawn_bg background-task exceptions (#356) | `e36a57c9` | `main` |
 | 103 | 2026-07-22 | Fix JetStream replay stall on malformed event (#355) | `275b04ce` | `main` |

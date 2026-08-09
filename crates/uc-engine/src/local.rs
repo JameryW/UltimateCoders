@@ -29,6 +29,9 @@ use crate::metadata::postgres::PostgresMetadataStore;
 use crate::rate_limiter::LlmRateLimiter;
 use crate::sandbox::subprocess::SubprocessSandbox;
 use crate::sandbox::{ExecRequest, ExecResult, Sandbox, SandboxConfig, SandboxHandle};
+#[cfg(feature = "storage")]
+use crate::scheduler::ScheduleStore;
+use crate::scheduler::SchedulerService;
 use crate::search::HybridSearchEngine;
 use crate::search::SemanticSearchEngine;
 
@@ -58,6 +61,9 @@ pub struct LocalEngine {
     sandbox: Arc<dyn Sandbox>,
     /// Task store for task orchestration methods.
     task_store: Arc<Mutex<crate::task_store::TaskStore>>,
+    /// Scheduler service for cron/one-shot job scheduling with night-window guard.
+    /// The dispatcher is wired to call `submit_task` on this engine when a job fires.
+    scheduler_service: Arc<SchedulerService>,
     start_time: Instant,
 }
 
@@ -66,8 +72,30 @@ impl LocalEngine {
     ///
     /// Connects to TiKV, Qdrant, and PostgreSQL using the configured endpoints.
     /// If any storage backend is unavailable, falls back to in-memory storage.
+    ///
+    /// The scheduler uses an in-memory store (jobs lost on restart). For
+    /// schedule persistence across restarts, use [`new_with_scheduler_store`]
+    /// with a `PostgresScheduleStore` (activated via `UC_SCHEDULE_BACKEND=postgres`
+    /// in the gateway binary).
+    ///
+    /// [`new_with_scheduler_store`]: LocalEngine::new_with_scheduler_store
     #[cfg(feature = "storage")]
     pub async fn new(config: EngineConfig) -> Result<Self, EngineError> {
+        Self::new_with_scheduler_store(config, None).await
+    }
+
+    /// Create a new local engine with an injected scheduler store.
+    ///
+    /// When `schedule_store` is `Some`, the scheduler persists jobs to that
+    /// store and recovers them on `SchedulerService::start()` (survives
+    /// restart). `None` falls back to the in-memory store (no persistence).
+    /// Mirrors the `UC_TASK_BACKEND` activation pattern. The store must be set
+    /// before `start()` runs — it is not hot-swappable.
+    #[cfg(feature = "storage")]
+    pub async fn new_with_scheduler_store(
+        config: EngineConfig,
+        schedule_store: Option<Arc<dyn ScheduleStore>>,
+    ) -> Result<Self, EngineError> {
         // Initialize short-term memory (TiKV)
         let short_term = Arc::new(
             ShortTermMemory::new(
@@ -129,6 +157,16 @@ impl LocalEngine {
         let conflict_detector = Arc::new(ConflictDetector::new());
         let rate_limiter = Arc::new(LlmRateLimiter::with_defaults());
 
+        // Scheduler service: use the injected store (e.g. PostgresScheduleStore
+        // for persistence across restarts) or fall back to in-memory. The
+        // dispatcher is late-bound via `set_dispatcher` after construction
+        // (chicken-and-egg with LocalEngine), so a LoggingDispatcher placeholder
+        // is used here regardless of store.
+        let scheduler_service = Arc::new(match schedule_store {
+            Some(store) => SchedulerService::with_store(store),
+            None => SchedulerService::new(),
+        });
+
         // Restore the in-memory text index from source (AST/semantic already
         // persist in Postgres/Qdrant; text index is rebuilt on startup).
         if let Err(e) = index_pipeline.restore_text_index().await {
@@ -148,6 +186,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service,
             start_time: Instant::now(),
         })
     }
@@ -213,6 +252,7 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service: Arc::new(SchedulerService::new()),
             start_time: Instant::now(),
         }
     }
@@ -271,8 +311,31 @@ impl LocalEngine {
             rate_limiter,
             sandbox: Arc::new(SubprocessSandbox::new()),
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
+            scheduler_service: Arc::new(SchedulerService::new()),
             start_time: Instant::now(),
         }
+    }
+
+    /// Resolve a client-supplied relative `path` against a repo's `local_path`,
+    /// rejecting traversal/escape attempts.
+    ///
+    /// Rejects any `..` component (which could escape the repo root via `join`)
+    /// and absolute paths (which `join` silently substitutes for the base). A
+    /// legitimate in-repo path never needs either — subpaths are relative and
+    /// dot-free. Returns NotFound on rejection (don't leak that it's a guard).
+    fn resolve_repo_path(local_path: &str, path: &str) -> Result<std::path::PathBuf, EngineError> {
+        let p = std::path::Path::new(path);
+        // Absolute path: Path::join would discard local_path entirely.
+        if p.is_absolute() {
+            return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
+        }
+        // Any ParentDir component can escape the repo root after join.
+        if p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
+        }
+        Ok(std::path::Path::new(local_path).join(path))
     }
 
     /// Get the memory store (for direct access from tests or other components).
@@ -322,16 +385,6 @@ impl LocalEngine {
         event: AgentEventType,
     ) -> Result<u64, EngineError> {
         self.checkpoint_manager.record_event(subject, event).await
-    }
-
-    /// Create a checkpoint (snapshot) of a task's current state.
-    pub async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
-        self.checkpoint_manager.create_snapshot(task_id).await
-    }
-
-    /// Recover a task from the latest checkpoint + event replay.
-    pub async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
-        self.checkpoint_manager.recover(task_id).await
     }
 
     /// Declare an edit intent for conflict detection.
@@ -421,6 +474,32 @@ impl LocalEngine {
     pub fn set_sandbox(&mut self, sandbox: Arc<dyn Sandbox>) {
         self.sandbox = sandbox;
     }
+
+    // ── Scheduler Operations ─────────────────────────────────────
+
+    /// Get the scheduler service (for direct access).
+    ///
+    /// The scheduler service manages cron/one-shot jobs with night-window guard.
+    /// By default it uses a `LoggingDispatcher` (no-op). Call
+    /// [`init_scheduler_dispatcher`](Self::init_scheduler_dispatcher) after
+    /// construction to wire it to `engine.submit_task` via `EngineSubmitDispatcher`.
+    pub fn scheduler_service(&self) -> &Arc<SchedulerService> {
+        &self.scheduler_service
+    }
+
+    /// Wire the scheduler service to dispatch via `engine.submit_task`.
+    ///
+    /// This replaces the default `LoggingDispatcher` with an `EngineSubmitDispatcher`
+    /// that calls `self.submit_task(description, project_id)` when a scheduled
+    /// job fires. Must be called after construction (chicken-and-egg: the
+    /// dispatcher needs `Arc<LocalEngine>`, which the engine doesn't have until
+    /// it's fully built). Should be called before `scheduler_service.start()`.
+    ///
+    /// This is a no-op if called more than once (the dispatcher is simply replaced).
+    pub async fn init_scheduler_dispatcher(&self) {
+        let dispatcher = Arc::new(crate::scheduler::EngineSubmitDispatcher::new(self.clone()));
+        self.scheduler_service.set_dispatcher(dispatcher).await;
+    }
 }
 
 #[async_trait]
@@ -478,6 +557,16 @@ impl EngineApi for LocalEngine {
     ) -> Result<IndexResponse, EngineError> {
         self.index_pipeline
             .reindex_file_content(repo_id, file_path, content)
+            .await
+    }
+
+    async fn delete_file_from_index(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
+        self.index_pipeline
+            .remove_file_from_index(repo_id, file_path)
             .await
     }
 
@@ -695,7 +784,7 @@ impl EngineApi for LocalEngine {
                 .to_string_lossy()
                 .to_string()
         });
-        let dir = std::path::Path::new(&local_path).join(path);
+        let dir = Self::resolve_repo_path(&local_path, path)?;
 
         if !dir.exists() {
             return Err(EngineError::NotFound(format!(
@@ -763,7 +852,7 @@ impl EngineApi for LocalEngine {
                 .to_string_lossy()
                 .to_string()
         });
-        let full_path = std::path::Path::new(&local_path).join(path);
+        let full_path = Self::resolve_repo_path(&local_path, path)?;
 
         if !full_path.exists() {
             return Err(EngineError::NotFound(format!(
@@ -876,6 +965,123 @@ impl EngineApi for LocalEngine {
     async fn resume_task(&self, task_id: &str) -> Result<Task, EngineError> {
         let mut store = self.task_store_locked();
         store.resume_task(task_id).map_err(EngineError::TaskError)
+    }
+
+    async fn checkpoint_task(&self, task_id: &str) -> Result<String, EngineError> {
+        self.checkpoint_manager.create_snapshot(task_id).await
+    }
+
+    async fn recover_task(&self, task_id: &str) -> Result<TaskSnapshot, EngineError> {
+        self.checkpoint_manager.recover(task_id).await
+    }
+
+    async fn get_scheduler_status(&self) -> Result<uc_types::SchedulerStatus, EngineError> {
+        let svc = &self.scheduler_service;
+        let is_running = svc.is_running().await;
+        let jobs = svc.list_jobs().await;
+        let night_window = svc.get_night_window_config().await;
+        let execution_history = svc.get_execution_history(None).await;
+
+        Ok(uc_types::SchedulerStatus {
+            available: true,
+            is_running,
+            night_window,
+            jobs,
+            execution_history,
+        })
+    }
+
+    async fn trigger_scheduler_job(
+        &self,
+        job_id: &str,
+    ) -> Result<uc_types::SchedulerTriggerResult, EngineError> {
+        let task_id = uuid::Uuid::parse_str(job_id)
+            .map_err(|e| EngineError::ConfigError(format!("Invalid job ID '{}': {}", job_id, e)))?;
+
+        let svc = &self.scheduler_service;
+
+        // Verify the job exists
+        if svc.get_job(&task_id).await.is_none() {
+            return Ok(uc_types::SchedulerTriggerResult {
+                success: false,
+                job_id: job_id.to_string(),
+                error: Some(format!("Job not found: {}", job_id)),
+            });
+        }
+
+        // Dispatch with night-window guard
+        match svc.dispatch_with_guard(&task_id).await {
+            Ok(()) => Ok(uc_types::SchedulerTriggerResult {
+                success: true,
+                job_id: job_id.to_string(),
+                error: None,
+            }),
+            Err(e) => {
+                // Night-window defer is not a "failure" per se, but the trigger
+                // didn't execute. Return success=false with the reason.
+                Ok(uc_types::SchedulerTriggerResult {
+                    success: false,
+                    job_id: job_id.to_string(),
+                    error: Some(e.to_string()),
+                })
+            }
+        }
+    }
+
+    async fn add_cron_job(
+        &self,
+        request: uc_types::AddCronJobApiRequest,
+    ) -> Result<uc_types::AddCronJobResult, EngineError> {
+        // Build a ScheduledTask from the API request. When night-window times
+        // are absent, fall back to the default UTC window (22:00-06:00). The
+        // actual guard check uses the service-level night window; the per-task
+        // fields are stored metadata.
+        let default_nw = uc_types::NightWindowConfig::default_utc();
+        let night_window_start = request.night_window_start.unwrap_or(default_nw.start);
+        let night_window_end = request.night_window_end.unwrap_or(default_nw.end);
+
+        let mut task = uc_types::ScheduledTask::cron(
+            request.description,
+            request.project_id,
+            request.cron_expression,
+            night_window_start,
+            night_window_end,
+            request.timezone,
+        );
+
+        // Apply the enabled flag (ScheduledTask::cron defaults to true).
+        task.enabled = request.enabled;
+
+        let svc = &self.scheduler_service;
+        match svc.add_cron_job(task).await {
+            Ok(result) => Ok(uc_types::AddCronJobResult {
+                success: true,
+                job_id: result.task_id.to_string(),
+                error: None,
+            }),
+            Err(e) => Ok(uc_types::AddCronJobResult {
+                success: false,
+                job_id: String::new(),
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    async fn remove_job(&self, job_id: &str) -> Result<uc_types::RemoveJobResult, EngineError> {
+        let task_id = uuid::Uuid::parse_str(job_id)
+            .map_err(|e| EngineError::ConfigError(format!("Invalid job ID '{}': {}", job_id, e)))?;
+
+        let svc = &self.scheduler_service;
+        match svc.remove_job(&task_id).await {
+            Ok(()) => Ok(uc_types::RemoveJobResult {
+                success: true,
+                error: None,
+            }),
+            Err(e) => Ok(uc_types::RemoveJobResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 }
 
@@ -1377,6 +1583,22 @@ fn load_index() -> Index { Index::new() }"#,
         assert!(!EngineError::ConnectionError("x".into()).is_not_found());
         assert!(!EngineError::TimeoutError("x".into()).is_not_found());
         assert!(!EngineError::RateLimited(5).is_not_found());
+    }
+
+    #[test]
+    fn resolve_repo_path_rejects_traversal() {
+        // `..` in the path would escape the repo root after join.
+        let r = LocalEngine::resolve_repo_path("/repo", "src/../etc/passwd");
+        assert!(r.is_err());
+        // Absolute path would make join discard the base.
+        let r = LocalEngine::resolve_repo_path("/repo", "/etc/passwd");
+        assert!(r.is_err());
+        // Relative dot-free path resolves under the repo root.
+        let r = LocalEngine::resolve_repo_path("/repo", "src/main.rs").unwrap();
+        assert_eq!(r, std::path::PathBuf::from("/repo/src/main.rs"));
+        // Empty path is allowed (lists the repo root).
+        let r = LocalEngine::resolve_repo_path("/repo", "").unwrap();
+        assert_eq!(r, std::path::PathBuf::from("/repo"));
     }
 
     #[tokio::test]

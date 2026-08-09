@@ -163,6 +163,29 @@ mod postgres {
         pub fn new(pool: Arc<PgPool>) -> Self {
             Self { pool }
         }
+
+        /// Connect to PostgreSQL, run scheduler migrations, and return a store.
+        ///
+        /// Mirrors `PostgresTaskBackend::new`: builds a dedicated pool
+        /// (`max_connections(5)`), runs `scheduled_tasks` + `execution_history`
+        /// migrations (idempotent), then wraps the pool. The caller decides
+        /// fallback policy on `Err` (typically: warn + in-memory).
+        pub async fn connect(database_url: &str) -> Result<Self, EngineError> {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .connect(database_url)
+                .await
+                .map_err(|e| {
+                    EngineError::ConnectionError(format!(
+                        "Failed to connect to PostgreSQL for schedule store: {}",
+                        e
+                    ))
+                })?;
+            let pool = Arc::new(pool);
+            crate::scheduler::migration::run_migrations(&pool).await?;
+            tracing::info!("Connected to PostgreSQL for schedule storage");
+            Ok(Self { pool })
+        }
     }
 
     #[async_trait]
@@ -173,8 +196,9 @@ mod postgres {
                 INSERT INTO scheduled_tasks (
                     id, description, project_id, cron_expression, execute_after,
                     night_window_start, night_window_end, timezone, enabled,
-                    last_execution, next_execution, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    last_execution, next_execution, created_at, updated_at,
+                    verify_command
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                 "#,
             )
             .bind(task.id)
@@ -190,6 +214,7 @@ mod postgres {
             .bind(task.next_execution)
             .bind(task.created_at)
             .bind(task.updated_at)
+            .bind(&task.verify_command)
             .execute(self.pool.as_ref())
             .await
             .map_err(|e| {
@@ -215,12 +240,14 @@ mod postgres {
                     Option<chrono::DateTime<chrono::Utc>>,
                     chrono::DateTime<chrono::Utc>,
                     chrono::DateTime<chrono::Utc>,
+                    Option<String>,
                 ),
             >(
                 r#"
                 SELECT id, description, project_id, cron_expression, execute_after,
                        night_window_start, night_window_end, timezone, enabled,
-                       last_execution, next_execution, created_at, updated_at
+                       last_execution, next_execution, created_at, updated_at,
+                       verify_command
                 FROM scheduled_tasks WHERE id = $1
                 "#,
             )
@@ -245,6 +272,7 @@ mod postgres {
                 next_execution: r.10,
                 created_at: r.11,
                 updated_at: r.12,
+                verify_command: r.13,
             }))
         }
 
@@ -266,12 +294,14 @@ mod postgres {
                         Option<chrono::DateTime<chrono::Utc>>,
                         chrono::DateTime<chrono::Utc>,
                         chrono::DateTime<chrono::Utc>,
+                        Option<String>,
                     ),
                 >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
-                           last_execution, next_execution, created_at, updated_at
+                           last_execution, next_execution, created_at, updated_at,
+                           verify_command
                     FROM scheduled_tasks WHERE enabled = TRUE ORDER BY created_at
                     "#,
                 )
@@ -294,12 +324,14 @@ mod postgres {
                         Option<chrono::DateTime<chrono::Utc>>,
                         chrono::DateTime<chrono::Utc>,
                         chrono::DateTime<chrono::Utc>,
+                        Option<String>,
                     ),
                 >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
-                           last_execution, next_execution, created_at, updated_at
+                           last_execution, next_execution, created_at, updated_at,
+                           verify_command
                     FROM scheduled_tasks ORDER BY created_at
                     "#,
                 )
@@ -326,6 +358,7 @@ mod postgres {
                     next_execution: r.10,
                     created_at: r.11,
                     updated_at: r.12,
+                    verify_command: r.13,
                 })
                 .collect())
         }
@@ -337,7 +370,7 @@ mod postgres {
                     description = $2, project_id = $3, cron_expression = $4,
                     execute_after = $5, night_window_start = $6, night_window_end = $7,
                     timezone = $8, enabled = $9, last_execution = $10,
-                    next_execution = $11, updated_at = $12
+                    next_execution = $11, updated_at = $12, verify_command = $13
                 WHERE id = $1
                 "#,
             )
@@ -353,6 +386,7 @@ mod postgres {
             .bind(task.last_execution)
             .bind(task.next_execution)
             .bind(task.updated_at)
+            .bind(&task.verify_command)
             .execute(self.pool.as_ref())
             .await
             .map_err(|e| {

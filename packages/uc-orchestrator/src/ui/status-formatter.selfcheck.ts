@@ -467,6 +467,20 @@ function st(id: string, dependsOn: string[] = [], status: SubtaskResult["status"
 	check("failed detail header has NO age tag", !failed.match(/\(\d+[smh]/));
 }
 
+// ponytail: formatElapsed guards non-finite input — a restored/older record missing
+// createdAt (undefined despite the `number` type) made Date.now()-createdAt = NaN, and
+// Math.max(0, NaN) = NaN → "(NaNs)" in the age tag (mirrors the #536/#537 NaN-display
+// class). The guard falls back to "0s" so the age tag reads "(0s)", never "(NaNs)".
+{
+	const noCreated = {
+		id: "T", description: "d", status: "in_progress", controlState: "running",
+		createdAt: undefined as unknown as number, subtasks: [],
+	} as unknown as TaskState;
+	const hdr = formatTaskDetail(noCreated, theme).find((l) => l.includes("T")) ?? "";
+	check("missing createdAt shows no NaN in age tag", !hdr.includes("NaN"));
+	check("missing createdAt falls back to (0s)", hdr.includes("(0s)"));
+}
+
 // ponytail: re-decomposed badge — task.redecomposed persists after tryRedecompose
 // splits failed subtasks into new ones and re-runs. The one-time notify is gone,
 // but the detail header surfaces a ↻ badge so the recovery history stays visible.

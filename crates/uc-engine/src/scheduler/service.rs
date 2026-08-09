@@ -15,12 +15,15 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+#[cfg(any(feature = "scheduler", test))]
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use uc_types::{EngineError, ExecutionHistory, ExecutionStatus, ScheduledTask};
 
+use super::lock::{LockProvider, NoOpLockProvider};
 use super::night_window::NightWindow;
 use super::store::ScheduleStore;
 
@@ -72,6 +75,12 @@ pub struct AddJobResult {
 /// Manages cron-based and one-shot scheduled tasks, with an optional
 /// night-window guard that prevents execution outside configured hours.
 /// Supports persistence via a `ScheduleStore` backend.
+///
+/// All fields are `Arc`-shared, so cloning a `SchedulerService` is a cheap
+/// refcount bump. The clone shares the same state (jobs, dispatcher, store)
+/// and is used to pass a handle into cron-scheduler callbacks (which need
+/// `'static` ownership).
+#[derive(Clone)]
 pub struct SchedulerService {
     /// Night window configuration (if any).
     night_window: Arc<RwLock<Option<NightWindow>>>,
@@ -80,7 +89,23 @@ pub struct SchedulerService {
     /// Execution history records (in-memory cache; store is source of truth).
     execution_history: Arc<RwLock<Vec<ExecutionHistory>>>,
     /// The dispatcher for executing tasks.
-    dispatcher: Arc<dyn ScheduleDispatcher>,
+    ///
+    /// Wrapped in `RwLock` to allow late binding: the `EngineSubmitDispatcher`
+    /// needs an `Arc<LocalEngine>`, but `LocalEngine` owns the
+    /// `SchedulerService` — a chicken-and-egg. The engine constructs the
+    /// service with a `LoggingDispatcher` placeholder, then calls
+    /// `set_dispatcher` to swap in the real `EngineSubmitDispatcher` once
+    /// the engine itself is fully constructed.
+    dispatcher: Arc<RwLock<Arc<dyn ScheduleDispatcher>>>,
+    /// Distributed lock provider for multi-instance coordination.
+    ///
+    /// Defaults to `NoOpLockProvider` (always acquire — single-instance).
+    /// In multi-instance deployments with NATS, the gateway injects
+    /// `NatsKvLockProvider` via `set_lock_provider` so only one instance
+    /// fires each cron tick.
+    ///
+    /// Wrapped in `RwLock` for late binding (same pattern as `dispatcher`).
+    lock_provider: Arc<RwLock<Arc<dyn LockProvider>>>,
     /// The persistence store for scheduled tasks and execution history.
     store: Arc<dyn ScheduleStore>,
     /// Whether the scheduler has been started.
@@ -108,7 +133,8 @@ impl SchedulerService {
             night_window: Arc::new(RwLock::new(None)),
             job_metadata: Arc::new(RwLock::new(HashMap::new())),
             execution_history: Arc::new(RwLock::new(Vec::new())),
-            dispatcher,
+            dispatcher: Arc::new(RwLock::new(dispatcher)),
+            lock_provider: Arc::new(RwLock::new(Arc::new(NoOpLockProvider))),
             store,
             started: Arc::new(RwLock::new(false)),
             #[cfg(feature = "scheduler")]
@@ -127,6 +153,39 @@ impl SchedulerService {
     /// Create a new scheduler service with a custom store (logging dispatcher).
     pub fn with_store(store: Arc<dyn ScheduleStore>) -> Self {
         Self::with_store_and_dispatcher(store, Arc::new(LoggingDispatcher))
+    }
+
+    /// Replace the dispatcher after construction.
+    ///
+    /// This enables late binding for `EngineSubmitDispatcher`, which needs
+    /// an `Arc<LocalEngine>` — but `LocalEngine` owns the `SchedulerService`.
+    /// The engine constructs the service with a `LoggingDispatcher` placeholder,
+    /// then calls `set_dispatcher` to swap in the real dispatcher.
+    ///
+    /// Should be called before `start()` — if called after, existing
+    /// tokio-cron-scheduler callbacks will pick up the new dispatcher on
+    /// their next `dispatch_with_guard` call (the RwLock read is per-dispatch).
+    pub async fn set_dispatcher(&self, dispatcher: Arc<dyn ScheduleDispatcher>) {
+        let mut d = self.dispatcher.write().await;
+        *d = dispatcher;
+        info!("Scheduler dispatcher replaced");
+    }
+
+    /// Replace the lock provider after construction.
+    ///
+    /// This enables late binding for `NatsKvLockProvider`, which needs an
+    /// established NATS connection — not available when `SchedulerService`
+    /// is first constructed (inside `LocalEngine::new`). The gateway calls
+    /// `set_lock_provider` after NATS is connected, swapping in the real
+    /// distributed lock provider.
+    ///
+    /// Should be called before `start()` — if called after, existing
+    /// cron-scheduler callbacks will pick up the new provider on their next
+    /// fire (the RwLock read is per-fire).
+    pub async fn set_lock_provider(&self, provider: Arc<dyn LockProvider>) {
+        let mut lp = self.lock_provider.write().await;
+        *lp = provider;
+        info!("Scheduler lock provider replaced");
     }
 
     /// Set the night window configuration.
@@ -276,6 +335,19 @@ impl SchedulerService {
         metadata.get(task_id).map(|m| m.task.clone())
     }
 
+    /// Get the configured night window, if any.
+    ///
+    /// Returns the `NightWindowConfig` (start, end, timezone) that was set via
+    /// `set_night_window`. Returns `None` if no night window is configured
+    /// (execution allowed at any time). Used by `EngineApi::get_scheduler_status`
+    /// to report the service-level window to the dashboard.
+    pub async fn get_night_window_config(&self) -> Option<uc_types::NightWindowConfig> {
+        let nw = self.night_window.read().await;
+        nw.as_ref().map(|window| {
+            uc_types::NightWindowConfig::new(window.start, window.end, window.tz.to_string())
+        })
+    }
+
     /// Check if a task should be executed now based on the night window guard.
     ///
     /// Returns Ok(()) if execution should proceed, or Err with a deferral reason
@@ -321,7 +393,8 @@ impl SchedulerService {
             Ok(()) => {
                 // Within window — dispatch the task
                 let started_at = Utc::now();
-                match self.dispatcher.dispatch(&task) {
+                let dispatcher = self.dispatcher.read().await.clone();
+                match dispatcher.dispatch(&task) {
                     Ok(()) => {
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
@@ -369,7 +442,13 @@ impl SchedulerService {
     }
 
     /// Record an execution history entry (both in-memory and to the store).
-    async fn record_execution(&self, history: &ExecutionHistory) {
+    ///
+    /// Public so that late-binding dispatchers (e.g., `EngineSubmitDispatcher`)
+    /// can append a `Failed` entry when a fire-and-forget `submit_task` fails
+    /// asynchronously — `dispatch_with_guard` will have already recorded a
+    /// `Completed` entry (spawn succeeded), and this appends the failure
+    /// outcome so the history is not misleading.
+    pub async fn record_execution(&self, history: &ExecutionHistory) {
         // Save to store (best-effort; log errors but don't fail the dispatch)
         if let Err(e) = self.store.save_execution(history).await {
             warn!(error = %e, "Failed to persist execution history to store");
@@ -538,20 +617,51 @@ impl SchedulerService {
 
         let task_id = task.id;
         let task_description = task.description.clone();
+        // Clone the service handle into the closure so it can call
+        // dispatch_with_guard on fire. All fields are Arc, so this is cheap.
+        let svc = self.clone();
 
         let job = tokio_cron_scheduler::Job::new_async(cron_6field, move |uuid, _l| {
             let task_id = task_id;
             let description = task_description.clone();
+            let svc = svc.clone();
             Box::pin(async move {
                 tracing::info!(
                     job_uuid = %uuid,
                     task_id = %task_id,
                     description = %description,
-                    "Cron job triggered by scheduler"
+                    "Cron job triggered by scheduler — acquiring lock"
                 );
-                // The actual dispatch happens via dispatch_with_guard
-                // which is called externally. This callback serves as
-                // the trigger notification.
+
+                // Acquire distributed lock so only one gateway instance fires
+                // this cron tick. Lock key = scheduler:{task_id}:{tick_timestamp}.
+                // The tick timestamp is truncated to the second — all instances
+                // fire at the same wall-clock second, so the key is deterministic.
+                // TTL = 30s (auto-release on crash). NoOpLockProvider (default)
+                // always acquires (single-instance = no coordination needed).
+                let tick_ts = Utc::now().timestamp();
+                let lock_key = format!("scheduler:{}:{}", task_id, tick_ts);
+                let lock_ttl = Duration::from_secs(30);
+                let lock_provider = svc.lock_provider.read().await.clone();
+                if !lock_provider.try_acquire(&lock_key, lock_ttl) {
+                    tracing::info!(
+                        task_id = %task_id,
+                        lock_key = %lock_key,
+                        "Cron tick skipped — another instance holds the lock"
+                    );
+                    return;
+                }
+
+                // Lock acquired — dispatch with night-window guard. This calls the
+                // EngineSubmitDispatcher (or whatever dispatcher is set),
+                // which spawns engine.submit_task as fire-and-forget.
+                if let Err(e) = svc.dispatch_with_guard(&task_id).await {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "Cron dispatch_with_guard failed (deferred or error)"
+                    );
+                }
             })
         })
         .map_err(|e| EngineError::InternalError(format!("Failed to create cron job: {:?}", e)))?;
@@ -592,19 +702,44 @@ impl SchedulerService {
         let duration_std = std::time::Duration::from_secs(duration.num_seconds().max(0) as u64);
         let task_id = task.id;
         let task_description = task.description.clone();
+        // Clone the service handle into the closure so it can call
+        // dispatch_with_guard on fire. All fields are Arc, so this is cheap.
+        let svc = self.clone();
 
         let job = tokio_cron_scheduler::Job::new_one_shot_async(duration_std, move |uuid, _l| {
             let task_id = task_id;
             let description = task_description.clone();
+            let svc = svc.clone();
             Box::pin(async move {
                 tracing::info!(
                     job_uuid = %uuid,
                     task_id = %task_id,
                     description = %description,
-                    "One-shot job triggered by scheduler"
+                    "One-shot job triggered by scheduler — acquiring lock"
                 );
-                // The actual dispatch happens via dispatch_with_guard
-                // which is called externally.
+
+                // Acquire distributed lock (same as cron callback).
+                let tick_ts = Utc::now().timestamp();
+                let lock_key = format!("scheduler:{}:{}", task_id, tick_ts);
+                let lock_ttl = Duration::from_secs(30);
+                let lock_provider = svc.lock_provider.read().await.clone();
+                if !lock_provider.try_acquire(&lock_key, lock_ttl) {
+                    tracing::info!(
+                        task_id = %task_id,
+                        lock_key = %lock_key,
+                        "One-shot tick skipped — another instance holds the lock"
+                    );
+                    return;
+                }
+
+                // Lock acquired — dispatch with night-window guard.
+                if let Err(e) = svc.dispatch_with_guard(&task_id).await {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "One-shot dispatch_with_guard failed (deferred or error)"
+                    );
+                }
             })
         })
         .map_err(|e| {
@@ -803,6 +938,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_night_window_config_returns_configured_window() {
+        let service = SchedulerService::new();
+        // No window set initially
+        assert!(service.get_night_window_config().await.is_none());
+
+        let config = uc_types::NightWindowConfig::new(
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "Asia/Shanghai".to_string(),
+        );
+        service.set_night_window(&config).await.unwrap();
+
+        let retrieved = service.get_night_window_config().await;
+        assert!(retrieved.is_some());
+        let nw = retrieved.unwrap();
+        assert_eq!(nw.start, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
+        assert_eq!(nw.end, NaiveTime::from_hms_opt(6, 0, 0).unwrap());
+        assert_eq!(nw.timezone, "Asia/Shanghai");
+    }
+
+    #[tokio::test]
     async fn execution_history() {
         let service = SchedulerService::new();
         let task = make_cron_task("0 22 * * *");
@@ -905,6 +1061,47 @@ mod tests {
         let loaded = store.load_task(&result.task_id).await.unwrap();
         assert!(loaded.is_some());
         assert!(loaded.unwrap().is_one_shot());
+    }
+
+    #[tokio::test]
+    async fn verify_command_persists_through_store() {
+        // Regression: PostgresScheduleStore previously dropped verify_command
+        // on save/load/update (the column didn't exist). The in-memory store
+        // is the contract reference — verify the field round-trips so the
+        // trait contract is locked, and the Postgres impl (which mirrors this
+        // shape) is held to the same standard.
+        let store = super::super::store::InMemoryScheduleStore::new();
+        let mut task = make_cron_task("0 22 * * *");
+        task.verify_command = Some("cargo check".to_string());
+
+        store.save_task(&task).await.unwrap();
+        let loaded = store.load_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(
+            loaded.verify_command.as_deref(),
+            Some("cargo check"),
+            "verify_command must survive save→load"
+        );
+
+        // Update with a different command
+        let mut updated = loaded.clone();
+        updated.verify_command = Some("cargo test".to_string());
+        store.update_task(&updated).await.unwrap();
+        let reloaded = store.load_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(
+            reloaded.verify_command.as_deref(),
+            Some("cargo test"),
+            "verify_command must survive update→load"
+        );
+
+        // Clearing to None must also persist
+        let mut cleared = reloaded.clone();
+        cleared.verify_command = None;
+        store.update_task(&cleared).await.unwrap();
+        let final_load = store.load_task(&task.id).await.unwrap().unwrap();
+        assert!(
+            final_load.verify_command.is_none(),
+            "verify_command=None must survive update→load"
+        );
     }
 
     #[tokio::test]
@@ -1026,5 +1223,498 @@ mod tests {
         } else {
             assert_eq!(executions[0].status, ExecutionStatus::Completed);
         }
+    }
+
+    // ── Cron-callback dispatch wiring tests ───────────────────────
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn cron_callback_calls_dispatch_with_guard() {
+        // Verify that when a cron job fires, the callback calls
+        // dispatch_with_guard (which records ExecutionHistory).
+        // We use a very short interval cron expression and wait for it
+        // to fire. The LoggingDispatcher is used (default), so dispatch
+        // succeeds and records Completed.
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        // Create a cron job that fires every second
+        let task = ScheduledTask::cron(
+            "Callback test".to_string(),
+            "test-project".to_string(),
+            "* * * * * *".to_string(), // 6-field: every second
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_cron_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the cron to fire (2 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Check that dispatch_with_guard was called (execution history recorded)
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history.is_empty(),
+            "Cron callback should have called dispatch_with_guard, recording execution history"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn one_shot_callback_calls_dispatch_with_guard() {
+        // Verify that when a one-shot job fires, the callback calls
+        // dispatch_with_guard (which records ExecutionHistory).
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        // Create a one-shot job that fires in 2 seconds
+        let execute_after = Utc::now() + chrono::Duration::seconds(2);
+        let task = ScheduledTask::one_shot(
+            "One-shot callback test".to_string(),
+            "test-project".to_string(),
+            execute_after,
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_one_shot_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the one-shot to fire (3 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Check that dispatch_with_guard was called
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history.is_empty(),
+            "One-shot callback should have called dispatch_with_guard, recording execution history"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    // ── EngineApi scheduler trait method tests ────────────────────
+
+    #[tokio::test]
+    async fn local_engine_get_scheduler_status() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let status = engine.get_scheduler_status().await.unwrap();
+
+        assert!(
+            status.available,
+            "LocalEngine scheduler should be available"
+        );
+        assert!(
+            !status.is_running,
+            "Scheduler should not be running until started"
+        );
+        assert!(status.jobs.is_empty(), "No jobs configured");
+        assert!(
+            status.night_window.is_none(),
+            "No night window configured by default"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_get_scheduler_status_with_night_window() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let config = uc_types::NightWindowConfig::new(
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        engine
+            .scheduler_service()
+            .set_night_window(&config)
+            .await
+            .unwrap();
+
+        let status = engine.get_scheduler_status().await.unwrap();
+        assert!(status.night_window.is_some(), "Night window should be set");
+        let nw = status.night_window.unwrap();
+        assert_eq!(nw.start, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
+        assert_eq!(nw.end, NaiveTime::from_hms_opt(6, 0, 0).unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_engine_trigger_scheduler_job_not_found() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let result = engine.trigger_scheduler_job("nonexistent-uuid").await;
+
+        // Invalid UUID string should return an error
+        assert!(result.is_err(), "Invalid UUID should return Err");
+    }
+
+    #[tokio::test]
+    async fn local_engine_trigger_scheduler_job_valid_uuid_not_found() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let result = engine.trigger_scheduler_job(&valid_uuid).await.unwrap();
+
+        assert!(!result.success, "Triggering a non-existent job should fail");
+        assert!(result.error.is_some(), "Error message should be present");
+    }
+
+    #[tokio::test]
+    async fn local_engine_remove_job_invalid_uuid() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let result = engine.remove_job("not-a-uuid").await;
+
+        // Invalid UUID string should return an error (ConfigError)
+        assert!(result.is_err(), "Invalid UUID should return Err, not Ok");
+    }
+
+    #[tokio::test]
+    async fn local_engine_remove_job_nonexistent() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let result = engine.remove_job(&valid_uuid).await.unwrap();
+
+        // Valid UUID but job doesn't exist — remove_job calls store.delete_task
+        // which returns Err for nonexistent. The engine converts to success=false.
+        assert!(
+            !result.success,
+            "Removing a non-existent job should return success=false"
+        );
+        assert!(
+            result.error.is_some(),
+            "Error message should be present for non-existent job"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_remove_job_success() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+
+        // First add a job via the engine API so it exists in the scheduler.
+        let add_result = engine
+            .add_cron_job(uc_types::AddCronJobApiRequest {
+                description: "To be removed".to_string(),
+                cron_expression: "0 22 * * *".to_string(),
+                project_id: "test-project".to_string(),
+                night_window_start: None,
+                night_window_end: None,
+                timezone: "UTC".to_string(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(add_result.success, "Job should be created successfully");
+        let job_id = add_result.job_id.clone();
+        assert!(!job_id.is_empty(), "Job ID should not be empty");
+
+        // Verify the job exists
+        assert_eq!(
+            engine.scheduler_service().job_count().await,
+            1,
+            "Should have 1 job after adding"
+        );
+
+        // Now remove it
+        let remove_result = engine.remove_job(&job_id).await.unwrap();
+
+        assert!(
+            remove_result.success,
+            "Removing an existing job should succeed"
+        );
+        assert!(
+            remove_result.error.is_none(),
+            "No error should be present on success"
+        );
+
+        // Verify the job is gone
+        assert_eq!(
+            engine.scheduler_service().job_count().await,
+            0,
+            "Should have 0 jobs after removal"
+        );
+    }
+
+    #[tokio::test]
+    async fn default_remove_job_returns_false() {
+        use uc_types::EngineApi;
+
+        /// Minimal engine that uses all default scheduler trait impls.
+        struct NoSchedulerEngine;
+
+        #[async_trait::async_trait]
+        impl EngineApi for NoSchedulerEngine {
+            async fn search(
+                &self,
+                _query: uc_types::SearchQuery,
+            ) -> Result<uc_types::SearchResult, EngineError> {
+                unreachable!()
+            }
+            async fn index_repo(
+                &self,
+                _request: uc_types::IndexRequest,
+            ) -> Result<uc_types::IndexResponse, EngineError> {
+                unreachable!()
+            }
+            async fn get_index_state(
+                &self,
+                _repo_id: &str,
+            ) -> Result<uc_types::RepoIndexState, EngineError> {
+                unreachable!()
+            }
+            async fn remove_index(&self, _repo_id: &str) -> Result<(), EngineError> {
+                unreachable!()
+            }
+            async fn read_memory(
+                &self,
+                _request: uc_types::MemoryReadRequest,
+            ) -> Result<Option<uc_types::MemoryEntry>, EngineError> {
+                unreachable!()
+            }
+            async fn write_memory(
+                &self,
+                _request: uc_types::MemoryWriteRequest,
+            ) -> Result<uc_types::MemoryEntry, EngineError> {
+                unreachable!()
+            }
+            async fn delete_memory(&self, _key: &uc_types::MemoryKey) -> Result<(), EngineError> {
+                unreachable!()
+            }
+            async fn search_memory(
+                &self,
+                _request: uc_types::MemorySearchRequest,
+            ) -> Result<uc_types::MemorySearchResponse, EngineError> {
+                unreachable!()
+            }
+            async fn health(&self) -> Result<uc_types::HealthStatus, EngineError> {
+                unreachable!()
+            }
+            async fn batch_write_memory(
+                &self,
+                _requests: Vec<uc_types::MemoryWriteRequest>,
+            ) -> Result<Vec<uc_types::MemoryEntry>, EngineError> {
+                unreachable!()
+            }
+            async fn list_repos(
+                &self,
+                _workspace_id: Option<&str>,
+            ) -> Result<Vec<uc_types::RepoIndexState>, EngineError> {
+                unreachable!()
+            }
+            async fn list_dir(
+                &self,
+                _repo_id: &str,
+                _path: &str,
+            ) -> Result<uc_types::agent::DirListing, EngineError> {
+                unreachable!()
+            }
+            async fn get_file(
+                &self,
+                _repo_id: &str,
+                _path: &str,
+            ) -> Result<uc_types::agent::FileContent, EngineError> {
+                unreachable!()
+            }
+            async fn search_stream(
+                &self,
+                _query: uc_types::SearchQuery,
+            ) -> Result<uc_types::SearchStream, EngineError> {
+                unreachable!()
+            }
+            async fn submit_task(
+                &self,
+                _description: String,
+                _project_id: String,
+            ) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn get_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn list_tasks(&self) -> Result<Vec<uc_types::Task>, EngineError> {
+                unreachable!()
+            }
+            async fn pause_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+            async fn resume_task(&self, _task_id: &str) -> Result<uc_types::Task, EngineError> {
+                unreachable!()
+            }
+        }
+
+        let engine = NoSchedulerEngine;
+        let result = engine.remove_job("any-id").await.unwrap();
+
+        assert!(
+            !result.success,
+            "Default remove_job impl should return success=false"
+        );
+        assert!(
+            result.error.is_some(),
+            "Default remove_job impl should return an error message"
+        );
+    }
+
+    // ── LockProvider tests ─────────────────────────────────────────
+
+    /// A mock lock provider whose acquire result can be controlled in tests.
+    struct MockLockProvider {
+        acquire_result: bool,
+    }
+
+    impl LockProvider for MockLockProvider {
+        fn try_acquire(&self, _key: &str, _ttl: Duration) -> bool {
+            self.acquire_result
+        }
+    }
+
+    #[tokio::test]
+    async fn default_lock_provider_is_noop() {
+        // SchedulerService::new() defaults to NoOpLockProvider, which always
+        // acquires. This is the single-instance fallback — no regression.
+        let service = SchedulerService::new();
+        let provider = service.lock_provider.read().await.clone();
+        assert!(
+            provider.try_acquire("any-key", Duration::from_secs(30)),
+            "Default lock provider should always acquire"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_lock_provider_replaces_default() {
+        // Verify that set_lock_provider swaps in a custom provider.
+        let service = SchedulerService::new();
+
+        // Default acquires
+        {
+            let provider = service.lock_provider.read().await.clone();
+            assert!(provider.try_acquire("key", Duration::from_secs(30)));
+        }
+
+        // Replace with a provider that always fails
+        let mock = Arc::new(MockLockProvider {
+            acquire_result: false,
+        }) as Arc<dyn LockProvider>;
+        service.set_lock_provider(mock).await;
+
+        // Now it should not acquire
+        let provider = service.lock_provider.read().await.clone();
+        assert!(
+            !provider.try_acquire("key", Duration::from_secs(30)),
+            "Replaced lock provider should reflect the new behavior"
+        );
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn cron_callback_skips_on_lock_failure() {
+        // When the lock provider returns false (another instance holds the lock),
+        // the cron callback should skip dispatch_with_guard entirely — no
+        // ExecutionHistory is recorded.
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+
+        // Set a lock provider that always fails (simulates another instance
+        // holding the lock).
+        let mock = Arc::new(MockLockProvider {
+            acquire_result: false,
+        }) as Arc<dyn LockProvider>;
+        service.set_lock_provider(mock).await;
+
+        service.start().await.unwrap();
+
+        // Create a cron job that fires every second
+        let task = ScheduledTask::cron(
+            "Lock skip test".to_string(),
+            "test-project".to_string(),
+            "* * * * * *".to_string(), // 6-field: every second
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_cron_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the cron to fire (2 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // No execution history should be recorded — the lock failed, so
+        // dispatch_with_guard was never called.
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            history.is_empty(),
+            "Cron callback should skip dispatch when lock acquisition fails"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn cron_callback_fires_when_lock_acquired() {
+        // When the lock provider returns true (lock acquired), the cron
+        // callback should proceed to dispatch_with_guard and record
+        // ExecutionHistory.
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let service = SchedulerService::new();
+
+        // Explicitly set NoOp (always acquire) — this is the default, but
+        // be explicit for test clarity.
+        let noop = Arc::new(NoOpLockProvider) as Arc<dyn LockProvider>;
+        service.set_lock_provider(noop).await;
+
+        service.start().await.unwrap();
+
+        // Create a cron job that fires every second
+        let task = ScheduledTask::cron(
+            "Lock acquire test".to_string(),
+            "test-project".to_string(),
+            "* * * * * *".to_string(), // 6-field: every second
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            "UTC".to_string(),
+        );
+
+        let result = service.add_cron_job(task).await.unwrap();
+        let task_id = result.task_id;
+
+        // Wait for the cron to fire (2 seconds to be safe)
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Execution history should be recorded — the lock acquired, so
+        // dispatch_with_guard was called.
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history.is_empty(),
+            "Cron callback should dispatch when lock acquisition succeeds"
+        );
+
+        service.stop().await.unwrap();
     }
 }

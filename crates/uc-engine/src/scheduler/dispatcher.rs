@@ -1,19 +1,21 @@
-//! OrchestratorDispatcher — NATS-based dispatcher for scheduled tasks.
+//! Dispatcher implementations for scheduled tasks.
 //!
-//! When a scheduled task fires (and the night-window guard passes),
-//! the `OrchestratorDispatcher` publishes a NATS message to
-//! `schedule.trigger.{task_id}` with the `ScheduledTask` as JSON payload.
+//! Three dispatchers exist:
 //!
-//! The Python Orchestrator subscribes to `schedule.trigger.>` and
-//! calls `submit_task()` for each triggered event.
-//!
-//! If NATS is not available, falls back to logging (graceful degradation).
-//! Feature-gated behind `messaging` (NATS dependency).
+//! 1. `LoggingDispatcher` (in `service.rs`) — no-op, for testing.
+//! 2. `OrchestratorDispatcher` — NATS-based, publishes `schedule.trigger.{task_id}`
+//!    for the Python Orchestrator to pick up. Feature-gated behind `messaging`.
+//! 3. `EngineSubmitDispatcher` — calls `engine.submit_task(description, project_id)`
+//!    directly on the `LocalEngine`. This is the production dispatcher that wires
+//!    cron-fires to real subtask decomposition + dispatch. Fire-and-forget: the
+//!    sync `dispatch` returns `Ok(())` immediately and the async `submit_task`
+//!    runs in a spawned tokio task.
 
 use tracing::info;
 #[cfg(feature = "messaging")]
 use tracing::warn;
-use uc_types::{EngineError, ScheduledTask};
+use uc_types::{EngineApi, EngineError, ExecutionHistory, ExecutionStatus, ScheduledTask};
+use uuid::Uuid;
 
 use super::service::ScheduleDispatcher;
 
@@ -334,11 +336,107 @@ pub enum WindowEventType {
     Closed,
 }
 
+// ── EngineSubmitDispatcher (direct engine submit) ──────────────
+
+/// Dispatcher that submits scheduled tasks directly to the `LocalEngine`.
+///
+/// When a cron job or one-shot fires (and the night-window guard passes),
+/// this dispatcher calls `engine.submit_task(description, project_id)`,
+/// which decomposes the task into subtasks and dispatches them.
+///
+/// Since `ScheduleDispatcher::dispatch` is sync but `submit_task` is async,
+/// the submit is spawned as a fire-and-forget tokio task: `dispatch` returns
+/// `Ok(())` immediately and the actual submission runs in the background.
+/// `SchedulerService::dispatch_with_guard` records a `Completed`
+/// `ExecutionHistory` when `dispatch` returns `Ok` (meaning "spawn
+/// succeeded"). If `submit_task` later fails, a `Failed` `ExecutionHistory`
+/// is appended via the engine's `scheduler_service()` so the failure is
+/// visible in the dashboard history.
+///
+/// Holds an `Arc<LocalEngine>` (LocalEngine is all-Arc fields, so clones are
+/// cheap refcount bumps — no borrow cycle).
+pub struct EngineSubmitDispatcher {
+    engine: crate::local::LocalEngine,
+}
+
+impl EngineSubmitDispatcher {
+    /// Create a new dispatcher backed by the given engine.
+    pub fn new(engine: crate::local::LocalEngine) -> Self {
+        Self { engine }
+    }
+}
+
+impl ScheduleDispatcher for EngineSubmitDispatcher {
+    fn dispatch(&self, task: &ScheduledTask) -> Result<(), EngineError> {
+        let engine = self.engine.clone();
+        let description = task.description.clone();
+        let project_id = task.project_id.clone();
+        let task_id = task.id;
+
+        info!(
+            task_id = %task_id,
+            description = %description,
+            project_id = %project_id,
+            "EngineSubmitDispatcher: spawning submit_task for scheduled job"
+        );
+
+        // Fire-and-forget: spawn the async submit_task and return Ok immediately.
+        // The SchedulerService records ExecutionHistory::Completed when dispatch
+        // returns Ok (meaning "spawn succeeded"). If submit_task later fails in
+        // the background, we append a Failed ExecutionHistory entry via the
+        // engine's scheduler_service so the failure is visible in the history
+        // (not silently logged).
+        tokio::spawn(async move {
+            let started_at = chrono::Utc::now();
+            match engine.submit_task(description, project_id).await {
+                Ok(submitted) => {
+                    info!(
+                        scheduled_task_id = %task_id,
+                        submitted_task_id = %submitted.id.0,
+                        "EngineSubmitDispatcher: submit_task succeeded for scheduled job"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        scheduled_task_id = %task_id,
+                        error = %e,
+                        "EngineSubmitDispatcher: submit_task failed for scheduled job"
+                    );
+                    // Append a Failed ExecutionHistory so the failure is visible
+                    // in the dashboard / history query (the Completed entry from
+                    // dispatch_with_guard means "spawn succeeded", this means
+                    // "submit_task failed").
+                    let history = ExecutionHistory {
+                        id: Uuid::new_v4(),
+                        scheduled_task_id: task_id,
+                        started_at,
+                        completed_at: Some(chrono::Utc::now()),
+                        status: ExecutionStatus::Failed,
+                        result_summary: Some(format!("submit_task failed: {}", e)),
+                        deferred_reason: None,
+                    };
+                    engine.scheduler_service().record_execution(&history).await;
+                }
+            }
+        });
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for EngineSubmitDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineSubmitDispatcher")
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::scheduler::LoggingDispatcher;
     use chrono::NaiveTime;
+    use std::sync::Arc;
     use uc_types::ScheduledTask;
 
     fn make_cron_task() -> ScheduledTask {
@@ -441,5 +539,113 @@ mod tests {
         let parsed = parse_subtasks(&subtasks).expect("valid subtasks parse");
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[1].depends_on.len(), 1);
+    }
+
+    // ── EngineSubmitDispatcher tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn engine_submit_dispatcher_dispatch_returns_ok() {
+        // The dispatcher is fire-and-forget: dispatch spawns a tokio task
+        // and returns Ok immediately. Verify the Ok return + that the
+        // spawned submit_task actually runs on the engine.
+        let engine = crate::local::LocalEngine::new_fallback();
+        let dispatcher = EngineSubmitDispatcher::new(engine.clone());
+
+        let task = make_cron_task();
+        let result = dispatcher.dispatch(&task);
+        assert!(result.is_ok(), "fire-and-forget dispatch should return Ok");
+
+        // Give the spawned task time to complete (submit_task on the
+        // fallback engine is synchronous-ish — newline decomposition only).
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The submit_task should have created a task in the engine's task store.
+        let tasks = engine.list_tasks().await.unwrap();
+        assert!(
+            !tasks.is_empty(),
+            "submit_task should have created a task in the engine"
+        );
+        assert_eq!(tasks[0].description, "Test dispatch");
+    }
+
+    #[tokio::test]
+    async fn engine_submit_dispatcher_with_scheduler_service() {
+        // Integration: SchedulerService with EngineSubmitDispatcher records
+        // Completed ExecutionHistory on dispatch_with_guard (no night window
+        // configured → guard passes → dispatch returns Ok → Completed).
+        use crate::scheduler::SchedulerService;
+        use uc_types::ExecutionStatus;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let dispatcher = Arc::new(EngineSubmitDispatcher::new(engine.clone()));
+        let service = SchedulerService::with_dispatcher(dispatcher);
+
+        let task = make_cron_task();
+        let result = service.add_cron_job(task).await.unwrap();
+
+        // Dispatch (no night window → should complete)
+        service
+            .dispatch_with_guard(&result.task_id)
+            .await
+            .expect("dispatch should succeed (no night window)");
+
+        // Verify Completed ExecutionHistory
+        let history = service.get_execution_history(Some(&result.task_id)).await;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, ExecutionStatus::Completed);
+
+        // Give spawned submit_task time to run
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Verify the engine actually received the submit_task
+        let tasks = engine.list_tasks().await.unwrap();
+        assert!(
+            !tasks.is_empty(),
+            "engine should have the submitted task from the cron fire"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_submit_dispatcher_failure_records_failed_history() {
+        // Verify that record_execution (public) can append a Failed entry.
+        // This simulates what EngineSubmitDispatcher does when submit_task
+        // fails asynchronously — dispatch_with_guard already recorded
+        // Completed (spawn succeeded), then the spawned task appends Failed.
+        use crate::scheduler::SchedulerService;
+        use uc_types::{ExecutionHistory, ExecutionStatus};
+        use uuid::Uuid;
+
+        let service = SchedulerService::new();
+        let task_id = Uuid::new_v4();
+
+        // Simulate the Completed entry from dispatch_with_guard
+        let completed = ExecutionHistory {
+            id: Uuid::new_v4(),
+            scheduled_task_id: task_id,
+            started_at: chrono::Utc::now(),
+            completed_at: Some(chrono::Utc::now()),
+            status: ExecutionStatus::Completed,
+            result_summary: Some("Task dispatched successfully".to_string()),
+            deferred_reason: None,
+        };
+        service.record_execution(&completed).await;
+
+        // Simulate the Failed entry from EngineSubmitDispatcher's spawned task
+        let failed = ExecutionHistory {
+            id: Uuid::new_v4(),
+            scheduled_task_id: task_id,
+            started_at: chrono::Utc::now(),
+            completed_at: Some(chrono::Utc::now()),
+            status: ExecutionStatus::Failed,
+            result_summary: Some("submit_task failed: connection refused".to_string()),
+            deferred_reason: None,
+        };
+        service.record_execution(&failed).await;
+
+        // Both entries should be present — Completed (spawn) + Failed (submit)
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].status, ExecutionStatus::Completed);
+        assert_eq!(history[1].status, ExecutionStatus::Failed);
     }
 }

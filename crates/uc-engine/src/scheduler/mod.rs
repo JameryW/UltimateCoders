@@ -10,15 +10,18 @@
 //! - `PostgresScheduleStore`: PostgreSQL-backed store for production (requires `storage` feature)
 //! - Migration functions for scheduler database tables (requires `storage` feature)
 
+pub mod config;
 pub mod dependency;
 pub mod dispatcher;
+pub mod lock;
 pub mod migration;
 pub mod night_window;
 pub mod service;
 pub mod store;
 
 pub use dependency::resolve_execution_order;
-pub use dispatcher::{OrchestratorDispatcher, WindowEventType};
+pub use dispatcher::{EngineSubmitDispatcher, OrchestratorDispatcher, WindowEventType};
+pub use lock::{LockProvider, NoOpLockProvider};
 pub use night_window::{NightWindow, NightWindowError};
 pub use service::{AddJobResult, LoggingDispatcher, ScheduleDispatcher, SchedulerService};
 pub use store::{InMemoryScheduleStore, ScheduleStore};

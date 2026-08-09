@@ -26,6 +26,9 @@ pub use conflict::{
     ConflictDetector, ConflictMarker, ConflictResult, EditIntent, EditType, MergeResult,
     ResolutionTier,
 };
+/// NATS JetStream-backed `EventStore` (feature-gated on `messaging`).
+#[cfg(feature = "messaging")]
+pub use events::NatsEventStore;
 pub use events::{
     AgentEventType, EventStore, InMemoryEventStore, LineRange, RecordedEvent, TaskSnapshot,
 };
@@ -61,8 +64,9 @@ pub use sandbox::{
 
 // Scheduler module re-exports
 pub use scheduler::{
-    AddJobResult, InMemoryScheduleStore, LoggingDispatcher, NightWindow, NightWindowError,
-    OrchestratorDispatcher, ScheduleDispatcher, ScheduleStore, SchedulerService, WindowEventType,
+    AddJobResult, EngineSubmitDispatcher, InMemoryScheduleStore, LoggingDispatcher, NightWindow,
+    NightWindowError, OrchestratorDispatcher, ScheduleDispatcher, ScheduleStore, SchedulerService,
+    WindowEventType,
 };
 
 #[cfg(feature = "storage")]

@@ -21,7 +21,7 @@ use uc_types::EngineApi;
 
 use crate::conversions::{
     memory_key_from_proto, proto_status_to_task_status, proto_subtask_status_from_str,
-    task_status_to_proto,
+    subtask_status_to_proto, task_snapshot_to_proto, task_status_to_proto,
 };
 use crate::ultimate_coders::dashboard_service_server::DashboardServiceServer;
 use crate::ultimate_coders::engine_service_server::{EngineService, EngineServiceServer};
@@ -56,11 +56,29 @@ pub const NATS_SUBJECT_FILE_CHANGED: &str = "uc.file.changed";
 ///
 /// Published by gRPC server when a task is submitted. The Python NATS
 /// consumer subscribes to this subject and calls Orchestrator.submit_task().
+///
+/// `scheduled` is set to `true` by `NatsSubmitDispatcher` (scheduler-fired
+/// tasks) and absent when `false` (real-time gRPC submissions). The Python
+/// consumer reads `payload.get("scheduled", False)` — absent means real-time.
+/// This drives the night-window exclusive mode: when the night window is
+/// active, real-time tasks defer to `_pending_tasks` while scheduled tasks
+/// bypass the queue (see scheduler-spec.md §"Orchestrator Night-Window
+/// Exclusive Mode").
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskSubmit {
     pub task_id: String,
     pub description: String,
     pub project_id: String,
+    /// Whether this submit originated from the scheduler (cron/one-shot fire).
+    /// `true` = scheduler-fired (bypasses night-window deferral).
+    /// Absent/`false` = real-time gRPC submission (subject to deferral).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scheduled: Option<bool>,
+    /// Optional verification command threaded from `ScheduledTask.verify_command`.
+    /// The Python consumer passes it to `Orchestrator.submit_task(verify_command=)`,
+    /// which threads it to `aggregate(verify_command=)`. None = no verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_command: Option<String>,
 }
 
 /// Payload for `uc.task.update` messages.
@@ -269,8 +287,9 @@ pub struct TaskStore {
     /// Unified EventStore — the single source of truth for event persistence.
     event_store: Arc<dyn uc_engine::EventStore>,
     /// Optional async backend for task persistence (PostgreSQL, etc.).
-    /// ponytail: stored for future wiring; sync methods still use HashMap
-    #[allow(dead_code)]
+    /// Write-ahead: fire-and-forget upsert on every mutation (HashMap stays
+    /// the read source of truth). Startup recovery via `load_tasks_from_backend`
+    /// reloads the HashMap from PG; runtime reads never hit PG directly.
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
@@ -463,6 +482,73 @@ impl TaskStore {
         proto
     }
 
+    /// Fire-and-forget upsert to the task backend via `update_task`.
+    ///
+    /// Mirrors the `record_event_with_subject` spawn pattern: spawns the
+    /// async backend call on the current tokio runtime, logging failures via
+    /// `tracing::warn`. No-op when `task_backend` is `None` or no runtime is
+    /// running (e.g. sync unit tests). The HashMap remains the read source of
+    /// truth; PG is write-ahead for restart recovery (`load_tasks_from_backend`
+    /// reloads it on startup).
+    fn persist_task(&self, task: &uc_types::Task) {
+        if let Some(backend) = &self.task_backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let backend = backend.clone();
+                let task = task.clone();
+                handle.spawn(async move {
+                    if let Err(e) = backend.update_task(task).await {
+                        tracing::warn!("task_backend update_task failed: {}", e);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Fire-and-forget INSERT of a newly-created task to the backend via
+    /// `submit_task`.
+    ///
+    /// Used at the two submit points (`submit_task`, `submit_task_pending`)
+    /// and the create-if-not-exists path in `update_task`. The backend's
+    /// `update_task` is an upsert (INSERT ON CONFLICT, see task_store.rs), so
+    /// `persist_task` alone would suffice — this explicit INSERT is kept so the
+    /// first write uses the cheaper single-row INSERT path rather than the
+    /// upsert's conflict check.
+    fn persist_new_task(&self, task: &uc_types::Task) {
+        if let Some(backend) = &self.task_backend {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let backend = backend.clone();
+                let task = task.clone();
+                handle.spawn(async move {
+                    if let Err(e) = backend.submit_task(task).await {
+                        tracing::warn!("task_backend submit_task failed: {}", e);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Load all tasks from the backend into the in-memory HashMap (startup
+    /// recovery). No-op when `task_backend` is None. Called once at server
+    /// startup before serving, so subsequent sync reads see the recovered state.
+    ///
+    /// ponytail: one-shot load, not per-read delegation. Single-gateway
+    /// deployments (the current architecture — workers scale, gateway doesn't)
+    /// stay consistent via the write-path. Multi-gateway live-read consistency
+    /// is out of scope (would need per-read backend delegation + async sigs).
+    pub async fn load_from_backend(&mut self) -> Result<usize, uc_types::EngineError> {
+        if let Some(backend) = &self.task_backend {
+            let tasks = backend.list_tasks().await?;
+            let count = tasks.len();
+            for task in tasks {
+                self.tasks.insert(task.id.0.clone(), task);
+            }
+            tracing::info!("Recovered {} tasks from backend", count);
+            Ok(count)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Submit a new task: create it with a single subtask (InProgress status), store, and return.
     /// Production code uses `submit_task_pending` (Planning, no subtasks) and lets
     /// the Python Orchestrator handle decomposition.
@@ -523,6 +609,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_new_task(&task);
         task
     }
 
@@ -560,6 +647,7 @@ impl TaskStore {
 
         let task_id_str = task.id.0.clone();
         self.tasks.insert(task_id_str, task.clone());
+        self.persist_new_task(&task);
         (task, vec![proto])
     }
 
@@ -583,7 +671,9 @@ impl TaskStore {
             uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
                 task.status = uc_types::TaskStatus::Paused;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot pause task in {} status (expected InProgress or Planning)",
@@ -602,7 +692,9 @@ impl TaskStore {
             uc_types::TaskStatus::Paused => {
                 task.status = uc_types::TaskStatus::InProgress;
                 task.updated_at = chrono::Utc::now();
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             other => Err(format!(
                 "Cannot resume task in {} status (expected Paused)",
@@ -641,7 +733,9 @@ impl TaskStore {
                         st.status = uc_types::SubtaskStatus::Failed;
                     }
                 }
-                Ok(task.clone())
+                let task = task.clone();
+                self.persist_task(&task);
+                Ok(task)
             }
             uc_types::TaskStatus::Failed => Err("Task is already failed".to_string()),
             uc_types::TaskStatus::Completed => {
@@ -671,7 +765,9 @@ impl TaskStore {
         // Create-if-not-exists: when description is non-empty and task not found,
         // insert a new task with the client-provided task_id (preserving the
         // orchestrator's original ID — no new ID generation).
+        let mut is_new_task = false;
         if !self.tasks.contains_key(task_id) && !description.is_empty() {
+            is_new_task = true;
             let now = chrono::Utc::now();
             let task = uc_types::Task {
                 id: uc_types::TaskId(task_id.to_string()),
@@ -802,6 +898,15 @@ impl TaskStore {
         // Record all events to EventStore
         for event in &events {
             self.record_event(event.clone());
+        }
+
+        // Persist to backend: submit_task (INSERT) for newly-created tasks,
+        // update_task (upsert) for existing ones. Both persist paths are
+        // fire-and-forget; the first write uses the plain INSERT for clarity.
+        if is_new_task {
+            self.persist_new_task(&updated);
+        } else {
+            self.persist_task(&updated);
         }
 
         Ok((updated, events))
@@ -986,8 +1091,11 @@ impl TaskStore {
         }
 
         task.updated_at = chrono::Utc::now();
+        let task_snapshot = task.clone();
         // Bound the in-memory task map (terminal tasks may have just appeared).
         self.evict_completed_tasks();
+        // Persist the updated task to the backend (fire-and-forget upsert).
+        self.persist_task(&task_snapshot);
     }
 
     /// Record an event from NATS (`uc.task.event`).
@@ -1082,7 +1190,9 @@ impl TaskStore {
     ) -> (Vec<String>, Vec<String>) {
         let mut affected_tasks = Vec::new();
         let mut reassigned = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for task in self.tasks.values_mut() {
+            let mut task_changed = false;
             for st in &mut task.subtasks {
                 if matches!(
                     st.status,
@@ -1102,10 +1212,18 @@ impl TaskStore {
                             if !affected_tasks.contains(&task.id.0) {
                                 affected_tasks.push(task.id.0.clone());
                             }
+                            task_changed = true;
                         }
                     }
                 }
             }
+            if task_changed {
+                task.updated_at = chrono::Utc::now();
+                snapshots.push(task.clone());
+            }
+        }
+        for task in &snapshots {
+            self.persist_task(task);
         }
         (affected_tasks, reassigned)
     }
@@ -1157,21 +1275,30 @@ impl TaskStore {
         subtask_id: &str,
         new_status: uc_types::SubtaskStatus,
     ) {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
-                // Track Assigned-at so stale Assigned subtasks (no worker ever
-                // picked them up) can be reverted to Pending by the heartbeat
-                // monitor. Clear on any transition out of Assigned.
-                if new_status == uc_types::SubtaskStatus::Assigned {
-                    self.assigned_subtask_times
-                        .insert(subtask_id.to_string(), chrono::Utc::now());
-                } else if st.status == uc_types::SubtaskStatus::Assigned {
-                    self.assigned_subtask_times.remove(subtask_id);
-                }
-                st.status = new_status;
-                task.updated_at = chrono::Utc::now();
+        let task = match self.tasks.get_mut(task_id) {
+            Some(t) => t,
+            None => return,
+        };
+        {
+            let st = match task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
+                Some(s) => s,
+                None => return,
+            };
+            // Track Assigned-at so stale Assigned subtasks (no worker ever
+            // picked them up) can be reverted to Pending by the heartbeat
+            // monitor. Clear on any transition out of Assigned.
+            if new_status == uc_types::SubtaskStatus::Assigned {
+                self.assigned_subtask_times
+                    .insert(subtask_id.to_string(), chrono::Utc::now());
+            } else if st.status == uc_types::SubtaskStatus::Assigned {
+                self.assigned_subtask_times.remove(subtask_id);
             }
+            st.status = new_status;
+            task.updated_at = chrono::Utc::now();
         }
+        // st borrow dropped — safe to clone task for persist.
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
     }
 
     /// Revert Assigned subtasks that have been stuck (no worker picked them up)
@@ -1198,7 +1325,9 @@ impl TaskStore {
             return Vec::new();
         }
         let mut affected = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for task in self.tasks.values_mut() {
+            let mut task_changed = false;
             for st in &mut task.subtasks {
                 if stale_ids.contains(&st.id.0) && st.status == uc_types::SubtaskStatus::Assigned {
                     st.status = uc_types::SubtaskStatus::Pending;
@@ -1212,11 +1341,19 @@ impl TaskStore {
                         retry_count = st.dispatch_retry_count,
                         "Reverting stale Assigned subtask to Pending (no worker picked it up)"
                     );
+                    task_changed = true;
                 }
+            }
+            if task_changed {
+                task.updated_at = chrono::Utc::now();
+                snapshots.push(task.clone());
             }
         }
         for id in &stale_ids {
             self.assigned_subtask_times.remove(id);
+        }
+        for task in &snapshots {
+            self.persist_task(task);
         }
         affected
     }
@@ -1224,14 +1361,16 @@ impl TaskStore {
     /// Increment a subtask's dispatch_retry_count within a task.
     /// Returns the new retry count, or None if task/subtask not found.
     pub fn increment_dispatch_retry(&mut self, task_id: &str, subtask_id: &str) -> Option<u32> {
-        if let Some(task) = self.tasks.get_mut(task_id) {
-            if let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
-                st.dispatch_retry_count += 1;
-                task.updated_at = chrono::Utc::now();
-                return Some(st.dispatch_retry_count);
-            }
-        }
-        None
+        let task = self.tasks.get_mut(task_id)?;
+        let retry_count = {
+            let st = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id)?;
+            st.dispatch_retry_count += 1;
+            task.updated_at = chrono::Utc::now();
+            st.dispatch_retry_count
+        };
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
+        Some(retry_count)
     }
 
     /// Update the status of a task by ID.
@@ -1247,6 +1386,8 @@ impl TaskStore {
         let old = task.status.clone();
         task.status = new_status;
         task.updated_at = chrono::Utc::now();
+        let task_snapshot = task.clone();
+        self.persist_task(&task_snapshot);
         Some(old)
     }
 
@@ -1269,15 +1410,21 @@ impl TaskStore {
 
         // Consumer is stale — mark all InProgress/Planning tasks as Failed
         let mut failed_ids = Vec::new();
+        let mut snapshots: Vec<uc_types::Task> = Vec::new();
         for (id, task) in &mut self.tasks {
             match task.status {
                 uc_types::TaskStatus::InProgress | uc_types::TaskStatus::Planning => {
                     task.status = uc_types::TaskStatus::Failed;
                     task.updated_at = now;
                     failed_ids.push(id.clone());
+                    snapshots.push(task.clone());
                 }
                 _ => {}
             }
+        }
+
+        for task in &snapshots {
+            self.persist_task(task);
         }
 
         if !failed_ids.is_empty() {
@@ -1321,6 +1468,9 @@ where
 struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     engine: E,
     task_store: Arc<Mutex<TaskStore>>,
+    /// Checkpoint manager sharing TaskStore's EventStore — the activated
+    /// event-sourcing recovery path.
+    checkpoint_manager: Arc<uc_engine::CheckpointManager>,
     /// Worker registry — source of truth for WorkerService and capability-aware dispatch.
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     /// NATS client for task submission and status subscriptions.
@@ -1364,19 +1514,36 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     pub fn new(engine: E) -> Self {
         let (event_tx, _) = broadcast::channel(256);
 
-        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let task_store = Arc::new(Mutex::new(TaskStore::with_event_store(event_store.clone())));
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                checkpoint_manager,
                 worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
             }),
         }
+    }
+
+    /// Build a CheckpointManager sharing an EventStore.
+    /// `subject_prefix = "task."` matches TaskStore's event-recording subjects
+    /// so recover() reads the same stream production events land in.
+    fn build_checkpoint_manager(
+        event_store: Arc<dyn uc_engine::EventStore>,
+    ) -> Arc<uc_engine::CheckpointManager> {
+        let config = uc_engine::CheckpointConfig {
+            subject_prefix: "task.".to_string(),
+            ..Default::default()
+        };
+        Arc::new(uc_engine::CheckpointManager::new(event_store, config))
     }
 
     /// Create a new gRPC server with custom task and event backends.
@@ -1390,14 +1557,16 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         let (event_tx, _) = broadcast::channel(256);
         let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
             task_backend,
-            event_store,
+            event_store.clone(),
         )));
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
 
         Self {
             inner: Arc::new(GrpcServerInner {
                 engine,
                 task_store,
+                checkpoint_manager,
                 worker_registry,
                 #[cfg(feature = "messaging")]
                 nats_client: None,
@@ -1464,15 +1633,17 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
             task_backend,
-            event_store,
+            event_store.clone(),
         )));
 
         let (event_tx, _) = broadcast::channel(256);
 
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            checkpoint_manager,
             worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
@@ -1520,14 +1691,18 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             }
         };
 
-        let task_store = Arc::new(Mutex::new(TaskStore::new()));
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let task_store = Arc::new(Mutex::new(TaskStore::with_event_store(event_store.clone())));
 
         let (event_tx, _) = broadcast::channel(256);
 
         let worker_registry = Arc::new(RwLock::new(WorkerRegistry::new()));
+        let checkpoint_manager = Self::build_checkpoint_manager(event_store);
         let inner = Arc::new(GrpcServerInner {
             engine,
             task_store: task_store.clone(),
+            checkpoint_manager,
             worker_registry: worker_registry.clone(),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
@@ -1628,6 +1803,19 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// Access the shared TaskStore.
     pub fn task_store(&self) -> &Arc<Mutex<TaskStore>> {
         &self.inner.task_store
+    }
+
+    /// Access the CheckpointManager (event-sourcing snapshot/recover).
+    pub fn checkpoint_manager(&self) -> &Arc<uc_engine::CheckpointManager> {
+        &self.inner.checkpoint_manager
+    }
+
+    /// Load all tasks from the backend into TaskStore's in-memory HashMap.
+    /// Call once at startup (after construction, before serving) to recover
+    /// tasks persisted by prior runs. No-op if no backend is configured.
+    pub async fn load_tasks_from_backend(&self) -> Result<usize, uc_types::EngineError> {
+        let mut store = self.inner.task_store.lock().await;
+        store.load_from_backend().await
     }
 
     /// Access the shared WorkerRegistry.
@@ -2177,14 +2365,29 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
                                 if fc.content.is_empty()
                                     || fc.change_type == "deleted"
                                 {
-                                    // ponytail: delete reindex not wired —
-                                    // reindex_file only handles content. Stale
-                                    // entries are cleaned on next full reindex.
-                                    tracing::debug!(
-                                        repo_id = %fc.repo_id,
-                                        file_path = %fc.file_path,
-                                        "Skipping file-changed (empty/delete)"
-                                    );
+                                    // File deleted (or emptied) — remove its
+                                    // symbols/embeddings from the shared index
+                                    // so searches don't return stale hits.
+                                    match inner.engine.delete_file_from_index(
+                                        &fc.repo_id,
+                                        &fc.file_path,
+                                    ).await {
+                                        Ok(()) => {
+                                            tracing::info!(
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Removed deleted file from index"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Failed to remove deleted file from index"
+                                            );
+                                        }
+                                    }
                                     continue;
                                 }
                                 match inner.engine.reindex_file(
@@ -2296,9 +2499,12 @@ fn spawn_heartbeat_monitor(
                     );
                 }
             } else {
-                // Release TaskStore before the stale-assignment pass below.
-                // Keeping this guard alive would self-deadlock on the next
-                // task_store.lock().await and block every TaskService read.
+                // No stale workers — still must release the lock before the
+                // reassign_stale_assigned_subtasks call below re-acquires it.
+                // tokio::sync::Mutex is not reentrant: without this drop, the
+                // second `task_store.lock().await` deadlocks forever on the
+                // first clean tick (no stale workers), freezing the entire
+                // heartbeat monitor — stale-task/worker detection stops.
                 drop(store);
             }
 
@@ -3098,6 +3304,11 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                         task_id: task.id.0.clone(),
                         description: req.description.clone(),
                         project_id: req.project_id.clone(),
+                        // Real-time gRPC submission — no `scheduled` flag.
+                        // The Python consumer treats absent as `False`
+                        // (subject to night-window deferral).
+                        scheduled: None,
+                        verify_command: None,
                     };
                     (task.id.0.clone(), payload, events)
                 };
@@ -3423,6 +3634,34 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         };
         match result {
             Ok(task) => {
+                // Best-effort: recover from the event log and log any drift
+                // between the in-memory TaskStore and the reconstructed state.
+                // ponytail: recover is advisory here — full state reconciliation
+                // from TaskSnapshot is lossy (no depends_on/file_constraints),
+                // so we surface drift via logs rather than rewriting TaskStore.
+                // Upgrade path: reconstruct Task from snapshot when TaskStore
+                // loses a task on restart (needs richer snapshot fields).
+                if let Ok(snapshot) = self.inner.checkpoint_manager.recover(&task_id).await {
+                    let drift = snapshot
+                        .subtasks
+                        .iter()
+                        .filter(|s| {
+                            !task.subtasks.iter().any(|t| {
+                                t.id.0 == s.subtask_id
+                                    && subtask_status_to_proto(&t.status)
+                                        .eq_ignore_ascii_case(&s.status)
+                            })
+                        })
+                        .count();
+                    if drift > 0 {
+                        tracing::warn!(
+                            task_id = %task_id,
+                            drift_count = drift,
+                            recovered_subtasks = snapshot.subtasks.len(),
+                            "resume: recovered subtask state drifted from TaskStore"
+                        );
+                    }
+                }
                 // Publish NATS event for Python side
                 self.publish_task_status_event(&task_id, "task_resumed")
                     .await;
@@ -3438,6 +3677,55 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 task_id: req.task_id,
                 status: String::new(),
                 error: Some(e),
+            })),
+        }
+    }
+
+    async fn create_checkpoint(
+        &self,
+        request: Request<CreateCheckpointRequest>,
+    ) -> Result<Response<CreateCheckpointResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        match self
+            .inner
+            .checkpoint_manager
+            .create_snapshot(&task_id)
+            .await
+        {
+            Ok(snapshot_id) => Ok(Response::new(CreateCheckpointResponse {
+                success: true,
+                task_id,
+                snapshot_id,
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(CreateCheckpointResponse {
+                success: false,
+                task_id,
+                snapshot_id: String::new(),
+                error: Some(e.to_string()),
+            })),
+        }
+    }
+
+    async fn recover_task(
+        &self,
+        request: Request<RecoverTaskRequest>,
+    ) -> Result<Response<RecoverTaskResponse>, Status> {
+        let req = request.into_inner();
+        let task_id = req.task_id.clone();
+        match self.inner.checkpoint_manager.recover(&task_id).await {
+            Ok(snapshot) => Ok(Response::new(RecoverTaskResponse {
+                success: true,
+                task_id,
+                snapshot: Some(task_snapshot_to_proto(&snapshot)),
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(RecoverTaskResponse {
+                success: false,
+                task_id,
+                snapshot: None,
+                error: Some(e.to_string()),
             })),
         }
     }
@@ -3589,6 +3877,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TaskStoreBackend trait methods (get_task, etc.) are needed for backend
+    // write-path persistence tests.
+    use uc_engine::TaskStoreBackend;
 
     #[test]
     fn error_mapping_search() {
@@ -3847,12 +4138,21 @@ mod tests {
             task_id: "abc-123".to_string(),
             description: "Fix the login bug".to_string(),
             project_id: "proj-1".to_string(),
+            scheduled: None,
+            verify_command: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
+        // `scheduled: None` must be absent from serialized JSON (skip_serializing_if).
+        assert!(
+            !json.contains("scheduled"),
+            "scheduled=None must not appear in JSON: {}",
+            json
+        );
         let parsed: NatsTaskSubmit = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.task_id, "abc-123");
         assert_eq!(parsed.description, "Fix the login bug");
         assert_eq!(parsed.project_id, "proj-1");
+        assert_eq!(parsed.scheduled, None);
     }
 
     #[test]
@@ -4088,6 +4388,105 @@ mod tests {
         });
 
         assert_eq!(store.event_count(), initial_count + 1);
+    }
+
+    /// PR1: CheckpointManager attached to TaskStore's EventStore recovers
+    /// state from events recorded under TaskStore's `task.{id}` subject.
+    /// Proves the subject-prefix alignment (`task.`) is correct — without it,
+    /// recover() would read `agent.events.{id}` and find nothing.
+    #[tokio::test]
+    async fn checkpoint_manager_recovers_taskstore_events() {
+        use std::sync::Arc;
+
+        let event_store: Arc<dyn uc_engine::EventStore> =
+            Arc::new(uc_engine::InMemoryEventStore::new());
+        let store = TaskStore::with_event_store(event_store.clone());
+
+        let task_id = "ck-task-1";
+        let subtask_id = uc_types::TaskId::new();
+        let worker_id = uc_types::WorkerId::new();
+        let subject = format!("task.{}", task_id);
+
+        // Simulate production event recording (TaskStore.record_event_with_subject
+        // appends under `task.{id}` via a spawned task; here we append directly
+        // to avoid the fire-and-forget race in a unit test).
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::TaskCreated {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    description: "Checkpoint test".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    worker_id: worker_id.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskCompleted {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    summary: "Done".to_string(),
+                    success: true,
+                    modified_files: Vec::new(),
+                    output: String::new(),
+                    simulated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Build CheckpointManager the same way GrpcServer does.
+        let config = uc_engine::CheckpointConfig {
+            subject_prefix: "task.".to_string(),
+            ..Default::default()
+        };
+        let ckpt = uc_engine::CheckpointManager::new(event_store.clone(), config);
+
+        // Recover from scratch (no snapshot yet) — replays all 3 events.
+        let state = ckpt.recover(task_id).await.unwrap();
+        assert_eq!(state.task_id, task_id);
+        assert_eq!(state.subtasks.len(), 1);
+        assert_eq!(state.subtasks[0].status, "completed");
+        assert_eq!(state.subtasks[0].result_summary.as_deref(), Some("Done"));
+
+        // Create a snapshot, record one more event, recover → post-snapshot
+        // event must be replayed on top of the snapshot.
+        let snapshot_id = ckpt.create_snapshot(task_id).await.unwrap();
+        assert!(!snapshot_id.is_empty());
+
+        event_store
+            .append(
+                &subject,
+                &uc_engine::AgentEventType::SubtaskAssigned {
+                    task_id: uc_types::TaskId(task_id.to_string()),
+                    subtask_id: uc_types::TaskId::new(),
+                    worker_id: uc_types::WorkerId::new(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let state2 = ckpt.recover(task_id).await.unwrap();
+        assert_eq!(
+            state2.subtasks.len(),
+            2,
+            "post-snapshot event should be replayed"
+        );
+
+        // Touch store so with_event_store path is exercised.
+        assert_eq!(store.event_count(), 0);
     }
 
     #[test]
@@ -5474,5 +5873,238 @@ mod tests {
         assert!(parsed.steps.is_empty());
         assert_eq!(parsed.agent_config_json, None);
         assert_eq!(parsed.message_id, None);
+    }
+
+    // ── task_backend write-path persistence tests ──────────────
+
+    /// Helper: build a TaskStore backed by InMemoryTaskBackend + InMemoryEventStore.
+    fn make_store_with_backend() -> (
+        TaskStore,
+        Arc<uc_engine::InMemoryTaskBackend>,
+        Arc<uc_engine::InMemoryEventStore>,
+    ) {
+        let backend = Arc::new(uc_engine::InMemoryTaskBackend::new());
+        let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+        let store = TaskStore::with_backend(backend.clone(), event_store.clone());
+        (store, backend, event_store)
+    }
+
+    /// submit_task persists the new task to the backend via submit_task (INSERT).
+    #[tokio::test]
+    async fn task_backend_persists_submit_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Yield so the fire-and-forget spawn completes.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.description, "Test task");
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(got.subtasks.len(), 1);
+    }
+
+    /// submit_task_pending persists the new task to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_submit_task_pending() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let (task, _) = store.submit_task_pending("Pending task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.description, "Pending task");
+        assert_eq!(got.status, uc_types::TaskStatus::Planning);
+        assert!(got.subtasks.is_empty());
+    }
+
+    /// pause_task persists the status change to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_pause_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Yield for submit_task persist.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.pause_task(&task_id).unwrap();
+
+        // Yield for pause_task persist.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::Paused);
+    }
+
+    /// resume_task persists the status change to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_resume_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.pause_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.resume_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+    }
+
+    /// cancel_task persists the status change (Failed) to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_cancel_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        store.cancel_task(&task_id).unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::Failed);
+        // Subtask should also be Failed in the persisted copy.
+        assert_eq!(got.subtasks.len(), 1);
+        assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Failed);
+    }
+
+    /// update_task persists both create-if-not-exists (INSERT) and update (UPDATE) paths.
+    #[tokio::test]
+    async fn task_backend_persists_update_task() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        // Create-if-not-exists path: task doesn't exist, description non-empty.
+        let subtask = uc_types::Subtask {
+            id: uc_types::TaskId("st-1".to_string()),
+            parent_id: uc_types::TaskId("t-1".to_string()),
+            description: "do thing".to_string(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
+            retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+        };
+        store
+            .update_task(
+                "t-1",
+                "InProgress",
+                vec![subtask],
+                "New task via update",
+                "p1",
+            )
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task("t-1").await.unwrap().unwrap();
+        assert_eq!(got.description, "New task via update");
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+
+        // Update path: task exists, change status.
+        store
+            .update_task("t-1", "Paused", Vec::new(), "", "p1")
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got2 = backend.get_task("t-1").await.unwrap().unwrap();
+        assert_eq!(got2.status, uc_types::TaskStatus::Paused);
+    }
+
+    /// apply_update persists the mutated task to the backend.
+    #[tokio::test]
+    async fn task_backend_persists_apply_update() {
+        let (mut store, backend, _es) = make_store_with_backend();
+
+        let (task, _) = store.submit_task_pending("Task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "in_progress".to_string(),
+            subtasks: vec![],
+            result: None,
+        };
+        store.apply_update(&update);
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let got = backend.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(got.status, uc_types::TaskStatus::InProgress);
+    }
+
+    /// When task_backend is None (default TaskStore::new), persist is a no-op —
+    /// no panic, no error. Existing behavior unchanged.
+    #[tokio::test]
+    async fn task_backend_none_is_noop() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        // Should not panic.
+        store.pause_task(&task.id.0).unwrap();
+        store.cancel_task(&task.id.0).unwrap();
+    }
+
+    /// PR3: load_from_backend recovers tasks persisted by a prior run into
+    /// the in-memory HashMap (startup recovery). Simulates restart: backend
+    /// has tasks, a fresh TaskStore loads them.
+    #[tokio::test]
+    async fn task_backend_load_from_backend_recovers_tasks() {
+        let backend = Arc::new(uc_engine::InMemoryTaskBackend::new());
+
+        // Simulate a prior run: submit tasks directly to the backend.
+        let t1 = uc_types::Task {
+            id: uc_types::TaskId("recover-1".to_string()),
+            description: "prior task 1".to_string(),
+            project_id: "p".to_string(),
+            status: uc_types::TaskStatus::Paused,
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        backend.submit_task(t1.clone()).await.unwrap();
+
+        // Fresh TaskStore (empty HashMap) sharing the populated backend.
+        let event_store = Arc::new(uc_engine::InMemoryEventStore::new());
+        let mut store = TaskStore::with_backend(backend, event_store);
+        assert!(
+            store.get_task("recover-1").is_none(),
+            "HashMap empty before load"
+        );
+
+        let count = store.load_from_backend().await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            store.get_task("recover-1").unwrap().description,
+            "prior task 1"
+        );
+        assert_eq!(
+            store.get_task("recover-1").unwrap().status,
+            uc_types::TaskStatus::Paused
+        );
+    }
+
+    /// PR3: load_from_backend is a no-op (returns 0) when no backend is set.
+    #[tokio::test]
+    async fn task_backend_load_from_backend_none_is_noop() {
+        let mut store = TaskStore::new();
+        let count = store.load_from_backend().await.unwrap();
+        assert_eq!(count, 0);
     }
 }

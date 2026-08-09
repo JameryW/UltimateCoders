@@ -9,7 +9,7 @@
 ### 1. Scope / Trigger
 
 - Trigger: Any time a `ScheduledTask` is created (cron or one-shot), the scheduler must evaluate the night window before dispatching.
-- Cross-layer: Rust `SchedulerService` → PyO3 → Python `Scheduler` → `Orchestrator.submit_task()`
+- Cross-layer: Rust `SchedulerService` (cron-fire) → `NatsSubmitDispatcher` publishes to `uc.task.submit` NATS → Python `_handle_submit` → `Orchestrator.submit_task()` (the Python `Scheduler` class was removed in #548; Rust owns scheduling, dispatch via NATS per the #553 ADR).
 
 ### 2. Signatures
 
@@ -53,6 +53,27 @@ pub trait ScheduleDispatcher: Send + Sync {
 }
 pub struct OrchestratorDispatcher { ... }  // feature-gated: messaging
 pub struct LoggingDispatcher;              // always available, no-op
+pub struct EngineSubmitDispatcher { ... }  // PR2: cron-fire → engine.submit_task (fire-and-forget)
+
+// ── Design Decision: late-binding dispatcher ────────────────────────────
+// EngineSubmitDispatcher needs Arc<LocalEngine>, but LocalEngine owns the
+// SchedulerService (chicken-and-egg). Solution: SchedulerService starts with
+// a LoggingDispatcher placeholder; the dispatcher field is
+// Arc<RwLock<Arc<dyn ScheduleDispatcher>>> with a set_dispatcher() swap.
+// After LocalEngine construction, call engine.init_scheduler_dispatcher()
+// which builds EngineSubmitDispatcher(engine.clone()) + set_dispatcher().
+//
+// dispatch_with_guard reads the dispatcher from the RwLock per-fire
+// (negligible: only on cron-fire, not per-request).
+//
+// ── Design Decision: fire-and-forget async-in-sync ──────────────────────
+// dispatch() is sync (trait), submit_task is async. Solved with tokio::spawn:
+// dispatch returns Ok(()) immediately (spawn succeeded), submit_task runs in
+// background. dispatch_with_guard records Completed on spawn-success; if
+// submit_task errs, the spawned task appends a Failed ExecutionHistory via
+// engine.scheduler_service().record_execution() (record_execution is pub).
+// block_in_place+block_on was REJECTED — blocking the runtime worker during
+// the full task decomposition is unacceptable for a cron callback.
 
 // store.rs
 #[async_trait]
@@ -133,6 +154,58 @@ class Scheduler:
 - Guard check happens before dispatch: outside window → record `Deferred` history, skip dispatch
 - Window open/close events published to NATS `schedule.window.opened` / `schedule.window.closed` (feature-gated: messaging)
 
+#### `uc.scheduler.yaml` Config Contract (PR1/PR2)
+
+Gateway loads `uc.scheduler.yaml` at boot (`UC_SCHEDULER_CONFIG` env → `./uc.scheduler.yaml`). Missing file = idle scheduler (no behavior change, opt-in). `SchedulerFileConfig` (Rust, `crates/uc-engine/src/scheduler/config.rs`):
+
+```yaml
+night_window:        # optional top-level; absent = no window (jobs fire any time)
+  start: "22:00"     # HH:MM
+  end: "06:00"
+  timezone: "Asia/Shanghai"  # IANA; defaults "UTC"
+jobs:
+  - description: nightly build        # required
+    project_id: ""                    # optional
+    cron: "0 22 * * *"               # cron OR execute_after, mutually exclusive
+    # execute_after: "2026-09-01T09:00:00Z"  # RFC-3339, one-shot
+    night_window: { start: "12:00", end: "13:00" }  # optional per-job override
+    enabled: true                     # default true
+```
+
+- `resolve()` validates: a job with neither/both `cron`+`execute_after` → error; bad HH:MM → error; bad RFC-3339 → error.
+- `default_night_window` + per-job `night_window` are `Option<NightWindowConfig>` — when no top-level window is declared, `None` (NOT 22:00-06:00 UTC). `main.rs` only calls `set_night_window` when `Some`.
+- A per-job `night_window` overrides the top-level default for that job only.
+
+#### Schedule Persistence (`UC_SCHEDULE_BACKEND`)
+
+The scheduler persists jobs + execution history via the `ScheduleStore` trait
+(`InMemoryScheduleStore` for tests, `PostgresScheduleStore` for production,
+the latter behind the `storage` feature). Activation is env-gated in the
+gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
+`UC_TASK_BACKEND` / `UC_EVENT_BACKEND`:
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `UC_SCHEDULE_BACKEND` | _(unset = in-memory)_ | `postgres` → `PostgresScheduleStore`; unset/`memory` → in-memory (jobs lost on restart) |
+| `UC_DATABASE_URL` | _(empty)_ | PostgreSQL URL. Required when `UC_SCHEDULE_BACKEND=postgres`; empty/missing → warn + in-memory fallback |
+
+- **Construction**: `PostgresScheduleStore::connect(url)` builds a dedicated
+  pool (`max_connections(5)`) and runs idempotent migrations
+  (`scheduled_tasks` + `execution_history` tables + indexes, `scheduler/migration.rs`).
+  Injected into `LocalEngine::new_with_scheduler_store(config, Some(store))`
+  BEFORE `SchedulerService::start()` runs. The store is set-once-at-construction
+  (not hot-swappable) — no RwLock.
+- **Write path** (already wired in `service.rs`): `add_cron_job`/`add_one_shot_job`
+  → `save_task`; `remove_job` → `delete_task`; `record_execution` → `save_execution`.
+- **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(true)`
+  → re-register each persisted cron/one-shot job with the `JobScheduler` + load
+  into `job_metadata`. With the PG backend, jobs survive a gateway restart.
+- **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
+  feature disabled → warn + in-memory (no crash). Default (unset) = zero
+  behavior change for existing deploys.
+- **Out of scope**: multi-gateway live-read consistency (one-shot startup load;
+  write-path keeps PG in sync going forward — same model as `UC_TASK_BACKEND`).
+
 ### 4. Validation & Error Matrix
 
 | Condition | Error | Code |
@@ -145,6 +218,9 @@ class Scheduler:
 | Task ID not found (remove/get) | `NotFound` | "Scheduled task not found: {id}" |
 | Scheduler already running (start) | `InvalidState` | "Scheduler is already running" |
 | Scheduler not running (stop) | `InvalidState` | "Scheduler is not running" |
+| `uc.scheduler.yaml` missing | (no error) | idle scheduler — opt-in, no behavior change |
+| `uc.scheduler.yaml` bad YAML / bad config | logged + skipped | gateway starts, scheduler idle |
+| cron-fire submit_task returns Err | `Failed` ExecutionHistory | appended by spawned task (fire-and-forget can't surface to dispatch return) |
 | Duplicate task ID (save) | `AlreadyExists` | "Scheduled task already exists: {id}" |
 
 ### 5. Good/Base/Bad Cases

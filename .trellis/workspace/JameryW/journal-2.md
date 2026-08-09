@@ -1836,3 +1836,146 @@ Scanned TS orchestrator.ts for silent failures. reviewSubtaskLocal/Remote used p
 ### Next Steps
 
 - None - task complete
+
+
+## Session 106: Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard)
+
+**Date**: 2026-08-03
+**Task**: Activate Rust SchedulerService + cross-stack audit (TUI/Python/Rust/Dashboard)
+**Branch**: `main`
+
+### Summary
+
+Two-track session: (1) full cross-stack audit — TUI (8 modules, 2 bugs #538/#539), Python worker (8 files, 1 bug #540), Rust uc-engine (3 bugs #541/#542/#543), Dashboard React + PyO3 + grpc-server (clean); (2) activated the dormant Rust SchedulerService end-to-end via Trellis B-flow — config loader (#544), engine wiring + EngineSubmitDispatcher + late-binding dispatcher + boot load (#545), gRPC routes-to-engine + cron-callback dispatch + AddCronJob stub + Python stub cleanup (#547), scheduler-spec update (#546). End-to-end: uc.scheduler.yaml cron jobs fire via engine.submit_task with night-window guard; dashboard GetSchedulerStatus returns available:true. ADR: Rust owns scheduling, fire-and-forget dispatch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aea778f7` | (see git log) |
+| `67530dad` | (see git log) |
+| `f2f2d37e` | (see git log) |
+| `eccbc322` | (see git log) |
+| `95b2fb2a` | (see git log) |
+| `57ef0e9b` | (see git log) |
+| `2ed02372` | (see git log) |
+| `3cdd7fc5` | (see git log) |
+| `0a176b56` | (see git log) |
+| `9ec97ca8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 107: Activate ResultAggregator (advisory in-memory merge)
+
+**Date**: 2026-08-04
+**Task**: Activate ResultAggregator (advisory in-memory merge)
+**Branch**: `main`
+
+### Summary
+
+Activated the dormant ResultAggregator — advisory in-memory 3-way merge at task completion, before MergeArbiter. Fixed the empty-diff data-loss bug in _merge_file (multi-modifier empty diffs surfaced as conflict_files instead of silently falling back to base). Wired into orchestrator._update_task_status (fire-and-forget, mirrors MergeArbiter pattern, advisory-only ADR — AST-verified no writes, MergeArbiter is sole writer). 13 new tests, 716 total pass. PRs #549 (bug fix) + #550 (wiring) merged, #551 (spec) open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e894bfa` | (see git log) |
+| `09e6a433` | (see git log) |
+| `15b5ae3d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 108: Migrate uc.subtask.execute to JetStream durable consumer
+
+**Date**: 2026-08-04
+**Task**: Migrate uc.subtask.execute to JetStream durable consumer
+**Branch**: `main`
+
+### Summary
+
+Migrated subtask dispatch from core NATS (no redelivery) to JetStream shared durable pull consumer — cross-host crash recovery. 3 ADRs: shared durable + ack-after-execution (ack in finally, all exit paths), max_deliver=5→Failed+term (poison guard), graceful fallback+coexist. trellis-check fixed 2 critical ACK-timing bugs (publish-failure path skipped ack → would re-run completed subtask) + stop() race. 20 new tests, 274 total pass. PR #552 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8e74d74c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 109: Fix scheduler dispatch: NATS submit (cross-feature audit gap)
+
+**Date**: 2026-08-04
+**Task**: Fix scheduler dispatch: NATS submit (cross-feature audit gap)
+**Branch**: `main`
+
+### Summary
+
+Cross-feature integration audit found the scheduler cron-fire gap: EngineSubmitDispatcher called Rust engine.submit_task (insert-only, no decompose) → scheduler-created tasks never reached the Python orchestrator → JetStream never fired for them. Fix: NatsSubmitDispatcher (uc-grpc, new) publishes {task_id, description, project_id} to uc.task.submit (Python decompose path), fresh task_id, fire-and-forget + Failed history. Gateway injects it via set_dispatcher when NATS connected; EngineSubmitDispatcher fallback when not. trellis-check verified all 7 points (no key drift, fresh id, injection ordering, layering, feature-gating). 144+380 tests pass. PR #553 open.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8b649a58` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

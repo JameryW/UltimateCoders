@@ -164,24 +164,8 @@ pub struct RecordedEvent {
 }
 
 /// Snapshot of a task's state for checkpoint/recovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskSnapshot {
-    pub task_id: String,
-    pub status: String,
-    pub subtasks: Vec<SubtaskSnapshot>,
-    pub last_event_offset: u64,
-    /// Unix timestamp (milliseconds).
-    pub timestamp: i64,
-}
-
-/// Snapshot of a single subtask's state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubtaskSnapshot {
-    pub subtask_id: String,
-    pub status: String,
-    pub assigned_worker: Option<String>,
-    pub result_summary: Option<String>,
-}
+/// Defined in `uc_types` (shared with the `EngineApi` trait + proto).
+pub use uc_types::{SubtaskSnapshot, TaskSnapshot};
 
 /// Trait for event storage backends.
 ///
@@ -294,11 +278,20 @@ impl NatsEventStore {
 
         let jetstream = async_nats::jetstream::new(client.clone());
 
-        // Ensure the agent events stream exists
+        // Ensure the agent events stream exists.
+        //
+        // Subject filter is `>` (all subjects) because the EventStore is
+        // shared: TaskStore appends under `task.{id}` subjects while
+        // LocalEngine appends under `agent.events.{id}`. A narrow
+        // `agent.events.>` filter would silently drop TaskStore events,
+        // breaking checkpoint replay (CheckpointManager reads `task.`
+        // prefix per PR #570). The stream is dedicated (own client
+        // connection), so `>` only captures subjects published via this
+        // EventStore — not unrelated NATS traffic.
         jetstream
             .create_stream(async_nats::jetstream::stream::Config {
                 name: "AGENT_EVENTS".to_string(),
-                subjects: vec!["agent.events.>".to_string()],
+                subjects: vec![">".to_string()],
                 ..Default::default()
             })
             .await
@@ -350,12 +343,21 @@ impl EventStore for NatsEventStore {
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence {
                     start_sequence: offset,
                 },
+                // Keep consumer state in memory, not on disk — this is a
+                // one-shot replay consumer, not a durable subscription.
+                memory_storage: true,
                 ..Default::default()
             })
             .await
             .map_err(|e| {
                 EngineError::ConnectionError(format!("NATS consumer create failed: {}", e))
             })?;
+
+        // Capture the server-assigned consumer name so we can delete it
+        // after reading. Without this, every read_from() call (every
+        // recover()/create_snapshot()) leaks a consumer on the JetStream
+        // server — unbounded growth over a long-running gateway.
+        let consumer_name = consumer.cached_info().name.clone();
 
         let mut results = Vec::new();
         let mut messages = consumer.messages().await.map_err(|e| {
@@ -400,9 +402,31 @@ impl EventStore for NatsEventStore {
             }
         }
 
+        // Clean up the one-shot consumer. Best-effort: a failure to delete
+        // must not lose the events we already read.
+        if let Err(e) = stream.delete_consumer(&consumer_name).await {
+            tracing::warn!(
+                consumer = %consumer_name,
+                error = %e,
+                "Failed to delete one-shot replay consumer (will be reaped by JetStream retention)"
+            );
+        }
+
         Ok(results)
     }
 
+    /// Get the latest offset for a subject.
+    ///
+    /// # Known limitation
+    ///
+    /// Returns the **global** stream `last_sequence`, ignoring `subject`.
+    /// JetStream does not expose a per-subject last sequence without a
+    /// scan, so this is an accepted approximation. `CheckpointManager`
+    /// uses this for `last_event_offset` in snapshots — a too-high offset
+    /// means `recover` replays from a position past the snapshot, which
+    /// is **safe**: `apply_event_to_snapshot` is idempotent for status
+    /// events (re-applying the same event is a no-op), so over-replay
+    /// just reprocesses already-applied events without corrupting state.
     async fn latest_offset(&self, _subject: &str) -> Result<u64, EngineError> {
         let mut stream = self
             .jetstream

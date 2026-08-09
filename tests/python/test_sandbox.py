@@ -2399,6 +2399,13 @@ class TestNatsWorkerSubtaskCapabilityReject:
             # Must not raise.
             await nw._handle_subtask_execute(msg)
 
+            # The rejection is published via _spawn_bg (background task), so
+            # we need to yield control to let it complete.
+            for _ in range(50):
+                if published:
+                    break
+                await asyncio.sleep(0.02)
+
             # Rejection event published so the default-mode worker keeps it Pending.
             assert any(p["type"] == "subtask_dispatch_rejected" for p in published)
             reject = next(p for p in published if p["type"] == "subtask_dispatch_rejected")
