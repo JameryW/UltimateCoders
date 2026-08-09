@@ -45,6 +45,10 @@ COPY . .
 # so it installs into /usr/local/lib/python3.11/site-packages (copied in Stage 2).
 RUN VIRTUAL_ENV=/usr/local maturin develop --release --manifest-path crates/uc-python/Cargo.toml
 
+# Use the current Node.js LTS line required by the Claude Code CLI. The
+# Debian package in the Python image can lag behind the CLI's engine floor.
+FROM node:22-bookworm-slim AS node-runtime
+
 # ── Stage 2: Runtime image ─────────────────────────────────────────
 FROM python:3.11-slim
 
@@ -60,12 +64,12 @@ RUN { \
 
 # Runtime deps: git is required for WorkspaceManager remote sync
 # (clone/fetch/push). openssh-client is cheap and enables SSH-based
-# remotes as an alternative to HTTPS+PAT. nodejs + npm are needed by
-# multilspy's TypeScriptLanguageServer (it shells out to node/npm to
-# install typescript-language-server into its static dir).
+# remotes as an alternative to HTTPS+PAT. Node.js + npm are copied from
+# the dedicated official Node runtime stage above; multilspy's
+# TypeScriptLanguageServer shells out to them to install its static server.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     -o Acquire::Retries=5 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 \
-    bash libssl3 ca-certificates curl git openssh-client nodejs npm \
+    bash libssl3 ca-certificates curl git openssh-client util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 # git-askpass helper: git invokes this only when auth is needed.
@@ -77,6 +81,9 @@ RUN printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "${GIT_USERNAME:-x-access
 
 WORKDIR /app
 
+# Copy Node.js 22 + npm from the dedicated official Node runtime stage.
+COPY --from=node-runtime /usr/local/ /usr/local/
+
 # Copy installed Python packages (includes _uc_core .so + all deps)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
@@ -85,17 +92,41 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/rust-analyzer /usr/local/bin/rust-analyzer
 
 # TypeScript LSP: install globally so multilspy (which needs node/npm in
-# PATH) can bootstrap typescript-language-server. Non-fatal verification.
+# PATH) can bootstrap typescript-language-server.
 RUN npm install -g typescript-language-server typescript \
-    && typescript-language-server --version \
-    || echo "typescript-language-server install skipped (non-fatal)"
+    && typescript-language-server --version
 
-# Grok Build is the default coding agent for Python workers. The installer is
-# the official xAI distribution path for the grok-build project; no API key is
-# needed at image build time.
+# Install all supported worker CLIs. Authentication is supplied at runtime;
+# no provider key is baked into the image.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+    && claude --version \
+    && codex --version
+
+# Grok Build remains the default coding agent for compatibility deployments.
+# The installer is the official xAI distribution path; no API key is needed
+# at image build time.
 RUN curl -fsSL https://x.ai/cli/install.sh | bash
 ENV PATH="/root/.local/bin:/root/.grok/bin:${PATH}"
 RUN grok --version
+
+# Claude Code refuses --dangerously-skip-permissions under root. Keep the
+# container entrypoint root-owned so it can initialize an existing named
+# volume, then drop the actual Python worker process to an unprivileged user.
+RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
+    && install -d -o ucworker -g ucworker /home/ucworker/.codex \
+    && printf '%s\n' \
+      '#!/bin/sh' \
+      'set -eu' \
+      'if [ "$(id -u)" -eq 0 ] && [ -d /workspace ]; then' \
+      '  chown -R ucworker:ucworker /workspace 2>/dev/null || true' \
+      '  export HOME=/home/ucworker USER=ucworker LOGNAME=ucworker' \
+      '  exec setpriv --reuid=ucworker --regid=ucworker --init-groups "$@"' \
+      'fi' \
+      'exec "$@"' \
+      > /usr/local/bin/uc-worker-entrypoint \
+    && chmod +x /usr/local/bin/uc-worker-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/uc-worker-entrypoint"]
 
 # Copy the full Python package from the builder stage — this includes both
 # the pure-Python source AND the compiled _uc_core*.so extension that maturin

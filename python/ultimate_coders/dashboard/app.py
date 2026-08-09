@@ -56,6 +56,7 @@ def _status_str(obj: Any) -> str:
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
 NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
 NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
+NATS_SUBJECT_DASHBOARD_SNAPSHOT: str = "uc.dashboard.snapshot"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
 
@@ -118,6 +119,10 @@ class DashboardApp:
         # _subscribe_sse inside the running loop — Py3.9 binds at construction).
         self._sse_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._nats_subscriptions: list[Any] = []
+        # Standalone dashboard processes do not own the Orchestrator object.
+        # Keep the latest snapshot published by nats-worker so the REST/SSE
+        # fallback remains connected and useful in that deployment topology.
+        self._dashboard_snapshot: dict[str, Any] | None = None
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -1179,7 +1184,20 @@ class DashboardApp:
         Falls back gracefully if the engine is unavailable.
         """
         orch = self.orchestrator
-        if orch is None or orch.engine is None:
+        if orch is None:
+            snapshot = self._dashboard_snapshot or {}
+            health = snapshot.get("health")
+            if isinstance(health, dict):
+                return {
+                    **health,
+                    "components": health.get("components", []),
+                }
+            return {
+                "available": False,
+                "status": "unavailable",
+                "components": [],
+            }
+        if orch.engine is None:
             return {
                 "available": False,
                 "status": "unavailable",
@@ -1220,6 +1238,10 @@ class DashboardApp:
         """
         orch = self.orchestrator
         if orch is None:
+            snapshot = self._dashboard_snapshot or {}
+            workers = snapshot.get("workers")
+            if isinstance(workers, dict):
+                return dict(workers)
             return {"available": False, "workers": []}
 
         heartbeat_timeout = orch.config.heartbeat_timeout_seconds if orch.config else 60
@@ -1257,6 +1279,10 @@ class DashboardApp:
         """
         orch = self.orchestrator
         if orch is None:
+            snapshot = self._dashboard_snapshot or {}
+            tasks = snapshot.get("tasks")
+            if isinstance(tasks, dict):
+                return dict(tasks)
             return {"available": False, "tasks": [], "status_counts": {}}
 
         tasks = []
@@ -1303,7 +1329,13 @@ class DashboardApp:
         Falls back gracefully if no scheduler is configured.
         """
         orch = self.orchestrator
-        if orch is None or orch.scheduler is None:
+        if orch is None:
+            snapshot = self._dashboard_snapshot or {}
+            scheduler = snapshot.get("scheduler")
+            if isinstance(scheduler, dict):
+                return dict(scheduler)
+            return {"available": False}
+        if orch.scheduler is None:
             return {"available": False}
 
         scheduler = orch.scheduler
@@ -1487,7 +1519,7 @@ class DashboardApp:
         self._sse_subscribers.discard(queue)
 
     async def _connect_and_subscribe_nats(self) -> None:
-        """Connect (if given a URL) and subscribe to ``uc.task.event``.
+        """Connect (if given a URL) and subscribe to dashboard NATS data.
 
         ponytail: F58 — runs as the FastAPI startup hook, i.e. ON uvicorn's
         event loop. The old code connected on a throwaway loop and closed
@@ -1543,10 +1575,18 @@ class DashboardApp:
             )
             self._nats_subscriptions.append(sub)
             logger.info("Dashboard subscribed to %s", NATS_SUBJECT_TASK_EVENT)
+            snapshot_sub = await self._nats_client.subscribe(
+                NATS_SUBJECT_DASHBOARD_SNAPSHOT,
+                cb=self._handle_dashboard_snapshot,
+            )
+            self._nats_subscriptions.append(snapshot_sub)
+            logger.info(
+                "Dashboard subscribed to %s",
+                NATS_SUBJECT_DASHBOARD_SNAPSHOT,
+            )
         except Exception:
             logger.warning(
-                "Failed to subscribe to %s",
-                NATS_SUBJECT_TASK_EVENT,
+                "Failed to subscribe to dashboard NATS subjects",
                 exc_info=True,
             )
 
@@ -1619,6 +1659,22 @@ class DashboardApp:
                     "SSE client queue full, dropping event: %s",
                     event_dict.get("type"),
                 )
+
+    async def _handle_dashboard_snapshot(self, msg: Any) -> None:
+        """Cache the latest snapshot from the independent nats-worker.
+
+        The dashboard container intentionally runs without a full
+        Orchestrator instance.  nats-worker already publishes the canonical
+        health/worker/task/scheduler view, so consuming that stream keeps the
+        REST and SSE fallback paths consistent with DashboardService gRPC.
+        """
+        try:
+            payload = json.loads(msg.data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+            logger.warning("Invalid NATS dashboard snapshot payload: %s", e)
+            return
+        if isinstance(payload, dict):
+            self._dashboard_snapshot = payload
 
     def stop(self) -> None:
         """Stop the dashboard server gracefully.

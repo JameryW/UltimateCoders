@@ -2975,8 +2975,11 @@ class NatsWorker:
         # Workers
         workers = await self._dash_listworkers({})
 
-        # Tasks
-        tasks = {"available": False, "tasks": [], "total": 0, "status_counts": {}}
+        # Tasks are available as soon as the Orchestrator exists, even when
+        # the cluster is empty.  ``available=false`` means the data source is
+        # disconnected, not that there are zero tasks; conflating those states
+        # made a healthy empty dashboard look offline.
+        tasks = {"available": True, "tasks": [], "total": 0, "status_counts": {}}
         if orch.tasks:
             status_counts: dict[str, int] = {}
             task_list = []
