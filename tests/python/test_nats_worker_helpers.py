@@ -27,6 +27,10 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
 )
 from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
+from ultimate_coders.nats_worker import (
+    _make_task_event_payload,
+    _make_task_update_payload,
+)
 
 
 def _make_worker() -> _NatsWorker:
@@ -91,8 +95,11 @@ def test_reset_subtask_to_pending_resets_assigned_subtask():
     st = Subtask(id="st-rejected", description="d", status=SubtaskStatus.ASSIGNED)
     st.assigned_worker = "remote"
     task = Task(
-        id="t1", description="d", project_id="p",
-        status=TaskStatus.IN_PROGRESS, subtasks=[st],
+        id="t1",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
     )
     nw._orchestrator.tasks[task.id] = task
 
@@ -110,8 +117,11 @@ def test_reset_subtask_to_pending_skips_non_assigned():
 
     st = Subtask(id="st-done", description="d", status=SubtaskStatus.COMPLETED)
     task = Task(
-        id="t1", description="d", project_id="p",
-        status=TaskStatus.IN_PROGRESS, subtasks=[st],
+        id="t1",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
     )
     nw._orchestrator.tasks[task.id] = task
 
@@ -328,14 +338,16 @@ async def test_handle_subtask_execute_dispatches_to_background():
     nw._publisher.publish_update = AsyncMock()
 
     msg = MagicMock()
-    msg.data = json.dumps({
-        "task_id": "t-1",
-        "subtask_id": "st-1",
-        "description": "do the thing",
-        "timeout_seconds": 600,
-        "dispatch_mode": "prefer_remote",
-        "steps": [],
-    }).encode()
+    msg.data = json.dumps(
+        {
+            "task_id": "t-1",
+            "subtask_id": "st-1",
+            "description": "do the thing",
+            "timeout_seconds": 600,
+            "dispatch_mode": "prefer_remote",
+            "steps": [],
+        }
+    ).encode()
 
     # Callback must return while execution is still blocked on `release`.
     # (wait_for succeeding at all proves the callback didn't await the
@@ -649,6 +661,7 @@ async def test_replay_skips_malformed_event_and_advances_seq():
         # event whose handler raises.
         if msg is bad_msg:
             raise ValueError("malformed event payload")
+
     nw._handle_task_event = _handle
     # Record ack order to assert the broken event was still acked.
     _orig_ack_good = good_msg.ack
@@ -717,10 +730,7 @@ def test_spawn_bg_logs_failed_task_exception(caplog: pytest.LogCaptureFixture) -
     # Strong ref released.
     assert task not in nw._bg_tasks
     # Warning logged with the exception.
-    assert any(
-        "Background task failed" in r.message and r.exc_info
-        for r in caplog.records
-    )
+    assert any("Background task failed" in r.message and r.exc_info for r in caplog.records)
 
 
 def test_spawn_bg_cancelled_task_not_logged(caplog: pytest.LogCaptureFixture) -> None:
@@ -745,3 +755,57 @@ def test_spawn_bg_cancelled_task_not_logged(caplog: pytest.LogCaptureFixture) ->
     asyncio.run(_run())
 
     assert not any("Background task failed" in r.message for r in caplog.records)
+
+
+def test_event_payload_message_id_distinct_for_rapid_same_type_events():
+    """Regression: a 5s bucket made two same-type events for one subtask
+    within 5s share a message_id → Rust-side dedup (5min TTL) dropped the
+    second, losing real state transitions (e.g. two subtask_progress phase
+    changes). message_id must now use ms precision so distinct events differ.
+    """
+    p1 = _make_task_event_payload("subtask_progress", "t1", "st-1", {"percent": 10})
+    # Spin until the ms clock advances (usually 1 iteration), then build p2.
+    import time
+
+    t0 = int(time.time() * 1000)
+    while int(time.time() * 1000) == t0:
+        time.sleep(0.001)
+    p2 = _make_task_event_payload("subtask_progress", "t1", "st-1", {"percent": 50})
+    assert p1["message_id"] != p2["message_id"], (
+        "same-type events must get distinct message_ids (ms precision), "
+        "else Rust dedup drops the second"
+    )
+
+
+def test_event_payload_message_id_no_5s_bucket_suffix():
+    """The old format ended in a 5s-bucket integer (ts_ms // 5000). The new
+    format uses ms precision so the suffix must be the raw ms timestamp,
+    not a bucketed value."""
+    import time
+
+    before = int(time.time() * 1000)
+    p = _make_task_event_payload("subtask_started", "t1", "st-1")
+    after = int(time.time() * 1000)
+    suffix = int(p["message_id"].rsplit(":", 1)[1])
+    assert before <= suffix <= after, "message_id suffix should be raw ms, not a bucket"
+
+
+def test_update_payload_message_id_uses_ms_not_bucket():
+    """Task updates published within 5s must not share a message_id (Rust
+    dedup would drop the second)."""
+    from ultimate_coders.agent.types import Task, TaskStatus
+
+    task = Task(
+        id="t1",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[],
+    )
+    p = _make_task_update_payload(task)
+    suffix = int(p["message_id"].rsplit(":", 1)[1])
+    # suffix is ms; a 5s bucket would be < ts_ms//5000 which is ~2.7e8,
+    # while ms is ~1.7e12 — assert magnitude to catch a bucket regression.
+    import time
+
+    assert abs(suffix - int(time.time() * 1000)) < 5000, "suffix should be ms, not bucket"
