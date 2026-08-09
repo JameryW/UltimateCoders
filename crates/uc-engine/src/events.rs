@@ -343,12 +343,21 @@ impl EventStore for NatsEventStore {
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence {
                     start_sequence: offset,
                 },
+                // Keep consumer state in memory, not on disk — this is a
+                // one-shot replay consumer, not a durable subscription.
+                memory_storage: true,
                 ..Default::default()
             })
             .await
             .map_err(|e| {
                 EngineError::ConnectionError(format!("NATS consumer create failed: {}", e))
             })?;
+
+        // Capture the server-assigned consumer name so we can delete it
+        // after reading. Without this, every read_from() call (every
+        // recover()/create_snapshot()) leaks a consumer on the JetStream
+        // server — unbounded growth over a long-running gateway.
+        let consumer_name = consumer.cached_info().name.clone();
 
         let mut results = Vec::new();
         let mut messages = consumer.messages().await.map_err(|e| {
@@ -391,6 +400,16 @@ impl EventStore for NatsEventStore {
                 Ok(Some(Err(_))) | Ok(None) => break,
                 Err(_) => break, // Timeout, no more messages available right now
             }
+        }
+
+        // Clean up the one-shot consumer. Best-effort: a failure to delete
+        // must not lose the events we already read.
+        if let Err(e) = stream.delete_consumer(&consumer_name).await {
+            tracing::warn!(
+                consumer = %consumer_name,
+                error = %e,
+                "Failed to delete one-shot replay consumer (will be reaped by JetStream retention)"
+            );
         }
 
         Ok(results)
