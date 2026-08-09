@@ -2499,9 +2499,12 @@ fn spawn_heartbeat_monitor(
                     );
                 }
             } else {
-                // Release TaskStore before the stale-assignment pass below.
-                // Keeping this guard alive would self-deadlock on the next
-                // task_store.lock().await and block every TaskService read.
+                // No stale workers — still must release the lock before the
+                // reassign_stale_assigned_subtasks call below re-acquires it.
+                // tokio::sync::Mutex is not reentrant: without this drop, the
+                // second `task_store.lock().await` deadlocks forever on the
+                // first clean tick (no stale workers), freezing the entire
+                // heartbeat monitor — stale-task/worker detection stops.
                 drop(store);
             }
 
