@@ -68,11 +68,8 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
     gRPC server can parse it with ``serde_json::from_slice``.
     Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
-    import time
+    import hashlib
 
-    ts_ms = int(time.time() * 1000)
-    # ponytail: bucket by 5s for NATS dedup (same as event payloads)
-    bucket = ts_ms // 5000
     subtasks = []
     for st in task.subtasks:
         entry: dict[str, Any] = {
@@ -96,13 +93,20 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
-        "message_id": f"{task.id}:update:{bucket}",
         "task_id": task.id,
         "status": _task_status_to_nats(task.status),
         "subtasks": subtasks,
     }
     if task.result is not None:
         payload["result"] = task.result
+
+    # The previous time bucket ID collapsed distinct snapshots emitted within
+    # five seconds (for example InProgress followed by Failed) into one NATS
+    # dedup key. Hash the snapshot instead: identical retries remain
+    # idempotent, while every actual state change reaches the Rust TaskStore.
+    snapshot = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:16]
+    payload["message_id"] = f"{task.id}:update:{digest}"
     return payload
 
 
@@ -1934,6 +1938,16 @@ class NatsWorker:
                 success=False,
             )
             await self._orchestrator.handle_subtask_result(result)
+
+        # The remote Worker also emits a minimal uc.task.update for the Rust
+        # TaskStore. That update contains only the one subtask and keeps the
+        # parent status at InProgress. Publish the authoritative Orchestrator
+        # snapshot after applying the result so the Dashboard sees the parent
+        # converge to Completed/Failed as well.
+        if self._publisher is not None and self._orchestrator is not None:
+            current = self._orchestrator.get_task_status(task_id)
+            if current is not None:
+                await self._publisher.publish_update(current)
 
     # ── Remote worker discovery ─────────────────────────────────────
 

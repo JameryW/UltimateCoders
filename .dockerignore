@@ -6,6 +6,7 @@ target/
 __pycache__/
 **/__pycache__/
 .trellis/
+.omp/
 .claude/
 node_modules/
 **/node_modules/

@@ -54,6 +54,12 @@ class TestClassifyLlmError:
         cls = _classify_llm_error(Exception("403 forbidden"))
         assert cls.kind == "permanent"
 
+    def test_classify_cli_not_signed_in_as_permanent(self) -> None:
+        cls = _classify_llm_error(
+            Exception("Error: Not signed in. Run grok login --device-code")
+        )
+        assert cls.kind == "permanent"
+
     def test_classify_unknown_error(self) -> None:
         cls = _classify_llm_error(Exception("Something weird happened"))
         assert cls.kind == "unknown"
@@ -267,6 +273,33 @@ class TestWorkerSetsErrorField:
         # error field should be set to the summary (root cause)
         assert result.error != ""
         assert "Build failed" in result.error
+
+    def test_sandbox_auth_failure_does_not_retry(self, stub_engine) -> None:
+        """Missing CLI credentials are permanent and should fail once."""
+        worker = self._make_worker(stub_engine)
+        subtask = self._make_subtask()
+        call_count = 0
+
+        async def _fail_auth(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return SubtaskResult(
+                subtask_id=subtask.id,
+                worker_id=worker.worker_id,
+                summary="Grok Build exited with code 1: Error: Not signed in.",
+                success=False,
+                error="Not signed in. Run grok login --device-code",
+            )
+
+        with patch.object(worker, "_execute_in_sandbox", side_effect=_fail_auth):
+            async def _noop_pub(*args, **kwargs):
+                pass
+            worker._publish_event = _noop_pub  # type: ignore[assignment]
+
+            result = asyncio.run(worker.execute_subtask(subtask))
+
+        assert result.success is False
+        assert call_count == 1
 
     def test_timeout_sets_error_field(self, stub_engine) -> None:
         """Timeout failure path sets error field."""

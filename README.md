@@ -106,9 +106,15 @@ cargo test           # Run all tests (with in-memory fallbacks)
 ### 3. Build the Python Package
 
 ```bash
-pip install maturin
-maturin develop      # Build Rust extension + install in editable mode
+python -m venv .venv
+# PowerShell: .venv\\Scripts\\Activate.ps1
+# Bash/WSL:    source .venv/bin/activate
+python -m pip install -e ".[test]"  # Runtime + test deps and Rust extension
 ```
+
+The editable install targets `crates/uc-python/Cargo.toml` and uses a
+platform-matched vendored `protoc` when a system `protoc` is not installed.
+This keeps a clean Windows checkout consistent with Docker and CI.
 
 ### 4. Use from Python
 
@@ -336,7 +342,7 @@ cargo fmt --all -- --check     # Format check
 ### Python
 
 ```bash
-maturin develop                # Build and install in editable mode
+python -m pip install -e ".[test]"
 pytest tests/python/ -v        # Run Python tests
 ```
 
@@ -487,11 +493,12 @@ cargo test --features indexing
 # Rust tests with real storage (requires Docker Compose)
 cargo test --features storage
 
-# Python tests (pure Python, no Rust extension needed)
-PYTHONPATH=python pytest tests/python/ -v
+# Python tests and runtime dependencies
+python -m pip install -e ".[test]"
+pytest tests/python/ -v
 
 # Python tests with Rust extension
-maturin develop && pytest tests/python/ -v
+python -m pip install -e ".[test]" && pytest tests/python/ -v
 
 # UC Orchestrator tests
 cd packages/uc-orchestrator && npx tsc --noEmit

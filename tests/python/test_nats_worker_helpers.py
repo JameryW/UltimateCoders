@@ -27,11 +27,24 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
 )
 from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
+from ultimate_coders.nats_worker import _make_task_update_payload
 
 
 def _make_worker() -> _NatsWorker:
     """Build a NatsWorker without running start() (no NATS/IO)."""
     return _NatsWorker(project_path="/tmp/test", mode="default")
+
+
+def test_task_update_message_id_changes_with_snapshot_state():
+    """Distinct snapshots in one dedup window must not collapse."""
+    task = Task(id="t-update", description="d", project_id="p", status=TaskStatus.IN_PROGRESS)
+    failed = Task(id="t-update", description="d", project_id="p", status=TaskStatus.FAILED)
+
+    in_progress_id = _make_task_update_payload(task)["message_id"]
+    failed_id = _make_task_update_payload(failed)["message_id"]
+
+    assert in_progress_id != failed_id
+    assert in_progress_id == _make_task_update_payload(task)["message_id"]
 
 
 # ── _load_js_seq ────────────────────────────────────────────────

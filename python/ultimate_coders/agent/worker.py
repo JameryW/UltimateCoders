@@ -795,8 +795,19 @@ class Worker:
                         if result.recent_tool_calls:
                             failure_data["recent_tools"] = json.dumps(result.recent_tool_calls)
 
-                        # Retry if attempts remain
-                        if attempt < self.MAX_RETRIES - 1:
+                        # Retry transient/unknown failures, but surface
+                        # permanent auth/configuration failures immediately.
+                        # A missing CLI login is deterministic and retrying it
+                        # three times only burns time before showing the same
+                        # actionable error in the dashboard.
+                        failure_class = _classify_llm_error(
+                            result.error or result.summary,
+                            retry_count=subtask.retry_count,
+                        )
+                        if (
+                            attempt < self.MAX_RETRIES - 1
+                            and failure_class.kind != "permanent"
+                        ):
                             subtask.retry_count += 1
                             result.retry_count = subtask.retry_count
                             delay = (
@@ -852,8 +863,16 @@ class Worker:
                         await self._workspace_manager.release(workspace_handle, merge=False)
                         workspace_handle = None  # ponytail: freed; re-acquire next attempt
 
-                    # Retry on exception too, if attempts remain
-                    if attempt < self.MAX_RETRIES - 1:
+                    # Retry transient/unknown exceptions. Permanent provider
+                    # auth/configuration errors cannot recover by waiting.
+                    exception_class = _classify_llm_error(
+                        e,
+                        retry_count=subtask.retry_count,
+                    )
+                    if (
+                        attempt < self.MAX_RETRIES - 1
+                        and exception_class.kind != "permanent"
+                    ):
                         subtask.retry_count += 1
                         delay = (
                             self.RETRY_DELAYS[attempt]
