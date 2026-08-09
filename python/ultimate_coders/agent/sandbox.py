@@ -1213,6 +1213,10 @@ class ClaudeCodeAdapter(AgentAdapter):
         args = [
             "-p", prompt,
             "--output-format", "stream-json",
+            # Claude Code requires verbose mode when stream-json is used with
+            # --print; without this flag current releases exit before making
+            # an API call.
+            "--verbose",
             "--max-turns", "20",
             "--dangerously-skip-permissions",
         ]
@@ -1264,10 +1268,11 @@ class ClaudeCodeAdapter(AgentAdapter):
             )
 
         if result.exit_code != 0:
+            failure_detail = (result.stderr.strip() or result.stdout.strip())[-500:]
             return AgentOutput(
-                summary=f"Claude Code exited with code {result.exit_code}: {result.stderr[:200]}",
+                summary=f"Claude Code exited with code {result.exit_code}: {failure_detail}",
                 success=False,
-                stderr_tail=stderr_tail,
+                stderr_tail=stderr_tail or failure_detail,
             )
 
         import json
@@ -1447,7 +1452,17 @@ class CodexAdapter(AgentAdapter):
             basename = os.path.basename(config_path)
             profile_name = basename[: -len(".config.toml")]
 
-        args = [prompt, "--sandbox", "workspace-write"]
+        # `codex <prompt>` starts the interactive TUI. Workers are
+        # non-interactive subprocesses, so use the explicit `exec` command;
+        # otherwise a headless worker fails with "stdin is not a terminal".
+        # `--skip-git-repo-check` keeps empty/non-git mounted workspaces
+        # executable while the workspace-write sandbox still limits edits.
+        args = [
+            "exec",
+            "--sandbox", "workspace-write",
+            "--skip-git-repo-check",
+            prompt,
+        ]
         if profile_name:
             args += ["--profile", profile_name]
 
@@ -1519,9 +1534,11 @@ class CodexAdapter(AgentAdapter):
             )
 
         if result.exit_code != 0:
+            failure_detail = (result.stderr.strip() or result.stdout.strip())[-500:]
             return AgentOutput(
-                summary=f"Codex exited with code {result.exit_code}: {result.stderr[:200]}",
+                summary=f"Codex exited with code {result.exit_code}: {failure_detail}",
                 success=False,
+                stderr_tail=failure_detail,
             )
 
         output = result.stdout.strip()

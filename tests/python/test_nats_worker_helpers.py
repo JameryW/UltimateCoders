@@ -499,6 +499,28 @@ async def test_build_snapshot_emits_real_task_timestamps():
     assert entry["created_at"] != 0
 
 
+async def test_build_snapshot_empty_task_store_is_still_available():
+    """An empty healthy task store must not be reported as disconnected."""
+    nw = _make_worker()
+    nw._dash_listworkers = AsyncMock(return_value={"available": True, "workers": []})
+    nw._dash_getschedulerstatus = AsyncMock(return_value={"available": False})
+
+    orch = MagicMock()
+    orch.engine = None
+    orch.tasks = {}
+    orch._dashboard_app = None
+    nw._orchestrator = orch
+
+    snap = await nw._build_snapshot()
+
+    assert snap["tasks"] == {
+        "available": True,
+        "tasks": [],
+        "total": 0,
+        "status_counts": {},
+    }
+
+
 # ── stop() shutdown reporting ──────────────────────────────────
 
 
