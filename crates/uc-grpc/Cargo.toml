@@ -32,6 +32,9 @@ messaging = ["async-nats", "uc-engine/messaging"]
 
 [build-dependencies]
 tonic-build = { workspace = true }
+# Keep local Windows/macOS builds self-contained; CI/Docker may still provide
+# a system protoc, which remains preferred through the PROTOC override.
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio-stream = "0.1"

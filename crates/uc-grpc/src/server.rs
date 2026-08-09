@@ -2480,6 +2480,11 @@ fn spawn_heartbeat_monitor(
                         "Removed stale workers from registry (no active subtasks to reassign)"
                     );
                 }
+            } else {
+                // Release TaskStore before the stale-assignment pass below.
+                // Keeping this guard alive would self-deadlock on the next
+                // task_store.lock().await and block every TaskService read.
+                drop(store);
             }
 
             // Revert Assigned subtasks no worker ever picked up (queue group had

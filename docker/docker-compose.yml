@@ -188,9 +188,10 @@ services:
   # The dashboard is available at http://localhost:8080/dashboard/
   # Use: docker compose --profile app up
   orchestrator:
+    image: docker-orchestrator:omp
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: docker/Dockerfile.omp
     profiles: ["app"]
     ports:
       - "8080:8080"   # Dashboard web UI + SSE
@@ -210,6 +211,11 @@ services:
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
+      UC_OMP_SCRIPT: "/usr/local/bin/uc-omp.sh"
+      UC_OMP_WORKSPACE: "/workspace/UltimateCoders"
+    volumes:
+      - ..:/workspace/UltimateCoders:rw
+    restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.dashboard", "--host", "0.0.0.0", "--port", "8080"]
 
   # ── Dashboard frontend (nginx) ──────────────────────────────────
@@ -256,7 +262,7 @@ services:
       nats:
         condition: service_healthy
       gateway:
-        condition: service_started
+        condition: service_healthy
     environment:
       UC_NATS_URL: "nats://nats:4222"
       UC_GRPC_ENDPOINT: "http://gateway:50051"
@@ -280,6 +286,7 @@ services:
       # Persist the clone across container restarts. Shared by all
       # same-host replicas (see note above) — cross-host gets its own.
       - worker_workspace:/workspace
+    restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.nats_worker", "--mode", "worker"]
 
   # ── UltimateCoders NATS Worker (default mode: Orchestrator) ──────
@@ -302,6 +309,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      gateway:
+        condition: service_healthy
     environment:
       UC_NATS_URL: "nats://nats:4222"
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
@@ -323,6 +332,7 @@ services:
       GIT_ASKPASS: "/usr/local/bin/git-askpass"
     volumes:
       - worker_workspace:/workspace
+    restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.nats_worker"]
 
 volumes:

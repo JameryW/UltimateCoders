@@ -71,6 +71,7 @@ pnpm-lock.yaml
 bun.lock
 uv.lock
 .playwright-mcp/
+.omp/
 
 # Lint/type caches
 .ruff_cache/

@@ -38,6 +38,18 @@ def _make_worker() -> _NatsWorker:
     return _NatsWorker(project_path="/tmp/test", mode="default")
 
 
+def test_task_update_message_id_changes_with_snapshot_state():
+    """Distinct snapshots in one dedup window must not collapse."""
+    task = Task(id="t-update", description="d", project_id="p", status=TaskStatus.IN_PROGRESS)
+    failed = Task(id="t-update", description="d", project_id="p", status=TaskStatus.FAILED)
+
+    in_progress_id = _make_task_update_payload(task)["message_id"]
+    failed_id = _make_task_update_payload(failed)["message_id"]
+
+    assert in_progress_id != failed_id
+    assert in_progress_id == _make_task_update_payload(task)["message_id"]
+
+
 # ── _load_js_seq ────────────────────────────────────────────────
 
 
@@ -788,24 +800,3 @@ def test_event_payload_message_id_no_5s_bucket_suffix():
     after = int(time.time() * 1000)
     suffix = int(p["message_id"].rsplit(":", 1)[1])
     assert before <= suffix <= after, "message_id suffix should be raw ms, not a bucket"
-
-
-def test_update_payload_message_id_uses_ms_not_bucket():
-    """Task updates published within 5s must not share a message_id (Rust
-    dedup would drop the second)."""
-    from ultimate_coders.agent.types import Task, TaskStatus
-
-    task = Task(
-        id="t1",
-        description="d",
-        project_id="p",
-        status=TaskStatus.IN_PROGRESS,
-        subtasks=[],
-    )
-    p = _make_task_update_payload(task)
-    suffix = int(p["message_id"].rsplit(":", 1)[1])
-    # suffix is ms; a 5s bucket would be < ts_ms//5000 which is ~2.7e8,
-    # while ms is ~1.7e12 — assert magnitude to catch a bucket regression.
-    import time
-
-    assert abs(suffix - int(time.time() * 1000)) < 5000, "suffix should be ms, not bucket"
