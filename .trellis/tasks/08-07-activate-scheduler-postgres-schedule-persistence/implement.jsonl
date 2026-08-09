@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Scheduler persistence contracts, ScheduleStore trait, restart-recovery semantics — the subsystem being activated."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Storage fallback pattern (env-gated PG, in-memory fallback) + migration conventions — mirrors UC_TASK_BACKEND activation."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust test patterns, naming, feature-gating conventions for the new constructor + activation code."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError wrapping for migration/store-construction failures; fallback-warn semantics."}
