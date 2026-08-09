@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ultimate_coders.agent.types import (
@@ -48,6 +48,24 @@ def test_task_update_message_id_changes_with_snapshot_state():
 
     assert in_progress_id != failed_id
     assert in_progress_id == _make_task_update_payload(task)["message_id"]
+
+
+def test_task_update_message_id_changes_with_subtask_snapshot_state():
+    """A subtask-only transition must reach Rust instead of being deduped."""
+    st = Subtask(id="st-update", description="d", status=SubtaskStatus.PENDING)
+    task = Task(
+        id="t-update-subtask",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+
+    pending_id = _make_task_update_payload(task)["message_id"]
+    st.status = SubtaskStatus.IN_PROGRESS
+    in_progress_id = _make_task_update_payload(task)["message_id"]
+
+    assert pending_id != in_progress_id
 
 
 # ── _load_js_seq ────────────────────────────────────────────────
@@ -787,6 +805,17 @@ def test_event_payload_message_id_distinct_for_rapid_same_type_events():
         "same-type events must get distinct message_ids (ms precision), "
         "else Rust dedup drops the second"
     )
+
+
+def test_event_payload_message_id_distinct_within_same_millisecond():
+    """A sequence suffix prevents collisions when two events share one ms."""
+    with patch("time.time", return_value=123.456789):
+        p1 = _make_task_event_payload("subtask_progress", "t1", "st-1", {"percent": 10})
+        p2 = _make_task_event_payload("subtask_progress", "t1", "st-1", {"percent": 50})
+
+    assert p1["message_id"] != p2["message_id"]
+    assert p1["message_id"].rsplit(":", 1)[1] == "123456"
+    assert p2["message_id"].rsplit(":", 1)[1] == "123456"
 
 
 def test_event_payload_message_id_no_5s_bucket_suffix():
