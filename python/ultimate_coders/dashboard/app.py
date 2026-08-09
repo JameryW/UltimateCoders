@@ -933,10 +933,11 @@ class DashboardApp:
             return None
 
         try:
-            # script provides a PTY; -q quiet, -c runs command
-            # ponytail: using script(1) as PTY — simpler than ptyprocess, works on Linux/macOS
+            # script provides a PTY; util-linux requires -c for the command
+            # (passing the command as a positional argument exits with
+            # "unexpected number of arguments" on Debian).
             pty_proc = subprocess.Popen(
-                ["script", "-q", "/dev/null", omp_script],
+                ["script", "-q", "-c", omp_script, "/dev/null"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

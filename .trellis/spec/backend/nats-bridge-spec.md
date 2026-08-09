@@ -180,6 +180,20 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 2. **Python `_local` methods**: `Orchestrator.pause_task_local()`/`resume_task_local()` update local state only — no `engine.pause_task()` call, no NATS publish
 3. **Idempotent guard**: If task is already in target state (e.g. already Paused when `task_paused` arrives), `_local` method returns False and does nothing
 
+### Task Update Deduplication and Terminal State Convergence
+
+- `uc.task.update` `message_id` is derived from the canonical task snapshot,
+  not only from a time bucket. Repeated delivery of the same snapshot remains
+  idempotent, while `InProgress → Failed` or `InProgress → Completed` updates
+  emitted within the same five-second NATS dedup window must remain distinct.
+- A remote Worker may publish a minimal subtask result update before the
+  default-mode NATS Worker applies the result to its Orchestrator. After that
+  application, the NATS Worker publishes the complete parent task snapshot so
+  the Rust TaskStore and Dashboard converge on the terminal parent status.
+- Heartbeat monitoring must release the TaskStore mutex before entering a
+  second lock acquisition or dispatching follow-up work; otherwise the
+  service-read RPCs (`ListTasks`, `GetTask`) can wait indefinitely.
+
 ---
 
 ## 4. Validation & Error Matrix

@@ -57,6 +57,12 @@ _PERMANENT_ERROR_MARKERS = (
     "not found",
     "bad request",
     "invalid request",
+    # CLI-backed providers surface missing local credentials as a login hint
+    # instead of an HTTP 401. Treat these as permanent until the container is
+    # provisioned with credentials; retrying only delays the actionable error.
+    "not signed in",
+    "login --device-code",
+    "xai_api_key",
 )
 
 
