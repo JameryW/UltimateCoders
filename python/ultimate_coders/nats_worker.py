@@ -20,6 +20,7 @@ Environment variables::
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -48,6 +49,13 @@ from ultimate_coders.engine import Engine
 
 logger = logging.getLogger(__name__)
 
+# A millisecond timestamp is enough to avoid the old 5-second bucket
+# collisions in normal operation, but two async callbacks can still run in
+# the same millisecond. Keep a process-local sequence in the opaque message
+# ID to make those events distinct as well. NATS redeliveries reuse the
+# already-published payload, so they retain the same ID and still deduplicate.
+_TASK_EVENT_MESSAGE_SEQUENCE = itertools.count()
+
 # ── NATS subject constants (must match Rust server.rs) ──────────
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
@@ -73,6 +81,7 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
     Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
     import hashlib
+
     subtasks = []
     for st in task.subtasks:
         entry: dict[str, Any] = {
@@ -133,11 +142,13 @@ def _make_task_event_payload(
     # (check_and_record_message_id, 5min TTL) dropped the second as a
     # duplicate, losing real state transitions. Use ms precision instead:
     # NATS redeliveries resend the identical payload (same message_id) so
-    # they still dedup; two genuinely distinct events land at different ms.
+    # they still dedup. The sequence closes the remaining same-ms collision
+    # window without changing the raw millisecond timestamp suffix.
     # Re-publishes after a worker retry get a new ms and may double-record,
     # but the event-store replay is idempotent (SubtaskProgress is a no-op,
     # SubtaskCompleted/Failed overwrite in place).
-    message_id = f"{task_id}:{event_type}:{subtask_id}:{ts_ms}"
+    sequence = next(_TASK_EVENT_MESSAGE_SEQUENCE)
+    message_id = f"{task_id}:{event_type}:{subtask_id}:{sequence}:{ts_ms}"
     payload: dict[str, Any] = {
         "v": 1,
         "message_id": message_id,
