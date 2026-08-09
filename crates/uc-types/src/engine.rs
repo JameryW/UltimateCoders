@@ -62,6 +62,24 @@ pub trait EngineApi: Send + Sync {
         ))
     }
 
+    /// Remove a single file from all indexes (text + AST + semantic).
+    ///
+    /// Used by the `uc.file.changed` subscriber when a worker reports a file
+    /// deletion (`change_type == "deleted"` or empty content). Without this,
+    /// deleted files leave stale symbols/embeddings in the shared index until
+    /// a full repo reindex. Default impl returns an error — only the
+    /// gateway-side LocalEngine implements this.
+    async fn delete_file_from_index(
+        &self,
+        repo_id: &str,
+        file_path: &str,
+    ) -> Result<(), EngineError> {
+        let _ = (repo_id, file_path);
+        Err(EngineError::IndexingError(
+            "delete_file_from_index not supported by this engine".into(),
+        ))
+    }
+
     // ── Memory ──────────────────────────────────────────────
 
     /// Read a memory entry.

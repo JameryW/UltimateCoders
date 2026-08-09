@@ -309,7 +309,7 @@ impl IndexPipeline {
     }
 
     /// Remove a single file from all indexes.
-    async fn remove_file_from_index(
+    pub async fn remove_file_from_index(
         &self,
         repo_id: &str,
         file_path: &str,
