@@ -288,7 +288,8 @@ pub struct TaskStore {
     event_store: Arc<dyn uc_engine::EventStore>,
     /// Optional async backend for task persistence (PostgreSQL, etc.).
     /// Write-ahead: fire-and-forget upsert on every mutation (HashMap stays
-    /// the read source of truth). Activated in PR1; read-path delegation is PR3.
+    /// the read source of truth). Startup recovery via `load_tasks_from_backend`
+    /// reloads the HashMap from PG; runtime reads never hit PG directly.
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
@@ -487,7 +488,8 @@ impl TaskStore {
     /// async backend call on the current tokio runtime, logging failures via
     /// `tracing::warn`. No-op when `task_backend` is `None` or no runtime is
     /// running (e.g. sync unit tests). The HashMap remains the read source of
-    /// truth; PG is write-ahead for future restart recovery (PR3 adds reads).
+    /// truth; PG is write-ahead for restart recovery (`load_tasks_from_backend`
+    /// reloads it on startup).
     fn persist_task(&self, task: &uc_types::Task) {
         if let Some(backend) = &self.task_backend {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -507,9 +509,10 @@ impl TaskStore {
     ///
     /// Used at the two submit points (`submit_task`, `submit_task_pending`)
     /// and the create-if-not-exists path in `update_task`. The backend's
-    /// `update_task` is currently a plain UPDATE (PR2 will make it upsert), so
-    /// the first persist must go through `submit_task` (INSERT) to ensure the
-    /// row exists before subsequent `update_task` calls hit it.
+    /// `update_task` is an upsert (INSERT ON CONFLICT, see task_store.rs), so
+    /// `persist_task` alone would suffice — this explicit INSERT is kept so the
+    /// first write uses the cheaper single-row INSERT path rather than the
+    /// upsert's conflict check.
     fn persist_new_task(&self, task: &uc_types::Task) {
         if let Some(backend) = &self.task_backend {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -898,8 +901,8 @@ impl TaskStore {
         }
 
         // Persist to backend: submit_task (INSERT) for newly-created tasks,
-        // update_task (UPDATE) for existing ones. PR2 will make update_task
-        // an upsert, collapsing these into one path.
+        // update_task (upsert) for existing ones. Both persist paths are
+        // fire-and-forget; the first write uses the plain INSERT for clarity.
         if is_new_task {
             self.persist_new_task(&updated);
         } else {
@@ -2362,14 +2365,29 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
                                 if fc.content.is_empty()
                                     || fc.change_type == "deleted"
                                 {
-                                    // ponytail: delete reindex not wired —
-                                    // reindex_file only handles content. Stale
-                                    // entries are cleaned on next full reindex.
-                                    tracing::debug!(
-                                        repo_id = %fc.repo_id,
-                                        file_path = %fc.file_path,
-                                        "Skipping file-changed (empty/delete)"
-                                    );
+                                    // File deleted (or emptied) — remove its
+                                    // symbols/embeddings from the shared index
+                                    // so searches don't return stale hits.
+                                    match inner.engine.delete_file_from_index(
+                                        &fc.repo_id,
+                                        &fc.file_path,
+                                    ).await {
+                                        Ok(()) => {
+                                            tracing::info!(
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Removed deleted file from index"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                repo_id = %fc.repo_id,
+                                                file_path = %fc.file_path,
+                                                "Failed to remove deleted file from index"
+                                            );
+                                        }
+                                    }
                                     continue;
                                 }
                                 match inner.engine.reindex_file(
@@ -2481,9 +2499,12 @@ fn spawn_heartbeat_monitor(
                     );
                 }
             } else {
-                // Release TaskStore before the stale-assignment pass below.
-                // Keeping this guard alive would self-deadlock on the next
-                // task_store.lock().await and block every TaskService read.
+                // No stale workers — still must release the lock before the
+                // reassign_stale_assigned_subtasks call below re-acquires it.
+                // tokio::sync::Mutex is not reentrant: without this drop, the
+                // second `task_store.lock().await` deadlocks forever on the
+                // first clean tick (no stale workers), freezing the entire
+                // heartbeat monitor — stale-task/worker detection stops.
                 drop(store);
             }
 

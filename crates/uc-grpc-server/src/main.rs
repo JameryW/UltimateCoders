@@ -22,7 +22,7 @@ mod window_watcher;
 
 use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
-use uc_engine::scheduler::config::SchedulerFileConfig;
+use uc_engine::scheduler::{config::SchedulerFileConfig, PostgresScheduleStore, ScheduleStore};
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
 use uc_grpc::AuthInterceptor;
@@ -123,6 +123,61 @@ async fn create_task_backend() -> (
         _ => {
             tracing::info!("TaskStore using in-memory backend");
             (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
+        }
+    }
+}
+
+/// Create a scheduler `ScheduleStore` based on environment configuration.
+///
+/// # Schedule backend (`UC_SCHEDULE_BACKEND`)
+/// - `postgres` + `UC_DATABASE_URL`: PostgreSQL persistence (survives restart;
+///   jobs recovered by `SchedulerService::start()` on boot)
+/// - Default / unset: in-memory (no persistence — jobs lost on restart)
+///
+/// Returns `None` for the in-memory case (the engine constructs an
+/// in-memory store itself when no store is injected). Mirrors the
+/// `UC_TASK_BACKEND` / `UC_EVENT_BACKEND` activation pattern. On connection
+/// failure or missing `UC_DATABASE_URL`, falls back to `None` with a warning
+/// rather than aborting startup.
+async fn create_schedule_store() -> Option<Arc<dyn ScheduleStore>> {
+    match std::env::var("UC_SCHEDULE_BACKEND").as_deref() {
+        #[cfg(feature = "storage")]
+        Ok("postgres") => {
+            let db_url = std::env::var("UC_DATABASE_URL").unwrap_or_else(|_| {
+                tracing::warn!(
+                    "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set, using in-memory scheduler store"
+                );
+                String::new()
+            });
+            if db_url.is_empty() {
+                return None;
+            }
+            // connect() builds a dedicated pool + runs idempotent migrations
+            // (scheduled_tasks + execution_history). Mirrors PostgresTaskBackend::new.
+            match PostgresScheduleStore::connect(&db_url).await {
+                Ok(store) => {
+                    tracing::info!("SchedulerService using PostgreSQL schedule store (durable)");
+                    Some(Arc::new(store) as Arc<dyn ScheduleStore>)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "PostgreSQL schedule store unavailable: {}, using in-memory",
+                        e
+                    );
+                    None
+                }
+            }
+        }
+        #[cfg(not(feature = "storage"))]
+        Ok("postgres") => {
+            tracing::warn!(
+                "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled, using in-memory scheduler store"
+            );
+            None
+        }
+        _ => {
+            tracing::info!("SchedulerService using in-memory store (jobs lost on restart)");
+            None
         }
     }
 }
@@ -405,8 +460,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment
     let config = EngineConfig::from_env();
 
+    // Create the scheduler store (PostgreSQL when UC_SCHEDULE_BACKEND=postgres,
+    // else None → in-memory). Built BEFORE the engine so the store is set at
+    // construction and `SchedulerService::start()` reads PG during restart
+    // recovery. Mirrors create_task_backend() timing.
+    let schedule_store = create_schedule_store().await;
+
     // Create local engine (with fallback to in-memory if storage is unavailable)
-    let engine = match LocalEngine::new(config).await {
+    let engine = match LocalEngine::new_with_scheduler_store(config, schedule_store).await {
         Ok(e) => {
             tracing::info!("LocalEngine created with storage backends");
             e

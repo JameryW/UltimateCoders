@@ -238,12 +238,25 @@ impl CheckpointManager {
                     subtask_id,
                     worker_id,
                 } => {
-                    subtasks.push(SubtaskSnapshot {
-                        subtask_id: subtask_id.0.clone(),
-                        status: "assigned".to_string(),
-                        assigned_worker: Some(worker_id.0.clone()),
-                        result_summary: None,
-                    });
+                    let sid = subtask_id.0.clone();
+                    // Dedup: a re-assigned subtask (recoverable failure →
+                    // re-dispatch) emits a second SubtaskAssigned for the same
+                    // subtask_id. Unconditionally pushing would create a
+                    // duplicate entry — the original (e.g. "completed") plus a
+                    // stale "assigned" — which then skews determine_task_status.
+                    // Mirrors the guard in apply_event_to_snapshot.
+                    if let Some(st) = subtasks.iter_mut().find(|s| s.subtask_id == sid) {
+                        st.status = "assigned".to_string();
+                        st.assigned_worker = Some(worker_id.0.clone());
+                        st.result_summary = None;
+                    } else {
+                        subtasks.push(SubtaskSnapshot {
+                            subtask_id: sid,
+                            status: "assigned".to_string(),
+                            assigned_worker: Some(worker_id.0.clone()),
+                            result_summary: None,
+                        });
+                    }
                 }
                 AgentEventType::SubtaskStarted {
                     task_id: _,
@@ -295,25 +308,7 @@ impl CheckpointManager {
 
     /// Determine overall task status from subtask states.
     fn determine_task_status(&self, subtasks: &[SubtaskSnapshot]) -> String {
-        if subtasks.is_empty() {
-            return "created".to_string();
-        }
-
-        let all_completed = subtasks.iter().all(|s| s.status == "completed");
-        let any_failed = subtasks.iter().any(|s| s.status == "failed");
-        let any_in_progress = subtasks
-            .iter()
-            .any(|s| s.status == "in_progress" || s.status == "assigned");
-
-        if all_completed {
-            "completed".to_string()
-        } else if any_failed {
-            "failed".to_string()
-        } else if any_in_progress {
-            "in_progress".to_string()
-        } else {
-            "pending".to_string()
-        }
+        derive_task_status(subtasks)
     }
 
     /// Find the latest snapshot for a task from the in-memory store.
@@ -335,6 +330,36 @@ impl CheckpointManager {
         }
 
         Ok(latest)
+    }
+}
+
+/// Derive the overall task status from subtask states.
+///
+/// Used both by `create_snapshot` (writes a fresh snapshot) and by
+/// `apply_event_to_snapshot` (replay). Keeping them on the same derivation
+/// ensures a recovered snapshot's `status` matches one written directly —
+/// previously replay set status to "in_progress" on the first SubtaskAssigned
+/// and never re-derived it, so an all-completed task recovered as
+/// "in_progress".
+fn derive_task_status(subtasks: &[SubtaskSnapshot]) -> String {
+    if subtasks.is_empty() {
+        return "created".to_string();
+    }
+
+    let all_completed = subtasks.iter().all(|s| s.status == "completed");
+    let any_failed = subtasks.iter().any(|s| s.status == "failed");
+    let any_in_progress = subtasks
+        .iter()
+        .any(|s| s.status == "in_progress" || s.status == "assigned");
+
+    if all_completed {
+        "completed".to_string()
+    } else if any_failed {
+        "failed".to_string()
+    } else if any_in_progress {
+        "in_progress".to_string()
+    } else {
+        "pending".to_string()
     }
 }
 
@@ -372,8 +397,17 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
             subtask_id,
             worker_id,
         } => {
+            // Dedup: a re-assigned subtask (recoverable failure →
+            // re-dispatch) emits a second SubtaskAssigned for the same
+            // subtask_id. Update the existing entry back to "assigned"
+            // rather than leaving stale "completed"/"failed" status or
+            // pushing a duplicate. Mirrors collect_subtask_states.
             let sid = subtask_id.0.clone();
-            if !snapshot.subtasks.iter().any(|s| s.subtask_id == sid) {
+            if let Some(st) = snapshot.subtasks.iter_mut().find(|s| s.subtask_id == sid) {
+                st.status = "assigned".to_string();
+                st.assigned_worker = Some(worker_id.0.clone());
+                st.result_summary = None;
+            } else {
                 snapshot.subtasks.push(SubtaskSnapshot {
                     subtask_id: sid,
                     status: "assigned".to_string(),
@@ -413,6 +447,9 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
                 st.status = if *success { "completed" } else { "failed" }.to_string();
                 st.result_summary = Some(summary.clone());
             }
+            // Re-derive task status so a recovered snapshot matches one
+            // written by create_snapshot (e.g. all subtasks done → "completed").
+            snapshot.status = derive_task_status(&snapshot.subtasks);
         }
         AgentEventType::SubtaskFailed {
             task_id: _,
@@ -435,6 +472,7 @@ fn apply_event_to_snapshot(snapshot: &mut TaskSnapshot, event: &AgentEventType) 
                 .to_string();
                 st.result_summary = Some(error.clone());
             }
+            snapshot.status = derive_task_status(&snapshot.subtasks);
         }
         AgentEventType::TaskPaused { .. } => {
             snapshot.status = "paused".to_string();
@@ -589,6 +627,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recover_derives_completed_status_from_subtasks() {
+        // Regression: replaying SubtaskCompleted used to leave snapshot.status
+        // at "in_progress" (set by the prior SubtaskAssigned). Status must be
+        // re-derived from subtask states so a recovered snapshot matches one
+        // written by create_snapshot.
+        let store = Arc::new(InMemoryEventStore::new());
+        let manager = CheckpointManager::new(store, CheckpointConfig::default());
+
+        let task_id = "test-task-status";
+        let subtask_id = TaskId::new();
+        let worker_id = WorkerId::new();
+
+        manager
+            .record_event(
+                "agent.events.test-task-status",
+                AgentEventType::TaskCreated {
+                    task_id: TaskId(task_id.to_string()),
+                    description: "Status derivation test".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        manager
+            .record_event(
+                "agent.events.test-task-status",
+                AgentEventType::SubtaskAssigned {
+                    task_id: TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    worker_id: worker_id.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        manager
+            .record_event(
+                "agent.events.test-task-status",
+                AgentEventType::SubtaskCompleted {
+                    task_id: TaskId(task_id.to_string()),
+                    subtask_id: subtask_id.clone(),
+                    summary: "Done".to_string(),
+                    success: true,
+                    modified_files: Vec::new(),
+                    output: String::new(),
+                    simulated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        let state = manager.recover(task_id).await.unwrap();
+        assert_eq!(state.subtasks.len(), 1);
+        assert_eq!(state.subtasks[0].status, "completed");
+        // The bug: this was "in_progress".
+        assert_eq!(state.status, "completed");
+    }
+
+    #[tokio::test]
     async fn auto_snapshot_at_interval() {
         let store = Arc::new(InMemoryEventStore::new());
         let config = CheckpointConfig {
@@ -650,5 +745,71 @@ mod tests {
 
         let events = manager.list_events(task_id, 0).await.unwrap();
         assert_eq!(events.len(), 2);
+    }
+
+    /// A recoverable failure followed by re-dispatch emits a second
+    /// SubtaskAssigned for the same subtask_id. Both the fresh-snapshot path
+    /// (collect_subtask_states) and the replay path (apply_event_to_snapshot)
+    /// must reset the subtask back to "assigned" with a single entry — not
+    /// duplicate it and not leave stale "recoverable_failed" status.
+    #[tokio::test]
+    async fn reassignment_resets_subtask_no_duplicate() {
+        let store = Arc::new(InMemoryEventStore::new());
+        let manager = CheckpointManager::new(store, CheckpointConfig::default());
+
+        let task_id = "test-reassign";
+        let subtask_id = TaskId::new();
+
+        // assigned → recoverable_failed → re-assigned (recoverable retry)
+        for event in [
+            AgentEventType::TaskCreated {
+                task_id: TaskId(task_id.to_string()),
+                description: "reassign test".to_string(),
+            },
+            AgentEventType::SubtaskAssigned {
+                task_id: TaskId(task_id.to_string()),
+                subtask_id: subtask_id.clone(),
+                worker_id: WorkerId::new(),
+            },
+            AgentEventType::SubtaskFailed {
+                task_id: TaskId(task_id.to_string()),
+                subtask_id: subtask_id.clone(),
+                error: "boom".to_string(),
+                recoverable: true,
+                stderr_tail: String::new(),
+                recent_tools: String::new(),
+            },
+            AgentEventType::SubtaskAssigned {
+                task_id: TaskId(task_id.to_string()),
+                subtask_id: subtask_id.clone(),
+                worker_id: WorkerId::new(),
+            },
+        ] {
+            manager
+                .record_event("agent.events.test-reassign", event)
+                .await
+                .unwrap();
+        }
+
+        // Replay path (apply_event_to_snapshot via recover-from-scratch):
+        // no snapshot exists, so all events replay through the apply fn.
+        let state = manager.recover(task_id).await.unwrap();
+        assert_eq!(
+            state.subtasks.len(),
+            1,
+            "reassignment must not duplicate the subtask entry"
+        );
+        assert_eq!(
+            state.subtasks[0].status, "assigned",
+            "reassignment must reset stale recoverable_failed back to assigned"
+        );
+        assert_eq!(state.subtasks[0].result_summary, None);
+
+        // Fresh-snapshot path (collect_subtask_states via create_snapshot)
+        let snap = manager.create_snapshot(task_id).await.unwrap();
+        let _ = snap;
+        let fresh = manager.recover(task_id).await.unwrap();
+        assert_eq!(fresh.subtasks.len(), 1);
+        assert_eq!(fresh.subtasks[0].status, "assigned");
     }
 }

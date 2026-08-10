@@ -1064,6 +1064,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_command_persists_through_store() {
+        // Regression: PostgresScheduleStore previously dropped verify_command
+        // on save/load/update (the column didn't exist). The in-memory store
+        // is the contract reference — verify the field round-trips so the
+        // trait contract is locked, and the Postgres impl (which mirrors this
+        // shape) is held to the same standard.
+        let store = super::super::store::InMemoryScheduleStore::new();
+        let mut task = make_cron_task("0 22 * * *");
+        task.verify_command = Some("cargo check".to_string());
+
+        store.save_task(&task).await.unwrap();
+        let loaded = store.load_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(
+            loaded.verify_command.as_deref(),
+            Some("cargo check"),
+            "verify_command must survive save→load"
+        );
+
+        // Update with a different command
+        let mut updated = loaded.clone();
+        updated.verify_command = Some("cargo test".to_string());
+        store.update_task(&updated).await.unwrap();
+        let reloaded = store.load_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(
+            reloaded.verify_command.as_deref(),
+            Some("cargo test"),
+            "verify_command must survive update→load"
+        );
+
+        // Clearing to None must also persist
+        let mut cleared = reloaded.clone();
+        cleared.verify_command = None;
+        store.update_task(&cleared).await.unwrap();
+        let final_load = store.load_task(&task.id).await.unwrap().unwrap();
+        assert!(
+            final_load.verify_command.is_none(),
+            "verify_command=None must survive update→load"
+        );
+    }
+
+    #[tokio::test]
     async fn remove_job_deletes_from_store() {
         let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
         let service = SchedulerService::with_store(store.clone());

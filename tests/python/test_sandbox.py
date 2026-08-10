@@ -168,6 +168,7 @@ class TestClaudeCodeAdapter:
         assert "Fix the bug" in request["args"]
         assert "--output-format" in request["args"]
         assert "stream-json" in request["args"]
+        assert "--verbose" in request["args"]
         assert "--dangerously-skip-permissions" in request["args"]
         assert request["working_dir"] == "/tmp/project"
 
@@ -190,10 +191,11 @@ class TestClaudeCodeAdapter:
 
     def test_parse_output_failure(self):
         adapter = ClaudeCodeAdapter()
-        result = ExecResult(exit_code=1, stderr="API error")
+        result = ExecResult(exit_code=1, stdout="{\"error\":\"authentication_failed\"}")
         output = adapter.parse_output(result)
         assert not output.success
         assert "exited with code 1" in output.summary
+        assert "authentication_failed" in output.summary
 
     def test_parse_output_non_json(self):
         adapter = ClaudeCodeAdapter()
@@ -321,9 +323,11 @@ class TestCodexAdapter:
         request = adapter.build_request("Implement feature", "/tmp/project", config)
 
         assert request["command"] == "codex"
+        assert request["args"][0] == "exec"
         assert "Implement feature" in request["args"]
         assert "--sandbox" in request["args"]
         assert "workspace-write" in request["args"]
+        assert "--skip-git-repo-check" in request["args"]
 
     def test_parse_output_success(self):
         adapter = CodexAdapter()
@@ -345,9 +349,10 @@ class TestCodexAdapter:
 
     def test_parse_output_failure(self):
         adapter = CodexAdapter()
-        result = ExecResult(exit_code=1, stderr="Error")
+        result = ExecResult(exit_code=1, stdout="Not logged in")
         output = adapter.parse_output(result)
         assert not output.success
+        assert "Not logged in" in output.summary
 
 
 # ── DecomposeAdapter tests ──────────────────────────────────────
@@ -1183,8 +1188,10 @@ class TestCodexAdapterBuildRequest:
         config = SandboxConfig(project_path="/tmp/project")
         request = adapter.build_request("Fix bug", "/tmp/project", config)
         assert request["command"] == "codex"
+        assert request["args"][0] == "exec"
         assert "--sandbox" in request["args"]
         assert "workspace-write" in request["args"]
+        assert "--skip-git-repo-check" in request["args"]
         assert request.get("_temp_files", []) == []
 
     def test_subtask_config_mcp_creates_temp_toml(self):

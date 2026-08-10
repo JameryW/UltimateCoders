@@ -466,7 +466,8 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_PROJECT_PATH` | - | Project path for sandbox execution |
 | `UC_CODING_AGENT` | `grok-build` | Worker coding agent (`grok-build`/`grok`, `claude-code`, or `codex`) |
 | `XAI_API_KEY` | - | xAI API key for the default Grok Build worker agent |
-| `ANTHROPIC_API_KEY` | - | Anthropic API key for LLM calls |
+| `ANTHROPIC_API_KEY` | - | Anthropic API key for Claude Code calls |
+| `OPENAI_API_KEY` | - | OpenAI API key for Codex calls |
 
 Docker Compose default credentials:
 
