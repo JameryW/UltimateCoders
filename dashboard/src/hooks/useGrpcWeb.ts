@@ -7,6 +7,11 @@ import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
 import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema, CancelTaskRequestSchema } from "@/grpc/engine_pb";
 import type { TaskEvent } from "@/types/dashboard";
+import type { UcSubmitResult, UcTaskActionResult } from "@/lib/ucCommands";
+
+type GrpcSubmitResult = UcSubmitResult;
+type GrpcTaskActionResult = UcTaskActionResult;
+export type { GrpcSubmitResult, GrpcTaskActionResult };
 
 /** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
@@ -79,14 +84,6 @@ export type GrpcConnectionState =
   | "connected"
   | "error"
   | "reconnecting";
-
-export interface GrpcSubmitResult {
-  success: boolean;
-  taskId: string;
-  status: string;
-  subtaskCount: number;
-  subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string }>;
-}
 
 /** #2: Normalize a gRPC timestamp to ISO string.
  *  Handles: bigint microseconds (>1e15), bigint milliseconds, ISO strings, numeric strings. */
@@ -381,7 +378,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, [getTransport]);
 
   /** Pause a running task via gRPC-Web. */
-  const pauseTask = useCallback(async (taskId: string) => {
+  const pauseTask = useCallback(async (taskId: string): Promise<GrpcTaskActionResult> => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
     const req = create(PauseTaskRequestSchema, { taskId });
@@ -390,7 +387,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, [getTransport]);
 
   /** Resume a paused task via gRPC-Web. */
-  const resumeTask = useCallback(async (taskId: string) => {
+  const resumeTask = useCallback(async (taskId: string): Promise<GrpcTaskActionResult> => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
     const req = create(ResumeTaskRequestSchema, { taskId });
@@ -399,7 +396,7 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
   }, [getTransport]);
 
   /** Cancel a task via gRPC-Web. */
-  const cancelTask = useCallback(async (taskId: string) => {
+  const cancelTask = useCallback(async (taskId: string): Promise<GrpcTaskActionResult> => {
     const transport = getTransport();
     const client = createClient(TaskService, transport);
     const req = create(CancelTaskRequestSchema, { taskId });

@@ -4,9 +4,10 @@ import { FileBrowser, type FileBrowserNavigateEvent } from "@/components/panels/
 import { SearchPanel } from "@/components/panels/SearchPanel";
 import { TasksPanel } from "@/components/panels/TasksPanel";
 import { WorkersPanel } from "@/components/panels/WorkersPanel";
-import type { GrpcConnectionState, GrpcSubmitResult } from "@/hooks/useGrpcWeb";
+import type { GrpcConnectionState, GrpcSubmitResult, GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { DashboardConnectionState } from "@/hooks/useDashboardGrpc";
 import type { Theme } from "@/hooks/useTheme";
+import { executeUcCommand } from "@/lib/ucCommands";
 import type {
   DashboardEvent,
   HealthData,
@@ -52,9 +53,10 @@ interface TerminalDashboardProps {
   selectedTask: TaskSummary | null;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string | null) => void;
-  onPauseTask: (taskId: string) => void;
-  onResumeTask: (taskId: string) => void;
-  onCancelTask: (taskId: string) => void;
+  onPauseTask: (taskId: string) => Promise<GrpcTaskActionResult>;
+  onResumeTask: (taskId: string) => Promise<GrpcTaskActionResult>;
+  onCancelTask: (taskId: string) => Promise<GrpcTaskActionResult>;
+  onRefresh: () => Promise<void>;
   onFlush: () => void;
   grpcSubmitTask?: (description: string, projectId: string) => Promise<GrpcSubmitResult>;
   onTaskCreated: (taskId: string) => void;
@@ -258,6 +260,7 @@ export function TerminalDashboard({
   onPauseTask,
   onResumeTask,
   onCancelTask,
+  onRefresh,
   onFlush,
   grpcSubmitTask,
   onTaskCreated,
@@ -278,85 +281,48 @@ export function TerminalDashboard({
   }, []);
 
   const selectedTaskForCommand = selectedTaskId ?? selectedTask?.id ?? tasks.tasks[0]?.id;
-  const runTaskAction = useCallback(async (action: (taskId: string) => void, label: string, taskId?: string) => {
-    if (!taskId) {
-      setNotice({ text: `${label} 需要先选择一个任务`, tone: "warn" });
-      return;
-    }
-    setBusy(true);
-    try {
-      action(taskId);
-      setNotice({ text: `${label} 已发送到真实 TaskService · ${shortId(taskId)}`, tone: "success" });
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
   const runCommand = useCallback(async (rawValue = command) => {
     const raw = rawValue.trim();
     if (!raw) return;
     setLastCommand(raw);
-    const [name, ...parts] = raw.split(/\s+/);
-    const action = name?.replace(/^\//, "").toLowerCase();
-    const target = parts[0] ?? selectedTaskForCommand;
-    if (action === "status" || action === "refresh") {
-      setView("overview");
-      setNotice({ text: `status · ${connected ? "engine connected" : "engine disconnected"} · ${workers.total} workers · ${tasks.total} tasks`, tone: connected ? "success" : "warn" });
-    } else if (action === "tasks") {
-      setView("tasks");
-      setNotice({ text: "tasks · real TaskService data", tone: "info" });
-    } else if (action === "workers") {
-      setView("workers");
-      setNotice({ text: "workers · real WorkerRegistry data", tone: "info" });
-    } else if (action === "search") {
-      setView("search");
-      setNotice({ text: "search · EngineService retrieval surface", tone: "info" });
-    } else if (action === "logs" || action === "events") {
-      setView("logs");
-      setNotice({ text: "logs · real DashboardService events", tone: "info" });
-    } else if (action === "pause") {
-      await runTaskAction(onPauseTask, "pause", target);
-    } else if (action === "resume") {
-      await runTaskAction(onResumeTask, "resume", target);
-    } else if (action === "cancel") {
-      await runTaskAction(onCancelTask, "cancel", target);
-    } else if (action === "submit") {
-      const description = parts.join(" ").replace(/^['"]|['"]$/g, "").trim();
-      if (!description || !grpcSubmitTask) {
-        setView("tasks");
-        setNotice({ text: "submit 需要描述；可在 Tasks 面板使用真实提交表单", tone: "warn" });
-      } else {
-        setBusy(true);
-        try {
-          const result = await grpcSubmitTask(description, "");
-          if (result.success) {
-            onOptimisticAdd(result.taskId, description, "", result.subtaskCount, result.subtasks.map((subtask) => ({
+    setBusy(true);
+    try {
+      const result = await executeUcCommand(raw, selectedTaskForCommand, {
+        refresh: onRefresh,
+        pause: onPauseTask,
+        resume: onResumeTask,
+        cancel: onCancelTask,
+        submit: async (description) => {
+          if (!grpcSubmitTask) {
+            return {
+              success: false,
+              taskId: "",
+              status: "TaskService unavailable",
+              subtaskCount: 0,
+              subtasks: [],
+            };
+          }
+          const submitResult = await grpcSubmitTask(description, "");
+          if (submitResult.success) {
+            onOptimisticAdd(submitResult.taskId, description, "", submitResult.subtaskCount, submitResult.subtasks.map((subtask) => ({
               id: subtask.id,
               description: subtask.description,
               status: subtask.status,
               depends_on: subtask.dependsOn,
               assigned_worker: subtask.assignedWorker,
             })));
-            onTaskCreated(result.taskId);
-            setNotice({ text: `submit · ${shortId(result.taskId)} 已进入真实 DAG`, tone: "success" });
-            setView("tasks");
-          } else {
-            setNotice({ text: `submit failed · ${result.status}`, tone: "error" });
+            onTaskCreated(submitResult.taskId);
           }
-        } catch (error) {
-          setNotice({ text: `submit failed · ${String(error)}`, tone: "error" });
-        } finally {
-          setBusy(false);
-        }
-      }
-    } else if (action === "help") {
-      setNotice({ text: "commands: status · tasks · workers · search · logs · submit · pause · resume · cancel", tone: "info" });
-    } else {
-      setNotice({ text: `未知命令 “${action ?? raw}” · 输入 help 查看命令`, tone: "warn" });
+          return submitResult;
+        },
+      });
+      if (result.view) setView(result.view);
+      setNotice({ text: result.message, tone: result.tone });
+    } finally {
+      setBusy(false);
+      setCommand("");
     }
-    setCommand("");
-  }, [command, connected, grpcSubmitTask, onCancelTask, onOptimisticAdd, onPauseTask, onResumeTask, onTaskCreated, runTaskAction, selectedTaskForCommand, tasks.total, workers.total]);
-
+  }, [command, grpcSubmitTask, onCancelTask, onOptimisticAdd, onPauseTask, onRefresh, onResumeTask, onTaskCreated, selectedTaskForCommand]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {

@@ -3,6 +3,8 @@ import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
+import { useGrpcWeb } from "@/hooks/useGrpcWeb";
+import { executeUcCommand } from "@/lib/ucCommands";
 import "@xterm/xterm/css/xterm.css";
 
 type ConnState = "connecting" | "connected" | "disconnected" | "error";
@@ -47,6 +49,47 @@ function TuiTerminal({ auth, theme }: { auth: { token: string | null }; theme: s
   const [connState, setConnState] = useState<ConnState>("disconnected");
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [command, setCommand] = useState("");
+  const [commandNotice, setCommandNotice] = useState("共享 UC 命令层就绪");
+  const [commandBusy, setCommandBusy] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const {
+    connectionState: grpcState,
+    submitTask,
+    healthCheck,
+    listTasks,
+    pauseTask,
+    resumeTask,
+    cancelTask,
+  } = useGrpcWeb({ enabled: true });
+
+  const runCommand = useCallback(async (rawValue = command) => {
+    if (!rawValue.trim()) return;
+    setCommandBusy(true);
+    try {
+      const result = await executeUcCommand(rawValue, selectedTaskId, {
+        refresh: async () => {
+          await healthCheck();
+          const data = await listTasks();
+          setSelectedTaskId(data.tasks[0]?.id ?? null);
+        },
+        submit: async (description) => {
+          const result = await submitTask(description, "");
+          if (result.success) setSelectedTaskId(result.taskId);
+          return result;
+        },
+        pause: pauseTask,
+        resume: resumeTask,
+        cancel: cancelTask,
+      });
+      if (result.submitResult?.taskId) setSelectedTaskId(result.submitResult.taskId);
+      if (result.taskActionResult?.taskId) setSelectedTaskId(result.taskActionResult.taskId);
+      setCommandNotice(result.message);
+    } finally {
+      setCommandBusy(false);
+      setCommand("");
+    }
+  }, [cancelTask, command, healthCheck, listTasks, pauseTask, resumeTask, selectedTaskId, submitTask]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -203,6 +246,38 @@ function TuiTerminal({ auth, theme }: { auth: { token: string | null }; theme: s
           </button>
         )}
       </header>
+      <form
+        className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-color)] bg-[var(--bg-surface-alt)]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void runCommand();
+        }}
+      >
+        <span className="text-xs font-mono text-[var(--terminal-green)]">uc ❯</span>
+        <input
+          value={command}
+          onChange={(event) => setCommand(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void runCommand();
+            }
+          }}
+          placeholder='run "fix flaky heartbeat test"'
+          aria-label="tui uc command"
+          className="min-w-0 flex-1 bg-transparent text-xs font-mono text-[var(--text-primary)] outline-none"
+        />
+        <button
+          type="submit"
+          disabled={!command.trim() || commandBusy}
+          className="px-3 py-1 text-xs rounded border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-40"
+        >
+          执行
+        </button>
+        <span className="hidden md:block max-w-[42%] truncate text-[10px] text-[var(--text-secondary)]" title={commandNotice}>
+          {commandNotice} · gRPC {grpcState}
+        </span>
+      </form>
       <div ref={termRef} className="flex-1 px-1 py-1" />
     </div>
   );
