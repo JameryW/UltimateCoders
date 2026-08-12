@@ -34,6 +34,66 @@ UltimateCoders 把“终端里的 AI Coding”扩展成可观测、可调度、�
 | 检索与记忆 | Text + Semantic + AST 混合检索，TiKV/Qdrant/PostgreSQL 分层 Memory | 让 Coding Agent 获得跨仓库上下文，结果更稳定、更可复用 |
 | 可靠部署 | Rust Gateway、NATS、Docker、内存 fallback 和任务事件广播 | 从本地单机平滑演进到多 Worker 集群 |
 
+## Quick Start
+
+### 1. 安装依赖
+
+- Rust 1.75+（stable）
+- Python 3.9+
+- Bun（OMP runtime）
+- [Grok Build CLI](https://docs.x.ai/build/overview)（默认 Worker 执行器）
+- Docker Compose（可选，用于 TiKV、Qdrant、PostgreSQL 和 NATS）
+
+安装默认的 Grok Build Worker，并设置 xAI API key：
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+export XAI_API_KEY=your-key
+```
+
+### 2. 启动本机工作流
+
+```bash
+git clone https://github.com/JameryW/UltimateCoders.git
+cd UltimateCoders
+./run-omp.sh --build
+```
+
+`--build` 会先构建 Python 包；启动脚本默认拉起 gRPC Gateway、FastAPI Dashboard、Vite 产品界面和 OMP。若只需要 OMP，可使用 `./run-omp.sh --no-server`。
+
+启动后可从三个入口进入：
+
+| 入口 | 用途 |
+| --- | --- |
+| `http://localhost:5173/` | 产品首页：能力总览、执行链和 Command Deck |
+| `http://localhost:5173/#/dashboard` | 旧版运营 Dashboard：任务、Worker、事件、调度、检索、文件和指标 |
+| `http://localhost:5173/#/tui` | 真实 OMP PTY 终端：执行共享 UC 命令并查看实时输出 |
+
+常用命令：
+
+```text
+/uc submit <description>    提交任务
+/uc status                  查看任务状态
+/uc pause <task-id>         暂停任务
+/uc resume <task-id>        恢复任务
+/uc cancel <task-id>       取消任务
+```
+
+### 3. 启动其他模式
+
+```bash
+# 分布式集群：NATS + gRPC + 多个 Worker + OMP
+./run-cluster.sh --workers 2
+
+# 独立 Gateway：内存 fallback 或外部存储
+./run-gateway.sh up
+
+# Gateway + 本地存储容器
+./run-gateway.sh up --docker
+```
+
+更多构建、测试、配置和外部 Git 部署说明见下方 [Building](#building)、[Configuration](#configuration) 和 [Distributed Worker + External Git Deployment](#distributed-worker--external-git-deployment)。
+
 ## 页面预览 / Screenshots
 
 产品首页（`/`）展示完整能力、执行链、OMP 双向交互和 Command Deck；旧版运营 dashboard（`#/dashboard`）继续提供详细监控面板；`#/tui` 是连接真实 OMP PTY、Gateway TaskService 的交互式终端。下面的截图和视频覆盖这些入口。
@@ -99,222 +159,20 @@ UltimateCoders 面向大型仓库改造、并行交付、线上问题诊断和�
 
 另有 [TUI 交互细节视频](docs/videos/ultimatecoders-tui-demo.mp4)，用于查看命令栏、终端回显和 OMP WebSocket 连接的细节。
 
-### 核心流程
+## Runtime and architecture
 
-```text
-用户命令
-   │
-   ├─ Dashboard Command Deck（能力说明）
-   ├─ TUI 命令栏 / OMP
-   │
-   ▼
-OMP UC Extension → TaskService.SubmitTask
-   │
-   ▼
-任务拆解 → DAG 调度 → WorkerService / NATS 分发
-   │                         │
-   └──────── 实时事件 ←───────┘
-                 │
-                 ▼
-       OMP 输出 / TUI 输出 / Dashboard 状态 / Memory
-```
+The product dashboard (Vite + React) is available at `http://localhost:5173/` with the default Vite config. Its root route is the product overview; open `#/tui` for the real OMP PTY terminal connected to the Gateway TaskService over gRPC-Web. The existing operations dashboard remains at `#/dashboard`.
 
-## Quick Start
+See [docs/architecture.md](docs/architecture.md) for the detailed architecture reference. The runtime can be read in five layers:
 
-### Prerequisites
+| Layer | Responsibility | Main interfaces |
+| --- | --- | --- |
+| Command | OMP, TUI and Dashboard entry points | `/uc`, Command Deck, gRPC-Web |
+| Control | Task lifecycle, DAG scheduling and persistence | TaskService, TaskStore, control signals |
+| Execution | Local fallback and capability-aware Workers | WorkerService, NATS, sandbox |
+| Knowledge | Repository indexing, hybrid search and layered memory | Text, Semantic, AST, TiKV, Qdrant, PostgreSQL |
+| Events | Live progress, recovery and monitoring updates | TaskEvent, broadcast channel, SSE, WatchTask |
 
-- Rust 1.75+ (stable)
-- Python 3.9+
-- Bun (for OMP runtime)
-- [Grok Build CLI](https://docs.x.ai/build/overview) (for the default local worker)
-- Docker and Docker Compose (optional, for storage backends)
-
-For a local worker, install Grok Build and provide an xAI API key:
-
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
-export XAI_API_KEY=your-key
-```
-
-### 单机模式（推荐）
-
-```bash
-# 启动 OMP + gRPC server（gRPC server 默认启动，LocalWorker 懒启动）
-./run-omp.sh
-
-# 跳过 gRPC server
-./run-omp.sh --no-server
-
-# 首次运行需构建 Python 包
-./run-omp.sh --build
-```
-
-### 分布式集群模式
-
-```bash
-# 一键启动：NATS + gRPC server + N workers + OMP
-./run-cluster.sh
-
-# 自定义 worker 数量（默认 2）
-./run-cluster.sh --workers 4
-
-# 仅后端（不启动 OMP，适合 headless 场景）
-./run-cluster.sh --no-omp
-
-# 用 Docker 提供存储后端（TiKV + Qdrant + PostgreSQL + NATS）
-./run-cluster.sh --docker
-
-# 停止所有集群进程
-./run-cluster.sh --stop
-```
-
-### 独立部署模式（容器化 gateway）
-
-```bash
-# 仅 gateway 容器，存储走内存 fallback（或外部存储，见下方 env）
-./run-gateway.sh up
-
-# gateway + 本地存储容器（TiKV + Qdrant + PostgreSQL + NATS）
-./run-gateway.sh up --docker
-
-# 查看状态 / 日志 / 停止
-./run-gateway.sh status
-./run-gateway.sh logs
-./run-gateway.sh down [--docker]
-
-# 独立 gateway + OMP（OMP 连接容器 gateway）
-./run-omp.sh --standalone
-
-# 独立集群：容器 gateway + 存储 + 本机 workers
-./run-cluster.sh --standalone --workers 2
-```
-
-外部存储部署（默认模式，无 `--docker`）：导出 env 指向远端后端，空值 = 内存 fallback。
-
-```bash
-export UC_TIKV_PD_ENDPOINTS=pd.example:2379
-export UC_QDRANT_URL=http://qdrant.example:6334
-export UC_PG_URL=postgresql://user:pass@pg.example:5432/ultimate_coders
-export UC_NATS_URL=nats://nats.example:4222
-./run-gateway.sh up
-```
-
-### Docker Compose（存储后端）
-
-```bash
-docker compose -f docker/docker-compose.yml up -d
-```
-
-This starts TiKV, Qdrant, PostgreSQL, and NATS. See [Configuration](#configuration) for connection details.
-
-### 2. Build the Rust Core
-
-```bash
-cargo check          # Verify compilation
-cargo test           # Run all tests (with in-memory fallbacks)
-```
-
-### 3. Build the Python Package
-
-```bash
-python -m venv .venv
-# PowerShell: .venv\\Scripts\\Activate.ps1
-# Bash/WSL:    source .venv/bin/activate
-python -m pip install -e ".[test]"  # Runtime + test deps and Rust extension
-```
-
-The editable install targets `crates/uc-python/Cargo.toml` and uses a
-platform-matched vendored `protoc` when a system `protoc` is not installed.
-This keeps a clean Windows checkout consistent with Docker and CI.
-
-### 4. Use from Python
-
-```python
-from ultimate_coders.engine import create_engine
-
-# Local mode (Rust runs in-process)
-engine = create_engine(mode="local")
-
-# Health check
-status = engine.health()
-
-# Index a repository
-engine.index_repo("my-project", "/path/to/repo")
-
-# Search across indexed repos
-from ultimate_coders.search.query import SearchQuery
-query = SearchQuery("database connection").in_repo("my-project").text_mode()
-results = engine.search(query)
-
-# Memory operations
-engine.write_memory("task", "decisions", "Use PostgreSQL for metadata", task_id="t1")
-entry = engine.read_memory("task", "decisions", task_id="t1")
-```
-
-### 5. Start the gRPC Server
-
-```bash
-cargo run -p uc-grpc-server
-```
-
-Then connect from Python:
-
-```python
-engine = create_engine(mode="grpc", grpc_endpoint="http://localhost:50051")
-```
-
-### 6. Run UC Orchestrator
-
-```bash
-# Start OMP with UC extension (gRPC server starts by default)
-./run-omp.sh
-
-# Skip gRPC server (OMP only)
-./run-omp.sh --no-server
-```
-
-The UC Orchestrator runs inside OMP's terminal UI. Use `/uc submit <description>` to submit tasks, `/uc status` to check progress, and `/uc cancel/pause/resume` for control. Keyboard shortcuts: **Ctrl+T** for subtask tree overlay, **Ctrl+Shift+T** for task list.
-
-The OMP extension also registers LLM-callable tools:
-- `uc_task` — Task lifecycle: submit/cancel/pause/resume/status
-- `uc_worker` — Worker management: list workers / check load/capacity/heartbeat, `scale` the cluster to a target count (docker compose), or `deregister` a stale worker from the registry
-- `uc_memory` — Shared layered memory: read/write/search/delete (task/project/global scopes)
-- `uc_search` — Hybrid index search (text + semantic + AST) across indexed repos
-- `uc_index` — Index management: index_repo / list_repos / get_state / remove_index
-- `uc_file` — File operations: list_dir / get_file
-
-The product dashboard (Vite + React) is available at `http://localhost:5173/` with the default Vite config. Its root route is the product overview; open `#/tui` for the real OMP PTY terminal connected to the Gateway TaskService over gRPC-Web. The current local handoff uses port `4176` (`http://127.0.0.1:4176/`).
-
-## Architecture
-
-See [docs/architecture.md](docs/architecture.md) for the full architecture document.
-
-```
-+-------------------+     +-------------------------------+     +---------------+
-|   Python Worker   |     |  OMP + UC Extension           |     | TUI Web Shell |
-|  (NATS Worker /   |     |  +-------------------------+  |     +-------+-------+
-|   local fallback) |     |  │ Orchestrator Core       │  |     | (Vite/React)  |
-+--------+----------+     |  │  ├─ Scheduler (DAG)     │  |             |
-         |                |  │  ├─ TaskStore (SQLite)  │  |     +-------v-------+
-         | Engine API     |  │  ├─ GrpcBridge          │──┼────►│  uc-grpc-server|
-         | (PyO3/gRPC)    |  │  ├─ ControlSignals      │  |     +-------+-------+
-+--------v-----------+    |  │  └─ MemoryBridge (LLM) │  |             | broadcast
-|  Rust Core Engine  |    |  +-------------------------+  |             | channel
-|  +----------+      |    |  │ Coding Agent (OMP API)  │  |             | (TaskEvent)
-|  | Indexer  |      |    |  │  └─ runSubprocess       │  |             |
-|  +----------+      |    |  │     → claude -p ...     │  |             |
-|  +--------+ +----+ |    |  +-------------------------+  |             |
-|  | Search | |Mem | |    |  │ UI Components           │  |             |
-|  +--------+ +----+ |    |  │  ├─ ProgressWidget      │  |             |
-|  +----------+------| |    |  │  ├─ SubtaskTreeOverlay  │  |             |
-|  |Scheduler|Ckpt  | |    |  │  ├─ TaskListOverlay     │  |             |
-|  +----------+------| |    |  │  ├─ TaskResultRenderer  │  |             |
-+---+------+---+--+--+ +    |  │  └─ FooterStatus        │  |             |
-    |      |   |  |         +---------------+---------------+             |
- +--v--+ +v-+-v--v--+                        |                             |
- | TiKV | |Qdrant| PgSQL | NATS  <-----------+-----------------------------+
- +-----+ +------+-------+-------+   NATS pub/sub + gRPC WatchTask
-```
 
 ### Real-Time Event Flow
 
@@ -381,61 +239,15 @@ Multiple NATS Worker processes can collaborate on a single task:
 
 ### Repository Structure
 
-```
-ultimate-coders/
-├── Cargo.toml                # Workspace root
-├── pyproject.toml            # Maturin build config
-├── run-omp.sh                # Start OMP with UC extension (primary interface)
-├── run-cluster.sh            # Start local distributed cluster (NATS + workers)
-├── run-gateway.sh            # Manage standalone containerized gateway
-├── crates/
-│   ├── uc-types/             # Shared types + EngineApi trait
-│   ├── uc-engine/            # Core engine (LocalEngine implementation)
-│   ├── uc-grpc/              # gRPC server/client + proto + broadcast channel + NATS integration
-│   ├── uc-grpc-server/       # Standalone gRPC server binary
-│   └── uc-python/            # PyO3 Python binding
-├── packages/
-│   └── uc-orchestrator/      # OMP extension — task orchestration + rich TUI
-│       ├── src/
-│       │   ├── extension.ts  # Extension entry (commands, shortcuts, renderers)
-│       │   ├── orchestrator/ # Core orchestration logic
-│       │   │   ├── orchestrator.ts   # Main orchestrator (submit, cancel, pause, resume, DAG waves)
-│       │   │   ├── scheduler.ts      # DAG builder, wave splitter, circuit breaker
-│       │   │   ├── grpc-bridge.ts    # gRPC-Web client for TaskService (submit, watch, control)
-│       │   │   ├── memory-bridge.ts  # LLM tool: uc_memory (read/write/search/delete)
-│       │   │   ├── task-bridge.ts    # LLM tool: uc_task (submit/cancel/pause/resume/status)
-│       │   │   ├── index-bridge.ts   # LLM tool: uc_index (index_repo/list_repos/get_state/remove_index)
-│       │   │   ├── file-bridge.ts    # LLM tool: uc_file (list_dir/get_file)
-│       │   │   ├── worker-bridge.ts  # LLM tool: uc_worker (list/status/scale/deregister)
-│       │   │   ├── task-store.ts     # SQLite-backed task persistence
-│       │   │   ├── control-signal-subscriber.ts  # gRPC stream control signals
-│       │   │   └── events.ts         # Typed event emitter (orchestration ↔ UI)
-│       │   ├── ui/           # pi-tui components
-│       │   │   ├── progress-widget.ts       # Live subtask progress
-│       │   │   ├── subtask-tree-overlay.ts  # Ctrl+T overlay
-│       │   │   ├── task-list-overlay.ts     # Ctrl+Shift+T overlay
-│       │   │   ├── task-result-renderer.ts  # Custom message renderer
-│       │   │   ├── error-format.ts          # Error message formatting
-│       │   │   ├── status-renderer.ts       # Footer connection status
-│       │   │   └── status-formatter.ts      # Task list/detail formatting
-│       │   ├── agents/       # Agent definition prompts (decomposer, supervisor, worker)
-│       │   └── uc-rpc-server.ts  # JSONL stdio bridge for Python
-│       └── uc-rpc-server.test.ts
-├── python/
-│   └── ultimate_coders/      # Python ergonomic layer
-│       ├── engine.py         # create_engine() factory
-│       ├── agent/            # Worker + Sandbox + Scheduler
-│       ├── dashboard/        # FastAPI metrics + SSE streaming
-│       ├── repo_config.py    # uc.repos.yaml loader + RepoScanner auto-discovery
-│       ├── nats_worker.py    # NATS consumer/producer bridge
-│       ├── search/           # SearchQuery builder
-│       ├── memory/           # Memory read/write interface
-│       └── config.py         # Configuration loading
-├── dashboard/                # Vite + React product dashboard + TUI terminal
-├── docker/                   # Docker configs + Dockerfiles + compose + scheduler config
-├── tests/python/             # Python unit tests
-└── vendor/                   # oh-my-pi (OMP runtime)
-```
+| Path | Purpose |
+| --- | --- |
+| `crates/` | Rust core, Engine API, gRPC services and PyO3 binding |
+| `packages/uc-orchestrator/` | OMP extension, DAG orchestration, UC tools and terminal UI |
+| `python/ultimate_coders/` | Python Engine facade, Worker/Sandbox, search, memory and FastAPI dashboard |
+| `dashboard/` | Vite + React product homepage, legacy operations dashboard and TUI terminal |
+| `docker/` | Gateway, Worker, storage and compose configuration |
+| `tests/python/` | Python unit tests |
+| `run-omp.sh`, `run-cluster.sh`, `run-gateway.sh` | Local, clustered and standalone startup entry points |
 
 ## Building
 
