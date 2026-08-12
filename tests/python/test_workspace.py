@@ -9,8 +9,8 @@ Also verifies the local-only path still behaves as before when no
 from __future__ import annotations
 
 import os
-import stat
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
