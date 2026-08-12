@@ -550,71 +550,48 @@ class TestSandboxSubprocessCancellation:
     @pytest.mark.asyncio
     async def test_cancellation_kills_subprocess(self):
         import asyncio
-        import shutil
-        import subprocess as sp
-        from pathlib import Path
+        import sys
+        from unittest.mock import patch
 
         config = SandboxConfig(project_path="/tmp")
         manager = SandboxManager(config)
-        # Unique sleep duration so pgrep won't match unrelated processes.
-        unique_sleep = "299.37"
         request = {
-            "command": "sleep",
-            "args": [unique_sleep],
+            "command": sys.executable,
+            "args": ["-c", "import time; time.sleep(300)"],
             "timeout_secs": 300,
             "env_vars": {},
             "working_dir": "/tmp",
         }
 
+        # Capture the real process handle instead of inspecting the system
+        # process table. The latter is unavailable in restricted environments
+        # where pgrep cannot connect to the host process-list service.
+        created: dict[str, object] = {}
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+
+        async def _create_subprocess_exec(*args, **kwargs):
+            proc = await real_create_subprocess_exec(*args, **kwargs)
+            created["proc"] = proc
+            return proc
+
         # Cancel mid-execution (simulating the outer wait_for timeout cancel).
-        task = asyncio.ensure_future(manager._execute_subprocess(request))
-        def matching_processes(pattern: str) -> list[str]:
-            """Find matching command lines without requiring procps in Docker."""
-            pgrep = shutil.which("pgrep")
-            if pgrep:
-                result = sp.run(
-                    [pgrep, "-f", pattern],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                return result.stdout.splitlines()
+        with patch("asyncio.create_subprocess_exec", new=_create_subprocess_exec):
+            task = asyncio.ensure_future(manager._execute_subprocess(request))
+            for _ in range(20):
+                if "proc" in created:
+                    break
+                await asyncio.sleep(0.05)
 
-            proc_root = Path("/proc")
-            if not proc_root.is_dir():
-                return []
-            needle = pattern.encode()
-            matches = []
-            for entry in proc_root.iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    command_line = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
-                except OSError:
-                    continue
-                if needle in command_line:
-                    matches.append(entry.name)
-            return matches
+            assert "proc" in created, "subprocess was not created before cancel"
+            proc = created["proc"]
+            assert proc.returncode is None, "subprocess exited before cancellation"
 
-        # Give the subprocess a moment to spawn and be visible to the helper.
-        await asyncio.sleep(0.4)
-        # Confirm the subprocess is actually running before we cancel — otherwise
-        # the test would pass trivially without exercising the kill path.
-        assert matching_processes(f"sleep {unique_sleep}"), "subprocess did not spawn before cancel"
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
-        # After cancellation, the subprocess must be gone. Poll briefly (the
-        # kill + wait in the finally block is async; under load it can take a
-        # moment for the OS to reap the SIGKILL'd process).
-        gone = False
-        for _ in range(20):
-            await asyncio.sleep(0.1)
-            if not matching_processes(f"sleep {unique_sleep}"):
-                gone = True
-                break
-        assert gone, "orphaned subprocess survived cancellation"
+        # _execute_subprocess must kill and reap the child in its finally block.
+        assert proc.returncode is not None, "orphaned subprocess survived cancellation"
 
     @pytest.mark.asyncio
     async def test_normal_completion_still_works(self):
