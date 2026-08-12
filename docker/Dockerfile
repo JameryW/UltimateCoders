@@ -12,12 +12,16 @@ RUN pip install maturin
 
 WORKDIR /app
 
-# ponytail: copy pyproject first + install pure-Python deps so they cache
+# ponytail: copy pyproject first + install runtime deps so they cache
 # separately from Rust/Python source. Source changes won't reinstall fastapi etc.
 COPY pyproject.toml ./
+# The worker always performs LLM task decomposition before dispatch. Keep the
+# optional project extra explicit in the runtime image so a fresh Docker
+# deployment does not fall back to newline splitting with ModuleNotFoundError.
 RUN pip install --no-cache-dir \
-    "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
-    "sse-starlette>=1.6.0" "nats-py>=2.7.0"
+    "fastapi>=0.100.0" "uvicorn>=0.20.0" "websockets>=12.0" "jinja2>=3.1.0" \
+    "sse-starlette>=1.6.0" "nats-py>=2.7.0" \
+    "anthropic>=0.30.0" "litellm>=1.0.0"
 
 # ponytail: multilspy (optional LSP dep) — install jedi-language-server (pure
 # Python, no binary download needed). Verify the import works at build time so

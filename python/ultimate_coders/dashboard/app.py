@@ -27,6 +27,7 @@ import logging
 import os
 import pathlib
 import select
+import shlex
 import shutil
 import subprocess
 import threading
@@ -49,6 +50,33 @@ def _status_str(obj: Any) -> str:
     """Extract status string from an object with .status attribute."""
     s = obj.status
     return s.value if hasattr(s, "value") else str(s)
+
+
+class _WindowsPtyProcess:
+    """Small adapter that gives pywinpty the process shape used by TUI code."""
+
+    is_windows_pty = True
+
+    def __init__(self, process: Any) -> None:
+        self._process = process
+        self.stdin = self
+        self.stdout = self
+        self.pid = process.pid
+
+    def poll(self) -> int | None:
+        return None if self._process.isalive() else self._process.exitstatus
+
+    def read(self, size: int = 4096) -> str:
+        return self._process.read(size)
+
+    def write(self, data: bytes | str) -> None:
+        self._process.write(data.decode(errors="replace") if isinstance(data, bytes) else data)
+
+    def flush(self) -> None:
+        self._process.flush()
+
+    def close(self) -> None:
+        self._process.close()
 
 
 # ── NATS subject constants (must match nats_worker.py + Rust server.rs) ──
@@ -131,7 +159,7 @@ class DashboardApp:
         # Auth configuration
         self._dashboard_password: str | None = os.environ.get("DASHBOARD_PASSWORD") or None
         # TUI PTY state — single global session
-        self._tui_pty: subprocess.Popen | None = None
+        self._tui_pty: Any | None = None
         self._tui_lock = threading.Lock()
         self._tui_ws: WebSocket | None = None  # current connected client
         # Connect to Orchestrator's event emitter if available
@@ -817,15 +845,32 @@ class DashboardApp:
                         return
 
             await ws.accept()
+            ws_id = id(ws)
+            logger.info("TUI WebSocket accepted: id=%s", ws_id)
 
-            # Detach previous client if any
+            # A browser can open more than one dashboard tab. Keep the default
+            # single-session guard, but allow an explicit takeover so the UI's
+            # "Take over" action can reclaim the same persistent PTY without
+            # requiring the user to find and close the old tab first.
+            takeover = ws.query_params.get("takeover") == "1"
+            active_ws = None
             with self._tui_lock:
                 if self._tui_ws is not None:
-                    try:
-                        await self._tui_ws.close(code=4002, reason="Replaced by new client")
-                    except Exception:
-                        pass
-                self._tui_ws = ws
+                    active_ws = self._tui_ws
+                if active_ws is None or takeover:
+                    self._tui_ws = ws
+            if active_ws is not None:
+                if not takeover:
+                    logger.info("TUI WebSocket rejected busy client: id=%s", ws_id)
+                    await ws.send_text("\r\n[OMP session already attached in another tab]\r\n")
+                    await ws.close(code=4003, reason="TUI session already attached")
+                    return
+                logger.info("TUI WebSocket takeover: old=%s new=%s", id(active_ws), ws_id)
+                try:
+                    await active_ws.send_text("\r\n[OMP session taken over by another tab]\r\n")
+                    await active_ws.close(code=4004, reason="TUI session taken over")
+                except Exception:
+                    logger.debug("Previous TUI WebSocket was already closed", exc_info=True)
 
             pty = self._ensure_tui_pty()
             if pty is None:
@@ -848,6 +893,49 @@ class DashboardApp:
 
             # Reader: PTY stdout → WebSocket
             async def _pty_reader():
+                if getattr(pty, "is_windows_pty", False):
+                    while pty.poll() is None:
+                        try:
+                            data = await asyncio.to_thread(pty.read, 4096)
+                            if not data:
+                                logger.warning(
+                                    "TUI PTY reader returned empty output (alive=%s)",
+                                    pty.poll() is None,
+                                )
+                                break
+                            await ws.send_text(data)
+                        except (EOFError, OSError, ValueError):
+                            logger.warning("TUI PTY reader stopped: PTY closed")
+                            break
+                        except Exception as exc:
+                            logger.warning("TUI PTY reader stopped: %s", exc)
+                            break
+                    try:
+                        await ws.send_text("\r\n[OMP session ended]\r\n")
+                    except Exception:
+                        pass
+                    return
+
+                if os.name == "nt":
+                    # Windows pipes are not compatible with fcntl/select.
+                    stream = pty.stdout
+                    read_chunk = getattr(stream, "read1", stream.read)
+                    while pty.poll() is None:
+                        try:
+                            data = await asyncio.to_thread(read_chunk, 4096)
+                            if not data:
+                                break
+                            await ws.send_bytes(data)
+                        except (OSError, ValueError):
+                            break
+                        except Exception:
+                            break
+                    try:
+                        await ws.send_text("\r\n[OMP session ended]\r\n")
+                    except Exception:
+                        pass
+                    return
+
                 # ponytail: F66 — non-blocking fd + short sleep instead of
                 # run_in_executor(os.read): a thread parked inside os.read
                 # CANNOT be cancelled, so every disconnected client leaked one
@@ -903,6 +991,7 @@ class DashboardApp:
                 pass
             finally:
                 reader_task.cancel()
+                logger.info("TUI WebSocket closed: id=%s", ws_id)
                 with self._tui_lock:
                     if self._tui_ws is ws:
                         self._tui_ws = None
@@ -910,7 +999,7 @@ class DashboardApp:
 
     # ── TUI PTY Management ───────────────────────────────────────
 
-    def _ensure_tui_pty(self) -> subprocess.Popen | None:
+    def _ensure_tui_pty(self) -> Any | None:
         """Return the global TUI PTY, starting it if needed.
 
         Spawns OMP via ``run-omp.sh`` inside a PTY (script wrapper).
@@ -921,8 +1010,15 @@ class DashboardApp:
                 return self._tui_pty
             return self._start_tui_pty()
 
-    def _start_tui_pty(self) -> subprocess.Popen | None:
-        """Spawn OMP in a PTY using the ``script`` wrapper for terminal emulation."""
+    def _start_tui_pty(self) -> Any | None:
+        """Spawn OMP in a PTY, with a Windows Git Bash fallback.
+
+        Linux/Docker uses util-linux ``script`` for a real PTY. Windows does
+        not provide ``script`` or ``fcntl``; ``pywinpty`` supplies a ConPTY
+        session and Git Bash executes the repository's ``run-omp.sh``. If the
+        optional Windows PTY package is unavailable, a normal pipe keeps the
+        WebSocket usable for line-oriented OMP output.
+        """
         omp_script = os.environ.get("UC_OMP_SCRIPT")
         if not omp_script:
             # Default: repo_root/run-omp.sh
@@ -932,26 +1028,94 @@ class DashboardApp:
             logger.warning("TUI PTY: OMP script not found: %s", omp_script)
             return None
 
+        env = {
+            **os.environ,
+            "TERM": "xterm-256color",
+            "COLUMNS": "120",
+            "LINES": "40",
+        }
+        if os.name == "nt":
+            # The Windows npm global bin directory is not guaranteed to be in
+            # the environment of a service-launched dashboard.  Keep the
+            # real OMP entrypoint usable when Bun was installed per-user.
+            bun_candidates = (
+                os.path.join(env.get("APPDATA", ""), "npm", "node_modules", "bun", "bin"),
+                os.path.join(env.get("USERPROFILE", ""), ".bun", "bin"),
+            )
+            for bun_dir in bun_candidates:
+                if os.path.isfile(os.path.join(bun_dir, "bun.exe")):
+                    env["PATH"] = bun_dir + os.pathsep + env.get("PATH", "")
+                    break
+        cwd = os.path.dirname(os.path.abspath(omp_script))
         script_bin = shutil.which("script")
-        if not script_bin:
-            logger.warning("TUI PTY: 'script' command not found")
-            return None
+        if script_bin and os.name != "nt":
+            # util-linux requires -c for the command (passing the command as
+            # a positional argument exits with "unexpected number of arguments").
+            command = [script_bin, "-q", "-c", omp_script, os.devnull]
+            try:
+                pty_proc = subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    cwd=cwd,
+                )
+            except Exception as e:
+                logger.error("TUI PTY start failed: %s", e)
+                return None
+        else:
+            bash_bin = self._find_windows_tool("bash.exe", ("Git", "bin"), ("Git", "usr", "bin"))
+            if not bash_bin:
+                bash_bin = shutil.which("bash") or shutil.which("sh")
+            if not bash_bin:
+                logger.warning("TUI PTY: neither script nor bash is available")
+                return None
 
+            script_path = self._to_bash_path(omp_script) if os.name == "nt" else omp_script
+            # The dashboard and Gateway are already running as local services;
+            # do not let the nested launcher start a second copy (especially
+            # on Windows, where `lsof` may be unavailable).  Extra arguments
+            # remain configurable for custom OMP launchers.
+            omp_args = shlex.split(os.environ.get("UC_TUI_OMP_ARGS", "--no-server --no-dashboard"))
+            command_parts = [script_path, *omp_args]
+            bash_command = "exec " + " ".join(shlex.quote(part) for part in command_parts)
+            command = [bash_bin, "-lc", bash_command]
+
+            if os.name == "nt":
+                try:
+                    from winpty import PtyProcess
+                except ImportError:
+                    logger.warning("TUI PTY: pywinpty is not installed; using pipe fallback")
+                else:
+                    try:
+                        pty_proc = _WindowsPtyProcess(
+                            PtyProcess.spawn(
+                                command,
+                                cwd=cwd,
+                                env=env,
+                                dimensions=(40, 120),
+                            )
+                        )
+                        self._tui_pty = pty_proc
+                        logger.info(
+                            "TUI PTY started with Windows ConPTY: PID=%d cmd=%s",
+                            pty_proc.pid,
+                            omp_script,
+                        )
+                        return pty_proc
+                    except Exception as e:
+                        logger.error("TUI Windows ConPTY start failed: %s", e)
+
+            logger.info("TUI PTY: using pipe fallback for %s", omp_script)
         try:
-            # script provides a PTY; util-linux requires -c for the command
-            # (passing the command as a positional argument exits with
-            # "unexpected number of arguments" on Debian).
             pty_proc = subprocess.Popen(
-                ["script", "-q", "-c", omp_script, "/dev/null"],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env={
-                    **os.environ,
-                    "TERM": "xterm-256color",
-                    "COLUMNS": "120",
-                    "LINES": "40",
-                },
+                env=env,
+                cwd=cwd,
             )
             self._tui_pty = pty_proc
             logger.info("TUI PTY started: PID=%d cmd=%s", pty_proc.pid, omp_script)
@@ -959,6 +1123,38 @@ class DashboardApp:
         except Exception as e:
             logger.error("TUI PTY start failed: %s", e)
             return None
+
+    @staticmethod
+    def _find_windows_tool(name: str, *relative_dirs: tuple[str, ...]) -> str | None:
+        """Find a Git for Windows tool without requiring Git on PATH."""
+        if os.name != "nt":
+            return None
+        roots = [
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            os.environ.get("LOCALAPPDATA"),
+        ]
+        for root in filter(None, roots):
+            for relative_dir in relative_dirs:
+                candidate = os.path.join(root, *relative_dir, name)
+                if os.path.isfile(candidate):
+                    return candidate
+        # ``bash.exe`` on PATH may be the WSL launcher at
+        # ``C:\Windows\System32\bash.exe``.  Only fall back to PATH after
+        # checking the explicit Git for Windows locations above.
+        found = shutil.which(name)
+        if found:
+            return found
+        return None
+
+    @staticmethod
+    def _to_bash_path(path: str) -> str:
+        """Convert a Windows path to the /c/... form understood by Git Bash."""
+        drive, tail = os.path.splitdrive(path)
+        if drive:
+            normalized_tail = tail.replace(chr(92), "/")
+            return f"/{drive.rstrip(':').lower()}{normalized_tail}"
+        return path.replace(chr(92), "/")
 
     # ── Data Collection Methods ──────────────────────────────────
 

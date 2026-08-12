@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useMemo, useState } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useDashboardGrpc } from "@/hooks/useDashboardGrpc";
 import { useGrpcWeb } from "@/hooks/useGrpcWeb";
@@ -9,6 +9,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastContainer, showToast } from "@/components/ui/toast";
 import { confirmAction } from "@/components/ui/confirm-dialog";
 import { KeyboardShortcuts } from "@/components/ui/keyboard-shortcuts";
+import type { GrpcTaskActionResult } from "@/hooks/useGrpcWeb";
 import type { TaskEvent, HealthData, TaskSummary } from "@/types/dashboard";
 
 function eventKey(ev: TaskEvent): string {
@@ -152,6 +153,21 @@ function App() {
     enabled: true,
   });
 
+  /** Refresh every dashboard surface through the live Gateway before reporting status. */
+  const fetchDashboardInitial = dashboard.fetchInitial;
+  const refreshDashboard = useCallback(async () => {
+    const errors = await fetchDashboardInitial({
+      fetchWorkers: listWorkers,
+      fetchScheduler: getSchedulerStatus,
+      fetchEvents: listEvents,
+      fetchTasks: listTasks,
+    });
+    if (Object.keys(errors).length > 0) {
+      throw new Error(`refresh failed: ${Object.keys(errors).join(", ")}`);
+    }
+    setLastUpdate(new Date().toISOString());
+  }, [fetchDashboardInitial, getSchedulerStatus, listEvents, listTasks, listWorkers]);
+
   const [loading, setLoading] = useState(true);
 
   const hasFetchedRef = useRef(false);
@@ -256,49 +272,64 @@ function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  const handlePauseTask = async (taskId: string) => {
+  const handlePauseTask = async (taskId: string): Promise<GrpcTaskActionResult> => {
+    if (grpcState === "disconnected" || grpcExhausted) {
+      const result = { success: false, taskId, status: "disconnected", error: "gRPC-Web disconnected" };
+      showToast(`Pause failed: ${result.error}`, "error");
+      return result;
+    }
     dashboard.optimisticStatusUpdate(taskId, "paused");
     try {
-      if (grpcState === "connected") {
-        const r = await grpcPauseTask(taskId);
-        if (r.success) showToast("Task paused", "success");
-        // ponytail: revert the optimistic pause on server rejection (wrong
-        // state, etc.) — otherwise the UI shows paused while the server didn't
-        // pause it, until a sync re-pulls the truth. catch (throw) path already
-        // reverts; this covers the r.success===false path.
-        else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); }
-      }
+      const r = await grpcPauseTask(taskId);
+      if (r.success) showToast("Task paused", "success");
+      // Revert the optimistic pause on server rejection (wrong state, etc.).
+      else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Pause failed: ${r.error ?? "unknown"}`, "error"); }
+      return r;
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
-      showToast(`Pause failed: ${String(e)}`, "error");
+      const result = { success: false, taskId, status: "error", error: String(e) };
+      showToast(`Pause failed: ${result.error}`, "error");
+      return result;
     }
   };
-  const handleResumeTask = async (taskId: string) => {
+  const handleResumeTask = async (taskId: string): Promise<GrpcTaskActionResult> => {
+    if (grpcState === "disconnected" || grpcExhausted) {
+      const result = { success: false, taskId, status: "disconnected", error: "gRPC-Web disconnected" };
+      showToast(`Resume failed: ${result.error}`, "error");
+      return result;
+    }
     dashboard.optimisticStatusUpdate(taskId, "in_progress");
     try {
-      if (grpcState === "connected") {
-        const r = await grpcResumeTask(taskId);
-        if (r.success) showToast("Task resumed", "success");
-        // ponytail: revert optimistic resume on server rejection — back to paused.
-        else { dashboard.optimisticStatusUpdate(taskId, "paused"); showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); }
-      }
+      const r = await grpcResumeTask(taskId);
+      if (r.success) showToast("Task resumed", "success");
+      // Revert optimistic resume on server rejection — back to paused.
+      else { dashboard.optimisticStatusUpdate(taskId, "paused"); showToast(`Resume failed: ${r.error ?? "unknown"}`, "error"); }
+      return r;
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "paused");
-      showToast(`Resume failed: ${String(e)}`, "error");
+      const result = { success: false, taskId, status: "error", error: String(e) };
+      showToast(`Resume failed: ${result.error}`, "error");
+      return result;
     }
   };
-  const handleCancelTask = async (taskId: string) => {
+  const handleCancelTask = async (taskId: string): Promise<GrpcTaskActionResult> => {
+    if (grpcState === "disconnected" || grpcExhausted) {
+      const result = { success: false, taskId, status: "disconnected", error: "gRPC-Web disconnected" };
+      showToast(`Cancel failed: ${result.error}`, "error");
+      return result;
+    }
     dashboard.optimisticStatusUpdate(taskId, "cancelled");
     try {
-      if (grpcState === "connected") {
-        const r = await grpcCancelTask(taskId);
-        if (r.success) showToast("Task cancelled", "success");
-        // ponytail: revert optimistic cancel on server rejection — back to in_progress.
-        else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
-      }
+      const r = await grpcCancelTask(taskId);
+      if (r.success) showToast("Task cancelled", "success");
+      // Revert optimistic cancel on server rejection — back to in_progress.
+      else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
+      return r;
     } catch (e) {
       dashboard.optimisticStatusUpdate(taskId, "in_progress");
-      showToast(`Cancel failed: ${String(e)}`, "error");
+      const result = { success: false, taskId, status: "error", error: String(e) };
+      showToast(`Cancel failed: ${result.error}`, "error");
+      return result;
     }
   };
   const handleFlush = async () => {
@@ -419,8 +450,12 @@ function App() {
         onPauseTask={handlePauseTask}
         onResumeTask={handleResumeTask}
         onCancelTask={handleCancelTask}
+        onRefresh={refreshDashboard}
         onFlush={handleFlush}
-        grpcSubmitTask={grpcState === "connected" ? grpcSubmitTask : undefined}
+        // Unary TaskService calls remain usable while the long-lived WatchTask
+        // stream is reconnecting. The hook owns transport failures and returns
+        // the actual server result to the command bar.
+        grpcSubmitTask={grpcSubmitTask}
         onTaskCreated={(taskId) => setSelectedTaskId(taskId)}
         onOptimisticAdd={dashboard.optimisticAddTask}
       />

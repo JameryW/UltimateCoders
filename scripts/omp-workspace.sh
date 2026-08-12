@@ -53,5 +53,9 @@ setup_omp_workspace() {
     # .uc — uc-orchestrator task state (tasks/checkpoints). Previously lived at
     # vendor/oh-my-pi/.uc when cwd was vendor; symlink so existing state follows
     # the cwd move to OMP_WORKSPACE (TaskStore uses <cwd>/.uc/{tasks,checkpoints}).
-    [ -e "$OMP_VENDOR/.uc" ] && link_config "$OMP_VENDOR/.uc" "$OMP_WORKSPACE/.uc"
+    # `.uc` is optional on a fresh checkout.  Keep the conditional explicit
+    # so `set -e` in the launchers cannot abort before OMP starts.
+    if [ -e "$OMP_VENDOR/.uc" ]; then
+        link_config "$OMP_VENDOR/.uc" "$OMP_WORKSPACE/.uc"
+    fi
 }
