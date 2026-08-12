@@ -13,7 +13,7 @@ The UC Orchestrator runs as an oh-my-pi (OMP) extension with terminal-native tas
 ## Key Features
 
 - **DAG orchestration**: decompose natural-language tasks into observable subtasks, schedule dependency waves, and stream submitted, running, completed, and failed states.
-- **Product home, operations dashboard, and TUI**: `/` explains capabilities and the execution path; the existing operations dashboard remains at `#/dashboard`; `#/tui` connects to a real OMP session over WebSocket.
+- **Product home, operations dashboard, and TUI**: `/` explains capabilities and the execution path; the existing operations dashboard remains at `/dashboard` (and `#/dashboard`); `#/tui` connects to a real OMP session over WebSocket.
 - **Shared TUI / OMP command layer**: `run/status/tasks/workers/search/logs` use the same UC semantics and stream results through TaskEvent.
 - **Distributed workers**: workers register through `WorkerService`, publish heartbeats and capabilities, and receive capability- and load-aware dispatch from the Gateway; NATS carries cross-process subtasks.
 - **Rust core**: Engine, Task, Dashboard, and Worker services expose unified gRPC/gRPC-Web interfaces with task recovery, event broadcast, and in-memory fallback.
@@ -68,7 +68,7 @@ The three entry points are:
 | Entry point | Use |
 | --- | --- |
 | `http://localhost:5173/` | Product home: capabilities, execution path, and Command Deck |
-| `http://localhost:5173/#/dashboard` | Existing operations dashboard: tasks, workers, events, scheduler, search, files, and metrics |
+| `http://localhost:5173/dashboard` or `http://localhost:5173/#/dashboard` | Existing operations dashboard: tasks, workers, events, scheduler, search, files, and metrics |
 | `http://localhost:5173/#/tui` | Real OMP PTY terminal: run shared UC commands and view live output |
 
 Common commands:
@@ -329,6 +329,11 @@ pytest tests/python/ -v        # Run Python tests
 ### Docker Compose (storage backends)
 
 ```bash
+# Build and start the complete local app, including the React Dashboard UI.
+docker compose -f docker/docker-compose.yml --profile app up --build
+# React UI: http://localhost:8081
+# Dashboard API: http://localhost:8080/dashboard/
+
 # Start all storage backends
 docker compose -f docker/docker-compose.yml up -d
 

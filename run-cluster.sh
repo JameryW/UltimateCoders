@@ -102,6 +102,12 @@ PYTHON_BIN=""
 if [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
     PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python3"
     export UC_WORKER_PYTHON="$PYTHON_BIN"
+elif [ -x "$SCRIPT_DIR/.venv/Scripts/python.exe" ]; then
+    PYTHON_BIN="$SCRIPT_DIR/.venv/Scripts/python.exe"
+    export UC_WORKER_PYTHON="$PYTHON_BIN"
+elif [ -x "$SCRIPT_DIR/.venv/Scripts/python" ]; then
+    PYTHON_BIN="$SCRIPT_DIR/.venv/Scripts/python"
+    export UC_WORKER_PYTHON="$PYTHON_BIN"
 else
     PYTHON_BIN="python3"
 fi
@@ -274,7 +280,7 @@ if [ "$goto_workers" = false ] && check_port 50051; then
     log "Starting gRPC server..."
     cd "$SCRIPT_DIR"
     GRPC_ENV=(
-        PATH="$SCRIPT_DIR/.venv/bin:$PATH"
+        PATH="$SCRIPT_DIR/.venv/Scripts:$SCRIPT_DIR/.venv/bin:$PATH"
         RUST_LOG="${RUST_LOG:-info}"
         UC_NATS_URL="$NATS_URL"
         UC_CORS_MODE="${UC_CORS_MODE:-dev}"

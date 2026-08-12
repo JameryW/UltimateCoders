@@ -28,6 +28,7 @@ initMermaid();
 // eslint-disable-next-line react-refresh/only-export-components -- entry file root component
 function Root() {
   const [hash, setHash] = useState(() => window.location.hash);
+  const isDashboardPath = window.location.pathname.replace(/\/+$/, "") === "/dashboard";
 
   useEffect(() => {
     const handleHashChange = () => setHash(window.location.hash);
@@ -36,7 +37,7 @@ function Root() {
   }, []);
 
   if (hash.startsWith("#/tui")) return <TuiPage />;
-  if (hash.startsWith("#/dashboard")) return <App />;
+  if (isDashboardPath || hash.startsWith("#/dashboard")) return <App />;
   return <HomePage />;
 }
 

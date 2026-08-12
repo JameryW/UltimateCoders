@@ -91,8 +91,19 @@ if [ "$NO_SPAWN" = true ]; then
 fi
 
 # ── Build Python package if requested ────────────────────────
-if [ "$DO_BUILD" = true ] && [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
-    "$SCRIPT_DIR/.venv/bin/python3" -c "import ultimate_coders" 2>/dev/null || {
+BUILD_PYTHON=""
+for candidate in \
+    "$SCRIPT_DIR/.venv/bin/python3" \
+    "$SCRIPT_DIR/.venv/bin/python" \
+    "$SCRIPT_DIR/.venv/Scripts/python.exe" \
+    "$SCRIPT_DIR/.venv/Scripts/python"; do
+    if [ -x "$candidate" ]; then
+        BUILD_PYTHON="$candidate"
+        break
+    fi
+done
+if [ "$DO_BUILD" = true ] && [ -n "$BUILD_PYTHON" ]; then
+    "$BUILD_PYTHON" -c "import ultimate_coders" 2>/dev/null || {
         echo ">>> Building ultimate_coders Python package..."
         cd "$SCRIPT_DIR" && maturin develop --manifest-path crates/uc-python/Cargo.toml
     }

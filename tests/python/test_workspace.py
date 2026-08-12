@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -36,6 +37,15 @@ def _git(args: list[str], cwd: str) -> None:
     )
 
 
+def _remove_tree(path: Path) -> None:
+    """Remove a git worktree, including read-only object files on Windows."""
+    def _make_writable_and_retry(func, target, _exc_info):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    shutil.rmtree(path, onerror=_make_writable_and_retry)
+
+
 def _make_bare_remote(tmp_path: Path) -> Path:
     """Create a bare repo with one commit on ``main``."""
     remote = tmp_path / "remote.git"
@@ -50,7 +60,7 @@ def _make_bare_remote(tmp_path: Path) -> Path:
     _git(["add", "."], cwd=str(work))
     _git(["commit", "-m", "initial"], cwd=str(work))
     _git(["push", "origin", "main"], cwd=str(work))
-    shutil.rmtree(work)
+    _remove_tree(work)
     return remote
 
 

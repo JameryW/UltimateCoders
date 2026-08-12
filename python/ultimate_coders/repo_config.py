@@ -366,6 +366,8 @@ class RepoScanner:
     @staticmethod
     def _get_remote_url(path: Path) -> str:
         """Get the git remote origin URL for a repo."""
+        if not RepoScanner._is_git_root(path):
+            return ""
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
@@ -383,6 +385,8 @@ class RepoScanner:
     @staticmethod
     def _get_default_branch(path: Path) -> str:
         """Get the default branch name for a git repo."""
+        if not RepoScanner._is_git_root(path):
+            return "main"
         try:
             result = subprocess.run(
                 ["git", "symbolic-ref", "--short", "HEAD"],
@@ -396,6 +400,29 @@ class RepoScanner:
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             pass
         return "main"
+
+    @staticmethod
+    def _is_git_root(path: Path) -> bool:
+        """Return whether Git resolves ``path`` as its repository root.
+
+        Git commands can walk up to a parent repository when a scanned
+        directory contains an incomplete or otherwise invalid ``.git``
+        directory. Do not attribute that parent's remote or branch to the
+        child path being discovered.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(path),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                return False
+            return Path(result.stdout.strip()).resolve() == path.resolve()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
 
 
 class RepoConfigWatcher:

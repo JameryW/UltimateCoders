@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 
 import pytest
 from ultimate_coders.dashboard.metrics import (
     WINDOW_SECONDS,
-    AlertStore,
     MetricsAggregator,
     MetricsSnapshot,
-    MetricsStore,
     _percentile,
 )
 
@@ -222,17 +221,19 @@ class TestMetricsAggregator:
 
     def test_trend_sampling(self) -> None:
         # Use a temp db to avoid contamination from previous test runs
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=True) as tmp:
-            agg = MetricsAggregator()
-            # Override metrics store to use temp db
-            agg._metrics_store = MetricsStore(db_path=tmp.name)
-            agg._alert_store = AlertStore(db_path=tmp.name)
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            db_path = tmp.name
+        try:
+            agg = MetricsAggregator(db_path=db_path)
             agg._trend.clear()
             # First snapshot should produce a trend sample
             agg.record_event("task_completed", {"duration_ms": 1000})
             snap = agg.snapshot()
             assert len(snap.trend) >= 1
             assert snap.trend[-1].timestamp > 0
+        finally:
+            agg.close()
+            os.unlink(db_path)
 
     def test_trend_not_sampled_too_frequently(self) -> None:
         agg = MetricsAggregator()

@@ -74,6 +74,7 @@ class CodegraphClient:
             return None
         if self._conn is not None:
             return self._conn
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
@@ -83,6 +84,11 @@ class CodegraphClient:
             return conn
         except (sqlite3.OperationalError, sqlite3.DatabaseError):
             logger.debug("Failed to open codegraph DB: %s", self._db_path, exc_info=True)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    logger.debug("Error closing failed codegraph DB connection", exc_info=True)
             self._available = False
             return None
 

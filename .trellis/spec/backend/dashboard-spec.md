@@ -1,6 +1,6 @@
 # Dashboard Code-Spec
 
-> FastAPI + Jinja2 + SSE monitoring dashboard — executable contracts for implementation.
+> FastAPI API/SSE backend plus the React/Vite monitoring dashboard — executable contracts for implementation.
 
 ---
 
@@ -9,7 +9,7 @@
 ### 1. Scope / Trigger
 
 - Trigger: Any time the Orchestrator is running and `start_dashboard()` is called, the dashboard serves real-time cluster state.
-- Cross-layer: Python Orchestrator in-memory state + Rust Engine health (PyO3) → FastAPI REST/SSE → Browser
+- Cross-layer: Python Orchestrator in-memory state + Rust Engine health (PyO3) → FastAPI REST/SSE → React dashboard
 
 ### 2. Signatures
 
@@ -22,7 +22,6 @@ class DashboardApp:
     def stop(self) -> None
 
     # REST API endpoints (GET)
-    GET /dashboard/              → HTMLResponse  (Jinja2 template)
     GET /dashboard/api/health    → JSONResponse  (engine health)
     GET /dashboard/api/workers   → JSONResponse  (worker list)
     GET /dashboard/api/tasks     → JSONResponse  (task status)
@@ -48,6 +47,20 @@ class DashboardApp:
     def _get_full_snapshot(self) -> dict
     def _record_event(self, event_type: str, **details) -> None
 ```
+
+#### Frontend deployment boundary
+
+- `DashboardApp` serves API, SSE, and the TUI WebSocket only; it does not serve
+  the React HTML shell.
+- Development uses Vite at `http://localhost:5173` and proxies gRPC-Web to
+  `:50051`, REST/SSE, and `/ws/tui` to `:8080`.
+- Docker Compose builds `docker/Dockerfile.dashboard` and serves the React
+  bundle through Nginx at `http://localhost:8081`. The image must build the
+  bundle itself because `dashboard/dist` is git-ignored and absent from a
+  clean checkout.
+- The React router accepts both `/dashboard` and `#/dashboard`; `/` remains
+  the product overview route. The FastAPI `:8080` port is an API endpoint, not
+  the browser UI.
 
 #### TaskEventEmitter (`python/ultimate_coders/agent/event_emitter.py`)
 
@@ -469,6 +482,10 @@ TUI flow:
 
 ## UI Conventions
 
+- The current browser UI is a React/Vite SPA in `dashboard/`; do not add
+  server-rendered Jinja pages or assume the FastAPI port serves HTML.
+- The styling and markup conventions below describe the retired server-rendered
+  dashboard and are retained only as historical compatibility notes.
 - Tailwind CSS via CDN (no node/npm build step)
   > **Gotcha**: Do NOT add `crossorigin="anonymous"` to the Tailwind CDN `<script>` tag. The play CDN (`cdn.tailwindcss.com`) does not support CORS credentials — the attribute causes fetch failures.
 - Mermaid.js via CDN (`cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js`) for subtask DAG rendering

@@ -368,8 +368,16 @@ class MergeVerifier:
         """Run a verification command."""
         import os
 
-        proc = await asyncio.create_subprocess_exec(
-            *command.split(),
+        original_command = command
+        command_to_run = command
+        normalized_command = command.strip().casefold()
+        if os.name == "nt" and normalized_command == "true":
+            command_to_run = "exit /b 0"
+        elif os.name == "nt" and normalized_command == "false":
+            command_to_run = "exit /b 1"
+
+        proc = await asyncio.create_subprocess_shell(
+            command_to_run,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd or os.getcwd(),
@@ -380,7 +388,7 @@ class MergeVerifier:
                 timeout=timeout or self._default_timeout,
             )
             return {
-                "command": command,
+                "command": original_command,
                 "success": proc.returncode == 0,
                 "stdout": stdout.decode("utf-8", errors="replace")[:1000],
                 "stderr": stderr.decode("utf-8", errors="replace")[:1000],
