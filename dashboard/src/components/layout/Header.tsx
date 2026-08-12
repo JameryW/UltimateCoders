@@ -91,6 +91,14 @@ export const Header = memo(function Header({ connected, grpcState, grpcExhausted
           ))}
         </nav>
         <div className="flex items-center space-x-3">
+          {/* Product overview entry */}
+          <a
+            href="#/"
+            title="Open Product Overview"
+            className="hidden sm:inline text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            Overview
+          </a>
           {/* TUI entry */}
           <a
             href="#/tui"

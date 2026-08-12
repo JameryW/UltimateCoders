@@ -159,7 +159,7 @@ export async function executeUcCommand(
       return { action, success: true, message: "search · EngineService retrieval surface", tone: "info", view: "search" };
     }
     if (action === "logs") {
-      return { action, success: true, message: "logs · real DashboardService events", tone: "info", view: "logs" };
+      return { action, success: true, message: "logs · real Gateway event stream", tone: "info", view: "logs" };
     }
     if (action === "help") {
       return { action, success: true, message: UC_COMMAND_HELP, tone: "info" };

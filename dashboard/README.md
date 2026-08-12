@@ -1,73 +1,51 @@
-# React + TypeScript + Vite
+# UltimateCoders Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This package is the browser dashboard for UltimateCoders. The root route `/`
+is the product overview: it explains the orchestration, worker, search/memory,
+event, and deployment layers, shows the live Gateway connection state, and
+provides interactive OMP and command capability walkthroughs. The real OMP
+terminal is available at `#/tui` and keeps the command bar connected to the
+Gateway TaskService over gRPC-Web. The existing operations dashboard remains
+available at `#/dashboard`, so the product overview is an entry layer rather
+than a replacement for task, worker, event, scheduler, search, file, and
+metrics monitoring.
 
-Currently, two official plugins are available:
+## Runtime flow
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```text
+Dashboard homepage `/`
+  ├─ Runtime Surface → gRPC-Web → Gateway :50051
+  ├─ Product Map → Command / Control / Execution / Knowledge / Event planes
+  ├─ OMP ↔ UC Loop → Extension → Gateway → Worker → TaskEvent
+  └─ Command Deck → run / status / tasks / workers / search / logs
 
-## React Compiler
+Real terminal `#/tui`
+  ├─ gRPC-Web → Gateway :50051
+  └─ WebSocket /ws/tui → FastAPI :8080 → ConPTY → run-omp.sh → OMP
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Operations dashboard `#/dashboard`
+  ├─ Task / Worker / Event / Scheduler panels → DashboardService
+  ├─ Search / File / Repository panels → Engine and index services
+  └─ Metrics / interaction log → live gRPC-Web event streams
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The FastAPI process is a bridge for the OMP PTY; it is not a second web UI.
+The OMP PTY is intentionally single-session. If another dashboard tab is
+attached, `#/tui` shows `session attached elsewhere`; use `Take over` to move
+the same persistent PTY to the current tab without restarting OMP.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Local commands
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install
+pnpm run dev
+pnpm run build
+pnpm run lint
 ```
+
+The default Vite URL is `http://127.0.0.1:5173/`. To reproduce the current
+local handoff port, run `pnpm run dev -- --host 127.0.0.1 --port 4176` and use
+`http://127.0.0.1:4176/`; the live terminal remains at `#/tui`.
+
+The Vite development server proxies gRPC-Web requests to `127.0.0.1:50051`
+and `/ws/tui` to `127.0.0.1:8080`.

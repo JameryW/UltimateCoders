@@ -6,12 +6,19 @@ import { TaskService, EngineService } from "@/grpc/engine_pb";
 import type { TaskEvent as GrpcTaskEvent } from "@/grpc/engine_pb";
 import { create } from "@bufbuild/protobuf";
 import { WatchTaskRequestSchema, SubmitTaskRequestSchema, HealthRequestSchema, ListTasksRequestSchema, PauseTaskRequestSchema, ResumeTaskRequestSchema, CancelTaskRequestSchema } from "@/grpc/engine_pb";
-import type { TaskEvent } from "@/types/dashboard";
 import type { UcSubmitResult, UcTaskActionResult } from "@/lib/ucCommands";
 
 type GrpcSubmitResult = UcSubmitResult;
 type GrpcTaskActionResult = UcTaskActionResult;
 export type { GrpcSubmitResult, GrpcTaskActionResult };
+
+interface TuiTaskEvent {
+  timestamp: string;
+  type: string;
+  task_id: string;
+  subtask_id?: string;
+  data: Record<string, unknown>;
+}
 
 /** gRPC-Web server address -- empty = same-origin (Vite proxy in dev, reverse proxy in prod). */
 const GRPC_WEB_ADDR =
@@ -72,7 +79,7 @@ const RETRY_INTERVALS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const MAX_RETRY_INTERVAL = 60000;
 
 interface UseGrpcWebOptions {
-  onTaskEvent?: (event: TaskEvent) => void;
+  onTaskEvent?: (event: TuiTaskEvent) => void;
   /** Called when the server signals that events were missed and client should re-sync. */
   onSyncRequired?: (reason: string, skipped: number) => void;
   enabled?: boolean;
@@ -145,10 +152,10 @@ function bigintToISO(ts: bigint): string {
   return new Date(seconds * 1000).toISOString();
 }
 
-/** Convert gRPC TaskEvent to dashboard TaskEvent.
+/** Convert a gRPC TaskEvent to the event shape used by the TUI.
  *  gRPC proto data is map<string,string> -- values that look like JSON
  *  arrays/objects are parsed, numeric strings are converted, others kept as-is. */
-function grpcEventToDashboardEvent(ev: GrpcTaskEvent): TaskEvent {
+function grpcEventToTuiEvent(ev: GrpcTaskEvent): TuiTaskEvent {
   const data: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(ev.data)) {
     // ponytail: try JSON parse for structured values (subtasks, depends_on, etc.)
@@ -256,8 +263,8 @@ export function useGrpcWeb(opts: UseGrpcWebOptions) {
             continue;
           }
 
-          const dashboardEvent = grpcEventToDashboardEvent(event);
-          optsRef.current.onTaskEvent?.(dashboardEvent);
+          const tuiEvent = grpcEventToTuiEvent(event);
+          optsRef.current.onTaskEvent?.(tuiEvent);
         }
 
         // Stream ended normally (server closed) -- reconnect

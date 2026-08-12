@@ -6,7 +6,118 @@
 
 Distributed AI Coding System with shared layered memory and multi-repo hybrid retrieval (Text + Semantic + AST).
 
-The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) terminal coding agent (`grok`) for subtask execution; Claude Code and Codex remain explicit compatibility options. OMP's local `runSubprocess` path is separate and still handles its own local decomposition/execution flow. The Rust core handles indexing, search, memory, and scheduling. A broadcast channel delivers real-time task events to Dashboard consumers.
+The UC Orchestrator runs as an oh-my-pi (OMP) extension, providing rich terminal interaction with subtask progress widgets, overlays, custom message rendering, and LLM-callable memory tools. The Python Worker/Sandbox defaults to the [xAI Grok Build](https://github.com/xai-org/grok-build) terminal coding agent (`grok`) for subtask execution; Claude Code and Codex remain explicit compatibility options. OMP's local `runSubprocess` path is separate and still handles its own local decomposition/execution flow. The Rust core handles indexing, search, memory, and scheduling. A broadcast channel delivers real-time task events to TUI and API consumers.
+
+## 主要功能 / Key Features
+
+- **DAG 任务编排**：将自然语言任务拆解为可观测的 subtasks，按依赖关系分波次调度，并持续回传 submitted、running、completed、failed 等状态。
+- **产品首页 + 运营 Dashboard + TUI**：React + gRPC-Web 的 `/` 展示产品能力和执行链；保留完整旧版运营 dashboard 于 `#/dashboard`（任务、Worker、事件、调度、检索、文件、指标），`#/tui` 通过 WebSocket 接入真实 OMP 会话。
+- **TUI / OMP 共享命令层**：`run/status/tasks/workers/search/logs` 共用同一套 UC 语义，命令结果直接回显在终端并同步到 TaskEvent 流。
+- **分布式 Worker**：Worker 通过 `WorkerService` 注册、心跳和能力声明，由 Gateway 按能力与负载调度；NATS 负责跨进程 subtask 分发。
+- **Rust 高性能核心**：Engine、Task、Dashboard、Worker 四类服务统一暴露 gRPC/gRPC-Web 接口，支持任务恢复、事件广播和内存 fallback。
+- **跨仓库混合检索**：同一查询支持 Text、Semantic、AST 三种检索能力，可面向多个 Git 仓库索引和搜索。
+- **分层 Memory**：短期记忆、长期语义记忆和结构化元数据分别对接 TiKV、Qdrant、PostgreSQL；依赖不可用时可退回内存模式。
+- **多种部署方式**：支持本机 OMP、Docker Gateway、Docker Compose 以及多 worker 集群；Worker 可选择 Grok Build、Claude Code 或 Codex 执行器。
+
+## 产品特性与优势 / Product Highlights
+
+UltimateCoders 把“终端里的 AI Coding”扩展成可观测、可调度、可扩展的执行平台：
+
+| 产品能力 | 展示内容 | 直接收益 |
+| --- | --- | --- |
+| Dashboard 产品首页 | Runtime Surface、OMP ↔ UC Loop、Command Deck、典型场景 | 先理解全产品，再从同一页面进入真实执行入口 |
+| 产品分层图 | Command、Control、Execution、Knowledge、Event 五层 | 直观看到入口、编排、Worker、上下文和结果回流如何连接 |
+| OMP 原生交互 | WebSocket PTY、实时终端输出、断线重连 | 保留熟悉的终端体验，同时接入 Web 控制台 |
+| DAG 编排 | `run/submit` 创建任务，拆分 subtasks 并按依赖分波次执行 | 复杂任务可拆解、可追踪、可恢复 |
+| 统一控制面 | TUI、OMP 命令和 gRPC TaskService 共用命令语义 | 不同入口看到同一份任务状态，减少操作割裂 |
+| 分布式 Worker | Worker 注册、能力声明、心跳和负载感知调度 | 根据模型/工具能力扩展执行容量，并支持 Claude Code/Codex/Grok Build |
+| 检索与记忆 | Text + Semantic + AST 混合检索，TiKV/Qdrant/PostgreSQL 分层 Memory | 让 Coding Agent 获得跨仓库上下文，结果更稳定、更可复用 |
+| 可靠部署 | Rust Gateway、NATS、Docker、内存 fallback 和任务事件广播 | 从本地单机平滑演进到多 Worker 集群 |
+
+## 页面预览 / Screenshots
+
+产品首页（`/`）展示完整能力、执行链、OMP 双向交互和 Command Deck；旧版运营 dashboard（`#/dashboard`）继续提供详细监控面板；`#/tui` 是连接真实 OMP PTY、Gateway TaskService 的交互式终端。下面的截图和视频覆盖这些入口。
+
+### Dashboard 首页与可操作展示
+
+首页不是旧版监控 Dashboard 的替代截图，而是产品能力总览和真实入口之间的导航层：
+
+- **Runtime Surface**：通过现有 gRPC-Web 连接显示 Gateway 状态、版本、任务数量和 WatchTask 状态。
+- **OMP ↔ UC Loop**：展示 `OMP terminal → UC Extension → Rust Gateway → Worker → TaskEvent` 的完整双向链路；点击阶段会切换对应的交互 trace。
+- **Command Deck**：可切换查看 `run`、`status`、`tasks`、`workers`、`search`、`logs` 对应的服务路径、示例输入和典型返回。
+- **Product Map**：用五层视图解释 Command surface、Control plane、Execution plane、Knowledge plane 和 Event plane 的职责、协议与优势。
+- **Live handoff**：从 Command Deck 或 OMP 流程直接进入 `#/tui`，执行仍由真实 WebSocket + gRPC-Web 通路完成。
+- **单会话接管**：OMP PTY 默认保持单标签页连接；如果打开多个 TUI 标签，当前页会明确显示占用状态，并可用 `Take over` 接管同一会话。
+
+本地查看：`http://127.0.0.1:4176/`；真实终端：`http://127.0.0.1:4176/#/tui`。
+
+### 全产品能力总览
+
+![UltimateCoders product capabilities](docs/screenshots/product-capabilities.png)
+
+这张总览图展示产品的六个核心面：DAG 编排、能力感知 Worker、Hybrid Search + Memory、OMP 原生交互、事件驱动恢复和从单机到集群的部署路径。
+
+### 典型场景与直接收益
+
+![UltimateCoders product use cases](docs/screenshots/product-scenarios.png)
+
+UltimateCoders 面向大型仓库改造、并行交付、线上问题诊断和本地到集群扩展四类高频场景，核心收益是上下文可复用、执行可观测、容量可弹性扩展。
+
+### 执行架构
+
+![UltimateCoders execution architecture](docs/screenshots/execution-architecture.png)
+
+任务从 OMP/TUI 进入 Rust Gateway，经 TaskService 和 DAG Scheduler 分发到 Worker Pool，同时通过 Search/Memory 获取上下文，最终由统一 TaskEvent 广播到 TUI 和 API。
+
+### TUI / OMP 终端
+
+`#/tui` 是 OMP 交互入口，顶部显示会话状态，命令栏用于执行共享 UC 命令；命令回显和 Gateway 返回结果会保留在终端区。在 Docker/WSL 或已安装 PTY/WebSocket 运行时的环境中，还会继续显示 OMP 的实时输出。产品首页负责解释能力和链路，真实执行统一进入这个终端。
+
+#### 完整产品走查
+
+![UltimateCoders TUI full product walkthrough](docs/screenshots/tui-terminal.png)
+
+画面集中展示 OMP 连接、Gateway 状态、Worker 能力、检索入口、事件日志、真实任务提交和 TaskService 查询结果。
+
+#### 命令与平台能力目录
+
+![UltimateCoders TUI command catalog](docs/screenshots/tui-command-catalog.png)
+
+通过同一命令栏可进入 `status`、`tasks`、`workers`、`search`、`logs`、`submit/run`、暂停/恢复/取消等产品能力；首页 Command Deck 同步解释这些命令对应的服务路径。
+
+#### DAG 任务提交
+
+![UltimateCoders TUI DAG task submission](docs/screenshots/tui-task-dag.png)
+
+自然语言任务通过真实 TaskService 提交，返回 task ID 后进入 DAG 调度链路。
+
+### 功能演示视频
+
+[下载全产品能力演示视频](docs/videos/ultimatecoders-product-showcase.mp4)
+
+视频先展示产品能力总览、典型场景和执行架构，再进入真实页面走查：OMP WebSocket 连接成功 → 查询 Gateway 状态、Worker、Search 和 Logs → 在 TUI 中输入并执行 `run` 任务 → 返回真实 task ID 并进入 DAG → 用 `tasks` 查询 TaskService 数据。
+
+另有 [TUI 交互细节视频](docs/videos/ultimatecoders-tui-demo.mp4)，用于查看命令栏、终端回显和 OMP WebSocket 连接的细节。
+
+### 核心流程
+
+```text
+用户命令
+   │
+   ├─ Dashboard Command Deck（能力说明）
+   ├─ TUI 命令栏 / OMP
+   │
+   ▼
+OMP UC Extension → TaskService.SubmitTask
+   │
+   ▼
+任务拆解 → DAG 调度 → WorkerService / NATS 分发
+   │                         │
+   └──────── 实时事件 ←───────┘
+                 │
+                 ▼
+       OMP 输出 / TUI 输出 / Dashboard 状态 / Memory
+```
 
 ## Quick Start
 
@@ -172,7 +283,7 @@ The OMP extension also registers LLM-callable tools:
 - `uc_index` — Index management: index_repo / list_repos / get_state / remove_index
 - `uc_file` — File operations: list_dir / get_file
 
-The Dashboard (Vite + React) provides a web UI at `http://localhost:5173` for cluster monitoring.
+The product dashboard (Vite + React) is available at `http://localhost:5173/` with the default Vite config. Its root route is the product overview; open `#/tui` for the real OMP PTY terminal connected to the Gateway TaskService over gRPC-Web. The current local handoff uses port `4176` (`http://127.0.0.1:4176/`).
 
 ## Architecture
 
@@ -180,9 +291,9 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 
 ```
 +-------------------+     +-------------------------------+     +---------------+
-|   Python Worker   |     |  OMP + UC Extension           |     |  Dashboard    |
+|   Python Worker   |     |  OMP + UC Extension           |     | TUI Web Shell |
 |  (NATS Worker /   |     |  +-------------------------+  |     +-------+-------+
-|   local fallback) |     |  │ Orchestrator Core       │  |     |  (Vite/React) |
+|   local fallback) |     |  │ Orchestrator Core       │  |     | (Vite/React)  |
 +--------+----------+     |  │  ├─ Scheduler (DAG)     │  |             |
          |                |  │  ├─ TaskStore (SQLite)  │  |     +-------v-------+
          | Engine API     |  │  ├─ GrpcBridge          │──┼────►│  uc-grpc-server|
@@ -320,7 +431,7 @@ ultimate-coders/
 │       ├── search/           # SearchQuery builder
 │       ├── memory/           # Memory read/write interface
 │       └── config.py         # Configuration loading
-├── dashboard/                # Vite + React web dashboard
+├── dashboard/                # Vite + React product dashboard + TUI terminal
 ├── docker/                   # Docker configs + Dockerfiles + compose + scheduler config
 ├── tests/python/             # Python unit tests
 └── vendor/                   # oh-my-pi (OMP runtime)

@@ -19,7 +19,7 @@ COPY pyproject.toml ./
 # optional project extra explicit in the runtime image so a fresh Docker
 # deployment does not fall back to newline splitting with ModuleNotFoundError.
 RUN pip install --no-cache-dir \
-    "fastapi>=0.100.0" "uvicorn>=0.20.0" "jinja2>=3.1.0" \
+    "fastapi>=0.100.0" "uvicorn>=0.20.0" "websockets>=12.0" "jinja2>=3.1.0" \
     "sse-starlette>=1.6.0" "nats-py>=2.7.0" \
     "anthropic>=0.30.0" "litellm>=1.0.0"
 
