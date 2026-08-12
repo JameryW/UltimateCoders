@@ -175,6 +175,7 @@ export function useAuth(): AuthState {
     setStoredToken(null);
     setToken(null);
     setIsAuthenticated(false);
+    setConnectionError(false);
     setLoginError(null);
   }, []);
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 
 import pytest
 from ultimate_coders.agent.sandbox import (
@@ -596,14 +598,22 @@ class TestSandboxSubprocessCancellation:
     @pytest.mark.asyncio
     async def test_normal_completion_still_works(self):
 
-        config = SandboxConfig(project_path="/tmp")
+        working_dir = tempfile.gettempdir()
+        if os.name == "nt":
+            command = "cmd.exe"
+            args = ["/c", "echo", "hello"]
+        else:
+            command = "echo"
+            args = ["hello"]
+
+        config = SandboxConfig(project_path=working_dir)
         manager = SandboxManager(config)
         request = {
-            "command": "echo",
-            "args": ["hello"],
+            "command": command,
+            "args": args,
             "timeout_secs": 10,
             "env_vars": {},
-            "working_dir": "/tmp",
+            "working_dir": working_dir,
         }
         result = await manager._execute_subprocess(request)
         assert result.exit_code == 0
@@ -1194,9 +1204,12 @@ class TestCodexAdapterBuildRequest:
         assert "--skip-git-repo-check" in request["args"]
         assert request.get("_temp_files", []) == []
 
-    def test_subtask_config_mcp_creates_temp_toml(self):
+    def test_subtask_config_mcp_creates_temp_toml(self, monkeypatch, tmp_path):
         adapter = CodexAdapter()
         config = SandboxConfig(project_path="/tmp/project")
+        codex_home = tmp_path / "codex-home"
+        codex_home.mkdir()
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
         mcp_inline = {"codegraph": {"command": "npx", "args": ["-y", "mcp-codegraph"]}}
         request = adapter.build_request(
             "Fix bug", "/tmp/project", config,

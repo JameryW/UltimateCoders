@@ -15,6 +15,8 @@ Result model (c) from ``research/external-git-sync-model.md``:
 
 from __future__ import annotations
 
+import os
+import stat
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,6 +45,15 @@ def _git(args: list[str], cwd: str) -> str:
     return result.stdout
 
 
+def _remove_tree(path: Path) -> None:
+    """Remove a git worktree, including read-only object files on Windows."""
+    def _make_writable_and_retry(func, target, _exc_info):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    shutil.rmtree(path, onerror=_make_writable_and_retry)
+
+
 def _make_bare_remote(tmp_path: Path) -> Path:
     """Create a bare repo with one commit on ``main`` + a base file.
 
@@ -60,7 +71,7 @@ def _make_bare_remote(tmp_path: Path) -> Path:
     _git(["add", "."], cwd=str(work))
     _git(["commit", "-m", "initial"], cwd=str(work))
     _git(["push", "origin", "main"], cwd=str(work))
-    shutil.rmtree(work)
+    _remove_tree(work)
     return remote
 
 
@@ -82,7 +93,7 @@ def _make_subtask_branch(
     _git(["add", "."], cwd=str(work))
     _git(["commit", "-m", commit_msg], cwd=str(work))
     _git(["push", "origin", branch], cwd=str(work))
-    shutil.rmtree(work)
+    _remove_tree(work)
 
 
 def _remote_main_content(remote: Path, file_path: str) -> str:
@@ -203,7 +214,7 @@ async def test_arbitrate_resolves_non_overlapping_same_file(tmp_path):
     _git(["add", "."], cwd=str(work))
     _git(["commit", "-m", "add multi"], cwd=str(work))
     _git(["push", "origin", "main"], cwd=str(work))
-    shutil.rmtree(work)
+    _remove_tree(work)
 
     # Branch A appends a line at the end; Branch B edits line1.
     _make_subtask_branch(

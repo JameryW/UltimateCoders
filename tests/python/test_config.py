@@ -44,13 +44,15 @@ model = "gpt-4o"
 """
         with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
             f.write(content)
-            f.flush()
-            config = load_config(f.name)
+            path = f.name
+        try:
+            config = load_config(path)
             assert config.engine.mode == "grpc"
             assert config.engine.grpc_endpoint == "http://remote:50051"
             assert config.llm.provider == "openai"
             assert config.llm.model == "gpt-4o"
-            os.unlink(f.name)
+        finally:
+            os.unlink(path)
 
     def test_missing_file_warns(self):
         config = load_config("/nonexistent/config.toml")
@@ -72,22 +74,26 @@ llm:
 """
         with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
             f.write(content)
-            f.flush()
-            config = load_config(f.name)
+            path = f.name
+        try:
+            config = load_config(path)
             assert config.engine.mode == "grpc"
             assert config.llm.provider == "gemini"
             assert config.llm.model == "gemini-2.5-pro"
-            os.unlink(f.name)
+        finally:
+            os.unlink(path)
 
     def test_file_priority_over_defaults(self):
         content = "[llm]\nprovider = 'openai'\nmodel = 'gpt-4'"
         with tempfile.NamedTemporaryFile(suffix=".toml", mode="w", delete=False) as f:
             f.write(content)
-            f.flush()
-            config = load_config(f.name)
+            path = f.name
+        try:
+            config = load_config(path)
             assert config.llm.provider == "openai"
             assert config.llm.model == "gpt-4"
-            os.unlink(f.name)
+        finally:
+            os.unlink(path)
 
 
 class TestLoadConfigEnvVars:

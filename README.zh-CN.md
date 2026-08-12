@@ -13,7 +13,7 @@ UC Orchestrator 以 oh-my-pi（OMP）扩展运行，提供终端任务交互、�
 ## 核心特性
 
 - **DAG 任务编排**：将自然语言任务拆解为可观测子任务，按依赖关系分波次调度，并持续推送 submitted、running、completed、failed 状态。
-- **产品首页、运营 Dashboard 和 TUI**：`/` 展示产品能力和执行链；现有运营 Dashboard 保留在 `#/dashboard`；`#/tui` 通过 WebSocket 连接真实 OMP 会话。
+- **产品首页、运营 Dashboard 和 TUI**：`/` 展示产品能力和执行链；现有运营 Dashboard 保留在 `/dashboard`（同时兼容 `#/dashboard`）；`#/tui` 通过 WebSocket 连接真实 OMP 会话。
 - **TUI / OMP 共享命令层**：`run/status/tasks/workers/search/logs` 共用同一套 UC 语义，结果通过 TaskEvent 流推送。
 - **分布式 Worker**：Worker 通过 `WorkerService` 注册，发布心跳和能力声明，由 Gateway 按能力和负载调度；NATS 负责跨进程子任务分发。
 - **Rust 核心**：Engine、Task、Dashboard、Worker 服务统一提供 gRPC/gRPC-Web 接口，支持任务恢复、事件广播和内存 fallback。
@@ -68,7 +68,7 @@ cd UltimateCoders
 | 入口 | 用途 |
 | --- | --- |
 | `http://localhost:5173/` | 产品首页：能力总览、执行链和 Command Deck |
-| `http://localhost:5173/#/dashboard` | 现有运营 Dashboard：任务、Worker、事件、调度、检索、文件和指标 |
+| `http://localhost:5173/dashboard` 或 `http://localhost:5173/#/dashboard` | 现有运营 Dashboard：任务、Worker、事件、调度、检索、文件和指标 |
 | `http://localhost:5173/#/tui` | 真实 OMP PTY 终端：执行共享 UC 命令并查看实时输出 |
 
 常用命令：
@@ -314,6 +314,11 @@ pytest tests/python/ -v
 ### Docker Compose（存储后端）
 
 ```bash
+# 构建并启动完整本地应用（包含 React Dashboard UI）
+docker compose -f docker/docker-compose.yml --profile app up --build
+# React UI：http://localhost:8081
+# Dashboard API：http://localhost:8080/dashboard/
+
 docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml down
 docker compose -f docker/docker-compose.yml down -v

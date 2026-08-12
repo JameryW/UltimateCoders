@@ -6,9 +6,8 @@
 #   PostgreSQL         — structured metadata (symbols, references, repos)
 #   NATS JetStream     — async event stream (agent events, indexing jobs)
 #
-# Dashboard is embedded in the Orchestrator process and exposes
-# a web UI on port 8080. Map the port when running the
-# Orchestrator in Docker:
+# The Orchestrator exposes the Dashboard API and WebSocket on port 8080.
+# The React UI is served separately by dashboard-ui on port 8081.
 #   docker run -p 8080:8080 ...
 
 services:
@@ -185,8 +184,9 @@ services:
 
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.
-  # The dashboard is available at http://localhost:8080/dashboard/
-  # Use: docker compose --profile app up
+  # The Dashboard API is available at http://localhost:8080/dashboard/;
+  # open the React UI at http://localhost:8081.
+  # Use: docker compose -f docker/docker-compose.yml --profile app up --build
   orchestrator:
     image: docker-orchestrator:omp
     build:
@@ -225,13 +225,13 @@ services:
   # Serves the built React SPA and proxies /dashboard/api, /ws/tui,
   # and gRPC-Web to the backend services. Access at http://localhost:8081
   dashboard-ui:
-    image: nginx:1.27-alpine
+    image: ultimatecoders-dashboard-ui:local
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dashboard
     profiles: ["app"]
     ports:
       - "8081:80"   # Dashboard web UI
-    volumes:
-      - ../dashboard/dist:/usr/share/nginx/html:ro
-      - ./nginx-dashboard.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       orchestrator:
         condition: service_started

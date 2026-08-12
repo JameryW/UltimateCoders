@@ -13,6 +13,7 @@ merge if waves produce many files.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -269,8 +270,22 @@ class ResultAggregator:
         import asyncio
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *command.split(),
+            # Verification commands are configuration strings (for example
+            # ``cargo check`` or ``pytest -q``), so execute them through the
+            # platform shell instead of splitting on whitespace. This keeps
+            # quoted arguments intact and makes the same command contract
+            # usable on POSIX and Windows hosts. Windows has no built-in
+            # ``true``/``false`` commands, which are useful portable test
+            # sentinels, so translate those exact commands to ``cmd.exe``
+            # exit codes.
+            normalized_command = command.strip().casefold()
+            if os.name == "nt" and normalized_command == "true":
+                command = "exit /b 0"
+            elif os.name == "nt" and normalized_command == "false":
+                command = "exit /b 1"
+
+            proc = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

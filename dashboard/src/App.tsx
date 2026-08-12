@@ -170,9 +170,14 @@ function App() {
 
   const [loading, setLoading] = useState(true);
 
+  // The operations surface can still render its disconnected state while the
+  // Gateway is starting or temporarily unavailable.  `useAuth` reports that
+  // condition separately from an actual authentication failure, so do not
+  // leave the whole Dashboard behind a full-screen connection error.
+  const authReady = auth.isAuthenticated || auth.connectionError;
   const hasFetchedRef = useRef(false);
   useEffect(() => {
-    if (auth.isChecking || !auth.isAuthenticated || hasFetchedRef.current) return;
+    if (auth.isChecking || !authReady || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     dashboard.fetchInitial({
       fetchWorkers: listWorkers,
@@ -190,7 +195,7 @@ function App() {
       if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboard object changes every render (hook returns new object literal); its methods (fetchInitial) are stable useCallbacks
-  }, [auth.isChecking, auth.isAuthenticated, grpcState, listWorkers, getSchedulerStatus, listEvents, listTasks]);
+  }, [auth.isChecking, authReady, grpcState, listWorkers, getSchedulerStatus, listEvents, listTasks]);
 
   useEffect(() => {
     if (dashGrpcState !== "connected" && grpcState === "connected") {
@@ -356,20 +361,7 @@ function App() {
     );
   }
 
-  if (!auth.isAuthenticated) {
-    if (auth.connectionError) {
-      return (
-        <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
-          <div className="text-center max-w-md">
-            <p className="text-lg font-semibold text-red-400 mb-2">Connection Error</p>
-            <p className="text-sm mb-4">Unable to reach the server. Please check your network connection and try again.</p>
-            <button onClick={() => window.location.reload()} className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition-colors">
-              Retry
-            </button>
-          </div>
-        </div>
-      );
-    }
+  if (!auth.isAuthenticated && !auth.connectionError) {
     return (
       <div className="min-h-screen bg-[var(--bg-primary)]">
         <LoginModal onLogin={auth.login} loginError={auth.loginError} />
@@ -383,35 +375,6 @@ function App() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400 mx-auto mb-3" />
           <p className="text-sm">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const allFailed = Object.keys(dashboard.fetchErrors).length >= 3 && grpcState !== "connected" && dashGrpcState !== "connected";
-  if (allFailed) {
-    return (
-      <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">
-        <div className="text-center max-w-md">
-          <p className="text-lg font-semibold text-red-400 mb-2">Unable to connect to server</p>
-          <p className="text-sm mb-4">All gRPC endpoints failed. The backend may be down or unreachable.</p>
-          <button
-            onClick={() => {
-              setLoading(true);
-              dashboard.fetchInitial({
-                fetchWorkers: listWorkers,
-                fetchScheduler: getSchedulerStatus,
-                fetchEvents: listEvents,
-                fetchTasks: (grpcState as string) === "connected" ? listTasks : undefined,
-              }).then((errors) => {
-                setLoading(false);
-                if (Object.keys(errors).length > 0) showToast(`Some panels failed to load`, "error");
-              });
-            }}
-            className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-500 transition-colors"
-          >
-            Retry
-          </button>
         </div>
       </div>
     );

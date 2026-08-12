@@ -438,6 +438,11 @@ class MetricsAggregator:
     def alert_store(self) -> AlertStore:
         return self._alert_store
 
+    def close(self) -> None:
+        """Release SQLite connections owned by this aggregator."""
+        self._alert_store.close()
+        self._metrics_store.close()
+
     def generate_prometheus(self) -> str:
         """Generate Prometheus text format output for /metrics endpoint."""
         return self._prom.generate()
@@ -542,6 +547,15 @@ class AlertStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def close(self) -> None:
+        """Close the current thread's SQLite connection, if any."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            finally:
+                self._local.conn = None
+
 
 # ── MetricsStore (SQLite time-series persistence) ──────────
 
@@ -584,6 +598,15 @@ class MetricsStore:
             )
         """)
         conn.commit()
+
+    def close(self) -> None:
+        """Close the current thread's SQLite connection, if any."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            finally:
+                self._local.conn = None
 
     def insert(self, sample: MetricsSample) -> None:
         conn = self._conn()
