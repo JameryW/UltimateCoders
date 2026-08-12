@@ -1098,7 +1098,11 @@ class DashboardApp:
                             )
                         )
                         self._tui_pty = pty_proc
-                        logger.info("TUI PTY started with Windows ConPTY: PID=%d cmd=%s", pty_proc.pid, omp_script)
+                        logger.info(
+                            "TUI PTY started with Windows ConPTY: PID=%d cmd=%s",
+                            pty_proc.pid,
+                            omp_script,
+                        )
                         return pty_proc
                     except Exception as e:
                         logger.error("TUI Windows ConPTY start failed: %s", e)
