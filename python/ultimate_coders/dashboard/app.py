@@ -147,6 +147,9 @@ class DashboardApp:
         # _subscribe_sse inside the running loop — Py3.9 binds at construction).
         self._sse_subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._nats_subscriptions: list[Any] = []
+        # Background task retrying the initial NATS connect (None when not
+        # retrying). Cancelled on shutdown alongside the owned client.
+        self._nats_retry_task: asyncio.Task[None] | None = None
         # Standalone dashboard processes do not own the Orchestrator object.
         # Keep the latest snapshot published by nats-worker so the REST/SSE
         # fallback remains connected and useful in that deployment topology.
@@ -1723,24 +1726,20 @@ class DashboardApp:
         then never delivered a single message while startup logged
         "Connected to NATS". Connecting here keeps the transport bound to
         the loop that actually runs the subscription.
+
+        Startup races (nats container not yet accepting when the dashboard
+        boots, e.g. after a docker-daemon restart where depends_on ordering
+        does not apply) previously degraded the dashboard to snapshot-only
+        FOREVER. On failure a bounded retry task keeps trying on this same
+        server loop; once connected, nats-py's own reconnect handles
+        subsequent broker outages.
         """
         if self._nats_client is None:
             if not self._nats_url:
                 logger.debug("No NATS client/URL configured, skipping event subscription")
                 return
             try:
-                import nats as nats_lib
-
-                self._nats_client = await asyncio.wait_for(
-                    nats_lib.connect(
-                        self._nats_url,
-                        connect_timeout=5.0,
-                        max_reconnect_attempts=0,
-                    ),
-                    timeout=6.0,
-                )
-                # Force a real round-trip so lazy-connect failures surface now.
-                await asyncio.wait_for(self._nats_client.flush(), timeout=5.0)
+                self._nats_client = await self._connect_nats_once()
                 self._owns_nats_client = True
                 logger.info(
                     "Dashboard connected to NATS at %s (on server loop)",
@@ -1758,12 +1757,77 @@ class DashboardApp:
             except Exception:
                 logger.warning(
                     "Dashboard failed to connect to NATS at %s; "
-                    "running snapshot-only (no live uc.task.event)",
+                    "retrying in background (snapshot-only until it succeeds)",
                     self._nats_url,
                     exc_info=True,
                 )
                 self._nats_client = None
+                self._spawn_nats_connect_retry()
                 return
+        await self._subscribe_nats_subjects()
+
+    async def _connect_nats_once(self):
+        """Single NATS connect attempt with unbounded runtime reconnects."""
+        import nats as nats_lib
+
+        client = await asyncio.wait_for(
+            nats_lib.connect(
+                self._nats_url,
+                connect_timeout=5.0,
+                max_reconnect_attempts=-1,
+                reconnect_time_wait=2,
+            ),
+            timeout=6.0,
+        )
+        # Force a real round-trip so lazy-connect failures surface now.
+        await asyncio.wait_for(client.flush(), timeout=5.0)
+        return client
+
+    def _spawn_nats_connect_retry(self) -> None:
+        """Retry the initial NATS connection until it succeeds.
+
+        Runs on the server's event loop (started from a startup-hook
+        context). Stops after a successful connect; the client's own
+        reconnect callbacks take over from there.
+        """
+        if self._nats_retry_task is not None and not self._nats_retry_task.done():
+            return
+
+        async def _retry_loop() -> None:
+            attempt = 0
+            while self._nats_client is None:
+                attempt += 1
+                await asyncio.sleep(10.0)
+                try:
+                    client = await self._connect_nats_once()
+                except Exception:
+                    logger.debug(
+                        "NATS connect retry %d failed (will keep retrying)",
+                        attempt,
+                        exc_info=True,
+                    )
+                    continue
+                self._nats_client = client
+                self._owns_nats_client = True
+                logger.info(
+                    "Dashboard connected to NATS at %s after %d retr%s",
+                    self._nats_url,
+                    attempt,
+                    "y" if attempt == 1 else "ies",
+                )
+                if self._nats_publisher is None:
+                    from ultimate_coders.nats_worker import NatsPublisher
+
+                    self._nats_publisher = NatsPublisher(self._nats_client)
+                await self._subscribe_nats_subjects()
+                return
+
+        self._nats_retry_task = asyncio.create_task(_retry_loop())
+
+    async def _subscribe_nats_subjects(self) -> None:
+        """Subscribe to the dashboard NATS subjects on the current client."""
+        if self._nats_client is None:
+            return
         try:
             sub = await self._nats_client.subscribe(
                 NATS_SUBJECT_TASK_EVENT,
@@ -1788,6 +1852,13 @@ class DashboardApp:
 
     async def _close_owned_nats(self) -> None:
         """Drain + close a client this app connected itself (shutdown hook)."""
+        if self._nats_retry_task is not None:
+            self._nats_retry_task.cancel()
+            try:
+                await self._nats_retry_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._nats_retry_task = None
         if self._owns_nats_client and self._nats_client is not None:
             try:
                 await self._nats_client.drain()

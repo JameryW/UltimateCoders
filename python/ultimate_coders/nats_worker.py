@@ -2979,6 +2979,18 @@ class NatsWorker:
                     "status": h.status,
                     "version": h.version,
                     "uptime_seconds": h.uptime_seconds,
+                    # Per-component detail (short_term_memory, qdrant, ...)
+                    # — the dashboard /health page reads this list; omitting
+                    # it made every component show blank while the engine
+                    # was actually reporting 10 healthy components.
+                    "components": [
+                        {
+                            "name": c.name,
+                            "status": c.status,
+                            "details": c.details,
+                        }
+                        for c in (h.components or [])
+                    ],
                 }
             except Exception:
                 logger.warning("Health check failed", exc_info=True)

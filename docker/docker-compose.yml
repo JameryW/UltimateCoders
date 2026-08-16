@@ -32,6 +32,12 @@ services:
       - --advertise-peer-urls=http://pd:2380
       - --data-dir=/data
       - --initial-cluster=pd=http://pd:2380
+    # Match the app tier's restart policy so a daemon/host restart brings the
+    # WHOLE stack back. Without this, only gateway/orchestrator/workers restart
+    # (they have restart: unless-stopped) — they boot before storage answers and
+    # permanently degrade to in-memory fallbacks (depends_on ordering does not
+    # apply to restart-policy starts).
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2379/health"]
       interval: 10s
@@ -52,6 +58,7 @@ services:
       - --advertise-addr=tikv:20160
       - --data-dir=/data
       - --config=/etc/tikv/tikv.toml
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://pd:2379/pd/api/v1/stores || exit 1"]
       interval: 15s
@@ -68,6 +75,7 @@ services:
       - qdrant_data:/qdrant/storage
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
       interval: 10s
@@ -84,6 +92,7 @@ services:
       POSTGRES_DB: ultimate_coders
     volumes:
       - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ultimate_coders"]
       interval: 10s
@@ -99,6 +108,7 @@ services:
       - nats_data:/data
       - ./nats.conf:/etc/nats/nats.conf:ro
     command: --config /etc/nats/nats.conf
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
       interval: 10s
@@ -151,12 +161,19 @@ services:
       # when the override mounts the workspace.
     environment:
       UC_TIKV_PD_ENDPOINTS: "pd:2379"
-      # TEMP-VERIFY: legacy alias the old binary still reads. Remove after
-      # gateway image rebuilt with config.rs env-name fix.
-      UC_TIKV_ENDPOINT: "pd:2379"
       UC_QDRANT_URL: "http://qdrant:6334"
       UC_PG_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
       UC_NATS_URL: "nats://nats:4222"
+      # Durable backends: events → NATS JetStream, tasks/scheduler jobs →
+      # PostgreSQL. Each degrades gracefully (warn + in-memory) if unreachable,
+      # so enabling these never blocks gateway startup.
+      UC_EVENT_BACKEND: "nats"
+      UC_TASK_BACKEND: "postgres"
+      UC_SCHEDULE_BACKEND: "postgres"
+      UC_DATABASE_URL: "postgresql://ultimate_coders:ultimate_coders@postgres:5432/ultimate_coders"
+      # Optional Voyage AI key enables real semantic embeddings (without it
+      # the BLAKE3 fallback only matches exact text). Set in docker/.env.
+      UC_VOYAGE_API_KEY: "${UC_VOYAGE_API_KEY:-}"
       UC_GRPC_ADDR: "[::]:50051"
       UC_CORS_MODE: "dev"
       # Point the gateway at the workspace config (mounted via docker-compose-root).
@@ -171,16 +188,17 @@ services:
     # the TCP port via bash /dev/tcp (bookworm-slim ships bash). The standard
     # tonic_health service is registered for EngineService, but
     # grpc_health_probe isn't in the image — a TCP connect is sufficient for
-    # liveness (the process is up and bound). start_period is short (5s):
-    # serve binds 50051 before workspace indexing runs (indexing is a
-    # detached background task, never blocks the listener), so the port is
-    # available within seconds of process start.
+    # liveness (the process is up and bound). start_period is generous (90s):
+    # LocalEngine construction restores the text index from PostgreSQL BEFORE
+    # serve binds 50051 (~35-100s for a ~5k-file index on a warm cache), and
+    # workers/dashboard-ui depend on this healthcheck — a short window marks
+    # the gateway unhealthy and leaves dependents in Created.
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50051' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 90s
 
   # ── UltimateCoders Orchestrator (with Dashboard) ─────────────
   # Run the Orchestrator with the embedded web dashboard.

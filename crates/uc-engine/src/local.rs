@@ -326,7 +326,10 @@ impl LocalEngine {
     fn resolve_repo_path(local_path: &str, path: &str) -> Result<std::path::PathBuf, EngineError> {
         let p = std::path::Path::new(path);
         // Absolute path: Path::join would discard local_path entirely.
-        if p.is_absolute() {
+        // On Windows, "/etc/passwd" has no drive prefix so is_absolute() is
+        // false — has_root() also catches root-relative paths there, keeping
+        // the rejection consistent across platforms.
+        if p.is_absolute() || p.has_root() {
             return Err(EngineError::NotFound(format!("Invalid path: {}", path)));
         }
         // Any ParentDir component can escape the repo root after join.

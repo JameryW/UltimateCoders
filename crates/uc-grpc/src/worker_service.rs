@@ -736,10 +736,15 @@ mod tests {
             err
         );
 
-        // ── Case 2: compose file exists but is invalid (/dev/null) ──
+        // ── Case 2: compose file exists but is invalid ──
         // Either docker CLI is missing (invoke error) or compose fails parsing.
         // Both must produce success=false without panicking.
-        std::env::set_var("UC_COMPOSE_FILE", "/dev/null");
+        // (/dev/null only "exists" on Unix — on Windows the existence pre-check
+        // would fire first and test a different branch. An empty temp file
+        // exists everywhere, so all platforms reach the compose invocation.)
+        let bad_compose = std::env::temp_dir().join("uc_test_not_a_compose.yml");
+        std::fs::write(&bad_compose, b"").expect("write temp compose file");
+        std::env::set_var("UC_COMPOSE_FILE", bad_compose.to_str().unwrap());
         let resp = server
             .scale_workers(Request::new(ScaleWorkersRequest {
                 action: "scale".to_string(),
@@ -752,7 +757,7 @@ mod tests {
 
         assert!(
             !resp.success,
-            "scale with /dev/null compose should not succeed: {:?}",
+            "scale with empty compose should not succeed: {:?}",
             resp.message
         );
         let err = resp.error.unwrap();
