@@ -1155,8 +1155,10 @@ class NatsWorker:
         from ultimate_coders.agent.sandbox import DEFAULT_CODING_AGENT, SandboxConfig
 
         sandbox_config = SandboxConfig(
-            # Grok Build is the default coding agent; UC_CODING_AGENT keeps
-            # deployments able to opt into Claude Code or Codex explicitly.
+            # Coding agent selection is plugin-registry driven; UC_CODING_AGENT
+            # accepts any registered agent (built-ins: grok-build, claude-code,
+            # codex; plugins: deepseek-harness, or anything added via
+            # UC_AGENT_PLUGINS / the ultimate_coders.agent_adapters entry point).
             agent=os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT),
             project_path=self._project_path or os.getcwd(),
         )

@@ -406,15 +406,15 @@ class Worker:
                     caps.append(f"agent:{name}")
             except (json.JSONDecodeError, TypeError):
                 pass
-        # ponytail: probe agent CLIs on PATH — advertise matching capabilities so
-        # the scheduler can route explicit agent steps to workers that actually
-        # have the CLI. Best-effort: missing CLI = capability not advertised.
-        if shutil.which("grok"):
-            caps.extend(("grok-build", "grok"))
-        if shutil.which("claude"):
-            caps.append("claude-code")
-        if shutil.which("codex"):
-            caps.append("codex")
+        # ponytail: probe agent availability via the plugin registry — CLI
+        # agents advertise only when their binary is on PATH, API-backed
+        # harnesses (e.g. deepseek-harness) always advertise. New agents
+        # registered as plugins show up here without touching this method.
+        from ultimate_coders.agent import registry as agent_registry
+        from ultimate_coders.agent.registry import ensure_builtin_plugins
+
+        ensure_builtin_plugins()
+        caps.extend(agent_registry.registry.capability_names(shutil.which))
         # Deduplicate while preserving order
         seen: set[str] = set()
         unique: list[str] = []

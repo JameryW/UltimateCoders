@@ -71,7 +71,10 @@ impl HybridSearchEngine {
                     all_items.extend(ast_result);
                 }
                 SearchMode::Hybrid => {
-                    // Run all three search modes
+                    // Run all three search modes. Text + AST results must
+                    // survive a semantic failure (bad/missing embedding API
+                    // key, Qdrant hiccup): degrade to text+AST with a warn
+                    // instead of failing the whole hybrid query.
                     let text_result = self.pipeline.search_text(query).await?;
                     all_items.extend(text_result.items);
 
@@ -79,8 +82,16 @@ impl HybridSearchEngine {
                     all_items.extend(ast_result);
 
                     if let Some(semantic) = &self.semantic_engine {
-                        let semantic_result = semantic.search(query).await?;
-                        all_items.extend(semantic_result.items);
+                        match semantic.search(query).await {
+                            Ok(semantic_result) => all_items.extend(semantic_result.items),
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "Semantic leg of hybrid search failed — \
+                                     returning text+AST results only"
+                                );
+                            }
+                        }
                     }
                 }
             }

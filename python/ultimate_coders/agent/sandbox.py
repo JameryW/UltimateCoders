@@ -1,7 +1,12 @@
 """Sandbox management for agent execution.
 
 Provides Python wrappers for creating and managing sandbox environments
-that execute coding agents (Grok Build, Claude Code, Codex) in isolated settings.
+that execute coding agents (Grok Build, Claude Code, Codex, DeepSeek
+harness, ...) in isolated settings.
+
+Agents are plugin-registry driven — see ``ultimate_coders.agent.registry``
+for adding new ones without modifying this module (in-tree plugins,
+installed entry-point packages, or ``UC_AGENT_PLUGINS`` file paths).
 """
 
 from __future__ import annotations
@@ -35,7 +40,10 @@ class SandboxConfig:
     """Configuration for sandbox agent execution.
 
     Args:
-        agent: Which coding agent to use ("grok-build", "claude-code", or "codex").
+        agent: Which coding agent to use — any name registered in the
+            plugin registry (built-ins: "grok-build", "claude-code",
+            "codex"; in-tree plugin: "deepseek-harness"; plus whatever
+            external plugins register — see ultimate_coders.agent.registry).
         project_path: Path to the project directory.
         api_key: API key for the agent (optional, can use env var).
         max_cpu_seconds: Maximum CPU time in seconds.
@@ -113,12 +121,15 @@ class SandboxConfig:
         """Build environment variables including API keys."""
         env = dict(self.env_vars)
         if self.api_key:
-            if self.agent in GROK_AGENT_ALIASES:
-                env["XAI_API_KEY"] = self.api_key
-            elif self.agent == "claude-code":
-                env["ANTHROPIC_API_KEY"] = self.api_key
-            elif self.agent == "codex":
-                env["OPENAI_API_KEY"] = self.api_key
+            # ponytail: plugin-driven key mapping — the registry knows which
+            # env var each registered agent reads (XAI_API_KEY, ANTHROPIC_API_KEY,
+            # DEEPSEEK_API_KEY, ...). Unknown agents get no key injection and
+            # rely on their own env handling.
+            from ultimate_coders.agent.registry import api_key_env_for
+
+            key_env = api_key_env_for(self.agent)
+            if key_env:
+                env[key_env] = self.api_key
         return env
 
 
@@ -202,15 +213,8 @@ class SandboxManager:
         self._adapter = self._create_adapter(config.agent)
 
     def _create_adapter(self, agent: str) -> AgentAdapter:
-        """Create an agent adapter for the specified agent type."""
-        if agent in GROK_AGENT_ALIASES:
-            return GrokBuildAdapter()
-        elif agent == "claude-code":
-            return ClaudeCodeAdapter()
-        elif agent == "codex":
-            return CodexAdapter()
-        else:
-            raise ValueError(f"Unknown agent: {agent}. Available: {available_agents()}")
+        """Create an agent adapter via the plugin registry."""
+        return create_adapter(agent)
 
     async def acquire(self) -> SandboxHandle:
         """Acquire a sandbox instance from the pool or create a new one.
@@ -1577,18 +1581,17 @@ class CodexAdapter(AgentAdapter):
 
 
 def available_agents() -> list[str]:
-    """List available agent adapter names."""
-    return [
-        "grok-build", "grok",
-        "claude-code", "claude-code-decompose", "codex",
-    ]
+    """List available agent adapter names (plugin registry, built-ins + external)."""
+    from ultimate_coders.agent.registry import available_agents as _registry_agents
+
+    return _registry_agents()
 
 
 def create_adapter(name: str) -> AgentAdapter:
-    """Create an agent adapter by name.
+    """Create an agent adapter by name (plugin registry).
 
     Args:
-        name: The agent adapter name.
+        name: The agent adapter name or alias.
 
     Returns:
         An AgentAdapter instance.
@@ -1596,12 +1599,6 @@ def create_adapter(name: str) -> AgentAdapter:
     Raises:
         ValueError: If the agent name is not recognized.
     """
-    if name in GROK_AGENT_ALIASES:
-        return GrokBuildAdapter()
-    elif name == "claude-code":
-        return ClaudeCodeAdapter()
-    elif name == "claude-code-decompose":
-        return DecomposeAdapter()
-    elif name == "codex":
-        return CodexAdapter()
-    raise ValueError(f"Unknown agent: {name}. Available: {available_agents()}")
+    from ultimate_coders.agent.registry import create_adapter as _registry_create
+
+    return _registry_create(name)
