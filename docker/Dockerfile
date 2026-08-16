@@ -109,6 +109,22 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
     && claude --version \
     && codex --version
 
+# DeepSeek Harness (dsh) — official DeepSeek agent harness CLI; the
+# `deepseek-harness` coding agent (UC_CODING_AGENT) shells out to it via
+# `dsh --profile headless`. Auth is env-based (DEEPSEEK_API_KEY), so no
+# key is needed at build time.
+# ponytail: dsh depends on node-pty, a native module — node-gyp needs
+# make/g++ which the slim runtime lacks. Install them transiently and
+# purge in the SAME layer so the compiled module ships without the
+# toolchain bloat.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends make g++ \
+    && npm install -g @deepseek-ai/dsh \
+    && dsh --version \
+    && apt-get purge -y -qq make g++ \
+    && apt-get autoremove -y -qq \
+    && rm -rf /var/lib/apt/lists/*
+
 # Grok Build remains the default coding agent for compatibility deployments.
 # The installer is the official xAI distribution path; no API key is needed
 # at image build time.

@@ -1,6 +1,14 @@
 # Incremental OMP runtime layer. The existing orchestrator image already
 # contains the compiled Rust/Python gateway extension; this image only adds
 # Bun, the OMP workspace, PTY support, and the UC extension.
+#
+# ponytail: `docker-orchestrator:latest` is a LOCAL tag — nothing in this
+# repo builds it directly. It is the maturin-built Python runtime image
+# (same content as the worker service image). If a rebuild fails with
+# "pull access denied", restore the tag first:
+#   docker tag docker-worker:latest docker-orchestrator:latest
+# (compose build order: `docker compose --profile app --profile worker
+# build worker orchestrator` also works — worker builds first.)
 FROM docker-orchestrator:latest
 
 USER root

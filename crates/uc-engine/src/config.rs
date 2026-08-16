@@ -94,7 +94,8 @@ impl StorageConfig {
                 .unwrap_or_else(|| vec!["127.0.0.1:2379".into()]),
             qdrant_url: std::env::var("UC_QDRANT_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6334".into()),
-            qdrant_api_key: std::env::var("UC_QDRANT_API_KEY").ok(),
+            // Empty string (compose "${UC_QDRANT_API_KEY:-}") = unauthenticated.
+            qdrant_api_key: non_empty_env("UC_QDRANT_API_KEY"),
             pg_url: std::env::var("UC_PG_URL")
                 .unwrap_or_else(|_| "postgres://localhost/ultimatecoders".into()),
             nats_url: std::env::var("UC_NATS_URL")
@@ -180,7 +181,11 @@ impl EmbeddingConfig {
     /// - `UC_EMBEDDING_BATCH_SIZE`: Batch size per API call (default: 128)
     pub fn from_env() -> Self {
         Self {
-            voyage_api_key: std::env::var("UC_VOYAGE_API_KEY").ok(),
+            // ponytail: an EMPTY key env var must count as "not configured" —
+            // compose files pass "${UC_VOYAGE_API_KEY:-}" which expands to ""
+            // when unset. Treating "" as a real key made EmbeddingService
+            // attempt Voyage calls that 401, failing every hybrid search.
+            voyage_api_key: non_empty_env("UC_VOYAGE_API_KEY"),
             model: std::env::var("UC_EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "voyage-code-3".to_string()),
             dimensions: std::env::var("UC_EMBEDDING_DIMENSIONS")
@@ -196,6 +201,18 @@ impl EmbeddingConfig {
             retry_max_delay_ms: 60000,
         }
     }
+}
+
+/// Read an env var, treating unset AND empty/whitespace-only as None.
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(v)
+        }
+    })
 }
 
 #[cfg(test)]
@@ -242,5 +259,56 @@ mod tests {
         clear_tikv_env();
         let cfg = StorageConfig::from_env();
         assert_eq!(cfg.tikv_pd_endpoints, vec!["127.0.0.1:2379"]);
+    }
+
+    // ponytail: compose passes "${UC_VOYAGE_API_KEY:-}" which is an EMPTY
+    // string when unset — that must not enable the Voyage embedding path
+    // (it 401s and used to fail every hybrid search).
+    #[test]
+    fn embedding_empty_voyage_key_means_unconfigured() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("UC_VOYAGE_API_KEY", "");
+        }
+        assert!(EmbeddingConfig::from_env().voyage_api_key.is_none());
+
+        unsafe {
+            std::env::set_var("UC_VOYAGE_API_KEY", "   ");
+        }
+        assert!(EmbeddingConfig::from_env().voyage_api_key.is_none());
+
+        unsafe {
+            std::env::set_var("UC_VOYAGE_API_KEY", "pa-real-key");
+        }
+        assert_eq!(
+            EmbeddingConfig::from_env().voyage_api_key.as_deref(),
+            Some("pa-real-key")
+        );
+
+        unsafe {
+            std::env::remove_var("UC_VOYAGE_API_KEY");
+        }
+        assert!(EmbeddingConfig::from_env().voyage_api_key.is_none());
+    }
+
+    #[test]
+    fn qdrant_empty_api_key_means_unauthenticated() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("UC_QDRANT_API_KEY", "");
+        }
+        assert!(StorageConfig::from_env().qdrant_api_key.is_none());
+
+        unsafe {
+            std::env::set_var("UC_QDRANT_API_KEY", "grd-key");
+        }
+        assert_eq!(
+            StorageConfig::from_env().qdrant_api_key.as_deref(),
+            Some("grd-key")
+        );
+
+        unsafe {
+            std::env::remove_var("UC_QDRANT_API_KEY");
+        }
     }
 }
