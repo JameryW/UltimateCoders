@@ -280,18 +280,18 @@ impl NatsEventStore {
 
         // Ensure the agent events stream exists.
         //
-        // Subject filter is `>` (all subjects) because the EventStore is
-        // shared: TaskStore appends under `task.{id}` subjects while
-        // LocalEngine appends under `agent.events.{id}`. A narrow
-        // `agent.events.>` filter would silently drop TaskStore events,
-        // breaking checkpoint replay (CheckpointManager reads `task.`
-        // prefix per PR #570). The stream is dedicated (own client
-        // connection), so `>` only captures subjects published via this
-        // EventStore — not unrelated NATS traffic.
+        // Subject filters are the two prefixes the EventStore appends under:
+        // `task.{id}` (TaskStore event recording) and `agent.events.{id}`
+        // (LocalEngine agent events, checkpoint replay reads this prefix per
+        // PR #570). A narrow filter is REQUIRED — `>` (all subjects) is
+        // rejected by NATS with error 10052 ("capturing all subjects
+        // requires no-ack") for the default explicit-ack stream, and would
+        // also overlap the Python-managed UC_SUBTASKS workqueue stream
+        // (uc.subtask.execute), which NATS forbids for workqueue retention.
         jetstream
             .create_stream(async_nats::jetstream::stream::Config {
                 name: "AGENT_EVENTS".to_string(),
-                subjects: vec![">".to_string()],
+                subjects: vec!["task.>".to_string(), "agent.events.>".to_string()],
                 ..Default::default()
             })
             .await

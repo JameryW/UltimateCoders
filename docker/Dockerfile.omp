@@ -14,7 +14,9 @@ ENV BUN_INSTALL=/opt/bun \
 
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14" \
     && bun --version
-RUN pip install --no-cache-dir websockets
+# websockets: TUI relay; prometheus-client: dashboard /metrics exporter
+# (the dashboard answers with a stub text response without it).
+RUN pip install --no-cache-dir websockets "prometheus-client>=0.20.0"
 
 COPY vendor/oh-my-pi /opt/oh-my-pi
 

@@ -466,20 +466,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // recovery. Mirrors create_task_backend() timing.
     let schedule_store = create_schedule_store().await;
 
-    // Create local engine (with fallback to in-memory if storage is unavailable)
-    let engine = match LocalEngine::new_with_scheduler_store(config, schedule_store).await {
-        Ok(e) => {
-            tracing::info!("LocalEngine created with storage backends");
-            e
+    // Create local engine (with fallback to in-memory if storage is unavailable).
+    // Storage boot races (e.g. docker-daemon restart brings the gateway up
+    // before TiKV/Qdrant/PG answer) would otherwise pin the gateway to the
+    // in-memory fallback forever — the fallback is never re-attempted. Retry
+    // the storage-backed construction for up to ~60s before degrading.
+    let mut engine = None;
+    for attempt in 1..=6 {
+        match LocalEngine::new_with_scheduler_store(config.clone(), schedule_store.clone()).await {
+            Ok(e) => {
+                tracing::info!("LocalEngine created with storage backends");
+                engine = Some(e);
+                break;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    attempt,
+                    "Failed to create LocalEngine with storage: {}",
+                    err
+                );
+                if attempt < 6 {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
+            }
         }
-        Err(err) => {
-            tracing::warn!(
-                "Failed to create LocalEngine with storage: {}. Using fallback.",
-                err
-            );
-            LocalEngine::new_fallback()
-        }
-    };
+    }
+    let engine = engine.unwrap_or_else(|| {
+        tracing::warn!("Storage unavailable after retries — LocalEngine using in-memory fallback");
+        LocalEngine::new_fallback()
+    });
 
     // Load uc.repos.yaml and index configured workspace repos at startup.
     // Mirrors Python worker's load_repos_config + RepoScanner.discover_and_index.

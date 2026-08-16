@@ -16,12 +16,15 @@ WORKDIR /app
 # separately from Rust/Python source. Source changes won't reinstall fastapi etc.
 COPY pyproject.toml ./
 # The worker always performs LLM task decomposition before dispatch. Keep the
-# optional project extra explicit in the runtime image so a fresh Docker
+# optional project extras explicit in the runtime image so a fresh Docker
 # deployment does not fall back to newline splitting with ModuleNotFoundError.
+# prometheus-client powers the dashboard /metrics exporter (the dashboard
+# degrades to a stub text response without it).
 RUN pip install --no-cache-dir \
     "fastapi>=0.100.0" "uvicorn>=0.20.0" "websockets>=12.0" "jinja2>=3.1.0" \
     "sse-starlette>=1.6.0" "nats-py>=2.7.0" \
-    "anthropic>=0.30.0" "litellm>=1.0.0"
+    "anthropic>=0.30.0" "litellm>=1.0.0" \
+    "prometheus-client>=0.20.0"
 
 # ponytail: multilspy (optional LSP dep) — install jedi-language-server (pure
 # Python, no binary download needed). Verify the import works at build time so
@@ -109,8 +112,14 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
 # Grok Build remains the default coding agent for compatibility deployments.
 # The installer is the official xAI distribution path; no API key is needed
 # at image build time.
-RUN curl -fsSL https://x.ai/cli/install.sh | bash
-ENV PATH="/root/.local/bin:/root/.grok/bin:${PATH}"
+# ponytail: the installer writes to $HOME/.grok (i.e. /root/.grok here), but
+# the entrypoint below drops the worker to ucworker — /root is 0700, so exec
+# of /root/.grok/bin/grok fails with EACCES at runtime. Move the install to
+# a world-traversable path and point PATH there instead.
+RUN curl -fsSL https://x.ai/cli/install.sh | bash \
+    && mv /root/.grok /opt/grok \
+    && chmod -R a+rX /opt/grok
+ENV PATH="/opt/grok/bin:${PATH}"
 RUN grok --version
 
 # Claude Code refuses --dangerously-skip-permissions under root. Keep the

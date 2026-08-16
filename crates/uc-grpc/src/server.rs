@@ -1616,20 +1616,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         task_backend: Arc<dyn uc_engine::TaskStoreBackend>,
         event_store: Arc<dyn uc_engine::EventStore>,
     ) -> Self {
-        let nats_client = match nats_connect_options().connect(nats_url).await {
-            Ok(client) => {
-                tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
-                Some(client)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    nats_url = %nats_url,
-                    error = %e,
-                    "NATS unavailable, TaskService will use local decomposition"
-                );
-                None
-            }
-        };
+        let nats_client = connect_nats_with_retry(nats_url).await;
 
         let task_store = Arc::new(Mutex::new(TaskStore::with_backend(
             task_backend,
@@ -1676,20 +1663,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         nats_url: &str,
         heartbeat_timeout: std::time::Duration,
     ) -> Self {
-        let nats_client = match nats_connect_options().connect(nats_url).await {
-            Ok(client) => {
-                tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
-                Some(client)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    nats_url = %nats_url,
-                    error = %e,
-                    "NATS unavailable, TaskService will use local decomposition"
-                );
-                None
-            }
-        };
+        let nats_client = connect_nats_with_retry(nats_url).await;
 
         let event_store: Arc<dyn uc_engine::EventStore> =
             Arc::new(uc_engine::InMemoryEventStore::new());
@@ -2087,6 +2061,48 @@ fn nats_connect_options() -> async_nats::ConnectOptions {
             let base = 100_u64.saturating_mul(2_u64.saturating_pow(attempts.min(20) as u32));
             std::time::Duration::from_millis(base.min(10_000))
         })
+}
+
+/// Connect to NATS with a bounded startup retry.
+///
+/// A one-shot connect silently degrades the server forever when NATS is
+/// slow to boot (e.g. a docker-daemon restart races the gateway ahead of
+/// the nats container — depends_on ordering does not apply to restart-
+/// policy starts). Retrying here covers the startup race; once connected,
+/// the client's own reconnect callbacks handle later outages. After the
+/// retries are exhausted the caller proceeds in degraded mode, exactly
+/// like the old one-shot behaviour.
+#[cfg(feature = "messaging")]
+async fn connect_nats_with_retry(nats_url: &str) -> Option<async_nats::Client> {
+    const MAX_ATTEMPTS: u32 = 30;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+    let mut last_err = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match nats_connect_options().connect(nats_url).await {
+            Ok(client) => {
+                tracing::info!(nats_url = %nats_url, "Connected to NATS for TaskService");
+                return Some(client);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    nats_url = %nats_url,
+                    attempt,
+                    max_attempts = MAX_ATTEMPTS,
+                    error = %e,
+                    "NATS connect failed, retrying"
+                );
+                last_err = Some(e);
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+        }
+    }
+    tracing::warn!(
+        nats_url = %nats_url,
+        error = ?last_err,
+        "NATS unavailable after retries, TaskService will use local decomposition"
+    );
+    None
 }
 
 /// Spawn a background task that subscribes to `uc.task.update`,

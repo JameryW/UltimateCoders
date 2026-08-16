@@ -46,71 +46,96 @@ impl ShortTermMemory {
     /// Create a new short-term memory store with a TiKV client.
     #[cfg(feature = "storage")]
     pub async fn new(pd_endpoints: Vec<String>, ttl_seconds: u64) -> Result<Self, EngineError> {
-        match tikv_client::RawClient::new(pd_endpoints).await {
-            Ok(client) => {
-                let client_arc = Arc::new(client);
-                // ponytail: verify TiKV store is writable — PD can be up while TiKV
-                // nodes are still starting. Retry up to 3 times with 2s backoff.
-                let mut probe_ok = false;
-                for attempt in 0..3 {
-                    let probe_key = format!("__uc_probe_{}", uuid::Uuid::new_v4());
-                    match client_arc.put(probe_key.clone(), b"probe".to_vec()).await {
-                        Ok(_) => {
-                            if let Err(e) = client_arc.delete(probe_key.clone()).await {
-                                // Best-effort cleanup: a failed delete leaks the
-                                // __uc_probe_<uuid> key into TiKV. Log so the leak
-                                // is observable, not silent. Volume is one key per
-                                // startup; no retry (transient, trivial cost).
-                                tracing::warn!(
-                                    key = %probe_key,
-                                    error = %e,
-                                    "TiKV probe key delete failed — key may leak"
-                                );
-                            }
-                            probe_ok = true;
-                            break;
-                        }
-                        Err(e) if attempt < 2 => {
-                            tracing::warn!(
-                                "TiKV write probe failed (attempt {}): {}, retrying in 2s",
-                                attempt + 1,
-                                e
-                            );
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        }
-                        Err(e) => {
-                            tracing::warn!("TiKV write probe failed after 3 attempts: {}", e);
-                        }
-                    }
+        // PD may still be booting when the engine starts (docker-daemon
+        // restart races the gateway ahead of the storage tier, and
+        // depends_on ordering does not apply to restart-policy starts).
+        // A one-shot connect here pins short-term memory to the in-memory
+        // fallback for the process lifetime. Retry the client connect for
+        // up to ~30s before degrading; the write probe below covers the
+        // PD-up-but-TiKV-not-ready window.
+        let mut last_err = None;
+        let mut client = None;
+        for attempt in 1..=10 {
+            match tikv_client::RawClient::new(pd_endpoints.clone()).await {
+                Ok(c) => {
+                    client = Some(c);
+                    break;
                 }
-
-                if probe_ok {
-                    tracing::info!("Connected to TiKV for short-term memory");
-                    Ok(Self {
-                        client: Some(client_arc),
-                        fallback: Arc::new(RwLock::new(Vec::new())),
-                        default_ttl_seconds: ttl_seconds,
-                    })
-                } else {
-                    tracing::warn!("TiKV PD reachable but store not ready, using in-memory fallback for short-term memory");
-                    Ok(Self {
-                        client: None,
-                        fallback: Arc::new(RwLock::new(Vec::new())),
-                        default_ttl_seconds: ttl_seconds,
-                    })
+                Err(e) => {
+                    tracing::warn!(
+                        "TiKV PD connect failed (attempt {}/10): {}, retrying in 3s",
+                        attempt,
+                        e
+                    );
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 }
             }
-            Err(e) => {
+        }
+        let client = match client {
+            Some(c) => Arc::new(c),
+            None => {
                 tracing::warn!(
-                    "TiKV unavailable, using in-memory fallback for short-term memory: {}",
-                    e
+                    "TiKV unavailable after retries, using in-memory fallback for short-term memory: {:?}",
+                    last_err
                 );
-                Ok(Self {
+                return Ok(Self {
                     client: None,
                     fallback: Arc::new(RwLock::new(Vec::new())),
                     default_ttl_seconds: ttl_seconds,
-                })
+                });
             }
+        };
+        let client_arc = client;
+        // ponytail: verify TiKV store is writable — PD can be up while TiKV
+        // nodes are still starting. Retry up to 3 times with 2s backoff.
+        let mut probe_ok = false;
+        for attempt in 0..3 {
+            let probe_key = format!("__uc_probe_{}", uuid::Uuid::new_v4());
+            match client_arc.put(probe_key.clone(), b"probe".to_vec()).await {
+                Ok(_) => {
+                    if let Err(e) = client_arc.delete(probe_key.clone()).await {
+                        // Best-effort cleanup: a failed delete leaks the
+                        // __uc_probe_<uuid> key into TiKV. Log so the leak
+                        // is observable, not silent. Volume is one key per
+                        // startup; no retry (transient, trivial cost).
+                        tracing::warn!(
+                            key = %probe_key,
+                            error = %e,
+                            "TiKV probe key delete failed — key may leak"
+                        );
+                    }
+                    probe_ok = true;
+                    break;
+                }
+                Err(e) if attempt < 2 => {
+                    tracing::warn!(
+                        "TiKV write probe failed (attempt {}): {}, retrying in 2s",
+                        attempt + 1,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                Err(e) => {
+                    tracing::warn!("TiKV write probe failed after 3 attempts: {}", e);
+                }
+            }
+        }
+
+        if probe_ok {
+            tracing::info!("Connected to TiKV for short-term memory");
+            Ok(Self {
+                client: Some(client_arc),
+                fallback: Arc::new(RwLock::new(Vec::new())),
+                default_ttl_seconds: ttl_seconds,
+            })
+        } else {
+            tracing::warn!("TiKV PD reachable but store not ready, using in-memory fallback for short-term memory");
+            Ok(Self {
+                client: None,
+                fallback: Arc::new(RwLock::new(Vec::new())),
+                default_ttl_seconds: ttl_seconds,
+            })
         }
     }
 
