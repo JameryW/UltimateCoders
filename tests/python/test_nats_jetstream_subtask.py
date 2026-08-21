@@ -559,6 +559,62 @@ async def test_execute_and_report_no_js_msg_no_ack():
     publisher.publish_event.assert_awaited_once()
 
 
+async def test_cancelled_task_skips_execution_and_acks_jetstream():
+    """A task cancelled before pickup must never start its sandbox process."""
+    nw = _make_worker()
+    nw._cancelled_task_ids.add("t-1")
+
+    worker = MagicMock()
+    worker.worker_id = "w-1"
+    worker.execute_subtask = AsyncMock()
+    nw._worker = worker
+
+    publisher = MagicMock()
+    publisher.publish_event = AsyncMock()
+    publisher.publish_update = AsyncMock()
+    nw._publisher = publisher
+
+    ack = AsyncMock()
+    js_msg = MagicMock()
+    js_msg.ack = ack
+
+    await nw._execute_and_report(
+        Subtask(id="st-1", parent_id="t-1", description="do not run"),
+        js_msg=js_msg,
+    )
+
+    worker.execute_subtask.assert_not_awaited()
+    publisher.publish_event.assert_not_awaited()
+    publisher.publish_update.assert_not_awaited()
+    ack.assert_awaited_once()
+
+
+async def test_cancel_event_stops_running_remote_execution():
+    """A task_cancelled event stops a remote execution already in progress."""
+    nw = _make_worker()
+    nw._dispatch_event = asyncio.Event()
+
+    orchestrator = MagicMock()
+    orchestrator.cancel_task = AsyncMock(return_value=True)
+    nw._orchestrator = orchestrator
+
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    execution = asyncio.create_task(wait_forever())
+    nw._running_subtask_tasks["t-1"] = {execution}
+
+    msg = MagicMock()
+    msg.data = json.dumps({"type": "task_cancelled", "task_id": "t-1"}).encode()
+    await nw._handle_task_event(msg)
+    await asyncio.sleep(0)
+
+    assert "t-1" in nw._cancelled_task_ids
+    assert execution.cancelled()
+    orchestrator.cancel_task.assert_awaited_once_with("t-1")
+    assert nw._dispatch_event.is_set()
+
+
 # ── Core NATS fallback path still works ─────────────────────────
 
 

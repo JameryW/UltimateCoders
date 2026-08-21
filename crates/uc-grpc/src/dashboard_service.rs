@@ -270,6 +270,7 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
         {
             match self.nats_client() {
                 Some(nats_client) => {
+                    let dashboard_server = self.clone();
                     let stream = async_stream::stream! {
                         // Subscribe to both snapshot and incremental event subjects
                         let mut snapshot_sub = match nats_client
@@ -305,7 +306,7 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                                 sub.next(),
                             ).await {
                                 match serde_json::from_slice::<serde_json::Value>(&message.payload) {
-                                    Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                    Ok(json_val) => yield Ok(dashboard_server.authoritative_dashboard_snapshot(&json_val).await),
                                     Err(e) => tracing::warn!("Initial snapshot parse error: {e}"),
                                 }
                             }
@@ -358,7 +359,7 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                                     match snapshot_result {
                                         Some(message) => {
                                             match serde_json::from_slice::<serde_json::Value>(&message.payload) {
-                                                Ok(json_val) => yield Ok(json_to_dashboard_snapshot(&json_val)),
+                                                Ok(json_val) => yield Ok(dashboard_server.authoritative_dashboard_snapshot(&json_val).await),
                                                 Err(e) => tracing::warn!("Dashboard snapshot parse error: {e}"),
                                             }
                                             last_snapshot = tokio::time::Instant::now();
@@ -440,6 +441,44 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
 }
 
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
+    /// Convert the Python snapshot while replacing fields owned by the
+    /// gateway. Python's Orchestrator view only sees one NATS responder, so
+    /// it cannot reliably represent the full WorkerRegistry or Rust scheduler.
+    #[cfg(feature = "messaging")]
+    async fn authoritative_dashboard_snapshot(
+        &self,
+        value: &serde_json::Value,
+    ) -> DashboardSnapshot {
+        let authoritative_workers = {
+            let registry = self.worker_registry().read().await;
+            if registry.workers().is_empty() {
+                None
+            } else {
+                let workers = registry.to_worker_protos();
+                let available_count =
+                    workers.iter().filter(|worker| worker.is_available).count() as u32;
+                Some(ListWorkersResponse {
+                    available: true,
+                    total: workers.len() as u32,
+                    available_count,
+                    workers,
+                })
+            }
+        };
+        let authoritative_scheduler = self
+            .engine()
+            .get_scheduler_status()
+            .await
+            .ok()
+            .map(|status| scheduler_status_to_proto(&status));
+
+        reconcile_dashboard_snapshot(
+            json_to_dashboard_snapshot(value),
+            authoritative_workers,
+            authoritative_scheduler,
+        )
+    }
+
     /// Send a NATS request-reply to Python Orchestrator for Dashboard data.
     async fn nats_dashboard_request(
         &self,
@@ -962,6 +1001,22 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
     }
 }
 
+/// Merge gateway-owned state into a snapshot produced by the Python
+/// dashboard publisher.
+fn reconcile_dashboard_snapshot(
+    mut snapshot: DashboardSnapshot,
+    authoritative_workers: Option<ListWorkersResponse>,
+    authoritative_scheduler: Option<GetSchedulerStatusResponse>,
+) -> DashboardSnapshot {
+    if let Some(workers) = authoritative_workers {
+        snapshot.workers = Some(workers);
+    }
+    if let Some(scheduler) = authoritative_scheduler {
+        snapshot.scheduler = Some(scheduler);
+    }
+    snapshot
+}
+
 /// Convert a `uc.task.event` JSON payload into a lightweight DashboardSnapshot
 /// containing only the event in `recent_task_events`. Used for incremental push.
 #[cfg(feature = "messaging")]
@@ -1084,5 +1139,67 @@ async fn build_local_snapshot(
         recent_events: Vec::new(),
         recent_task_events,
         metrics: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_prefers_gateway_workers_and_scheduler() {
+        let snapshot = DashboardSnapshot {
+            workers: Some(ListWorkersResponse {
+                available: true,
+                workers: vec![WorkerProto {
+                    id: "python-view".to_string(),
+                    ..Default::default()
+                }],
+                total: 1,
+                available_count: 1,
+            }),
+            scheduler: Some(GetSchedulerStatusResponse {
+                available: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let authoritative_workers = ListWorkersResponse {
+            available: true,
+            workers: vec![
+                WorkerProto {
+                    id: "worker-a".to_string(),
+                    ..Default::default()
+                },
+                WorkerProto {
+                    id: "worker-b".to_string(),
+                    ..Default::default()
+                },
+            ],
+            total: 2,
+            available_count: 2,
+        };
+        let authoritative_scheduler = GetSchedulerStatusResponse {
+            available: true,
+            is_running: true,
+            ..Default::default()
+        };
+
+        let reconciled = reconcile_dashboard_snapshot(
+            snapshot,
+            Some(authoritative_workers),
+            Some(authoritative_scheduler),
+        );
+
+        let workers = reconciled.workers.expect("workers should be present");
+        assert_eq!(workers.total, 2);
+        assert_eq!(workers.workers.len(), 2);
+        assert_eq!(workers.workers[0].id, "worker-a");
+        assert!(
+            reconciled
+                .scheduler
+                .expect("scheduler should be present")
+                .available
+        );
     }
 }

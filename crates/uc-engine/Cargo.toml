@@ -49,6 +49,9 @@ tokio-cron-scheduler = { version = "0.15", optional = true }
 [dev-dependencies]
 sqlx = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [features]
 default = ["storage", "indexing", "messaging"]
 storage = ["tikv-client", "qdrant-client", "sqlx"]

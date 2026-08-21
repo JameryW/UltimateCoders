@@ -20,6 +20,7 @@ uc-types = { path = "../uc-types" }
 uc-engine = { path = "../uc-engine" }
 uc-grpc = { path = "../uc-grpc", features = ["messaging"] }
 tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { workspace = true }
 tonic-web = { workspace = true }
 tonic-health = "0.12"

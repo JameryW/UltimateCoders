@@ -8,6 +8,41 @@ use uc_types::index::RepoSpec;
 
 use std::path::{Path, PathBuf};
 
+fn local_workspace_owner_validation_disabled(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
+/// Allow an explicitly trusted, host-mounted workspace to be opened when the
+/// container user differs from the host file owner. This is opt-in because
+/// disabling libgit2 owner validation weakens repository safety checks.
+fn configure_local_workspace_owner_validation(spec: &RepoSpec) {
+    if spec.local_path.is_none()
+        || !local_workspace_owner_validation_disabled(
+            std::env::var("UC_GIT_ALLOW_UNTRUSTED_WORKSPACE")
+                .ok()
+                .as_deref(),
+        )
+    {
+        return;
+    }
+
+    // libgit2 exposes owner validation as a process-wide option rather than
+    // a per-repository setting. The compose deployment only enables this for
+    // its read-only local workspace mount.
+    unsafe {
+        if let Err(error) = git2::opts::set_verify_owner_validation(false) {
+            tracing::warn!(%error, "Failed to disable libgit2 owner validation for local workspace");
+        } else {
+            tracing::warn!(
+                "libgit2 owner validation disabled for explicitly trusted local workspace"
+            );
+        }
+    }
+}
+
 /// Information about a file change between two commits.
 #[derive(Debug, Clone)]
 pub struct FileDiff {
@@ -65,6 +100,7 @@ impl RepoManager {
     /// If the repository is already cloned, opens it instead.
     /// If a `local_path` is provided in the spec, uses that path directly.
     pub fn clone_or_open(&self, spec: &RepoSpec) -> Result<git2::Repository, EngineError> {
+        configure_local_workspace_owner_validation(spec);
         let local_path = spec
             .local_path
             .as_ref()
@@ -337,5 +373,11 @@ mod tests {
     fn test_diff_kind_equality() {
         assert_eq!(DiffKind::Added, DiffKind::Added);
         assert_ne!(DiffKind::Added, DiffKind::Modified);
+    }
+
+    #[test]
+    fn local_workspace_owner_validation_flag_accepts_explicit_truthy_values() {
+        assert!(local_workspace_owner_validation_disabled(Some("true")));
+        assert!(!local_workspace_owner_validation_disabled(Some("false")));
     }
 }

@@ -22,11 +22,11 @@ RUN set -e; \
       mkdir -p crates/$d/src; \
       case $d in \
         uc-grpc-server) echo 'fn main() {}' > crates/$d/src/main.rs ;; \
-        uc-python) ;; \
+        uc-python) echo '' > crates/$d/src/lib.rs ;; \
         *) echo '' > crates/$d/src/lib.rs ;; \
       esac; \
     done && \
-    cargo build --release -p uc-grpc-server || true
+    cargo build --release -p uc-grpc-server
 
 # Now overlay the real source and build for real. Dependency artifacts are
 # already cached from the stub build above.

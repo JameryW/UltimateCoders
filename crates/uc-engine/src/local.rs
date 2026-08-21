@@ -96,6 +96,29 @@ impl LocalEngine {
         config: EngineConfig,
         schedule_store: Option<Arc<dyn ScheduleStore>>,
     ) -> Result<Self, EngineError> {
+        Self::new_with_scheduler_store_inner(config, schedule_store, true).await
+    }
+
+    /// Create an engine without rebuilding the in-memory text index.
+    ///
+    /// The standalone gateway uses this during startup so it can bind its
+    /// listener before the potentially expensive source walk. Call
+    /// [`restore_text_index`] from a background task after the listener is
+    /// ready to preserve text-search recovery without blocking readiness.
+    #[cfg(feature = "storage")]
+    pub async fn new_with_scheduler_store_deferred_text_index_restore(
+        config: EngineConfig,
+        schedule_store: Option<Arc<dyn ScheduleStore>>,
+    ) -> Result<Self, EngineError> {
+        Self::new_with_scheduler_store_inner(config, schedule_store, false).await
+    }
+
+    #[cfg(feature = "storage")]
+    async fn new_with_scheduler_store_inner(
+        config: EngineConfig,
+        schedule_store: Option<Arc<dyn ScheduleStore>>,
+        restore_text_index: bool,
+    ) -> Result<Self, EngineError> {
         // Initialize short-term memory (TiKV)
         let short_term = Arc::new(
             ShortTermMemory::new(
@@ -167,16 +190,7 @@ impl LocalEngine {
             None => SchedulerService::new(),
         });
 
-        // Restore the in-memory text index from source (AST/semantic already
-        // persist in Postgres/Qdrant; text index is rebuilt on startup).
-        if let Err(e) = index_pipeline.restore_text_index().await {
-            tracing::warn!(
-                "Text index restore failed (search will be incomplete until next reindex): {}",
-                e
-            );
-        }
-
-        Ok(Self {
+        let engine = Self {
             memory_store,
             metadata_store,
             index_pipeline,
@@ -188,7 +202,26 @@ impl LocalEngine {
             task_store: Arc::new(Mutex::new(crate::task_store::TaskStore::new())),
             scheduler_service,
             start_time: Instant::now(),
-        })
+        };
+
+        if restore_text_index {
+            if let Err(e) = engine.restore_text_index().await {
+                tracing::warn!(
+                    "Text index restore failed (search will be incomplete until next reindex): {}",
+                    e
+                );
+            }
+        }
+
+        Ok(engine)
+    }
+
+    /// Rebuild the in-memory text index from registered repository source.
+    ///
+    /// AST and semantic indexes are persisted separately. This method exists
+    /// so a gateway can defer the source walk until it has accepted traffic.
+    pub async fn restore_text_index(&self) -> Result<u64, EngineError> {
+        self.index_pipeline.restore_text_index().await
     }
 
     /// Create a new local engine with explicit configuration (fallback-only when storage feature is disabled).
@@ -1478,16 +1511,21 @@ fn load_index() -> Index { Index::new() }"#,
     async fn local_engine_sandbox_create_and_execute() {
         let engine = LocalEngine::new_fallback();
 
+        let test_dir = std::env::temp_dir().to_string_lossy().into_owned();
         let config = crate::sandbox::SandboxConfig {
-            project_path: "/tmp".to_string(),
-            working_dir: "/tmp".to_string(),
+            project_path: test_dir.clone(),
+            working_dir: test_dir,
             ..Default::default()
         };
 
         let handle = engine.create_sandbox(&config).await.unwrap();
         assert_eq!(handle.status, crate::sandbox::SandboxStatus::Ready);
 
-        let request = crate::sandbox::ExecRequest::new("echo", vec!["hello sandbox".to_string()]);
+        let (command, args) = crate::sandbox::test_shell_command(
+            "printf '%s\\n' 'hello sandbox'",
+            "echo hello sandbox",
+        );
+        let request = crate::sandbox::ExecRequest::new(command, args);
         let result = engine.execute_in_sandbox(&handle, request).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("hello sandbox"));
@@ -1499,23 +1537,31 @@ fn load_index() -> Index { Index::new() }"#,
     async fn local_engine_sandbox_execute_timeout() {
         let engine = LocalEngine::new_fallback();
 
+        let test_dir = std::env::temp_dir().to_string_lossy().into_owned();
         let config = crate::sandbox::SandboxConfig {
-            project_path: "/tmp".to_string(),
-            working_dir: "/tmp".to_string(),
+            project_path: test_dir.clone(),
+            working_dir: test_dir,
             ..Default::default()
         };
 
         let handle = engine.create_sandbox(&config).await.unwrap();
 
+        let (command, args) =
+            crate::sandbox::test_shell_command("sleep 60", "ping -n 61 127.0.0.1 > NUL");
         let request = crate::sandbox::ExecRequest {
-            command: "sleep".to_string(),
-            args: vec!["60".to_string()],
+            command,
+            args,
             timeout_secs: 1,
             ..Default::default()
         };
 
         let result = engine.execute_in_sandbox(&handle, request).await.unwrap();
         assert!(result.timed_out);
+        assert!(
+            result.duration_ms < 5_000,
+            "timeout returned after {} ms",
+            result.duration_ms
+        );
 
         engine.stop_sandbox(&handle).await.unwrap();
     }

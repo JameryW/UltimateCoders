@@ -208,8 +208,6 @@ impl SandboxPool {
 mod tests {
     use super::*;
     use crate::sandbox::subprocess::SubprocessSandbox;
-    use crate::sandbox::NetworkMode;
-    use std::collections::HashMap;
 
     fn test_config() -> SandboxConfig {
         SandboxConfig {

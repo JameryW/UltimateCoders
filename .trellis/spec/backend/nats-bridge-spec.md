@@ -194,6 +194,18 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
   second lock acquisition or dispatching follow-up work; otherwise the
   service-read RPCs (`ListTasks`, `GetTask`) can wait indefinitely.
 
+### Dashboard Worker Snapshot
+
+- The default-mode NATS Worker keeps its own local worker in
+  `Orchestrator.workers` and tracks remote dispatch candidates separately in
+  `_known_remote_workers` from `uc.heartbeat` messages.
+- Dashboard snapshots and the `ListWorkers` NATS responder must merge both
+  collections by worker ID.  This is observability-only: remote workers must
+  not be registered in the local Orchestrator, because that would make the
+  local scheduler treat a NATS execution target as a direct local worker.
+- A remote heartbeat without a valid `last_seen` is shown as stale and
+  unavailable rather than making the snapshot fail.
+
 ---
 
 ## 4. Validation & Error Matrix

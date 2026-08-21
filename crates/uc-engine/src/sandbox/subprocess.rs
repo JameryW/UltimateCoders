@@ -125,6 +125,17 @@ impl Sandbox for SubprocessSandbox {
             ))
         })?;
 
+        // A Job Object guarantees that a Windows timeout terminates the whole
+        // command tree, not just a shell wrapper such as `cmd.exe /C`.
+        #[cfg(windows)]
+        let process_job = match WindowsProcessJob::assign(&child) {
+            Ok(job) => Some(job),
+            Err(error) => {
+                tracing::warn!(%error, "could not assign subprocess to a Windows Job Object");
+                None
+            }
+        };
+
         // Optionally provide stdin
         if let Some(stdin_data) = &request.stdin {
             if let Some(mut stdin_pipe) = child.stdin.take() {
@@ -134,72 +145,41 @@ impl Sandbox for SubprocessSandbox {
             }
         }
 
-        // Wait for the process (with optional timeout), capturing output.
-        // The inner block reads stdout+stderr concurrently via tokio::join!
-        // before child.wait() — serial reads deadlock when the child writes
-        // >64KB to one pipe while the other fills.
-        let inner = async {
-            // Take stdout+stderr handles up front so we can read them
-            // concurrently with each other and with child.wait(). Reading
-            // them serially before wait() deadlocks when the child writes
-            // >64KB to one pipe while the other fills (both block on a
-            // reader that hasn't started yet).
-            let mut stdout_buf = Vec::new();
-            let mut stderr_buf = Vec::new();
+        // Drain both pipes in background tasks while waiting for the process.
+        // Waiting on either pipe before `child.wait()` deadlocks when a child
+        // fills one pipe while the other is still waiting to be read.
+        let mut stdout_task = child.stdout.take().map(|mut stdout| {
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                stdout.read_to_end(&mut bytes).await?;
+                Ok::<Vec<u8>, std::io::Error>(bytes)
+            })
+        });
+        let mut stderr_task = child.stderr.take().map(|mut stderr| {
+            tokio::spawn(async move {
+                let mut bytes = Vec::new();
+                stderr.read_to_end(&mut bytes).await?;
+                Ok::<Vec<u8>, std::io::Error>(bytes)
+            })
+        });
 
-            let stdout_handle = child.stdout.take();
-            let stderr_handle = child.stderr.take();
-
-            // Read both pipes concurrently; the futures only resolve once
-            // each pipe hits EOF (child closed it). Runs in parallel with
-            // the implicit wait below via tokio::join!.
-            let (stdout_result, stderr_result) = tokio::join!(
-                async {
-                    match stdout_handle {
-                        Some(mut stdout) => stdout.read_to_end(&mut stdout_buf).await,
-                        None => Ok(0),
-                    }
-                },
-                async {
-                    match stderr_handle {
-                        Some(mut stderr) => stderr.read_to_end(&mut stderr_buf).await,
-                        None => Ok(0),
-                    }
-                },
-            );
-
-            // Now that both pipes are drained, wait for exit.
-            let status = child.wait().await;
-
-            // Propagate I/O errors
-            stdout_result
-                .map_err(|e| EngineError::SandboxError(format!("stdout read error: {}", e)))?;
-            stderr_result
-                .map_err(|e| EngineError::SandboxError(format!("stderr read error: {}", e)))?;
-
-            let exit_status = status
-                .map_err(|e| EngineError::SandboxError(format!("process wait error: {}", e)))?;
-
-            let exit_code = exit_status.code().unwrap_or(-1);
-
-            Ok::<(i32, Vec<u8>, Vec<u8>), EngineError>((exit_code, stdout_buf, stderr_buf))
+        // Apply the timeout to the process wait only. Descendant processes may
+        // inherit stdout/stderr; timing out a pipe read would otherwise wait
+        // for those descendants to exit even after the requested command has
+        // been terminated.
+        let status = match timeout_duration {
+            Some(duration) => timeout(duration, child.wait()).await,
+            None => Ok(child.wait().await),
         };
-
-        // Apply timeout only when configured; 0 means unbounded. Both
-        // branches yield Result<Result<(i32,Vec<u8>,Vec<u8>), EngineError>, EngineError>,
-        // where the outer Err is a timeout (mapped from Elapsed).
-        let result: Result<Result<(i32, Vec<u8>, Vec<u8>), EngineError>, EngineError> =
-            match timeout_duration {
-                Some(d) => timeout(d, inner)
-                    .await
-                    .map_err(|_| EngineError::SandboxError("command timed out".into())),
-                None => Ok(inner.await),
-            };
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        match result {
-            Ok(Ok((exit_code, stdout_bytes, stderr_bytes))) => {
+        match status {
+            Ok(Ok(exit_status)) => {
+                let stdout_bytes = collect_output(stdout_task.take(), "stdout").await?;
+                let stderr_bytes = collect_output(stderr_task.take(), "stderr").await?;
+                let exit_code = exit_status.code().unwrap_or(-1);
+
                 // Use the default max output size from ResourceLimits.
                 // The subprocess sandbox does not have access to the SandboxConfig
                 // at execute time, so we use the default (50 MB).
@@ -225,11 +205,31 @@ impl Sandbox for SubprocessSandbox {
                     timed_out: false,
                 })
             }
-            Ok(Err(e)) => Err(e),
+            Ok(Err(e)) => Err(EngineError::SandboxError(format!(
+                "process wait error: {}",
+                e
+            ))),
             Err(_) => {
-                // Timeout -- kill the child process
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                // Timeout -- kill the process and, on Windows, its descendants.
+                // `cmd.exe /C` leaves child tools holding inherited pipe handles
+                // unless the process tree is terminated as a unit.
+                #[cfg(windows)]
+                if let Some(job) = &process_job {
+                    job.terminate();
+                } else if let Some(pid) = child.id() {
+                    Self::kill_process_tree(pid).await;
+                }
+                // `Child::kill()` waits for process exit. On Windows a shell
+                // can remain blocked while descendants release inherited pipe
+                // handles, so only request termination here and return the
+                // timeout result without waiting for cleanup.
+                let _ = child.start_kill();
+                if let Some(task) = stdout_task.take() {
+                    task.abort();
+                }
+                if let Some(task) = stderr_task.take() {
+                    task.abort();
+                }
 
                 let stdout = String::new();
                 let stderr = "Command timed out".to_string();
@@ -273,6 +273,27 @@ impl Sandbox for SubprocessSandbox {
 }
 
 impl SubprocessSandbox {
+    /// Terminate a Windows process tree so descendants cannot outlive a timed
+    /// out shell command while retaining its stdout/stderr pipe handles.
+    #[cfg(windows)]
+    async fn kill_process_tree(pid: u32) {
+        let mut taskkill = match Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            // Allow taskkill to finish cleaning descendants after this timeout
+            // path has returned; it must never delay the sandbox response.
+            .kill_on_drop(false)
+            .spawn()
+        {
+            Ok(taskkill) => taskkill,
+            Err(_) => return,
+        };
+
+        let _ = timeout(Duration::from_millis(500), taskkill.wait()).await;
+    }
+
     /// Apply Unix-specific resource limits to a command.
     ///
     /// On Unix, we use process groups and ulimit-style limits.
@@ -296,6 +317,89 @@ impl SubprocessSandbox {
     }
 }
 
+#[cfg(windows)]
+struct WindowsProcessJob {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+// A Job Object handle is an owned kernel handle. This wrapper never exposes
+// the raw handle or permits mutation without a shared reference.
+#[cfg(windows)]
+unsafe impl Send for WindowsProcessJob {}
+
+#[cfg(windows)]
+impl WindowsProcessJob {
+    fn assign(child: &tokio::process::Child) -> std::io::Result<Self> {
+        use std::mem::size_of;
+        use std::ptr::null;
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let handle = unsafe { CreateJobObjectW(null(), null()) };
+        if handle.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            unsafe { CloseHandle(handle) };
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let child_handle = child
+            .raw_handle()
+            .ok_or_else(std::io::Error::last_os_error)?;
+        let assigned = unsafe { AssignProcessToJobObject(handle, child_handle as HANDLE) };
+        if assigned == 0 {
+            unsafe { CloseHandle(handle) };
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn terminate(&self) {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        unsafe { TerminateJobObject(self.handle, 1) };
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsProcessJob {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        unsafe { CloseHandle(self.handle) };
+    }
+}
+
+async fn collect_output(
+    task: Option<tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>>,
+    stream_name: &str,
+) -> Result<Vec<u8>, EngineError> {
+    match task {
+        Some(task) => task
+            .await
+            .map_err(|e| EngineError::SandboxError(format!("{stream_name} read task failed: {e}")))?
+            .map_err(|e| EngineError::SandboxError(format!("{stream_name} read error: {e}"))),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// Truncate output bytes to the maximum allowed size, appending a marker
 /// if truncation occurred.
 pub(crate) fn truncate_output(bytes: &[u8], max_bytes: usize) -> String {
@@ -310,7 +414,7 @@ pub(crate) fn truncate_output(bytes: &[u8], max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{NetworkMode, ResourceLimits};
+    use super::super::test_shell_command;
     use super::*;
     use std::collections::HashMap;
 
@@ -352,9 +456,11 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
+        let (command, args) =
+            test_shell_command("printf '%s\\n' 'hello world'", "echo hello world");
         let request = ExecRequest {
-            command: "echo".to_string(),
-            args: vec!["hello world".to_string()],
+            command,
+            args,
             stdin: None,
             timeout_secs: 10,
             working_dir: String::new(),
@@ -373,10 +479,11 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
-        // On Unix, use `env` or `printenv`; on Windows, use `echo %VAR%`
+        let (command, args) =
+            test_shell_command("printf '%s\\n' \"$UC_TEST_VAR\"", "echo %UC_TEST_VAR%");
         let request = ExecRequest {
-            command: "printenv".to_string(),
-            args: vec!["UC_TEST_VAR".to_string()],
+            command,
+            args,
             stdin: None,
             timeout_secs: 10,
             working_dir: String::new(),
@@ -394,9 +501,10 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
+        let (command, args) = test_shell_command("sleep 60", "ping -n 61 127.0.0.1 > NUL");
         let request = ExecRequest {
-            command: "sleep".to_string(),
-            args: vec!["60".to_string()],
+            command,
+            args,
             stdin: None,
             timeout_secs: 1,
             working_dir: String::new(),
@@ -406,6 +514,11 @@ mod tests {
         let result = sandbox.execute(&handle, request).await.unwrap();
         assert!(result.timed_out);
         assert_ne!(result.exit_code, 0);
+        assert!(
+            result.duration_ms < 5_000,
+            "timeout returned after {} ms",
+            result.duration_ms
+        );
     }
 
     #[tokio::test]
@@ -433,9 +546,10 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
+        let (command, args) = test_shell_command("false", "exit /B 1");
         let request = ExecRequest {
-            command: "false".to_string(),
-            args: vec![],
+            command,
+            args,
             stdin: None,
             timeout_secs: 5,
             working_dir: String::new(),
@@ -508,9 +622,10 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
+        let (command, args) = test_shell_command("printf '%s\\n' survived", "echo survived");
         let request = ExecRequest {
-            command: "echo".to_string(),
-            args: vec!["survived".to_string()],
+            command,
+            args,
             stdin: None,
             timeout_secs: 0, // unbounded
             working_dir: String::new(),
@@ -534,12 +649,25 @@ mod tests {
         let config = test_config();
         let handle = sandbox.create(&config).await.unwrap();
 
-        // Print ~200KB to stdout AND ~200KB to stderr concurrently. Use a
-        // portable POSIX loop (no brace expansion — dash, the Ubuntu /bin/sh,
-        // doesn't support `{1..N}`). Under the old serial read this hangs
-        // until the test timeout because the child blocks writing to one pipe
-        // while the other fills.
-        let script = r#"
+        // Print ~200KB to stdout AND ~200KB to stderr concurrently. Under the
+        // old serial read this hangs until the test timeout because the child
+        // blocks writing to one pipe while the other fills.
+        let (command, args) = {
+            #[cfg(windows)]
+            {
+                (
+                    "powershell.exe".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-Command".to_string(),
+                        "$out = 'x' * 64; $err = 'y' * 64; 1..4000 | ForEach-Object { [Console]::Out.Write($out); [Console]::Error.Write($err) }".to_string(),
+                    ],
+                )
+            }
+
+            #[cfg(not(windows))]
+            {
+                let script = r#"
             i=0
             while [ $i -lt 4000 ]; do
               printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
@@ -547,9 +675,12 @@ mod tests {
               i=$((i+1))
             done
         "#;
+                test_shell_command(script, "")
+            }
+        };
         let request = ExecRequest {
-            command: "sh".to_string(),
-            args: vec!["-c".to_string(), script.to_string()],
+            command,
+            args,
             stdin: None,
             timeout_secs: 30,
             working_dir: String::new(),

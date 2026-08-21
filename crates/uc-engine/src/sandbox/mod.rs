@@ -36,6 +36,35 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uc_types::EngineError;
 
+/// Return a shell command for tests that must run on every supported host.
+///
+/// Production callers supply the executable they intend to run. Tests use a
+/// shell only for portable assertions such as environment expansion, sleeping,
+/// and deliberate non-zero exits.
+#[cfg(test)]
+pub(crate) fn test_shell_command(
+    posix_script: impl Into<String>,
+    windows_script: impl Into<String>,
+) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let _ = posix_script;
+        (
+            "cmd".to_string(),
+            vec!["/C".to_string(), windows_script.into()],
+        )
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = windows_script;
+        (
+            "sh".to_string(),
+            vec!["-c".to_string(), posix_script.into()],
+        )
+    }
+}
+
 // ── Sandbox Trait ──────────────────────────────────────────────
 
 /// Sandbox execution trait -- abstracts over isolation backends.

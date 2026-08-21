@@ -326,7 +326,13 @@ function App() {
     dashboard.optimisticStatusUpdate(taskId, "cancelled");
     try {
       const r = await grpcCancelTask(taskId);
-      if (r.success) showToast("Task cancelled", "success");
+      if (r.success) {
+        // The task model represents cancellation as a terminal Failed state.
+        // Reconcile the optimistic UI value with the authoritative response
+        // because task_cancelled is an event, not a distinct task status.
+        dashboard.optimisticStatusUpdate(taskId, r.status.toLowerCase());
+        showToast("Task cancelled", "success");
+      }
       // Revert optimistic cancel on server rejection — back to in_progress.
       else { dashboard.optimisticStatusUpdate(taskId, "in_progress"); showToast(`Cancel failed: ${r.error ?? "unknown"}`, "error"); }
       return r;

@@ -20,6 +20,7 @@
 
 mod window_watcher;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
 use uc_engine::scheduler::{config::SchedulerFileConfig, PostgresScheduleStore, ScheduleStore};
@@ -28,10 +29,16 @@ use uc_grpc::server::{health_reporter, GrpcServer};
 use uc_grpc::AuthInterceptor;
 use uc_types::EngineApi;
 
+use tokio::net::TcpListener;
+use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_web::GrpcWebLayer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
+
+async fn bind_gateway_listener(addr: SocketAddr) -> Result<TcpListener, std::io::Error> {
+    TcpListener::bind(addr).await
+}
 
 /// Create a TaskStoreBackend and EventStore based on environment configuration.
 ///
@@ -473,7 +480,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the storage-backed construction for up to ~60s before degrading.
     let mut engine = None;
     for attempt in 1..=6 {
-        match LocalEngine::new_with_scheduler_store(config.clone(), schedule_store.clone()).await {
+        match LocalEngine::new_with_scheduler_store_deferred_text_index_restore(
+            config.clone(),
+            schedule_store.clone(),
+        )
+        .await
+        {
             Ok(e) => {
                 tracing::info!("LocalEngine created with storage backends");
                 engine = Some(e);
@@ -494,31 +506,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = engine.unwrap_or_else(|| {
         tracing::warn!("Storage unavailable after retries — LocalEngine using in-memory fallback");
         LocalEngine::new_fallback()
-    });
-
-    // Load uc.repos.yaml and index configured workspace repos at startup.
-    // Mirrors Python worker's load_repos_config + RepoScanner.discover_and_index.
-    // ponytail: local-path repos only (remote-only entries are skipped — handled
-    // by Python worker mode). Failures per-repo log a warning but don't abort.
-    //
-    // CRITICAL: indexing must NOT block Server::serve. A full reindex of a large
-    // repo (e.g. UltimateCoders, 4905 files, triggered when its SHA is no longer
-    // an ancestor of HEAD) can take minutes. If we `.await` here, port 50051
-    // never binds until indexing finishes — the docker healthcheck marks the
-    // container unhealthy, `restart: unless-stopped` does not restart unhealthy
-    // (only exited) containers, and the process never exits (blocked in async),
-    // leaving a permanent zombie that workers cannot connect to.
-    //
-    // Fix: clone the engine (zero-cost — LocalEngine is all-Arc, see
-    // local.rs) and spawn indexing as a detached task. Server::serve binds
-    // 50051 within seconds; indexing proceeds in the background. Searches
-    // during indexing return partial results — acceptable, and strictly better
-    // than a zombie gateway.
-    let index_engine = engine.clone();
-    tokio::spawn(async move {
-        tracing::info!("Background workspace indexing started (non-blocking serve)");
-        index_workspace_repos(&index_engine).await;
-        tracing::info!("Background workspace indexing finished");
     });
 
     // Create task store backend (in-memory or PostgreSQL)
@@ -589,9 +576,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_reporter, health_service) = health_reporter::<LocalEngine>().await;
 
     // Determine listen address
-    let addr = std::env::var("UC_GRPC_ADDR")
+    let addr: SocketAddr = std::env::var("UC_GRPC_ADDR")
         .unwrap_or_else(|_| "[::]:50051".to_string())
         .parse()?;
+
+    // Bind before any source walk. Docker's readiness probe is a TCP connect,
+    // so a large text-index restore cannot make the container look dead.
+    let listener = bind_gateway_listener(addr).await?;
 
     // CORS layer — allow dashboard origins for gRPC-Web browser requests
     // UC_CORS_MODE=dev: allow Any origins (local development only)
@@ -662,6 +653,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         addr
     );
 
+    // Text search is restored from source and can take minutes for a large
+    // workspace. Run it only after the TCP listener is bound, then continue
+    // with the configured workspace scan in the same task to avoid concurrent
+    // full walks over the same checkout.
+    let background_index_engine = grpc_server.engine().clone();
+    tokio::spawn(async move {
+        tracing::info!("Background text-index restore and workspace indexing started");
+        match background_index_engine.restore_text_index().await {
+            Ok(files) => tracing::info!(files, "Background text-index restore finished"),
+            Err(error) => tracing::warn!(
+                %error,
+                "Background text-index restore failed; search will be incomplete until reindex"
+            ),
+        }
+        index_workspace_repos(&background_index_engine).await;
+        tracing::info!("Background workspace indexing finished");
+    });
+
     let server_builder = if dashboard_token.is_empty() {
         tracing::info!("gRPC auth disabled (no UC_DASHBOARD_TOKEN — open access)");
 
@@ -699,8 +708,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // docker health probes keep working without a bearer token.
     server_builder
         .add_service(health_service)
-        .serve(addr)
+        .serve_with_incoming(TcpListenerStream::new(listener))
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::time::Duration;
+
+    use tokio::net::TcpStream;
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn gateway_listener_accepts_connections_before_background_restore() {
+        let listener =
+            bind_gateway_listener(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+                .await
+                .expect("gateway listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("bound listener should expose its address");
+
+        let (release_restore, restore_blocked) = oneshot::channel::<()>();
+        let background_restore = tokio::spawn(async move {
+            let _ = restore_blocked.await;
+        });
+
+        let connection = tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(address))
+            .await
+            .expect("connection should not wait for background restore");
+        assert!(
+            connection.is_ok(),
+            "bound gateway listener should accept TCP connections"
+        );
+
+        let _ = release_restore.send(());
+        background_restore
+            .await
+            .expect("background restore task should finish cleanly");
+    }
 }
