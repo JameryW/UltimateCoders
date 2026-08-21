@@ -484,6 +484,42 @@ async def test_dispatch_remote_publish_failure_resets_to_pending():
 # ── _build_snapshot task timestamps ─────────────────────────────
 
 
+@pytest.mark.asyncio
+async def test_dashboard_worker_snapshot_includes_known_remote_workers():
+    """The dashboard snapshot must include remote NATS dispatch workers.
+
+    Remote workers intentionally stay out of ``Orchestrator.workers`` so the
+    local scheduler does not treat them as direct execution targets. Their
+    heartbeat state lives in ``_known_remote_workers`` and must be merged only
+    when generating the monitoring snapshot.
+    """
+    from datetime import datetime, timezone
+
+    from ultimate_coders.agent.orchestrator import Orchestrator
+    from ultimate_coders.agent.types import WorkerInfo
+
+    nw = _make_worker()
+    orch = Orchestrator()
+    await orch.register_worker(WorkerInfo(id="local", capabilities=["code"], max_capacity=3))
+    nw._orchestrator = orch
+    nw._known_remote_workers["remote"] = {
+        "id": "remote",
+        "capabilities": ["code"],
+        "load": 1,
+        "max_capacity": 3,
+        "last_seen": datetime.now(timezone.utc),
+    }
+
+    snapshot = await nw._dash_listworkers({})
+
+    assert {worker["id"] for worker in snapshot["workers"]} == {"local", "remote"}
+    remote = next(worker for worker in snapshot["workers"] if worker["id"] == "remote")
+    assert remote["current_load"] == 1
+    assert remote["is_available"] is True
+    assert snapshot["total"] == 2
+    assert snapshot["available_count"] == 2
+
+
 async def test_build_snapshot_emits_real_task_timestamps():
     """_build_snapshot hardcoded created_at/updated_at to 0 → dashboard showed
     epoch. Regression: must emit int(t.<field>.timestamp()) (tz-aware UTC)."""

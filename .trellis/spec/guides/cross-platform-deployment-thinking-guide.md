@@ -6,6 +6,7 @@
 
 - [ ] Check both virtual-environment layouts: `.venv/bin` and `.venv/Scripts`.
 - [ ] Check both command execution models: POSIX shell commands and Windows `cmd.exe`.
+- [ ] When enforcing a subprocess timeout on Windows, put the command in a Job Object so a shell wrapper and every descendant terminate together; never wait for inherited output pipes on the timeout return path.
 - [ ] Check whether a path is a real repository root before inheriting Git metadata from a parent repository.
 - [ ] Check cleanup behavior on Windows, where open handles and read-only Git files can block deletion.
 - [ ] Check that every SQLite-backed component exposes a close path for its thread-local connection.
@@ -29,6 +30,7 @@ For Nginx upstreams that may be unavailable when the image starts:
 |----------|----------------|
 | Python launcher | `.venv/bin/python` and `.venv/Scripts/python.exe` resolution |
 | Verification command | Quoted arguments and `true`/`false` on Windows |
+| Sandbox timeout | `cmd.exe` descendants terminate with the wrapper and the timeout result returns promptly |
 | Git metadata | Nested non-repository directories do not inherit outer remote data |
 | SQLite lifecycle | Close metrics/alert stores before removing temporary databases |
 | Dashboard image | Standalone startup, SPA fallback, static assets, API proxy |

@@ -376,6 +376,12 @@ class NatsWorker:
         # marks the task Failed (the "OMP session interruption" symptom).
         # Set is safe to construct in __init__ (does not bind an event loop).
         self._bg_tasks: set[asyncio.Task[Any]] = set()
+        # A cancellation can arrive after a remote subtask has been queued.
+        # Remember it so that queued deliveries never start a sandbox process.
+        self._cancelled_task_ids: set[str] = set()
+        # Active remote executions keyed by parent task, used to terminate an
+        # already-running sandbox when its task is cancelled.
+        self._running_subtask_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         # Capacity semaphore — lazy-constructed in _init_components (Semaphore
         # binds a loop on Py3.9). Caps concurrent subtask executions.
         self._exec_semaphore: asyncio.Semaphore | None = None
@@ -475,6 +481,16 @@ class NatsWorker:
                     "fallback — no redelivery on crash)",
                     NATS_SUBJECT_SUBTASK_EXECUTE,
                 )
+
+            # A remote Worker must receive cancellation control events too.
+            # Otherwise a JetStream delivery that was queued before CancelTask
+            # can still start a coding-agent subprocess.
+            event_sub = await self._nc.subscribe(
+                NATS_SUBJECT_TASK_EVENT,
+                cb=self._handle_task_event,
+            )
+            self._subscriptions.append(event_sub)
+            logger.info("Subscribed to %s (cancellation control)", NATS_SUBJECT_TASK_EVENT)
 
             # Worker mode: subscribe to file change events for distributed conflict tracking
             file_change_sub = await self._nc.subscribe(
@@ -1343,6 +1359,38 @@ class NatsWorker:
         if exc is not None:
             logger.warning("Background task failed", exc_info=exc)
 
+    def _spawn_subtask_execution(
+        self,
+        subtask: Subtask,
+        js_msg: Any | None = None,
+    ) -> asyncio.Task[Any]:
+        """Start and retain an execution so its task cancellation can stop it."""
+        execution = self._spawn_bg(self._execute_and_report(subtask, js_msg=js_msg))
+        self._running_subtask_tasks.setdefault(subtask.parent_id, set()).add(execution)
+        execution.add_done_callback(
+            lambda done: self._remove_running_subtask(subtask.parent_id, done)
+        )
+        return execution
+
+    def _remove_running_subtask(
+        self,
+        task_id: str,
+        execution: asyncio.Task[Any],
+    ) -> None:
+        """Release a settled execution from the cancellation registry."""
+        running = self._running_subtask_tasks.get(task_id)
+        if running is None:
+            return
+        running.discard(execution)
+        if not running:
+            self._running_subtask_tasks.pop(task_id, None)
+
+    def _cancel_task_executions(self, task_id: str) -> None:
+        """Remember a cancellation and terminate remote executions for the task."""
+        self._cancelled_task_ids.add(task_id)
+        for execution in self._running_subtask_tasks.pop(task_id, set()):
+            execution.cancel()
+
     async def _handle_submit(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle a ``uc.task.submit`` message.
 
@@ -1401,6 +1449,15 @@ class NatsWorker:
                 len(task.subtasks),
             )
 
+            # A cancel event can arrive while LLM decomposition is in flight,
+            # before submit_task has inserted the task in the Orchestrator.
+            # Apply that remembered cancellation before any subtask dispatch.
+            if task.id in self._cancelled_task_ids:
+                await self._orchestrator.cancel_task(task.id)
+                logger.info("Task %s was cancelled during decomposition", task.id)
+                if self._publisher is not None:
+                    await self._publisher.publish_update(task)
+
             # Reply with decomposed task if this is a request-reply message
             if msg.reply:
                 reply_data = json.dumps(
@@ -1430,7 +1487,7 @@ class NatsWorker:
             # exclusive mode, status PAUSED, no subtasks) skip execution;
             # they'll be re-submitted on flush_pending_tasks() when the
             # window closes.
-            if task.subtasks:
+            if task.subtasks and task.status != TaskStatus.FAILED:
                 self._spawn_bg(self._execute_subtasks(task))
             else:
                 logger.info(
@@ -1882,6 +1939,10 @@ class NatsWorker:
             logger.error("No worker initialized, cannot execute subtask")
             return
 
+        if task_id in self._cancelled_task_ids:
+            logger.info("Skipping cancelled subtask %s", subtask_id[:8])
+            return
+
         # Capability check: worker must have ALL required_capabilities
         missing_caps = self._check_capabilities(data, task_id, subtask_id)
         if missing_caps is not None:
@@ -1910,7 +1971,7 @@ class NatsWorker:
         # drains instantly and the semaphore inside _execute_and_report does
         # the real concurrency limiting. Bonus: bg tasks are tracked in
         # _bg_tasks, so stop()'s cancellation finally reaches executions.
-        self._spawn_bg(self._execute_and_report(subtask))
+        self._spawn_subtask_execution(subtask)
 
     async def _handle_subtask_execute_js(self, js_msg: Any) -> None:
         """Handle a JetStream ``uc.subtask.execute`` message (Worker mode).
@@ -1944,6 +2005,11 @@ class NatsWorker:
         if self._worker is None:
             logger.error("No worker initialized, cannot execute subtask")
             await self._js_ack_safe(js_msg, term=True)
+            return
+
+        if task_id in self._cancelled_task_ids:
+            logger.info("ACK cancelled JetStream subtask %s", subtask_id[:8])
+            await self._js_ack_safe(js_msg, ack=True)
             return
 
         # Max-deliver cap: poison subtask. Term-ack (stop redelivery) +
@@ -1998,7 +2064,7 @@ class NatsWorker:
         # Dispatch execution with the JetStream msg so ack/term happens
         # AFTER execution completes (success → ack, failure → ack, crash →
         # no ack → redelivery).
-        self._spawn_bg(self._execute_and_report(subtask, js_msg=js_msg))
+        self._spawn_subtask_execution(subtask, js_msg=js_msg)
 
     def _parse_subtask_message(
         self,
@@ -2147,15 +2213,30 @@ class NatsWorker:
         assert self._worker is not None  # callback guards this before spawning
         task_id = subtask.parent_id
         subtask_id = subtask.id
+        if task_id in self._cancelled_task_ids:
+            logger.info("Skipping cancelled subtask %s", subtask_id[:8])
+            if js_msg is not None:
+                await self._js_ack_safe(js_msg, ack=True)
+            return
         try:
             # Bound concurrent executions to max_capacity so a flood of
             # uc.subtask.execute messages doesn't spawn that many agent
             # subprocesses at once (OOM/CPU starvation → worker death).
             if self._exec_semaphore is not None:
                 async with self._exec_semaphore:
+                    if task_id in self._cancelled_task_ids:
+                        logger.info("Skipping cancelled subtask %s", subtask_id[:8])
+                        if js_msg is not None:
+                            await self._js_ack_safe(js_msg, ack=True)
+                        return
                     result = await self._worker.execute_subtask(subtask)
             else:
                 result = await self._worker.execute_subtask(subtask)
+        except asyncio.CancelledError:
+            logger.info("Cancelled running subtask %s", subtask_id[:8])
+            if js_msg is not None:
+                await self._js_ack_safe(js_msg, ack=True)
+            return
         except Exception as e:
             logger.error(
                 "Subtask %s execution failed: %s",
@@ -2321,8 +2402,9 @@ class NatsWorker:
     async def _handle_task_event(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle ``uc.task.event`` messages from NATS.
 
-        Processes task_paused/resumed events originated by the Rust gRPC server,
-        and subtask_completed/failed events for event-driven dispatch wake-up.
+        Processes task_paused/resumed/cancelled events originated by the Rust
+        gRPC server, and subtask_completed/failed events for event-driven
+        dispatch wake-up.
         Uses Orchestrator._local methods to avoid a feedback loop.
         """
         try:
@@ -2346,6 +2428,14 @@ class NatsWorker:
             self._orchestrator.pause_task_local(task_id)
         elif event_type == "task_resumed":
             self._orchestrator.resume_task_local(task_id)
+        elif event_type == "task_cancelled":
+            # Cancel queued/active remote executions even when this process is
+            # in worker-only mode. The default-mode Orchestrator also marks its
+            # local task terminal so _execute_subtasks stops dispatching.
+            self._cancel_task_executions(task_id)
+            await self._orchestrator.cancel_task(task_id)
+            if self._dispatch_event is not None:
+                self._dispatch_event.set()
         elif event_type in ("subtask_completed", "subtask_failed"):
             # For remote dispatch: feed the result back into the Orchestrator.
             # The handler scopes by task_id (looked up in the Orchestrator), so it
@@ -2360,7 +2450,8 @@ class NatsWorker:
                 await self._handle_remote_subtask_result(event_type, task_id, subtask_id, data)
             # Wake _execute_subtasks loop so newly-unblocked subtasks
             # dispatch immediately
-            self._dispatch_event.set()
+            if self._dispatch_event is not None:
+                self._dispatch_event.set()
         elif event_type == "subtask_dispatch_rejected":
             # Worker rejected subtask (e.g. missing capabilities).
             # Reset to PENDING so select_next_subtask re-dispatches when a
@@ -2376,7 +2467,8 @@ class NatsWorker:
                 subtask_id[:8] if subtask_id else "?",
                 reason,
             )
-            self._dispatch_event.set()
+            if self._dispatch_event is not None:
+                self._dispatch_event.set()
         else:
             logger.debug("Ignoring uc.task.event type=%s", event_type)
 
@@ -2810,14 +2902,22 @@ class NatsWorker:
                 await msg.respond(json.dumps({"available": False, "error": str(e)}).encode())
 
     async def _dash_listworkers(self, _payload: dict) -> dict:
-        """Return workers list from Orchestrator."""
+        """Return the local and NATS-discovered workers for the dashboard.
+
+        The Orchestrator owns local worker load state, while remote workers are
+        intentionally tracked in ``_known_remote_workers`` for dispatch.  A
+        dashboard snapshot needs both sets: remote workers must not be added to
+        ``orch.workers`` because that would make the local scheduler assign
+        work to a worker it cannot execute against directly.
+        """
         orch = self._orchestrator
         if orch is None:
             return {"available": False, "workers": []}
         heartbeat_timeout = orch.config.heartbeat_timeout_seconds if orch.config else 60
+        now = datetime.now(timezone.utc)
         workers = []
+        worker_ids = set()
         for wid, w in orch.workers.items():
-            now = datetime.now(timezone.utc)
             age = (now - w.last_heartbeat).total_seconds()
             workers.append(
                 {
@@ -2834,6 +2934,50 @@ class NatsWorker:
                     "is_available": w.is_available,
                 }
             )
+            worker_ids.add(w.id)
+
+        # Remote NATS workers are dispatch candidates but are not registered in
+        # the local Orchestrator state. Merge their latest heartbeat view for
+        # monitoring only, without changing scheduling ownership.
+        for remote_id, remote in self._known_remote_workers.items():
+            worker_id = remote.get("id", remote_id)
+            if not isinstance(worker_id, str) or not worker_id or worker_id in worker_ids:
+                continue
+
+            capabilities = remote.get("capabilities", [])
+            if not isinstance(capabilities, list):
+                capabilities = []
+            current_load = remote.get("load", remote.get("current_load", 0))
+            if not isinstance(current_load, int):
+                current_load = 0
+            max_capacity = remote.get("max_capacity", 3)
+            if not isinstance(max_capacity, int) or max_capacity <= 0:
+                max_capacity = 3
+            last_seen = remote.get("last_seen")
+            if isinstance(last_seen, datetime):
+                heartbeat_age = max(0.0, (now - last_seen).total_seconds())
+                last_heartbeat = last_seen.isoformat()
+            else:
+                # Keep the snapshot JSON-serializable even if a malformed
+                # heartbeat did not carry a timestamp.
+                heartbeat_age = float(heartbeat_timeout + 1)
+                last_heartbeat = ""
+            heartbeat_stale = heartbeat_age > heartbeat_timeout
+            is_available = not heartbeat_stale and current_load < max_capacity
+            workers.append(
+                {
+                    "id": worker_id,
+                    "capabilities": capabilities,
+                    "current_load": current_load,
+                    "max_capacity": max_capacity,
+                    "load_percent": round(current_load / max_capacity * 100),
+                    "last_heartbeat": last_heartbeat,
+                    "heartbeat_age_seconds": round(heartbeat_age, 1),
+                    "heartbeat_stale": heartbeat_stale,
+                    "is_available": is_available,
+                }
+            )
+            worker_ids.add(worker_id)
         return {
             "available": True,
             "workers": workers,

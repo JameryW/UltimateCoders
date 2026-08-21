@@ -179,6 +179,10 @@ services:
       # Point the gateway at the workspace config (mounted via docker-compose-root).
       # The binary's CWD is /app, so the relative ./uc.repos.yaml lookup would miss it.
       UC_REPOS_CONFIG: "/app/docker-compose-root/uc.repos.yaml"
+      # Docker Desktop / rootless Linux can expose the host checkout with a
+      # different UID. The checkout is mounted read-only, and this opt-in
+      # allows libgit2 to index that explicitly trusted local workspace.
+      UC_GIT_ALLOW_UNTRUSTED_WORKSPACE: "${UC_GIT_ALLOW_UNTRUSTED_WORKSPACE:-true}"
       # ScaleWorkers: compose file + project name for `docker compose` shell-out.
       UC_COMPOSE_FILE: "/app/docker-compose-root/docker/docker-compose.yml"
       UC_COMPOSE_PROJECT: "docker"
@@ -188,11 +192,9 @@ services:
     # the TCP port via bash /dev/tcp (bookworm-slim ships bash). The standard
     # tonic_health service is registered for EngineService, but
     # grpc_health_probe isn't in the image — a TCP connect is sufficient for
-    # liveness (the process is up and bound). start_period is generous (90s):
-    # LocalEngine construction restores the text index from PostgreSQL BEFORE
-    # serve binds 50051 (~35-100s for a ~5k-file index on a warm cache), and
-    # workers/dashboard-ui depend on this healthcheck — a short window marks
-    # the gateway unhealthy and leaves dependents in Created.
+    # liveness (the process is up and bound). Source recovery now runs after
+    # the listener is bound; the generous 90s start period still tolerates
+    # slow storage initialization on a cold machine.
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/50051' || exit 1"]
       interval: 10s
