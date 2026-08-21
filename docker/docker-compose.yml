@@ -244,6 +244,11 @@ services:
       UC_REPOS: "UltimateCoders=/workspace/UltimateCoders"
     volumes:
       - ..:/workspace/UltimateCoders:rw
+    # The host workspace is already writable by the image's unprivileged
+    # runtime user. Starting as it bypasses the worker entrypoint's ownership
+    # repair, which otherwise recursively traverses the full bind mount before
+    # the Dashboard can listen on 8080.
+    user: "ucworker"
     restart: unless-stopped
     command: ["python", "-m", "ultimate_coders.dashboard", "--host", "0.0.0.0", "--port", "8080"]
 

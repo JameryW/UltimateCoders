@@ -6,6 +6,8 @@
 
 - [ ] Check both virtual-environment layouts: `.venv/bin` and `.venv/Scripts`.
 - [ ] Check both command execution models: POSIX shell commands and Windows `cmd.exe`.
+- [ ] Normalize executable shell scripts to LF in Docker images when their build context can originate on Windows; an executable CRLF shebang resolves to `/bin/sh\r` and fails with `not found` on Linux.
+- [ ] Before recursively changing ownership of a bind-mounted workspace, test whether the runtime user can already write to it. Docker Desktop mounts are often writable despite host UID differences; an unconditional `chown -R` can leave Dashboard/TUI unavailable while it traverses a large repository.
 - [ ] When enforcing a subprocess timeout on Windows, put the command in a Job Object so a shell wrapper and every descendant terminate together; never wait for inherited output pipes on the timeout return path.
 - [ ] Check whether a path is a real repository root before inheriting Git metadata from a parent repository.
 - [ ] Check cleanup behavior on Windows, where open handles and read-only Git files can block deletion.

@@ -26,6 +26,11 @@ pub use server::{
 pub use worker_service::WorkerRegistry;
 
 /// Generated protobuf types and service definitions.
+///
+/// Tonic generates `Result<_, tonic::Status>` service signatures. `Status` is
+/// intentionally returned by value as part of the generated gRPC contract, so
+/// newer Clippy versions flag the generated code with `result_large_err`.
+#[allow(clippy::result_large_err)]
 pub mod ultimate_coders {
     tonic::include_proto!("ultimate_coders");
 }

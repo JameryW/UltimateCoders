@@ -1064,6 +1064,13 @@ class DashboardApp:
                     env=env,
                     cwd=cwd,
                 )
+                # The `script` wrapper is the complete Linux PTY path.  Do
+                # not fall through to the pipe-fallback launch below: doing
+                # so starts a second OMP process and leaves two sessions
+                # competing for the same dashboard TUI.
+                self._tui_pty = pty_proc
+                logger.info("TUI PTY started: PID=%d cmd=%s", pty_proc.pid, omp_script)
+                return pty_proc
             except Exception as e:
                 logger.error("TUI PTY start failed: %s", e)
                 return None

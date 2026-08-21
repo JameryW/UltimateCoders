@@ -332,12 +332,12 @@ fn blake3_embedding(text: &str, dimensions: usize) -> Vec<f32> {
 
         // Convert hash bytes to f32 values in [-1, 1]
         let bytes = hash.as_bytes();
-        for chunk in bytes.chunks_exact(4) {
+        for chunk in bytes.as_chunks::<4>().0 {
             if vector.len() >= dimensions {
                 break;
             }
             // Convert 4 bytes to a u32, then map to [-1, 1]
-            let bits = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let bits = u32::from_le_bytes(*chunk);
             let value = (bits as f64 / u32::MAX as f64) * 2.0 - 1.0;
             vector.push(value as f32);
         }
