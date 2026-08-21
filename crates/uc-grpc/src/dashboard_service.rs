@@ -231,7 +231,8 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
     ) -> Result<Response<FlushPendingTasksResponse>, Status> {
         let json = self
             .nats_dashboard_request("FlushPendingTasks", serde_json::json!({}))
-            .await?;
+            .await
+            .map_err(|status| *status)?;
         Ok(Response::new(json_to_flush_pending_tasks_response(&json)))
     }
 
@@ -484,16 +485,16 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         &self,
         rpc_name: &str,
         payload: serde_json::Value,
-    ) -> Result<serde_json::Value, Status> {
+    ) -> Result<serde_json::Value, Box<Status>> {
         #[cfg(feature = "messaging")]
         {
             let nats_client = self
                 .nats_client()
-                .ok_or_else(|| Status::unavailable("NATS not connected"))?;
+                .ok_or_else(|| Box::new(Status::unavailable("NATS not connected")))?;
 
             let subject = format!("{NATS_SUBJECT_DASHBOARD_PREFIX}.{rpc_name}");
             let bytes = serde_json::to_vec(&payload)
-                .map_err(|e| Status::internal(format!("serialize error: {e}")))?;
+                .map_err(|e| Box::new(Status::internal(format!("serialize error: {e}"))))?;
 
             let request = async_nats::Request::new()
                 .payload(bytes.into())
@@ -506,14 +507,14 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                         tracing::warn!(
                             "Dashboard passthrough JSON parse error for {rpc_name}: {e}"
                         );
-                        Status::internal(format!("JSON parse error: {e}"))
+                        Box::new(Status::internal(format!("JSON parse error: {e}")))
                     })
                 }
                 Err(e) => {
                     tracing::warn!("Dashboard NATS request-reply timeout for {rpc_name}: {e}");
-                    Err(Status::unavailable(format!(
+                    Err(Box::new(Status::unavailable(format!(
                         "Python Orchestrator unavailable for {rpc_name}"
-                    )))
+                    ))))
                 }
             }
         }
@@ -521,9 +522,9 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         #[cfg(not(feature = "messaging"))]
         {
             let _ = (rpc_name, payload);
-            Err(Status::unavailable(
+            Err(Box::new(Status::unavailable(
                 "Dashboard requires NATS (messaging feature not enabled)",
-            ))
+            )))
         }
     }
 }

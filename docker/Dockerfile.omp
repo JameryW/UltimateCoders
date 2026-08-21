@@ -46,7 +46,11 @@ RUN cd /opt/oh-my-pi \
     && bun --cwd=packages/coding-agent run generate-docs-index
 
 COPY docker/omp-entrypoint.sh /usr/local/bin/uc-omp.sh
-RUN chmod +x /usr/local/bin/uc-omp.sh
+# Docker Desktop on Windows can present a CRLF working copy even when Git
+# tracks this script as LF. Normalize before executing it so the shebang stays
+# /bin/sh rather than the invalid /bin/sh\r.
+RUN sed -i 's/\r$//' /usr/local/bin/uc-omp.sh \
+    && chmod +x /usr/local/bin/uc-omp.sh
 
 ENV UC_OMP_SCRIPT=/usr/local/bin/uc-omp.sh \
     UC_OMP_WORKSPACE=/workspace/UltimateCoders

@@ -147,7 +147,13 @@ RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
       '#!/bin/sh' \
       'set -eu' \
       'if [ "$(id -u)" -eq 0 ] && [ -d /workspace ]; then' \
-      '  chown -R ucworker:ucworker /workspace 2>/dev/null || true' \
+      '  # Docker Desktop bind mounts are usually already writable by ucworker.' \
+      '  # Avoid a full recursive chown on every restart: it delays the Dashboard' \
+      '  # and TUI by minutes in large workspaces. Native Linux mounts that need' \
+      '  # ownership repair still take the existing fallback path.' \
+      '  if ! setpriv --reuid=ucworker --regid=ucworker --init-groups test -w /workspace; then' \
+      '    chown -R ucworker:ucworker /workspace 2>/dev/null || true' \
+      '  fi' \
       '  export HOME=/home/ucworker USER=ucworker LOGNAME=ucworker' \
       '  exec setpriv --reuid=ucworker --regid=ucworker --init-groups "$@"' \
       'fi' \
