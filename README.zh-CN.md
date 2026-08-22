@@ -376,6 +376,11 @@ Worker 可以在容器中运行，并从外部 Git remote（GitHub/GitLab）同�
 | `XAI_API_KEY` | - | 默认 Grok Build Worker 使用的 xAI API key |
 | `ANTHROPIC_API_KEY` | - | Claude Code 使用的 Anthropic API key |
 | `OPENAI_API_KEY` | - | Codex 使用的 OpenAI API key |
+| `UC_CODEX_OPENROUTER` | `false` | 启用 Codex CLI 的 OpenRouter provider（需同时设置 `UC_CODING_AGENT=codex`） |
+| `UC_OPENROUTER_MODEL` | `stealth/ox-alpha` | opt-in Codex provider 使用的 OpenRouter 模型 slug |
+| `UC_CODEX_WEB_SEARCH` | `disabled` | Codex 原生 web-search 模式；`stealth/ox-alpha` 会拒绝该 OpenAI 专属工具，应保持禁用 |
+| `UC_OPENROUTER_REASONING_EFFORT` | `low` | Codex 推理强度；`stealth/ox-alpha` 要求启用 reasoning |
+| `OPENROUTER_API_KEY` | - | opt-in Codex provider 使用的 OpenRouter API key |
 
 Docker Compose 默认凭据：
 
