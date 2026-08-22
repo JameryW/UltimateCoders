@@ -116,10 +116,11 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex \
 # ponytail: dsh depends on node-pty, a native module — node-gyp needs
 # make/g++ which the slim runtime lacks. Install them transiently and
 # purge in the SAME layer so the compiled module ships without the
-# toolchain bloat.
+# toolchain bloat. Pin the last complete DSH release: the unpinned latest
+# release can resolve a missing prerelease worker package and fail Docker builds.
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends make g++ \
-    && npm install -g @deepseek-ai/dsh \
+    && npm install -g @deepseek-ai/dsh@0.1.0-rc.7 \
     && dsh --version \
     && apt-get purge -y -qq make g++ \
     && apt-get autoremove -y -qq \
@@ -153,6 +154,27 @@ RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
       '  # ownership repair still take the existing fallback path.' \
       '  if ! setpriv --reuid=ucworker --regid=ucworker --init-groups test -w /workspace; then' \
       '    chown -R ucworker:ucworker /workspace 2>/dev/null || true' \
+      '  fi' \
+      '  # Codex reads custom providers only from the user-level config. Keep the' \
+      '  # OpenRouter route opt-in so direct OpenAI Codex deployments are unchanged.' \
+      '  if [ "${UC_CODEX_OPENROUTER:-false}" = "true" ]; then' \
+      '    install -d -m 700 -o ucworker -g ucworker /home/ucworker/.codex' \
+      '    {' \
+       '      printf '\''model = "%s"\n'\'' "${UC_OPENROUTER_MODEL:-stealth/ox-alpha}"' \
+      '      printf '\''%s\n'\'' "model_provider = \"openrouter\""' \
+       '      printf '\''web_search = "%s"\n'\'' "${UC_CODEX_WEB_SEARCH:-disabled}"' \
+       '      printf '\''model_reasoning_effort = "%s"\n'\'' "${UC_OPENROUTER_REASONING_EFFORT:-low}"' \
+       '      printf '\''%s\n'\'' ""' \
+       '      printf '\''%s\n'\'' "[model_providers.openrouter]"' \
+       '      printf '\''%s\n'\'' "name = \"openrouter\""' \
+       '      printf '\''%s\n'\'' "base_url = \"https://openrouter.ai/api/v1\""' \
+       '      printf '\''%s\n'\'' "wire_api = \"responses\""' \
+       '      printf '\''%s\n'\'' "[model_providers.openrouter.auth]"' \
+       '      printf '\''%s\n'\'' "command = \"printenv\""' \
+       '      printf '\''%s\n'\'' "args = [\"OPENROUTER_API_KEY\"]"' \
+      '    } > /home/ucworker/.codex/config.toml' \
+      '    chown ucworker:ucworker /home/ucworker/.codex/config.toml' \
+      '    chmod 600 /home/ucworker/.codex/config.toml' \
       '  fi' \
       '  export HOME=/home/ucworker USER=ucworker LOGNAME=ucworker' \
       '  exec setpriv --reuid=ucworker --regid=ucworker --init-groups "$@"' \
