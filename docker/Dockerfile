@@ -167,8 +167,8 @@ RUN useradd --create-home --uid 1000 --shell /bin/sh ucworker \
        '      printf '\''%s\n'\'' ""' \
        '      printf '\''%s\n'\'' "[model_providers.openrouter]"' \
        '      printf '\''%s\n'\'' "name = \"openrouter\""' \
-       '      printf '\''%s\n'\'' "base_url = \"https://openrouter.ai/api/v1\""' \
-       '      printf '\''%s\n'\'' "wire_api = \"responses\""' \
+       '      printf '\''base_url = "%s"\n'\'' "${UC_CODEX_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"' \
+       '      printf '\''wire_api = "%s"\n'\'' "${UC_CODEX_OPENROUTER_WIRE_API:-responses}"' \
        '      printf '\''%s\n'\'' "[model_providers.openrouter.auth]"' \
        '      printf '\''%s\n'\'' "command = \"printenv\""' \
        '      printf '\''%s\n'\'' "args = [\"OPENROUTER_API_KEY\"]"' \

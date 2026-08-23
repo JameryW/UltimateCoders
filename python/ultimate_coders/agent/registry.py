@@ -200,7 +200,7 @@ def ensure_builtin_plugins() -> None:
     with _BUILTINS_LOCK:
         if _BUILTINS_LOADED:
             return
-        from ultimate_coders.agent import harness_deepseek
+        from ultimate_coders.agent import harness_deepseek, harness_local_loop
         from ultimate_coders.agent.sandbox import (
             GROK_AGENT_ALIASES,
             ClaudeCodeAdapter,
@@ -240,6 +240,7 @@ def ensure_builtin_plugins() -> None:
             description="OpenAI Codex CLI",
         ))
         harness_deepseek.register(registry)
+        harness_local_loop.register(registry)
         _BUILTINS_LOADED = True
 
 

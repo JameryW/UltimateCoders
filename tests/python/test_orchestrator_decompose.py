@@ -140,7 +140,9 @@ class TestLLMDecomposition:
         assert call_kwargs.kwargs["messages"][0]["role"] == "user"
         assert "Some task" in call_kwargs.kwargs["messages"][0]["content"]
         assert call_kwargs.kwargs["system"] is not None
-        assert call_kwargs.kwargs["max_tokens"] == 2048
+        # Default raised for thinking-style local models (Qwen3 distills);
+        # see UC_LLM_DECOMPOSE_MAX_TOKENS in orchestrator._decompose_task.
+        assert call_kwargs.kwargs["max_tokens"] == 4096
 
     async def test_llm_subtasks_with_markdown_fences(self):
         """parse_decomposition_output strips markdown fences — end-to-end."""
