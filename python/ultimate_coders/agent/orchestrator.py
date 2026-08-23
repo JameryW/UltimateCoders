@@ -306,10 +306,14 @@ class Orchestrator:
             f"Output ONLY the JSON array, no prose.\n\n"
             f"Task: {description}"
         )
+        # ponytail: thinking-style local models (Qwen3 distills) can burn
+        # 1-3k tokens on reasoning BEFORE the JSON — the old hard 2048 cap
+        # truncated them to empty output. Env-tunable, default 4096.
+        decompose_max_tokens = int(os.environ.get("UC_LLM_DECOMPOSE_MAX_TOKENS", "4096"))
         result = await self.llm_client.complete(
             messages=[{"role": "user", "content": prompt}],
             system=self._DECOMPOSE_SYSTEM,
-            max_tokens=2048,
+            max_tokens=decompose_max_tokens,
         )
 
         # LLMClient.complete returns LLMResponse (has .text). Be defensive

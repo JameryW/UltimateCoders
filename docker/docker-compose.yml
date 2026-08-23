@@ -310,15 +310,26 @@ services:
       XAI_API_KEY: "${XAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      # Optional Codex CLI provider override for OpenRouter.
+      # Optional Codex CLI provider override for OpenRouter or a LOCAL
+      # OpenAI-compatible server (Ollama/vLLM): point BASE_URL at
+      # http://host.docker.internal:11434/v1 and set WIRE_API=chat (local
+      # servers have no /v1/responses endpoint).
       UC_CODEX_OPENROUTER: "${UC_CODEX_OPENROUTER:-false}"
       UC_OPENROUTER_MODEL: "${UC_OPENROUTER_MODEL:-stealth/ox-alpha}"
       UC_CODEX_WEB_SEARCH: "${UC_CODEX_WEB_SEARCH:-disabled}"
       UC_OPENROUTER_REASONING_EFFORT: "${UC_OPENROUTER_REASONING_EFFORT:-low}"
+      UC_CODEX_OPENROUTER_BASE_URL: "${UC_CODEX_OPENROUTER_BASE_URL:-}"
+      UC_CODEX_OPENROUTER_WIRE_API: "${UC_CODEX_OPENROUTER_WIRE_API:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       # Optional DeepSeek endpoint override for proxy gateways (dsh var).
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+      # ── Local LLM for decomposition/planning (litellm openai-compatible) ──
+      # UC_LLM_PROVIDER=openai + OPENAI_API_BASE=<local>/v1 routes the
+      # Orchestrator's task decomposition through a local server too.
+      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-}"
+      OPENAI_API_BASE: "${OPENAI_API_BASE:-}"
+      OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       # Optional extra agent plugins (.py file / package dir, ':'-separated).
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
       # ── External git sync (Phase 1) ───────────────────────────────
@@ -377,9 +388,15 @@ services:
       UC_OPENROUTER_MODEL: "${UC_OPENROUTER_MODEL:-stealth/ox-alpha}"
       UC_CODEX_WEB_SEARCH: "${UC_CODEX_WEB_SEARCH:-disabled}"
       UC_OPENROUTER_REASONING_EFFORT: "${UC_OPENROUTER_REASONING_EFFORT:-low}"
+      UC_CODEX_OPENROUTER_BASE_URL: "${UC_CODEX_OPENROUTER_BASE_URL:-}"
+      UC_CODEX_OPENROUTER_WIRE_API: "${UC_CODEX_OPENROUTER_WIRE_API:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+      # Local LLM for this service's task decomposition (litellm route).
+      UC_LLM_PROVIDER: "${UC_LLM_PROVIDER:-}"
+      OPENAI_API_BASE: "${OPENAI_API_BASE:-}"
+      OPENAI_DEFAULT_MODEL: "${OPENAI_DEFAULT_MODEL:-}"
       UC_AGENT_PLUGINS: "${UC_AGENT_PLUGINS:-}"
       # ── External git sync (Phase 1) ───────────────────────────────
       # Same env as the worker service; empty UC_REPO_URL = local mode.

@@ -269,11 +269,12 @@ class TestDeepSeekAdapterParse:
 class TestCapabilityAdvertising:
     def test_registry_capability_names(self) -> None:
         ensure_builtin_plugins()
-        # All built-ins are CLI-backed: nothing on PATH → nothing advertised
+        # CLI-backed built-ins advertise nothing with an empty PATH; the
+        # API-backed local-harness (no CLI) still advertises itself.
         names = registry.capability_names(lambda exe: False)
         assert "grok-build" not in names
         assert "deepseek-harness" not in names
-        assert names == []
+        assert names == ["local-harness", "local-llm"]
 
         # dsh present → deepseek-harness + deepseek alias advertised
         names = registry.capability_names(lambda exe: exe == "dsh")

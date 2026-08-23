@@ -194,14 +194,20 @@ class LLMClient:
 
     def __init__(
         self,
-        provider: str = "anthropic",
+        provider: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
         max_retries: int = 5,
         rpm_limit: int = 60,
         tpm_limit: int = 100000,
     ):
-        self.provider = provider
+        # ponytail: UC_LLM_PROVIDER selects the provider from the environment
+        # so deployments can point decomposition/planning at a local
+        # OpenAI-compatible server (Ollama/vLLM/LM Studio) without code
+        # changes: UC_LLM_PROVIDER=openai + OPENAI_API_BASE=http://...:11434/v1
+        # + OPENAI_DEFAULT_MODEL=openai/<model> (litellm custom-openai format).
+        self.provider = provider or os.environ.get("UC_LLM_PROVIDER", "anthropic")
+        provider = self.provider
         # Resolve API key: explicit > provider env > ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN
         env_key = _PROVIDER_KEY_ENV.get(provider, "ANTHROPIC_API_KEY")
         self.api_key = (
