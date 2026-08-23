@@ -1,0 +1,7 @@
+interface:
+  display_name: "UltimateCoders Issue Flow"
+  short_description: "Turn an idea or ticket into isolated delivery work"
+  default_prompt: "Use $ultimatecoders-issue-flow to turn this idea into dependency-aware tickets and one Trellis delivery task."
+
+policy:
+  allow_implicit_invocation: true
