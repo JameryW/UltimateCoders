@@ -12,14 +12,17 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from ultimate_coders.dashboard.app import DashboardApp
 
 
 def _make_app(nats_client: object | None = None) -> DashboardApp:
-    app = DashboardApp(orchestrator=MagicMock(), nats_client=nats_client)
+    # DashboardApp normally builds a MetricsAggregator backed by SQLite.
+    # Stream-unit tests only need the SSE state, so avoid filesystem state.
+    with patch("ultimate_coders.dashboard.app.MetricsAggregator"):
+        app = DashboardApp(orchestrator=MagicMock(), nats_client=nats_client)
     app.event_emitter = None
     app._metrics = MagicMock()
     app._metrics.snapshot.return_value = {}
@@ -60,7 +63,7 @@ async def _drive(app: DashboardApp, max_iters: int) -> tuple[list, Exception | N
 def test_stream_no_nats_does_not_crash_on_idle() -> None:
     """No NATS + a few quick idle ticks must not raise UnboundLocalError.
 
-    Previously the generator computed ``snapshot`` only inside the 10s-interval
+    Previously the generator computed ``snapshot`` only inside the 5s-interval
     guard but yielded it unconditionally → first idle tick crashed.
     """
     app = _make_app(nats_client=None)
@@ -69,15 +72,15 @@ def test_stream_no_nats_does_not_crash_on_idle() -> None:
     out, err = asyncio.run(_drive(app, max_iters=3))
 
     assert err is None, f"stream crashed: {err!r}"
-    # Under 10s of idle ticks → no full snapshot should be emitted.
+    # Under 5s of idle ticks → no full snapshot should be emitted.
     assert out == []
 
 
 def test_stream_emits_snapshot_after_interval(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the 10s interval has elapsed, a full snapshot is emitted.
+    """When the 5s interval has elapsed, a full snapshot is emitted.
 
     We force the interval to elapse by patching ``loop.time`` so the first
-    read (used to seed ``last_snapshot``) returns 0 and the next returns 11s.
+    read (used to seed ``last_snapshot``) returns 0 and the next returns 6s.
     """
     app = _make_app(nats_client=None)
     computed: list[int] = []
@@ -90,7 +93,7 @@ def test_stream_emits_snapshot_after_interval(monkeypatch: pytest.MonkeyPatch) -
 
     # Patch asyncio.get_running_loop().time via a fake loop. The generator calls
     # loop.time() twice per idle tick (once for heartbeat, once for snapshot).
-    times = iter([0.0, 0.0, 0.0, 11.0, 11.0, 11.0, 11.0, 11.0])
+    times = iter([0.0, 0.0, 0.0, 6.0, 6.0, 6.0, 6.0, 6.0])
 
     class _FakeLoop:
         def time(self) -> float:
@@ -106,6 +109,38 @@ def test_stream_emits_snapshot_after_interval(monkeypatch: pytest.MonkeyPatch) -
     updates = [o for o in out if isinstance(o, dict) and o.get("event") == "update"]
     assert len(updates) >= 1
     assert json.loads(updates[0]["data"])["ok"] is True
+
+
+def test_stream_nats_wait_respects_snapshot_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An idle NATS wait cannot push the 5s snapshot past its deadline."""
+    app = _make_app(nats_client=MagicMock())
+    app._get_full_snapshot = lambda: {"ok": True}
+    queue: asyncio.Queue = asyncio.Queue()
+    app._subscribe_sse = lambda: queue
+    app._unsubscribe_sse = lambda _queue: None
+    timeouts: list[float] = []
+
+    async def timeout_wait(queue_get: object, timeout: float) -> object:
+        queue_get.close()  # type: ignore[union-attr]
+        timeouts.append(timeout)
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", timeout_wait)
+    times = iter([0.0, 0.0, 4.0, 4.0, 5.0])
+
+    class _FakeLoop:
+        def time(self) -> float:
+            return next(times)
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
+
+    out, err = asyncio.run(_drive(app, max_iters=1))
+
+    assert err is None, f"stream crashed: {err!r}"
+    assert timeouts == [1.0]
+    assert any(item.get("event") == "update" for item in out)
 
 
 def test_stream_snapshot_payload_shape() -> None:
