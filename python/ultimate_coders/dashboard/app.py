@@ -315,6 +315,7 @@ class DashboardApp:
             async def event_generator():
                 nonlocal event_id, last_heartbeat, last_snapshot
 
+                snapshot_interval = 5.0
                 # ponytail: F63 — this client's own queue (fan-out). Created
                 # inside the running loop (Py3.9 binds Queues at construction);
                 # unregistered in finally even when sse-starlette cancels the
@@ -342,10 +343,23 @@ class DashboardApp:
                         had_event = False
                         if sse_queue is not None:
                             try:
-                                # First event: blocking wait (max 2s for snapshot)
-                                nats_event = await asyncio.wait_for(
-                                    sse_queue.get(), timeout=2.0,
+                                # Wait for an event, but never beyond the next
+                                # reconciliation snapshot. Otherwise a fixed
+                                # 2s idle wait can make the 5s snapshot late.
+                                snapshot_wait = min(
+                                    2.0,
+                                    max(
+                                        0.0,
+                                        snapshot_interval
+                                        - (loop.time() - last_snapshot),
+                                    ),
                                 )
+                                if snapshot_wait > 0:
+                                    nats_event = await asyncio.wait_for(
+                                        sse_queue.get(), timeout=snapshot_wait,
+                                    )
+                                else:
+                                    nats_event = sse_queue.get_nowait()
                                 if nats_event is not None:
                                     event_id += 1
                                     yield {
@@ -382,7 +396,6 @@ class DashboardApp:
                         # send full snapshot during idle periods for
                         # reconciliation.
                         if not had_event:
-                            snapshot_interval = 10.0
                             now = loop.time()
                             if now - last_snapshot >= snapshot_interval:
                                 snapshot = self._get_full_snapshot()
