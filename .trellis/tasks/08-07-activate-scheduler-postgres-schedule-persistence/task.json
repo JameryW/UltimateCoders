@@ -3,7 +3,7 @@
   "name": "activate-scheduler-postgres-schedule-persistence",
   "title": "activate scheduler postgres schedule persistence",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "JameryW",
   "assignee": "JameryW",
   "createdAt": "2026-08-07",
-  "completedAt": null,
+  "completedAt": "2026-08-24",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Activation PR #581 (14a82f5); rollout hardening 2026-08-24: gating unit tests (uc-grpc-server 22→27), standalone-gateway + run-cluster/run-omp env wiring, .env.example docs. See prd.md Completion Log.",
   "meta": {}
 }

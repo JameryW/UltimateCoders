@@ -292,6 +292,9 @@ if [ "$goto_workers" = false ] && check_port 50051; then
             UC_PG_URL="${UC_PG_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
             UC_DATABASE_URL="${UC_DATABASE_URL:-postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders}"
             UC_TASK_BACKEND="${UC_TASK_BACKEND:-postgres}"
+            # Scheduled jobs survive gateway restarts (PG ScheduleStore +
+            # restart recovery). Warns + in-memory if PG is unreachable.
+            UC_SCHEDULE_BACKEND="${UC_SCHEDULE_BACKEND:-postgres}"
         )
     fi
     # Build first, then exec the binary directly so PID is correct

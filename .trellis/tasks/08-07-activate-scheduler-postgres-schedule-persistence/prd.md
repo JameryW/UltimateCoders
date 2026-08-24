@@ -89,9 +89,37 @@ Mirrors the task_backend activation series (#576 write-path, #577 fix, #578 star
 
 ## Acceptance Criteria
 
-* [ ] With `UC_SCHEDULE_BACKEND=postgres` + `UC_DATABASE_URL`, a scheduled cron job survives a server restart (re-registered by `start()` recovery reading PG).
-* [ ] Without those env vars, scheduler behaves exactly as today (in-memory, no crash, warn on misconfig).
-* [ ] `scheduled_tasks` + `execution_history` tables created on first PG startup; idempotent on subsequent.
-* [ ] `cargo check` (default + storage/messaging features) + `cargo test -p uc-engine` green.
-* [ ] No new dependencies; reuses existing sqlx pool pattern.
-* [ ] Spec documents `UC_SCHEDULE_BACKEND`.
+* [x] With `UC_SCHEDULE_BACKEND=postgres` + `UC_DATABASE_URL`, a scheduled cron job survives a server restart (re-registered by `start()` recovery reading PG).
+* [x] Without those env vars, scheduler behaves exactly as today (in-memory, no crash, warn on misconfig).
+* [x] `scheduled_tasks` + `execution_history` tables created on first PG startup; idempotent on subsequent.
+* [x] `cargo check` (default + storage/messaging features) + `cargo test -p uc-engine` green.
+* [x] No new dependencies; reuses existing sqlx pool pattern.
+* [x] Spec documents `UC_SCHEDULE_BACKEND`.
+
+## Completion Log
+
+* **Activation** (PR #581 / 14a82f5): engine constructor variants
+  (`new_with_scheduler_store[_deferred_text_index_restore]`),
+  `create_schedule_store()` wiring in main.rs before engine construction,
+  full-stack compose durable default, scheduler-spec persistence section,
+  verify-command persistence fix (#585).
+* **Rollout hardening** (this session, 2026-08-24):
+  * Extracted pure `resolve_schedule_store_choice()` decision fn +
+    cfg-split `connect_postgres_schedule_store()` — env-gating matrix now
+    covered by 5 unit tests in uc-grpc-server (22 → 27 tests).
+  * Standalone gateway (`docker-compose.gateway.yml`) now passes through
+    `UC_SCHEDULE_BACKEND` (and `UC_EVENT_BACKEND`, same gap class) with
+    `memory` defaults.
+  * `run-cluster.sh` / `run-omp.sh` docker branches wire
+    `UC_SCHEDULE_BACKEND=${UC_SCHEDULE_BACKEND:-postgres}` mirroring
+    `UC_TASK_BACKEND`.
+  * `docker/.env.example` documents the three durable-backend vars +
+    shared `UC_DATABASE_URL`.
+  * Crate doc header in main.rs documents the schedule backend.
+  * Verified: workspace `cargo check --all-targets` ✓, `cargo test -p
+    uc-engine` ✓, `cargo test -p uc-grpc-server` 27/27 ✓, workspace
+    clippy ✓ (pre-existing uc-engine warning only), compose config ✓,
+    script syntax (LF-normalized bash -n) ✓.
+  * Note: live-PG restart-recovery remains covered by the ignored
+    `storage_integration` suite (repo convention — requires a real PG),
+    plus the service-level recovery tests in `scheduler/service.rs`.

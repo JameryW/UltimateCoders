@@ -229,38 +229,50 @@ pub struct AgentEvent {
 }
 
 /// Payload of an agent event.
+///
+// Subtask-level variants carry the PARENT task_id so downstream
+// consumers (WatchTask filters, PyAgentEvent.task_id) can attribute
+// events to their task without a store lookup. Mirrors the engine-side
+// `AgentEventType`, which has carried both ids from the start.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEventPayload {
     TaskCreated {
         task: Task,
     },
     SubtaskAssigned {
+        task_id: TaskId,
         subtask_id: TaskId,
         worker_id: WorkerId,
     },
     WorkerStarted {
+        task_id: TaskId,
         subtask_id: TaskId,
         worker_id: WorkerId,
     },
     ToolInvoked {
+        task_id: TaskId,
         subtask_id: TaskId,
         tool_name: String,
         tool_input: String,
     },
     ToolResult {
+        task_id: TaskId,
         subtask_id: TaskId,
         tool_output: String,
         exit_code: i32,
     },
     FileModified {
+        task_id: TaskId,
         subtask_id: TaskId,
         file_path: String,
         diff: String,
     },
     SubtaskCompleted {
+        task_id: TaskId,
         result: SubtaskResult,
     },
     SubtaskFailed {
+        task_id: TaskId,
         subtask_id: TaskId,
         error: String,
         recoverable: bool,

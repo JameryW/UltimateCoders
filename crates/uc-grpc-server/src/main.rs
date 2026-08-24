@@ -15,6 +15,11 @@
 //! - `memory` (default): in-memory, events lost on restart
 //! - `nats`: NATS JetStream (durable), requires `UC_NATS_URL`
 //!
+//! Schedule persistence can be configured via `UC_SCHEDULE_BACKEND`:
+//! - `memory` (default): in-memory, jobs lost on restart
+//! - `postgres`: jobs survive restarts (`SchedulerService::start()` recovers
+//!   them), requires `UC_DATABASE_URL`; migrations run idempotently on boot
+//!
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
@@ -23,7 +28,12 @@ mod window_watcher;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use uc_engine::repos_config::{build_index_requests, load_repos_config};
-use uc_engine::scheduler::{config::SchedulerFileConfig, PostgresScheduleStore, ScheduleStore};
+// `PostgresScheduleStore` is only referenced by the storage-feature
+// connection helper, so gate the import to avoid an unused-import warning
+// in non-storage builds.
+#[cfg(feature = "storage")]
+use uc_engine::scheduler::PostgresScheduleStore;
+use uc_engine::scheduler::{config::SchedulerFileConfig, ScheduleStore};
 use uc_engine::{EngineConfig, LocalEngine};
 use uc_grpc::server::{health_reporter, GrpcServer};
 use uc_grpc::AuthInterceptor;
@@ -38,6 +48,148 @@ use tracing_subscriber::EnvFilter;
 
 async fn bind_gateway_listener(addr: SocketAddr) -> Result<TcpListener, std::io::Error> {
     TcpListener::bind(addr).await
+}
+
+/// Outcome of a durable-backend decision (see the `resolve_*_choice`
+/// helpers). Kept separate from the async connection steps so every
+/// env-gating matrix is unit-testable without touching the process
+/// environment or the network.
+#[derive(Debug, PartialEq, Eq)]
+enum BackendChoice {
+    /// Build the durable backend at this URL.
+    Durable(String),
+    /// Fall back to the in-memory implementation. `warn` is true when the
+    /// user explicitly opted into durability and silently loses it.
+    Memory { reason: String, warn: bool },
+}
+
+/// Shared decision logging: explicit-opt-in degradation warns, plain
+/// defaults stay informational.
+fn log_backend_decision(reason: &str, warn: bool) {
+    if warn {
+        tracing::warn!("{reason}");
+    } else {
+        tracing::info!("{reason}");
+    }
+}
+
+// ── Event store (`UC_EVENT_BACKEND`) ─────────────────────────────
+
+/// Decide the event store from env values WITHOUT touching the process
+/// environment or NATS. `messaging_feature` mirrors
+/// `cfg!(feature = "messaging")`.
+///
+/// Semantics (mirrors `resolve_schedule_store_choice`):
+/// - `nats` + `UC_NATS_URL` + messaging feature → [`BackendChoice::Durable`]
+/// - `nats` with missing/empty URL or without the messaging feature →
+///   in-memory with a warning
+/// - anything else → in-memory, informational
+fn resolve_event_store_choice(
+    backend: Option<&str>,
+    nats_url: Option<&str>,
+    messaging_feature: bool,
+) -> BackendChoice {
+    match (backend, nats_url, messaging_feature) {
+        (Some("nats"), Some(url), true) if !url.is_empty() => {
+            BackendChoice::Durable(url.to_string())
+        }
+        (Some("nats"), _, true) => BackendChoice::Memory {
+            reason: "UC_EVENT_BACKEND=nats but UC_NATS_URL not set, \
+                     falling back to in-memory event store"
+                .to_string(),
+            warn: true,
+        },
+        (Some("nats"), _, false) => BackendChoice::Memory {
+            reason: "UC_EVENT_BACKEND=nats but messaging feature not enabled, \
+                     using in-memory event store"
+                .to_string(),
+            warn: true,
+        },
+        _ => BackendChoice::Memory {
+            reason: "EventStore using in-memory (events lost on restart)".to_string(),
+            warn: false,
+        },
+    }
+}
+
+/// Connect to NATS JetStream and wrap the event store. Any failure degrades
+/// to the in-memory store rather than aborting startup.
+#[cfg(feature = "messaging")]
+async fn connect_nats_event_store(url: &str) -> Arc<dyn uc_engine::EventStore> {
+    match uc_engine::NatsEventStore::new(url).await {
+        Ok(store) => {
+            tracing::info!("EventStore using NATS JetStream (durable)");
+            Arc::new(store)
+        }
+        Err(e) => {
+            tracing::warn!("NATS event store failed: {}, using in-memory", e);
+            Arc::new(uc_engine::InMemoryEventStore::new())
+        }
+    }
+}
+
+/// Non-messaging stub: the resolver never yields `Nats` without the
+/// messaging feature, so this is defensive only.
+#[cfg(not(feature = "messaging"))]
+async fn connect_nats_event_store(_url: &str) -> Arc<dyn uc_engine::EventStore> {
+    Arc::new(uc_engine::InMemoryEventStore::new())
+}
+
+// ── Task backend (`UC_TASK_BACKEND`) ─────────────────────────────
+
+/// Decide the task backend from env values WITHOUT touching the process
+/// environment or PostgreSQL. `storage_feature` mirrors
+/// `cfg!(feature = "storage")`.
+fn resolve_task_backend_choice(
+    backend: Option<&str>,
+    db_url: Option<&str>,
+    storage_feature: bool,
+) -> BackendChoice {
+    match (backend, db_url, storage_feature) {
+        (Some("postgres"), Some(url), true) if !url.is_empty() => {
+            BackendChoice::Durable(url.to_string())
+        }
+        (Some("postgres"), _, true) => BackendChoice::Memory {
+            reason: "UC_TASK_BACKEND=postgres but UC_DATABASE_URL not set, \
+                     falling back to in-memory task backend"
+                .to_string(),
+            warn: true,
+        },
+        (Some("postgres"), _, false) => BackendChoice::Memory {
+            reason: "UC_TASK_BACKEND=postgres but storage feature not enabled, \
+                     using in-memory"
+                .to_string(),
+            warn: true,
+        },
+        _ => BackendChoice::Memory {
+            reason: "TaskStore using in-memory backend".to_string(),
+            warn: false,
+        },
+    }
+}
+
+/// Connect to PostgreSQL and wrap the task backend. Mirrors
+/// `connect_postgres_schedule_store`. Any failure degrades to the in-memory
+/// backend rather than aborting startup.
+#[cfg(feature = "storage")]
+async fn connect_postgres_task_backend(url: &str) -> Arc<dyn uc_engine::TaskStoreBackend> {
+    match uc_engine::PostgresTaskBackend::new(url).await {
+        Ok(backend) => {
+            tracing::info!("TaskStore using PostgreSQL backend");
+            Arc::new(backend)
+        }
+        Err(e) => {
+            tracing::warn!("PostgreSQL task backend failed: {}, using in-memory", e);
+            Arc::new(uc_engine::InMemoryTaskBackend::new())
+        }
+    }
+}
+
+/// Non-storage stub: the resolver never yields `Postgres` without the
+/// storage feature, so this is defensive only.
+#[cfg(not(feature = "storage"))]
+async fn connect_postgres_task_backend(_url: &str) -> Arc<dyn uc_engine::TaskStoreBackend> {
+    Arc::new(uc_engine::InMemoryTaskBackend::new())
 }
 
 /// Create a TaskStoreBackend and EventStore based on environment configuration.
@@ -56,82 +208,95 @@ async fn create_task_backend() -> (
     Arc<dyn uc_engine::TaskStoreBackend>,
     Arc<dyn uc_engine::EventStore>,
 ) {
-    // Event store: NATS JetStream (durable) when UC_EVENT_BACKEND=nats,
-    // else in-memory (lost on restart). Mirrors the UC_TASK_BACKEND pattern.
-    let event_store: Arc<dyn uc_engine::EventStore> = match std::env::var("UC_EVENT_BACKEND")
-        .as_deref()
-    {
-        #[cfg(feature = "messaging")]
-        Ok("nats") => {
-            let nats_url = std::env::var("UC_NATS_URL").unwrap_or_else(|_| {
-                tracing::warn!(
-                    "UC_EVENT_BACKEND=nats but UC_NATS_URL not set, falling back to in-memory event store"
-                );
-                String::new()
-            });
-            if nats_url.is_empty() {
-                tracing::warn!("Empty UC_NATS_URL, using in-memory event store");
-                Arc::new(uc_engine::InMemoryEventStore::new())
-            } else {
-                match uc_engine::NatsEventStore::new(&nats_url).await {
-                    Ok(store) => {
-                        tracing::info!("EventStore using NATS JetStream (durable)");
-                        Arc::new(store)
-                    }
-                    Err(e) => {
-                        tracing::warn!("NATS event store failed: {}, using in-memory", e);
-                        Arc::new(uc_engine::InMemoryEventStore::new())
-                    }
-                }
-            }
-        }
-        #[cfg(not(feature = "messaging"))]
-        Ok("nats") => {
-            tracing::warn!(
-                "UC_EVENT_BACKEND=nats but messaging feature not enabled, using in-memory event store"
-            );
-            Arc::new(uc_engine::InMemoryEventStore::new())
-        }
-        _ => {
-            tracing::info!("EventStore using in-memory (events lost on restart)");
+    let event_store: Arc<dyn uc_engine::EventStore> = match resolve_event_store_choice(
+        std::env::var("UC_EVENT_BACKEND").as_deref().ok(),
+        std::env::var("UC_NATS_URL").as_deref().ok(),
+        cfg!(feature = "messaging"),
+    ) {
+        BackendChoice::Durable(url) => connect_nats_event_store(&url).await,
+        BackendChoice::Memory { reason, warn } => {
+            log_backend_decision(&reason, warn);
             Arc::new(uc_engine::InMemoryEventStore::new())
         }
     };
 
-    match std::env::var("UC_TASK_BACKEND").as_deref() {
-        #[cfg(feature = "storage")]
-        Ok("postgres") => {
-            let db_url = std::env::var("UC_DATABASE_URL").unwrap_or_else(|_| {
-                tracing::warn!("UC_TASK_BACKEND=postgres but UC_DATABASE_URL not set, falling back to in-memory");
-                String::new()
-            });
-            if db_url.is_empty() {
-                tracing::warn!("Empty UC_DATABASE_URL, using in-memory task backend");
-                return (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store);
-            }
-            match uc_engine::PostgresTaskBackend::new(&db_url).await {
-                Ok(backend) => {
-                    tracing::info!("TaskStore using PostgreSQL backend");
-                    (Arc::new(backend), event_store)
-                }
-                Err(e) => {
-                    tracing::warn!("PostgreSQL task backend failed: {}, using in-memory", e);
-                    (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
-                }
-            }
+    let task_backend: Arc<dyn uc_engine::TaskStoreBackend> = match resolve_task_backend_choice(
+        std::env::var("UC_TASK_BACKEND").as_deref().ok(),
+        std::env::var("UC_DATABASE_URL").as_deref().ok(),
+        cfg!(feature = "storage"),
+    ) {
+        BackendChoice::Durable(url) => connect_postgres_task_backend(&url).await,
+        BackendChoice::Memory { reason, warn } => {
+            log_backend_decision(&reason, warn);
+            Arc::new(uc_engine::InMemoryTaskBackend::new())
         }
-        #[cfg(not(feature = "storage"))]
-        Ok("postgres") => {
+    };
+
+    (task_backend, event_store)
+}
+
+/// Decide the schedule store from env values WITHOUT touching the process
+/// environment or the database. `storage_feature` mirrors
+/// `cfg!(feature = "storage")` (passed in by the caller so every branch is
+/// reachable from tests regardless of the compiled feature set).
+///
+/// Semantics (mirrors `UC_TASK_BACKEND` / `UC_EVENT_BACKEND`):
+/// - `postgres` + `UC_DATABASE_URL` + storage feature → durable PG store
+/// - `postgres` with missing/empty URL or without the storage feature →
+///   in-memory with a warning (explicit opt-in degraded)
+/// - anything else (unset / `memory` / unknown) → in-memory, informational
+fn resolve_schedule_store_choice(
+    backend: Option<&str>,
+    db_url: Option<&str>,
+    storage_feature: bool,
+) -> BackendChoice {
+    match (backend, db_url, storage_feature) {
+        (Some("postgres"), Some(url), true) if !url.is_empty() => {
+            BackendChoice::Durable(url.to_string())
+        }
+        (Some("postgres"), _, true) => BackendChoice::Memory {
+            reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+            warn: true,
+        },
+        (Some("postgres"), _, false) => BackendChoice::Memory {
+            reason: "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled".to_string(),
+            warn: true,
+        },
+        _ => BackendChoice::Memory {
+            reason: "SchedulerService using in-memory store (jobs lost on restart)".to_string(),
+            warn: false,
+        },
+    }
+}
+
+/// Connect to PostgreSQL and wrap the store. Split from the decision above
+/// so `create_schedule_store` reads declaratively. `PostgresScheduleStore::
+/// connect` builds a dedicated pool + runs idempotent migrations
+/// (`scheduled_tasks` + `execution_history`). Mirrors
+/// `PostgresTaskBackend::new`. Any failure degrades to `None` (in-memory)
+/// rather than aborting startup.
+#[cfg(feature = "storage")]
+async fn connect_postgres_schedule_store(url: &str) -> Option<Arc<dyn ScheduleStore>> {
+    match PostgresScheduleStore::connect(url).await {
+        Ok(store) => {
+            tracing::info!("SchedulerService using PostgreSQL schedule store (durable)");
+            Some(Arc::new(store) as Arc<dyn ScheduleStore>)
+        }
+        Err(e) => {
             tracing::warn!(
-                "UC_TASK_BACKEND=postgres but storage feature not enabled, using in-memory"
+                "PostgreSQL schedule store unavailable: {}, using in-memory",
+                e
             );
-            (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
-        }
-        _ => {
-            tracing::info!("TaskStore using in-memory backend");
-            (Arc::new(uc_engine::InMemoryTaskBackend::new()), event_store)
+            None
         }
     }
+}
+
+/// Non-storage stub: the resolver never yields `Postgres` without the
+/// storage feature, so this is defensive only.
+#[cfg(not(feature = "storage"))]
+async fn connect_postgres_schedule_store(_url: &str) -> Option<Arc<dyn ScheduleStore>> {
+    None
 }
 
 /// Create a scheduler `ScheduleStore` based on environment configuration.
@@ -147,43 +312,15 @@ async fn create_task_backend() -> (
 /// failure or missing `UC_DATABASE_URL`, falls back to `None` with a warning
 /// rather than aborting startup.
 async fn create_schedule_store() -> Option<Arc<dyn ScheduleStore>> {
-    match std::env::var("UC_SCHEDULE_BACKEND").as_deref() {
-        #[cfg(feature = "storage")]
-        Ok("postgres") => {
-            let db_url = std::env::var("UC_DATABASE_URL").unwrap_or_else(|_| {
-                tracing::warn!(
-                    "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set, using in-memory scheduler store"
-                );
-                String::new()
-            });
-            if db_url.is_empty() {
-                return None;
-            }
-            // connect() builds a dedicated pool + runs idempotent migrations
-            // (scheduled_tasks + execution_history). Mirrors PostgresTaskBackend::new.
-            match PostgresScheduleStore::connect(&db_url).await {
-                Ok(store) => {
-                    tracing::info!("SchedulerService using PostgreSQL schedule store (durable)");
-                    Some(Arc::new(store) as Arc<dyn ScheduleStore>)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "PostgreSQL schedule store unavailable: {}, using in-memory",
-                        e
-                    );
-                    None
-                }
-            }
-        }
-        #[cfg(not(feature = "storage"))]
-        Ok("postgres") => {
-            tracing::warn!(
-                "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled, using in-memory scheduler store"
-            );
-            None
-        }
-        _ => {
-            tracing::info!("SchedulerService using in-memory store (jobs lost on restart)");
+    let choice = resolve_schedule_store_choice(
+        std::env::var("UC_SCHEDULE_BACKEND").as_deref().ok(),
+        std::env::var("UC_DATABASE_URL").as_deref().ok(),
+        cfg!(feature = "storage"),
+    );
+    match choice {
+        BackendChoice::Durable(url) => connect_postgres_schedule_store(&url).await,
+        BackendChoice::Memory { reason, warn } => {
+            log_backend_decision(&reason, warn);
             None
         }
     }
@@ -751,5 +888,165 @@ mod tests {
         background_restore
             .await
             .expect("background restore task should finish cleanly");
+    }
+
+    // ── resolve_schedule_store_choice: env-gating matrix ────────────
+
+    #[test]
+    fn postgres_with_url_and_storage_selects_postgres() {
+        let url = "postgresql://uc:uc@localhost:5432/ultimate_coders";
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some(url), true),
+            BackendChoice::Durable(url.to_string())
+        );
+    }
+
+    #[test]
+    fn postgres_without_url_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), None, true),
+            BackendChoice::Memory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn postgres_with_empty_url_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some(""), true),
+            BackendChoice::Memory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn postgres_without_storage_feature_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some("postgresql://h/db"), false),
+            BackendChoice::Memory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn unset_or_memory_backend_is_silent_memory() {
+        for backend in [None, Some("memory"), Some("redis")] {
+            match resolve_schedule_store_choice(backend, None, true) {
+                BackendChoice::Memory { warn, .. } => {
+                    assert!(
+                        !warn,
+                        "backend {backend:?} must not warn (not an explicit opt-in)"
+                    );
+                }
+                other => panic!("backend {backend:?} must stay in-memory, got {other:?}"),
+            }
+        }
+    }
+
+    // ── resolve_event_store_choice: env-gating matrix ───────────────
+
+    #[test]
+    fn nats_with_url_and_messaging_selects_nats() {
+        assert_eq!(
+            resolve_event_store_choice(Some("nats"), Some("nats://h:4222"), true),
+            BackendChoice::Durable("nats://h:4222".to_string())
+        );
+    }
+
+    #[test]
+    fn nats_without_or_empty_url_warns_into_memory() {
+        for url in [None, Some("")] {
+            assert_eq!(
+                resolve_event_store_choice(Some("nats"), url, true),
+                BackendChoice::Memory {
+                    reason: "UC_EVENT_BACKEND=nats but UC_NATS_URL not set, \
+                             falling back to in-memory event store"
+                        .to_string(),
+                    warn: true,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn nats_without_messaging_feature_warns_into_memory() {
+        assert_eq!(
+            resolve_event_store_choice(Some("nats"), Some("nats://h:4222"), false),
+            BackendChoice::Memory {
+                reason: "UC_EVENT_BACKEND=nats but messaging feature not enabled, \
+                         using in-memory event store"
+                    .to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn unset_or_memory_event_backend_is_silent_memory() {
+        for backend in [None, Some("memory"), Some("redis")] {
+            match resolve_event_store_choice(backend, None, true) {
+                BackendChoice::Memory { warn, .. } => {
+                    assert!(!warn, "event backend {backend:?} must not warn");
+                }
+                other => panic!("event backend {backend:?} must stay in-memory, got {other:?}"),
+            }
+        }
+    }
+
+    // ── resolve_task_backend_choice: env-gating matrix ──────────────
+
+    #[test]
+    fn task_postgres_with_url_and_storage_selects_postgres() {
+        let url = "postgresql://uc:uc@localhost:5432/ultimate_coders";
+        assert_eq!(
+            resolve_task_backend_choice(Some("postgres"), Some(url), true),
+            BackendChoice::Durable(url.to_string())
+        );
+    }
+
+    #[test]
+    fn task_postgres_without_or_empty_url_warns_into_memory() {
+        for url in [None, Some("")] {
+            assert_eq!(
+                resolve_task_backend_choice(Some("postgres"), url, true),
+                BackendChoice::Memory {
+                    reason: "UC_TASK_BACKEND=postgres but UC_DATABASE_URL not set, \
+                             falling back to in-memory task backend"
+                        .to_string(),
+                    warn: true,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn task_postgres_without_storage_feature_warns_into_memory() {
+        assert_eq!(
+            resolve_task_backend_choice(Some("postgres"), Some("postgresql://h/db"), false),
+            BackendChoice::Memory {
+                reason: "UC_TASK_BACKEND=postgres but storage feature not enabled, \
+                         using in-memory"
+                    .to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn unset_or_unknown_task_backend_is_silent_memory() {
+        for backend in [None, Some("memory")] {
+            match resolve_task_backend_choice(backend, None, true) {
+                BackendChoice::Memory { warn, .. } => {
+                    assert!(!warn, "task backend {backend:?} must not warn");
+                }
+                other => panic!("task backend {backend:?} must stay in-memory, got {other:?}"),
+            }
+        }
     }
 }

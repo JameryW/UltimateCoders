@@ -717,57 +717,66 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
         use uc_types::AgentEventPayload::*;
 
         // Extract event_type, task_id, subtask_id from the payload variant.
+        // Subtask-level variants carry the parent task_id (mirrors the
+        // engine's AgentEventType), so watch_task consumers can attribute
+        // every event to its task without a store lookup.
         let (event_type, task_id, subtask_id) = match &event.payload {
             TaskCreated { task } => ("task_created".to_string(), task.id.0.clone(), None),
             SubtaskAssigned {
+                task_id,
                 subtask_id,
                 worker_id: _,
             } => (
                 "subtask_assigned".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
             WorkerStarted {
+                task_id,
                 subtask_id,
                 worker_id: _,
             } => (
                 "worker_started".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
             ToolInvoked {
+                task_id,
                 subtask_id,
                 tool_name: _,
                 tool_input: _,
             } => (
                 "tool_invoked".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
             ToolResult {
+                task_id,
                 subtask_id,
                 tool_output: _,
                 exit_code: _,
             } => (
                 "tool_result".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
             FileModified {
+                task_id,
                 subtask_id,
                 file_path: _,
                 diff: _,
             } => (
                 "file_modified".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
-            SubtaskCompleted { result } => (
+            SubtaskCompleted { task_id, result } => (
                 "subtask_completed".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(result.subtask_id.0.clone()),
             ),
             SubtaskFailed {
+                task_id,
                 subtask_id,
                 error: _,
                 recoverable: _,
@@ -775,7 +784,7 @@ impl From<uc_types::AgentEvent> for PyAgentEvent {
                 recent_tools: _,
             } => (
                 "subtask_failed".to_string(),
-                String::new(),
+                task_id.0.clone(),
                 Some(subtask_id.0.clone()),
             ),
             CheckpointCreated {

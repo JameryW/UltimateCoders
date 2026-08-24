@@ -132,6 +132,9 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
 /// `dependency::resolve_execution_order` ("Unknown dependency → ignore"),
 /// yielding wrong execution order / data corruption. Surfacing the failure
 /// marks the task failed instead of dispatching with a corrupted graph.
+// Only caller is OrchestratorDispatcher's reply processing (messaging);
+// ungated, it is dead code in no-messaging builds.
+#[cfg(feature = "messaging")]
 fn parse_subtasks(subtasks: &[serde_json::Value]) -> Result<Vec<uc_types::Subtask>, EngineError> {
     let mut parsed: Vec<uc_types::Subtask> = Vec::with_capacity(subtasks.len());
     for (i, v) in subtasks.iter().enumerate() {
@@ -474,6 +477,7 @@ mod tests {
         assert_ne!(WindowEventType::Opened, WindowEventType::Closed);
     }
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn parse_subtasks_partial_drop_returns_err() {
         // One valid + one malformed subtask (depends_on as int, not array).
@@ -509,6 +513,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn parse_subtasks_all_valid() {
         use uc_types::{Subtask, SubtaskStatus, TaskId};

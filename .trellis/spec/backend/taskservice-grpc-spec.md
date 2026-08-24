@@ -287,7 +287,15 @@ async submitTask(req) {
 
 **Decision**: Option 3 (in-memory TaskStore). The store uses `Arc<Mutex<HashMap>>` for thread-safe access. Decomposition uses a simple newline-split heuristic. This is explicitly a bridge implementation — when the full Python Orchestrator integration is ready, TaskStore will be replaced.
 
-**Limitation**: Subtask-level events don't carry `task_id` in `AgentEventType`, so `WatchTask` with a specific `task_id` may miss subtask events. Current TUI watches all tasks (empty `task_id`), so this is not a user-facing issue. TODO added in code.
+**Resolution** (was a limitation): Subtask-level events now carry the parent
+`task_id` at every layer. The engine's `AgentEventType` always did (WatchTask
+filters on the proto's parent `task_id`, so targeted watches see subtask
+events). The client-facing `AgentEventPayload` (`uc-types`) previously
+DROPPED the parent id on its subtask variants — leaving `PyAgentEvent.task_id`
+empty for Python `watch_task` consumers — and now carries `task_id` on every
+subtask-level variant, populated from the proto in
+`From<TaskEventProto> for AgentEvent`. Regression test:
+`conversions::tests::task_event_proto_preserves_parent_task_id_on_subtask_events`.
 
 ### Decision: Dynamic proto loading (proto-loader) vs code generation
 
