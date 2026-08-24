@@ -1004,6 +1004,9 @@ fn json_to_dashboard_snapshot(v: &serde_json::Value) -> DashboardSnapshot {
 
 /// Merge gateway-owned state into a snapshot produced by the Python
 /// dashboard publisher.
+// Only caller is authoritative_dashboard_snapshot (messaging); ungated,
+// it is dead code in no-messaging builds.
+#[cfg(feature = "messaging")]
 fn reconcile_dashboard_snapshot(
     mut snapshot: DashboardSnapshot,
     authoritative_workers: Option<ListWorkersResponse>,
@@ -1147,6 +1150,7 @@ async fn build_local_snapshot(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "messaging")]
     #[test]
     fn snapshot_prefers_gateway_workers_and_scheduler() {
         let snapshot = DashboardSnapshot {

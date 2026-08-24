@@ -623,7 +623,8 @@ mod tikv_tests {
     #[tokio::test]
     #[ignore]
     async fn test_tikv_connect() {
-        let store = connect_tikv(3600).await;
+        // Connect-only smoke test: success is the assertion.
+        let _store = connect_tikv(3600).await;
     }
 
     /// Test write -> read -> verify -> delete -> verify None.

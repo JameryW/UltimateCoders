@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn noop_lock_provider_default() {
-        let provider = NoOpLockProvider::default();
+        let provider = NoOpLockProvider;
         assert!(provider.try_acquire("key", Duration::from_secs(10)));
     }
 

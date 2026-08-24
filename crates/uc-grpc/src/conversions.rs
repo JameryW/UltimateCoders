@@ -1907,13 +1907,13 @@ mod tests {
         );
         assert_eq!(proto.data.get("percent").map(String::as_str), Some("50"));
         // Optional keys absent for single-agent progress
-        assert!(proto.data.get("step_index").is_none());
-        assert!(proto.data.get("step_total").is_none());
-        assert!(proto.data.get("step_agent").is_none());
-        assert!(proto.data.get("step_status").is_none());
-        assert!(proto.data.get("step_summary").is_none());
-        assert!(proto.data.get("parallel_group").is_none());
-        assert!(proto.data.get("parallel_step_count").is_none());
+        assert!(!proto.data.contains_key("step_index"));
+        assert!(!proto.data.contains_key("step_total"));
+        assert!(!proto.data.contains_key("step_agent"));
+        assert!(!proto.data.contains_key("step_status"));
+        assert!(!proto.data.contains_key("step_summary"));
+        assert!(!proto.data.contains_key("parallel_group"));
+        assert!(!proto.data.contains_key("parallel_step_count"));
     }
 
     #[test]
