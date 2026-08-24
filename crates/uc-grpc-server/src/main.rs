@@ -15,6 +15,11 @@
 //! - `memory` (default): in-memory, events lost on restart
 //! - `nats`: NATS JetStream (durable), requires `UC_NATS_URL`
 //!
+//! Schedule persistence can be configured via `UC_SCHEDULE_BACKEND`:
+//! - `memory` (default): in-memory, jobs lost on restart
+//! - `postgres`: jobs survive restarts (`SchedulerService::start()` recovers
+//!   them), requires `UC_DATABASE_URL`; migrations run idempotently on boot
+//!
 //! tonic-web is enabled for gRPC-Web browser support (unary + server-streaming).
 //! CORS is configured to allow dashboard origins.
 
@@ -134,6 +139,82 @@ async fn create_task_backend() -> (
     }
 }
 
+/// Outcome of the pure schedule-backend decision (see
+/// [`resolve_schedule_store_choice`]). Kept separate from the async
+/// connection step so the env-gating matrix is unit-testable.
+#[derive(Debug, PartialEq, Eq)]
+enum ScheduleStoreChoice {
+    /// Build a `PostgresScheduleStore` at this URL.
+    Postgres(String),
+    /// Fall back to the engine's in-memory store. `warn` is true when the
+    /// user explicitly asked for postgres and silently loses durability.
+    InMemory { reason: String, warn: bool },
+}
+
+/// Decide the schedule store from env values WITHOUT touching the process
+/// environment or the database. `storage_feature` mirrors
+/// `cfg!(feature = "storage")` (passed in by the caller so every branch is
+/// reachable from tests regardless of the compiled feature set).
+///
+/// Semantics (mirrors `UC_TASK_BACKEND` / `UC_EVENT_BACKEND`):
+/// - `postgres` + `UC_DATABASE_URL` + storage feature → [`ScheduleStoreChoice::Postgres`]
+/// - `postgres` with missing/empty URL or without the storage feature →
+///   in-memory with a warning (explicit opt-in degraded)
+/// - anything else (unset / `memory` / unknown) → in-memory, informational
+fn resolve_schedule_store_choice(
+    backend: Option<&str>,
+    db_url: Option<&str>,
+    storage_feature: bool,
+) -> ScheduleStoreChoice {
+    match (backend, db_url, storage_feature) {
+        (Some("postgres"), Some(url), true) if !url.is_empty() => {
+            ScheduleStoreChoice::Postgres(url.to_string())
+        }
+        (Some("postgres"), _, true) => ScheduleStoreChoice::InMemory {
+            reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+            warn: true,
+        },
+        (Some("postgres"), _, false) => ScheduleStoreChoice::InMemory {
+            reason: "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled".to_string(),
+            warn: true,
+        },
+        _ => ScheduleStoreChoice::InMemory {
+            reason: "SchedulerService using in-memory store (jobs lost on restart)".to_string(),
+            warn: false,
+        },
+    }
+}
+
+/// Connect to PostgreSQL and wrap the store. Split from the decision above
+/// so `create_schedule_store` reads declaratively. `PostgresScheduleStore::
+/// connect` builds a dedicated pool + runs idempotent migrations
+/// (`scheduled_tasks` + `execution_history`). Mirrors
+/// `PostgresTaskBackend::new`. Any failure degrades to `None` (in-memory)
+/// rather than aborting startup.
+#[cfg(feature = "storage")]
+async fn connect_postgres_schedule_store(url: &str) -> Option<Arc<dyn ScheduleStore>> {
+    match PostgresScheduleStore::connect(url).await {
+        Ok(store) => {
+            tracing::info!("SchedulerService using PostgreSQL schedule store (durable)");
+            Some(Arc::new(store) as Arc<dyn ScheduleStore>)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "PostgreSQL schedule store unavailable: {}, using in-memory",
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Non-storage stub: the resolver never yields `Postgres` without the
+/// storage feature, so this is defensive only.
+#[cfg(not(feature = "storage"))]
+async fn connect_postgres_schedule_store(_url: &str) -> Option<Arc<dyn ScheduleStore>> {
+    None
+}
+
 /// Create a scheduler `ScheduleStore` based on environment configuration.
 ///
 /// # Schedule backend (`UC_SCHEDULE_BACKEND`)
@@ -147,43 +228,19 @@ async fn create_task_backend() -> (
 /// failure or missing `UC_DATABASE_URL`, falls back to `None` with a warning
 /// rather than aborting startup.
 async fn create_schedule_store() -> Option<Arc<dyn ScheduleStore>> {
-    match std::env::var("UC_SCHEDULE_BACKEND").as_deref() {
-        #[cfg(feature = "storage")]
-        Ok("postgres") => {
-            let db_url = std::env::var("UC_DATABASE_URL").unwrap_or_else(|_| {
-                tracing::warn!(
-                    "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set, using in-memory scheduler store"
-                );
-                String::new()
-            });
-            if db_url.is_empty() {
-                return None;
+    let choice = resolve_schedule_store_choice(
+        std::env::var("UC_SCHEDULE_BACKEND").as_deref().ok(),
+        std::env::var("UC_DATABASE_URL").as_deref().ok(),
+        cfg!(feature = "storage"),
+    );
+    match choice {
+        ScheduleStoreChoice::Postgres(url) => connect_postgres_schedule_store(&url).await,
+        ScheduleStoreChoice::InMemory { reason, warn } => {
+            if warn {
+                tracing::warn!("{}, using in-memory scheduler store", reason);
+            } else {
+                tracing::info!("{}", reason);
             }
-            // connect() builds a dedicated pool + runs idempotent migrations
-            // (scheduled_tasks + execution_history). Mirrors PostgresTaskBackend::new.
-            match PostgresScheduleStore::connect(&db_url).await {
-                Ok(store) => {
-                    tracing::info!("SchedulerService using PostgreSQL schedule store (durable)");
-                    Some(Arc::new(store) as Arc<dyn ScheduleStore>)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "PostgreSQL schedule store unavailable: {}, using in-memory",
-                        e
-                    );
-                    None
-                }
-            }
-        }
-        #[cfg(not(feature = "storage"))]
-        Ok("postgres") => {
-            tracing::warn!(
-                "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled, using in-memory scheduler store"
-            );
-            None
-        }
-        _ => {
-            tracing::info!("SchedulerService using in-memory store (jobs lost on restart)");
             None
         }
     }
@@ -751,5 +808,64 @@ mod tests {
         background_restore
             .await
             .expect("background restore task should finish cleanly");
+    }
+
+    // ── resolve_schedule_store_choice: env-gating matrix ────────────
+
+    #[test]
+    fn postgres_with_url_and_storage_selects_postgres() {
+        let url = "postgresql://uc:uc@localhost:5432/ultimate_coders";
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some(url), true),
+            ScheduleStoreChoice::Postgres(url.to_string())
+        );
+    }
+
+    #[test]
+    fn postgres_without_url_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), None, true),
+            ScheduleStoreChoice::InMemory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn postgres_with_empty_url_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some(""), true),
+            ScheduleStoreChoice::InMemory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but UC_DATABASE_URL not set".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn postgres_without_storage_feature_warns_into_memory() {
+        assert_eq!(
+            resolve_schedule_store_choice(Some("postgres"), Some("postgresql://h/db"), false),
+            ScheduleStoreChoice::InMemory {
+                reason: "UC_SCHEDULE_BACKEND=postgres but storage feature not enabled".to_string(),
+                warn: true,
+            }
+        );
+    }
+
+    #[test]
+    fn unset_or_memory_backend_is_silent_memory() {
+        for backend in [None, Some("memory"), Some("redis")] {
+            match resolve_schedule_store_choice(backend, None, true) {
+                ScheduleStoreChoice::InMemory { warn, .. } => {
+                    assert!(
+                        !warn,
+                        "backend {backend:?} must not warn (not an explicit opt-in)"
+                    );
+                }
+                other => panic!("backend {backend:?} must stay in-memory, got {other:?}"),
+            }
+        }
     }
 }

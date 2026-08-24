@@ -203,6 +203,13 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
 - **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
   feature disabled → warn + in-memory (no crash). Default (unset) = zero
   behavior change for existing deploys.
+- **Deployment surfaces**: full-stack `docker/docker-compose.yml` defaults
+  `UC_SCHEDULE_BACKEND=postgres` (durable); the standalone gateway
+  (`docker-compose.gateway.yml` via `run-gateway.sh`) passes the var through
+  with `memory` default (opt-in via env / docker `.env`), as do the docker
+  branches of `run-cluster.sh` / `run-omp.sh` (postgres default, mirroring
+  `UC_TASK_BACKEND`). The gating decision lives in the pure
+  `resolve_schedule_store_choice` helper so the matrix stays unit-testable.
 - **Out of scope**: multi-gateway live-read consistency (one-shot startup load;
   write-path keeps PG in sync going forward — same model as `UC_TASK_BACKEND`).
 
