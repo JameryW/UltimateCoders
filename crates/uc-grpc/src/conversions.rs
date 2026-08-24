@@ -1430,32 +1430,39 @@ impl From<TaskEventProto> for AgentEvent {
                 }
             }
             "subtask_assigned" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
                 AgentEventPayload::SubtaskAssigned {
+                    task_id,
                     subtask_id,
                     worker_id,
                 }
             }
             "subtask_started" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let worker_id = WorkerId(proto.data.get("worker_id").cloned().unwrap_or_default());
                 AgentEventPayload::WorkerStarted {
+                    task_id,
                     subtask_id,
                     worker_id,
                 }
             }
             "tool_call" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let tool_name = proto.data.get("tool_name").cloned().unwrap_or_default();
                 let tool_input = proto.data.get("tool_input").cloned().unwrap_or_default();
                 AgentEventPayload::ToolInvoked {
+                    task_id,
                     subtask_id,
                     tool_name,
                     tool_input,
                 }
             }
             "tool_result" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let tool_output = proto.data.get("tool_output").cloned().unwrap_or_default();
                 let exit_code = proto
@@ -1464,22 +1471,26 @@ impl From<TaskEventProto> for AgentEvent {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 AgentEventPayload::ToolResult {
+                    task_id,
                     subtask_id,
                     tool_output,
                     exit_code,
                 }
             }
             "file_modified" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let file_path = proto.data.get("file_path").cloned().unwrap_or_default();
                 let diff = proto.data.get("diff").cloned().unwrap_or_default();
                 AgentEventPayload::FileModified {
+                    task_id,
                     subtask_id,
                     file_path,
                     diff,
                 }
             }
             "subtask_completed" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let summary = proto.data.get("summary").cloned().unwrap_or_default();
                 // `success` arrives stringified in the proto's string→string data
@@ -1498,6 +1509,7 @@ impl From<TaskEventProto> for AgentEvent {
                     .unwrap_or_default();
                 let output = proto.data.get("output").cloned().unwrap_or_default();
                 AgentEventPayload::SubtaskCompleted {
+                    task_id,
                     result: uc_types::SubtaskResult {
                         subtask_id,
                         worker_id: WorkerId::new(),
@@ -1514,6 +1526,7 @@ impl From<TaskEventProto> for AgentEvent {
                 }
             }
             "subtask_failed" => {
+                let task_id = TaskId(proto.task_id.clone());
                 let subtask_id = TaskId(proto.subtask_id.unwrap_or_default());
                 let error = proto.data.get("error").cloned().unwrap_or_default();
                 let recoverable = proto
@@ -1542,6 +1555,7 @@ impl From<TaskEventProto> for AgentEvent {
                     })
                     .unwrap_or_default();
                 AgentEventPayload::SubtaskFailed {
+                    task_id,
                     subtask_id,
                     error,
                     recoverable,
@@ -1983,6 +1997,53 @@ mod tests {
                 }
                 other => panic!("expected SubtaskCompleted, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn task_event_proto_preserves_parent_task_id_on_subtask_events() {
+        // Regression: subtask-level AgentEventPayload variants used to drop
+        // the proto's parent task_id, so WatchTask(task_id) filters and
+        // PyAgentEvent.task_id could not attribute events to their task.
+        // Every subtask-level conversion must now carry the parent id.
+        let cases: Vec<(&str, Vec<(String, String)>)> = vec![
+            (
+                "subtask_assigned",
+                vec![("worker_id".to_string(), "w-1".to_string())],
+            ),
+            ("subtask_started", vec![]),
+            ("tool_call", vec![]),
+            ("tool_result", vec![]),
+            ("file_modified", vec![]),
+            (
+                "subtask_completed",
+                vec![("success".to_string(), "true".to_string())],
+            ),
+            ("subtask_failed", vec![]),
+        ];
+        for (event_type, data) in cases {
+            let proto = TaskEventProto {
+                timestamp: "2024-01-01T00:00:00+00:00".to_string(),
+                r#type: event_type.to_string(),
+                task_id: "parent-task-9".to_string(),
+                subtask_id: Some("st-3".to_string()),
+                data: data.into_iter().collect(),
+            };
+            let event: AgentEvent = proto.into();
+            let task_id = match &event.payload {
+                AgentEventPayload::SubtaskAssigned { task_id, .. } => task_id,
+                AgentEventPayload::WorkerStarted { task_id, .. } => task_id,
+                AgentEventPayload::ToolInvoked { task_id, .. } => task_id,
+                AgentEventPayload::ToolResult { task_id, .. } => task_id,
+                AgentEventPayload::FileModified { task_id, .. } => task_id,
+                AgentEventPayload::SubtaskCompleted { task_id, .. } => task_id,
+                AgentEventPayload::SubtaskFailed { task_id, .. } => task_id,
+                other => panic!("{event_type}: unexpected payload {other:?}"),
+            };
+            assert_eq!(
+                task_id.0, "parent-task-9",
+                "{event_type} must preserve the parent task_id"
+            );
         }
     }
 }
