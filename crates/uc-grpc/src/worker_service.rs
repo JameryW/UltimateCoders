@@ -305,9 +305,9 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
                 }
             }
             "scale" => {
-                // Shell out to docker compose to set the worker instance count.
-                // --no-deps is MANDATORY: worker depends_on gateway, and the gateway
-                // itself is issuing this command (would deadlock without --no-deps).
+                // Shell out to docker compose to set the worker instance
+                // count, fanned out over the hosts listed in
+                // UC_SCALE_HOSTS (default: the gateway's own daemon).
                 let compose_file = std::env::var("UC_COMPOSE_FILE")
                     .unwrap_or_else(|_| "/app/docker/docker-compose.yml".to_string());
                 let compose_project =
@@ -329,82 +329,74 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
                 }
 
                 let target = req.target_count;
+                let hosts = parse_scale_hosts(std::env::var("UC_SCALE_HOSTS").ok().as_deref());
+                let assignments = split_target_across_hosts(target, &hosts);
                 tracing::info!(
                     compose_file = %compose_file,
                     compose_project = %compose_project,
                     target_count = target,
+                    assignments = ?assignments,
                     "Scaling workers via docker compose"
                 );
 
-                let output = tokio::process::Command::new("docker")
-                    .arg("compose")
-                    .arg("-p")
-                    .arg(&compose_project)
-                    .arg("-f")
-                    .arg(&compose_file)
-                    .arg("up")
-                    .arg("-d")
-                    .arg("--no-deps")
-                    .arg("--scale")
-                    .arg(format!("worker={}", target))
-                    .arg("worker")
-                    .output()
-                    .await;
+                // Per-host best-effort: one unreachable host must not block
+                // scaling of the others. Shares are absolute per host.
+                let mut results = Vec::with_capacity(assignments.len());
+                for (host, share) in &assignments {
+                    let docker_host =
+                        (!host.eq_ignore_ascii_case("local")).then_some(host.as_str());
+                    let outcome =
+                        run_compose_scale(&compose_file, &compose_project, *share, docker_host)
+                            .await;
+                    results.push((host.clone(), *share, outcome));
+                }
 
-                match output {
-                    Ok(output) if output.status.success() => {
-                        // Workers self-register asynchronously on container start;
-                        // the registry reconciles via the existing RegisterWorker path.
-                        // We return the requested target as actual_count without blocking.
-                        tracing::info!(target_count = target, "docker compose scale succeeded");
-                        Ok(Response::new(ScaleWorkersResponse {
-                            success: true,
-                            error: None,
-                            actual_count: target,
-                            message: format!(
-                                "Scaled worker instances to {}; workers self-register asynchronously",
-                                target
-                            ),
-                        }))
-                    }
-                    Ok(output) => {
-                        // Non-zero exit — capture stderr for diagnostics.
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let snippet = if !stderr.trim().is_empty() {
-                            stderr.lines().take(5).collect::<Vec<_>>().join("; ")
-                        } else {
-                            stdout.lines().take(5).collect::<Vec<_>>().join("; ")
-                        };
-                        tracing::warn!(
-                            exit_code = ?output.status.code(),
-                            snippet = %snippet,
-                            "docker compose scale failed"
-                        );
-                        Ok(Response::new(ScaleWorkersResponse {
-                            success: false,
-                            error: Some(format!(
-                                "docker compose scale failed (exit {:?}): {}",
-                                output.status.code(),
-                                snippet
-                            )),
-                            actual_count: 0,
-                            message: String::new(),
-                        }))
-                    }
-                    Err(e) => {
-                        // docker CLI not found or cannot spawn.
-                        tracing::warn!(error = %e, "Failed to invoke docker CLI");
-                        Ok(Response::new(ScaleWorkersResponse {
-                            success: false,
-                            error: Some(format!(
-                                "Failed to invoke docker CLI: {} (ensure docker is installed and docker.sock is mounted)",
-                                e
-                            )),
-                            actual_count: 0,
-                            message: String::new(),
-                        }))
-                    }
+                // Workers self-register asynchronously on container start;
+                // the registry reconciles via the existing RegisterWorker
+                // path. actual_count sums the shares we successfully
+                // requested without blocking on registration.
+                let actual_count: u32 = results
+                    .iter()
+                    .filter(|(_, _, r)| r.is_ok())
+                    .map(|(_, share, _)| *share)
+                    .sum();
+                let detail = results
+                    .iter()
+                    .map(|(h, s, r)| match r {
+                        Ok(()) => format!("{}={}", h, s),
+                        Err(e) => format!("{}=FAILED({})", h, e),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let failures: Vec<String> = results
+                    .iter()
+                    .filter_map(|(_, _, r)| r.as_ref().err().cloned())
+                    .collect();
+
+                if failures.is_empty() {
+                    tracing::info!(target_count = target, hosts = ?hosts, "docker compose scale succeeded");
+                    Ok(Response::new(ScaleWorkersResponse {
+                        success: true,
+                        error: None,
+                        actual_count,
+                        message: format!(
+                            "Scaled worker instances across {} host(s) [{}]; workers self-register asynchronously",
+                            hosts.len(),
+                            detail
+                        ),
+                    }))
+                } else {
+                    tracing::warn!(
+                        failures = failures.len(),
+                        total_hosts = hosts.len(),
+                        "docker compose scale partially failed"
+                    );
+                    Ok(Response::new(ScaleWorkersResponse {
+                        success: false,
+                        error: Some(failures.join("; ")),
+                        actual_count,
+                        message: format!("Partial scale [{}]", detail),
+                    }))
                 }
             }
             other => {
@@ -420,6 +412,98 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
                 }))
             }
         }
+    }
+}
+
+// ── Cross-host scale helpers ─────────────────────────────────────
+
+/// Parse `UC_SCALE_HOSTS` into per-host docker connection specs.
+///
+/// Comma/semicolon-separated list. The special value `local` (case-
+/// insensitive) means "the daemon this gateway itself reaches" — no
+/// `DOCKER_HOST` override, i.e. today's single-host behavior. Any other
+/// entry is passed to `docker compose` as `DOCKER_HOST` for that
+/// invocation, so plain `ssh://user@host` specs work without pre-created
+/// docker contexts. Unset/empty/blank → `["local"]`.
+fn parse_scale_hosts(raw: Option<&str>) -> Vec<String> {
+    let hosts: Vec<String> = raw
+        .unwrap_or("")
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    if hosts.is_empty() {
+        vec!["local".to_string()]
+    } else {
+        hosts
+    }
+}
+
+/// Even-split of a target worker count across hosts, preserving input
+/// order: the first `target % hosts.len()` hosts take one extra worker.
+fn split_target_across_hosts(target: u32, hosts: &[String]) -> Vec<(String, u32)> {
+    let n = hosts.len().max(1);
+    let base = target / n as u32;
+    let rem = target % n as u32;
+    hosts
+        .iter()
+        .enumerate()
+        .map(|(i, h)| (h.clone(), base + u32::from(i < rem as usize)))
+        .collect()
+}
+
+/// Run one `docker compose up -d --no-deps --scale worker=N worker`
+/// invocation against `docker_host` (`None` = the gateway's own daemon).
+/// `--no-deps` is MANDATORY: worker depends_on gateway, and the gateway
+/// itself is issuing this command (would deadlock without it).
+async fn run_compose_scale(
+    compose_file: &str,
+    compose_project: &str,
+    count: u32,
+    docker_host: Option<&str>,
+) -> Result<(), String> {
+    let label = docker_host.unwrap_or("local");
+    let mut cmd = tokio::process::Command::new("docker");
+    cmd.arg("compose")
+        .arg("-p")
+        .arg(compose_project)
+        .arg("-f")
+        .arg(compose_file)
+        .arg("up")
+        .arg("-d")
+        .arg("--no-deps")
+        .arg("--scale")
+        .arg(format!("worker={}", count))
+        .arg("worker");
+    if let Some(dh) = docker_host {
+        cmd.env("DOCKER_HOST", dh);
+    }
+
+    match cmd.output().await {
+        Ok(output) if output.status.success() => {
+            tracing::info!(host = %label, count, "docker compose scale succeeded");
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let snippet = if !stderr.trim().is_empty() {
+                stderr.lines().take(5).collect::<Vec<_>>().join("; ")
+            } else {
+                stdout.lines().take(5).collect::<Vec<_>>().join("; ")
+            };
+            Err(format!(
+                "{}: docker compose scale failed (exit {:?}): {}",
+                label,
+                output.status.code(),
+                snippet
+            ))
+        }
+        Err(e) => Err(format!(
+            "{}: Failed to invoke docker CLI: {} (ensure docker is installed and reachable from this host)",
+            label, e
+        )),
     }
 }
 
@@ -786,5 +870,67 @@ mod tests {
 
         assert!(!resp.success);
         assert!(resp.error.as_ref().unwrap().contains("Unknown action"));
+    }
+
+    // ── Cross-host scale helpers ─────────────────────────────────
+
+    #[test]
+    fn parse_scale_hosts_defaults_to_local() {
+        assert_eq!(parse_scale_hosts(None), vec!["local".to_string()]);
+        assert_eq!(parse_scale_hosts(Some("")), vec!["local".to_string()]);
+        assert_eq!(parse_scale_hosts(Some("  ")), vec!["local".to_string()]);
+    }
+
+    #[test]
+    fn parse_scale_hosts_splits_trims_and_keeps_order() {
+        assert_eq!(
+            parse_scale_hosts(Some("local, ssh://u@h2 ;ssh://u@h3")),
+            vec![
+                "local".to_string(),
+                "ssh://u@h2".to_string(),
+                "ssh://u@h3".to_string()
+            ]
+        );
+        // Semicolon separator and stray separators are tolerated.
+        assert_eq!(
+            parse_scale_hosts(Some(";ssh://a@b;")),
+            vec!["ssh://a@b".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_target_even_and_remainder() {
+        let hosts =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|s| s.to_string()).collect() };
+        let h3 = hosts(&["local", "h2", "h3"]);
+        assert_eq!(
+            split_target_across_hosts(10, &h3),
+            vec![
+                ("local".to_string(), 4),
+                ("h2".to_string(), 3),
+                ("h3".to_string(), 3)
+            ]
+        );
+        let h2 = hosts(&["local", "h2"]);
+        assert_eq!(
+            split_target_across_hosts(3, &h2),
+            vec![("local".to_string(), 2), ("h2".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn split_target_edge_cases() {
+        let single = vec!["local".to_string()];
+        // Single host keeps today's exact behavior.
+        assert_eq!(
+            split_target_across_hosts(5, &single),
+            vec![("local".to_string(), 5)]
+        );
+        // Zero target scales every host down to zero.
+        let two = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            split_target_across_hosts(0, &two),
+            vec![("a".to_string(), 0), ("b".to_string(), 0)]
+        );
     }
 }
