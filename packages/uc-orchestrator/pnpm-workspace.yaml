@@ -1,0 +1,6 @@
+# pnpm build-scripts approval — none of these need to run native installs
+# for extension development/typechecking (puppeteer would pull Chromium).
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false
+  puppeteer: false
