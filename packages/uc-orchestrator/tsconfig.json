@@ -8,10 +8,18 @@
 		"skipLibCheck": true,
 		"noEmit": true,
 		"resolveJsonModule": true,
+		"allowArbitraryExtensions": true,
 		"esModuleInterop": true,
 		"verbatimModuleSyntax": true,
+		"typeRoots": [
+			"../../vendor/oh-my-pi/types",
+			"../../vendor/oh-my-pi/node_modules/@types",
+			"./node_modules/@types"
+		],
+		"types": ["bun", "assets"],
 		"paths": {
 			"@oh-my-pi/pi-coding-agent": ["../../vendor/oh-my-pi/packages/coding-agent/src"],
+			"@oh-my-pi/pi-tui": ["../../vendor/oh-my-pi/packages/tui/src"],
 			"@oh-my-pi/pi-utils": ["../../vendor/oh-my-pi/packages/utils/src"]
 		}
 	},
