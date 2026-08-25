@@ -112,11 +112,28 @@ available there.
 
 ### Distributed (cross-host) scaling
 
-`docker compose --scale worker=N` only scales workers on the **same host**
-— the gateway shells out to the local `docker.sock`, which controls the
-local docker daemon. True cross-host scaling requires docker swarm mode, a
-remote docker context, or a per-host gateway (future work). The
-distributed worker + external-git design (below) is already cross-host-safe
+By default `docker compose --scale worker=N` scales workers on the
+**same host** only — the gateway shells out to the local docker daemon.
+Set **`UC_SCALE_HOSTS`** on the gateway to fan the ScaleWorkers "scale"
+action out over multiple hosts:
+
+```
+UC_SCALE_HOSTS="local,ssh://user@host-b,ssh://user@host-c"
+```
+
+Comma/semicolon-separated docker connection specs; `local` = the daemon
+the gateway itself reaches (no override). Each non-local spec is passed
+as `DOCKER_HOST` for that invocation (`ssh://user@host` needs no
+pre-registered docker context). The target count is split evenly across
+hosts (first hosts take the remainder) and each host runs its own
+compose command; one unreachable host does not block the others, and
+failures are reported per host in the response.
+
+Remote workers additionally need (their own compose/env):
+- a gateway address reachable from their host (`UC_GATEWAY_ADDR`),
+- code sync via an external git remote (`UC_REPO_URL`, see below).
+
+The distributed worker + external-git design is already cross-host-safe
 at the data level: each host runs its own compose and clones from the same
 external git remote, and git merge-time arbitration reconciles concurrent
 edits.

@@ -170,9 +170,34 @@ class Engine:
 
 ---
 
+## 6b. ScaleWorkers "scale" action (cross-host fan-out)
+
+- **Hosts source**: `UC_SCALE_HOSTS` — comma/semicolon-separated docker
+  connection specs. `local` (case-insensitive) = the daemon the gateway
+  itself reaches (no `DOCKER_HOST` override); any other spec is passed as
+  `DOCKER_HOST` for that invocation (`ssh://user@host` works without
+  pre-registered docker contexts). Unset/empty/blank → `["local"]`
+  (byte-for-byte single-host behavior).
+- **Split**: `split_target_across_hosts(target, hosts)` — even split,
+  first `target % n` hosts take one extra worker; order preserved.
+  `target=0` scales every host down to zero.
+- **Per-host execution**: one
+  `docker compose -p <proj> -f <file> up -d --no-deps --scale worker=<share> worker`
+  per host (`--no-deps` MANDATORY — the gateway depends_on itself would
+  deadlock). Best-effort: one unreachable host does not block others.
+- **Aggregation**: `success=true` only when ALL hosts succeed;
+  `actual_count` = sum of shares on successful hosts; failures joined in
+  `error`, per-host detail (`host=share` / `host=FAILED(...)`) in `message`.
+- **Remote-worker prerequisites** (deployment config, not gateway code):
+  reachable gateway address + external git sync (`UC_REPO_URL`).
+
+---
+
 ## 7. Environment Variables
 
 | Key | Required | Default | Purpose |
 |-----|----------|---------|---------|
 | `UC_GRPC_ENDPOINT` | No | — | gRPC server address for WorkerService registration (e.g., `http://localhost:50051`) |
 | `UC_GRPC_ADDR` | No | `[::]:50051` | gRPC server listen address (Rust server side) |
+| `UC_SCALE_HOSTS` | No | _(unset = `local`)_ | Comma/semicolon list of docker connection specs for cross-host ScaleWorkers fan-out |
+| `UC_COMPOSE_FILE` / `UC_COMPOSE_PROJECT` | No | `/app/docker/docker-compose.yml` / `docker` | Compose target for the scale action |
