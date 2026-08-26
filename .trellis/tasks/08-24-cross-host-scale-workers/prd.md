@@ -63,3 +63,18 @@ and `UC_REPO_URL` for code sync (deployment config, documented).
   `docker/.env.example` entry, worker-service-spec §6b + env table row.
 * Verified: workspace clippy --all-targets zero warnings, fmt clean,
   full workspace test suite green, Python suite 947 passed.
+
+### Addendum — dry-run plan mode (same day)
+
+* `UC_SCALE_DRY_RUN` truthy (`1/true/yes/on`) → scale action returns the
+  per-host plan (`DRY-RUN: … host=share …`) with `actual_count = target`
+  WITHOUT invoking docker; compose-file pre-check skipped so the plan is
+  inspectable on gateways without a local compose file. Unset → real
+  execution, unchanged.
+* +1 helper unit test (truthy/falsy variants) + Case 3 in the env-race
+  test (dry-run succeeds despite missing compose file, no FAILED marker).
+* Also: `dashboard_service` tests-module `use super::*` gated behind the
+  `messaging` feature (all its tests are messaging-gated; unconditional
+  import warned under default features).
+* Docs: AGENTS.md/CLAUDE.md cross-host sections, `.env.example`,
+  worker-service-spec §6b.

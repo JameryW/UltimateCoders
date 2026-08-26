@@ -188,6 +188,12 @@ class Engine:
 - **Aggregation**: `success=true` only when ALL hosts succeed;
   `actual_count` = sum of shares on successful hosts; failures joined in
   `error`, per-host detail (`host=share` / `host=FAILED(...)`) in `message`.
+- **Dry-run plan mode**: `UC_SCALE_DRY_RUN` truthy (`1/true/yes/on`,
+  case-insensitive) → the scale action returns `success=true` with
+  `actual_count = target` (PLANNED count) and a `DRY-RUN: …` message
+  listing per-host `host=share` pairs; NO docker invocation and the
+  compose-file pre-check is skipped (plan must be inspectable on
+  gateways without a local compose file). Anything else → executes.
 - **Remote-worker prerequisites** (deployment config, not gateway code):
   reachable gateway address + external git sync (`UC_REPO_URL`).
 

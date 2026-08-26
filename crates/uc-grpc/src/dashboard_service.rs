@@ -1148,6 +1148,9 @@ async fn build_local_snapshot(
 
 #[cfg(test)]
 mod tests {
+    // Every test below is messaging-gated; without the feature the module
+    // is empty and an unconditional import would warn as unused.
+    #[cfg(feature = "messaging")]
     use super::*;
 
     #[cfg(feature = "messaging")]
