@@ -172,6 +172,7 @@ impl WorkerRegistry {
                     heartbeat_age_seconds: age,
                     heartbeat_stale: !available,
                     is_available: available,
+                    metadata: w.metadata.clone(),
                 }
             })
             .collect()
@@ -715,6 +716,36 @@ mod tests {
         assert_eq!(protos[0].id, "w-1");
         assert_eq!(protos[0].capabilities, vec!["code"]);
         assert!(protos[0].is_available);
+    }
+
+    #[test]
+    fn registry_proto_carries_registration_metadata() {
+        // Cross-host observability: whatever the worker sent in
+        // RegisterWorkerRequest.metadata must round-trip into
+        // WorkerProto.metadata for ListWorkers consumers.
+        let mut reg = WorkerRegistry::new();
+        reg.register(
+            "host-b-w1".to_string(),
+            vec!["code".to_string()],
+            3,
+            r#"{"hostname":"host-b","pid":42}"#.to_string(),
+        )
+        .unwrap();
+        reg.register(
+            "local-w2".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+        )
+        .unwrap();
+
+        let protos = reg.to_worker_protos();
+        let by_id = |id: &str| protos.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(
+            by_id("host-b-w1").metadata,
+            r#"{"hostname":"host-b","pid":42}"#
+        );
+        assert_eq!(by_id("local-w2").metadata, "");
     }
 
     #[test]

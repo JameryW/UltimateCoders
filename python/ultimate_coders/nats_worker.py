@@ -1883,7 +1883,7 @@ class NatsWorker:
                 max_capacity = info.max_capacity
 
             success = await self._grpc_reg_engine.register_worker_async(
-                worker_id, capabilities, max_capacity
+                worker_id, capabilities, max_capacity, self._registration_metadata()
             )
             if success:
                 logger.info(
@@ -1897,6 +1897,28 @@ class NatsWorker:
         except Exception:
             logger.warning("Gateway registration failed (non-fatal)", exc_info=True)
             self._grpc_reg_engine = None
+
+    @staticmethod
+    def _registration_metadata() -> str:
+        """JSON blob identifying WHERE this worker runs.
+
+        Cross-host scaling (#607) makes worker→host mapping non-obvious;
+        the gateway stores this and echoes it in WorkerProto.metadata so
+        ops can tell which machine each registered worker lives on.
+        Keys are stable API: hostname/pid always present, compose_project
+        only when running under a compose project.
+        """
+        import json
+        import socket
+
+        meta: dict = {
+            "hostname": socket.gethostname(),
+            "pid": os.getpid(),
+        }
+        compose_project = os.environ.get("UC_COMPOSE_PROJECT", "")
+        if compose_project:
+            meta["compose_project"] = compose_project
+        return json.dumps(meta, separators=(",", ":"))
 
     async def _deregister_from_gateway(self) -> None:
         """Deregister this worker from the gateway (graceful shutdown).

@@ -1,0 +1,17 @@
+{
+  "id": "08-25-worker-host-metadata",
+  "title": "Worker host self-identification metadata",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "JameryW",
+  "assignee": "JameryW",
+  "createdAt": "2026-08-25",
+  "completedAt": "2026-08-25",
+  "tags": [
+    "cross-host",
+    "observability"
+  ]
+}

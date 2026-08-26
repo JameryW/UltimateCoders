@@ -1216,6 +1216,8 @@ impl PyEngine {
     ///     worker_id: Unique worker identifier.
     ///     capabilities: List of capability strings (e.g., "python", "rust", "docker").
     ///     max_capacity: Maximum concurrent subtasks this worker can handle.
+    ///     metadata: Optional JSON blob (hostname, pid, compose project, …)
+    ///         stored by the gateway registry and echoed in WorkerProto.
     ///
     /// Returns:
     ///     True if registration succeeded.
@@ -1228,6 +1230,7 @@ impl PyEngine {
         worker_id: String,
         capabilities: Vec<String>,
         max_capacity: u32,
+        metadata: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let grpc_client = self.grpc_client.clone();
         let client = grpc_client.ok_or_else(|| {
@@ -1235,7 +1238,7 @@ impl PyEngine {
         })?;
         future_into_py::<_, bool>(py, async move {
             client
-                .register_worker(&worker_id, &capabilities, max_capacity)
+                .register_worker(&worker_id, &capabilities, max_capacity, metadata.as_deref())
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })
