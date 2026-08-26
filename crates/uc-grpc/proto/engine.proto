@@ -557,6 +557,10 @@ message WorkerProto {
     double heartbeat_age_seconds = 7;
     bool heartbeat_stale = 8;
     bool is_available = 9;
+    // Optional JSON metadata as sent in RegisterWorkerRequest.metadata
+    // (e.g. hostname/pid/compose project for cross-host observability).
+    // Empty when the worker did not send any.
+    string metadata = 10;
 }
 
 message GetSchedulerStatusRequest {}

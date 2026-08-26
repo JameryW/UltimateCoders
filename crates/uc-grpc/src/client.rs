@@ -237,17 +237,22 @@ fn from_status(status: tonic::Status) -> EngineError {
 
 impl GrpcEngineClient {
     /// Register this worker with the gateway.
+    ///
+    /// `metadata` is an optional JSON blob (hostname, pid, compose project,
+    /// …) stored by the registry and echoed back in `WorkerProto.metadata`
+    /// for cross-host observability.
     pub async fn register_worker(
         &self,
         worker_id: &str,
         capabilities: &[String],
         max_capacity: u32,
+        metadata: Option<&str>,
     ) -> Result<bool, EngineError> {
         let request = tonic::Request::new(RegisterWorkerRequest {
             worker_id: worker_id.to_string(),
             capabilities: capabilities.to_vec(),
             max_capacity,
-            metadata: String::new(),
+            metadata: metadata.unwrap_or_default().to_string(),
         });
         match self.worker_client.clone().register_worker(request).await {
             Ok(response) => {

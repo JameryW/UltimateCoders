@@ -887,3 +887,20 @@ def test_event_payload_message_id_no_5s_bucket_suffix():
     after = int(time.time() * 1000)
     suffix = int(p["message_id"].rsplit(":", 1)[1])
     assert before <= suffix <= after, "message_id suffix should be raw ms, not a bucket"
+
+
+def test_registration_metadata_shape(monkeypatch):
+    """Cross-host observability (#607 follow-up): the gateway registration
+    metadata must be stable JSON with hostname+pid always present and
+    compose_project only when running under a compose project."""
+    from ultimate_coders.nats_worker import NatsWorker
+
+    monkeypatch.delenv("UC_COMPOSE_PROJECT", raising=False)
+    meta = json.loads(NatsWorker._registration_metadata())
+    assert isinstance(meta["hostname"], str) and meta["hostname"]
+    assert isinstance(meta["pid"], int)
+    assert "compose_project" not in meta
+
+    monkeypatch.setenv("UC_COMPOSE_PROJECT", "uc-prod")
+    meta = json.loads(NatsWorker._registration_metadata())
+    assert meta["compose_project"] == "uc-prod"

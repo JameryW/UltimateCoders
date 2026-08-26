@@ -1085,6 +1085,7 @@ class Engine:
         worker_id: str,
         capabilities: list[str] | None = None,
         max_capacity: int = 3,
+        metadata: str | None = None,
     ) -> bool:
         """Register this worker with the gateway via WorkerService RPC.
 
@@ -1092,6 +1093,9 @@ class Engine:
             worker_id: Unique worker identifier.
             capabilities: List of capability strings (e.g., "python", "docker").
             max_capacity: Maximum concurrent subtasks (default: 3).
+            metadata: Optional JSON blob (hostname, pid, compose project, …)
+                stored by the gateway registry and echoed back in
+                ``WorkerProto.metadata`` by ListWorkers.
 
         Returns:
             True if registration succeeded.
@@ -1101,7 +1105,7 @@ class Engine:
             return False
         try:
             return await self._grpc_engine.register_worker_async(
-                worker_id, capabilities or [], max_capacity
+                worker_id, capabilities or [], max_capacity, metadata
             )
         except Exception as exc:
             logger.warning("register_worker failed: %s", exc)

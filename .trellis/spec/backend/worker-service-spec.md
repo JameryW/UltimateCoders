@@ -105,6 +105,14 @@ class Engine:
 3. On success → worker_id + capabilities registered in WorkerRegistry
 4. On failure → non-fatal, worker operates in NATS-only mode
 
+**Metadata contract (cross-host observability)**: workers send a compact
+JSON blob in `RegisterWorkerRequest.metadata`; the registry stores it
+verbatim and `ListWorkers` echoes it in `WorkerProto.metadata`.
+Stable keys: `hostname` + `pid` always present; `compose_project` only
+when running under a compose project (`UC_COMPOSE_PROJECT`). Empty when
+the worker sends nothing. Consumers MUST treat it as opaque JSON with
+best-effort parsing.
+
 ### Heartbeat Flow
 
 1. NATS heartbeat loop (every 30s) also sends gRPC `WorkerHeartbeat`

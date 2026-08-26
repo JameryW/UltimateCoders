@@ -83,6 +83,8 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                             heartbeat_age_seconds: age,
                             heartbeat_stale: age > 60.0,
                             is_available: age <= 60.0,
+                            // NATS-heartbeat fallback has no metadata payload.
+                            metadata: String::new(),
                         });
                     }
                     drop(store);
@@ -635,6 +637,11 @@ fn json_to_worker_proto(v: &serde_json::Value) -> WorkerProto {
         heartbeat_age_seconds: json_f64(v, "heartbeat_age_seconds"),
         heartbeat_stale: json_bool(v, "heartbeat_stale"),
         is_available: json_bool(v, "is_available"),
+        metadata: v
+            .get("metadata")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
     }
 }
 
@@ -1080,6 +1087,8 @@ async fn build_local_snapshot(
                 heartbeat_age_seconds: age,
                 heartbeat_stale: age > 60.0,
                 is_available: age <= 60.0,
+                // NATS-heartbeat fallback has no metadata payload.
+                metadata: String::new(),
             }
         })
         .collect();
