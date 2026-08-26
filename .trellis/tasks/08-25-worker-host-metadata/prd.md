@@ -44,3 +44,16 @@ but nothing sent it, and `ListWorkers` could not return it.
   test_registration_metadata_shape (Python). uc-grpc 144+8 green,
   helper suite 31 green, orchestrator gate exit 0 (18 tolerated vendored
   diagnostics unchanged), dashboard vite build clean.
+
+### Addendum — hostname rendering (same day, follow-up)
+
+Out-of-scope item pulled in immediately after the API surface landed:
+* OMP `worker-bridge`: `uc_worker` list lines show `@hostname` after the
+  truncated id; status view shows `Worker <id> @ <host>` header line.
+* Dashboard `WorkersPanel`: collapsed rows get an `@host` badge next to
+  the short id; expanded detail gains a Host row.
+* Plumbing: `grpc-bridge.WorkerInfo` + dashboard `WorkerInfo` gain
+  `metadata` (opaque JSON), mapped straight from WorkerProto; both
+  surfaces use an identical best-effort `workerHostname()` parse
+  (null on missing/malformed).
+* Verified: orchestrator gate exit 0, dashboard vite build clean.

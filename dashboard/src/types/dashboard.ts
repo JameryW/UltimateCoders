@@ -29,6 +29,8 @@ export interface WorkerInfo {
   heartbeat_age_seconds: number;
   heartbeat_stale: boolean;
   is_available: boolean;
+  /** Opaque JSON from RegisterWorkerRequest.metadata (hostname/pid/…). */
+  metadata?: string;
 }
 
 export interface WorkersData {
