@@ -12,6 +12,17 @@ import { GrpcBridge } from "./grpc-bridge";
 // ponytail: `as never` on parameters to dodge TS2589 deep instantiation
 // in registerTool<TParams extends TSchema>. Runtime schema is correct.
 
+/** Best-effort hostname from a worker's opaque registration metadata. */
+function workerHostname(metadata: string | undefined): string | null {
+	if (!metadata) return null;
+	try {
+		const host = (JSON.parse(metadata) as { hostname?: unknown }).hostname;
+		return typeof host === "string" && host.length > 0 ? host : null;
+	} catch {
+		return null;
+	}
+}
+
 export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 	const workerSchema = pi.zod.object({
 		action: pi.zod.enum(["list", "status", "scale", "deregister"]).describe(
@@ -125,11 +136,12 @@ export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 					const loadLine = w.maxCapacity < 0
 						? `  Load: unknown (degraded mode)`
 						: `  Load: ${w.currentLoad}/${w.maxCapacity} (${w.loadPercent}%)`;
+					const host = workerHostname(w.metadata);
 					return {
 						content: [{
 							type: "text" as const,
 							text: [
-								`Worker ${w.id}${result.degraded ? " (degraded)" : ""}`,
+								`Worker ${w.id}${host ? ` @ ${host}` : ""}${result.degraded ? " (degraded)" : ""}`,
 								`  Status: ${w.isAvailable ? "online" : "offline"}${w.heartbeatStale ? " (stale heartbeat)" : ""}`,
 								loadLine,
 								`  Heartbeat: ${age}`,
@@ -150,7 +162,9 @@ export function registerWorkerTools(pi: ExtensionAPI, bridge: GrpcBridge): void 
 					const load = w.maxCapacity < 0
 						? "unknown"
 						: `${w.currentLoad}/${w.maxCapacity} (${w.loadPercent}%)`;
-					return `${icon} ${w.id.slice(0, 12)}: ${load}${stale}${caps}`;
+					const host = workerHostname(w.metadata);
+					const at = host ? ` @${host}` : "";
+					return `${icon} ${w.id.slice(0, 12)}${at}: ${load}${stale}${caps}`;
 				});
 				const degradedTag = result.degraded ? " (degraded)" : "";
 				const summary = `Workers: ${result.availableCount}/${result.total} available${degradedTag}`;

@@ -19,6 +19,17 @@ function formatHeartbeatAge(seconds: number): string {
   return `${h}h ${m % 60}m ago`;
 }
 
+/** Best-effort hostname from the worker's opaque registration metadata. */
+function workerHostname(metadata?: string): string | null {
+  if (!metadata) return null;
+  try {
+    const host = (JSON.parse(metadata) as { hostname?: unknown }).hostname;
+    return typeof host === "string" && host.length > 0 ? host : null;
+  } catch {
+    return null;
+  }
+}
+
 function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { worker: WorkerInfo; activeSubtasks: SubtaskSummary[]; subtaskToTask: Map<string, string>; onJumpTask?: (taskId: string) => void }) {
   // ponytail: look up parent task ID from the subtask→task map (replaces fragile lastIndexOf heuristic)
   const taskIdFromSubtask = (subtaskId: string) => subtaskToTask.get(subtaskId) ?? subtaskId;
@@ -29,6 +40,12 @@ function WorkerDetail({ worker, activeSubtasks, subtaskToTask, onJumpTask }: { w
         <span className="text-[var(--text-muted)] shrink-0 w-20">Full ID</span>
         <span className="font-mono text-[var(--text-primary)] break-all">{worker.id}</span>
       </div>
+      {workerHostname(worker.metadata) && (
+        <div className="flex items-start gap-2">
+          <span className="text-[var(--text-muted)] shrink-0 w-20">Host</span>
+          <span className="font-mono text-[var(--text-primary)]">{workerHostname(worker.metadata)}</span>
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <span className="text-[var(--text-muted)] shrink-0 w-20">Heartbeat</span>
         <span className="text-[var(--text-primary)]">
@@ -224,7 +241,17 @@ export const WorkersPanel = memo(function WorkersPanel({
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(w.id); } }}
                 >
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[var(--text-primary)]">{shortId(w.id)}</span>
+                    <span className="font-mono text-[var(--text-primary)] flex items-center gap-1.5">
+                      {shortId(w.id)}
+                      {workerHostname(w.metadata) && (
+                        <span
+                          className="text-[10px] font-sans text-[var(--text-muted)] bg-[var(--bg-surface-alt)] px-1 py-0.5 rounded"
+                          title="Host this worker registered from"
+                        >
+                          @{workerHostname(w.metadata)}
+                        </span>
+                      )}
+                    </span>
                     <div className="flex items-center gap-1.5">
                       {activeCount > 0 && (
                         <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded" title={`${activeCount} active subtask(s)`}>

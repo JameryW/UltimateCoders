@@ -95,6 +95,8 @@ export interface WorkerInfo {
 	heartbeatAgeSeconds: number;
 	heartbeatStale: boolean;
 	isAvailable: boolean;
+	/** Opaque JSON from RegisterWorkerRequest.metadata (hostname/pid/…). */
+	metadata: string;
 }
 
 /** Result of listWorkers() — full cluster snapshot with availability flag. */
@@ -790,6 +792,7 @@ export class GrpcBridge {
 				heartbeatAgeSeconds: w.heartbeatAgeSeconds,
 				heartbeatStale: w.heartbeatStale,
 				isAvailable: w.isAvailable,
+				metadata: w.metadata,
 			}));
 			return {
 				available: resp.available,

@@ -67,6 +67,7 @@ function grpcWorkerToDashboard(w: WorkerProto): WorkerInfo {
     heartbeat_age_seconds: w.heartbeatAgeSeconds,
     heartbeat_stale: w.heartbeatStale,
     is_available: w.isAvailable,
+    metadata: w.metadata,
   };
 }
 
