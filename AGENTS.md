@@ -127,7 +127,12 @@ as `DOCKER_HOST` for that invocation (`ssh://user@host` needs no
 pre-registered docker context). The target count is split evenly across
 hosts (first hosts take the remainder) and each host runs its own
 compose command; one unreachable host does not block the others, and
-failures are reported per host in the response.
+failures are reported per host in the response. Set
+**`UC_SCALE_DRY_RUN=true`** to validate the plan first: the scale action
+then reports the per-host shares it *would* apply (`DRY-RUN: … local=2,
+ssh://…=3 …`) without invoking docker on any host — including skipping
+the compose-file pre-check — so a typo'd host list is caught before real
+side effects.
 
 Remote workers additionally need (their own compose/env):
 - a gateway address reachable from their host (`UC_GATEWAY_ADDR`),

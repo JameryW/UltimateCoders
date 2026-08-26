@@ -312,20 +312,27 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
                     .unwrap_or_else(|_| "/app/docker/docker-compose.yml".to_string());
                 let compose_project =
                     std::env::var("UC_COMPOSE_PROJECT").unwrap_or_else(|_| "docker".to_string());
+                let dry_run =
+                    scale_dry_run_enabled(std::env::var("UC_SCALE_DRY_RUN").ok().as_deref());
 
-                // Validate compose file exists before shelling out.
-                let compose_path = std::path::Path::new(&compose_file);
-                if !compose_path.exists() {
-                    tracing::warn!(compose_file = %compose_file, "Compose file not found");
-                    return Ok(Response::new(ScaleWorkersResponse {
-                        success: false,
-                        error: Some(format!(
-                            "Compose file not found: '{}' (set UC_COMPOSE_FILE to the correct path)",
-                            compose_file
-                        )),
-                        actual_count: 0,
-                        message: String::new(),
-                    }));
+                // Validate compose file exists before shelling out. Skipped
+                // in dry-run: the plan must be inspectable on gateways that
+                // have no local compose file (e.g. validating UC_SCALE_HOSTS
+                // before the real deployment).
+                if !dry_run {
+                    let compose_path = std::path::Path::new(&compose_file);
+                    if !compose_path.exists() {
+                        tracing::warn!(compose_file = %compose_file, "Compose file not found");
+                        return Ok(Response::new(ScaleWorkersResponse {
+                            success: false,
+                            error: Some(format!(
+                                "Compose file not found: '{}' (set UC_COMPOSE_FILE to the correct path)",
+                                compose_file
+                            )),
+                            actual_count: 0,
+                            message: String::new(),
+                        }));
+                    }
                 }
 
                 let target = req.target_count;
@@ -335,9 +342,30 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
                     compose_file = %compose_file,
                     compose_project = %compose_project,
                     target_count = target,
+                    dry_run,
                     assignments = ?assignments,
                     "Scaling workers via docker compose"
                 );
+
+                // Dry-run: report the exact per-host plan without touching
+                // any docker daemon. actual_count reports the PLANNED count.
+                if dry_run {
+                    let detail = assignments
+                        .iter()
+                        .map(|(h, s)| format!("{h}={s}"))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    tracing::info!(target_count = target, hosts = ?hosts, "DRY-RUN scale plan");
+                    return Ok(Response::new(ScaleWorkersResponse {
+                        success: true,
+                        error: None,
+                        actual_count: target,
+                        message: format!(
+                            "DRY-RUN: would scale {target} worker instance(s) across {} host(s) [{detail}]; no docker invoked (unset UC_SCALE_DRY_RUN to apply)",
+                            hosts.len()
+                        ),
+                    }));
+                }
 
                 // Per-host best-effort: one unreachable host must not block
                 // scaling of the others. Shares are absolute per host.
@@ -451,6 +479,16 @@ fn split_target_across_hosts(target: u32, hosts: &[String]) -> Vec<(String, u32)
         .enumerate()
         .map(|(i, h)| (h.clone(), base + u32::from(i < rem as usize)))
         .collect()
+}
+
+/// Truthy check for `UC_SCALE_DRY_RUN`. Accepts "1", "true", "yes", "on"
+/// case-insensitively (trimmed); anything else — including unset/empty —
+/// means the scale action executes for real.
+fn scale_dry_run_enabled(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase),
+        Some(ref v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
+    )
 }
 
 /// Run one `docker compose up -d --no-deps --scale worker=N worker`
@@ -851,8 +889,42 @@ mod tests {
             err
         );
 
-        // Restore default so other tests are unaffected.
+        // ── Case 3: dry-run plans without touching docker ──
+        // Even with a NONEXISTENT compose file (which would fail the real
+        // path's pre-check), dry-run must return a success plan containing
+        // every host with its share, and actual_count == planned target.
+        std::env::set_var("UC_COMPOSE_FILE", "/nonexistent/uc-test-compose-12345.yml");
+        std::env::set_var("UC_SCALE_DRY_RUN", "true");
+        let resp = server
+            .scale_workers(Request::new(ScaleWorkersRequest {
+                action: "scale".to_string(),
+                target_count: 3,
+                worker_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(
+            resp.success,
+            "dry-run must succeed despite missing compose file: {:?}",
+            resp.error
+        );
+        assert_eq!(resp.actual_count, 3, "planned count == target in dry-run");
+        assert!(
+            resp.message.contains("DRY-RUN") && resp.message.contains("local=3"),
+            "message should carry the plan, got: {}",
+            resp.message
+        );
+        assert!(
+            !resp.message.contains("FAILED"),
+            "dry-run must not invoke docker: {:?}",
+            resp.message
+        );
+
+        // Restore defaults so other tests are unaffected.
         std::env::remove_var("UC_COMPOSE_FILE");
+        std::env::remove_var("UC_SCALE_DRY_RUN");
     }
 
     #[tokio::test]
@@ -896,6 +968,30 @@ mod tests {
             parse_scale_hosts(Some(";ssh://a@b;")),
             vec!["ssh://a@b".to_string()]
         );
+    }
+
+    #[test]
+    fn scale_dry_run_enabled_variants() {
+        for truthy in [
+            "1", "true", "TRUE", "True", "yes", "Yes", "on", "ON", "  on  ",
+        ] {
+            assert!(
+                scale_dry_run_enabled(Some(truthy)),
+                "expected truthy: {truthy:?}"
+            );
+        }
+        for falsy in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("0"),
+            Some("false"),
+            Some("off"),
+            Some("no"),
+            Some("garbage"),
+        ] {
+            assert!(!scale_dry_run_enabled(falsy), "expected falsy: {falsy:?}");
+        }
     }
 
     #[test]
