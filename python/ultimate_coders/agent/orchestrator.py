@@ -500,20 +500,36 @@ class Orchestrator:
         if self.nats_publisher is None:
             return
         attempts = 3
+        failure_reason = "publisher returned False"
         for attempt in range(1, attempts + 1):
             try:
-                await self.nats_publisher.publish_update(task)
-                return
+                published = await self.nats_publisher.publish_update(task)
+                # NatsPublisher deliberately converts transport failures into
+                # False so event paths stay non-raising.  Treat only an
+                # explicit False as failure; older injected adapters that
+                # return None on success remain backward compatible.
+                if published is not False:
+                    return
             except Exception:
-                if attempt < attempts:
-                    await asyncio.sleep(0)
-                    continue
-                logger.warning(
-                    "Failed to publish task update for %s after %d attempts",
-                    task.id,
+                failure_reason = "publisher raised an exception"
+                logger.debug(
+                    "Task update publish attempt %d/%d failed for %s",
+                    attempt,
                     attempts,
+                    task.id,
                     exc_info=True,
                 )
+
+            if attempt < attempts:
+                await asyncio.sleep(0)
+                continue
+
+            logger.warning(
+                "Failed to publish task update for %s after %d attempts (%s)",
+                task.id,
+                attempts,
+                failure_reason,
+            )
 
     # Cap on retained tasks. Terminal tasks (Completed/Failed/Cancelled) beyond
     # this count are evicted to prevent unbounded growth on a long-running

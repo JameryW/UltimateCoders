@@ -24,6 +24,7 @@ from ultimate_coders.agent.types import (
     Task,
     TaskStatus,
 )
+from ultimate_coders.nats_worker import NatsPublisher
 
 
 def _make_task(task_id: str, subtask_ids: list[str]) -> Task:
@@ -171,6 +172,20 @@ async def test_parent_task_snapshot_retries_transient_publish_failure():
     assert publisher.publish_update.await_count == 2
     assert task.status == TaskStatus.COMPLETED
 
+
+async def test_parent_task_snapshot_retries_publisher_false_result():
+    """The real NatsPublisher's false result must trigger the same retry path."""
+    nc = MagicMock()
+    nc.publish = AsyncMock(side_effect=[ConnectionError("temporary"), None])
+    orch = Orchestrator(nats_publisher=NatsPublisher(nc))
+    task = _make_task("t-publish-false-retry", ["st-1"])
+    orch.tasks[task.id] = task
+    orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+    await orch.handle_subtask_result(_result("st-1"))
+
+    assert nc.publish.await_count == 2
+    assert task.status == TaskStatus.COMPLETED
 
 # ── ResultAggregator wiring tests ──────────────────────────────
 
