@@ -50,6 +50,18 @@ def test_task_update_message_id_changes_with_snapshot_state():
     assert in_progress_id == _make_task_update_payload(task)["message_id"]
 
 
+def test_partial_task_update_is_marked_explicitly():
+    """Worker-only subtask updates must not imply a complete parent snapshot."""
+    task = Task(id="t-partial", description="d", status=TaskStatus.IN_PROGRESS)
+
+    full = _make_task_update_payload(task)
+    partial = _make_task_update_payload(task, partial=True)
+
+    assert full["partial"] is False
+    assert partial["partial"] is True
+    assert full["message_id"] != partial["message_id"]
+
+
 def test_task_update_message_id_changes_with_subtask_snapshot_state():
     """A subtask-only transition must reach Rust instead of being deduped."""
     st = Subtask(id="st-update", description="d", status=SubtaskStatus.PENDING)
@@ -669,6 +681,42 @@ async def test_handle_remote_subtask_result_reads_nested_payload():
     assert r.summary == "did the thing", "summary must come from nested data"
     assert len(r.modified_files) == 1, "modified_files must survive nesting"
     assert r.modified_files[0].file_path == "src/a.py"
+
+
+async def test_handle_remote_subtask_result_publishes_parent_terminal_snapshot():
+    """Remote result handling publishes the Orchestrator's full task state."""
+    from ultimate_coders.agent.orchestrator import Orchestrator
+
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock()
+    orch = Orchestrator(nats_publisher=publisher)
+    task = Task(
+        id="t-remote-terminal",
+        description="d",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[Subtask(
+            id="st-1",
+            parent_id="t-remote-terminal",
+            description="remote",
+            status=SubtaskStatus.PENDING,
+        )],
+    )
+    orch.tasks[task.id] = task
+
+    nw = _make_worker()
+    nw._orchestrator = orch
+    nw._publisher = publisher
+    payload = {
+        "type": "subtask_completed",
+        "task_id": task.id,
+        "subtask_id": "st-1",
+        "data": {"summary": "done"},
+    }
+
+    await nw._handle_remote_subtask_result("subtask_completed", task.id, "st-1", payload)
+
+    publisher.publish_update.assert_awaited_once_with(task)
+    assert task.status == TaskStatus.COMPLETED
 
 
 async def test_handle_remote_subtask_result_reads_nested_error():

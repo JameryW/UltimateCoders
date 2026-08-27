@@ -120,6 +120,58 @@ async def test_retry_after_failure_still_applies_new_result():
     assert st.result is not None and st.result.success is True
 
 
+async def test_subtask_result_publishes_terminal_parent_task_snapshot():
+    """A terminal subtask result must publish the parent's terminal status.
+
+    The gateway only sees Python state through ``uc.task.update``.  Updating
+    the in-memory task without publishing the resulting parent snapshot leaves
+    the gateway at InProgress until heartbeat cleanup marks it Failed.
+    """
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock()
+    orch = Orchestrator(nats_publisher=publisher)
+    task = _make_task("t-publish-terminal", ["st-1"])
+    orch.tasks[task.id] = task
+    orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+    await orch.handle_subtask_result(_result("st-1"))
+
+    publisher.publish_update.assert_awaited_once_with(task)
+    assert publisher.publish_update.call_args.args[0].status == TaskStatus.COMPLETED
+
+
+async def test_failed_subtask_result_publishes_failed_parent_task_snapshot():
+    """A terminal failed subtask must publish a Failed parent snapshot."""
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock()
+    orch = Orchestrator(nats_publisher=publisher)
+    task = _make_task("t-publish-failed", ["st-1"])
+    orch.tasks[task.id] = task
+    orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+    await orch.handle_subtask_result(_result("st-1", success=False))
+
+    publisher.publish_update.assert_awaited_once_with(task)
+    assert publisher.publish_update.call_args.args[0].status == TaskStatus.FAILED
+
+
+async def test_parent_task_snapshot_retries_transient_publish_failure():
+    """A transient NATS failure must not lose the terminal parent snapshot."""
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock(
+        side_effect=[ConnectionError("temporary"), None],
+    )
+    orch = Orchestrator(nats_publisher=publisher)
+    task = _make_task("t-publish-retry", ["st-1"])
+    orch.tasks[task.id] = task
+    orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+    await orch.handle_subtask_result(_result("st-1"))
+
+    assert publisher.publish_update.await_count == 2
+    assert task.status == TaskStatus.COMPLETED
+
+
 # ── ResultAggregator wiring tests ──────────────────────────────
 
 

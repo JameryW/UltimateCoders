@@ -454,6 +454,11 @@ class Orchestrator:
                         entry.current_load -= 1
                     # Check if all subtasks done
                     self._update_task_status(task)
+                    # Publish the authoritative parent snapshot after the
+                    # in-memory status transition. Worker-only result
+                    # messages are intentionally minimal, so the gateway
+                    # cannot learn the terminal parent status from them alone.
+                    await self._publish_task_update(task)
                     # Evict terminal tasks to bound memory on long-running workers.
                     self.evict_terminal_tasks()
                     return
@@ -480,6 +485,35 @@ class Orchestrator:
             done_statuses = (SubtaskStatus.COMPLETED, SubtaskStatus.FAILED)
             if all(st.status in done_statuses for st in task.subtasks):
                 task.status = TaskStatus.FAILED
+
+    async def _publish_task_update(self, task: Task) -> None:
+        """Publish the current task snapshot to the gateway with bounded retry.
+
+        ``_update_task_status`` is synchronous because it is also used by
+        retry bookkeeping and existing callers. The async boundary belongs
+        immediately after the state transition, where the caller can await
+        publication and preserve the ordering: mutate -> publish -> evict.
+        A NATS outage must not undo a locally-applied subtask result. Reusing
+        the same snapshot on retry is safe because its content-derived message
+        ID makes delivery idempotent at the gateway.
+        """
+        if self.nats_publisher is None:
+            return
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                await self.nats_publisher.publish_update(task)
+                return
+            except Exception:
+                if attempt < attempts:
+                    await asyncio.sleep(0)
+                    continue
+                logger.warning(
+                    "Failed to publish task update for %s after %d attempts",
+                    task.id,
+                    attempts,
+                    exc_info=True,
+                )
 
     # Cap on retained tasks. Terminal tasks (Completed/Failed/Cancelled) beyond
     # this count are evicted to prevent unbounded growth on a long-running

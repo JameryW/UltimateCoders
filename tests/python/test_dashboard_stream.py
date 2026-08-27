@@ -117,9 +117,6 @@ def test_stream_nats_wait_respects_snapshot_deadline(
     """An idle NATS wait cannot push the 5s snapshot past its deadline."""
     app = _make_app(nats_client=MagicMock())
     app._get_full_snapshot = lambda: {"ok": True}
-    queue: asyncio.Queue = asyncio.Queue()
-    app._subscribe_sse = lambda: queue
-    app._unsubscribe_sse = lambda _queue: None
     timeouts: list[float] = []
 
     async def timeout_wait(queue_get: object, timeout: float) -> object:
@@ -136,7 +133,15 @@ def test_stream_nats_wait_respects_snapshot_deadline(
 
     monkeypatch.setattr(asyncio, "get_running_loop", lambda: _FakeLoop())
 
-    out, err = asyncio.run(_drive(app, max_iters=1))
+    async def run() -> tuple[list, Exception | None]:
+        # asyncio.Queue must be created inside the running loop (Py3.9 binds
+        # a loop at construction), matching the snapshot payload test below.
+        queue: asyncio.Queue = asyncio.Queue()
+        app._subscribe_sse = lambda: queue
+        app._unsubscribe_sse = lambda _queue: None
+        return await _drive(app, max_iters=1)
+
+    out, err = asyncio.run(run())
 
     assert err is None, f"stream crashed: {err!r}"
     assert timeouts == [1.0]

@@ -378,6 +378,8 @@ async def test_execute_and_report_acks_on_success():
     # subtask_completed published
     publisher.publish_event.assert_awaited_once()
     assert publisher.publish_event.call_args.args[0] == "subtask_completed"
+    publisher.publish_update.assert_awaited_once()
+    assert publisher.publish_update.call_args.kwargs["partial"] is True
 
     # ACK happened after execution
     ack.assert_awaited_once()
