@@ -26,11 +26,12 @@ from ultimate_coders.agent.types import (
     TaskStatus,
     WorkflowStep,
 )
-from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 from ultimate_coders.nats_worker import (
+    NatsPublisher,
     _make_task_event_payload,
     _make_task_update_payload,
 )
+from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 
 
 def _make_worker() -> _NatsWorker:
@@ -78,6 +79,31 @@ def test_task_update_message_id_changes_with_subtask_snapshot_state():
     in_progress_id = _make_task_update_payload(task)["message_id"]
 
     assert pending_id != in_progress_id
+
+
+@pytest.mark.asyncio
+async def test_nats_publisher_reports_transport_failure_without_raising():
+    """The publisher keeps graceful degradation but exposes failure to callers."""
+    nc = MagicMock()
+    nc.publish = AsyncMock(side_effect=ConnectionError("NATS down"))
+    publisher = NatsPublisher(nc)
+
+    result = await publisher.publish_update(Task(id="t-publish-status"))
+
+    assert result is False
+    nc.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_nats_publisher_reports_success():
+    """A successful NATS publish is observable at the publisher seam."""
+    nc = MagicMock()
+    nc.publish = AsyncMock()
+    publisher = NatsPublisher(nc)
+
+    result = await publisher.publish_update(Task(id="t-publish-ok"))
+
+    assert result is True
 
 
 # ── _load_js_seq ────────────────────────────────────────────────

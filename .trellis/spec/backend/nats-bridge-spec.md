@@ -79,11 +79,16 @@ pub struct NatsHeartbeat {
 
 ```python
 class NatsPublisher:
-    async def publish_update(self, task: Task) -> None
-    async def publish_event(self, event_type: str, task_id: str, ...) -> None
-    async def publish_heartbeat(self) -> None
-    async def publish_submit(self, task_id: str, description: str, project_id: str = "") -> None
+    async def publish_update(self, task: Task, *, partial: bool = False) -> bool
+    async def publish_event(self, event_type: str, task_id: str, ...) -> bool
+    async def publish_heartbeat(self) -> bool
+    async def publish_submit(self, task_id: str, description: str, project_id: str = "") -> bool
 ```
+
+Publisher methods are non-raising and return `true` only when the underlying
+NATS client accepts the publish. They return `false` on serialization or
+transport failure so fire-and-forget event paths can degrade gracefully while
+delivery-sensitive callers can retry without duplicating transport handling.
 
 ---
 

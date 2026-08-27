@@ -235,10 +235,17 @@ class NatsPublisher:
     def __init__(self, nc: NatsClient) -> None:
         self._nc = nc
 
-    async def publish_update(self, task: Task, *, partial: bool = False) -> None:
-        """Publish a task status update, optionally marking it partial."""
+    async def publish_update(self, task: Task, *, partial: bool = False) -> bool:
+        """Publish a task status update, optionally marking it partial.
+
+        Returns ``True`` when NATS accepted the publish and ``False`` when
+        serialization or transport failed.  The method remains non-raising so
+        fire-and-forget event paths keep their graceful-degradation behaviour,
+        while callers that need delivery guarantees (for example the
+        Orchestrator's terminal snapshot path) can retry deliberately.
+        """
         payload = _make_task_update_payload(task, partial=partial)
-        await self._publish(NATS_SUBJECT_TASK_UPDATE, payload)
+        return await self._publish(NATS_SUBJECT_TASK_UPDATE, payload)
 
     async def publish_event(
         self,
@@ -246,21 +253,21 @@ class NatsPublisher:
         task_id: str,
         subtask_id: str = "",
         data: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Publish a task event to ``uc.task.event``.
 
         Events include a ``v`` (version) field for future schema migration.
         """
         payload = _make_task_event_payload(event_type, task_id, subtask_id, data)
         payload["v"] = 1
-        await self._publish(NATS_SUBJECT_TASK_EVENT, payload)
+        return await self._publish(NATS_SUBJECT_TASK_EVENT, payload)
 
     async def publish_submit(
         self,
         task_id: str,
         description: str,
         project_id: str = "",
-    ) -> None:
+    ) -> bool:
         """Publish a task submission to ``uc.task.submit``.
 
         Used by the Dashboard (and gRPC server) to route task submissions
@@ -277,7 +284,7 @@ class NatsPublisher:
             "description": description,
             "project_id": project_id,
         }
-        await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
+        return await self._publish(NATS_SUBJECT_TASK_SUBMIT, payload)
 
     async def publish_memory_changed(
         self,
@@ -285,7 +292,7 @@ class NatsPublisher:
         key: str,
         action: str = "write",
         source_worker: str = "",
-    ) -> None:
+    ) -> bool:
         """Broadcast a memory change to ``uc.memory.changed``.
 
         Other Workers subscribe and invalidate stale local search-cache
@@ -298,11 +305,11 @@ class NatsPublisher:
             "action": action,
             "source_worker": source_worker,
         }
-        await self._publish(NATS_SUBJECT_MEMORY_CHANGED, payload)
+        return await self._publish(NATS_SUBJECT_MEMORY_CHANGED, payload)
 
     async def publish_heartbeat(
         self, consumer_id: str, worker_info: dict[str, Any] | None = None
-    ) -> None:
+    ) -> bool:
         """Publish a heartbeat to ``uc.heartbeat``."""
         payload: dict[str, Any] = {
             "consumer_id": consumer_id,
@@ -310,15 +317,17 @@ class NatsPublisher:
         }
         if worker_info:
             payload.update(worker_info)
-        await self._publish(NATS_SUBJECT_HEARTBEAT, payload)
+        return await self._publish(NATS_SUBJECT_HEARTBEAT, payload)
 
-    async def _publish(self, subject: str, payload: dict[str, Any]) -> None:
-        """Serialize and publish a JSON payload to a NATS subject."""
+    async def _publish(self, subject: str, payload: dict[str, Any]) -> bool:
+        """Serialize and publish a JSON payload, returning delivery status."""
         try:
             data = json.dumps(payload).encode("utf-8")
             await self._nc.publish(subject, data)
+            return True
         except Exception:
             logger.warning("Failed to publish to %s", subject, exc_info=True)
+            return False
 
 
 # ── NatsWorker ──────────────────────────────────────────────────
