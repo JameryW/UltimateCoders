@@ -50,6 +50,18 @@ def test_task_update_message_id_changes_with_snapshot_state():
     assert in_progress_id == _make_task_update_payload(task)["message_id"]
 
 
+def test_partial_task_update_is_marked_explicitly():
+    """Worker-only subtask updates must not imply a complete parent snapshot."""
+    task = Task(id="t-partial", description="d", status=TaskStatus.IN_PROGRESS)
+
+    full = _make_task_update_payload(task)
+    partial = _make_task_update_payload(task, partial=True)
+
+    assert full["partial"] is False
+    assert partial["partial"] is True
+    assert full["message_id"] != partial["message_id"]
+
+
 def test_task_update_message_id_changes_with_subtask_snapshot_state():
     """A subtask-only transition must reach Rust instead of being deduped."""
     st = Subtask(id="st-update", description="d", status=SubtaskStatus.PENDING)

@@ -93,6 +93,10 @@ pub struct NatsTaskUpdate {
     pub message_id: Option<String>,
     pub task_id: String,
     pub status: String,
+    /// `true` for worker-only updates that contain a single subtask result
+    /// rather than the complete parent task snapshot.
+    #[serde(default)]
+    pub partial: bool,
     pub subtasks: Vec<NatsSubtaskUpdate>,
     #[serde(default)]
     pub result: Option<String>,
@@ -953,15 +957,17 @@ impl TaskStore {
         };
 
         // Update task status
-        if let Some(status) = task_status_from_str(&update.status) {
+        let task_status_valid = if let Some(status) = task_status_from_str(&update.status) {
             task.status = status;
+            true
         } else {
             tracing::warn!(
                 task_id = %update.task_id,
                 status = %update.status,
                 "Unknown task status in NATS update, ignoring status field"
             );
-        }
+            false
+        };
 
         // Update result if provided
         if update.result.is_some() {
@@ -1100,8 +1106,12 @@ impl TaskStore {
         // update settle the task; an explicit terminal status from the
         // update still wins (paused/cancelled transitions are non-terminal
         // for this purpose and never overridden while subtasks are pending).
-        if task.status == uc_types::TaskStatus::InProgress
-            || task.status == uc_types::TaskStatus::Planning
+        // Partial worker-only results must not infer completeness from the
+        // currently known subset of subtasks.
+        if task_status_valid
+            && !update.partial
+            && (task.status == uc_types::TaskStatus::InProgress
+                || task.status == uc_types::TaskStatus::Planning)
         {
             let terminal = |st: &uc_types::Subtask| {
                 matches!(
@@ -4216,6 +4226,7 @@ mod tests {
             message_id: Some("abc-123:update::1700000000".to_string()),
             task_id: "abc-123".to_string(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-1".to_string(),
                 status: "Assigned".to_string(),
@@ -4340,6 +4351,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-new-1".to_string(),
                 status: "Assigned".to_string(),
@@ -4371,6 +4383,7 @@ mod tests {
             message_id: None,
             task_id: "nonexistent".to_string(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![],
             result: None,
         };
@@ -4390,6 +4403,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "BogusStatus".to_string(),
+            partial: false,
             subtasks: vec![],
             result: None,
         };
@@ -4399,6 +4413,47 @@ mod tests {
         // Status should remain unchanged (unknown status is ignored)
         let updated = store.get_task(&task_id).unwrap();
         assert_eq!(updated.status, uc_types::TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn task_store_unknown_status_does_not_trigger_terminal_derivation() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let Some(task) = store.tasks.get_mut(&task_id) else {
+            panic!("task inserted by submit_task_pending");
+        };
+        task.subtasks.push(uc_types::Subtask {
+            id: uc_types::TaskId("st-terminal".to_string()),
+            parent_id: task.id.clone(),
+            description: "already terminal".to_string(),
+            status: uc_types::SubtaskStatus::Completed,
+            assigned_worker: None,
+            depends_on: Vec::new(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 0,
+            retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+        });
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "BogusStatus".to_string(),
+            partial: false,
+            subtasks: Vec::new(),
+            result: None,
+        });
+
+        assert_eq!(
+            store.get_task(&task_id).map(|task| task.status.clone()),
+            Some(uc_types::TaskStatus::Planning)
+        );
     }
 
     #[test]
@@ -4412,6 +4467,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: subtask_id.clone(),
                 status: "Completed".to_string(),
@@ -4445,6 +4501,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![
                 NatsSubtaskUpdate {
                     subtask_id: "st-a".to_string(),
@@ -4470,6 +4527,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-a".to_string(),
                 status: "Completed".to_string(),
@@ -4481,14 +4539,15 @@ mod tests {
             result: None,
         });
         assert_eq!(
-            store.get_task(&task_id).unwrap().status,
-            uc_types::TaskStatus::InProgress
+            store.get_task(&task_id).map(|task| task.status.clone()),
+            Some(uc_types::TaskStatus::InProgress)
         );
 
         store.apply_update(&NatsTaskUpdate {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-b".to_string(),
                 status: "Completed".to_string(),
@@ -4500,8 +4559,8 @@ mod tests {
             result: None,
         });
         assert_eq!(
-            store.get_task(&task_id).unwrap().status,
-            uc_types::TaskStatus::Completed
+            store.get_task(&task_id).map(|task| task.status.clone()),
+            Some(uc_types::TaskStatus::Completed)
         );
     }
 
@@ -4515,6 +4574,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-fail".to_string(),
                 status: "Failed".to_string(),
@@ -4527,8 +4587,36 @@ mod tests {
         });
 
         assert_eq!(
-            store.get_task(&task_id).unwrap().status,
-            uc_types::TaskStatus::Failed
+            store.get_task(&task_id).map(|task| task.status.clone()),
+            Some(uc_types::TaskStatus::Failed)
+        );
+    }
+
+    #[test]
+    fn task_store_apply_update_partial_result_does_not_derive_terminal_status() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-partial".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: Some("partial result".to_string()),
+                depends_on: None,
+                result: Some("done".to_string()),
+            }],
+            result: None,
+        });
+
+        assert_eq!(
+            store.get_task(&task_id).map(|task| task.status.clone()),
+            Some(uc_types::TaskStatus::InProgress)
         );
     }
 
@@ -5367,6 +5455,7 @@ mod tests {
                 message_id: None,
                 task_id: task_id.clone(),
                 status: "InProgress".to_string(),
+                partial: false,
                 subtasks: vec![NatsSubtaskUpdate {
                     subtask_id: subtask_id.clone(),
                     status: "Completed".to_string(),
@@ -5456,6 +5545,7 @@ mod tests {
                 message_id: None,
                 task_id: task_id.clone(),
                 status: "InProgress".to_string(),
+                partial: false,
                 subtasks: vec![NatsSubtaskUpdate {
                     subtask_id: subtask_id.clone(),
                     status: "Assigned".to_string(),
@@ -5777,6 +5867,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: subtask_id.clone(),
                 status: "InProgress".to_string(),
@@ -5811,6 +5902,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-new".to_string(),
                 status: "Assigned".to_string(),
@@ -5850,6 +5942,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-failed-new".to_string(),
                 status: "Failed".to_string(),
@@ -5894,6 +5987,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: st_id.clone(),
                 status: "InProgress".to_string(),
@@ -5927,6 +6021,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "InProgress".to_string(),
+            partial: false,
             subtasks: vec![NatsSubtaskUpdate {
                 subtask_id: "st-old".to_string(),
                 status: "Assigned".to_string(),
@@ -6195,6 +6290,7 @@ mod tests {
             message_id: None,
             task_id: task_id.clone(),
             status: "in_progress".to_string(),
+            partial: false,
             subtasks: vec![],
             result: None,
         };

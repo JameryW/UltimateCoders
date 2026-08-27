@@ -186,6 +186,10 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
   not only from a time bucket. Repeated delivery of the same snapshot remains
   idempotent, while `InProgress → Failed` or `InProgress → Completed` updates
   emitted within the same five-second NATS dedup window must remain distinct.
+- `uc.task.update.partial=true` identifies a worker-only update that contains
+  only one subtask result. The gateway must apply that subtask update but must
+  not infer parent-task completeness from the known subset. Complete parent
+  snapshots use `partial=false` (the backward-compatible default).
 - A remote Worker may publish a minimal subtask result update before the
   default-mode NATS Worker applies the result to its Orchestrator. After that
   application, the NATS Worker publishes the complete parent task snapshot so

@@ -74,11 +74,13 @@ NATS_SUBJECT_WINDOW_CLOSED: str = "schedule.window.closed"
 # ── Payload types ───────────────────────────────────────────────
 
 
-def _make_task_update_payload(task: Task) -> dict[str, Any]:
+def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str, Any]:
     """Build a ``uc.task.update`` payload from a Task object.
 
     The format matches the Rust ``NatsTaskUpdate`` struct so the
-    gRPC server can parse it with ``serde_json::from_slice``.
+    gRPC server can parse it with ``serde_json::from_slice``. ``partial``
+    marks worker-only updates that contain one subtask rather than the
+    complete parent snapshot.
     Includes a ``message_id`` for deduplication (at-least-once NATS delivery).
     """
     import hashlib
@@ -109,6 +111,7 @@ def _make_task_update_payload(task: Task) -> dict[str, Any]:
         "task_id": task.id,
         "status": _task_status_to_nats(task.status),
         "subtasks": subtasks,
+        "partial": partial,
     }
     if task.result is not None:
         payload["result"] = task.result
@@ -232,9 +235,9 @@ class NatsPublisher:
     def __init__(self, nc: NatsClient) -> None:
         self._nc = nc
 
-    async def publish_update(self, task: Task) -> None:
-        """Publish a task status update to ``uc.task.update``."""
-        payload = _make_task_update_payload(task)
+    async def publish_update(self, task: Task, *, partial: bool = False) -> None:
+        """Publish a task status update, optionally marking it partial."""
+        payload = _make_task_update_payload(task, partial=partial)
         await self._publish(NATS_SUBJECT_TASK_UPDATE, payload)
 
     async def publish_event(
@@ -2373,6 +2376,7 @@ class NatsWorker:
                         status,
                         summary,
                     ),
+                    partial=True,
                 )
         except Exception:
             logger.error(
@@ -2402,7 +2406,10 @@ class NatsWorker:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
         NatsPublisher.publish_update() needs a Task with subtasks, so we
-        construct a lightweight one with just the result subtask.
+        construct a lightweight one with just the result subtask. The parent
+        status intentionally remains InProgress because this is a partial
+        update; the ``partial=True`` marker prevents the gateway from treating
+        the known one-subtask subset as the complete parent task.
         """
         from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
 

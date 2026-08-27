@@ -155,6 +155,23 @@ async def test_failed_subtask_result_publishes_failed_parent_task_snapshot():
     assert publisher.publish_update.call_args.args[0].status == TaskStatus.FAILED
 
 
+async def test_parent_task_snapshot_retries_transient_publish_failure():
+    """A transient NATS failure must not lose the terminal parent snapshot."""
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock(
+        side_effect=[ConnectionError("temporary"), None],
+    )
+    orch = Orchestrator(nats_publisher=publisher)
+    task = _make_task("t-publish-retry", ["st-1"])
+    orch.tasks[task.id] = task
+    orch.workers["w-1"] = WorkerEntry(id="w-1", current_load=1)
+
+    await orch.handle_subtask_result(_result("st-1"))
+
+    assert publisher.publish_update.await_count == 2
+    assert task.status == TaskStatus.COMPLETED
+
+
 # ── ResultAggregator wiring tests ──────────────────────────────
 
 
