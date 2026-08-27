@@ -20,6 +20,7 @@ Environment variables::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import json
 import logging
@@ -1455,8 +1456,13 @@ class NatsWorker:
             if task.id in self._cancelled_task_ids:
                 await self._orchestrator.cancel_task(task.id)
                 logger.info("Task %s was cancelled during decomposition", task.id)
-                if self._publisher is not None:
-                    await self._publisher.publish_update(task)
+                await NatsWorker._publish_task_snapshot(self, task)
+            else:
+                # Publish the complete decomposition before dispatching any
+                # remote work. Worker-mode result updates contain only one
+                # subtask; the gateway needs this snapshot to know the full
+                # task shape before it derives a terminal parent status.
+                await NatsWorker._publish_task_snapshot(self, task)
 
             # Reply with decomposed task if this is a request-reply message
             if msg.reply:
@@ -1501,6 +1507,36 @@ class NatsWorker:
                 task_id,
                 exc_info=True,
             )
+
+    async def _publish_task_snapshot(self, task: Task) -> None:
+        """Publish a task snapshot through the owning Orchestrator.
+
+        The Orchestrator owns the authoritative state transition and its NATS
+        publisher. The fallback is kept for lightweight/test integrations that
+        provide a worker publisher without the Orchestrator hook.
+        """
+        callback = getattr(self._orchestrator, "_publish_task_update", None)
+        if callback is not None:
+            try:
+                result = callback(task)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.warning(
+                    "Failed to publish task snapshot for %s",
+                    task.id,
+                    exc_info=True,
+                )
+            return
+        if self._publisher is not None:
+            try:
+                await self._publisher.publish_update(task)
+            except Exception:
+                logger.warning(
+                    "Failed to publish task snapshot for %s",
+                    task.id,
+                    exc_info=True,
+                )
 
     async def _execute_subtasks(self, task: Task) -> None:
         """Assign and execute ready subtasks for a task.
@@ -1553,6 +1589,7 @@ class NatsWorker:
                     # the retry limit (ready_ids is empty, loop breaks, but
                     # _update_task_status is never called for the FAILED).
                     self._orchestrator._update_task_status(task)
+                    await NatsWorker._publish_task_snapshot(self, task)
                     continue
                 ready_ids.append(next_st.id)
 
@@ -1648,8 +1685,7 @@ class NatsWorker:
                             summary="Assignment failed",
                             success=False,
                         )
-                    if self._publisher is not None:
-                        await self._publisher.publish_update(task)
+                    await NatsWorker._publish_task_snapshot(self, task)
                     # Declare edit intent for conflict tracking
                     if st.file_constraints:
                         from ultimate_coders.agent.conflict import EditIntent
@@ -1670,8 +1706,6 @@ class NatsWorker:
                                 self._worker.worker_id,
                             )
                     await self._orchestrator.handle_subtask_result(result)
-                    if self._publisher is not None:
-                        await self._publisher.publish_update(task)
                     return result
 
                 # Run local batch concurrently
@@ -2561,15 +2595,10 @@ class NatsWorker:
             )
             await self._orchestrator.handle_subtask_result(result)
 
-        # The remote Worker also emits a minimal uc.task.update for the Rust
-        # TaskStore. That update contains only the one subtask and keeps the
-        # parent status at InProgress. Publish the authoritative Orchestrator
-        # snapshot after applying the result so the Dashboard sees the parent
-        # converge to Completed/Failed as well.
-        if self._publisher is not None and self._orchestrator is not None:
-            current = self._orchestrator.get_task_status(task_id)
-            if current is not None:
-                await self._publisher.publish_update(current)
+        # ``Orchestrator.handle_subtask_result`` publishes the authoritative
+        # full snapshot after applying the result. Keeping that responsibility
+        # in one place prevents local and remote paths from diverging or
+        # publishing the same terminal snapshot twice.
 
     # ── Remote worker discovery ─────────────────────────────────────
 

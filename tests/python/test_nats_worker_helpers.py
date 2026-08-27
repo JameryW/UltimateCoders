@@ -671,6 +671,42 @@ async def test_handle_remote_subtask_result_reads_nested_payload():
     assert r.modified_files[0].file_path == "src/a.py"
 
 
+async def test_handle_remote_subtask_result_publishes_parent_terminal_snapshot():
+    """Remote result handling publishes the Orchestrator's full task state."""
+    from ultimate_coders.agent.orchestrator import Orchestrator
+
+    publisher = MagicMock()
+    publisher.publish_update = AsyncMock()
+    orch = Orchestrator(nats_publisher=publisher)
+    task = Task(
+        id="t-remote-terminal",
+        description="d",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[Subtask(
+            id="st-1",
+            parent_id="t-remote-terminal",
+            description="remote",
+            status=SubtaskStatus.PENDING,
+        )],
+    )
+    orch.tasks[task.id] = task
+
+    nw = _make_worker()
+    nw._orchestrator = orch
+    nw._publisher = publisher
+    payload = {
+        "type": "subtask_completed",
+        "task_id": task.id,
+        "subtask_id": "st-1",
+        "data": {"summary": "done"},
+    }
+
+    await nw._handle_remote_subtask_result("subtask_completed", task.id, "st-1", payload)
+
+    publisher.publish_update.assert_awaited_once_with(task)
+    assert task.status == TaskStatus.COMPLETED
+
+
 async def test_handle_remote_subtask_result_reads_nested_error():
     """subtask_failed: error text must come from nested data, not fallback."""
     nw = _make_worker()

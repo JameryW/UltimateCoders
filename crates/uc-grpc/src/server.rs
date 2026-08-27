@@ -1090,6 +1090,45 @@ impl TaskStore {
             }
         }
 
+        // ponytail: derive terminal task status from subtask states. Python's
+        // subtask-result publishes carry task-level status "InProgress" (the
+        // reporter's view mid-task) and the task-level Completed/Failed
+        // transition is never published on uc.task.update — so a task whose
+        // subtasks ALL completed stayed InProgress in the gateway forever,
+        // until mark_stale_tasks_failed killed it during a heartbeat gap
+        // (worker restarts). Deriving here makes every subtask terminal
+        // update settle the task; an explicit terminal status from the
+        // update still wins (paused/cancelled transitions are non-terminal
+        // for this purpose and never overridden while subtasks are pending).
+        if task.status == uc_types::TaskStatus::InProgress
+            || task.status == uc_types::TaskStatus::Planning
+        {
+            let terminal = |st: &uc_types::Subtask| {
+                matches!(
+                    st.status,
+                    uc_types::SubtaskStatus::Completed
+                        | uc_types::SubtaskStatus::Failed
+                        | uc_types::SubtaskStatus::Conflicted
+                )
+            };
+            if !task.subtasks.is_empty() && task.subtasks.iter().all(terminal) {
+                task.status = if task
+                    .subtasks
+                    .iter()
+                    .all(|st| st.status == uc_types::SubtaskStatus::Completed)
+                {
+                    uc_types::TaskStatus::Completed
+                } else {
+                    uc_types::TaskStatus::Failed
+                };
+                tracing::info!(
+                    task_id = %task.id.0,
+                    status = ?task.status,
+                    "Derived terminal task status from subtask states"
+                );
+            }
+        }
+
         task.updated_at = chrono::Utc::now();
         let task_snapshot = task.clone();
         // Bound the in-memory task map (terminal tasks may have just appeared).
@@ -4390,6 +4429,106 @@ mod tests {
         assert_eq!(
             updated.subtasks[0].status,
             uc_types::SubtaskStatus::Completed
+        );
+    }
+
+    #[test]
+    fn task_store_apply_update_derives_terminal_status_from_all_subtasks() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // The Python Orchestrator publishes the complete decomposition before
+        // workers report individual results. A single completed subtask must
+        // not complete a task while another subtask is still pending.
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![
+                NatsSubtaskUpdate {
+                    subtask_id: "st-a".to_string(),
+                    status: "Pending".to_string(),
+                    assigned_worker: None,
+                    description: Some("first".to_string()),
+                    depends_on: None,
+                    result: None,
+                },
+                NatsSubtaskUpdate {
+                    subtask_id: "st-b".to_string(),
+                    status: "Pending".to_string(),
+                    assigned_worker: None,
+                    description: Some("second".to_string()),
+                    depends_on: None,
+                    result: None,
+                },
+            ],
+            result: None,
+        });
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-a".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("first done".to_string()),
+            }],
+            result: None,
+        });
+        assert_eq!(
+            store.get_task(&task_id).unwrap().status,
+            uc_types::TaskStatus::InProgress
+        );
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-b".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-2".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("second done".to_string()),
+            }],
+            result: None,
+        });
+        assert_eq!(
+            store.get_task(&task_id).unwrap().status,
+            uc_types::TaskStatus::Completed
+        );
+    }
+
+    #[test]
+    fn task_store_apply_update_derives_failed_status_from_terminal_subtask() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-fail".to_string(),
+                status: "Failed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: Some("fails".to_string()),
+                depends_on: None,
+                result: Some("boom".to_string()),
+            }],
+            result: None,
+        });
+
+        assert_eq!(
+            store.get_task(&task_id).unwrap().status,
+            uc_types::TaskStatus::Failed
         );
     }
 
