@@ -187,7 +187,6 @@ async def test_parent_task_snapshot_retries_publisher_false_result():
     assert nc.publish.await_count == 2
     assert task.status == TaskStatus.COMPLETED
 
-
 # ── ResultAggregator wiring tests ──────────────────────────────
 
 
