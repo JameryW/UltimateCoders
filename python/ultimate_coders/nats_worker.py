@@ -1628,6 +1628,7 @@ class NatsWorker:
                 # Skip subtasks that exceeded max retries
                 if next_st.retry_count >= max_retries:
                     next_st.status = SubtaskStatus.FAILED
+                    task.update_timestamp()
                     logger.warning(
                         "Subtask %s exceeded max retries (%d), marking Failed",
                         next_st.id[:8],
@@ -2502,6 +2503,7 @@ class NatsWorker:
                 if st.id == subtask_id and st.status == SubtaskStatus.ASSIGNED:
                     st.status = SubtaskStatus.PENDING
                     st.assigned_worker = None
+                    task.update_timestamp()
                     # ponytail: F56 — stop the remote-timeout clock for this
                     # subtask (it's no longer awaiting a remote result).
                     self._remote_dispatched_at.pop(subtask_id, None)
@@ -2854,6 +2856,7 @@ class NatsWorker:
                 st.status = SubtaskStatus.PENDING
                 st.assigned_worker = None
                 st.retry_count += 1
+                task.update_timestamp()
                 self._remote_dispatched_at.pop(st.id, None)
                 reclaimed = True
                 logger.warning(
@@ -2910,6 +2913,7 @@ class NatsWorker:
                                 st.status = SubtaskStatus.PENDING
                                 st.assigned_worker = None
                                 st.retry_count += 1
+                                task.update_timestamp()
                                 logger.info(
                                     "Reassigned subtask %s from dead worker %s",
                                     st.id[:8],
@@ -2950,6 +2954,10 @@ class NatsWorker:
                     st.status = SubtaskStatus.PENDING
                     st.assigned_worker = None
                     st.retry_count += 1
+                    if self._orchestrator is not None:
+                        parent_task = self._orchestrator.tasks.get(st.parent_id)
+                        if parent_task is not None:
+                            parent_task.update_timestamp()
                     self._worker.current_task = None
                     if self._publisher is not None:
                         await self._publisher.publish_event(

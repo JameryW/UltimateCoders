@@ -415,6 +415,7 @@ class Orchestrator:
             return None
         subtask.status = SubtaskStatus.ASSIGNED
         subtask.assigned_worker = worker_id
+        task.update_timestamp()
         # Update worker load
         entry = self.workers.get(worker_id)
         if entry:
@@ -454,6 +455,10 @@ class Orchestrator:
                         entry.current_load -= 1
                     # Check if all subtasks done
                     self._update_task_status(task)
+                    # Keep dashboard snapshots and checkpoints aligned with
+                    # the latest in-memory subtask transition, even when the
+                    # parent task remains InProgress.
+                    task.update_timestamp()
                     # Publish the authoritative parent snapshot after the
                     # in-memory status transition. Worker-only result
                     # messages are intentionally minimal, so the gateway
@@ -781,12 +786,14 @@ class Orchestrator:
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.IN_PROGRESS:
             task.status = TaskStatus.PAUSED
+            task.update_timestamp()
 
     def resume_task_local(self, task_id: str) -> None:
         """Resume a paused task (from NATS event)."""
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.PAUSED:
             task.status = TaskStatus.IN_PROGRESS
+            task.update_timestamp()
 
     async def cancel_task(self, task_id: str, subtask_id: str | None = None) -> bool:
         """Cancel a task or specific subtask."""
@@ -797,9 +804,11 @@ class Orchestrator:
             for st in task.subtasks:
                 if st.id == subtask_id:
                     st.status = SubtaskStatus.FAILED
+                    task.update_timestamp()
                     return True
             return False
         task.status = TaskStatus.FAILED
+        task.update_timestamp()
         return True
 
     # ── Night-window exclusive mode ─────────────────────────────

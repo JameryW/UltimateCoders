@@ -11,6 +11,7 @@ arbitration — two concurrent MergeArbiter runs merging into main.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from ultimate_coders.agent.aggregator import AggregatedResult, AggregationStatus
@@ -64,6 +65,65 @@ def _result_with_files(
 
 def _change(path: str, diff: str = "diff content") -> FileChange:
     return FileChange(file_path=path, change_type=ChangeType.MODIFIED, diff=diff)
+
+
+class TestTaskTimestampLifecycle:
+    """Task.updated_at follows Orchestrator-owned state transitions."""
+
+    @staticmethod
+    def _old_timestamp() -> datetime:
+        return datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+    async def test_assign_subtask_refreshes_parent_timestamp(self):
+        orch = Orchestrator()
+        task = _make_task("t-assign-ts", ["st-1"])
+        task.updated_at = self._old_timestamp()
+        orch.tasks[task.id] = task
+
+        await orch.assign_subtask(task.subtasks[0], "w-1")
+
+        assert task.updated_at > self._old_timestamp()
+
+    async def test_subtask_result_refreshes_parent_timestamp(self):
+        orch = Orchestrator()
+        task = _make_task("t-result-ts", ["st-1"])
+        task.updated_at = self._old_timestamp()
+        orch.tasks[task.id] = task
+        orch._schedule_aggregation = MagicMock()
+
+        await orch.handle_subtask_result(_result("st-1"))
+
+        assert task.updated_at > self._old_timestamp()
+
+    def test_pause_and_resume_refresh_timestamp(self):
+        orch = Orchestrator()
+        task = _make_task("t-control-ts", ["st-1"])
+        task.updated_at = self._old_timestamp()
+        orch.tasks[task.id] = task
+
+        orch.pause_task_local(task.id)
+        paused_at = task.updated_at
+        orch.resume_task_local(task.id)
+
+        assert paused_at > self._old_timestamp()
+        assert task.updated_at > paused_at
+
+    async def test_cancel_refreshes_timestamp_for_task_and_subtask(self):
+        orch = Orchestrator()
+        task = _make_task("t-cancel-ts", ["st-1"])
+        task.updated_at = self._old_timestamp()
+        orch.tasks[task.id] = task
+
+        await orch.cancel_task(task.id, subtask_id="st-1")
+        cancelled_subtask_at = task.updated_at
+        assert cancelled_subtask_at > self._old_timestamp()
+
+        # Reset the subtask only to exercise the parent-task cancellation path
+        # independently; real callers use one of these paths per request.
+        task.subtasks[0].status = SubtaskStatus.IN_PROGRESS
+        await orch.cancel_task(task.id)
+
+        assert task.updated_at > cancelled_subtask_at
 
 
 async def test_duplicate_result_does_not_double_decrement_load():
