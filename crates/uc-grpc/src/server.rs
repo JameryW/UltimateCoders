@@ -85,6 +85,8 @@ pub struct NatsTaskSubmit {
 ///
 /// Published by Python Orchestrator when a task or its subtasks change status.
 /// The gRPC server subscribes to this subject and updates the in-memory TaskStore.
+/// Complete snapshots also carry `description` and `project_id` sibling fields
+/// decoded by `NatsTaskUpdateEnvelope` for restart recovery.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsTaskUpdate {
     /// Deduplication key for at-least-once NATS delivery.
@@ -102,6 +104,24 @@ pub struct NatsTaskUpdate {
     pub result: Option<String>,
 }
 
+/// Wire envelope for a Python task snapshot.
+///
+/// `NatsTaskUpdate` remains the small status/subtask payload used by existing
+/// callers. Complete snapshots add the task identity context as sibling
+/// fields so the gateway can rebuild a task after an in-memory restart. The
+/// decoder keeps them optional for backward compatibility with older
+/// publishers, but both must be present before an unknown task is rehydrated;
+/// partial worker updates must never use them to create a task.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct NatsTaskUpdateEnvelope {
+    #[serde(flatten)]
+    update: NatsTaskUpdate,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+}
+
 /// Subtask update within a `NatsTaskUpdate`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatsSubtaskUpdate {
@@ -115,6 +135,54 @@ pub struct NatsSubtaskUpdate {
     pub depends_on: Option<Vec<String>>,
     #[serde(default)]
     pub result: Option<String>,
+}
+
+/// Convert the wire representation of a subtask into the domain type used by
+/// `TaskStore`. This is shared by the rehydration path and the normal upsert
+/// path so recovered and live subtasks receive the same defaults.
+fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types::Subtask {
+    let status =
+        subtask_status_from_str(&update.status).unwrap_or(uc_types::SubtaskStatus::Pending);
+    let assigned_worker = update
+        .assigned_worker
+        .as_ref()
+        .map(|worker| uc_types::WorkerId(worker.clone()));
+    let result = update
+        .result
+        .as_ref()
+        .map(|summary| uc_types::SubtaskResult {
+            subtask_id: uc_types::TaskId(update.subtask_id.clone()),
+            worker_id: assigned_worker.clone().unwrap_or_default(),
+            modified_files: Vec::new(),
+            summary: summary.clone(),
+            success: !matches!(&status, uc_types::SubtaskStatus::Failed),
+            completed_at: chrono::Utc::now(),
+            result: Some(summary.clone()),
+        });
+
+    uc_types::Subtask {
+        id: uc_types::TaskId(update.subtask_id.clone()),
+        parent_id: uc_types::TaskId(task_id.to_string()),
+        description: update.description.clone().unwrap_or_default(),
+        status,
+        assigned_worker,
+        depends_on: update
+            .depends_on
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(uc_types::TaskId)
+            .collect(),
+        file_constraints: Vec::new(),
+        expected_output: String::new(),
+        result,
+        dispatch_mode: uc_types::DispatchMode::default(),
+        dispatch_retry_count: 0,
+        retry_count: 0,
+        required_capabilities: Vec::new(),
+        agent_config_json: None,
+        steps: Vec::new(),
+    }
 }
 
 /// Payload for `uc.task.event` messages.
@@ -942,9 +1010,101 @@ impl TaskStore {
     /// Performs full upsert on subtasks: updates description, depends_on, and
     /// result in addition to status and assigned_worker. New subtasks are
     /// created with all provided fields.
-    /// If the task does not exist, logs a warning and does nothing (graceful
-    /// handling of stale or out-of-order messages).
+    /// If the task does not exist, the subscriber may provide complete-snapshot
+    /// metadata to rehydrate it; updates without that metadata are ignored.
     pub fn apply_update(&mut self, update: &NatsTaskUpdate) {
+        self.apply_update_with_metadata(update, None, None);
+    }
+
+    /// Apply a task update and optionally use complete-snapshot metadata to
+    /// rehydrate an unknown task.
+    ///
+    /// The NATS stream can outlive the gateway's in-memory TaskStore. A full
+    /// Python snapshot contains enough context to reconstruct that task with
+    /// its original ID. A partial worker result intentionally cannot do this:
+    /// it only describes one subtask and would create an incomplete, falsely
+    /// authoritative parent task.
+    fn apply_update_with_metadata(
+        &mut self,
+        update: &NatsTaskUpdate,
+        description: Option<&str>,
+        project_id: Option<&str>,
+    ) {
+        if !self.tasks.contains_key(&update.task_id) {
+            if update.partial {
+                tracing::warn!(
+                    task_id = %update.task_id,
+                    "Received partial NATS update for unknown task, ignoring"
+                );
+                return;
+            }
+
+            let description = match description {
+                Some(description) if !description.is_empty() => description,
+                _ => {
+                    tracing::warn!(
+                        task_id = %update.task_id,
+                        "Received complete NATS update without task description, ignoring"
+                    );
+                    return;
+                }
+            };
+            let project_id = match project_id {
+                Some(project_id) => project_id,
+                None => {
+                    tracing::warn!(
+                        task_id = %update.task_id,
+                        "Received complete NATS update without project ID, ignoring"
+                    );
+                    return;
+                }
+            };
+
+            let now = chrono::Utc::now();
+            let status = match task_status_from_str(&update.status) {
+                Some(status) => status,
+                None => {
+                    tracing::warn!(
+                        task_id = %update.task_id,
+                        status = %update.status,
+                        "Unknown task status while rehydrating NATS task, using Created"
+                    );
+                    uc_types::TaskStatus::Created
+                }
+            };
+            let task = uc_types::Task {
+                id: uc_types::TaskId(update.task_id.clone()),
+                description: description.to_string(),
+                project_id: project_id.to_string(),
+                status,
+                subtasks: update
+                    .subtasks
+                    .iter()
+                    .map(|subtask| nats_subtask_to_domain(&update.task_id, subtask))
+                    .collect(),
+                created_at: now,
+                updated_at: now,
+            };
+            self.record_event_with_subject(
+                uc_engine::AgentEventType::TaskCreated {
+                    task_id: task.id.clone(),
+                    description: task.description.clone(),
+                },
+                &format!("task.{}", update.task_id),
+            );
+            for subtask in &task.subtasks {
+                if subtask.status == uc_types::SubtaskStatus::Assigned {
+                    self.assigned_subtask_times
+                        .insert(subtask.id.0.clone(), now);
+                }
+            }
+            self.tasks.insert(update.task_id.clone(), task);
+            tracing::info!(
+                task_id = %update.task_id,
+                "Rehydrated task from complete NATS snapshot"
+            );
+        }
+
         let task = match self.tasks.get_mut(&update.task_id) {
             Some(t) => t,
             None => {
@@ -1034,53 +1194,9 @@ impl TaskStore {
                     });
                 }
             } else {
-                // New subtask from Python Orchestrator — create with all provided fields
-                let new_subtask = uc_types::Subtask {
-                    id: uc_types::TaskId(subtask_update.subtask_id.clone()),
-                    parent_id: task.id.clone(),
-                    description: subtask_update.description.clone().unwrap_or_default(),
-                    status: subtask_status_from_str(&subtask_update.status)
-                        .unwrap_or(uc_types::SubtaskStatus::Pending),
-                    assigned_worker: subtask_update
-                        .assigned_worker
-                        .as_ref()
-                        .map(|w| uc_types::WorkerId(w.clone())),
-                    depends_on: subtask_update
-                        .depends_on
-                        .as_ref()
-                        .map(|deps| deps.iter().map(|d| uc_types::TaskId(d.clone())).collect())
-                        .unwrap_or_default(),
-                    file_constraints: Vec::new(),
-                    expected_output: String::new(),
-                    result: subtask_update
-                        .result
-                        .as_ref()
-                        .map(|r| uc_types::SubtaskResult {
-                            subtask_id: uc_types::TaskId(subtask_update.subtask_id.clone()),
-                            worker_id: subtask_update
-                                .assigned_worker
-                                .as_ref()
-                                .map(|w| uc_types::WorkerId(w.clone()))
-                                .unwrap_or_default(),
-                            modified_files: Vec::new(),
-                            summary: r.clone(),
-                            // ponytail: derive success from parsed status, matching the
-                            // existing-subtask path. The raw string is CamelCase ("Failed"),
-                            // so a naive `!= "failed"` would always be true.
-                            success: !matches!(
-                                subtask_status_from_str(&subtask_update.status),
-                                Some(uc_types::SubtaskStatus::Failed)
-                            ),
-                            completed_at: chrono::Utc::now(),
-                            result: Some(r.clone()),
-                        }),
-                    dispatch_mode: uc_types::DispatchMode::default(),
-                    dispatch_retry_count: 0,
-                    retry_count: 0,
-                    required_capabilities: Vec::new(),
-                    agent_config_json: None,
-                    steps: Vec::new(),
-                };
+                // New subtask from Python Orchestrator — use the same
+                // conversion as the rehydration path.
+                let new_subtask = nats_subtask_to_domain(&task.id.0, subtask_update);
                 task.subtasks.push(new_subtask);
                 // If a brand-new subtask arrives already Assigned (rare — usually
                 // Pending until dispatch_ready_subtasks marks it), track assigned-at
@@ -2217,8 +2333,13 @@ fn spawn_nats_subscriber(
             loop {
                 tokio::select! {
                         Some(message) = update_sub.next() => {
-                        match serde_json::from_slice::<NatsTaskUpdate>(&message.payload) {
-                            Ok(update) => {
+                        match serde_json::from_slice::<NatsTaskUpdateEnvelope>(&message.payload) {
+                            Ok(envelope) => {
+                                let NatsTaskUpdateEnvelope {
+                                    update,
+                                    description,
+                                    project_id,
+                                } = envelope;
                                 tracing::debug!(
                                     task_id = %update.task_id,
                                     status = %update.status,
@@ -2233,7 +2354,11 @@ fn spawn_nats_subscriber(
                                 }
                                 {
                                     let mut store = task_store.lock().await;
-                                    store.apply_update(&update);
+                                    store.apply_update_with_metadata(
+                                        &update,
+                                    description.as_deref(),
+                                    project_id.as_deref(),
+                                    );
                                 }
 
                                 // Record events for subtask status transitions so
@@ -4391,6 +4516,88 @@ mod tests {
         // Should not panic, just log a warning
         store.apply_update(&update);
         assert!(store.get_task("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_task_store_rehydrates_from_complete_nats_snapshot() {
+        let raw = serde_json::json!({
+            "message_id": "t-recover:update:abc",
+            "task_id": "t-recover",
+            "description": "restore the task",
+            "project_id": "project-a",
+            "status": "InProgress",
+            "partial": false,
+            "subtasks": [{
+                "subtask_id": "t-recover-s0",
+                "status": "Assigned",
+                "description": "first step",
+                "depends_on": [],
+                "assigned_worker": "worker-a"
+            }]
+        });
+        let envelope: NatsTaskUpdateEnvelope = serde_json::from_value(raw).unwrap();
+        let mut store = TaskStore::new();
+
+        store.apply_update_with_metadata(
+            &envelope.update,
+            envelope.description.as_deref(),
+            envelope.project_id.as_deref(),
+        );
+
+        let task = store
+            .get_task("t-recover")
+            .expect("snapshot rehydrates task");
+        assert_eq!(task.description, "restore the task");
+        assert_eq!(task.project_id, "project-a");
+        assert_eq!(task.status, uc_types::TaskStatus::InProgress);
+        assert_eq!(task.subtasks.len(), 1);
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Assigned);
+        assert_eq!(store.event_count(), 1); // TaskCreated for the rehydrated task
+    }
+
+    #[test]
+    fn test_task_store_does_not_rehydrate_from_partial_nats_update() {
+        let mut store = TaskStore::new();
+        let update = NatsTaskUpdate {
+            message_id: None,
+            task_id: "t-partial-unknown".to_string(),
+            status: "InProgress".to_string(),
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-only".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-a".to_string()),
+                description: Some("only one result".to_string()),
+                depends_on: None,
+                result: Some("done".to_string()),
+            }],
+            result: None,
+        };
+
+        store.apply_update_with_metadata(&update, Some("should not create"), Some("project-a"));
+
+        assert!(store.get_task("t-partial-unknown").is_none());
+    }
+
+    #[test]
+    fn test_task_store_requires_project_id_for_rehydration() {
+        let raw = serde_json::json!({
+            "task_id": "t-missing-project",
+            "status": "InProgress",
+            "partial": false,
+            "description": "restore the task",
+            "subtasks": []
+        });
+        let envelope: NatsTaskUpdateEnvelope = serde_json::from_value(raw).unwrap();
+        let mut store = TaskStore::new();
+
+        store.apply_update_with_metadata(
+            &envelope.update,
+            envelope.description.as_deref(),
+            envelope.project_id.as_deref(),
+        );
+
+        assert!(store.get_task("t-missing-project").is_none());
     }
 
     #[test]

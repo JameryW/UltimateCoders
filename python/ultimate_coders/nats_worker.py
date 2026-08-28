@@ -113,6 +113,12 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
         "subtasks": subtasks,
         "partial": partial,
     }
+    if not partial:
+        # Keep the task identity context in complete snapshots so a gateway
+        # that restarted while this worker was running can rehydrate the task
+        # instead of discarding the first post-restart update.
+        payload["description"] = task.description
+        payload["project_id"] = task.project_id
     if task.result is not None:
         payload["result"] = task.result
 
