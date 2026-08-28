@@ -38,9 +38,15 @@ pub struct NatsTaskSubmit {
 pub struct NatsTaskUpdate {
     pub task_id: String,
     pub status: String,
+    pub partial: bool, // true only for worker-only updates
     pub subtasks: Vec<NatsSubtaskUpdate>,
     pub result: Option<String>,
 }
+
+// Complete snapshots additionally carry sibling JSON fields `description`
+// and `project_id`. The Rust subscriber decodes them in
+// NatsTaskUpdateEnvelope for restart recovery; older payloads may omit them
+// when updating a task that already exists in the gateway.
 
 pub struct NatsSubtaskUpdate {
     pub id: String,
@@ -199,6 +205,11 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
   default-mode NATS Worker applies the result to its Orchestrator. After that
   application, the NATS Worker publishes the complete parent task snapshot so
   the Rust TaskStore and Dashboard converge on the terminal parent status.
+- A complete (`partial=false`) task snapshot includes `description` and
+  `project_id`. If the gateway does not know the task (for example after an
+  in-memory restart), it rehydrates the task with the original ID and full
+  subtask set when both fields are present and the description is non-empty.
+  A partial worker update is never allowed to create a task.
 - Heartbeat monitoring must release the TaskStore mutex before entering a
   second lock acquisition or dispatching follow-up work; otherwise the
   service-read RPCs (`ListTasks`, `GetTask`) can wait indefinitely.
@@ -227,7 +238,8 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | NATS publish fails in `publish_ready_subtasks` (Remote, retry < 3) | Increment `dispatch_retry_count`, revert to Pending |
 | NATS publish fails in `publish_ready_subtasks` (Remote, retry ≥ 3) | Mark subtask as Failed — max dispatch retries exceeded |
 | NATS subscriber receives malformed JSON | Log warning, skip message, no crash |
-| NATS subscriber receives unknown task_id | Log warning, skip update |
+| NATS subscriber receives unknown task_id with a complete snapshot | Rehydrate the task when description is non-empty and the project_id field is present |
+| NATS subscriber receives unknown task_id with a partial snapshot | Log warning, skip update |
 | NATS subscriber receives unknown status string | Preserve existing status, log warning |
 | Python consumer crash | No heartbeat → heartbeat monitor marks InProgress tasks as Failed after timeout |
 | Heartbeat timeout (default 10 min) | `TaskStore::mark_stale_tasks_failed()` marks all InProgress/Planning tasks as Failed |
@@ -358,11 +370,12 @@ self._app.add_event_handler("startup", self._subscribe_nats_events)
 
 ## Known Limitations
 
-1. **Task ID mismatch**: Orchestrator creates its own task_id, ignoring the one from NATS submit. The gRPC TaskStore's placeholder task stays in Planning forever. Fix requires Orchestrator accepting external task IDs.
-2. **Subtask result type mismatch**: Python sends `result` as `Option<String>`, Rust expects `Option<SubtaskResult>` (a struct). Summary is silently discarded.
-3. **uc.subtask.execute now uses JetStream**: Work-queue retention stream `UC_SUBTASKS` + shared durable pull consumer `subtask-workers` (ack-after-execution, max_deliver=5). Worker crash mid-subtask → redelivery to another worker. Falls back to core NATS queue group if JetStream unavailable (mixed-mode coexistence).
-4. **No auto-reconnect**: If NATS connection breaks, gRPC subscriber exits. Requires server restart.
-5. **Heartbeat is coarse**: 30-second heartbeat, 10-minute timeout. No per-task progress tracking.
+1. **Rehydration requires a complete snapshot**: A gateway can rebuild a task
+   after an in-memory restart only when a Python publisher sends
+   `partial=false` with a non-empty description and the `project_id` field.
+   Partial worker results are intentionally ignored for unknown task IDs.
+2. **Heartbeat is coarse**: 30-second heartbeat, 10-minute timeout. No
+   per-task progress tracking.
 
 ---
 

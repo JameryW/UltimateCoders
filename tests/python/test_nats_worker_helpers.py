@@ -60,7 +60,26 @@ def test_partial_task_update_is_marked_explicitly():
 
     assert full["partial"] is False
     assert partial["partial"] is True
+    assert "description" in full
+    assert "project_id" in full
+    assert "description" not in partial
+    assert "project_id" not in partial
     assert full["message_id"] != partial["message_id"]
+
+
+def test_complete_task_update_carries_rehydration_metadata():
+    """A gateway restart can rebuild a task from the next full snapshot."""
+    task = Task(
+        id="t-rehydrate",
+        description="restore the task",
+        project_id="project-a",
+        status=TaskStatus.IN_PROGRESS,
+    )
+
+    payload = _make_task_update_payload(task)
+
+    assert payload["description"] == "restore the task"
+    assert payload["project_id"] == "project-a"
 
 
 def test_task_update_message_id_changes_with_subtask_snapshot_state():
