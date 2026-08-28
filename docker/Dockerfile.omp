@@ -27,6 +27,11 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14" \
 RUN pip install --no-cache-dir websockets "prometheus-client>=0.20.0"
 
 COPY vendor/oh-my-pi /opt/oh-my-pi
+# The extension keeps repo-relative paths to the vendored OMP sources in its
+# tsconfig.  Preserve that path after relocating the repository into the
+# image, so type declarations such as types/assets remain discoverable.
+RUN mkdir -p /opt/vendor \
+    && ln -s /opt/oh-my-pi /opt/vendor/oh-my-pi
 
 # Refresh the dashboard source from the current checkout. The base image keeps
 # the compiled engine/runtime, while this layer carries Python dashboard fixes
@@ -40,10 +45,21 @@ RUN cd /opt/oh-my-pi \
 RUN cd /opt/oh-my-pi \
     && bun add --no-save --ignore-scripts @oh-my-pi/pi-natives-linux-x64@16.1.16
 COPY packages/uc-orchestrator /opt/oh-my-pi/uc-orchestrator
+# The extension is copied after the OMP workspace install, so its own direct
+# dependencies would otherwise be absent from the runtime image.  Install
+# them here while keeping the vendored OMP packages as peer dependencies.
+RUN cd /opt/oh-my-pi/uc-orchestrator \
+    && /opt/bun/bin/bun install --no-save --ignore-scripts --omit=peer \
+    && test -f node_modules/nats/package.json \
+    && test -f node_modules/@connectrpc/connect/package.json
 RUN cd /opt/oh-my-pi \
     && bun --cwd=packages/collab-web run build:tool-views
 RUN cd /opt/oh-my-pi \
     && bun --cwd=packages/coding-agent run generate-docs-index
+# Keep the image contract explicit: the copied extension must remain
+# executable by Bun after all OMP build steps have completed.
+RUN test -f /opt/oh-my-pi/uc-orchestrator/node_modules/nats/package.json \
+    && test -f /opt/oh-my-pi/uc-orchestrator/node_modules/@connectrpc/connect/package.json
 
 COPY docker/omp-entrypoint.sh /usr/local/bin/uc-omp.sh
 # Docker Desktop on Windows can present a CRLF working copy even when Git
