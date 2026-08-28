@@ -2345,8 +2345,10 @@ class TestNatsWorkerRemoteResults:
             # Two tasks, each with a subtask assigned to the same remote worker.
             t1 = await orch.submit_task("task one", project_id="p")  # type: ignore[union-attr]
             t2 = await orch.submit_task("task two", project_id="p")  # type: ignore[union-attr]
+            old_timestamp = datetime(2020, 1, 1, tzinfo=timezone.utc)
             wid = "remote-worker-1"
             for t in (t1, t2):
+                t.updated_at = old_timestamp
                 st = t.subtasks[0]
                 st.assigned_worker = wid
                 st.status = SubtaskStatus.IN_PROGRESS
@@ -2376,6 +2378,7 @@ class TestNatsWorkerRemoteResults:
                     assert st.status == SubtaskStatus.PENDING, (
                         f"expected PENDING, got {st.status.name}"
                     )
+                assert t.updated_at > old_timestamp
 
         asyncio.run(run())
 

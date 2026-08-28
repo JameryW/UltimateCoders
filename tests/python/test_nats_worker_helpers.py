@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -226,11 +227,13 @@ def test_reset_subtask_to_pending_resets_assigned_subtask():
         status=TaskStatus.IN_PROGRESS,
         subtasks=[st],
     )
+    task.updated_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
     nw._orchestrator.tasks[task.id] = task
 
     assert nw._reset_subtask_to_pending("st-rejected") is True
     assert st.status == SubtaskStatus.PENDING
     assert st.assigned_worker is None
+    assert task.updated_at > datetime(2020, 1, 1, tzinfo=timezone.utc)
 
 
 def test_reset_subtask_to_pending_skips_non_assigned():
@@ -521,6 +524,7 @@ async def test_reclaim_timed_out_remote_subtasks():
     st.status = SubtaskStatus.ASSIGNED
     st.assigned_worker = "remote"
     task = Task(id="t-1", description="t", subtasks=[st], status=TaskStatus.IN_PROGRESS)
+    task.updated_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
     orch.tasks["t-1"] = task
     nw._orchestrator = orch
     nw._publisher = MagicMock()
@@ -533,6 +537,7 @@ async def test_reclaim_timed_out_remote_subtasks():
     assert st.status == SubtaskStatus.PENDING
     assert st.assigned_worker is None
     assert st.retry_count == 1
+    assert task.updated_at > datetime(2020, 1, 1, tzinfo=timezone.utc)
     assert "st-r1" not in nw._remote_dispatched_at
     assert nw._publisher.publish_event.await_count == 1
 
@@ -545,6 +550,86 @@ async def test_reclaim_timed_out_remote_subtasks():
     await nw._reclaim_timed_out_remote_subtasks()
     assert st2.status == SubtaskStatus.ASSIGNED
     assert st2.assigned_worker == "remote"
+
+
+@pytest.mark.asyncio
+async def test_max_retry_failure_updates_task_timestamp():
+    """A pending subtask at the retry limit must advance its parent snapshot."""
+    from ultimate_coders.agent.orchestrator import Orchestrator
+
+    nw = _make_worker()
+    orch = Orchestrator()
+    st = Subtask(
+        id="st-max-retries",
+        description="retry limit",
+        parent_id="t-max-retries",
+        status=SubtaskStatus.PENDING,
+    )
+    st.retry_count = orch.config.max_retries
+    task = Task(
+        id="t-max-retries",
+        description="t",
+        subtasks=[st],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    old_timestamp = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    task.updated_at = old_timestamp
+    orch.tasks[task.id] = task
+    nw._orchestrator = orch
+    nw._worker = MagicMock()
+
+    await nw._execute_subtasks(task)
+
+    assert st.status == SubtaskStatus.FAILED
+    assert task.status == TaskStatus.FAILED
+    assert task.updated_at > old_timestamp
+
+
+@pytest.mark.asyncio
+async def test_local_worker_stall_updates_parent_task_timestamp():
+    """Stall recovery must update the parent task along with subtask state."""
+    from datetime import timedelta
+
+    from ultimate_coders.agent.orchestrator import Orchestrator
+
+    nw = _make_worker()
+    orch = Orchestrator()
+    st = Subtask(
+        id="st-local-stall",
+        description="local stall",
+        parent_id="t-local-stall",
+        status=SubtaskStatus.IN_PROGRESS,
+    )
+    st.assigned_worker = "local"
+    task = Task(
+        id="t-local-stall",
+        description="t",
+        subtasks=[st],
+        status=TaskStatus.IN_PROGRESS,
+    )
+    old_timestamp = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    task.updated_at = old_timestamp
+    orch.tasks[task.id] = task
+    nw._orchestrator = orch
+    nw._worker = MagicMock(
+        worker_id="local",
+        current_task=st,
+        _last_heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=120),
+    )
+    nw._dispatch_event = asyncio.Event()
+    nw._running = True
+
+    async def stop_after_tick(_seconds: float) -> None:
+        nw._running = False
+
+    with patch("ultimate_coders.nats_worker.asyncio.sleep", stop_after_tick):
+        await nw._stale_worker_cleanup_loop()
+
+    assert st.status == SubtaskStatus.PENDING
+    assert st.assigned_worker is None
+    assert st.retry_count == 1
+    assert task.updated_at > old_timestamp
+    assert nw._worker.current_task is None
 
 
 async def test_dispatch_remote_publish_failure_resets_to_pending():
