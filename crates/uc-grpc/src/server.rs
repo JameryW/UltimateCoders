@@ -38,6 +38,9 @@ pub const NATS_SUBJECT_TASK_SUBMIT: &str = "uc.task.submit";
 /// NATS subject for task status updates (Python -> gRPC).
 pub const NATS_SUBJECT_TASK_UPDATE: &str = "uc.task.update";
 
+/// NATS request subject used by the gateway to recover all task snapshots.
+pub const NATS_SUBJECT_TASK_SNAPSHOT_REQUEST: &str = "uc.task.snapshot.request";
+
 /// NATS subject for task events (Python -> gRPC).
 pub const NATS_SUBJECT_TASK_EVENT: &str = "uc.task.event";
 
@@ -112,6 +115,7 @@ pub struct NatsTaskUpdate {
 /// decoder keeps them optional for backward compatibility with older
 /// publishers, but both must be present before an unknown task is rehydrated;
 /// partial worker updates must never use them to create a task.
+#[cfg(any(feature = "messaging", test))]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct NatsTaskUpdateEnvelope {
     #[serde(flatten)]
@@ -120,6 +124,14 @@ struct NatsTaskUpdateEnvelope {
     description: Option<String>,
     #[serde(default)]
     project_id: Option<String>,
+}
+
+/// Response returned by the Python Orchestrator for a snapshot request.
+#[cfg(any(feature = "messaging", test))]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct NatsTaskSnapshotResponse {
+    #[serde(default)]
+    tasks: Vec<NatsTaskUpdateEnvelope>,
 }
 
 /// Subtask update within a `NatsTaskUpdate`.
@@ -2271,7 +2283,8 @@ async fn connect_nats_with_retry(nats_url: &str) -> Option<async_nats::Client> {
 }
 
 /// Spawn a background task that subscribes to `uc.task.update`,
-/// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly.
+/// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly,
+/// while periodically requesting complete task snapshots for recovery.
 #[cfg(feature = "messaging")]
 fn spawn_nats_subscriber(
     nats_client: async_nats::Client,
@@ -2330,9 +2343,15 @@ fn spawn_nats_subscriber(
 
             tracing::info!("NATS subscriber started for TaskService");
 
+            let mut snapshot_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            snapshot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
             loop {
                 tokio::select! {
-                        Some(message) = update_sub.next() => {
+                    _ = snapshot_interval.tick() => {
+                        request_task_snapshots(&nats_client, &task_store).await;
+                    }
+                    Some(message) = update_sub.next() => {
                         match serde_json::from_slice::<NatsTaskUpdateEnvelope>(&message.payload) {
                             Ok(envelope) => {
                                 let NatsTaskUpdateEnvelope {
@@ -2356,8 +2375,8 @@ fn spawn_nats_subscriber(
                                     let mut store = task_store.lock().await;
                                     store.apply_update_with_metadata(
                                         &update,
-                                    description.as_deref(),
-                                    project_id.as_deref(),
+                                        description.as_deref(),
+                                        project_id.as_deref(),
                                     );
                                 }
 
@@ -2512,6 +2531,94 @@ fn spawn_nats_subscriber(
             }
         }
     });
+}
+
+/// Apply a complete snapshot response from the Python Orchestrator.
+///
+/// Snapshot recovery is state-only: it may rebuild missing tasks, but it does
+/// not dispatch subtasks. The Orchestrator remains the owner of execution and
+/// will publish the next state transition through the normal update path.
+#[cfg(any(feature = "messaging", test))]
+fn apply_task_snapshot_response(
+    store: &mut TaskStore,
+    response: NatsTaskSnapshotResponse,
+) -> usize {
+    let mut rehydrated = 0;
+    for envelope in response.tasks {
+        let update = envelope.update;
+        if update.partial {
+            tracing::warn!(
+                task_id = %update.task_id,
+                "Ignoring partial task snapshot in recovery response"
+            );
+            continue;
+        }
+
+        let task_id = update.task_id.clone();
+        if store.check_and_record_message_id(&update.message_id) {
+            continue;
+        }
+
+        let was_known = store.tasks.contains_key(&task_id);
+        store.apply_update_with_metadata(
+            &update,
+            envelope.description.as_deref(),
+            envelope.project_id.as_deref(),
+        );
+        if !was_known && store.tasks.contains_key(&task_id) {
+            rehydrated += 1;
+        }
+    }
+    rehydrated
+}
+
+/// Request current complete task snapshots from the Python Orchestrator.
+///
+/// The request is best-effort and periodic. A gateway may start before the
+/// Python consumer, so a missing responder is expected and retried on the
+/// next interval. A successful response is applied through the same envelope
+/// and TaskStore seam as live `uc.task.update` messages.
+#[cfg(feature = "messaging")]
+async fn request_task_snapshots(
+    nats_client: &async_nats::Client,
+    task_store: &Arc<Mutex<TaskStore>>,
+) {
+    let response = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        nats_client.request(
+            NATS_SUBJECT_TASK_SNAPSHOT_REQUEST,
+            b"{\"v\":1}".to_vec().into(),
+        ),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            tracing::debug!(error = %error, "Task snapshot request had no responder");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!("Task snapshot request timed out");
+            return;
+        }
+    };
+
+    let response = match serde_json::from_slice::<NatsTaskSnapshotResponse>(&response.payload) {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to parse task snapshot response");
+            return;
+        }
+    };
+
+    let mut store = task_store.lock().await;
+    let rehydrated = apply_task_snapshot_response(&mut store, response);
+    if rehydrated > 0 {
+        tracing::info!(
+            count = rehydrated,
+            "Rehydrated tasks from snapshot response"
+        );
+    }
 }
 
 /// Spawn a background subscriber for `uc.file.changed` that incrementally
@@ -4521,28 +4628,27 @@ mod tests {
     #[test]
     fn test_task_store_rehydrates_from_complete_nats_snapshot() {
         let raw = serde_json::json!({
-            "message_id": "t-recover:update:abc",
-            "task_id": "t-recover",
-            "description": "restore the task",
-            "project_id": "project-a",
-            "status": "InProgress",
-            "partial": false,
-            "subtasks": [{
-                "subtask_id": "t-recover-s0",
-                "status": "Assigned",
-                "description": "first step",
-                "depends_on": [],
-                "assigned_worker": "worker-a"
+            "v": 1,
+            "tasks": [{
+                "message_id": "t-recover:update:abc",
+                "task_id": "t-recover",
+                "description": "restore the task",
+                "project_id": "project-a",
+                "status": "InProgress",
+                "partial": false,
+                "subtasks": [{
+                    "subtask_id": "t-recover-s0",
+                    "status": "Assigned",
+                    "description": "first step",
+                    "depends_on": [],
+                    "assigned_worker": "worker-a"
+                }]
             }]
         });
-        let envelope: NatsTaskUpdateEnvelope = serde_json::from_value(raw).unwrap();
+        let response: NatsTaskSnapshotResponse = serde_json::from_value(raw).unwrap();
         let mut store = TaskStore::new();
 
-        store.apply_update_with_metadata(
-            &envelope.update,
-            envelope.description.as_deref(),
-            envelope.project_id.as_deref(),
-        );
+        assert_eq!(apply_task_snapshot_response(&mut store, response), 1);
 
         let task = store
             .get_task("t-recover")
@@ -5010,6 +5116,10 @@ mod tests {
     fn nats_subjects_constants() {
         assert_eq!(NATS_SUBJECT_TASK_SUBMIT, "uc.task.submit");
         assert_eq!(NATS_SUBJECT_TASK_UPDATE, "uc.task.update");
+        assert_eq!(
+            NATS_SUBJECT_TASK_SNAPSHOT_REQUEST,
+            "uc.task.snapshot.request"
+        );
         assert_eq!(NATS_SUBJECT_TASK_EVENT, "uc.task.event");
         assert_eq!(NATS_SUBJECT_HEARTBEAT, "uc.heartbeat");
         assert_eq!(NATS_SUBJECT_SUBTASK_EXECUTE, "uc.subtask.execute");

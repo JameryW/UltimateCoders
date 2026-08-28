@@ -61,6 +61,7 @@ _TASK_EVENT_MESSAGE_SEQUENCE = itertools.count()
 
 NATS_SUBJECT_TASK_SUBMIT: str = "uc.task.submit"
 NATS_SUBJECT_TASK_UPDATE: str = "uc.task.update"
+NATS_SUBJECT_TASK_SNAPSHOT_REQUEST: str = "uc.task.snapshot.request"
 NATS_SUBJECT_TASK_EVENT: str = "uc.task.event"
 NATS_SUBJECT_HEARTBEAT: str = "uc.heartbeat"
 NATS_SUBJECT_SUBTASK_EXECUTE: str = "uc.subtask.execute"
@@ -426,7 +427,8 @@ class NatsWorker:
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
 
-        Mode "default": subscribe to uc.task.submit + uc.task.event + uc.dashboard.>
+        Mode "default": subscribe to uc.task.submit + snapshot recovery +
+        uc.task.event + uc.dashboard.>
         Mode "worker": subscribe to uc.subtask.execute (queue group) only
         """
         # Bind the dispatch event here (inside a running loop) for Py3.9 safety.
@@ -541,6 +543,16 @@ class NatsWorker:
             )
             self._subscriptions.append(sub)
             logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SUBMIT)
+
+            # Gateway request/reply recovery: return complete task snapshots
+            # so a restarted gateway can rebuild tasks even when no new state
+            # transition has happened since it came back up.
+            snapshot_request_sub = await self._nc.subscribe(
+                NATS_SUBJECT_TASK_SNAPSHOT_REQUEST,
+                cb=self._handle_task_snapshot_request,
+            )
+            self._subscriptions.append(snapshot_request_sub)
+            logger.info("Subscribed to %s", NATS_SUBJECT_TASK_SNAPSHOT_REQUEST)
 
             # Subscribe to uc.heartbeat for remote worker discovery
             hb_sub = await self._nc.subscribe(
@@ -1525,6 +1537,25 @@ class NatsWorker:
                 task_id,
                 exc_info=True,
             )
+
+    async def _handle_task_snapshot_request(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
+        """Reply with complete task snapshots for gateway restart recovery."""
+        if not msg.reply:
+            logger.debug("Ignoring task snapshot request without reply inbox")
+            return
+
+        tasks = []
+        if self._orchestrator is not None:
+            tasks = [
+                _make_task_update_payload(task)
+                for task in self._orchestrator.tasks.values()
+            ]
+
+        try:
+            await msg.respond(json.dumps({"v": 1, "tasks": tasks}).encode())
+            logger.debug("Replied with %d task snapshots", len(tasks))
+        except Exception:
+            logger.warning("Failed to reply to task snapshot request", exc_info=True)
 
     async def _publish_task_snapshot(self, task: Task) -> None:
         """Publish a task snapshot through the owning Orchestrator.

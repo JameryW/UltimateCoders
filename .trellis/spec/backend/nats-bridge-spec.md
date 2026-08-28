@@ -20,6 +20,7 @@
 |---------|-----------|---------|
 | `uc.task.submit` | gRPC/Dashboard → Python | New task submission |
 | `uc.task.update` | Python → gRPC | Task/subtask status update |
+| `uc.task.snapshot.request` | Gateway request/reply → Python | Request current complete task snapshots for gateway recovery |
 | `uc.task.event` | Python → gRPC, gRPC → Python | Real-time execution event + pause/resume status change |
 | `uc.heartbeat` | Python → gRPC | Consumer heartbeat |
 | `uc.subtask.execute` | gRPC → Worker | Dispatch ready subtask to remote worker |
@@ -47,6 +48,10 @@ pub struct NatsTaskUpdate {
 // and `project_id`. The Rust subscriber decodes them in
 // NatsTaskUpdateEnvelope for restart recovery; older payloads may omit them
 // when updating a task that already exists in the gateway.
+
+// Snapshot recovery request/reply (Gateway ↔ Python)
+// Request:  {"v": 1}
+// Response: {"v": 1, "tasks": [<complete task update snapshots>]}
 
 pub struct NatsSubtaskUpdate {
     pub id: String,
@@ -106,6 +111,7 @@ delivery-sensitive callers can retry without duplicating transport handling.
 |----------|-------|------------|
 | `NATS_SUBJECT_TASK_SUBMIT` | `"uc.task.submit"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_TASK_UPDATE` | `"uc.task.update"` | `crates/uc-grpc/src/server.rs` |
+| `NATS_SUBJECT_TASK_SNAPSHOT_REQUEST` | `"uc.task.snapshot.request"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_TASK_EVENT` | `"uc.task.event"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_HEARTBEAT` | `"uc.heartbeat"` | `crates/uc-grpc/src/server.rs` |
 | `NATS_SUBJECT_SUBTASK_EXECUTE` | `"uc.subtask.execute"` | `crates/uc-grpc/src/server.rs` |
@@ -210,6 +216,15 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
   in-memory restart), it rehydrates the task with the original ID and full
   subtask set when both fields are present and the description is non-empty.
   A partial worker update is never allowed to create a task.
+- The gateway sends `{"v": 1}` to `uc.task.snapshot.request` immediately after
+  its task subscriptions are established and every 30 seconds thereafter.
+  The default-mode Python Worker replies with every current task as a complete
+  `partial=false` snapshot. The gateway applies these responses through the
+  same envelope and `TaskStore` path as live updates.
+- Snapshot recovery is state-only. Applying a response may rehydrate missing
+  tasks, but never dispatches subtasks; the Python Orchestrator remains the
+  execution owner. A missing responder, timeout, or malformed response is
+  non-fatal and retried on the next interval.
 - Heartbeat monitoring must release the TaskStore mutex before entering a
   second lock acquisition or dispatching follow-up work; otherwise the
   service-read RPCs (`ListTasks`, `GetTask`) can wait indefinitely.
@@ -240,6 +255,8 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | NATS subscriber receives malformed JSON | Log warning, skip message, no crash |
 | NATS subscriber receives unknown task_id with a complete snapshot | Rehydrate the task when description is non-empty and the project_id field is present |
 | NATS subscriber receives unknown task_id with a partial snapshot | Log warning, skip update |
+| Snapshot request has no Python responder or times out | Log at debug level, keep the gateway running, retry next interval |
+| Snapshot response is malformed JSON | Log warning, discard the response, retry next interval |
 | NATS subscriber receives unknown status string | Preserve existing status, log warning |
 | Python consumer crash | No heartbeat → heartbeat monitor marks InProgress tasks as Failed after timeout |
 | Heartbeat timeout (default 10 min) | `TaskStore::mark_stale_tasks_failed()` marks all InProgress/Planning tasks as Failed |
@@ -277,6 +294,7 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | `task_store_submit_pending` | submit_task_pending creates Planning task |
 | `task_store_apply_update_existing_task` | apply_update updates task + adds subtasks |
 | `task_store_apply_update_unknown_task` | Unknown task_id ignored |
+| `test_task_store_rehydrates_from_complete_nats_snapshot` | Complete response rebuilds the original task and subtasks |
 | `task_store_apply_update_unknown_status` | Unknown status ignored |
 | `task_store_mark_stale_tasks_with_heartbeat` | Heartbeat timeout → task Failed |
 | `task_store_mark_stale_skips_completed_tasks` | Completed tasks not affected |
@@ -295,6 +313,8 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | `test_publish_submit_payload` | Dashboard submit via NATS payload |
 | `test_dashboard_nats_submit_fallback` | NATS fail → direct Orchestrator call |
 | `test_dashboard_nats_event_handling` | Valid/invalid event payloads |
+| `test_task_snapshot_request_replies_with_complete_snapshots` | Request/reply contains versioned complete task snapshots |
+| `test_task_snapshot_request_without_reply_is_ignored` | One-way delivery does not attempt a response |
 
 ---
 
@@ -370,10 +390,13 @@ self._app.add_event_handler("startup", self._subscribe_nats_events)
 
 ## Known Limitations
 
-1. **Rehydration requires a complete snapshot**: A gateway can rebuild a task
-   after an in-memory restart only when a Python publisher sends
-   `partial=false` with a non-empty description and the `project_id` field.
-   Partial worker results are intentionally ignored for unknown task IDs.
+1. **Recovery is best-effort over core NATS**: When a Python responder is
+   available, the gateway proactively requests snapshots on startup and every
+   30 seconds. A gateway can rebuild a task only from a complete
+   `partial=false` snapshot with a non-empty description and the `project_id`
+   field. If NATS or the responder is unavailable, recovery waits for the next
+   retry or a later live snapshot; partial worker results are intentionally
+   ignored for unknown task IDs.
 2. **Heartbeat is coarse**: 30-second heartbeat, 10-minute timeout. No
    per-task progress tracking.
 
@@ -389,6 +412,7 @@ Rust gRPC Server ←→ NATS JetStream ←→ Python nats_worker
     │ (subscribe)     (publish) (subscribe)  Orchestrator + Worker
     │                                     ↓
     └─── uc.task.update ◄──────── NATS ◄──┘
+    └─── uc.task.snapshot.request ──────► NATS ──►  (Gateway request; Python reply)
     └─── uc.task.event  ◄──────── NATS ◄──┘  (Python → gRPC)
     └─── uc.task.event  ────────► NATS ──►  (gRPC → Python: task_paused/task_resumed)
     └─── uc.heartbeat   ◄──────── NATS ◄──┘
