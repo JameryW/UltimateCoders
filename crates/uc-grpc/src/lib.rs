@@ -20,8 +20,8 @@ pub use scheduler_dispatch::{NatsKvLockProvider, NatsSubmitDispatcher};
 pub use server::TaskStore;
 pub use server::{
     NatsHeartbeat, NatsSubtaskUpdate, NatsTaskEvent, NatsTaskSubmit, NatsTaskUpdate,
-    NATS_SUBJECT_HEARTBEAT, NATS_SUBJECT_TASK_EVENT, NATS_SUBJECT_TASK_SUBMIT,
-    NATS_SUBJECT_TASK_UPDATE,
+    NATS_SUBJECT_HEARTBEAT, NATS_SUBJECT_TASK_EVENT, NATS_SUBJECT_TASK_SNAPSHOT_REQUEST,
+    NATS_SUBJECT_TASK_SUBMIT, NATS_SUBJECT_TASK_UPDATE,
 };
 pub use worker_service::WorkerRegistry;
 

@@ -82,6 +82,44 @@ def test_complete_task_update_carries_rehydration_metadata():
     assert payload["project_id"] == "project-a"
 
 
+@pytest.mark.asyncio
+async def test_task_snapshot_request_replies_with_complete_snapshots():
+    """Gateway recovery receives complete snapshots owned by the Orchestrator."""
+    nw = _make_worker()
+    task = Task(
+        id="t-recover",
+        description="restore the task",
+        project_id="project-a",
+        status=TaskStatus.IN_PROGRESS,
+    )
+    nw._orchestrator = MagicMock(tasks={task.id: task})
+    msg = MagicMock(reply="inbox")
+    msg.respond = AsyncMock()
+
+    await nw._handle_task_snapshot_request(msg)
+
+    msg.respond.assert_awaited_once()
+    payload = json.loads(msg.respond.call_args.args[0])
+    assert payload["v"] == 1
+    assert len(payload["tasks"]) == 1
+    snapshot = payload["tasks"][0]
+    assert snapshot["partial"] is False
+    assert snapshot["description"] == "restore the task"
+    assert snapshot["project_id"] == "project-a"
+
+
+@pytest.mark.asyncio
+async def test_task_snapshot_request_without_reply_is_ignored():
+    """A plain subscription message must not attempt a response."""
+    nw = _make_worker()
+    msg = MagicMock(reply="")
+    msg.respond = AsyncMock()
+
+    await nw._handle_task_snapshot_request(msg)
+
+    msg.respond.assert_not_awaited()
+
+
 def test_task_update_message_id_changes_with_subtask_snapshot_state():
     """A subtask-only transition must reach Rust instead of being deduped."""
     st = Subtask(id="st-update", description="d", status=SubtaskStatus.PENDING)
