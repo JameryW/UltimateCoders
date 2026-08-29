@@ -101,12 +101,20 @@ class TestTaskTimestampLifecycle:
         task.updated_at = self._old_timestamp()
         orch.tasks[task.id] = task
 
-        orch.pause_task_local(task.id)
+        assert orch.pause_task_local(task.id) is True
         paused_at = task.updated_at
-        orch.resume_task_local(task.id)
+        assert orch.pause_task_local(task.id) is False
+        assert task.updated_at == paused_at
+
+        assert orch.resume_task_local(task.id) is True
+        resumed_at = task.updated_at
+        assert orch.resume_task_local(task.id) is False
+        assert task.updated_at == resumed_at
 
         assert paused_at > self._old_timestamp()
         assert task.updated_at > paused_at
+        assert orch.pause_task_local("missing-task") is False
+        assert orch.resume_task_local("missing-task") is False
 
     async def test_cancel_refreshes_timestamp_for_task_and_subtask(self):
         orch = Orchestrator()
