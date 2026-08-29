@@ -24,6 +24,9 @@ import { OrchestratorEventEmitter } from "./events";
 import type { OrchestratorEvents } from "./events";
 import { sleepBackoff } from "./backoff";
 
+/** Delay before starting a fresh WatchTask recovery cycle after exhaustion. */
+const WATCH_TASK_RECOVERY_DELAY_MS = 30_000;
+
 // ── Types ──────────────────────────────────────────────────────────
 
 /** Combine an AbortSignal with a timeout — aborts on whichever fires first. */
@@ -290,6 +293,10 @@ export class UCOrchestrator {
 	private watchTaskController?: AbortController;
 	/** Reconnect attempt counter for the WatchTask stream (resets on success). */
 	private watchTaskReconnectAttempt = 0;
+	/** Generation token that invalidates callbacks from superseded streams. */
+	private watchTaskStreamGeneration = 0;
+	/** Delayed recovery timer after the bounded backoff sequence is exhausted. */
+	private watchTaskRecoveryTimer?: ReturnType<typeof setTimeout>;
 	/** Internal event emitter — decouples orchestration from presentation */
 	readonly events = new OrchestratorEventEmitter();
 
@@ -378,11 +385,17 @@ export class UCOrchestrator {
 	 * delay once the stream delivers an event (success signal).
 	 */
 	private startWatchTaskStream(): void {
+		if (this.watchTaskRecoveryTimer) {
+			clearTimeout(this.watchTaskRecoveryTimer);
+			this.watchTaskRecoveryTimer = undefined;
+		}
 		if (this.watchTaskController) {
 			this.watchTaskController.abort();
 		}
+		const generation = ++this.watchTaskStreamGeneration;
 		this.watchTaskController = this.bridge.startWatchTask(
 			(ev: TaskEvent) => {
+				if (generation !== this.watchTaskStreamGeneration) return;
 				// First event on a fresh stream = reconnect succeeded.
 				if (this.watchTaskReconnectAttempt > 0) {
 					this.watchTaskReconnectAttempt = 0;
@@ -390,6 +403,7 @@ export class UCOrchestrator {
 				this.handleWatchTaskEvent(ev);
 			},
 			() => {
+				if (generation !== this.watchTaskStreamGeneration) return;
 				// Stream ended or errored — reconnect with exponential backoff.
 				// Keep the bridge.isConnected() guard: if the server is fully
 				// down, the GrpcBridge reconnect sequence owns recovery; we only
@@ -402,16 +416,65 @@ export class UCOrchestrator {
 						maxAttempts: 8,
 					});
 					if (!slept) {
-						// Exhausted backoff — reset so a later trigger (e.g. next
-						// health-check cycle) can start a fresh sequence.
+						// Exhausted backoff — reset and schedule a fresh cycle so a
+						// long gateway outage does not permanently strand the stream.
+						if (generation !== this.watchTaskStreamGeneration) return;
 						this.watchTaskReconnectAttempt = 0;
+						this.scheduleWatchTaskRecovery(generation);
 						return;
 					}
-					if (!this.bridge.isConnected()) return;
+					if (generation !== this.watchTaskStreamGeneration) return;
+					if (!this.bridge.isConnected()) {
+						// A disconnected bridge cannot open a stream. Reset the
+						// bounded counter and let the recovery cycle probe/reconnect.
+						this.watchTaskReconnectAttempt = 0;
+						this.scheduleWatchTaskRecovery(generation);
+						return;
+					}
 					this.startWatchTaskStream();
 				})();
 			},
 		);
+	}
+
+	/**
+	 * Keep retrying after the bounded stream backoff is exhausted. When the
+	 * bridge is disconnected, a health RPC owns connection-level recovery;
+	 * after it succeeds, the stream is opened in the same recovery cycle.
+	 */
+	private scheduleWatchTaskRecovery(generation: number): void {
+		if (generation !== this.watchTaskStreamGeneration || this.watchTaskRecoveryTimer) return;
+
+		let timer: ReturnType<typeof setTimeout>;
+		timer = setTimeout(() => {
+			if (this.watchTaskRecoveryTimer !== timer) return;
+			this.watchTaskRecoveryTimer = undefined;
+			if (generation !== this.watchTaskStreamGeneration) return;
+
+			if (this.bridge.isConnected()) {
+				this.startWatchTaskStream();
+				return;
+			}
+
+			void this.bridge.health().then(() => {
+				if (generation !== this.watchTaskStreamGeneration) return;
+				if (this.bridge.isConnected()) {
+					this.startWatchTaskStream();
+				} else {
+					this.scheduleWatchTaskRecovery(generation);
+				}
+			}).catch(() => {
+				if (generation === this.watchTaskStreamGeneration) {
+					this.scheduleWatchTaskRecovery(generation);
+				}
+			});
+		}, WATCH_TASK_RECOVERY_DELAY_MS);
+		this.watchTaskRecoveryTimer = timer;
+		// A pending recovery must not keep the extension process alive during
+		// teardown or when the host is otherwise idle.
+		if (typeof timer === "object" && timer && "unref" in timer && typeof (timer as { unref?: () => void }).unref === "function") {
+			(timer as { unref: () => void }).unref();
+		}
 	}
 
 	/**
@@ -2073,9 +2136,14 @@ export class UCOrchestrator {
 	 */
 	async destroy(): Promise<void> {
 		// Stop WatchTask stream (live event subscription)
+		this.watchTaskStreamGeneration++;
 		this.watchTaskController?.abort();
 		this.watchTaskController = undefined;
 		this.watchTaskReconnectAttempt = 0;
+		if (this.watchTaskRecoveryTimer) {
+			clearTimeout(this.watchTaskRecoveryTimer);
+			this.watchTaskRecoveryTimer = undefined;
+		}
 		// Stop NATS/polling subscriber
 		await this.controlSubscriber.stop();
 		// Abort all running tasks

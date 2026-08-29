@@ -781,19 +781,23 @@ class Orchestrator:
 
     # ── Task control ───────────────────────────────────────────
 
-    def pause_task_local(self, task_id: str) -> None:
-        """Pause a task (from NATS event)."""
+    def pause_task_local(self, task_id: str) -> bool:
+        """Pause a task from a NATS event and report whether it changed."""
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.IN_PROGRESS:
             task.status = TaskStatus.PAUSED
             task.update_timestamp()
+            return True
+        return False
 
-    def resume_task_local(self, task_id: str) -> None:
-        """Resume a paused task (from NATS event)."""
+    def resume_task_local(self, task_id: str) -> bool:
+        """Resume a paused task from a NATS event and report whether it changed."""
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.PAUSED:
             task.status = TaskStatus.IN_PROGRESS
             task.update_timestamp()
+            return True
+        return False
 
     async def cancel_task(self, task_id: str, subtask_id: str | None = None) -> bool:
         """Cancel a task or specific subtask."""
