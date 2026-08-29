@@ -13,9 +13,6 @@ import { describe, expect, it, mock } from "bun:test";
 mock.module("@oh-my-pi/pi-coding-agent", () => ({
 	runSubprocess: async () => ({ stdout: "", stderr: "", code: 0 }),
 }));
-mock.module("./backoff", () => ({
-	sleepBackoff: async () => false,
-}));
 
 import { UCOrchestrator } from "./orchestrator";
 import type { GrpcBridge } from "./grpc-bridge";
@@ -24,6 +21,7 @@ type WatchTaskInternals = {
 	startWatchTaskStream: () => void;
 	scheduleWatchTaskRecovery: (generation: number) => void;
 	watchTaskStreamGeneration: number;
+	watchTaskReconnectAttempt: number;
 };
 
 function makeOrchestrator(connected: boolean) {
@@ -83,6 +81,9 @@ describe("WatchTask stream recovery", () => {
 		expect(streams).toHaveLength(1);
 
 		await withFakeTimeout(async (fire, delay) => {
+			// The production backoff helper returns false immediately when the
+			// current attempt has reached maxAttempts, without sleeping 91s.
+			internals.watchTaskReconnectAttempt = 8;
 			streams[0].onError();
 			await Promise.resolve();
 
