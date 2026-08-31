@@ -10,6 +10,26 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Mermaid's largest lazy diagram chunk is ~594 kB (~138 kB gzip).
+    // Keep the threshold close to that known boundary so initial-bundle regressions still warn.
+    chunkSizeWarningLimit: 600,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor",
+              test: /node_modules[\\/]/,
+              tags: ["$initial"],
+              maxSize: 400 * 1024,
+              entriesAware: true,
+            },
+          ],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

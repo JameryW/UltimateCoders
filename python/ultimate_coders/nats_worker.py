@@ -3261,21 +3261,50 @@ class NatsWorker:
         # disconnected, not that there are zero tasks; conflating those states
         # made a healthy empty dashboard look offline.
         tasks = {"available": True, "tasks": [], "total": 0, "status_counts": {}}
-        if orch.tasks:
+        task_values = list(orch.tasks.values())
+        if orch.engine is not None:
+            try:
+                # The gateway restores durable TaskService state from
+                # PostgreSQL on restart; the Python Orchestrator's in-process
+                # map starts empty. Prefer the engine inventory so the REST
+                # snapshot agrees with the gRPC-Web dashboard.
+                task_values = list(orch.engine.list_tasks())
+            except Exception:
+                logger.warning(
+                    "Gateway task snapshot failed; using local Orchestrator state",
+                    exc_info=True,
+                )
+
+        if task_values:
             status_counts: dict[str, int] = {}
             task_list = []
-            for tid, t in orch.tasks.items():
+            for t in task_values:
                 sv = t.status.value if hasattr(t.status, "value") else str(t.status)
                 status_counts[sv] = status_counts.get(sv, 0) + 1
+                created_at = t.created_at
+                updated_at = t.updated_at
+                created_ts = (
+                    int(created_at.timestamp())
+                    if hasattr(created_at, "timestamp")
+                    else int(created_at)
+                )
+                updated_ts = (
+                    int(updated_at.timestamp())
+                    if hasattr(updated_at, "timestamp")
+                    else int(updated_at)
+                )
+                subtask_count = getattr(t, "subtask_count", None)
+                if subtask_count is None:
+                    subtask_count = len(getattr(t, "subtasks", []))
                 task_list.append(
                     {
                         "id": t.id,
                         "description": t.description,
                         "status": sv,
                         "project_id": t.project_id,
-                        "subtask_count": len(t.subtasks),
-                        "created_at": int(t.created_at.timestamp()),
-                        "updated_at": int(t.updated_at.timestamp()),
+                        "subtask_count": subtask_count,
+                        "created_at": created_ts,
+                        "updated_at": updated_ts,
                         "subtasks": [],
                     }
                 )

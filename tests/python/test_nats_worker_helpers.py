@@ -755,6 +755,56 @@ async def test_build_snapshot_empty_task_store_is_still_available():
     }
 
 
+async def test_build_snapshot_prefers_gateway_task_store():
+    """Standalone REST snapshots must mirror the gateway's durable tasks.
+
+    The Python Orchestrator starts with an empty in-process task map after a
+    restart, while TaskService restores persisted tasks in the gateway. Using
+    only ``orch.tasks`` made the REST dashboard report zero tasks even though
+    the gRPC-Web dashboard correctly showed the restored inventory.
+    """
+    from types import SimpleNamespace
+
+    nw = _make_worker()
+    nw._dash_listworkers = AsyncMock(return_value={"available": True, "workers": []})
+    nw._dash_getschedulerstatus = AsyncMock(return_value={"available": False})
+
+    engine = MagicMock()
+    engine.health.side_effect = RuntimeError("health is irrelevant to this test")
+    engine.list_tasks.return_value = [
+        SimpleNamespace(
+            id="gateway-task",
+            description="restored from PostgreSQL",
+            status="Failed",
+            project_id="project-a",
+            subtask_count=2,
+            created_at=1_700_000_000,
+            updated_at=1_700_000_100,
+        )
+    ]
+    orch = MagicMock()
+    orch.engine = engine
+    orch.tasks = {}
+    orch._dashboard_app = None
+    nw._orchestrator = orch
+
+    snap = await nw._build_snapshot()
+
+    engine.list_tasks.assert_called_once_with()
+    assert snap["tasks"]["total"] == 1
+    assert snap["tasks"]["status_counts"] == {"Failed": 1}
+    assert snap["tasks"]["tasks"][0] == {
+        "id": "gateway-task",
+        "description": "restored from PostgreSQL",
+        "status": "Failed",
+        "project_id": "project-a",
+        "subtask_count": 2,
+        "created_at": 1_700_000_000,
+        "updated_at": 1_700_000_100,
+        "subtasks": [],
+    }
+
+
 # ── stop() shutdown reporting ──────────────────────────────────
 
 
