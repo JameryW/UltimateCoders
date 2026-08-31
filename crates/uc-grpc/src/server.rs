@@ -2282,6 +2282,58 @@ async fn connect_nats_with_retry(nats_url: &str) -> Option<async_nats::Client> {
     None
 }
 
+/// One observable input from the gateway's three NATS subscriptions or its
+/// periodic snapshot-recovery timer.
+///
+/// Keeping stream termination as an explicit variant is important: a
+/// `tokio::select!` branch written as `Some(message) = stream.next()` becomes
+/// disabled when that stream closes. Because the snapshot interval never
+/// closes, a surrounding `else` branch would then never run and the dead
+/// subscription would never be recreated.
+#[derive(Debug)]
+#[cfg(any(feature = "messaging", test))]
+enum NatsSubscriberInput<T> {
+    SnapshotTick,
+    TaskUpdate(T),
+    TaskEvent(T),
+    Heartbeat(T),
+    SubscriptionEnded(&'static str),
+}
+
+/// Wait for the next subscriber input while preserving stream-closure as a
+/// first-class lifecycle event. The generic stream seam lets unit tests use
+/// in-memory streams while production uses `async_nats::Subscriber`.
+#[cfg(any(feature = "messaging", test))]
+async fn next_nats_subscriber_input<T, U, E, H>(
+    snapshot_interval: &mut tokio::time::Interval,
+    update_sub: &mut U,
+    event_sub: &mut E,
+    heartbeat_sub: &mut H,
+) -> NatsSubscriberInput<T>
+where
+    U: futures::Stream<Item = T> + Unpin,
+    E: futures::Stream<Item = T> + Unpin,
+    H: futures::Stream<Item = T> + Unpin,
+{
+    use futures::StreamExt;
+
+    tokio::select! {
+        _ = snapshot_interval.tick() => NatsSubscriberInput::SnapshotTick,
+        message = update_sub.next() => match message {
+            Some(message) => NatsSubscriberInput::TaskUpdate(message),
+            None => NatsSubscriberInput::SubscriptionEnded(NATS_SUBJECT_TASK_UPDATE),
+        },
+        message = event_sub.next() => match message {
+            Some(message) => NatsSubscriberInput::TaskEvent(message),
+            None => NatsSubscriberInput::SubscriptionEnded(NATS_SUBJECT_TASK_EVENT),
+        },
+        message = heartbeat_sub.next() => match message {
+            Some(message) => NatsSubscriberInput::Heartbeat(message),
+            None => NatsSubscriberInput::SubscriptionEnded(NATS_SUBJECT_HEARTBEAT),
+        },
+    }
+}
+
 /// Spawn a background task that subscribes to `uc.task.update`,
 /// `uc.task.event`, and `uc.heartbeat`, updating the TaskStore accordingly,
 /// while periodically requesting complete task snapshots for recovery.
@@ -2292,8 +2344,6 @@ fn spawn_nats_subscriber(
     worker_registry: Arc<RwLock<WorkerRegistry>>,
     event_tx: broadcast::Sender<TaskEvent>,
 ) {
-    use futures::StreamExt;
-
     tokio::spawn(async move {
         // Resubscribe loop: if NATS drops (server restart, network blip), the
         // subscription streams end. Without this loop the subscriber task would
@@ -2347,11 +2397,18 @@ fn spawn_nats_subscriber(
             snapshot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
-                tokio::select! {
-                    _ = snapshot_interval.tick() => {
+                match next_nats_subscriber_input(
+                    &mut snapshot_interval,
+                    &mut update_sub,
+                    &mut event_sub,
+                    &mut heartbeat_sub,
+                )
+                .await
+                {
+                    NatsSubscriberInput::SnapshotTick => {
                         request_task_snapshots(&nats_client, &task_store).await;
                     }
-                    Some(message) = update_sub.next() => {
+                    NatsSubscriberInput::TaskUpdate(message) => {
                         match serde_json::from_slice::<NatsTaskUpdateEnvelope>(&message.payload) {
                             Ok(envelope) => {
                                 let NatsTaskUpdateEnvelope {
@@ -2389,7 +2446,11 @@ fn spawn_nats_subscriber(
                                     let mut events = Vec::new();
                                     if let Some(task) = store.tasks.get(&update.task_id) {
                                         for subtask_update in &update.subtasks {
-                                            if let Some(subtask) = task.subtasks.iter().find(|st| st.id.0 == subtask_update.subtask_id) {
+                                            if let Some(subtask) = task
+                                                .subtasks
+                                                .iter()
+                                                .find(|st| st.id.0 == subtask_update.subtask_id)
+                                            {
                                                 let event = match subtask.status {
                                                     uc_types::SubtaskStatus::Assigned => {
                                                         Some(uc_engine::AgentEventType::SubtaskAssigned {
@@ -2443,11 +2504,8 @@ fn spawn_nats_subscriber(
                                 // entries, shifting newly-pushed events to lower indices —
                                 // so events[event_count_before..] would return an empty
                                 // slice and silently drop the broadcast.
-                                let new_events: Vec<TaskEvent> = events_to_record
-                                    .iter()
-                                    .cloned()
-                                    .map(|e| e.into())
-                                    .collect();
+                                let new_events: Vec<TaskEvent> =
+                                    events_to_record.iter().cloned().map(|e| e.into()).collect();
 
                                 // Record the collected events (consumes events_to_record)
                                 {
@@ -2468,7 +2526,8 @@ fn spawn_nats_subscriber(
                                     &worker_registry,
                                     &nats_client,
                                     &update.task_id,
-                                ).await;
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -2478,7 +2537,7 @@ fn spawn_nats_subscriber(
                             }
                         }
                     }
-                    Some(message) = event_sub.next() => {
+                    NatsSubscriberInput::TaskEvent(message) => {
                         match serde_json::from_slice::<NatsTaskEvent>(&message.payload) {
                             Ok(nats_event) => {
                                 tracing::debug!(
@@ -2511,7 +2570,7 @@ fn spawn_nats_subscriber(
                             }
                         }
                     }
-                    Some(message) = heartbeat_sub.next() => {
+                    NatsSubscriberInput::Heartbeat(message) => {
                         let mut store = task_store.lock().await;
                         store.update_last_heartbeat();
                         // Also track per-worker heartbeat for failover detection.
@@ -2519,11 +2578,11 @@ fn spawn_nats_subscriber(
                             store.update_worker_heartbeat(&hb.consumer_id);
                         }
                     }
-                    else => {
-                        // A subscription stream ended (NATS disconnect/reconnect).
-                        // Break the inner loop to re-subscribe rather than dying —
-                        // a dead subscriber means heartbeat timeouts kill live tasks.
-                        tracing::warn!("NATS subscription ended, re-subscribing in 2s");
+                    NatsSubscriberInput::SubscriptionEnded(subject) => {
+                        // Recreate the full subscription set. Keeping one stale
+                        // stream while replacing another complicates ordering and
+                        // can miss events across a reconnect boundary.
+                        tracing::warn!(subject, "NATS subscription ended, re-subscribing in 2s");
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         break;
                     }
@@ -4174,9 +4233,50 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::stream;
     // TaskStoreBackend trait methods (get_task, etc.) are needed for backend
     // write-path persistence tests.
     use uc_engine::TaskStoreBackend;
+
+    #[tokio::test]
+    async fn nats_subscriber_input_reports_any_closed_subscription() {
+        for expected_subject in [
+            NATS_SUBJECT_TASK_UPDATE,
+            NATS_SUBJECT_TASK_EVENT,
+            NATS_SUBJECT_HEARTBEAT,
+        ] {
+            let mut snapshot_interval =
+                tokio::time::interval(std::time::Duration::from_secs(3_600));
+            // Tokio intervals tick immediately. Consume that first tick so the
+            // closed stream is the only ready branch in the selector below.
+            snapshot_interval.tick().await;
+
+            let make_stream = |subject| -> std::pin::Pin<Box<dyn futures::Stream<Item = u8>>> {
+                if subject == expected_subject {
+                    Box::pin(stream::empty())
+                } else {
+                    Box::pin(stream::pending())
+                }
+            };
+            let mut update_sub = make_stream(NATS_SUBJECT_TASK_UPDATE);
+            let mut event_sub = make_stream(NATS_SUBJECT_TASK_EVENT);
+            let mut heartbeat_sub = make_stream(NATS_SUBJECT_HEARTBEAT);
+
+            match next_nats_subscriber_input(
+                &mut snapshot_interval,
+                &mut update_sub,
+                &mut event_sub,
+                &mut heartbeat_sub,
+            )
+            .await
+            {
+                NatsSubscriberInput::SubscriptionEnded(subject) => {
+                    assert_eq!(subject, expected_subject);
+                }
+                _ => panic!("expected the closed NATS subscription to end the cycle"),
+            }
+        }
+    }
 
     #[test]
     fn error_mapping_search() {
