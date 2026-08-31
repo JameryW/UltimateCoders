@@ -229,6 +229,19 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
   second lock acquisition or dispatching follow-up work; otherwise the
   service-read RPCs (`ListTasks`, `GetTask`) can wait indefinitely.
 
+### Gateway Subscription Lifecycle
+
+- The gateway treats `uc.task.update`, `uc.task.event`, and `uc.heartbeat` as
+  one subscription set. If any stream returns `None`, it logs the ended
+  subject, waits two seconds, and recreates all three subscriptions.
+- Stream closure must be selected as an explicit input. Do not use
+  `Some(message) = stream.next()` plus a `tokio::select!` `else` branch: the
+  snapshot interval is permanently enabled, so `else` can never observe a
+  single closed stream.
+- Recreating the set also recreates the snapshot interval. Tokio's immediate
+  first interval tick requests a complete task snapshot as soon as the new
+  subscriptions are established, closing state gaps from the outage.
+
 ### Dashboard Worker Snapshot
 
 - The default-mode NATS Worker keeps its own local worker in
@@ -257,6 +270,7 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | NATS subscriber receives unknown task_id with a partial snapshot | Log warning, skip update |
 | Snapshot request has no Python responder or times out | Log at debug level, keep the gateway running, retry next interval |
 | Snapshot response is malformed JSON | Log warning, discard the response, retry next interval |
+| Any gateway NATS subscription stream ends | Log the subject, wait 2 seconds, recreate the full subscription set, then request a snapshot |
 | NATS subscriber receives unknown status string | Preserve existing status, log warning |
 | Python consumer crash | No heartbeat → heartbeat monitor marks InProgress tasks as Failed after timeout |
 | Heartbeat timeout (default 10 min) | `TaskStore::mark_stale_tasks_failed()` marks all InProgress/Planning tasks as Failed |
@@ -295,6 +309,7 @@ When gRPC publishes `task_paused`/`task_resumed` via `uc.task.event`:
 | `task_store_apply_update_existing_task` | apply_update updates task + adds subtasks |
 | `task_store_apply_update_unknown_task` | Unknown task_id ignored |
 | `test_task_store_rehydrates_from_complete_nats_snapshot` | Complete response rebuilds the original task and subtasks |
+| `nats_subscriber_input_reports_any_closed_subscription` | Closing update/event/heartbeat is surfaced with the exact subject so the outer loop can resubscribe |
 | `task_store_apply_update_unknown_status` | Unknown status ignored |
 | `task_store_mark_stale_tasks_with_heartbeat` | Heartbeat timeout → task Failed |
 | `task_store_mark_stale_skips_completed_tasks` | Completed tasks not affected |
@@ -384,6 +399,37 @@ def _schedule_subscribe(self):
 ```python
 # Correct — use FastAPI startup event which runs on uvicorn's event loop
 self._app.add_event_handler("startup", self._subscribe_nats_events)
+```
+
+### Wrong: Pattern-matching only live messages in `tokio::select!`
+
+```rust
+tokio::select! {
+    Some(message) = update_sub.next() => handle(message).await,
+    _ = snapshot_interval.tick() => request_snapshot().await,
+    else => break, // unreachable while the interval branch stays enabled
+}
+```
+
+When `update_sub` closes, only that branch is disabled. The interval remains
+enabled forever, so the loop never reaches `else` and never re-subscribes.
+
+#### Correct
+
+```rust
+match next_nats_subscriber_input(
+    &mut snapshot_interval,
+    &mut update_sub,
+    &mut event_sub,
+    &mut heartbeat_sub,
+).await {
+    NatsSubscriberInput::TaskUpdate(message) => handle(message).await,
+    NatsSubscriberInput::SubscriptionEnded(subject) => {
+        tracing::warn!(subject, "NATS subscription ended, re-subscribing in 2s");
+        break;
+    }
+    // task event, heartbeat, and snapshot variants omitted
+}
 ```
 
 ---
