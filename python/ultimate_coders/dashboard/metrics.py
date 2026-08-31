@@ -443,6 +443,15 @@ class MetricsAggregator:
         self._alert_store.close()
         self._metrics_store.close()
 
+    def __del__(self) -> None:
+        """Best-effort fallback for callers that omit explicit shutdown."""
+        try:
+            self.close()
+        except Exception:
+            # Destructors can run during partial construction or interpreter
+            # shutdown, when attributes and imported modules may be unavailable.
+            pass
+
     def generate_prometheus(self) -> str:
         """Generate Prometheus text format output for /metrics endpoint."""
         return self._prom.generate()
@@ -474,7 +483,67 @@ _METRICS_DB_DEFAULT = os.path.expanduser("~/.ultimate_coders/metrics.db")
 _ALERTS_DB_PATH = os.environ.get("UC_METRICS_DB", _METRICS_DB_DEFAULT)
 
 
-class AlertStore:
+class _ThreadLocalSQLiteStore:
+    """Own per-thread SQLite handles until the store is explicitly closed.
+
+    ``threading.local`` alone releases a connection when its thread exits,
+    which makes Python 3.14 report an unclosed-database ``ResourceWarning``.
+    The registry keeps those handles alive and lets shutdown close them from
+    the owning service thread. Connections remain thread-local for queries.
+    """
+
+    _db_path: str
+
+    def _init_connections(self) -> None:
+        self._local = threading.local()
+        self._connections_lock = threading.Lock()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connection_generation = 0
+
+    def _conn(self) -> sqlite3.Connection:
+        with self._connections_lock:
+            generation = self._connection_generation
+            conn = getattr(self._local, "conn", None)
+            local_generation = getattr(self._local, "generation", -1)
+            if conn is not None and local_generation == generation:
+                return conn
+
+            conn = sqlite3.connect(
+                self._db_path,
+                timeout=5,
+                check_same_thread=False,
+            )
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.row_factory = sqlite3.Row
+            except Exception:
+                conn.close()
+                raise
+
+            self._connections.add(conn)
+            self._local.conn = conn
+            self._local.generation = generation
+            return conn
+
+    def close(self) -> None:
+        """Close every SQLite connection created by this store."""
+        with self._connections_lock:
+            connections = tuple(self._connections)
+            self._connections.clear()
+            self._connection_generation += 1
+
+        for conn in connections:
+            conn.close()
+
+    def __del__(self) -> None:
+        """Best-effort fallback for callers that omit explicit shutdown."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class AlertStore(_ThreadLocalSQLiteStore):
     """SQLite-backed alert history store.
 
     ponytail: single WAL-mode db file, shared with MetricsStore (PR3).
@@ -483,18 +552,10 @@ class AlertStore:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or _ALERTS_DB_PATH
-        self._local = threading.local()  # per-thread connections
+        self._init_connections()
         # Ensure parent directory exists
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._init_db()
-
-    def _conn(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self._db_path, timeout=5)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.row_factory = sqlite3.Row
-            self._local.conn = conn
-        return self._local.conn
 
     def _init_db(self) -> None:
         conn = self._conn()
@@ -547,22 +608,12 @@ class AlertStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def close(self) -> None:
-        """Close the current thread's SQLite connection, if any."""
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            try:
-                conn.close()
-            finally:
-                self._local.conn = None
-
-
 # ── MetricsStore (SQLite time-series persistence) ──────────
 
 _METRICS_RETENTION_DAYS = int(os.environ.get("UC_METRICS_RETENTION_DAYS", "7"))
 
 
-class MetricsStore:
+class MetricsStore(_ThreadLocalSQLiteStore):
     """SQLite-backed time-series store for trend samples.
 
     Same db file as AlertStore — different table.  Enables >1h trend
@@ -573,18 +624,10 @@ class MetricsStore:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or _ALERTS_DB_PATH
-        self._local = threading.local()
+        self._init_connections()
         self._last_cleanup_ts: float = 0.0
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         self._init_db()
-
-    def _conn(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self._db_path, timeout=5)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.row_factory = sqlite3.Row
-            self._local.conn = conn
-        return self._local.conn
 
     def _init_db(self) -> None:
         conn = self._conn()
@@ -598,15 +641,6 @@ class MetricsStore:
             )
         """)
         conn.commit()
-
-    def close(self) -> None:
-        """Close the current thread's SQLite connection, if any."""
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            try:
-                conn.close()
-            finally:
-                self._local.conn = None
 
     def insert(self, sample: MetricsSample) -> None:
         conn = self._conn()

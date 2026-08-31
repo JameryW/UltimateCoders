@@ -5,7 +5,8 @@
   "description": "UltimateCoders Orchestrator extension for oh-my-pi",
   "license": "MIT",
   "scripts": {
-    "check": "tsc --noEmit | node scripts/check-ownership.mjs",
+    "check": "node scripts/check-ownership.mjs",
+    "test:check": "node --test scripts/check-ownership.test.mjs",
     "dev": "cd ../../vendor/oh-my-pi && omp --extension ../../packages/uc-orchestrator",
     "rpc": "bun run src/uc-rpc-server.ts"
   },

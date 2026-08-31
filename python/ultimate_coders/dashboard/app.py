@@ -157,6 +157,7 @@ class DashboardApp:
         self._app = FastAPI(title="UltimateCoders Dashboard")
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
+        self._stopped = False
         self._event_log: deque[dict[str, Any]] = deque(maxlen=500)
         self._metrics = MetricsAggregator()
         # Auth configuration
@@ -1968,6 +1969,10 @@ class DashboardApp:
 
         Unsubscribes from NATS event streams and shuts down the FastAPI server.
         """
+        if self._stopped:
+            return
+        self._stopped = True
+
         # Clear NATS subscriptions. The actual unsubscribe calls are async
         # and the event loop may be shutting down; since the NATS client
         # will be drained/closed separately, clearing the references is
@@ -1980,6 +1985,7 @@ class DashboardApp:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+        self._metrics.close()
         logger.info("Dashboard stopped")
 
     # ── Factory Methods ─────────────────────────────────────────────

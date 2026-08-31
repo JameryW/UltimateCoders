@@ -1138,6 +1138,7 @@ impl LocalEngine {
 mod tests {
     use super::*;
     use uc_types::memory::{MemoryContent, MemoryMetadata, MemoryReadRequest};
+    #[cfg(feature = "indexing")]
     use uc_types::search::SearchMode;
 
     #[cfg(feature = "indexing")]

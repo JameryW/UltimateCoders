@@ -6,8 +6,11 @@ Uses temp SQLite databases so tests never touch the real metrics.db.
 
 from __future__ import annotations
 
+import gc
 import os
+import threading
 import time
+import warnings
 
 import pytest
 from ultimate_coders.dashboard.metrics import (
@@ -59,6 +62,47 @@ def _make_aggregator(tmp_path: str, alert_config: AlertConfig | None = None) -> 
         agg._metrics_store.get_trend(minutes=60), maxlen=60
     )
     return agg
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        AlertStore,
+        MetricsStore,
+        MetricsAggregator,
+    ],
+    ids=["alert-store", "metrics-store", "aggregator"],
+)
+def test_sqlite_connections_close_when_owner_is_collected(tmp_path, factory):
+    """Best-effort cleanup prevents Python 3.14 sqlite ResourceWarnings."""
+    db_path = str(tmp_path / f"{factory.__name__}.db")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        owner = factory(db_path=db_path)
+        del owner
+        gc.collect()
+
+    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert resource_warnings == []
+
+
+def test_aggregator_closes_connection_created_by_worker_thread(tmp_path):
+    """Thread-local SQLite handles must remain owned until shutdown."""
+    db_path = str(tmp_path / "threaded-metrics.db")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        aggregator = MetricsAggregator(db_path=db_path)
+        reader = threading.Thread(target=aggregator.snapshot)
+        reader.start()
+        reader.join()
+        aggregator.close()
+        del aggregator
+        gc.collect()
+
+    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert resource_warnings == []
 
 
 # ── AlertConfig Tests ────────────────────────────────────────
