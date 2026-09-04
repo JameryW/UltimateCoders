@@ -225,7 +225,7 @@ impl SchedulerService {
     /// the window; otherwise it will be deferred to the next window.
     ///
     /// The task is persisted to the store and registered with the job scheduler.
-    pub async fn add_cron_job(&self, task: ScheduledTask) -> Result<AddJobResult, EngineError> {
+    pub async fn add_cron_job(&self, mut task: ScheduledTask) -> Result<AddJobResult, EngineError> {
         let cron_expr = task.cron_expression.clone().ok_or_else(|| {
             EngineError::ConfigError("Cron expression required for cron job".to_string())
         })?;
@@ -234,6 +234,11 @@ impl SchedulerService {
         croner::Cron::from_str(&cron_expr).map_err(|e| {
             EngineError::ConfigError(format!("Invalid cron expression '{}': {:?}", cron_expr, e))
         })?;
+
+        // Keep the persisted status useful to callers before the first tick.
+        // The runtime scheduler has its own clock, so expose the same next
+        // occurrence through the durable task record as soon as it is added.
+        task.next_execution = Some(Self::next_cron_execution(&cron_expr, Utc::now())?);
 
         let task_id = task.id;
 
@@ -273,10 +278,18 @@ impl SchedulerService {
     /// the window, the job will be deferred to the next window.
     ///
     /// The task is persisted to the store and registered with the job scheduler.
-    pub async fn add_one_shot_job(&self, task: ScheduledTask) -> Result<AddJobResult, EngineError> {
+    pub async fn add_one_shot_job(
+        &self,
+        mut task: ScheduledTask,
+    ) -> Result<AddJobResult, EngineError> {
         let execute_after = task.execute_after.ok_or_else(|| {
             EngineError::ConfigError("execute_after required for one-shot job".to_string())
         })?;
+
+        // A future one-shot has exactly one known next occurrence. A past
+        // timestamp is still persisted for compatibility, but is represented
+        // as no longer pending rather than advertising an expired run.
+        task.next_execution = (execute_after > Utc::now()).then_some(execute_after);
 
         let task_id = task.id;
 
@@ -420,6 +433,7 @@ impl SchedulerService {
                 let dispatcher = self.dispatcher.read().await.clone();
                 match dispatcher.dispatch(&task) {
                     Ok(()) => {
+                        self.mark_execution_started(task_id, started_at).await;
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
                             scheduled_task_id: *task_id,
@@ -433,6 +447,7 @@ impl SchedulerService {
                         Ok(())
                     }
                     Err(e) => {
+                        self.mark_execution_started(task_id, started_at).await;
                         // Dispatch returned Err — NATS unavailable / no worker
                         // received the task. Record as Skipped (not Failed):
                         // the task itself is valid, it just didn't execute.
@@ -627,6 +642,106 @@ impl SchedulerService {
         self.job_metadata.read().await.len()
     }
 
+    /// Calculate the next cron occurrence after `after` using the same
+    /// six-field representation passed to `tokio-cron-scheduler`.
+    ///
+    /// Keeping this calculation behind the scheduler service's interface
+    /// gives callers a consistent `next_execution` value without exposing
+    /// the runtime scheduler's opaque job type.
+    fn next_cron_execution(
+        cron_expression: &str,
+        after: chrono::DateTime<Utc>,
+    ) -> Result<chrono::DateTime<Utc>, EngineError> {
+        let cron = croner::Cron::from_str(&Self::cron_to_6field(cron_expression)).map_err(|e| {
+            EngineError::ConfigError(format!(
+                "Invalid cron expression '{}': {:?}",
+                cron_expression, e
+            ))
+        })?;
+
+        cron.find_next_occurrence(&after, false).map_err(|e| {
+            EngineError::ConfigError(format!(
+                "Unable to calculate next execution for cron '{}': {:?}",
+                cron_expression, e
+            ))
+        })
+    }
+
+    /// Convert a one-shot timestamp into the runtime scheduler delay while
+    /// preserving sub-second precision. Returning `None` is intentional for
+    /// an already-expired task: it remains persisted, but cannot be scheduled
+    /// in the past.
+    #[cfg(feature = "scheduler")]
+    fn one_shot_duration(
+        execute_after: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<std::time::Duration>, EngineError> {
+        let duration = execute_after.signed_duration_since(now);
+        if duration <= chrono::Duration::zero() {
+            return Ok(None);
+        }
+
+        duration.to_std().map(Some).map_err(|e| {
+            EngineError::ConfigError(format!(
+                "Invalid one-shot delay until {}: {}",
+                execute_after, e
+            ))
+        })
+    }
+
+    /// Update the durable and in-memory schedule snapshot after a dispatch
+    /// attempt. The dispatcher is synchronous and may only acknowledge that a
+    /// background submission was started, so this timestamp represents the
+    /// scheduler's dispatch boundary rather than eventual worker completion.
+    async fn mark_execution_started(&self, task_id: &Uuid, started_at: chrono::DateTime<Utc>) {
+        let updated_task = {
+            let mut metadata = self.job_metadata.write().await;
+            let Some(job) = metadata.get_mut(task_id) else {
+                return;
+            };
+
+            // A manual trigger can race a cron callback. Never let a slower
+            // completion move the visible last-run timestamp backwards.
+            if job
+                .task
+                .last_execution
+                .map(|last| started_at >= last)
+                .unwrap_or(true)
+            {
+                job.task.last_execution = Some(started_at);
+                job.task.next_execution = match job.task.cron_expression.as_deref() {
+                    Some(cron_expression) => {
+                        match Self::next_cron_execution(cron_expression, started_at) {
+                            Ok(next) => Some(next),
+                            Err(error) => {
+                                warn!(
+                                    task_id = %task_id,
+                                    error = %error,
+                                    "Failed to calculate next cron execution after dispatch"
+                                );
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                };
+            }
+            job.task.updated_at = Utc::now();
+            job.task.clone()
+        };
+
+        // The scheduler must remain usable if a secondary persistence write
+        // fails. The in-memory snapshot is already updated and recovery will
+        // reconcile it on the next successful store read.
+        if let Err(error) = self.store.update_task(&updated_task).await {
+            warn!(
+                task_id = %task_id,
+                error = %error,
+                "Failed to persist scheduler execution metadata"
+            );
+        }
+    }
+
     /// Forget the runtime UUID for a one-shot job after it fires.
     ///
     /// One-shot jobs are removed by `tokio-cron-scheduler` after execution;
@@ -643,7 +758,6 @@ impl SchedulerService {
     /// to a 6-field expression (with seconds) as required by tokio-cron-scheduler.
     ///
     /// If the expression already has 6+ fields, it is returned as-is.
-    #[cfg(feature = "scheduler")]
     fn cron_to_6field(expr: &str) -> String {
         let parts: Vec<&str> = expr.split_whitespace().collect();
         if parts.len() == 5 {
@@ -739,17 +853,14 @@ impl SchedulerService {
             .ok_or_else(|| EngineError::ConfigError("execute_after missing".to_string()))?;
 
         let now = Utc::now();
-        let duration = execute_after.signed_duration_since(now);
-        if duration.num_seconds() <= 0 {
+        let Some(duration_std) = Self::one_shot_duration(execute_after, now)? else {
             warn!(
                 task_id = %task.id,
                 execute_after = %execute_after,
                 "One-shot job execute_after is in the past, skipping scheduler registration"
             );
             return Ok(None);
-        }
-
-        let duration_std = std::time::Duration::from_secs(duration.num_seconds().max(0) as u64);
+        };
         let task_id = task.id;
         let task_description = task.description.clone();
         // Clone the service handle into the closure so it can call
@@ -864,6 +975,20 @@ mod tests {
         assert_eq!(service.job_count().await, 1);
     }
 
+    #[tokio::test]
+    async fn add_cron_job_populates_next_execution() {
+        let service = SchedulerService::new();
+        let task = make_cron_task("0 22 * * *");
+        let result = service.add_cron_job(task).await.unwrap();
+
+        let stored = service.get_job(&result.task_id).await.unwrap();
+        assert!(
+            stored.next_execution.is_some(),
+            "cron jobs should expose their next occurrence immediately"
+        );
+        assert!(stored.next_execution.unwrap() > Utc::now());
+    }
+
     #[cfg(feature = "scheduler")]
     #[tokio::test]
     async fn disabled_cron_job_is_not_registered_with_runtime_scheduler() {
@@ -911,6 +1036,17 @@ mod tests {
         let result = service.add_one_shot_job(task).await.unwrap();
         assert!(!result.task_id.to_string().is_empty());
         assert_eq!(service.job_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn add_one_shot_job_populates_next_execution() {
+        let service = SchedulerService::new();
+        let later = Utc::now() + chrono::Duration::hours(8);
+        let task = make_one_shot_task(later);
+        let result = service.add_one_shot_job(task).await.unwrap();
+
+        let stored = service.get_job(&result.task_id).await.unwrap();
+        assert_eq!(stored.next_execution, Some(later));
     }
 
     #[tokio::test]
@@ -968,6 +1104,29 @@ mod tests {
         assert!(service.get_job(&task_id).await.is_none());
 
         service.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[test]
+    fn one_shot_duration_preserves_subsecond_precision() {
+        let now = Utc::now();
+        let execute_after = now + chrono::Duration::milliseconds(250);
+        let delay = SchedulerService::one_shot_duration(execute_after, now)
+            .unwrap()
+            .expect("future one-shot should have a runtime delay");
+
+        assert_eq!(delay, std::time::Duration::from_millis(250));
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[test]
+    fn one_shot_duration_skips_expired_timestamp() {
+        let now = Utc::now();
+        let execute_after = now - chrono::Duration::milliseconds(1);
+        assert_eq!(
+            SchedulerService::one_shot_duration(execute_after, now).unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -1241,6 +1400,63 @@ mod tests {
         let executions = store.list_executions(&result.task_id, 10).await.unwrap();
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0].status, ExecutionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn dispatch_updates_execution_metadata() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service = SchedulerService::with_store(store.clone());
+
+        let task = make_cron_task("0 22 * * *");
+        let result = service.add_cron_job(task).await.unwrap();
+        let before = service.get_job(&result.task_id).await.unwrap();
+        assert!(before.last_execution.is_none());
+        assert!(before.next_execution.is_some());
+
+        service.dispatch_with_guard(&result.task_id).await.unwrap();
+
+        let after = service.get_job(&result.task_id).await.unwrap();
+        assert!(after.last_execution.is_some());
+        assert!(after.next_execution.is_some());
+        assert!(after.updated_at >= after.last_execution.unwrap());
+
+        let persisted = store.load_task(&result.task_id).await.unwrap().unwrap();
+        assert_eq!(persisted.last_execution, after.last_execution);
+        assert_eq!(persisted.next_execution, after.next_execution);
+    }
+
+    #[tokio::test]
+    async fn failed_dispatch_still_updates_execution_metadata() {
+        struct FailingDispatcher;
+        impl ScheduleDispatcher for FailingDispatcher {
+            fn dispatch(&self, _task: &ScheduledTask) -> Result<(), EngineError> {
+                Err(EngineError::ConnectionError(
+                    "worker unavailable".to_string(),
+                ))
+            }
+        }
+
+        let service = SchedulerService::with_dispatcher(Arc::new(FailingDispatcher));
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+
+        assert!(service.dispatch_with_guard(&task_id).await.is_err());
+
+        let updated = service.get_job(&task_id).await.unwrap();
+        assert!(
+            updated.last_execution.is_some(),
+            "failed dispatch attempts still represent a scheduler run"
+        );
+        assert!(updated.next_execution.is_some());
+        assert_eq!(
+            service
+                .get_execution_history(Some(&task_id))
+                .await
+                .first()
+                .map(|history| &history.status),
+            Some(&ExecutionStatus::Skipped)
+        );
     }
 
     #[tokio::test]
