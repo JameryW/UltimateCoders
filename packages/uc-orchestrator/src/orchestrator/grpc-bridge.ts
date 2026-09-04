@@ -897,9 +897,8 @@ export class GrpcBridge {
 	}
 
 	/**
-	 * Add a cron job at runtime. NOTE: the Rust server currently returns
-	 * UNIMPLEMENTED for AddCronJob (jobs are declared in uc.scheduler.yaml),
-	 * but the RPC + proto messages exist so this wires the client side now.
+	 * Add and persist a cron job at runtime. Enabled jobs are registered by the
+	 * Rust scheduler immediately; disabled jobs are kept for later activation.
 	 */
 	async addCronJob(request: {
 		description: string;
@@ -931,8 +930,7 @@ export class GrpcBridge {
 	}
 
 	/**
-	 * Remove a scheduled job by ID. Like addCronJob, may return UNIMPLEMENTED
-	 * on older servers; the client surfaces the error string.
+	 * Remove a scheduled job by ID from persistence and the active scheduler.
 	 */
 	async removeJob(jobId: string): Promise<RemoveJobResult> {
 		return this.withReconnect(async () => {

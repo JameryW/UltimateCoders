@@ -113,6 +113,14 @@ pub struct SchedulerService {
     /// The tokio-cron-scheduler instance (when the `scheduler` feature is enabled).
     #[cfg(feature = "scheduler")]
     job_scheduler: Arc<RwLock<Option<tokio_cron_scheduler::JobScheduler>>>,
+    /// Runtime scheduler UUIDs keyed by our durable task IDs.
+    ///
+    /// `tokio-cron-scheduler` generates its own UUID for every registered job.
+    /// Keeping that opaque ID separate from `ScheduledTask::id` lets removal
+    /// reliably unregister the runtime job without leaking scheduler details
+    /// into the public scheduler interface.
+    #[cfg(feature = "scheduler")]
+    scheduler_job_ids: Arc<RwLock<HashMap<Uuid, Uuid>>>,
 }
 
 impl SchedulerService {
@@ -139,6 +147,8 @@ impl SchedulerService {
             started: Arc::new(RwLock::new(false)),
             #[cfg(feature = "scheduler")]
             job_scheduler: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "scheduler")]
+            scheduler_job_ids: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -232,10 +242,14 @@ impl SchedulerService {
 
         // Register with job scheduler (if feature enabled and started)
         #[cfg(feature = "scheduler")]
-        {
+        if task.enabled {
             let js = self.job_scheduler.read().await;
             if let Some(scheduler) = js.as_ref() {
-                self.register_cron_with_scheduler(scheduler, &task).await?;
+                let scheduler_job_id = self.register_cron_with_scheduler(scheduler, &task).await?;
+                self.scheduler_job_ids
+                    .write()
+                    .await
+                    .insert(task_id, scheduler_job_id);
             }
         }
 
@@ -271,11 +285,18 @@ impl SchedulerService {
 
         // Register with job scheduler (if feature enabled and started)
         #[cfg(feature = "scheduler")]
-        {
+        if task.enabled {
             let js = self.job_scheduler.read().await;
             if let Some(scheduler) = js.as_ref() {
-                self.register_one_shot_with_scheduler(scheduler, &task)
-                    .await?;
+                if let Some(scheduler_job_id) = self
+                    .register_one_shot_with_scheduler(scheduler, &task)
+                    .await?
+                {
+                    self.scheduler_job_ids
+                        .write()
+                        .await
+                        .insert(task_id, scheduler_job_id);
+                }
             }
         }
 
@@ -313,11 +334,14 @@ impl SchedulerService {
         #[cfg(feature = "scheduler")]
         {
             let js = self.job_scheduler.read().await;
-            if let Some(scheduler) = js.as_ref() {
-                if let Err(e) = scheduler.remove(task_id).await {
+            let scheduler_job_id = self.scheduler_job_ids.read().await.get(task_id).copied();
+            if let (Some(scheduler), Some(scheduler_job_id)) = (js.as_ref(), scheduler_job_id) {
+                if let Err(e) = scheduler.remove(&scheduler_job_id).await {
                     warn!(task_id = %task_id, error = ?e, "Failed to remove job from tokio-cron-scheduler");
                 }
             }
+            drop(js);
+            self.scheduler_job_ids.write().await.remove(task_id);
         }
 
         Ok(())
@@ -510,26 +534,43 @@ impl SchedulerService {
             // Register all persisted tasks with the job scheduler
             for task in &persisted_tasks {
                 if task.cron_expression.is_some() {
-                    if let Err(e) = self
+                    match self
                         .register_cron_with_scheduler(&job_scheduler, task)
                         .await
                     {
-                        warn!(
-                            task_id = %task.id,
-                            error = %e,
-                            "Failed to register persisted cron task with scheduler during recovery"
-                        );
+                        Ok(scheduler_job_id) => {
+                            self.scheduler_job_ids
+                                .write()
+                                .await
+                                .insert(task.id, scheduler_job_id);
+                        }
+                        Err(e) => {
+                            warn!(
+                                task_id = %task.id,
+                                error = %e,
+                                "Failed to register persisted cron task with scheduler during recovery"
+                            );
+                        }
                     }
                 } else if task.execute_after.is_some() {
-                    if let Err(e) = self
+                    match self
                         .register_one_shot_with_scheduler(&job_scheduler, task)
                         .await
                     {
-                        warn!(
-                            task_id = %task.id,
-                            error = %e,
-                            "Failed to register persisted one-shot task with scheduler during recovery"
-                        );
+                        Ok(Some(scheduler_job_id)) => {
+                            self.scheduler_job_ids
+                                .write()
+                                .await
+                                .insert(task.id, scheduler_job_id);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!(
+                                task_id = %task.id,
+                                error = %e,
+                                "Failed to register persisted one-shot task with scheduler during recovery"
+                            );
+                        }
                     }
                 }
             }
@@ -568,6 +609,7 @@ impl SchedulerService {
                     EngineError::InternalError(format!("Failed to stop job scheduler: {:?}", e))
                 })?;
             }
+            self.scheduler_job_ids.write().await.clear();
         }
 
         *started = false;
@@ -583,6 +625,16 @@ impl SchedulerService {
     /// Get the number of registered jobs.
     pub async fn job_count(&self) -> usize {
         self.job_metadata.read().await.len()
+    }
+
+    /// Forget the runtime UUID for a one-shot job after it fires.
+    ///
+    /// One-shot jobs are removed by `tokio-cron-scheduler` after execution;
+    /// clearing our lookup here prevents a later explicit removal from trying
+    /// to delete an already-consumed runtime job.
+    #[cfg(feature = "scheduler")]
+    async fn forget_scheduler_job_id(&self, task_id: &Uuid) {
+        self.scheduler_job_ids.write().await.remove(task_id);
     }
 
     // ── tokio-cron-scheduler integration ─────────────────────────
@@ -607,7 +659,7 @@ impl SchedulerService {
         &self,
         scheduler: &tokio_cron_scheduler::JobScheduler,
         task: &ScheduledTask,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Uuid, EngineError> {
         let cron_expr = task
             .cron_expression
             .as_ref()
@@ -668,9 +720,7 @@ impl SchedulerService {
 
         scheduler.add(job).await.map_err(|e| {
             EngineError::InternalError(format!("Failed to add cron job to scheduler: {:?}", e))
-        })?;
-
-        Ok(())
+        })
     }
 
     /// Register a one-shot task with the job scheduler.
@@ -683,7 +733,7 @@ impl SchedulerService {
         &self,
         scheduler: &tokio_cron_scheduler::JobScheduler,
         task: &ScheduledTask,
-    ) -> Result<(), EngineError> {
+    ) -> Result<Option<Uuid>, EngineError> {
         let execute_after = task
             .execute_after
             .ok_or_else(|| EngineError::ConfigError("execute_after missing".to_string()))?;
@@ -696,7 +746,7 @@ impl SchedulerService {
                 execute_after = %execute_after,
                 "One-shot job execute_after is in the past, skipping scheduler registration"
             );
-            return Ok(());
+            return Ok(None);
         }
 
         let duration_std = std::time::Duration::from_secs(duration.num_seconds().max(0) as u64);
@@ -729,6 +779,7 @@ impl SchedulerService {
                         lock_key = %lock_key,
                         "One-shot tick skipped — another instance holds the lock"
                     );
+                    svc.forget_scheduler_job_id(&task_id).await;
                     return;
                 }
 
@@ -740,17 +791,18 @@ impl SchedulerService {
                         "One-shot dispatch_with_guard failed (deferred or error)"
                     );
                 }
+                svc.forget_scheduler_job_id(&task_id).await;
             })
         })
         .map_err(|e| {
             EngineError::InternalError(format!("Failed to create one-shot job: {:?}", e))
         })?;
 
-        scheduler.add(job).await.map_err(|e| {
+        let scheduler_job_id = scheduler.add(job).await.map_err(|e| {
             EngineError::InternalError(format!("Failed to add one-shot job to scheduler: {:?}", e))
         })?;
 
-        Ok(())
+        Ok(Some(scheduler_job_id))
     }
 }
 
@@ -812,6 +864,30 @@ mod tests {
         assert_eq!(service.job_count().await, 1);
     }
 
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn disabled_cron_job_is_not_registered_with_runtime_scheduler() {
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        let mut task = make_cron_task("* * * * * *");
+        task.enabled = false;
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+
+        assert!(service.get_job(&task_id).await.is_some());
+        assert!(
+            !service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "disabled jobs must remain persisted/visible but must not be scheduled"
+        );
+
+        service.stop().await.unwrap();
+    }
+
     #[tokio::test]
     async fn add_cron_job_invalid_expression() {
         let service = SchedulerService::new();
@@ -860,6 +936,38 @@ mod tests {
 
         service.remove_job(&result.task_id).await.unwrap();
         assert_eq!(service.job_count().await, 0);
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn remove_job_unregisters_runtime_scheduler_job() {
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        let task = make_cron_task("* * * * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+        assert!(
+            service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "enabled jobs must retain the runtime scheduler UUID"
+        );
+
+        service.remove_job(&task_id).await.unwrap();
+        assert!(
+            !service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "removing a task must also forget its runtime scheduler UUID"
+        );
+        assert!(service.get_job(&task_id).await.is_none());
+
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
@@ -1298,6 +1406,14 @@ mod tests {
         assert!(
             !history.is_empty(),
             "One-shot callback should have called dispatch_with_guard, recording execution history"
+        );
+        assert!(
+            !service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "one-shot jobs should release their runtime scheduler UUID after firing"
         );
 
         service.stop().await.unwrap();

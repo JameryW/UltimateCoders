@@ -617,8 +617,9 @@ message TriggerSchedulerJobResponse {
     optional string error = 3;
 }
 
-// AddCronJob — reserved for future runtime job creation via dashboard UI.
-// Currently returns UNIMPLEMENTED; jobs are declared in uc.scheduler.yaml.
+// AddCronJob creates a persisted runtime job. Enabled jobs are registered with
+// the active scheduler immediately; disabled jobs remain persisted for later
+// lifecycle management.
 
 message AddCronJobRequest {
     string description = 1;
