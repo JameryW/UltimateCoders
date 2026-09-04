@@ -277,6 +277,11 @@ cargo clippy --workspace       # Lint
 cargo fmt --all -- --check     # Format check
 ```
 
+The `uc-grpc-server` gateway enables the scheduler runtime by default, so
+the standard launcher and Docker builds execute jobs declared in
+`uc.scheduler.yaml`. The lower-level `uc-engine` library keeps scheduler
+support feature-gated for consumers that do not need runtime scheduling.
+
 ### Python
 
 ```bash
