@@ -53,8 +53,8 @@ export function registerSchedulerTools(pi: ExtensionAPI, bridge: GrpcBridge): vo
 			"Manage the UltimateCoders cron scheduler. " +
 			"Get scheduler status (running flag, night window, jobs, execution history), " +
 			"trigger a job to run immediately, add a new cron job, or remove a job. " +
-			"Note: add/remove may return UNIMPLEMENTED on servers that only accept " +
-			"jobs declared in uc.scheduler.yaml.",
+			"Runtime jobs are persisted by the Rust scheduler and enabled jobs are " +
+			"registered immediately.",
 		parameters: schedulerSchema as never,
 		async execute(_id, params: unknown, _signal, _onUpdate, _ctx) {
 			const p = params as {
