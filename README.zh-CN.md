@@ -268,6 +268,11 @@ cargo clippy --workspace       # 代码检查
 cargo fmt --all -- --check     # 格式检查
 ```
 
+`uc-grpc-server` 网关默认启用调度器运行时，因此标准启动脚本和
+Docker 构建会实际执行 `uc.scheduler.yaml` 中声明的 cron/一次性任务。
+底层 `uc-engine` 库仍保持 scheduler feature 可选，供不需要运行时调度的
+调用方使用。
+
 ### Python
 
 ```bash

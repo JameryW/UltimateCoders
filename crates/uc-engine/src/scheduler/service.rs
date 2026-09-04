@@ -1235,7 +1235,6 @@ mod tests {
         // We use a very short interval cron expression and wait for it
         // to fire. The LoggingDispatcher is used (default), so dispatch
         // succeeds and records Completed.
-        use std::sync::Arc;
         use std::time::Duration;
 
         let service = SchedulerService::new();
