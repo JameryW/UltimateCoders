@@ -129,8 +129,8 @@ class Scheduler:
 | night_window_end | Option\<NaiveTime\> | HH:MM format; can be before start (cross-midnight) | No |
 | timezone | String | Valid IANA timezone name (chrono-tz) | Yes (default "UTC") |
 | enabled | bool | — | Yes (default true) |
-| last_execution | Option\<DateTime\<Utc\>\> | Updated by system | No |
-| next_execution | Option\<DateTime\<Utc\>\> | Computed from cron/execute_after | No |
+| last_execution | Option\<DateTime\<Utc\>\> | Updated at the scheduler dispatch boundary (including a failed dispatch attempt) | No |
+| next_execution | Option\<DateTime\<Utc\>\> | Computed on registration and after each dispatch from cron/execute_after; one-shot becomes `None` after dispatch | No |
 | created_at | DateTime\<Utc\> | Auto-set | Yes |
 | updated_at | DateTime\<Utc\> | Auto-updated | Yes |
 
@@ -196,7 +196,9 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
   BEFORE `SchedulerService::start()` runs. The store is set-once-at-construction
   (not hot-swappable) — no RwLock.
 - **Write path** (already wired in `service.rs`): `add_cron_job`/`add_one_shot_job`
-  → `save_task`; `remove_job` → `delete_task`; `record_execution` → `save_execution`.
+  → `save_task`; `remove_job` → `delete_task`; dispatch attempts update
+  `last_execution`/`next_execution` through `update_task`; `record_execution`
+  → `save_execution`.
 - **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(true)`
   → re-register each persisted cron/one-shot job with the `JobScheduler` + load
   into `job_metadata`. With the PG backend, jobs survive a gateway restart.
