@@ -210,9 +210,9 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
   Startup also best-effort hydrates the dashboard cache with the latest 50
   execution records across persisted tasks (including disabled jobs), merges
   the per-task newest-first queries into chronological order, and keeps the
-  durable store as the source of truth for older history. The live cache uses
-  the same 50-entry bound, and a failed history slice is logged without
-  blocking healthy job recovery.
+  durable store as the source of truth for older history. Live recording keeps
+  the existing in-memory behavior for the default memory backend, and a failed
+  history slice is logged without blocking healthy job recovery.
 - **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
   feature disabled → warn + in-memory (no crash). Default (unset) = zero
   behavior change for existing deploys.

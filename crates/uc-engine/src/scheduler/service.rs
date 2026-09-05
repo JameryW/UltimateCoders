@@ -27,11 +27,11 @@ use super::lock::{LockProvider, NoOpLockProvider};
 use super::night_window::NightWindow;
 use super::store::ScheduleStore;
 
-/// Maximum number of execution-history rows retained in the dashboard cache.
-/// The durable store remains the source of truth for older records and
-/// task-specific queries.
-const EXECUTION_HISTORY_CACHE_LIMIT: usize = 50;
-const EXECUTION_HISTORY_RECOVERY_LIMIT: i64 = EXECUTION_HISTORY_CACHE_LIMIT as i64;
+/// Number of execution-history rows restored into the dashboard cache during
+/// scheduler startup. The durable store remains the source of truth for older
+/// records and task-specific queries; live recording keeps the existing
+/// in-memory behavior for the default memory backend.
+const EXECUTION_HISTORY_RECOVERY_LIMIT: i64 = 50;
 
 /// Trait for dispatching scheduled tasks to the execution engine.
 ///
@@ -505,12 +505,7 @@ impl SchedulerService {
             warn!(error = %e, "Failed to persist execution history to store");
         }
         // Also save to in-memory cache
-        let mut cached_history = self.execution_history.write().await;
-        cached_history.push(history.clone());
-        if cached_history.len() > EXECUTION_HISTORY_CACHE_LIMIT {
-            let drop_count = cached_history.len() - EXECUTION_HISTORY_CACHE_LIMIT;
-            cached_history.drain(..drop_count);
-        }
+        self.execution_history.write().await.push(history.clone());
     }
 
     /// Get the execution history for all tasks, or a specific task from the
@@ -574,8 +569,9 @@ impl SchedulerService {
         // A task can contribute up to the recovery limit, so cap the merged
         // dashboard cache as well instead of allowing many tasks to expand it
         // without bound during a restart.
-        if recovered_history.len() > EXECUTION_HISTORY_CACHE_LIMIT {
-            let drop_count = recovered_history.len() - EXECUTION_HISTORY_CACHE_LIMIT;
+        let cache_limit = EXECUTION_HISTORY_RECOVERY_LIMIT as usize;
+        if recovered_history.len() > cache_limit {
+            let drop_count = recovered_history.len() - cache_limit;
             recovered_history.drain(..drop_count);
         }
 
@@ -1403,27 +1399,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execution_history_cache_retains_only_recent_entries() {
-        let service = SchedulerService::new();
-        let task_id = Uuid::new_v4();
-        let base = Utc::now();
-
-        for offset in 0..(EXECUTION_HISTORY_CACHE_LIMIT + 5) {
-            let mut history = ExecutionHistory::started(task_id);
-            history.started_at = base + chrono::Duration::seconds(offset as i64);
-            service.record_execution(&history).await;
-        }
-
-        let cached = service.get_execution_history(None).await;
-        assert_eq!(cached.len(), EXECUTION_HISTORY_CACHE_LIMIT);
-        assert_eq!(cached[0].started_at, base + chrono::Duration::seconds(5));
-        assert_eq!(
-            cached.last().unwrap().started_at,
-            base + chrono::Duration::seconds(54)
-        );
-    }
-
-    #[tokio::test]
     async fn dispatch_nonexistent_task() {
         let service = SchedulerService::new();
         let result = service.dispatch_with_guard(&Uuid::new_v4()).await;
@@ -1687,7 +1662,9 @@ mod tests {
 
         let recovered = service.get_job(&task.id).await.unwrap();
         assert!(
-            recovered.next_execution.unwrap() > Utc::now(),
+            recovered
+                .next_execution
+                .is_some_and(|next_execution| next_execution > Utc::now()),
             "recovery should replace an expired next-run timestamp"
         );
         let persisted = store.load_task(&task.id).await.unwrap().unwrap();
