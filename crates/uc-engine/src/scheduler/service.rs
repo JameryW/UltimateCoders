@@ -366,10 +366,16 @@ impl SchedulerService {
         Ok(())
     }
 
-    /// List all registered jobs.
+    /// List all registered jobs in stable creation order.
     pub async fn list_jobs(&self) -> Vec<ScheduledTask> {
         let metadata = self.job_metadata.read().await;
-        metadata.values().map(|m| m.task.clone()).collect()
+        let mut jobs: Vec<_> = metadata.values().map(|m| m.task.clone()).collect();
+        jobs.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        jobs
     }
 
     /// Get a specific job by ID.
@@ -1264,6 +1270,29 @@ mod tests {
 
         let jobs = service.list_jobs().await;
         assert_eq!(jobs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_jobs_is_stable_after_hash_map_recovery() {
+        let service = SchedulerService::new();
+        let base = Utc::now();
+        let mut older = make_cron_task("0 22 * * *");
+        older.created_at = base;
+        let older_id = older.id;
+        let mut newer = make_cron_task("0 23 * * *");
+        newer.created_at = base + chrono::Duration::seconds(1);
+        let newer_id = newer.id;
+
+        // Insert newest first so insertion order cannot accidentally make the
+        // test pass without exercising the explicit ordering contract.
+        service.add_cron_job(newer).await.unwrap();
+        service.add_cron_job(older).await.unwrap();
+
+        let jobs = service.list_jobs().await;
+        assert_eq!(
+            jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![older_id, newer_id]
+        );
     }
 
     #[tokio::test]

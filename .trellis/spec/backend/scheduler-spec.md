@@ -204,6 +204,9 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
   the refreshed snapshot when it changed, then re-register each persisted
   cron/one-shot job with the `JobScheduler` + load into `job_metadata`. With the
   PG backend, jobs survive a gateway restart without stale next-run metadata.
+  `list_jobs()` returns the active snapshot in stable `created_at` order (with
+  UUID as a tie-breaker), so Dashboard refreshes do not reorder jobs after
+  HashMap recovery.
   Startup also best-effort hydrates the dashboard cache with the latest 50
   execution records across persisted tasks (including disabled jobs), merges
   the per-task newest-first queries into chronological order, and keeps the
