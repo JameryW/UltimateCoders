@@ -200,8 +200,10 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
   `last_execution`/`next_execution` through `update_task`; `record_execution`
   → `save_execution`.
 - **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(true)`
-  → re-register each persisted cron/one-shot job with the `JobScheduler` + load
-  into `job_metadata`. With the PG backend, jobs survive a gateway restart.
+  → recompute each task's `next_execution` from the current UTC clock, persist
+  the refreshed snapshot when it changed, then re-register each persisted
+  cron/one-shot job with the `JobScheduler` + load into `job_metadata`. With the
+  PG backend, jobs survive a gateway restart without stale next-run metadata.
 - **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
   feature disabled → warn + in-memory (no crash). Default (unset) = zero
   behavior change for existing deploys.

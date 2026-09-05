@@ -238,7 +238,7 @@ impl SchedulerService {
         // Keep the persisted status useful to callers before the first tick.
         // The runtime scheduler has its own clock, so expose the same next
         // occurrence through the durable task record as soon as it is added.
-        task.next_execution = Some(Self::next_cron_execution(&cron_expr, Utc::now())?);
+        task.next_execution = Self::next_execution_for_task(&task, Utc::now())?;
 
         let task_id = task.id;
 
@@ -289,7 +289,7 @@ impl SchedulerService {
         // A future one-shot has exactly one known next occurrence. A past
         // timestamp is still persisted for compatibility, but is represented
         // as no longer pending rather than advertising an expired run.
-        task.next_execution = (execute_after > Utc::now()).then_some(execute_after);
+        task.next_execution = Self::next_execution_for_task(&task, Utc::now())?;
 
         let task_id = task.id;
 
@@ -530,10 +530,43 @@ impl SchedulerService {
             return Ok(());
         }
 
-        // Load persisted tasks into local metadata
+        // Load persisted tasks into local metadata. Recompute the next
+        // occurrence from the current clock so a restart never exposes a
+        // stale timestamp left behind by the previous process.
         let persisted_tasks = self.store.list_tasks(true).await?;
+        let recovery_now = Utc::now();
+        let mut recovered_tasks = Vec::with_capacity(persisted_tasks.len());
+        for task in persisted_tasks {
+            let mut recovered = task.clone();
+            match Self::next_execution_for_task(&task, recovery_now) {
+                Ok(next_execution) if next_execution != task.next_execution => {
+                    recovered.next_execution = next_execution;
+                    recovered.updated_at = Utc::now();
+                    if let Err(error) = self.store.update_task(&recovered).await {
+                        warn!(
+                            task_id = %task.id,
+                            error = %error,
+                            "Failed to persist refreshed scheduler recovery metadata"
+                        );
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    // Keep a previously persisted value when a legacy or
+                    // malformed record cannot be recalculated. Registration
+                    // will report the same error without preventing startup.
+                    warn!(
+                        task_id = %task.id,
+                        error = %error,
+                        "Failed to refresh scheduler recovery metadata"
+                    );
+                }
+            }
+            recovered_tasks.push(recovered);
+        }
+
         let mut metadata = self.job_metadata.write().await;
-        for task in &persisted_tasks {
+        for task in &recovered_tasks {
             metadata.insert(task.id, JobMetadata { task: task.clone() });
         }
         drop(metadata); // Release lock before starting scheduler
@@ -547,7 +580,7 @@ impl SchedulerService {
                 })?;
 
             // Register all persisted tasks with the job scheduler
-            for task in &persisted_tasks {
+            for task in &recovered_tasks {
                 if task.cron_expression.is_some() {
                     match self
                         .register_cron_with_scheduler(&job_scheduler, task)
@@ -601,7 +634,7 @@ impl SchedulerService {
 
         *started = true;
         info!(
-            task_count = persisted_tasks.len(),
+            task_count = recovered_tasks.len(),
             "Scheduler service started (recovered persisted tasks)"
         );
         Ok(())
@@ -667,6 +700,22 @@ impl SchedulerService {
         })
     }
 
+    /// Return the next persisted occurrence for either supported schedule
+    /// shape. A one-shot in the past is intentionally represented as `None`;
+    /// it is no longer pending even though its history remains queryable.
+    fn next_execution_for_task(
+        task: &ScheduledTask,
+        after: chrono::DateTime<Utc>,
+    ) -> Result<Option<chrono::DateTime<Utc>>, EngineError> {
+        if let Some(cron_expression) = task.cron_expression.as_deref() {
+            return Self::next_cron_execution(cron_expression, after).map(Some);
+        }
+
+        Ok(task
+            .execute_after
+            .filter(|execute_after| *execute_after > after))
+    }
+
     /// Convert a one-shot timestamp into the runtime scheduler delay while
     /// preserving sub-second precision. Returning `None` is intentional for
     /// an already-expired task: it remains persisted, but cannot be scheduled
@@ -709,21 +758,17 @@ impl SchedulerService {
                 .unwrap_or(true)
             {
                 job.task.last_execution = Some(started_at);
-                job.task.next_execution = match job.task.cron_expression.as_deref() {
-                    Some(cron_expression) => {
-                        match Self::next_cron_execution(cron_expression, started_at) {
-                            Ok(next) => Some(next),
-                            Err(error) => {
-                                warn!(
-                                    task_id = %task_id,
-                                    error = %error,
-                                    "Failed to calculate next cron execution after dispatch"
-                                );
-                                None
-                            }
-                        }
+                job.task.next_execution = match Self::next_execution_for_task(&job.task, started_at)
+                {
+                    Ok(next) => next,
+                    Err(error) => {
+                        warn!(
+                            task_id = %task_id,
+                            error = %error,
+                            "Failed to calculate next scheduler execution after dispatch"
+                        );
+                        None
                     }
-                    None => None,
                 };
             }
             job.task.updated_at = Utc::now();
@@ -1475,6 +1520,47 @@ mod tests {
 
         // Jobs should be loaded
         assert_eq!(service.job_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn start_refreshes_stale_next_execution() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let mut task = make_cron_task("* * * * * *");
+        task.next_execution = Some(Utc::now() - chrono::Duration::hours(1));
+        store.save_task(&task).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        let recovered = service.get_job(&task.id).await.unwrap();
+        assert!(
+            recovered.next_execution.unwrap() > Utc::now(),
+            "recovery should replace an expired next-run timestamp"
+        );
+        let persisted = store.load_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(persisted.next_execution, recovered.next_execution);
+        assert!(persisted.updated_at >= task.updated_at);
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_clears_expired_one_shot_next_execution() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        task.next_execution = Some(Utc::now() + chrono::Duration::hours(1));
+        store.save_task(&task).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        let recovered = service.get_job(&task.id).await.unwrap();
+        assert!(
+            recovered.next_execution.is_none(),
+            "expired one-shot tasks must not advertise a future run"
+        );
+        let persisted = store.load_task(&task.id).await.unwrap().unwrap();
+        assert!(persisted.next_execution.is_none());
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
