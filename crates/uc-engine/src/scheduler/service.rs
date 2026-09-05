@@ -27,6 +27,12 @@ use super::lock::{LockProvider, NoOpLockProvider};
 use super::night_window::NightWindow;
 use super::store::ScheduleStore;
 
+/// Maximum number of execution-history rows retained in the dashboard cache.
+/// The durable store remains the source of truth for older records and
+/// task-specific queries.
+const EXECUTION_HISTORY_CACHE_LIMIT: usize = 50;
+const EXECUTION_HISTORY_RECOVERY_LIMIT: i64 = EXECUTION_HISTORY_CACHE_LIMIT as i64;
+
 /// Trait for dispatching scheduled tasks to the execution engine.
 ///
 /// Implementations handle the actual task execution (e.g., submitting
@@ -493,10 +499,17 @@ impl SchedulerService {
             warn!(error = %e, "Failed to persist execution history to store");
         }
         // Also save to in-memory cache
-        self.execution_history.write().await.push(history.clone());
+        let mut cached_history = self.execution_history.write().await;
+        cached_history.push(history.clone());
+        if cached_history.len() > EXECUTION_HISTORY_CACHE_LIMIT {
+            let drop_count = cached_history.len() - EXECUTION_HISTORY_CACHE_LIMIT;
+            cached_history.drain(..drop_count);
+        }
     }
 
-    /// Get the execution history for all tasks, or a specific task (from in-memory cache).
+    /// Get the execution history for all tasks, or a specific task from the
+    /// dashboard cache. The cache is hydrated from persistence during startup
+    /// and updated as dispatch attempts complete.
     pub async fn get_execution_history(&self, task_id: Option<&Uuid>) -> Vec<ExecutionHistory> {
         let history = self.execution_history.read().await;
         match task_id {
@@ -518,6 +531,51 @@ impl SchedulerService {
         self.store.list_executions(task_id, limit).await
     }
 
+    /// Restore recent persisted execution history into the in-memory cache.
+    ///
+    /// `ScheduleStore::list_executions` intentionally returns newest-first,
+    /// while the live cache is appended in dispatch order. Merge all task
+    /// slices and sort ascending so the cache has one deterministic ordering
+    /// regardless of whether entries came from a live dispatch or a restart.
+    /// History is best-effort during recovery: an unavailable task slice must
+    /// not prevent healthy scheduled jobs from starting.
+    async fn recover_execution_history(&self, tasks: &[ScheduledTask]) {
+        let mut recovered_history = Vec::new();
+
+        for task in tasks {
+            match self
+                .store
+                .list_executions(&task.id, EXECUTION_HISTORY_RECOVERY_LIMIT)
+                .await
+            {
+                Ok(mut history) => recovered_history.append(&mut history),
+                Err(error) => {
+                    warn!(
+                        task_id = %task.id,
+                        error = %error,
+                        "Failed to recover scheduler execution history"
+                    );
+                }
+            }
+        }
+
+        recovered_history.sort_by(|left, right| {
+            left.started_at
+                .cmp(&right.started_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+
+        // A task can contribute up to the recovery limit, so cap the merged
+        // dashboard cache as well instead of allowing many tasks to expand it
+        // without bound during a restart.
+        if recovered_history.len() > EXECUTION_HISTORY_CACHE_LIMIT {
+            let drop_count = recovered_history.len() - EXECUTION_HISTORY_CACHE_LIMIT;
+            recovered_history.drain(..drop_count);
+        }
+
+        *self.execution_history.write().await = recovered_history;
+    }
+
     /// Start the scheduler.
     ///
     /// When the `scheduler` feature is enabled, this creates a `JobScheduler`
@@ -534,6 +592,20 @@ impl SchedulerService {
         // occurrence from the current clock so a restart never exposes a
         // stale timestamp left behind by the previous process.
         let persisted_tasks = self.store.list_tasks(true).await?;
+        // Recover history for disabled jobs too: they are intentionally absent
+        // from the active job registry, but their completed executions still
+        // belong in the dashboard's cross-job history view.
+        let history_tasks = match self.store.list_tasks(false).await {
+            Ok(tasks) => tasks,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Failed to list all scheduler tasks for history recovery"
+                );
+                persisted_tasks.clone()
+            }
+        };
+        self.recover_execution_history(&history_tasks).await;
         let recovery_now = Utc::now();
         let mut recovered_tasks = Vec::with_capacity(persisted_tasks.len());
         for task in persisted_tasks {
@@ -1302,6 +1374,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execution_history_cache_retains_only_recent_entries() {
+        let service = SchedulerService::new();
+        let task_id = Uuid::new_v4();
+        let base = Utc::now();
+
+        for offset in 0..(EXECUTION_HISTORY_CACHE_LIMIT + 5) {
+            let mut history = ExecutionHistory::started(task_id);
+            history.started_at = base + chrono::Duration::seconds(offset as i64);
+            service.record_execution(&history).await;
+        }
+
+        let cached = service.get_execution_history(None).await;
+        assert_eq!(cached.len(), EXECUTION_HISTORY_CACHE_LIMIT);
+        assert_eq!(cached[0].started_at, base + chrono::Duration::seconds(5));
+        assert_eq!(
+            cached.last().unwrap().started_at,
+            base + chrono::Duration::seconds(54)
+        );
+    }
+
+    #[tokio::test]
     async fn dispatch_nonexistent_task() {
         let service = SchedulerService::new();
         let result = service.dispatch_with_guard(&Uuid::new_v4()).await;
@@ -1520,6 +1613,37 @@ mod tests {
 
         // Jobs should be loaded
         assert_eq!(service.job_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn start_recovers_persisted_execution_history() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let writer = SchedulerService::with_store(store.clone());
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        let mut disabled_task = make_cron_task("0 23 * * *");
+        disabled_task.enabled = false;
+        let disabled_task_id = disabled_task.id;
+
+        writer.add_cron_job(task).await.unwrap();
+        writer.add_cron_job(disabled_task).await.unwrap();
+        writer.dispatch_with_guard(&task_id).await.unwrap();
+        let mut disabled_history = ExecutionHistory::started(disabled_task_id);
+        disabled_history.started_at = Utc::now() - chrono::Duration::hours(1);
+        store.save_execution(&disabled_history).await.unwrap();
+
+        // A fresh service instance represents a gateway restart while sharing
+        // the same durable store.
+        let recovered = SchedulerService::with_store(store);
+        recovered.start().await.unwrap();
+
+        let history = recovered.get_execution_history(None).await;
+        assert_eq!(recovered.job_count().await, 1);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].scheduled_task_id, disabled_task_id);
+        assert_eq!(history[1].scheduled_task_id, task_id);
+        assert_eq!(history[1].status, ExecutionStatus::Completed);
+        recovered.stop().await.unwrap();
     }
 
     #[tokio::test]
