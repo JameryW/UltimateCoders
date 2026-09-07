@@ -54,6 +54,10 @@ service DashboardService {
     rpc TriggerSchedulerJob(TriggerSchedulerJobRequest) returns (TriggerSchedulerJobResponse);
     rpc AddCronJob(AddCronJobRequest) returns (AddCronJobResponse);
     rpc RemoveJob(RemoveJobRequest) returns (RemoveJobResponse);
+    // Pause (enabled=false) or resume (enabled=true) a scheduled job without
+    // deleting it or its execution history.
+    rpc SetSchedulerJobEnabled(SetSchedulerJobEnabledRequest)
+        returns (SetSchedulerJobEnabledResponse);
     rpc FlushPendingTasks(FlushPendingTasksRequest) returns (FlushPendingTasksResponse);
     rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
     rpc WatchDashboard(WatchDashboardRequest) returns (stream DashboardSnapshot);
@@ -644,6 +648,23 @@ message RemoveJobRequest {
 message RemoveJobResponse {
     bool success = 1;
     optional string error = 2;
+}
+
+// SetSchedulerJobEnabled pauses (enabled=false) or resumes (enabled=true) a
+// persisted job. Pausing unregisters the job from the runtime scheduler and
+// clears its advertised next run; the job and its execution history are kept,
+// unlike RemoveJob. The response echoes the state the scheduler settled on.
+
+message SetSchedulerJobEnabledRequest {
+    string job_id = 1;
+    bool enabled = 2;
+}
+
+message SetSchedulerJobEnabledResponse {
+    bool success = 1;
+    string job_id = 2;
+    bool enabled = 3;
+    optional string error = 4;
 }
 
 message FlushPendingTasksRequest {}

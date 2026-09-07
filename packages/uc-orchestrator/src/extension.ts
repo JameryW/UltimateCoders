@@ -732,7 +732,8 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				}
 				case "schedule": {
 					// ponytail: /uc schedule — scheduler status / actions.
-					// Sub-actions: trigger <id>, add <desc> <cron> [flags], remove <id>.
+					// Sub-actions: trigger <id>, add <desc> <cron> [flags], remove <id>,
+					// pause <id>, resume <id>.
 					// No args → show scheduler status (toast, mirrors /uc status).
 					const subParts = rest.trim().split(/\s+/).filter(Boolean);
 					const subAction = subParts[0] ?? "";
@@ -762,6 +763,29 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								ctx.ui.notify(`Remove failed: ${r.error}`, "error");
 							} else {
 								ctx.ui.notify(`Removed job ${jobId.slice(0, 14)}`, "info");
+							}
+							return;
+						}
+						if (subAction === "pause" || subAction === "resume") {
+							const jobId = subParts[1];
+							if (!jobId) {
+								ctx.ui.notify(`Usage: /uc schedule ${subAction} <job-id>`, "error");
+								return;
+							}
+							const enabled = subAction === "resume";
+							const r = await bridge.setSchedulerJobEnabled(jobId, enabled);
+							if (!r.ok) {
+								ctx.ui.notify(
+									`${subAction === "pause" ? "Pause" : "Resume"} failed: ${r.error}`,
+									"error",
+								);
+							} else if (r.enabled) {
+								ctx.ui.notify(`Resumed job ${jobId.slice(0, 14)} — firing again`, "info");
+							} else {
+								ctx.ui.notify(
+									`Paused job ${jobId.slice(0, 14)} — kept with its history, will not fire until resumed`,
+									"info",
+								);
 							}
 							return;
 						}
@@ -819,7 +843,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						} else {
 							lines.push("Jobs:");
 							for (const j of status.jobs) {
-								const en = j.enabled ? "on" : "off";
+								const en = j.enabled ? "on" : "paused";
 								const last = j.lastRun ? ` last=${j.lastRun}` : "";
 								const next = j.nextRun ? ` next=${j.nextRun}` : "";
 								lines.push(`  [${en}] ${j.id.slice(0, 14)}: ${j.name} (${j.cron})${last}${next}`);
@@ -833,7 +857,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 								lines.push(`  [${tag}] ${h.jobName} @ ${h.executedAt}${err}`);
 							}
 						}
-						lines.push(ctx.ui.theme.fg("dim", "/uc schedule trigger|add|remove <args> for actions"));
+						lines.push(ctx.ui.theme.fg("dim", "/uc schedule trigger|add|remove|pause|resume <args> for actions"));
 						ctx.ui.notify(lines.join("\n"), "info");
 					} catch (e) {
 						ctx.ui.notify(`Schedule failed: ${e}`, "error");

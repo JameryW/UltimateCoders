@@ -263,7 +263,7 @@ pub struct SchedulerStatus {
     pub is_running: bool,
     /// Active night window configuration, if any.
     pub night_window: Option<NightWindowConfig>,
-    /// All registered scheduled jobs.
+    /// All known scheduled jobs, including paused (`enabled = false`) ones.
     pub jobs: Vec<ScheduledTask>,
     /// Recent execution history entries (across all jobs).
     pub execution_history: Vec<ExecutionHistory>,
@@ -321,6 +321,24 @@ pub struct RemoveJobResult {
     /// Whether the job was removed successfully.
     pub success: bool,
     /// Error message if removal failed.
+    pub error: Option<String>,
+}
+
+/// Result of pausing or resuming a scheduled job at runtime, returned by
+/// `EngineApi::set_scheduler_job_enabled`.
+///
+/// `enabled` echoes the state the scheduler settled on, so a caller can tell an
+/// idempotent no-op apart from a real transition even when the response arrives
+/// after another toggle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerJobEnabledResult {
+    /// Whether the toggle succeeded.
+    pub success: bool,
+    /// The job ID that was paused or resumed.
+    pub job_id: String,
+    /// The job's enabled state after the call.
+    pub enabled: bool,
+    /// Error message if the toggle failed.
     pub error: Option<String>,
 }
 

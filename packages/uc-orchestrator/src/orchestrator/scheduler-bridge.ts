@@ -3,8 +3,9 @@
  *
  * Routes scheduler operations through GrpcBridge to the UC Rust engine's
  * DashboardService (GetSchedulerStatus, TriggerSchedulerJob, AddCronJob,
- * RemoveJob). Lets the LLM agent inspect the cron scheduler, trigger jobs
- * on demand, add new cron jobs, and remove jobs.
+ * RemoveJob, SetSchedulerJobEnabled). Lets the LLM agent inspect the cron
+ * scheduler, trigger jobs on demand, add new cron jobs, pause/resume them, and
+ * remove jobs.
  *
  * Mirrors memory-bridge.ts / worker-bridge.ts pattern.
  */
@@ -17,11 +18,11 @@ import { GrpcBridge } from "./grpc-bridge";
 
 export function registerSchedulerTools(pi: ExtensionAPI, bridge: GrpcBridge): void {
 	const schedulerSchema = pi.zod.object({
-		action: pi.zod.enum(["status", "trigger", "add", "remove"]).describe(
-			"Scheduler action: status (snapshot), trigger (run a job now), add (new cron job), remove (delete a job)"
+		action: pi.zod.enum(["status", "trigger", "add", "remove", "pause", "resume"]).describe(
+			"Scheduler action: status (snapshot), trigger (run a job now), add (new cron job), remove (delete a job), pause (stop a job from firing, keeping it and its history), resume (start a paused job again)"
 		),
 		job_id: pi.zod.string().optional().describe(
-			"Job ID (required for trigger and remove)"
+			"Job ID (required for trigger, remove, pause and resume)"
 		),
 		description: pi.zod.string().optional().describe(
 			"Human-readable job description (required for add)"
@@ -52,7 +53,9 @@ export function registerSchedulerTools(pi: ExtensionAPI, bridge: GrpcBridge): vo
 		description:
 			"Manage the UltimateCoders cron scheduler. " +
 			"Get scheduler status (running flag, night window, jobs, execution history), " +
-			"trigger a job to run immediately, add a new cron job, or remove a job. " +
+			"trigger a job to run immediately, add a new cron job, remove a job, or " +
+			"pause/resume a job (pausing keeps the job and its execution history, " +
+			"unlike removing). " +
 			"Runtime jobs are persisted by the Rust scheduler and enabled jobs are " +
 			"registered immediately.",
 		parameters: schedulerSchema as never,
@@ -88,7 +91,7 @@ export function registerSchedulerTools(pi: ExtensionAPI, bridge: GrpcBridge): vo
 						} else {
 							lines.push("Jobs:");
 							for (const j of status.jobs) {
-								const en = j.enabled ? "on" : "off";
+								const en = j.enabled ? "on" : "paused";
 								const last = j.lastRun ? ` last=${j.lastRun}` : "";
 								const next = j.nextRun ? ` next=${j.nextRun}` : "";
 								lines.push(`  [${en}] ${j.id}: ${j.name} (${j.cron})${last}${next}`);
@@ -164,6 +167,31 @@ export function registerSchedulerTools(pi: ExtensionAPI, bridge: GrpcBridge): vo
 						}
 						return {
 							content: [{ type: "text" as const, text: `Removed job ${p.job_id}` }],
+						};
+					}
+					case "pause":
+					case "resume": {
+						if (!p.job_id) {
+							return {
+								content: [{ type: "text" as const, text: `Error: job_id required for ${p.action}` }],
+								isError: true,
+							};
+						}
+						const enabled = p.action === "resume";
+						const r = await bridge.setSchedulerJobEnabled(p.job_id, enabled);
+						if (!r.ok) {
+							return {
+								content: [{ type: "text" as const, text: `${p.action} failed: ${r.error}` }],
+								isError: true,
+							};
+						}
+						return {
+							content: [{
+								type: "text" as const,
+								text: r.enabled
+									? `Resumed job ${p.job_id} — registered with the scheduler again`
+									: `Paused job ${p.job_id} — kept with its history, will not fire until resumed`,
+							}],
 						};
 					}
 					default:

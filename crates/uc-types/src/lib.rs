@@ -30,6 +30,7 @@ pub use memory::{
 };
 pub use scheduler::{
     AddCronJobApiRequest, AddCronJobResult, ExecutionHistory, ExecutionStatus, NightWindowConfig,
-    RemoveJobResult, ScheduledTask, SchedulerStatus, SchedulerTriggerResult,
+    RemoveJobResult, ScheduledTask, SchedulerJobEnabledResult, SchedulerStatus,
+    SchedulerTriggerResult,
 };
 pub use search::{AstQuery, SearchMode, SearchQuery, SearchResult, SearchResultItem, SymbolKind};

@@ -1,7 +1,8 @@
 //! DashboardService implementation — NATS passthrough to Python Orchestrator.
 //!
 //! Scheduler RPCs (GetSchedulerStatus, TriggerSchedulerJob, AddCronJob,
-//! RemoveJob) route directly to the Rust engine's SchedulerService. All other DashboardService
+//! RemoveJob, SetSchedulerJobEnabled) route directly to the Rust engine's
+//! SchedulerService. All other DashboardService
 //! RPCs forward via NATS request-reply to the Python Orchestrator. When NATS
 //! is unavailable, those RPCs return UNAVAILABLE status.
 
@@ -221,6 +222,34 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                 tracing::warn!(error = %e, "Failed to remove job");
                 Ok(Response::new(RemoveJobResponse {
                     success: false,
+                    error: Some(e.to_string()),
+                }))
+            }
+        }
+    }
+
+    async fn set_scheduler_job_enabled(
+        &self,
+        request: Request<SetSchedulerJobEnabledRequest>,
+    ) -> Result<Response<SetSchedulerJobEnabledResponse>, Status> {
+        let req = request.into_inner();
+        match self
+            .engine()
+            .set_scheduler_job_enabled(&req.job_id, req.enabled)
+            .await
+        {
+            Ok(result) => Ok(Response::new(SetSchedulerJobEnabledResponse {
+                success: result.success,
+                job_id: result.job_id,
+                enabled: result.enabled,
+                error: result.error,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to set scheduler job enabled");
+                Ok(Response::new(SetSchedulerJobEnabledResponse {
+                    success: false,
+                    job_id: req.job_id.clone(),
+                    enabled: req.enabled,
                     error: Some(e.to_string()),
                 }))
             }
@@ -1217,6 +1246,49 @@ mod tests {
                 .scheduler
                 .expect("scheduler should be present")
                 .available
+        );
+    }
+
+    /// What a paused job looks like on the wire: still delivered (so the
+    /// dashboard can resume it), advertising no future run, and keeping the
+    /// record of when it last fired.
+    #[test]
+    fn scheduler_status_proto_reports_paused_job_without_next_run() {
+        use super::scheduler_status_to_proto;
+
+        let mut task = uc_types::ScheduledTask::cron(
+            "Nightly build".to_string(),
+            "proj".to_string(),
+            "0 22 * * *".to_string(),
+            chrono::NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            chrono::NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        );
+        task.enabled = false;
+        task.next_execution = None;
+        task.last_execution = Some(chrono::Utc::now());
+
+        let proto = scheduler_status_to_proto(&uc_types::SchedulerStatus {
+            available: true,
+            is_running: true,
+            night_window: None,
+            jobs: vec![task],
+            execution_history: vec![],
+        });
+
+        assert!(proto.available && proto.is_running);
+        let job = proto
+            .jobs
+            .first()
+            .expect("a paused job must still reach the dashboard, or it cannot be resumed");
+        assert!(!job.enabled);
+        assert!(
+            job.next_run.is_none(),
+            "a paused job must not advertise a run the scheduler will never fire"
+        );
+        assert!(
+            job.last_run.is_some(),
+            "pausing must not hide when the job last ran"
         );
     }
 }
