@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Executable contract for night-window scheduling, persistence, restart recovery and the new Pause/Resume Semantics table"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EngineError variant mapping for the new not-found / unavailable-scheduler paths"}
+{"file": ".trellis/spec/backend/omp-tools-spec.md", "reason": "Conventions for LLM tool actions and /uc command surface added by pause/resume"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "DashboardService RPC + scheduler status projection consumed by the dashboard and OMP bridge"}
