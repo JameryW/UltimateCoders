@@ -89,7 +89,10 @@ data/
 !.agents/skills/ultimatecoders-issue-flow/**
 .codex/
 .gemini/
+.kimi-code/
 .kiro/
+.opencode/
+.reasonix/
 .mcp.json
 opencode.jsonc
 
