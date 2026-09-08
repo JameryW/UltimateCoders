@@ -41,6 +41,7 @@ import {
 	TriggerSchedulerJobRequestSchema,
 	AddCronJobRequestSchema,
 	RemoveJobRequestSchema,
+	SetSchedulerJobEnabledRequestSchema,
 	type SubmitTaskResponse,
 	type TaskEvent,
 } from "../grpc/engine_pb.js";
@@ -156,6 +157,14 @@ export type AddCronJobResult =
 /** Result of removeJob() — success flag + optional error. */
 export type RemoveJobResult =
 	| { ok: true }
+	| { ok: false; error: string };
+
+/**
+ * Result of setSchedulerJobEnabled() — the enabled state the scheduler settled
+ * on, so a caller can tell a real transition from an idempotent no-op.
+ */
+export type SchedulerJobEnabledResult =
+	| { ok: true; enabled: boolean }
 	| { ok: false; error: string };
 
 /** Structured error from GrpcBridge operations. */
@@ -844,7 +853,7 @@ export class GrpcBridge {
 
 	/**
 	 * Get the scheduler status — running flag, night window, jobs, and recent
-	 * execution history. All four scheduler RPCs live on DashboardService.
+	 * execution history. The scheduler RPCs all live on DashboardService.
 	 * Returns { available: false } when the server is unreachable.
 	 */
 	async getSchedulerStatus(): Promise<SchedulerStatus> {
@@ -942,6 +951,29 @@ export class GrpcBridge {
 				return { ok: false, error: resp.error ?? "removeJob rejected" };
 			}
 			return { ok: true };
+		}, { ok: false, error: "gRPC server unavailable — start with ./run-omp.sh" });
+	}
+
+	/**
+	 * Pause (`enabled: false`) or resume (`enabled: true`) a scheduled job by ID.
+	 *
+	 * Unlike removeJob this keeps the job and its execution history: the job is
+	 * unregistered from / re-registered with the active scheduler and stays
+	 * persisted, so it can be resumed later — including after a gateway restart.
+	 */
+	async setSchedulerJobEnabled(
+		jobId: string,
+		enabled: boolean,
+	): Promise<SchedulerJobEnabledResult> {
+		return this.withReconnect(async () => {
+			const resp = await this.dashboardClient.setSchedulerJobEnabled(
+				create(SetSchedulerJobEnabledRequestSchema, { jobId, enabled }),
+			);
+			this.connected = true;
+			if (!resp.success) {
+				return { ok: false, error: resp.error ?? "setSchedulerJobEnabled rejected" };
+			}
+			return { ok: true, enabled: resp.enabled };
 		}, { ok: false, error: "gRPC server unavailable — start with ./run-omp.sh" });
 	}
 

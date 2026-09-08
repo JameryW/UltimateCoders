@@ -6,6 +6,7 @@ import {
   ListWorkersRequestSchema,
   GetSchedulerStatusRequestSchema,
   TriggerSchedulerJobRequestSchema,
+  SetSchedulerJobEnabledRequestSchema,
   FlushPendingTasksRequestSchema,
   ListEventsRequestSchema,
   WatchDashboardRequestSchema,
@@ -558,6 +559,21 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     return { success: resp.success, error: resp.error ?? undefined };
   }, [getTransport]);
 
+  // Pause (enabled=false) or resume (enabled=true) a scheduled job. The job and
+  // its execution history are kept — unlike removal — so this is the reversible
+  // control for "stop this from firing for a while".
+  const setSchedulerJobEnabled = useCallback(async (
+    jobId: string,
+    enabled: boolean,
+  ): Promise<{ success: boolean; enabled: boolean; error?: string }> => {
+    const transport = getTransport();
+    const client = createClient(DashboardService, transport);
+    const resp = await client.setSchedulerJobEnabled(
+      create(SetSchedulerJobEnabledRequestSchema, { jobId, enabled }),
+    );
+    return { success: resp.success, enabled: resp.enabled, error: resp.error ?? undefined };
+  }, [getTransport]);
+
   const flushPendingTasks = useCallback(async (): Promise<{ success: boolean; pendingCount: number; executedCount: number; error?: string }> => {
     const transport = getTransport();
     const client = createClient(DashboardService, transport);
@@ -594,6 +610,7 @@ export function useDashboardGrpc(opts: UseDashboardGrpcOptions) {
     listWorkers,
     getSchedulerStatus,
     triggerSchedulerJob,
+    setSchedulerJobEnabled,
     flushPendingTasks,
     listEvents,
   };

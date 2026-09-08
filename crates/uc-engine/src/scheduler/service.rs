@@ -348,22 +348,126 @@ impl SchedulerService {
             // This can happen during recovery. Not an error.
             info!(task_id = %task_id, "Job removed from store (not in local metadata)");
         }
+        drop(metadata);
 
         // Remove from tokio-cron-scheduler if running
         #[cfg(feature = "scheduler")]
-        {
-            let js = self.job_scheduler.read().await;
-            let scheduler_job_id = self.scheduler_job_ids.read().await.get(task_id).copied();
-            if let (Some(scheduler), Some(scheduler_job_id)) = (js.as_ref(), scheduler_job_id) {
-                if let Err(e) = scheduler.remove(&scheduler_job_id).await {
-                    warn!(task_id = %task_id, error = ?e, "Failed to remove job from tokio-cron-scheduler");
-                }
-            }
-            drop(js);
-            self.scheduler_job_ids.write().await.remove(task_id);
-        }
+        self.unregister_runtime_job(task_id).await;
 
         Ok(())
+    }
+
+    /// Pause (`enabled = false`) or resume (`enabled = true`) a scheduled job
+    /// without deleting it.
+    ///
+    /// Pausing is the non-destructive alternative to removal: removal deletes the
+    /// durable record *and* cascades its execution history away, while pausing
+    /// keeps both. It unregisters the job from the runtime scheduler and clears
+    /// the advertised `next_execution`, so nothing continues to promise a run
+    /// that will never happen. `last_execution` and history stay untouched.
+    ///
+    /// Resuming recomputes `next_execution` from the current clock — never the
+    /// stale pre-pause value — and registers the job with the runtime scheduler
+    /// again when the service is started. A one-shot whose `execute_after` has
+    /// already passed behaves exactly as it does at creation time: the job is
+    /// enabled again, has no pending run, and nothing is registered.
+    ///
+    /// The resulting state is written through the store, so a paused job is
+    /// still paused *and still listed* after a gateway restart (see `start`),
+    /// which is what makes it resumable later.
+    ///
+    /// Toggling a job to the state it is already in is a no-op: no scheduler
+    /// churn, no durable write, no refreshed timestamps.
+    pub async fn set_job_enabled(
+        &self,
+        task_id: &Uuid,
+        enabled: bool,
+    ) -> Result<ScheduledTask, EngineError> {
+        let current = {
+            let metadata = self.job_metadata.read().await;
+            metadata
+                .get(task_id)
+                .map(|m| m.task.clone())
+                .ok_or_else(|| {
+                    EngineError::TaskError(format!("Scheduled task not found: {}", task_id))
+                })?
+        };
+
+        if current.enabled == enabled {
+            return Ok(current);
+        }
+
+        let mut candidate = current.clone();
+        candidate.enabled = enabled;
+        candidate.next_execution = if enabled {
+            match Self::next_execution_for_task(&candidate, Utc::now()) {
+                Ok(next) => next,
+                Err(error) => {
+                    // A legacy or malformed record cannot be recalculated. The
+                    // job is still resumable — it just has no advertised run
+                    // until it dispatches successfully once more.
+                    warn!(
+                        task_id = %task_id,
+                        error = %error,
+                        "Failed to calculate next execution while resuming scheduler job"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        candidate.updated_at = Utc::now();
+
+        // Apply the runtime registration *before* committing the visible
+        // snapshot: a resume whose registration fails leaves the job exactly as
+        // it was rather than half-applied (enabled but never firing).
+        #[cfg(feature = "scheduler")]
+        {
+            if enabled {
+                let js = self.job_scheduler.read().await;
+                if let Some(scheduler) = js.as_ref() {
+                    let registered = self.register_runtime_job(scheduler, &candidate).await;
+                    drop(js);
+                    // An expired one-shot has nothing left to register.
+                    if let Some(scheduler_job_id) = registered? {
+                        self.scheduler_job_ids
+                            .write()
+                            .await
+                            .insert(*task_id, scheduler_job_id);
+                    }
+                }
+            } else {
+                self.unregister_runtime_job(task_id).await;
+            }
+        }
+
+        {
+            let mut metadata = self.job_metadata.write().await;
+            if let Some(job) = metadata.get_mut(task_id) {
+                job.task = candidate.clone();
+            }
+        }
+
+        // Same persistence contract as the dispatch metadata update: a failed
+        // durable write is logged, not fatal, because the in-memory snapshot and
+        // the runtime scheduler already agree on the new state.
+        if let Err(error) = self.store.update_task(&candidate).await {
+            warn!(
+                task_id = %task_id,
+                error = %error,
+                "Failed to persist scheduler job enabled state"
+            );
+        }
+
+        info!(
+            task_id = %task_id,
+            enabled = enabled,
+            description = %candidate.description,
+            "Scheduler job enabled state updated"
+        );
+
+        Ok(candidate)
     }
 
     /// List all registered jobs in stable creation order.
@@ -590,29 +694,28 @@ impl SchedulerService {
             return Ok(());
         }
 
-        // Load persisted tasks into local metadata. Recompute the next
-        // occurrence from the current clock so a restart never exposes a
-        // stale timestamp left behind by the previous process.
-        let persisted_tasks = self.store.list_tasks(true).await?;
-        // Recover history for disabled jobs too: they are intentionally absent
-        // from the active job registry, but their completed executions still
-        // belong in the dashboard's cross-job history view.
-        let history_tasks = match self.store.list_tasks(false).await {
-            Ok(tasks) => tasks,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "Failed to list all scheduler tasks for history recovery"
-                );
-                persisted_tasks.clone()
-            }
-        };
-        self.recover_execution_history(&history_tasks).await;
+        // Load persisted tasks into local metadata. Every persisted job is
+        // recovered — paused ones included — so a pause survives a restart as a
+        // visible, resumable job rather than silently disappearing from the
+        // registry (and from the dashboard that reads it). Enabled jobs are
+        // additionally registered with the runtime scheduler below.
+        //
+        // Recompute the next occurrence from the current clock so a restart
+        // never exposes a stale timestamp left behind by the previous process.
+        let persisted_tasks = self.store.list_tasks(false).await?;
+        self.recover_execution_history(&persisted_tasks).await;
         let recovery_now = Utc::now();
         let mut recovered_tasks = Vec::with_capacity(persisted_tasks.len());
         for task in persisted_tasks {
             let mut recovered = task.clone();
-            match Self::next_execution_for_task(&task, recovery_now) {
+            let refreshed = if task.enabled {
+                Self::next_execution_for_task(&task, recovery_now)
+            } else {
+                // Paused jobs advertise no pending run. Self-heal records that
+                // were paused by an older build, or whose durable write raced.
+                Ok(None)
+            };
+            match refreshed {
                 Ok(next_execution) if next_execution != task.next_execution => {
                     recovered.next_execution = next_execution;
                     recovered.updated_at = Utc::now();
@@ -653,46 +756,27 @@ impl SchedulerService {
                     EngineError::InternalError(format!("Failed to create job scheduler: {:?}", e))
                 })?;
 
-            // Register all persisted tasks with the job scheduler
+            // Register the enabled tasks with the job scheduler. Paused tasks
+            // are loaded into the registry so they stay visible and resumable,
+            // but they must not occupy the runtime scheduler.
             for task in &recovered_tasks {
-                if task.cron_expression.is_some() {
-                    match self
-                        .register_cron_with_scheduler(&job_scheduler, task)
-                        .await
-                    {
-                        Ok(scheduler_job_id) => {
-                            self.scheduler_job_ids
-                                .write()
-                                .await
-                                .insert(task.id, scheduler_job_id);
-                        }
-                        Err(e) => {
-                            warn!(
-                                task_id = %task.id,
-                                error = %e,
-                                "Failed to register persisted cron task with scheduler during recovery"
-                            );
-                        }
+                if !task.enabled {
+                    continue;
+                }
+                match self.register_runtime_job(&job_scheduler, task).await {
+                    Ok(Some(scheduler_job_id)) => {
+                        self.scheduler_job_ids
+                            .write()
+                            .await
+                            .insert(task.id, scheduler_job_id);
                     }
-                } else if task.execute_after.is_some() {
-                    match self
-                        .register_one_shot_with_scheduler(&job_scheduler, task)
-                        .await
-                    {
-                        Ok(Some(scheduler_job_id)) => {
-                            self.scheduler_job_ids
-                                .write()
-                                .await
-                                .insert(task.id, scheduler_job_id);
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            warn!(
-                                task_id = %task.id,
-                                error = %e,
-                                "Failed to register persisted one-shot task with scheduler during recovery"
-                            );
-                        }
+                    Ok(None) => {}
+                    Err(e) => {
+                        warn!(
+                            task_id = %task.id,
+                            error = %e,
+                            "Failed to register persisted task with scheduler during recovery"
+                        );
                     }
                 }
             }
@@ -844,6 +928,12 @@ impl SchedulerService {
                         None
                     }
                 };
+                // A paused job can still be triggered manually (that is an
+                // explicit operator action), but it must not start advertising a
+                // run the runtime scheduler is no longer registered to fire.
+                if !job.task.enabled {
+                    job.task.next_execution = None;
+                }
             }
             job.task.updated_at = Utc::now();
             job.task.clone()
@@ -872,6 +962,46 @@ impl SchedulerService {
     }
 
     // ── tokio-cron-scheduler integration ─────────────────────────
+
+    /// Register a task with the runtime scheduler, picking the job shape from
+    /// the persisted definition (cron expression wins over `execute_after`).
+    ///
+    /// Returns `None` when the task carries neither shape, or when a one-shot's
+    /// target time has already passed and therefore cannot be scheduled.
+    #[cfg(feature = "scheduler")]
+    async fn register_runtime_job(
+        &self,
+        scheduler: &tokio_cron_scheduler::JobScheduler,
+        task: &ScheduledTask,
+    ) -> Result<Option<Uuid>, EngineError> {
+        if task.cron_expression.is_some() {
+            self.register_cron_with_scheduler(scheduler, task)
+                .await
+                .map(Some)
+        } else if task.execute_after.is_some() {
+            self.register_one_shot_with_scheduler(scheduler, task).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Drop a task's runtime registration, if any, and forget its scheduler UUID.
+    ///
+    /// Used by both removal and pause, so the two can never drift apart: a job
+    /// that leaves the active schedule must also stop occupying the runtime
+    /// scheduler. A missing registration is not an error.
+    #[cfg(feature = "scheduler")]
+    async fn unregister_runtime_job(&self, task_id: &Uuid) {
+        let js = self.job_scheduler.read().await;
+        let scheduler_job_id = self.scheduler_job_ids.read().await.get(task_id).copied();
+        if let (Some(scheduler), Some(scheduler_job_id)) = (js.as_ref(), scheduler_job_id) {
+            if let Err(e) = scheduler.remove(&scheduler_job_id).await {
+                warn!(task_id = %task_id, error = ?e, "Failed to remove job from tokio-cron-scheduler");
+            }
+        }
+        drop(js);
+        self.scheduler_job_ids.write().await.remove(task_id);
+    }
 
     /// Convert a 5-field cron expression (standard: min hour day month dow)
     /// to a 6-field expression (with seconds) as required by tokio-cron-scheduler.
@@ -1223,6 +1353,223 @@ mod tests {
         assert!(service.get_job(&task_id).await.is_none());
 
         service.stop().await.unwrap();
+    }
+
+    // ── Pause / resume (set_job_enabled) tests ───────────────────
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn pause_unregisters_runtime_job_and_clears_next_execution() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+        assert!(
+            service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "precondition: enabled job is registered with the runtime scheduler"
+        );
+
+        let paused = service.set_job_enabled(&task_id, false).await.unwrap();
+        assert!(!paused.enabled);
+        assert!(
+            paused.next_execution.is_none(),
+            "a paused job must not advertise a run that will never happen"
+        );
+        assert!(
+            !service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "pausing must unregister the runtime scheduler job"
+        );
+        assert!(
+            service.get_job(&task_id).await.is_some(),
+            "pausing must keep the job listed, unlike removal"
+        );
+
+        let persisted = store.load_task(&task_id).await.unwrap().unwrap();
+        assert!(!persisted.enabled);
+        assert!(persisted.next_execution.is_none());
+
+        service.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn resume_registers_runtime_job_and_recomputes_next_execution() {
+        let service = SchedulerService::new();
+        service.start().await.unwrap();
+
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+        service.set_job_enabled(&task_id, false).await.unwrap();
+
+        let resumed = service.set_job_enabled(&task_id, true).await.unwrap();
+        assert!(resumed.enabled);
+        let next = resumed
+            .next_execution
+            .expect("a resumed cron job needs a next run");
+        assert!(
+            next > Utc::now(),
+            "resume must recompute from the current clock, not reuse a stale value"
+        );
+        assert!(
+            service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "resuming must re-register the runtime scheduler job"
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pause_keeps_last_execution_and_history() {
+        let service = SchedulerService::new();
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+        service.dispatch_with_guard(&task_id).await.unwrap();
+
+        let paused = service.set_job_enabled(&task_id, false).await.unwrap();
+        assert!(
+            paused.last_execution.is_some(),
+            "pause must not rewind the last-run timestamp"
+        );
+        assert_eq!(
+            service.get_execution_history(Some(&task_id)).await.len(),
+            1,
+            "pause must preserve execution history (unlike removal, which cascades it away)"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_job_enabled_toggling_to_same_state_is_noop() {
+        let service = SchedulerService::new();
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+
+        service.set_job_enabled(&task_id, false).await.unwrap();
+        let first = service.get_job(&task_id).await.unwrap();
+        let again = service.set_job_enabled(&task_id, false).await.unwrap();
+
+        assert_eq!(
+            again.updated_at, first.updated_at,
+            "a no-op toggle must not churn the record's timestamps"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_job_enabled_unknown_job_is_reported() {
+        let service = SchedulerService::new();
+        let error = service
+            .set_job_enabled(&Uuid::new_v4(), false)
+            .await
+            .expect_err("toggling an unknown job must fail");
+        assert!(
+            matches!(error, EngineError::TaskError(_)),
+            "unexpected error variant: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_expired_one_shot_stays_enabled_without_next_run() {
+        let service = SchedulerService::new();
+        let task = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        service.set_job_enabled(&task_id, false).await.unwrap();
+        let resumed = service.set_job_enabled(&task_id, true).await.unwrap();
+
+        assert!(
+            resumed.enabled,
+            "resuming an expired one-shot still flips the enabled flag"
+        );
+        assert!(
+            resumed.next_execution.is_none(),
+            "an expired one-shot cannot advertise a future run"
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_trigger_of_paused_job_does_not_advertise_next_run() {
+        let service = SchedulerService::new();
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+        service.set_job_enabled(&task_id, false).await.unwrap();
+
+        // An explicit operator trigger is still allowed on a paused job, but
+        // the post-dispatch metadata refresh must not resurrect its next run.
+        service.dispatch_with_guard(&task_id).await.unwrap();
+
+        let job = service.get_job(&task_id).await.unwrap();
+        assert!(job.last_execution.is_some());
+        assert!(
+            job.next_execution.is_none(),
+            "a paused job must stay without an advertised next run"
+        );
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn paused_job_survives_restart_and_can_be_resumed() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let writer = SchedulerService::with_store(store.clone());
+        writer.start().await.unwrap();
+
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        writer.add_cron_job(task).await.unwrap();
+        writer.set_job_enabled(&task_id, false).await.unwrap();
+        writer.stop().await.unwrap();
+
+        // A fresh service sharing the same store represents a gateway restart.
+        let recovered = SchedulerService::with_store(store.clone());
+        recovered.start().await.unwrap();
+
+        let job = recovered
+            .get_job(&task_id)
+            .await
+            .expect("a paused job must stay listed after a restart, or it could never be resumed");
+        assert!(!job.enabled);
+        assert!(job.next_execution.is_none());
+        assert!(
+            !recovered
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "restart must not register a paused job with the runtime scheduler"
+        );
+
+        let resumed = recovered.set_job_enabled(&task_id, true).await.unwrap();
+        assert!(resumed.enabled);
+        assert!(resumed.next_execution.is_some());
+        assert!(
+            recovered
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "resuming after a restart must register the runtime job"
+        );
+        assert!(store.load_task(&task_id).await.unwrap().unwrap().enabled);
+
+        recovered.stop().await.unwrap();
     }
 
     #[cfg(feature = "scheduler")]
@@ -1642,7 +1989,11 @@ mod tests {
         recovered.start().await.unwrap();
 
         let history = recovered.get_execution_history(None).await;
-        assert_eq!(recovered.job_count().await, 1);
+        assert_eq!(
+            recovered.job_count().await,
+            2,
+            "recovery lists both the enabled and the paused job"
+        );
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].scheduled_task_id, disabled_task_id);
         assert_eq!(history[1].scheduled_task_id, task_id);
@@ -1693,8 +2044,9 @@ mod tests {
         service.stop().await.unwrap();
     }
 
+    #[cfg(feature = "scheduler")]
     #[tokio::test]
-    async fn start_reloads_only_enabled_tasks() {
+    async fn start_reloads_paused_tasks_without_registering_them() {
         let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
 
         // Pre-populate store with tasks
@@ -1704,12 +2056,36 @@ mod tests {
         store.save_task(&task1).await.unwrap();
         store.save_task(&task2).await.unwrap();
 
-        // Create service and start — should recover only enabled tasks
+        // Create service and start — every persisted task becomes visible again
+        // (so a paused job can be resumed later), but only the enabled one is
+        // handed to the runtime scheduler.
         let service = SchedulerService::with_store(store.clone());
         service.start().await.unwrap();
 
-        // Only the enabled task should be loaded
-        assert_eq!(service.job_count().await, 1);
+        assert_eq!(service.job_count().await, 2);
+        let paused = service.get_job(&task2.id).await.unwrap();
+        assert!(!paused.enabled);
+        assert!(
+            paused.next_execution.is_none(),
+            "recovery must not advertise a run for a paused task"
+        );
+        assert!(
+            service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task1.id),
+            "enabled tasks are registered on recovery"
+        );
+        assert!(
+            !service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task2.id),
+            "paused tasks must stay out of the runtime scheduler"
+        );
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
@@ -2004,6 +2380,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_engine_pause_and_resume_job_via_api() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let add_result = engine
+            .add_cron_job(uc_types::AddCronJobApiRequest {
+                description: "Nightly build".to_string(),
+                cron_expression: "0 22 * * *".to_string(),
+                project_id: "test-project".to_string(),
+                night_window_start: None,
+                night_window_end: None,
+                timezone: "UTC".to_string(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        let job_id = add_result.job_id;
+
+        let paused = engine
+            .set_scheduler_job_enabled(&job_id, false)
+            .await
+            .unwrap();
+        assert!(paused.success, "pausing an existing job should succeed");
+        assert!(!paused.enabled, "the result echoes the settled state");
+        assert!(paused.error.is_none());
+
+        // The dashboard reads the status snapshot: a paused job must remain
+        // listed there (so it can be resumed) and must stop advertising a run.
+        let status = engine.get_scheduler_status().await.unwrap();
+        let job = status
+            .jobs
+            .iter()
+            .find(|job| job.id.to_string() == job_id)
+            .expect("a paused job must stay visible in the scheduler status");
+        assert!(!job.enabled);
+        assert!(job.next_execution.is_none());
+
+        let resumed = engine
+            .set_scheduler_job_enabled(&job_id, true)
+            .await
+            .unwrap();
+        assert!(resumed.success, "resuming an existing job should succeed");
+        assert!(resumed.enabled);
+        assert!(engine
+            .get_scheduler_status()
+            .await
+            .unwrap()
+            .jobs
+            .iter()
+            .find(|job| job.id.to_string() == job_id)
+            .and_then(|job| job.next_execution)
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn local_engine_set_scheduler_job_enabled_invalid_uuid() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let result = engine.set_scheduler_job_enabled("not-a-uuid", false).await;
+
+        assert!(
+            result.is_err(),
+            "An invalid job ID should return Err, like the sibling operations"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_engine_set_scheduler_job_enabled_nonexistent() {
+        use uc_types::EngineApi;
+
+        let engine = crate::local::LocalEngine::new_fallback();
+        let valid_uuid = uuid::Uuid::new_v4().to_string();
+        let result = engine
+            .set_scheduler_job_enabled(&valid_uuid, false)
+            .await
+            .unwrap();
+
+        assert!(
+            !result.success,
+            "Toggling a non-existent job should return success=false"
+        );
+        assert!(result.error.is_some(), "Error message should be present");
+        assert!(
+            !result.enabled,
+            "The echoed state must not claim a change that did not happen"
+        );
+    }
+
+    #[tokio::test]
     async fn default_remove_job_returns_false() {
         use uc_types::EngineApi;
 
@@ -2120,6 +2586,23 @@ mod tests {
         assert!(
             result.error.is_some(),
             "Default remove_job impl should return an error message"
+        );
+
+        let toggle = engine
+            .set_scheduler_job_enabled("any-id", false)
+            .await
+            .unwrap();
+        assert!(
+            !toggle.success,
+            "Default set_scheduler_job_enabled impl should return success=false"
+        );
+        assert!(
+            toggle.error.is_some(),
+            "Default set_scheduler_job_enabled impl should return an error message"
+        );
+        assert!(
+            !toggle.enabled,
+            "Default impl should echo the requested state"
         );
     }
 

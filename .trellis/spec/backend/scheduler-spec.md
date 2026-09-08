@@ -26,6 +26,9 @@ impl SchedulerService {
     pub async fn add_cron_job(&self, task: ScheduledTask) -> Result<Uuid, EngineError>;
     pub async fn add_one_shot_job(&self, task: ScheduledTask) -> Result<Uuid, EngineError>;
     pub async fn remove_job(&self, id: &Uuid) -> Result<(), EngineError>;
+    /// Pause (`false`) or resume (`true`) a job without deleting it; returns the
+    /// updated task. See "Pause / Resume Semantics" below.
+    pub async fn set_job_enabled(&self, id: &Uuid, enabled: bool) -> Result<ScheduledTask, EngineError>;
     pub fn list_jobs(&self) -> Vec<ScheduledTask>;
     pub fn get_job(&self, id: &Uuid) -> Option<ScheduledTask>;
     pub async fn start(&self) -> Result<(), EngineError>;
@@ -154,6 +157,38 @@ class Scheduler:
 - Guard check happens before dispatch: outside window → record `Deferred` history, skip dispatch
 - Window open/close events published to NATS `schedule.window.opened` / `schedule.window.closed` (feature-gated: messaging)
 
+#### Pause / Resume Semantics (`set_job_enabled`)
+
+Removal is destructive: `delete_task` cascades the job's `execution_history`
+away. Pausing is the reversible control for "stop firing this for a while" —
+it keeps the durable record *and* its history.
+
+| Operation | Runtime scheduler | `enabled` | `next_execution` | `last_execution` / history |
+|-----------|-------------------|-----------|------------------|-----------------------------|
+| Pause (`enabled = false`) | unregistered | `false` | cleared (`None`) | untouched |
+| Resume (`enabled = true`) | registered when the service is started | `true` | recomputed from *now* | untouched |
+| Toggle to the current state | untouched | unchanged | unchanged | untouched (no-op, no durable write) |
+| Manual trigger of a paused job | not registered | unchanged | stays `None` | updated as usual |
+
+- **Ordering**: the runtime (un)registration happens *before* the visible
+  snapshot is committed, so a resume whose registration fails leaves the job
+  exactly as it was instead of reporting an enabled job that never fires.
+- **A paused job never advertises a run.** `mark_execution_started` re-applies
+  the rule after a manual trigger, so `next_execution` cannot reappear while the
+  job is paused (a manual trigger is still honoured — it is an explicit operator
+  action).
+- **Expired one-shot**: resuming a one-shot whose `execute_after` already passed
+  sets `enabled = true` with `next_execution = None` and registers nothing — the
+  same shape `add_one_shot_job` produces for a past timestamp.
+- **Persistence is best-effort**: `update_task` failure is logged, not fatal,
+  matching the dispatch-metadata contract (in-memory + runtime already agree).
+- **Cross-layer surface**: `EngineApi::set_scheduler_job_enabled(job_id, enabled)`
+  → `SchedulerJobEnabledResult { success, job_id, enabled, error }` (the trait's
+  default impl reports `success: false` + "Scheduler not available"); gRPC
+  `DashboardService::SetSchedulerJobEnabled`; the `uc_scheduler` LLM tool's
+  `pause` / `resume` actions; `/uc schedule pause|resume <job-id>`; and the
+  Dashboard SchedulerPanel Pause/Resume button (`onSetJobEnabled`).
+
 #### `uc.scheduler.yaml` Config Contract (PR1/PR2)
 
 Gateway loads `uc.scheduler.yaml` at boot (`UC_SCHEDULER_CONFIG` env → `./uc.scheduler.yaml`). Missing file = idle scheduler (no behavior change, opt-in). `SchedulerFileConfig` (Rust, `crates/uc-engine/src/scheduler/config.rs`):
@@ -196,14 +231,18 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
   BEFORE `SchedulerService::start()` runs. The store is set-once-at-construction
   (not hot-swappable) — no RwLock.
 - **Write path** (already wired in `service.rs`): `add_cron_job`/`add_one_shot_job`
-  → `save_task`; `remove_job` → `delete_task`; dispatch attempts update
+  → `save_task`; `remove_job` → `delete_task`; `set_job_enabled` (pause/resume)
+  → `update_task`; dispatch attempts update
   `last_execution`/`next_execution` through `update_task`; `record_execution`
   → `save_execution`.
-- **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(true)`
-  → recompute each task's `next_execution` from the current UTC clock, persist
-  the refreshed snapshot when it changed, then re-register each persisted
-  cron/one-shot job with the `JobScheduler` + load into `job_metadata`. With the
-  PG backend, jobs survive a gateway restart without stale next-run metadata.
+- **Restart recovery** (already wired in `service.rs::start()`): `list_tasks(false)`
+  loads **every** persisted task — enabled *and* paused — into `job_metadata`, so a
+  paused job stays visible and resumable after a restart (a job that vanished from
+  the registry could never be resumed). Each task's `next_execution` is recomputed
+  from the current UTC clock when it is enabled, and forced to `None` when it is
+  paused; the refreshed snapshot is persisted when it changed. Only enabled tasks
+  are registered with the `JobScheduler`. With the PG backend, jobs survive a
+  gateway restart without stale next-run metadata.
   `list_jobs()` returns the active snapshot in stable `created_at` order (with
   UUID as a tie-breaker), so Dashboard refreshes do not reorder jobs after
   HashMap recovery.
@@ -238,6 +277,8 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
 | Invalid IANA timezone name | `InvalidInput` | "Invalid timezone: {name}" |
 | execute_after is in the past | `InvalidInput` | "execute_after must be in the future" |
 | Task ID not found (remove/get) | `NotFound` | "Scheduled task not found: {id}" |
+| Task ID not in the registry (pause/resume) | `TaskError` | "Scheduled task not found: {id}" |
+| Pause/resume to the state the job is already in | (no error) | no-op — current task returned, no durable write |
 | Scheduler already running (start) | `InvalidState` | "Scheduler is already running" |
 | Scheduler not running (stop) | `InvalidState` | "Scheduler is not running" |
 | `uc.scheduler.yaml` missing | (no error) | idle scheduler — opt-in, no behavior change |
@@ -290,6 +331,14 @@ scheduler.create_cron_job(
 | ScheduleStore cascade delete | Unit | Deleting task removes associated executions |
 | SchedulerService night window guard | Unit | Outside window → Deferred execution history |
 | SchedulerService persistence | Unit | Add job → save to store → restart → job recovered |
+| Pause unregisters + clears `next_execution` | Unit | `scheduler_job_ids` loses the task, store row has `enabled=false`, `next_execution=None` |
+| Resume re-registers + recomputes | Unit | `next_execution > now`, runtime UUID present again |
+| Pause keeps `last_execution` + history | Unit | History row survives the toggle (removal would cascade it) |
+| Toggle to current state is a no-op | Unit | `updated_at` unchanged on the second call |
+| Expired one-shot resume | Unit | `enabled=true`, `next_execution=None`, nothing registered |
+| Manual trigger of a paused job | Unit | `last_execution` set, `next_execution` stays `None` |
+| Pause survives a restart | Unit | Fresh service on the same store lists the paused job, does not register it, and resumes it |
+| Recovery loads all, registers only enabled | Unit | `job_count == 2`, paused job present with `next_execution=None` and no runtime registration |
 | Orchestrator night exclusive mode | Unit | `night_window_active=True` → non-scheduled tasks queued |
 | Orchestrator flush pending | Unit | `flush_pending_tasks()` executes all queued tasks |
 | Orchestrator scheduled task bypass | Unit | Scheduled tasks execute even during night window |

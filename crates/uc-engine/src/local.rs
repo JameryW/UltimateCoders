@@ -1119,6 +1119,31 @@ impl EngineApi for LocalEngine {
             }),
         }
     }
+
+    async fn set_scheduler_job_enabled(
+        &self,
+        job_id: &str,
+        enabled: bool,
+    ) -> Result<uc_types::SchedulerJobEnabledResult, EngineError> {
+        let task_id = uuid::Uuid::parse_str(job_id)
+            .map_err(|e| EngineError::ConfigError(format!("Invalid job ID '{}': {}", job_id, e)))?;
+
+        let svc = &self.scheduler_service;
+        match svc.set_job_enabled(&task_id, enabled).await {
+            Ok(task) => Ok(uc_types::SchedulerJobEnabledResult {
+                success: true,
+                job_id: job_id.to_string(),
+                enabled: task.enabled,
+                error: None,
+            }),
+            Err(e) => Ok(uc_types::SchedulerJobEnabledResult {
+                success: false,
+                job_id: job_id.to_string(),
+                enabled,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 }
 
 impl LocalEngine {

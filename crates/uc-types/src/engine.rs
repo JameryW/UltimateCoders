@@ -267,6 +267,31 @@ pub trait EngineApi: Send + Sync {
             error: Some("Scheduler not available".to_string()),
         })
     }
+
+    /// Pause (`enabled = false`) or resume (`enabled = true`) a scheduled job at
+    /// runtime by its UUID string, without deleting it or its history. The gRPC
+    /// `DashboardService::set_scheduler_job_enabled` delegates here.
+    ///
+    /// Pausing unregisters the job from the runtime scheduler and clears its
+    /// advertised `next_execution`; resuming recomputes it from the current
+    /// clock. Both states persist, so a paused job survives a restart still
+    /// paused — and still listed, so it can be resumed.
+    ///
+    /// Default impl returns `success: false` — only `LocalEngine` (with the
+    /// scheduler feature) implements this.
+    async fn set_scheduler_job_enabled(
+        &self,
+        job_id: &str,
+        enabled: bool,
+    ) -> Result<crate::SchedulerJobEnabledResult, EngineError> {
+        let _ = job_id;
+        Ok(crate::SchedulerJobEnabledResult {
+            success: false,
+            job_id: job_id.to_string(),
+            enabled,
+            error: Some("Scheduler not available".to_string()),
+        })
+    }
 }
 
 /// Index state returned by get_index_state.

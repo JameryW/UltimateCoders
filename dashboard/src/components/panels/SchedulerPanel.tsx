@@ -50,11 +50,13 @@ function formatDuration(start: string, end: string): string {
 interface SchedulerPanelProps {
   data: SchedulerData;
   onTriggerJob?: (jobId: string) => void;
+  /** Pause (enabled=false) or resume (enabled=true) a job without deleting it. */
+  onSetJobEnabled?: (jobId: string, enabled: boolean) => void;
   stale?: boolean;
   embedded?: boolean;
 }
 
-export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob, stale, embedded }: SchedulerPanelProps) {
+export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob, onSetJobEnabled, stale, embedded }: SchedulerPanelProps) {
   if (!data.available) {
     const unavailable = <EmptyState icon="clock" title="Scheduler not available" description="The scheduler endpoint is unreachable" />;
     if (embedded) return unavailable;
@@ -102,12 +104,31 @@ export const SchedulerPanel = memo(function SchedulerPanel({ data, onTriggerJob,
                   )}
                 />
                 <span className="text-[var(--text-primary)]">{job.description}</span>
+                {!job.enabled && (
+                  <span className="text-xs px-1.5 py-0.5 rounded status-paused">PAUSED</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {job.cron_expression && (
                   <span className="text-xs text-[var(--text-muted)] font-mono">
                     {job.cron_expression}
                   </span>
+                )}
+                {onSetJobEnabled && (
+                  <button
+                    onClick={() => onSetJobEnabled(job.id, !job.enabled)}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-xs cursor-pointer",
+                      job.enabled ? "btn-action-warn" : "btn-action-ok"
+                    )}
+                    title={
+                      job.enabled
+                        ? "Stop this job from firing. The job and its history are kept."
+                        : "Start this paused job again."
+                    }
+                  >
+                    {job.enabled ? "Pause" : "Resume"}
+                  </button>
                 )}
                 {onTriggerJob && (
                   <button
