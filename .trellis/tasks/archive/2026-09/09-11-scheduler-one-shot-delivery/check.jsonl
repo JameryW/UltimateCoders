@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Verify implementation against the Missed One-Shot / One-Shot Re-Arm / Dispatch Retry Budget sections"}
+{"file": ".trellis/spec/backend/dashboard-spec.md", "reason": "DispatchSource and trigger semantics surface through DashboardService::TriggerSchedulerJob"}

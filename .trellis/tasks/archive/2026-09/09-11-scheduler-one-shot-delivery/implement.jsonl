@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Authoritative contract for the owed-attempt model, missed-run record, re-arm and retry budget"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration and column-addition conventions the dispatch_attempts column follows"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Definition-of-done: feature matrices, clippy -D warnings, ignored live-DB tests"}
