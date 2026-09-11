@@ -1,7 +1,7 @@
 # Wayfinder Map: Durable Agent Runtime P0
 
 Status: active
-GitHub: map #632 · D4 #633 · D5 #634 · D6 #635 · D7 #636 (created 2026-09-11; GitHub mode is authoritative, these files are mirrors)
+GitHub: map #632 · D4 #633 · D5 #634 · D6 #635 · D7 #636 · T1 #637 · T2 #638 · T3 #639 · T4 #640 · T5 #641 · T6 #642 · T7 #643 (GitHub mode is authoritative, these files are mirrors)
 Assessment: docs/architecture/durable-runtime-migration-assessment.md (approved 2026-09-11)
 Decided already: D1 state-table authority + audit events · D2 one-shot authority flip to Rust · D3 one-shot new worker contract (lockstep, handshake-gated)
 
