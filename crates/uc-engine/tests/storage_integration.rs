@@ -5,9 +5,18 @@
 //! so they do NOT run on default `cargo test`.
 //!
 //! Run manually:
-//!   docker compose up -d --wait
-//!   cargo test --features storage -- --ignored
-//!   docker compose down -v
+//!   docker compose -f docker/docker-compose.yml up -d --wait postgres
+//!   UC_PG_URL=postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders \
+//!     cargo test -p uc-engine --features storage -- --ignored postgres
+//!
+//! Prefer 127.0.0.1 over `localhost` in UC_PG_URL: a `localhost` host makes the
+//! client try IPv6 first, and where that stalls each connection wastes ~10s —
+//! enough to blow PostgresMetadataStore's 10s `acquire_timeout`, which turns
+//! `test_pg_connect` red and takes 42s instead of 0.2s.
+//!
+//! CI: `.github/workflows/ci-rust.yml` → `postgres-integration` runs the
+//! PostgreSQL-backed tests on every PR; `storage-integration` runs the whole
+//! stack (TiKV/Qdrant/PG) on main pushes only.
 //!
 //! Environment variables (with defaults for local Docker Compose):
 //!   UC_PG_URL              - PostgreSQL connection string
@@ -105,6 +114,25 @@ mod postgres_tests {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
 
+    /// Build a metadata store that is *actually* talking to PostgreSQL.
+    ///
+    /// `new()` turns a failed connection into `Ok` plus an in-memory fallback, so
+    /// without this check every CRUD assertion below passes against an
+    /// unreachable database — a green integration job that verified nothing.
+    /// `test_pg_connect` is the one test that notices; this keeps the others from
+    /// being vacuous.
+    async fn connected_store() -> uc_engine::metadata::postgres::PostgresMetadataStore {
+        let store = uc_engine::metadata::postgres::PostgresMetadataStore::new(&pg_url())
+            .await
+            .expect("PostgresMetadataStore::new should succeed");
+        assert!(
+            store.is_connected(),
+            "PostgreSQL is unreachable — the store fell back to memory, so this \
+             integration test would pass without ever touching a database"
+        );
+        store
+    }
+
     /// Verify that PostgresMetadataStore::new(pg_url) connects successfully.
     #[tokio::test]
     #[ignore]
@@ -124,9 +152,7 @@ mod postgres_tests {
     #[ignore]
     async fn test_pg_migrations() {
         // Connecting via new() automatically runs migrations.
-        let _store = uc_engine::metadata::postgres::PostgresMetadataStore::new(&pg_url())
-            .await
-            .expect("Failed to connect to PostgreSQL");
+        let _store = connected_store().await;
 
         // new() already calls run_migrations(), so tables should exist.
         // Verify by querying pg_tables.
@@ -172,9 +198,7 @@ mod postgres_tests {
     #[tokio::test]
     #[ignore]
     async fn test_pg_repo_crud() {
-        let store = uc_engine::metadata::postgres::PostgresMetadataStore::new(&pg_url())
-            .await
-            .expect("Failed to connect to PostgreSQL");
+        let store = connected_store().await;
 
         let prefix = unique_prefix();
 
@@ -252,9 +276,7 @@ mod postgres_tests {
     #[tokio::test]
     #[ignore]
     async fn test_pg_symbol_crud() {
-        let store = uc_engine::metadata::postgres::PostgresMetadataStore::new(&pg_url())
-            .await
-            .expect("Failed to connect to PostgreSQL");
+        let store = connected_store().await;
 
         let prefix = unique_prefix();
         let repo_id = format!("{}_symrepo", prefix);
@@ -346,9 +368,7 @@ mod postgres_tests {
     #[tokio::test]
     #[ignore]
     async fn test_pg_index_state_with_counts() {
-        let store = uc_engine::metadata::postgres::PostgresMetadataStore::new(&pg_url())
-            .await
-            .expect("Failed to connect to PostgreSQL");
+        let store = connected_store().await;
 
         let prefix = unique_prefix();
         let repo_id = format!("{}_idxrepo", prefix);
@@ -985,6 +1005,253 @@ mod memory_e2e_tests {
         assert!(
             semantic_result.is_some(),
             "read with include_semantic=true should find the long-term-only entry"
+        );
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// AC-SCHED: PostgreSQL schedule persistence
+//
+// Run against a live database:
+//   docker compose -f docker/docker-compose.yml up -d postgres
+//   cargo test -p uc-engine --features storage -- schedule_ -- --ignored
+// ══════════════════════════════════════════════════════════════════════
+
+mod schedule_postgres_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use uc_engine::{PostgresScheduleStore, ScheduleStore};
+    use uc_types::ScheduledTask;
+
+    fn one_shot(desc: &str, at: chrono::DateTime<chrono::Utc>) -> ScheduledTask {
+        ScheduledTask::one_shot(
+            desc.to_string(),
+            "uc-it-test".to_string(),
+            at,
+            chrono::NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+            chrono::NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
+            "UTC".to_string(),
+        )
+    }
+
+    async fn column_info(
+        pool: &sqlx::PgPool,
+        column: &str,
+    ) -> Result<Option<(String, Option<String>, String)>, sqlx::Error> {
+        // `column_default` is legitimately NULL for a nullable column with no
+        // default — that is exactly `verify_command` — so it decodes into Option.
+        sqlx::query_as(
+            "SELECT is_nullable, column_default, data_type FROM information_schema.columns \
+             WHERE table_schema = current_schema() AND table_name = 'scheduled_tasks' \
+               AND column_name = $1",
+        )
+        .bind(column)
+        .fetch_optional(pool)
+        .await
+    }
+
+    /// Facts read from the database, asserted only after cleanup.
+    struct LegacyFacts {
+        dispatch_attempts: Option<(String, Option<String>, String)>,
+        verify_command: Option<(String, Option<String>, String)>,
+        legacy_row_attempts: i32,
+    }
+
+    /// `verify_command` and `dispatch_attempts` were both added after the first
+    /// release, so the `ALTER TABLE … ADD COLUMN IF NOT EXISTS` branch — not the
+    /// `CREATE TABLE` — is what a rolling deploy actually runs. Execute it inside
+    /// a throwaway schema on a single-connection pool, so the real
+    /// `public.scheduled_tasks` can never be reached or dropped.
+    #[tokio::test]
+    #[ignore]
+    async fn schedule_migration_upgrades_a_legacy_table() {
+        let schema = format!("uc_sched_it_{}", unique_prefix());
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&pg_url())
+            .await
+            .expect("pool for the legacy-schema migration test");
+
+        sqlx::query(&format!("CREATE SCHEMA {}", schema))
+            .execute(&pool)
+            .await
+            .expect("CREATE SCHEMA");
+        // `SET` is per-connection; max_connections(1) guarantees every statement
+        // here runs on it. `public` is only a fallback, and must never be used,
+        // because the legacy table below is created in this schema first.
+        sqlx::query(&format!("SET search_path TO {}, public", schema))
+            .execute(&pool)
+            .await
+            .expect("SET search_path");
+
+        // Everything that touches the temp schema happens inside this block, and
+        // it returns facts instead of asserting: a failed assertion must not skip
+        // the DROP below and leak the schema into the database.
+        let facts: Result<LegacyFacts, Box<dyn std::error::Error>> = async {
+            sqlx::query(
+                r#"
+                CREATE TABLE scheduled_tasks (
+                    id UUID PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    project_id TEXT,
+                    cron_expression TEXT,
+                    execute_after TIMESTAMPTZ,
+                    night_window_start TIME NOT NULL,
+                    night_window_end TIME NOT NULL,
+                    timezone TEXT DEFAULT 'UTC',
+                    enabled BOOLEAN DEFAULT TRUE,
+                    last_execution TIMESTAMPTZ,
+                    next_execution TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                "#,
+            )
+            .execute(&pool)
+            .await?;
+
+            // This is the shape a deployed gateway boots into.
+            uc_engine::scheduler::migration::run_migrations(&Arc::new(pool.clone()))
+                .await
+                .expect("run_migrations should upgrade a legacy table");
+
+            let dispatch_attempts = column_info(&pool, "dispatch_attempts").await?;
+            let verify_command = column_info(&pool, "verify_command").await?;
+
+            // Idempotent: a second boot over an already-upgraded table is a no-op.
+            uc_engine::scheduler::migration::run_migrations(&Arc::new(pool.clone()))
+                .await
+                .expect("run_migrations must be idempotent");
+
+            // A row written by pre-column SQL still gets a usable default.
+            let id = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO scheduled_tasks (id, description, night_window_start, night_window_end) \
+                 VALUES ($1, 'legacy row', '02:00', '06:00')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await?;
+            let (legacy_row_attempts,): (i32,) = sqlx::query_as(
+                "SELECT dispatch_attempts FROM scheduled_tasks WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await?;
+
+            Ok(LegacyFacts {
+                dispatch_attempts,
+                verify_command,
+                legacy_row_attempts,
+            })
+        }
+        .await;
+
+        sqlx::query(&format!("DROP SCHEMA {} CASCADE", schema))
+            .execute(&pool)
+            .await
+            .expect("cleanup: DROP SCHEMA");
+        pool.close().await;
+
+        let facts = facts.expect("legacy migration steps failed");
+        let (nullable, default, data_type) = facts
+            .dispatch_attempts
+            .expect("dispatch_attempts should exist after migration");
+        assert_eq!(nullable, "NO", "the retry column must be NOT NULL");
+        assert_eq!(
+            default.as_deref(),
+            Some("0"),
+            "an upgraded row starts with a full budget, never NULL"
+        );
+        assert_eq!(data_type, "integer", "unexpected column type");
+        assert!(
+            facts.verify_command.is_some(),
+            "verify_command must survive alongside the new column"
+        );
+        assert_eq!(
+            facts.legacy_row_attempts, 0,
+            "a legacy insert must land with a full budget"
+        );
+    }
+
+    /// `TIMESTAMPTZ` stores **microseconds**, while `Utc::now()` carries
+    /// nanoseconds. A value that round-trips the database therefore differs below
+    /// the microsecond — compare at the column's own resolution, which is about
+    /// the stored instant, not about losing precision.
+    fn micros(dt: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp_micros(dt.timestamp_micros())
+            .expect("in-range timestamp for this test")
+    }
+
+    /// The store's column list and bind order are hand-maintained, so an
+    /// off-by-one in `$15` or a wrong cast is only visible against a real server.
+    /// Uses the real tables and deletes only its own row.
+    #[tokio::test]
+    #[ignore]
+    async fn schedule_store_round_trips_retry_state() {
+        let store = PostgresScheduleStore::connect(&pg_url())
+            .await
+            .expect("PostgresScheduleStore::connect should succeed");
+
+        let mut task = one_shot(
+            &format!("uc-it-sched-{}", unique_prefix()),
+            chrono::Utc::now() + chrono::Duration::hours(2),
+        );
+        task.dispatch_attempts = 2;
+        task.next_execution = Some(chrono::Utc::now() + chrono::Duration::minutes(60));
+        let id = task.id;
+
+        store.save_task(&task).await.expect("save_task");
+        let loaded = store
+            .load_task(&id)
+            .await
+            .expect("load_task")
+            .expect("the saved task should be found");
+        assert_eq!(
+            loaded.dispatch_attempts, 2,
+            "the retry budget must survive the INSERT column list"
+        );
+        assert_eq!(
+            loaded.next_execution.map(micros),
+            task.next_execution.map(micros),
+            "an owed retry instant must survive unchanged at the column's resolution"
+        );
+
+        let mut updated = loaded.clone();
+        updated.dispatch_attempts = 4;
+        updated.next_execution = None;
+        store.update_task(&updated).await.expect("update_task");
+        let reloaded = store
+            .load_task(&id)
+            .await
+            .expect("load_task")
+            .expect("the updated task should be found");
+        assert_eq!(
+            reloaded.dispatch_attempts, 4,
+            "the UPDATE bind order must carry the exhausted budget"
+        );
+        assert!(
+            reloaded.next_execution.is_none(),
+            "an exhausted job must stop advertising a run"
+        );
+
+        // list_tasks has its own tuple ordering, which is its own chance to drift.
+        let listed = store
+            .list_tasks(false)
+            .await
+            .expect("list_tasks")
+            .into_iter()
+            .find(|job| job.id == id)
+            .expect("the task should appear in list_tasks");
+        assert_eq!(
+            listed.dispatch_attempts, 4,
+            "list_tasks must map the new column in the right position"
+        );
+
+        store.delete_task(&id).await.expect("cleanup: delete_task");
+        assert!(
+            store.load_task(&id).await.expect("load_task").is_none(),
+            "the test row must be gone"
         );
     }
 }

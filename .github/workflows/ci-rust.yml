@@ -88,6 +88,46 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  postgres-integration:
+    name: postgres integration tests
+    runs-on: ubuntu-latest
+    # The PostgreSQL-backed paths on every PR. Unlike `storage-integration`
+    # below this needs no TiKV/Qdrant, so it is fast and immune to their
+    # start-up flakiness — which is why the heavyweight job is main-only.
+    #
+    # The URL uses 127.0.0.1 rather than localhost on purpose: a `localhost`
+    # host makes the client try IPv6 first, and where that address is reachable
+    # but unanswered every new pool stalls ~10s. That is enough to blow
+    # PostgresMetadataStore's 10s acquire_timeout, so the same suite takes 42s
+    # and fails `test_pg_connect` over `localhost` and 0.2s green over IPv4.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ultimate_coders
+          POSTGRES_PASSWORD: ultimate_coders
+          POSTGRES_DB: ultimate_coders
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U ultimate_coders"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      UC_PG_URL: postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Run PostgreSQL-backed integration tests
+        # Covers the metadata store plus the scheduler's durable jobs
+        # (`schedule_postgres_tests`): migrations, legacy ALTER upgrade, and
+        # the retry-state round trip.
+        run: cargo test -p uc-engine --features storage -- --ignored postgres
+
   storage-integration:
     name: storage integration tests
     runs-on: ubuntu-latest
