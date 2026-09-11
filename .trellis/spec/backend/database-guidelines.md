@@ -194,6 +194,42 @@ ALTER TABLE index_state ADD COLUMN IF NOT EXISTS chunks_count BIGINT NOT NULL DE
 
 These columns are populated by `IndexPipeline` after indexing. The `IF NOT EXISTS` + `DEFAULT 0` ensures the migration is additive and non-breaking — existing rows get 0 (matching previous hardcoded behavior).
 
+### Concurrent cold-start safety (required for every new store)
+
+`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` are **not**
+concurrency-safe. Two sessions that both see "no such table" both proceed, and
+the loser is rejected while inserting the composite row type that CREATE TABLE
+also writes into `pg_type`:
+
+```text
+duplicate key value violates unique constraint "pg_type_typname_nsp_index"
+→ EngineError::ConnectionError("Migration error (…): …")
+```
+
+Because *every store constructor runs its own migrations*, this is the ordinary
+multi-replica first-boot path (`uc-grpc-server` replicas scaling out against a
+fresh database, or `docker compose up` on a new volume) — not a rare corner. It
+is invisible on a migrated database, so it reproduces only on a cold one.
+
+A new store must therefore wrap its migration body:
+
+```rust
+let _migrations =
+    crate::migration_lock::hold_schema_migrations_lock(pool, "my-store").await?;
+// … CREATE … statements, unchanged …
+```
+
+- Helper: `crates/uc-engine/src/migration_lock.rs` (storage-gated), one shared
+  advisory-lock key for all migration sets.
+- The guard owns a **dedicated** `PgConnection` and never returns one to a pool:
+  dropping it ends the session, and the advisory lock goes with it. That is why
+  migration bodies can keep their many `?` early returns, and why a cancelled
+  start-up cannot leave every replica blocked.
+- Waiting is bounded (30s), then a clear error: a holder that long is wedged.
+- Regression coverage: `schedule_concurrent_migrations_are_serialized` in
+  `crates/uc-engine/tests/storage_integration.rs` (four concurrent constructors
+  against a freshly created database; `#[ignore]`d, needs a live PostgreSQL).
+
 **Upsert pattern** uses `ON CONFLICT ... DO UPDATE`:
 
 ```sql

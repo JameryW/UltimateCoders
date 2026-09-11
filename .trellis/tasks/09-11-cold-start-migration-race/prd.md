@@ -78,10 +78,57 @@ place to reason about, and matches the "first boot wins, others wait" model.
   database. Deciding whether that should be fatal at boot is a **separate**
   product decision; note it here so it is not lost, and split it if the answer
   changes behaviour for existing deployments.
-* CI job serialisation → `09-11-ci-storage-integration-serial` (stopgap, lands
-  independently).
+* CI job serialisation → `09-11-ci-storage-integration-serial` (**superseded by
+  this fix — see Completion Log**).
 
 ## Blocked by
 
 Nothing — independent of the CI task. The CI task is the workaround, this is the
 fix; either can land first.
+
+## Completion Log (2026-09-11)
+
+**Wording correction.** The original write-up (here and in #629/#630) says the
+race is in `CREATE TYPE`. There is no `CREATE TYPE` in these migrations. The real
+mechanism is that **`CREATE TABLE` also inserts a composite row type**, so the
+loser of a concurrent `CREATE TABLE IF NOT EXISTS` is rejected on
+`pg_type_typname_nsp_index`. Same symptom, different statement — worth being
+precise, because "add IF NOT EXISTS" is exactly the kind of non-fix someone would
+reach for against the wrong reading.
+
+**Chosen design: option (1)**, transaction-free session-scoped advisory lock held
+by a dedicated connection (`pg_try_advisory_lock` + bounded 30s wait, one shared
+key). Option (2) was rejected as per-statement retry logic duplicated across
+~20 DDL sites; option (3) as an invasive change to library consumers. The
+dedicated-connection choice is what makes the guard leak-proof: migration bodies
+keep their `?` early returns and cancellation still releases the lock, because
+closing the session releases it.
+
+* `crates/uc-engine/src/migration_lock.rs` (new, storage-gated) + `lib.rs` wiring.
+* One guard line in `metadata::PostgresMetadataStore::run_migrations` and
+  `scheduler::migration::run_migrations`; both migration bodies unchanged.
+* Regression test `schedule_concurrent_migrations_are_serialized` (four
+  concurrent constructors against a freshly created database).
+* Rule documented in `.trellis/spec/backend/database-guidelines.md` under
+  "Concurrent cold-start safety (required for every new store)".
+
+**Evidence (live PostgreSQL 16, local compose):**
+
+| scenario | before | after |
+|---|---|---|
+| cold DB, 4 concurrent constructors | 3 of 4 failed, 3/3 runs | 0 failed, 5/5 runs |
+| cold DB, whole ignored `postgres` suite in parallel | 4 of 7 failed | 8 of 8 passed |
+
+Per-run cost of serialisation: ~0.8s (cold DB only).
+
+**Consequence for #629**: measured after the fix, "cold + parallel" passes the
+full suite 8/8, so the `--test-threads=1` flag on the main-only
+`storage-integration` job is no longer load-bearing. That task should be reduced
+to a speed/robustness preference or closed, not merged as if it still prevented
+failures.
+
+**Gates**: `cargo fmt --all -- --check` 0; `cargo clippy --workspace
+--all-targets --all-features -- -D warnings` 0; `cargo test -p uc-engine
+--features scheduler` 442 passed / 0 failed; `--no-default-features` 370;
+`uc-grpc --all-features` 172+8; `uc-grpc-server` 35. Probe databases dropped, no
+leftover schemas.
