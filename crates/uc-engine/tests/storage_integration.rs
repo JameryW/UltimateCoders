@@ -1260,4 +1260,74 @@ mod schedule_postgres_tests {
             "the test row must be gone"
         );
     }
+
+    /// Swap the database name in a `postgresql://user:pass@host:port/db` URL.
+    fn url_for_database(base: &str, database: &str) -> String {
+        let split = base.rfind('/').expect("URL has a database segment");
+        format!("{}{}", &base[..=split], database)
+    }
+
+    /// `CREATE TABLE IF NOT EXISTS` is **not** concurrency-safe: two sessions that
+    /// both observe "no such table" both proceed, and the loser is rejected on the
+    /// composite row type that CREATE TABLE inserts alongside it —
+    /// `duplicate key value violates unique constraint "pg_type_typname_nsp_index"`.
+    ///
+    /// This is the multi-replica first-boot case (gateway replicas scaling out
+    /// against a fresh database, or `docker compose up` with a new volume). It
+    /// only reproduces on a genuinely cold database: once migrated every
+    /// statement is a no-op, which is exactly how it hid behind warm local runs.
+    /// The concurrency here is `tokio::join!`, so the test is meaningful
+    /// independently of `--test-threads`.
+    #[tokio::test]
+    #[ignore]
+    async fn schedule_concurrent_migrations_are_serialized() {
+        let fresh = format!("uc_cit_race_{}", unique_prefix());
+        let maintenance = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&pg_url())
+            .await
+            .expect("maintenance connection");
+        sqlx::query(&format!("CREATE DATABASE {}", fresh))
+            .execute(&maintenance)
+            .await
+            .expect("CREATE DATABASE");
+        drop(maintenance);
+
+        let url = url_for_database(&pg_url(), &fresh);
+        let four = tokio::join!(
+            PostgresScheduleStore::connect(&url),
+            PostgresScheduleStore::connect(&url),
+            PostgresScheduleStore::connect(&url),
+            PostgresScheduleStore::connect(&url),
+        );
+
+        let mut stores = Vec::new();
+        let mut failures = Vec::new();
+        for (index, result) in [four.0, four.1, four.2, four.3].into_iter().enumerate() {
+            match result {
+                Ok(store) => stores.push(store),
+                Err(error) => failures.push(format!("replica {index}: {error}")),
+            }
+        }
+        // Release every pool attached to the probe database before dropping it.
+        drop(stores);
+
+        // DROP with FORCE: a lingering idle backend would otherwise hang a plain
+        // DROP DATABASE on the very connection that issued it.
+        let cleanup = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&pg_url())
+            .await
+            .expect("cleanup connection");
+        let dropped = sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", fresh))
+            .execute(&cleanup)
+            .await;
+        drop(cleanup);
+        dropped.expect("cleanup: DROP DATABASE");
+
+        assert!(
+            failures.is_empty(),
+            "concurrent cold-start migrations must serialize; failures: {failures:?}"
+        );
+    }
 }
