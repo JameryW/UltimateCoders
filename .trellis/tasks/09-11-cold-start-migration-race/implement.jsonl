@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Where the migration-execution rule must be documented and followed for new stores"}
+{"file": ".trellis/spec/backend/scheduler-spec.md", "reason": "Scheduler store construction/migration contract (connect runs migrations, fallback semantics)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Definition-of-done for the concurrent-start regression test and its feature gating"}

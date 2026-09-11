@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "What counts as a verified CI gate and how the ignored live-DB suite is meant to be run"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Explains why constructor-run migrations make parallel cold-start suites unsafe"}
