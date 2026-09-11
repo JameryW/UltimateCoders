@@ -16,6 +16,11 @@ use uc_types::EngineError;
 /// if they do not already exist, along with supporting indexes.
 #[cfg(feature = "storage")]
 pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
+    // Same cold-start race as the metadata store's migrations: the guard is held
+    // for the rest of this function, so any `?` drop path ends the locking
+    // session and releases the advisory lock with it.
+    let _migrations = crate::migration_lock::hold_schema_migrations_lock(pool, "scheduler").await?;
+
     // Create scheduled_tasks table
     sqlx::query(
         r#"

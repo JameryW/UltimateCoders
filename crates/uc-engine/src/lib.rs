@@ -12,6 +12,7 @@ pub mod indexer;
 pub mod local;
 pub mod memory;
 pub mod metadata;
+pub mod migration_lock;
 pub mod rate_limiter;
 pub mod repos_config;
 pub mod sandbox;

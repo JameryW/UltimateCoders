@@ -138,6 +138,13 @@ impl PostgresMetadataStore {
             .as_ref()
             .ok_or_else(|| EngineError::ConnectionError("PostgreSQL pool not available".into()))?;
 
+        // `CREATE TABLE IF NOT EXISTS` is not concurrency-safe, so two replicas
+        // starting against the same fresh database race and the loser fails here.
+        // Held for the rest of this function; any early return drops the guard and
+        // ends the session that owns the lock.
+        let _migrations =
+            crate::migration_lock::hold_schema_migrations_lock(pool, "metadata").await?;
+
         // Create repos table
         sqlx::query(
             r#"
