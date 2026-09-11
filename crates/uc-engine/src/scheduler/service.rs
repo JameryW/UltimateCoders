@@ -33,6 +33,45 @@ use super::store::ScheduleStore;
 /// in-memory behavior for the default memory backend.
 const EXECUTION_HISTORY_RECOVERY_LIMIT: i64 = 50;
 
+/// Consecutive transport-level dispatch failures a one-shot may be re-armed for
+/// before the scheduler gives up and leaves the `Skipped` record as the last
+/// word. Bounded on purpose: if nothing will take the job four times, the
+/// fifth attempt is a different problem than a transient one.
+const MAX_DISPATCH_RETRIES: u32 = 3;
+
+/// First retry delay, in seconds; doubles per failed attempt up to the ceiling.
+const DISPATCH_RETRY_BASE_SECS: u64 = 60;
+
+/// Ceiling on a single retry delay, so a long outage cannot push the next
+/// attempt hours beyond the point where the cluster is already back.
+const DISPATCH_RETRY_MAX_SECS: u64 = 900;
+
+/// What caused a dispatch attempt, which decides how much it may change.
+///
+/// An operator trigger is a one-off poke at the *current* plan: on failure it
+/// records the outcome but must neither spend the scheduled retry budget nor
+/// move `next_execution`, or a single click on "Trigger" would silently
+/// reschedule a run planned for later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchSource {
+    /// The runtime scheduler fired the job on its own schedule.
+    Scheduled,
+    /// `TriggerSchedulerJob` / `/uc schedule trigger` — an explicit request.
+    Manual,
+}
+
+/// How a dispatch attempt ended, which decides what happens to the retry budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatchOutcome {
+    /// Accepted by the dispatcher — the budget resets for the next schedule.
+    Succeeded,
+    /// Transport failure that entitles a one-shot to one more scheduled retry.
+    FailedRetryable,
+    /// Failure observed *without* spending the budget: an operator trigger, or
+    /// a cron job whose next tick already is its own retry.
+    FailedObserved,
+}
+
 /// Trait for dispatching scheduled tasks to the execution engine.
 ///
 /// Implementations handle the actual task execution (e.g., submitting
@@ -295,7 +334,11 @@ impl SchedulerService {
         // A future one-shot has exactly one known next occurrence. A past
         // timestamp is still persisted for compatibility, but is represented
         // as no longer pending rather than advertising an expired run.
-        task.next_execution = Self::next_execution_for_task(&task, Utc::now())?;
+        //
+        // Deliberately derived from `execute_after` alone: after a night-window
+        // deferral `next_execution` means "the attempt the scheduler owes", and
+        // a brand-new job has never been owed anything.
+        task.next_execution = (execute_after > Utc::now()).then_some(execute_after);
 
         let task_id = task.id;
 
@@ -501,29 +544,42 @@ impl SchedulerService {
         })
     }
 
+    /// When the night window reopens, if it is currently closed.
+    ///
+    /// `None` means execution may proceed right now — either we are inside the
+    /// window or none is configured. `Some(instant)` is the moment it reopens,
+    /// which is what a deferred one-shot has to be re-armed for; the prose in
+    /// `check_night_window` alone cannot schedule anything.
+    async fn next_window_opening(&self) -> Option<chrono::DateTime<Utc>> {
+        let nw = self.night_window.read().await;
+        let window = nw.as_ref()?;
+        let now = chrono::Utc::now().with_timezone(&window.tz);
+        if window.is_within_window(now) {
+            return None;
+        }
+        Some(window.next_window_start(now).with_timezone(&Utc))
+    }
+
+    /// The deferral error, shared by the public guard check and the dispatch
+    /// path so the two cannot drift apart.
+    fn outside_window_error(next_start: chrono::DateTime<Utc>) -> EngineError {
+        EngineError::TaskError(format!(
+            "Outside night window. Next window starts at {}",
+            next_start
+        ))
+    }
+
     /// Check if a task should be executed now based on the night window guard.
     ///
     /// Returns Ok(()) if execution should proceed, or Err with a deferral reason
     /// if the task should be deferred to the next window.
     pub async fn check_night_window(&self) -> Result<(), EngineError> {
-        let nw = self.night_window.read().await;
-        match nw.as_ref() {
-            Some(window) => {
-                let now = chrono::Utc::now().with_timezone(&window.tz);
-                if window.is_within_window(now) {
-                    Ok(())
-                } else {
-                    let next_start = window.next_window_start(now);
-                    Err(EngineError::TaskError(format!(
-                        "Outside night window. Next window starts at {}",
-                        next_start
-                    )))
-                }
-            }
+        match self.next_window_opening().await {
             None => {
-                // No night window configured — allow execution at any time
+                // Within the window, or no night window configured at all.
                 Ok(())
             }
+            Some(next_start) => Err(Self::outside_window_error(next_start)),
         }
     }
 
@@ -533,6 +589,21 @@ impl SchedulerService {
     /// the task is dispatched immediately. Otherwise, an execution history
     /// record is created with Deferred status.
     pub async fn dispatch_with_guard(&self, task_id: &Uuid) -> Result<(), EngineError> {
+        self.dispatch_with_guard_from(task_id, DispatchSource::Scheduled)
+            .await
+    }
+
+    /// `dispatch_with_guard` with the origin of the attempt.
+    ///
+    /// Only a `Scheduled` fire may reschedule itself — the retry after a failed
+    /// dispatch, or the re-arm after a night-window deferral. `Manual` records
+    /// the outcome and leaves the plan alone: an operator pressing "Trigger" is
+    /// asking for an extra run now, not for a schedule move.
+    pub async fn dispatch_with_guard_from(
+        &self,
+        task_id: &Uuid,
+        source: DispatchSource,
+    ) -> Result<(), EngineError> {
         let task = {
             let metadata = self.job_metadata.read().await;
             metadata
@@ -541,15 +612,22 @@ impl SchedulerService {
                 .ok_or_else(|| EngineError::TaskError(format!("Job {} not found", task_id)))?
         };
 
-        // Check night window guard
-        match self.check_night_window().await {
-            Ok(()) => {
+        // Check night window guard. Asking for the reopening *instant* (rather
+        // than the prose error `check_night_window` returns) is what makes a
+        // deferred one-shot re-armable.
+        match self.next_window_opening().await {
+            None => {
                 // Within window — dispatch the task
                 let started_at = Utc::now();
                 let dispatcher = self.dispatcher.read().await.clone();
                 match dispatcher.dispatch(&task) {
                     Ok(()) => {
-                        self.mark_execution_started(task_id, started_at).await;
+                        self.mark_execution_started(
+                            task_id,
+                            started_at,
+                            DispatchOutcome::Succeeded,
+                        )
+                        .await;
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
                             scheduled_task_id: *task_id,
@@ -563,27 +641,57 @@ impl SchedulerService {
                         Ok(())
                     }
                     Err(e) => {
-                        self.mark_execution_started(task_id, started_at).await;
                         // Dispatch returned Err — NATS unavailable / no worker
-                        // received the task. Record as Skipped (not Failed):
-                        // the task itself is valid, it just didn't execute.
-                        // Returning Err lets the caller decide to retry.
+                        // received the task. Record as Skipped (not Failed): the
+                        // task itself is valid, it just never reached one. Only a
+                        // one-shot can *lose* its single promised run that way; a
+                        // cron job's next tick is its own retry, so it never
+                        // spends the budget.
+                        let spends_budget =
+                            source == DispatchSource::Scheduled && task.is_one_shot();
+                        let outcome = if spends_budget {
+                            DispatchOutcome::FailedRetryable
+                        } else {
+                            DispatchOutcome::FailedObserved
+                        };
+                        let attempts = self
+                            .mark_execution_started(task_id, started_at, outcome)
+                            .await;
+
+                        let retry_at = (spends_budget && attempts <= MAX_DISPATCH_RETRIES)
+                            .then(|| started_at + Self::retry_delay_for(attempts));
+                        let summary = match (retry_at, spends_budget) {
+                            (Some(at), true) => format!(
+                                "Dispatch skipped (no worker): {}; retry {} of {} at {}",
+                                e, attempts, MAX_DISPATCH_RETRIES, at
+                            ),
+                            (None, true) => format!(
+                                "Dispatch skipped (no worker): {}; retries exhausted after {} attempts",
+                                e, attempts
+                            ),
+                            _ => format!("Dispatch skipped (no worker): {}", e),
+                        };
                         let history = ExecutionHistory {
                             id: Uuid::new_v4(),
                             scheduled_task_id: *task_id,
                             started_at,
                             completed_at: Some(Utc::now()),
                             status: ExecutionStatus::Skipped,
-                            result_summary: Some(format!("Dispatch skipped (no worker): {}", e)),
+                            result_summary: Some(summary),
                             deferred_reason: None,
                         };
                         self.record_execution(&history).await;
+
+                        if let Some(at) = retry_at {
+                            self.rearm_one_shot_at(task_id, at).await;
+                        }
                         Err(e)
                     }
                 }
             }
-            Err(reason) => {
-                // Outside window — defer
+            Some(next_start) => {
+                // Outside window — defer.
+                let reason = Self::outside_window_error(next_start);
                 let history = ExecutionHistory::deferred(*task_id, reason.to_string());
                 self.record_execution(&history).await;
                 warn!(
@@ -591,9 +699,32 @@ impl SchedulerService {
                     reason = %reason,
                     "Task deferred (outside night window)"
                 );
+                // A cron job has a next tick anyway, so the deferral costs it
+                // nothing. A one-shot has just been consumed by the runtime
+                // scheduler without ever dispatching — unless it is re-armed
+                // for the moment the window reopens, the promised run is lost
+                // while the Deferred record claims otherwise.
+                if source == DispatchSource::Scheduled {
+                    self.rearm_one_shot_at(task_id, next_start).await;
+                }
                 Err(reason)
             }
         }
+    }
+
+    /// Backoff delay before retry `attempt` (1-based) of a failed dispatch.
+    ///
+    /// Exponential from a minute, capped at fifteen: long enough that a worker
+    /// rolling restart recovers on its own, short enough that the last retry is
+    /// not hours after the cluster came back.
+    fn retry_delay_for(attempt: u32) -> chrono::Duration {
+        let factor = 1u64
+            .checked_shl(attempt.saturating_sub(1))
+            .unwrap_or(u64::MAX);
+        let seconds = DISPATCH_RETRY_BASE_SECS
+            .saturating_mul(factor)
+            .min(DISPATCH_RETRY_MAX_SECS);
+        chrono::Duration::seconds(seconds as i64)
     }
 
     /// Record an execution history entry (both in-memory and to the store).
@@ -739,6 +870,14 @@ impl SchedulerService {
                     );
                 }
             }
+            // A one-shot whose instant passed while the gateway was down must
+            // not vanish silently — record the miss, so the run the operator
+            // promised themselves still shows up in the history the dashboard
+            // already renders.
+            if recovered.enabled {
+                self.record_missed_one_shot(&recovered).await;
+            }
+
             recovered_tasks.push(recovered);
         }
 
@@ -869,9 +1008,26 @@ impl SchedulerService {
             return Self::next_cron_execution(cron_expression, after).map(Some);
         }
 
-        Ok(task
-            .execute_after
-            .filter(|execute_after| *execute_after > after))
+        Ok(Self::one_shot_attempt_at(task, after))
+    }
+
+    /// The instant the scheduler still owes this one-shot an attempt.
+    ///
+    /// Normally that is the operator's `execute_after`. But after a night-window
+    /// deferral the original instant has passed and the *only* thing pointing at
+    /// a real future attempt is the re-armed `next_execution`, so recovery and
+    /// runtime registration must prefer it — otherwise a job deferred at 03:59
+    /// silently loses the retry the deferral record just promised.
+    fn one_shot_attempt_at(
+        task: &ScheduledTask,
+        after: chrono::DateTime<Utc>,
+    ) -> Option<chrono::DateTime<Utc>> {
+        task.next_execution
+            .filter(|next| *next > after)
+            .or_else(|| {
+                task.execute_after
+                    .filter(|execute_after| *execute_after > after)
+            })
     }
 
     /// Convert a one-shot timestamp into the runtime scheduler delay while
@@ -897,18 +1053,28 @@ impl SchedulerService {
     }
 
     /// Update the durable and in-memory schedule snapshot after a dispatch
-    /// attempt. The dispatcher is synchronous and may only acknowledge that a
-    /// background submission was started, so this timestamp represents the
-    /// scheduler's dispatch boundary rather than eventual worker completion.
-    async fn mark_execution_started(&self, task_id: &Uuid, started_at: chrono::DateTime<Utc>) {
+    /// attempt, and return the job's attempt count afterwards. The dispatcher is
+    /// synchronous and may only acknowledge that a background submission was
+    /// started, so this timestamp represents the scheduler's dispatch boundary
+    /// rather than eventual worker completion.
+    async fn mark_execution_started(
+        &self,
+        task_id: &Uuid,
+        started_at: chrono::DateTime<Utc>,
+        outcome: DispatchOutcome,
+    ) -> u32 {
         let updated_task = {
             let mut metadata = self.job_metadata.write().await;
             let Some(job) = metadata.get_mut(task_id) else {
-                return;
+                // Gone from the registry (removed concurrently). Nothing to
+                // account for, and the caller's retry re-arm is a no-op.
+                return 0;
             };
 
             // A manual trigger can race a cron callback. Never let a slower
-            // completion move the visible last-run timestamp backwards.
+            // completion move the visible last-run timestamp backwards. The
+            // retry budget is updated under the same guard, so an out-of-order
+            // completion cannot double-count an attempt.
             if job
                 .task
                 .last_execution
@@ -916,6 +1082,13 @@ impl SchedulerService {
                 .unwrap_or(true)
             {
                 job.task.last_execution = Some(started_at);
+                job.task.dispatch_attempts = match outcome {
+                    DispatchOutcome::Succeeded => 0,
+                    DispatchOutcome::FailedRetryable => {
+                        job.task.dispatch_attempts.saturating_add(1)
+                    }
+                    DispatchOutcome::FailedObserved => job.task.dispatch_attempts,
+                };
                 job.task.next_execution = match Self::next_execution_for_task(&job.task, started_at)
                 {
                     Ok(next) => next,
@@ -949,6 +1122,240 @@ impl SchedulerService {
                 "Failed to persist scheduler execution metadata"
             );
         }
+
+        updated_task.dispatch_attempts
+    }
+
+    /// Surface a one-shot whose scheduled instant passed while the gateway was
+    /// not running.
+    ///
+    /// `one_shot_duration` cannot schedule into the past, so a one-shot that
+    /// expired during downtime is simply not registered. Deliberately *not*
+    /// firing it late either: an operator picked that instant for a reason (a
+    /// maintenance window, a quiet hour), and the moment a gateway happens to
+    /// boot is not a good one to spring a scheduled run.
+    ///
+    /// What must not happen is the silent disappearance of a promised run, so
+    /// append one `Skipped` record stamped with the instant it should have
+    /// fired — which is exactly what the dashboard's execution-history list and
+    /// the `uc_scheduler` status output already render.
+    ///
+    /// Suppressed once anything proves a dispatch attempt at or after that
+    /// instant: `last_execution` moved, or a `Completed` / `Failed` / `Skipped`
+    /// history row exists — including the miss a previous restart recorded,
+    /// which is what makes this idempotent across repeated restarts. A
+    /// `Deferred` row does **not** suppress: the guard refused to dispatch, and
+    /// a one-shot is never retried after that, so the promised run is still
+    /// missing. Cron jobs never produce a miss: a cron expression is a standing
+    /// schedule rather than a single promised run, so recovery only recomputes
+    /// its next occurrence.
+    async fn record_missed_one_shot(&self, task: &ScheduledTask) {
+        let Some(execute_after) = task.execute_after else {
+            return;
+        };
+        if task.cron_expression.is_some() {
+            return;
+        }
+        if Self::one_shot_attempt_at(task, Utc::now()).is_some() {
+            // Still owed a future attempt — the original instant, or a retry
+            // re-armed by a previous deferral. Nothing has been missed yet.
+            return;
+        }
+        if task
+            .last_execution
+            .is_some_and(|last| last >= execute_after)
+        {
+            return; // already dispatched at or after the scheduled instant
+        }
+
+        match self.store.list_executions(&task.id, 1).await {
+            Ok(latest) => {
+                if latest.iter().any(|entry| {
+                    entry.started_at >= execute_after
+                        // `Deferred` is deliberately NOT a suppression signal:
+                        // it means the night-window guard refused to dispatch,
+                        // and a one-shot is never retried after that — so the
+                        // promised run is still missing. Completed / Failed /
+                        // Skipped all prove an attempt was made (and the miss we
+                        // recorded on an earlier restart suppresses a repeat).
+                        && !matches!(entry.status, ExecutionStatus::Deferred)
+                }) {
+                    return;
+                }
+            }
+            Err(error) => {
+                // Without a dedup signal, writing could duplicate the record on
+                // every restart. Leave it unwritten and say so.
+                warn!(
+                    task_id = %task.id,
+                    error = %error,
+                    "Skipped recording a missed one-shot: execution history unavailable"
+                );
+                return;
+            }
+        }
+
+        let missed = ExecutionHistory {
+            id: Uuid::new_v4(),
+            scheduled_task_id: task.id,
+            // The instant it should have run, so the timeline shows when the
+            // promise was broken rather than when this process noticed.
+            started_at: execute_after,
+            // Intentionally unset: pairing it with "now" would render as a run
+            // duration, not as the length of the downtime.
+            completed_at: None,
+            status: ExecutionStatus::Skipped,
+            result_summary: Some(format!(
+                "Missed: execute_after {} passed while the gateway scheduler was not running",
+                execute_after
+            )),
+            deferred_reason: None,
+        };
+
+        self.insert_execution_history_ordered(&missed).await;
+
+        warn!(
+            task_id = %task.id,
+            execute_after = %execute_after,
+            description = %task.description,
+            "One-shot job expired while the gateway was down — recorded as Skipped"
+        );
+    }
+
+    /// Persist a recovered history entry and place it at its chronological
+    /// position in the dashboard cache.
+    ///
+    /// `recover_execution_history` keeps the cache ascending by `started_at`,
+    /// while `record_execution` appends — correct for live dispatches, which
+    /// carry the current time. A recovered miss is stamped with a past instant,
+    /// so appending it would break that ordering for every reader of the
+    /// snapshot.
+    async fn insert_execution_history_ordered(&self, history: &ExecutionHistory) {
+        if let Err(error) = self.store.save_execution(history).await {
+            warn!(
+                error = %error,
+                "Failed to persist recovered scheduler execution history"
+            );
+        }
+        let mut cache = self.execution_history.write().await;
+        let position = cache.partition_point(|entry| entry.started_at <= history.started_at);
+        cache.insert(position, history.clone());
+    }
+
+    /// Re-arm a one-shot for a future attempt the scheduler now owes.
+    ///
+    /// Two callers, same shape: the night-window guard refused a run the consumed
+    /// runtime job will never retry (the window `opening`), and a transport
+    /// failure entitles the job to one backoff retry (the `retry_at`). Without
+    /// it, the promised run disappears behind a record worded as if it will
+    /// happen. Committing the instant as the owed attempt makes the retry real,
+    /// visible (`next_run` shows when it will actually be retried) and durable —
+    /// recovery reads the same field, so a restart in between does not lose it.
+    ///
+    /// Reads the current registry snapshot rather than trusting a caller's copy:
+    /// `mark_execution_started` has just written the attempt count, and
+    /// overwriting the whole task from a stale clone would erase it. An already
+    /// owed attempt is also never moved *earlier*, so a later event cannot pull
+    /// a pending retry forward.
+    ///
+    /// Cron jobs need nothing — their next tick is already a future attempt.
+    async fn rearm_one_shot_at(&self, task_id: &Uuid, when: chrono::DateTime<Utc>) {
+        let rearmed = {
+            let mut metadata = self.job_metadata.write().await;
+            let Some(job) = metadata.get_mut(task_id) else {
+                return;
+            };
+            if job.task.cron_expression.is_some() || job.task.execute_after.is_none() {
+                return;
+            }
+            let target = match Self::one_shot_attempt_at(&job.task, Utc::now()) {
+                Some(owed) if owed > when => owed,
+                _ => when,
+            };
+            job.task.next_execution = Some(target);
+            job.task.updated_at = Utc::now();
+            job.task.clone()
+        };
+
+        if let Err(error) = self.store.update_task(&rearmed).await {
+            warn!(
+                task_id = %task_id,
+                error = %error,
+                "Failed to persist re-armed one-shot retry time"
+            );
+        }
+
+        #[cfg(feature = "scheduler")]
+        {
+            // Detached rather than awaited (see `rearm_registration_task`). The
+            // retry time is already committed above, so a process that dies
+            // before this task runs still re-registers on the next boot.
+            tokio::spawn(Self::rearm_registration_task(self.clone(), rearmed.clone()));
+        }
+    }
+
+    /// Build the detached task that registers a re-armed one-shot.
+    ///
+    /// The declared `BoxFuture` return type is load-bearing, not stylistic. This
+    /// path otherwise closes a type cycle: `register_one_shot_with_scheduler`'s
+    /// future contains the fired-callback future, which awaits
+    /// `dispatch_with_guard`, which awaits `rearm_deferred_one_shot`, which needs
+    /// a registration future again. Naming an erased type here is what lets
+    /// inference terminate.
+    #[cfg(feature = "scheduler")]
+    fn rearm_registration_task(
+        svc: SchedulerService,
+        task: ScheduledTask,
+    ) -> futures::future::BoxFuture<'static, ()> {
+        Box::pin(async move {
+            let task_id = task.id;
+            let js = svc.job_scheduler.read().await;
+            let Some(scheduler) = js.as_ref() else {
+                // Not started (or stopped): the persisted retry time alone is
+                // enough, since `start()` re-registers from it on the next boot.
+                return;
+            };
+            let registered = svc.register_one_shot_with_scheduler(scheduler, &task).await;
+
+            match registered {
+                Ok(Some(scheduler_job_id)) => {
+                    // Replace rather than overwrite. A concurrent re-arm of the
+                    // same task (an operator trigger racing the due callback)
+                    // would otherwise leave a runtime job that keeps firing while
+                    // `remove_job` can no longer find it.
+                    let previous = svc
+                        .scheduler_job_ids
+                        .write()
+                        .await
+                        .insert(task_id, scheduler_job_id);
+                    if let Some(previous) = previous {
+                        if let Err(error) = scheduler.remove(&previous).await {
+                            warn!(
+                                task_id = %task_id,
+                                error = ?error,
+                                "Failed to drop a superseded re-armed runtime job"
+                            );
+                        }
+                    }
+                    info!(
+                        task_id = %task_id,
+                        retry_at = %task
+                            .next_execution
+                            .map(|next| next.to_rfc3339())
+                            .unwrap_or_default(),
+                        "Deferred one-shot re-armed for the next window"
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(
+                        task_id = %task_id,
+                        error = %error,
+                        "Failed to re-arm a deferred one-shot with the runtime scheduler"
+                    );
+                }
+            }
+        })
     }
 
     /// Forget the runtime UUID for a one-shot job after it fires.
@@ -1097,17 +1504,26 @@ impl SchedulerService {
         scheduler: &tokio_cron_scheduler::JobScheduler,
         task: &ScheduledTask,
     ) -> Result<Option<Uuid>, EngineError> {
-        let execute_after = task
-            .execute_after
-            .ok_or_else(|| EngineError::ConfigError("execute_after missing".to_string()))?;
+        if task.execute_after.is_none() {
+            return Err(EngineError::ConfigError(
+                "execute_after missing".to_string(),
+            ));
+        }
 
+        // The owed attempt, not necessarily the original request: a one-shot
+        // already deferred by the night window carries its retry time in
+        // `next_execution`, and scheduling against `execute_after` alone would
+        // drop exactly the retry the deferral promised.
         let now = Utc::now();
-        let Some(duration_std) = Self::one_shot_duration(execute_after, now)? else {
+        let Some(attempt_at) = Self::one_shot_attempt_at(task, now) else {
             warn!(
                 task_id = %task.id,
-                execute_after = %execute_after,
-                "One-shot job execute_after is in the past, skipping scheduler registration"
+                execute_after = %task.execute_after.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                "One-shot job has no future attempt instant, skipping scheduler registration"
             );
+            return Ok(None);
+        };
+        let Some(duration_std) = Self::one_shot_duration(attempt_at, now)? else {
             return Ok(None);
         };
         let task_id = task.id;
@@ -1128,6 +1544,13 @@ impl SchedulerService {
                     "One-shot job triggered by scheduler — acquiring lock"
                 );
 
+                // The runtime one-shot is consumed the moment it fires, so
+                // forget its UUID *before* doing anything else: a retry
+                // re-armed later in this callback (see
+                // `rearm_deferred_one_shot`) would otherwise have its fresh
+                // mapping erased by a trailing forget here.
+                svc.forget_scheduler_job_id(&task_id).await;
+
                 // Acquire distributed lock (same as cron callback).
                 let tick_ts = Utc::now().timestamp();
                 let lock_key = format!("scheduler:{}:{}", task_id, tick_ts);
@@ -1139,7 +1562,6 @@ impl SchedulerService {
                         lock_key = %lock_key,
                         "One-shot tick skipped — another instance holds the lock"
                     );
-                    svc.forget_scheduler_job_id(&task_id).await;
                     return;
                 }
 
@@ -1151,7 +1573,6 @@ impl SchedulerService {
                         "One-shot dispatch_with_guard failed (deferred or error)"
                     );
                 }
-                svc.forget_scheduler_job_id(&task_id).await;
             })
         })
         .map_err(|e| {
@@ -2025,22 +2446,581 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_clears_expired_one_shot_next_execution() {
+    async fn start_clears_a_stale_one_shot_run_but_keeps_an_owed_retry() {
         let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
-        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
-        task.next_execution = Some(Utc::now() + chrono::Duration::hours(1));
+
+        // A stale (already-passed) next-run on an expired one-shot advertises
+        // nothing real, so recovery clears it.
+        let mut stale = make_one_shot_task(Utc::now() - chrono::Duration::hours(2));
+        stale.next_execution = Some(Utc::now() - chrono::Duration::minutes(30));
+        let stale_id = stale.id;
+        store.save_task(&stale).await.unwrap();
+
+        // A *future* next-run on an expired one-shot is meaningful state: the
+        // only code that produces that shape is `rearm_deferred_one_shot`, so
+        // recovery must honour it as the retry it owes rather than clear it.
+        let retry_at = Utc::now() + chrono::Duration::hours(1);
+        let mut owed = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        owed.next_execution = Some(retry_at);
+        let owed_id = owed.id;
+        store.save_task(&owed).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        let recovered_stale = service.get_job(&stale_id).await.unwrap();
+        assert!(
+            recovered_stale.next_execution.is_none(),
+            "an expired one-shot with nothing owed must not advertise a future run"
+        );
+        let persisted_stale = store.load_task(&stale_id).await.unwrap().unwrap();
+        assert!(
+            persisted_stale.next_execution.is_none(),
+            "the cleared value must reach the durable record too"
+        );
+
+        let recovered_owed = service.get_job(&owed_id).await.unwrap();
+        assert_eq!(
+            recovered_owed.next_execution,
+            Some(retry_at),
+            "a re-armed retry survives recovery"
+        );
+        service.stop().await.unwrap();
+    }
+
+    // ── Missed one-shot recovery tests ───────────────────────────
+
+    #[tokio::test]
+    async fn recovery_records_missed_one_shot_as_skipped() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let execute_after = Utc::now() - chrono::Duration::hours(1);
+        let task = make_one_shot_task(execute_after);
+        let task_id = task.id;
         store.save_task(&task).await.unwrap();
 
         let service = SchedulerService::with_store(store.clone());
         service.start().await.unwrap();
 
-        let recovered = service.get_job(&task.id).await.unwrap();
+        let history = service
+            .get_execution_history_from_store(&task_id, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            history.len(),
+            1,
+            "an expired one-shot must leave exactly one trace of the promised run"
+        );
+        let missed = &history[0];
+        assert!(
+            matches!(missed.status, ExecutionStatus::Skipped),
+            "unexpected status: {:?}",
+            missed.status
+        );
+        assert_eq!(
+            missed.started_at, execute_after,
+            "the record is stamped with the instant that was missed, not the time it was noticed"
+        );
+        assert!(
+            missed.completed_at.is_none(),
+            "no completed_at — pairing the missed instant with 'now' renders as a fake run duration"
+        );
+        assert!(missed
+            .result_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Missed"));
+
+        let recovered = service.get_job(&task_id).await.unwrap();
         assert!(
             recovered.next_execution.is_none(),
-            "expired one-shot tasks must not advertise a future run"
+            "the expired one-shot stays listed but pending nothing"
         );
-        let persisted = store.load_task(&task.id).await.unwrap().unwrap();
-        assert!(persisted.next_execution.is_none());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_duplicate_missed_one_shot_history() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let task = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        let task_id = task.id;
+        store.save_task(&task).await.unwrap();
+
+        let first = SchedulerService::with_store(store.clone());
+        first.start().await.unwrap();
+        first.stop().await.unwrap();
+
+        let second = SchedulerService::with_store(store.clone());
+        second.start().await.unwrap();
+
+        assert_eq!(
+            store.list_executions(&task_id, 10).await.unwrap().len(),
+            1,
+            "repeated restarts must not repeat the same miss"
+        );
+        second.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_record_an_already_dispatched_one_shot() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let execute_after = Utc::now() - chrono::Duration::hours(1);
+        let mut task = make_one_shot_task(execute_after);
+        // It fired on time in the previous process, then the gateway restarted.
+        task.last_execution = Some(execute_after);
+        let task_id = task.id;
+        store.save_task(&task).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        assert!(
+            service
+                .get_execution_history(Some(&task_id))
+                .await
+                .is_empty(),
+            "a one-shot that already ran has nothing to report as missed"
+        );
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_record_a_miss_for_a_paused_one_shot() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        let task_id = task.id;
+        task.enabled = false;
+        store.save_task(&task).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        assert!(
+            service
+                .get_execution_history(Some(&task_id))
+                .await
+                .is_empty(),
+            "a paused job was stopped deliberately; a skipped-by-request run is not a missed run"
+        );
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_records_no_miss_for_cron_jobs_and_keeps_history_ordered() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let cron = make_cron_task("0 22 * * *");
+        let cron_id = cron.id;
+        store.save_task(&cron).await.unwrap();
+
+        let older = make_one_shot_task(Utc::now() - chrono::Duration::hours(2));
+        let older_id = older.id;
+        store.save_task(&older).await.unwrap();
+        let newer = make_one_shot_task(Utc::now() - chrono::Duration::hours(1));
+        let newer_id = newer.id;
+        store.save_task(&newer).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        assert!(
+            service
+                .get_execution_history(Some(&cron_id))
+                .await
+                .is_empty(),
+            "a cron expression is a standing schedule, not a single promised run"
+        );
+
+        let history = service.get_execution_history(None).await;
+        assert_eq!(history.len(), 2, "both misses are recorded");
+        assert_eq!(history[0].scheduled_task_id, older_id);
+        assert_eq!(history[1].scheduled_task_id, newer_id);
+        assert!(
+            history[0].started_at <= history[1].started_at,
+            "recovered misses must land in chronological order, not append order"
+        );
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_records_the_miss_behind_a_deferred_one_shot() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let execute_after = Utc::now() - chrono::Duration::hours(3);
+        let task = make_one_shot_task(execute_after);
+        let task_id = task.id;
+        store.save_task(&task).await.unwrap();
+
+        // It came due and the night-window guard refused it. A one-shot is never
+        // retried after that, so the deferral must not read as "already handled".
+        let mut deferred = ExecutionHistory::deferred(task_id, "Outside night window".to_string());
+        deferred.started_at = execute_after;
+        store.save_execution(&deferred).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        let history = service
+            .get_execution_history_from_store(&task_id, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            history.len(),
+            2,
+            "a deferral that was never retried still ends in a missed run"
+        );
+        assert!(history.iter().any(|entry| {
+            matches!(entry.status, ExecutionStatus::Skipped) && entry.started_at == execute_after
+        }));
+        service.stop().await.unwrap();
+
+        let again = SchedulerService::with_store(store.clone());
+        again.start().await.unwrap();
+        assert_eq!(
+            store.list_executions(&task_id, 10).await.unwrap().len(),
+            2,
+            "the miss is recorded once, not once per restart"
+        );
+        again.stop().await.unwrap();
+    }
+
+    // ── Deferred one-shot re-arm tests ───────────────────────────
+
+    /// A window whose start equals its end is never open (`start <= t < end`
+    /// cannot hold), which makes the deferral branch deterministic rather than
+    /// dependent on the wall clock.
+    fn always_closed_window() -> uc_types::NightWindowConfig {
+        let at = NaiveTime::from_hms_opt(2, 0, 0).expect("valid time");
+        uc_types::NightWindowConfig::new(at, at, "UTC".to_string())
+    }
+
+    #[tokio::test]
+    async fn deferred_one_shot_rearms_for_the_next_window_opening() {
+        let service = SchedulerService::new();
+        service
+            .set_night_window(&always_closed_window())
+            .await
+            .unwrap();
+
+        let task = make_one_shot_task(Utc::now());
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        let result = service.dispatch_with_guard(&task_id).await;
+        assert!(
+            result.is_err(),
+            "a closed window must refuse the dispatch, not run it"
+        );
+
+        let deferred = service.get_job(&task_id).await.unwrap();
+        let retry_at = deferred
+            .next_execution
+            .expect("a deferred one-shot must carry the retry it was promised");
+        assert!(
+            retry_at > Utc::now(),
+            "the retry has to lie in the future, or nothing can honour it"
+        );
+
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert_eq!(history.len(), 1, "one deferral, one record");
+        assert!(
+            matches!(history[0].status, ExecutionStatus::Deferred),
+            "unexpected status: {:?}",
+            history[0].status
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_preserves_a_pending_rearm_and_records_no_miss() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service = SchedulerService::with_store(store.clone());
+        service
+            .set_night_window(&always_closed_window())
+            .await
+            .unwrap();
+
+        let task = make_one_shot_task(Utc::now());
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+        assert!(service.dispatch_with_guard(&task_id).await.is_err());
+        let retry_at = service
+            .get_job(&task_id)
+            .await
+            .unwrap()
+            .next_execution
+            .expect("re-armed");
+        drop(service); // the gateway exits before the retry ever came due
+
+        let recovered = SchedulerService::with_store(store.clone());
+        recovered.start().await.unwrap();
+
+        let job = recovered.get_job(&task_id).await.unwrap();
+        assert_eq!(
+            job.next_execution,
+            Some(retry_at),
+            "recovery must not clobber an attempt the scheduler still owes"
+        );
+        assert!(
+            recovered
+                .get_execution_history(Some(&task_id))
+                .await
+                .iter()
+                .all(|entry| !matches!(entry.status, ExecutionStatus::Skipped)),
+            "a pending retry is not a missed run"
+        );
+        recovered.stop().await.unwrap();
+    }
+
+    #[test]
+    fn one_shot_attempt_at_prefers_a_rearmed_retry() {
+        let now = Utc::now();
+        let retry_at = now + chrono::Duration::hours(3);
+        let mut task = make_one_shot_task(now - chrono::Duration::hours(1));
+        task.next_execution = Some(retry_at);
+        assert_eq!(
+            SchedulerService::one_shot_attempt_at(&task, now),
+            Some(retry_at),
+            "the owed retry outranks an already-passed original instant"
+        );
+
+        // Nothing re-armed yet: the original future instant is the attempt.
+        let mut pending = make_one_shot_task(now + chrono::Duration::hours(1));
+        pending.next_execution = None;
+        assert_eq!(
+            SchedulerService::one_shot_attempt_at(&pending, now),
+            pending.execute_after
+        );
+
+        // Expired and never re-armed: nothing is owed.
+        let exhausted = make_one_shot_task(now - chrono::Duration::hours(1));
+        assert_eq!(SchedulerService::one_shot_attempt_at(&exhausted, now), None);
+    }
+
+    /// A dispatcher whose transport is down (NATS unavailable / no worker).
+    struct DownDispatcher;
+
+    impl ScheduleDispatcher for DownDispatcher {
+        fn dispatch(&self, _task: &ScheduledTask) -> Result<(), EngineError> {
+            Err(EngineError::TaskError("nats unavailable".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_dispatch_rearms_one_shot_with_backoff() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service =
+            SchedulerService::with_store_and_dispatcher(store.clone(), Arc::new(DownDispatcher));
+
+        let task = make_one_shot_task(Utc::now() - chrono::Duration::minutes(5));
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        let error = service
+            .dispatch_with_guard(&task_id)
+            .await
+            .expect_err("a dead transport must surface as an error");
+        assert!(error.to_string().contains("nats unavailable"));
+
+        let job = service.get_job(&task_id).await.unwrap();
+        assert_eq!(
+            job.dispatch_attempts, 1,
+            "a scheduled failure spends exactly one retry"
+        );
+        let retry_at = job
+            .next_execution
+            .expect("the one-shot whose only run failed must be re-armed");
+        assert!(
+            retry_at > Utc::now(),
+            "the retry has to be scheduled for the future"
+        );
+
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert_eq!(history.len(), 1);
+        let summary = history[0].result_summary.as_deref().unwrap_or_default();
+        assert!(
+            summary.contains("retry 1 of"),
+            "the record must name the coming retry, got: {summary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_retries_are_bounded_and_then_exhaust() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service =
+            SchedulerService::with_store_and_dispatcher(store.clone(), Arc::new(DownDispatcher));
+
+        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::minutes(5));
+        task.dispatch_attempts = MAX_DISPATCH_RETRIES;
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        assert!(service.dispatch_with_guard(&task_id).await.is_err());
+
+        let job = service.get_job(&task_id).await.unwrap();
+        assert_eq!(job.dispatch_attempts, MAX_DISPATCH_RETRIES + 1);
+        assert!(
+            job.next_execution.is_none(),
+            "an exhausted budget must stop re-arming rather than retry forever"
+        );
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(history[0]
+            .result_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("exhausted"));
+    }
+
+    #[tokio::test]
+    async fn manual_trigger_neither_reschedules_nor_spends_the_budget() {
+        let service = SchedulerService::with_dispatcher(Arc::new(DownDispatcher));
+        let planned = Utc::now() + chrono::Duration::hours(2);
+        let task = make_one_shot_task(planned);
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        service
+            .dispatch_with_guard_from(&task_id, DispatchSource::Manual)
+            .await
+            .expect_err("transport is down");
+
+        let job = service.get_job(&task_id).await.unwrap();
+        assert_eq!(
+            job.dispatch_attempts, 0,
+            "an operator poke must not eat the scheduled retry budget"
+        );
+        assert_eq!(
+            job.next_execution,
+            Some(planned),
+            "nor move the standing plan it was not asked to move"
+        );
+        let history = service.get_execution_history(Some(&task_id)).await;
+        assert!(
+            !history[0]
+                .result_summary
+                .as_deref()
+                .unwrap_or_default()
+                .contains("retry"),
+            "a manual failure announces no automatic retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_dispatch_resets_the_retry_budget() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let service = SchedulerService::with_store(store.clone());
+
+        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::minutes(5));
+        task.dispatch_attempts = 2;
+        let task_id = task.id;
+        service.add_one_shot_job(task).await.unwrap();
+
+        service.dispatch_with_guard(&task_id).await.unwrap();
+
+        assert_eq!(
+            service.get_job(&task_id).await.unwrap().dispatch_attempts,
+            0,
+            "a fresh schedule gets a fresh budget"
+        );
+        assert_eq!(
+            store
+                .load_task(&task_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .dispatch_attempts,
+            0,
+            "the reset must reach the durable record, or a restart re-spends it"
+        );
+    }
+
+    #[tokio::test]
+    async fn cron_failure_relies_on_its_next_tick_not_the_retry_budget() {
+        let service = SchedulerService::with_dispatcher(Arc::new(DownDispatcher));
+        let task = make_cron_task("0 22 * * *");
+        let task_id = task.id;
+        service.add_cron_job(task).await.unwrap();
+
+        assert!(service.dispatch_with_guard(&task_id).await.is_err());
+
+        let job = service.get_job(&task_id).await.unwrap();
+        assert_eq!(
+            job.dispatch_attempts, 0,
+            "a cron job's next tick already is its retry"
+        );
+        assert!(
+            job.next_execution.is_some(),
+            "and that next tick stays advertised"
+        );
+    }
+
+    #[test]
+    fn dispatch_retry_backoff_doubles_and_caps() {
+        assert_eq!(SchedulerService::retry_delay_for(1).num_seconds(), 60);
+        assert_eq!(SchedulerService::retry_delay_for(2).num_seconds(), 120);
+        assert_eq!(SchedulerService::retry_delay_for(3).num_seconds(), 240);
+        assert_eq!(
+            SchedulerService::retry_delay_for(64).num_seconds(),
+            900,
+            "the doubling must hit the ceiling, not overflow"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_budget_and_owed_retry_survive_a_restart() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        {
+            let service = SchedulerService::with_store_and_dispatcher(
+                store.clone(),
+                Arc::new(DownDispatcher),
+            );
+            let task = make_one_shot_task(Utc::now() - chrono::Duration::minutes(5));
+            let task_id = task.id;
+            service.add_one_shot_job(task).await.unwrap();
+            assert!(service.dispatch_with_guard(&task_id).await.is_err());
+        } // gateway dies between the failure and its retry
+
+        let recovered = SchedulerService::with_store(store.clone());
+        recovered.start().await.unwrap();
+
+        let job = recovered
+            .get_job(&store.list_tasks(false).await.unwrap()[0].id)
+            .await
+            .expect("the job is still listed");
+        assert_eq!(
+            job.dispatch_attempts, 1,
+            "the budget is durable, so restarts cannot launder it"
+        );
+        assert!(
+            job.next_execution.is_some(),
+            "the owed retry survives recovery"
+        );
+        recovered.stop().await.unwrap();
+    }
+
+    #[cfg(feature = "scheduler")]
+    #[tokio::test]
+    async fn recovery_registers_a_pending_retry_with_the_runtime_scheduler() {
+        let store = Arc::new(super::super::store::InMemoryScheduleStore::new());
+        let retry_at = Utc::now() + chrono::Duration::hours(1);
+        let mut task = make_one_shot_task(Utc::now() - chrono::Duration::minutes(5));
+        // Exactly the shape a re-arm leaves behind: the original instant has
+        // passed, and the owed retry sits in the future.
+        task.next_execution = Some(retry_at);
+        let task_id = task.id;
+        store.save_task(&task).await.unwrap();
+
+        let service = SchedulerService::with_store(store.clone());
+        service.start().await.unwrap();
+
+        assert!(
+            service
+                .scheduler_job_ids
+                .read()
+                .await
+                .contains_key(&task_id),
+            "an owed retry must actually be re-registered after a restart, not merely recorded"
+        );
+        assert_eq!(
+            service.get_job(&task_id).await.unwrap().next_execution,
+            Some(retry_at)
+        );
         service.stop().await.unwrap();
     }
 

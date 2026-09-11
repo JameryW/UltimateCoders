@@ -1045,8 +1045,13 @@ impl EngineApi for LocalEngine {
             });
         }
 
-        // Dispatch with night-window guard
-        match svc.dispatch_with_guard(&task_id).await {
+        // Dispatch with night-window guard. `Manual` because an operator poke
+        // must not reschedule the standing plan or consume the scheduled retry
+        // budget when the transport is down.
+        match svc
+            .dispatch_with_guard_from(&task_id, crate::scheduler::DispatchSource::Manual)
+            .await
+        {
             Ok(()) => Ok(uc_types::SchedulerTriggerResult {
                 success: true,
                 job_id: job_id.to_string(),

@@ -38,7 +38,9 @@ pub struct ScheduledTask {
     pub enabled: bool,
     /// Timestamp of the last execution.
     pub last_execution: Option<DateTime<Utc>>,
-    /// Timestamp of the next scheduled execution.
+    /// Timestamp of the next scheduled execution. For a one-shot this is **the
+    /// attempt the scheduler still owes**: normally `execute_after`, but a
+    /// night-window deferral or a failed dispatch moves it to the retry instant.
     pub next_execution: Option<DateTime<Utc>>,
     /// When this scheduled task was created.
     pub created_at: DateTime<Utc>,
@@ -49,6 +51,13 @@ pub struct ScheduledTask {
     /// scheduler → NATS → Python → aggregator chain. None = no verification.
     #[serde(default)]
     pub verify_command: Option<String>,
+    /// Consecutive failed *dispatch* attempts — transport-level only (NATS
+    /// unavailable, or no worker accepted the subtask). This is the durable
+    /// budget behind the bounded backoff retry for one-shot jobs, reset to 0 by
+    /// the next successful dispatch. Deliberately distinct from a task that was
+    /// accepted and then failed on its own, which the scheduler never retries.
+    #[serde(default)]
+    pub dispatch_attempts: u32,
 }
 
 impl ScheduledTask {
@@ -76,6 +85,7 @@ impl ScheduledTask {
             created_at: now,
             updated_at: now,
             verify_command: None,
+            dispatch_attempts: 0,
         }
     }
 
