@@ -9,10 +9,10 @@ This map resolves the remaining route decisions. Decision tickets are NOT implem
 
 ## Decision tickets
 
-- D4 nats-transport-convergence — subtask dispatch JetStream-only? Core path demoted to events?
+- D4 nats-transport-convergence — DECIDED (#633): JetStream-only hard dep; effect_class-gated LocalExecutor; P0 converges dispatch plane only
 - D5 commit-barrier-ownership — MergeArbiter stays Python with Rust-issued fenced barrier vs rewritten in Rust (gates P1-2, needed before T-plan review)
-- D6 resume-semantics — replacement for TS `resumeFromWave` under ready-node scheduling (node/scope checkpoint vs full-graph replay); T6 acceptance depends on it
-- D7 upgrade-window-inflight-policy — drain-before-upgrade vs declared-discard for in-flight tasks during the D2 flip + D3 lockstep window; feeds T6 release notes
+- D6 resume-semantics — DECIDED (#635): recompute-ready from committed nodes (no snapshots, wave checkpoints deleted); soft pause + UC_PAUSE_GRACE_SECS escalation; cancel-attempt-keep-node into T7
+- D7 upgrade-window-inflight-policy — DECIDED (#636): auto-resume after one-shot import (uncommitted attempts re-READY via timeout+fence); stale-envelope messages term-dropped with counter+alert; release-notes checklist fixed
 
 ## Out of scope (per assessment §4 / plan §21)
 

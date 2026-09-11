@@ -65,7 +65,7 @@ Rust 网关侧早就是 event-driven ready-node：每个 subtask 状态更新后
 
 **D2 · 双权威收口过渡策略 — ✅ 已决：一刀切反转**
 一个版本内 TS 停止自行转移状态，删除 `resyncAllTasksToGrpc` push，`.uc/tasks` 只读化。**连带约束（必须随票交付）**：
-1. 需要一个**显式的启动回填步骤**：反转上线后，Rust 从 PG 行表读权威，存量 `.uc/tasks/*.json` 只在"PG 无对应 graph"时一次性导入并标记，不再双向。运行中的 in-flight 任务在升级窗口内要求排空或声明为可丢弃（发布说明必须写明）。
+1. 需要一个**显式的启动回填步骤**：反转上线后，Rust 从 PG 行表读权威，存量 `.uc/tasks/*.json` 只在"PG 无对应 graph"时一次性导入并标记，不再双向。升级窗口 in-flight 任务处置已由 D7/#636 定案：自动续跑（未 commit attempt 超时→fence→重派），不排空、不丢弃。
 2. 回滚预案：反转后 TS 不再持有权威，回滚 = 退回旧版本镜像并重新 import；此风险由用户显式接受。
 
 **D3 · worker 契约切换 — ✅ 已决：一刀切新契约（无兼容窗口）**
@@ -74,11 +74,17 @@ Rust 网关侧早就是 event-driven ready-node：每个 subtask 状态更新后
 2. `contract_version` 字段仍保留（握手用），但只接受当前版本。
 3. 跨主机部署文档（`UC_SCALE_HOSTS`/remote worker 章节）需同步"先升 worker 还是先升 gateway"的硬性顺序说明。
 
-**D4 · NATS 传输收敛**
-JetStream workqueue（pull、ack-after-exec）与 Core queue-group（at-most-once）并存。建议：subtask 派发**只允许 JetStream**，Core 路径降级为纯事件广播；`NatsExecutor` 不可用时 fallback 的是 **LocalExecutor 这个 trait 实现**（P0-5 的产物），而不是换协议语义。
+**D4 · NATS 传输收敛 — ✅ 已决（#633，2026-09-11）**
+① 派发 JetStream-only 硬依赖：删除 worker Core 静默降级（`nats_worker.py` L486–503），JS 不可用→拒绝注册+周期重试+健康/Dashboard 可见，UC_SUBTASKS 流创建归 gateway 侧供给；② LocalExecutor fallback 按节点 `effect_class` 白名单（仅 `local_safe` 节点可就地执行），Coding 节点保持 READY 排队+告警，不重分解、不改协议（WHAT 冻结，只降 HOW/WHERE）；③ P0 只收敛派发面：事件/控制通道（update/event/heartbeat）维持 core，node/attempt 级 cancel 语义归 T7。完整决议见 #633 resolution comment。
 
 **D5 · Commit barrier 的归属（P1-2 的前置决策，现在只需要记录）**
 MergeArbiter 在 Python。方案要求 merge 是 single-writer 事务。选项：Rust 重写 arbiter vs Python 保留执行、Rust 只发放带 fencing 的 barrier 授权（`merge_idempotency_key = graph_id+node_id+commit_sha` 由 Rust 签发）。建议后者，P0 不动。
+
+**D6 · resume 语义（#635）— ✅ 已决（2026-09-11）**
+① node 态重算：pause=图级停派闸（Rust 现行为即如此，`task_store.rs` L91–L125），resume=从 NodeCompletion 重推 READY，不存图快照；TS `resumeFromWave` + `.uc/checkpoints` 随 T6 删除，checkpoint 退化为 execution_events 审计流。② RUNNING attempt 软暂停 + `UC_PAUSE_GRACE_SECS`（默认 120s）超时升级 node 级 cancel（机制归 T7）。③ grace-cancel 不终态化 node：fence attempt、node 回 READY——"cancel-attempt-keep-node"进 T7 验收。
+
+**D7 · 升级窗口 in-flight 处置（#636）— ✅ 已决（2026-09-11）**
+① 自动续跑：一次性导入后已 commit node 保留，窗口内 RUNNING attempt 超时→fence→node 回 READY→新信封重派（D1/D6 模型本身，零新机制），未 commit 半程工作从零重跑为已接受代价；无排空门禁/丢弃/人工闸门。② 滞留旧信封消息：新 worker term 丢弃 + `stale_dispatch_dropped` 计数告警，不建 DLQ。③ T6 发布说明四要点（升级顺序、重跑语义、计数位置、回滚路径）见 #636 comment。
 
 **遗留风险（本评估件无法在代码里解决）**
 - 验收指标 Useful Work Ratio / Coordination Ratio / Activation Inflation 目前**没有任何采集点**；若采纳，需要在 P0-2 的 event 表里预留 `cost/tokens/duration` 字段，否则 P2 的 Optimizer 没有数据可优化。
@@ -86,7 +92,7 @@ MergeArbiter 在 Python。方案要求 merge 是 single-writer 事务。选项�
 
 ## 五、P0 工单草案（vertical slices，含阻塞边）
 
-按 issue-flow：D1–D3 已随本件批准定案；剩余开放决策（见本节末）进 wayfinder 地图，闭环后建实现票。拟 7 张：
+按 issue-flow：D1–D4 已定案（D4 via #633）；剩余开放决策（见本节末）进 wayfinder 地图，闭环后建实现票。拟 7 张：
 
 | 票 | What to build | Blocked by |
 |----|---------------|-----------|
@@ -95,13 +101,13 @@ MergeArbiter 在 Python。方案要求 merge 是 single-writer 事务。选项�
 | T3 | Rust 图状态机：node 状态集（CREATED…SKIPPED）+ version/CAS + `NodeCompletion` commit-once（`INSERT … ON CONFLICT DO NOTHING`）+ attempt 心跳/超时判定；替换 reaper 的 reassign 逻辑 | T2 |
 | T4 | 正确性闭环：`Nats-Msg-Id` 设置、修正 message_id 键、worker 端 attempt 级去重（结果存在→ack no-op）、迟到结果按 epoch/attempt 拒绝 | T3 |
 | T5 | Executor trait 统一：Local/Nats(JetStream-only)/Sandbox/Remote 实现 + 消灭 `decompose_task` 本地分叉与 no-op DispatchMode::Local；NATS 故障只换 HOW | T3, 决策 D4 |
-| T6 | 权威反转（D2 一刀切）：TS 状态转移全部改为经 Rust API 生效、删 `resyncAllTasksToGrpc`、删 TS wave 循环（ready-node 由 Rust 独任）、重定义 resume 语义（按 node/scope 而非 wave）、发布说明含排空窗口与回滚步骤 | T3, T4 |
-| T7 | 取消下沉：node/attempt 级 cancel RPC + NATS 控制信号 + worker 响应；TS cascadeCancel 删除 | T6 |
+| T6 | 权威反转（D2 一刀切）：TS 状态转移全部改为经 Rust API 生效、删 `resyncAllTasksToGrpc`、删 TS wave 循环与 wave 快照（ready-node 由 Rust 独任）、按 D6 实现软暂停/宽限硬停/node 态重算 resume、发布说明按 D7 四要点（自动续跑+回滚步骤） | T3, T4 |
+| T7 | 取消下沉：node/attempt 级 cancel RPC + NATS 控制信号 + worker 响应；含 D6 的 cancel-attempt-keep-node（fence attempt→node 回 READY）；TS cascadeCancel 删除 | T6 |
 
 P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）在 P0 验收后另开地图，不在本件展开。
 
-**wayfinder 地图仍需消化的开放决策**：D4（NATS 收敛）、D5（Commit barrier 归属，P1 前）、resume/`resumeFromWave` 的新语义定义（T6 验收依赖）、升级窗口的 in-flight 任务处置策略（排空 vs 声明丢弃，D2 约束 1 的落地形式）。
+**wayfinder 地图开放决策**：仅剩 D5（Commit barrier 归属，#634，P1-2 前置，不阻塞 P0）。D4（#633）、D6（#635）、D7（#636）已全部闭环——**T1–T7 的决策阻塞清零，可建实现票**。
 
 ## 六、执行状态
 
-评估件已批准（2026-09-11）。下一步：在 `JameryW/UltimateCoders` 建 wayfinder map issue + 开放决策票（D4/D5/resume 语义/in-flight 处置），决策闭环后按 T1–T7 建实现票，每张票单独走 Trellis 新上下文。建票/链接等远端动作均按逐步授权单独确认后执行。
+评估件已批准（2026-09-11）。Tracker：map #632 + 决策票 #633–#636。**P0 前置决策全部定案：D4、D6、D7（D5 留待 P1）**，T1–T7 可建票。下一步：按依赖序建 T1–T7 实现票（GitHub 建票+blockedBy 边需授权），每张票单独走 Trellis 新上下文。建票/链接/关单等远端动作均按逐步授权单独确认后执行。
