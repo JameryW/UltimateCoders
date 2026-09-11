@@ -188,6 +188,14 @@ mod postgres {
         }
     }
 
+    /// The `dispatch_attempts` column is `INTEGER`, so the u32 retry counter is
+    /// narrowed here and clamped back in the row mappers. Both directions are
+    /// unreachable in practice — an attempt budget does not reach 2³¹ — but the
+    /// saturation is explicit rather than a silent wrap.
+    fn dispatch_attempts_to_column(task: &ScheduledTask) -> i32 {
+        i32::try_from(task.dispatch_attempts).unwrap_or(i32::MAX)
+    }
+
     #[async_trait]
     impl ScheduleStore for PostgresScheduleStore {
         async fn save_task(&self, task: &ScheduledTask) -> Result<(), EngineError> {
@@ -197,8 +205,8 @@ mod postgres {
                     id, description, project_id, cron_expression, execute_after,
                     night_window_start, night_window_end, timezone, enabled,
                     last_execution, next_execution, created_at, updated_at,
-                    verify_command
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    verify_command, dispatch_attempts
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                 "#,
             )
             .bind(task.id)
@@ -215,6 +223,7 @@ mod postgres {
             .bind(task.created_at)
             .bind(task.updated_at)
             .bind(&task.verify_command)
+            .bind(dispatch_attempts_to_column(task))
             .execute(self.pool.as_ref())
             .await
             .map_err(|e| {
@@ -241,13 +250,14 @@ mod postgres {
                     chrono::DateTime<chrono::Utc>,
                     chrono::DateTime<chrono::Utc>,
                     Option<String>,
+                    i32,
                 ),
             >(
                 r#"
                 SELECT id, description, project_id, cron_expression, execute_after,
                        night_window_start, night_window_end, timezone, enabled,
                        last_execution, next_execution, created_at, updated_at,
-                       verify_command
+                       verify_command, dispatch_attempts
                 FROM scheduled_tasks WHERE id = $1
                 "#,
             )
@@ -273,6 +283,9 @@ mod postgres {
                 created_at: r.11,
                 updated_at: r.12,
                 verify_command: r.13,
+                // Negative is unreachable through our own writes; clamp rather
+                // than wrap a signed column into a huge u32 budget.
+                dispatch_attempts: u32::try_from(r.14).unwrap_or_default(),
             }))
         }
 
@@ -295,13 +308,14 @@ mod postgres {
                         chrono::DateTime<chrono::Utc>,
                         chrono::DateTime<chrono::Utc>,
                         Option<String>,
+                        i32,
                     ),
                 >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
                            last_execution, next_execution, created_at, updated_at,
-                           verify_command
+                           verify_command, dispatch_attempts
                     FROM scheduled_tasks WHERE enabled = TRUE ORDER BY created_at
                     "#,
                 )
@@ -325,13 +339,14 @@ mod postgres {
                         chrono::DateTime<chrono::Utc>,
                         chrono::DateTime<chrono::Utc>,
                         Option<String>,
+                        i32,
                     ),
                 >(
                     r#"
                     SELECT id, description, project_id, cron_expression, execute_after,
                            night_window_start, night_window_end, timezone, enabled,
                            last_execution, next_execution, created_at, updated_at,
-                           verify_command
+                           verify_command, dispatch_attempts
                     FROM scheduled_tasks ORDER BY created_at
                     "#,
                 )
@@ -359,6 +374,7 @@ mod postgres {
                     created_at: r.11,
                     updated_at: r.12,
                     verify_command: r.13,
+                    dispatch_attempts: u32::try_from(r.14).unwrap_or_default(),
                 })
                 .collect())
         }
@@ -370,7 +386,8 @@ mod postgres {
                     description = $2, project_id = $3, cron_expression = $4,
                     execute_after = $5, night_window_start = $6, night_window_end = $7,
                     timezone = $8, enabled = $9, last_execution = $10,
-                    next_execution = $11, updated_at = $12, verify_command = $13
+                    next_execution = $11, updated_at = $12, verify_command = $13,
+                    dispatch_attempts = $14
                 WHERE id = $1
                 "#,
             )
@@ -387,6 +404,7 @@ mod postgres {
             .bind(task.next_execution)
             .bind(task.updated_at)
             .bind(&task.verify_command)
+            .bind(dispatch_attempts_to_column(task))
             .execute(self.pool.as_ref())
             .await
             .map_err(|e| {

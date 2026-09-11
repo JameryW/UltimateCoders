@@ -29,6 +29,12 @@ impl SchedulerService {
     /// Pause (`false`) or resume (`true`) a job without deleting it; returns the
     /// updated task. See "Pause / Resume Semantics" below.
     pub async fn set_job_enabled(&self, id: &Uuid, enabled: bool) -> Result<ScheduledTask, EngineError>;
+    /// Dispatch under the night-window guard, with the origin of the attempt.
+    /// `dispatch_with_guard(id)` == `DispatchSource::Scheduled`. Only a
+    /// `Scheduled` fire may re-arm the job (backoff retry after a transport
+    /// failure, next window opening after a deferral); `Manual` records the
+    /// outcome and leaves the plan and the retry budget untouched.
+    pub async fn dispatch_with_guard_from(&self, id: &Uuid, source: DispatchSource) -> Result<(), EngineError>;
     pub fn list_jobs(&self) -> Vec<ScheduledTask>;
     pub fn get_job(&self, id: &Uuid) -> Option<ScheduledTask>;
     pub async fn start(&self) -> Result<(), EngineError>;
@@ -133,7 +139,8 @@ class Scheduler:
 | timezone | String | Valid IANA timezone name (chrono-tz) | Yes (default "UTC") |
 | enabled | bool | — | Yes (default true) |
 | last_execution | Option\<DateTime\<Utc\>\> | Updated at the scheduler dispatch boundary (including a failed dispatch attempt) | No |
-| next_execution | Option\<DateTime\<Utc\>\> | Computed on registration and after each dispatch from cron/execute_after; one-shot becomes `None` after dispatch | No |
+| next_execution | Option\<DateTime\<Utc\>\> | Cron: the next occurrence, computed on registration and after each dispatch. One-shot: **the attempt the scheduler owes** — normally `execute_after`, but a night-window deferral moves it to the next window opening (see "Deferred One-Shot Retry") and a failed dispatch moves it to the backoff retry (see "Dispatch Retry Budget"). `None` once dispatched, expired with nothing owed, or paused | No |
+| dispatch_attempts | u32 | **Consecutive transport-level dispatch failures** (NATS unavailable / no worker accepted the job), i.e. `0` or a full budget on a never-failed job. Reset by the next successful dispatch. Deliberately *not* a task that was accepted and then failed on its own — the scheduler never retries those. Column `INTEGER NOT NULL DEFAULT 0`, not exposed over gRPC: the retry instant shows up as `next_run` and the attempt count is written into the history `result_summary` | No |
 | created_at | DateTime\<Utc\> | Auto-set | Yes |
 | updated_at | DateTime\<Utc\> | Auto-updated | Yes |
 
@@ -155,7 +162,135 @@ class Scheduler:
 - Cross-midnight: if `end < start`, window spans midnight (e.g., 22:00→06:00)
 - `is_within_window(now)`: For cross-midnight: `time >= start || time < end`; For same-day: `time >= start && time < end`
 - Guard check happens before dispatch: outside window → record `Deferred` history, skip dispatch
+- A deferred **one-shot** is re-armed for the moment the window reopens (see "One-Shot Re-Arm"); a deferred cron job needs nothing
+- The guard exposes the reopening instant as data (`next_window_opening() -> Option<DateTime<Utc>>`); `check_night_window()` is expressed through it and builds the shared `outside_window_error(...)`, so the public message and the scheduling decision cannot drift
 - Window open/close events published to NATS `schedule.window.opened` / `schedule.window.closed` (feature-gated: messaging)
+
+#### One-Shot Re-Arm (`rearm_one_shot_at(task_id, when)`)
+
+Shared by two callers: the night-window deferral below, and the dispatch retry
+budget. It reads the **current** registry snapshot rather than a caller's clone (a
+whole-task write from a stale copy would erase the attempt count
+`mark_execution_started` has just persisted), and never moves an already-owed
+attempt **earlier**, so one event cannot pull another's pending retry forward.
+
+The runtime one-shot is **consumed by firing**. If the guard then refuses the
+dispatch, the job has run out of lives: without an explicit re-arm the promised
+run is gone, while the `Deferred` record the guard just wrote reads "next window
+starts at X" — a promise nothing intended to keep.
+
+On deferral the service commits the window opening as the owed attempt, in this
+order:
+
+1. `job_metadata` snapshot gets `next_execution = Some(opening)` → the dashboard
+   `next_run` now shows *when the retry will actually happen*.
+2. `store.update_task` persists it (failure logged, not fatal). Committing before
+   scheduling is the point: a restart between the two steps re-registers the
+   retry from the durable record, because `one_shot_attempt_at` prefers a future
+   `next_execution` over the passed `execute_after`.
+3. Registration with the runtime scheduler happens **detached and type-erased**
+   (`tokio::spawn(Self::rearm_registration_task(..) -> BoxFuture<'static, ()>)`).
+   The erased signature is load-bearing: the chain
+   `register_one_shot_with_scheduler → fired-callback → dispatch_with_guard →
+   rearm_deferred_one_shot → register_one_shot_with_scheduler` is a type cycle,
+   and without a declared boundary the callback's future is neither inferrable
+   nor `Send`.
+4. Because of (3), the fired one-shot callback forgets its runtime UUID **first**
+   (not on exit): a trailing forget could otherwise erase the fresh mapping the
+   re-arm just inserted, leaving a live runtime job that `remove_job` no longer
+   knows about.
+
+Consequences that are intentional: a deferral while the service is stopped still
+persists the retry time and registers on the next `start()`; if the window has
+moved by the time the retry comes due, the job defers again and re-arms again
+(each re-arm waits for a real future opening, so this cannot spin); and pausing a
+job drops a pending retry, since `pause` clears `next_execution` and a resumed
+expired one-shot owes nothing.
+
+When two re-arms race for the same task (an operator trigger during the due
+callback), the later one **replaces** the runtime-id mapping and unregisters the
+job it superseded — an overwritten mapping would leave a live runtime job that
+`remove_job` can no longer find. It follows the file's existing lock order
+(job scheduler read guard held while the id map is written), so it cannot
+deadlock against `remove_job` / `unregister_runtime_job`.
+
+#### Dispatch Retry Budget (no worker)
+
+`ScheduleDispatcher::dispatch` returning `Err` means the job never reached a
+worker (NATS down, or no registered worker took it). The task itself is valid, so
+it is recorded as `Skipped` rather than `Failed` — but for a one-shot that
+consumed attempt was also its only one, so the scheduler owes a bounded retry.
+
+| Situation | Spends the budget? | Re-arms? |
+|-----------|--------------------|----------|
+| `Scheduled` fire of a **one-shot**, transport `Err` | yes (`dispatch_attempts += 1`) | yes, at the backoff instant while `attempts <= MAX_DISPATCH_RETRIES` (3) |
+| Same, budget exhausted | counted, then nothing further | no — `next_execution = None` |
+| **Cron** job, transport `Err` | no | no — its next tick already *is* the retry |
+| **`Manual`** trigger, transport `Err` | no | no — `next_execution` stays exactly as planned |
+| Accepted, then failed on its own (`Failed`) | no | no — retrying a task that is itself broken just burns the same credits again |
+
+- **Backoff:** `retry_delay_for(attempt)` = 60s doubled per attempt, capped at
+  900s → `60s, 120s, 240s`, then exhausted. One initial dispatch plus three
+  retries: a fifth failure is a different problem than a transient one.
+- **History wording carries the state** instead of a new proto field:
+  `"Dispatch skipped (no worker): <err>; retry 1 of 3 at <instant>"`, finally
+  `"…; retries exhausted after 4 attempts"`. `uc_scheduler` renders a Skipped
+  summary in its error slot, and the dashboard shows the retry instant as
+  `next_run`.
+- **Budget maintenance lives in `mark_execution_started(task_id, started_at,
+  outcome)`**, under the same monotonicity guard as `last_execution` so an
+  out-of-order completion cannot double-count: `Succeeded` → 0,
+  `FailedRetryable` → +1, `FailedObserved` → unchanged.
+- **Durable on purpose.** Because `dispatch_attempts` is a column, a restart
+  cannot launder a spent budget into a fresh one; recovery also keeps the owed
+  retry instant, and a pending retry is *not* recorded as a missed run.
+- A retry that is itself deferred re-arms to `max(window opening, retry instant)`
+  — the two events cannot pull each other earlier.
+
+#### Missed One-Shot Recovery (`start()`)
+
+A one-shot whose `execute_after` passed while the gateway was down cannot be
+scheduled (`one_shot_duration` refuses a past instant). Two wrong answers to
+avoid: **back-firing it at boot** (an operator chose that instant for a reason —
+a maintenance window, a quiet hour — and process start-up is not a licence to
+spring a scheduled run), or **dropping it silently** (the historical behaviour:
+one `warn!` line and nothing in the UI, leaving a lost run indistinguishable from
+a job that simply has not come due).
+
+Recovery therefore appends **exactly one** `ExecutionHistory` record:
+
+| Field | Value | Why |
+|-------|-------|-----|
+| `status` | `Skipped` | no dispatch was made, and none will be |
+| `started_at` | the missed `execute_after` | the timeline shows *when the promise broke*, not when this process noticed |
+| `completed_at` | `None` | pairing the missed instant with "now" renders as a fake run *duration* rather than as downtime |
+| `result_summary` | `"Missed: execute_after <ts> passed while the gateway scheduler was not running"` | surfaced verbatim by `uc_scheduler` status (a Skipped summary maps onto `error`) and the dashboard history list |
+
+Suppression — the run is not "missed" if anything proves it was handled, and a
+restart must not repeat the record:
+
+- Nothing owed yet: `one_shot_attempt_at(task, now)` is `Some(..)` — the original
+  `execute_after` is still future, **or** a previous deferral re-armed a retry.
+- `last_execution >= execute_after` → a real dispatch already happened.
+- newest durable history row with `started_at >= execute_after` **and status
+  `Completed` / `Failed` / `Skipped`** → an attempt was made, or an earlier
+  restart already recorded this exact miss (idempotence across N restarts).
+- A **`Deferred`** row does *not* suppress. The guard refusing to dispatch is
+  precisely the case where the promised run is still lost — a one-shot is never
+  retried after a deferral — so letting `Deferred` mask the miss would leave
+  "next window starts at X" as the last thing anyone ever sees about a run that
+  will not happen.
+- `store.list_executions` failing → record nothing, `warn!`. Without a dedup
+  signal the write would duplicate on every boot.
+
+Exclusions: **cron jobs never produce a miss** — a cron expression is a standing
+schedule, not a single promised run, so recomputing `next_execution` is the
+entire recovery obligation. Paused one-shots are excluded too: a job stopped on
+purpose did not have its run *missed*.
+
+The record uses an **ordered insert**, not `record_execution`'s append —
+`recover_execution_history` keeps the dashboard cache ascending by
+`started_at`, and a recovered miss carries a past timestamp.
 
 #### Pause / Resume Semantics (`set_job_enabled`)
 
@@ -227,6 +362,10 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
 - **Construction**: `PostgresScheduleStore::connect(url)` builds a dedicated
   pool (`max_connections(5)`) and runs idempotent migrations
   (`scheduled_tasks` + `execution_history` tables + indexes, `scheduler/migration.rs`).
+  Migrations stay additive-only: new columns land in `CREATE TABLE` for fresh
+  installs *and* an `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for rows written
+  before they existed (`verify_command`, `dispatch_attempts`), so a rolling
+  deploy needs no manual DDL.
   Injected into `LocalEngine::new_with_scheduler_store(config, Some(store))`
   BEFORE `SchedulerService::start()` runs. The store is set-once-at-construction
   (not hot-swappable) — no RwLock.
@@ -255,6 +394,18 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
 - **Fallback**: missing `UC_DATABASE_URL` / connection failure / `storage`
   feature disabled → warn + in-memory (no crash). Default (unset) = zero
   behavior change for existing deploys.
+- **Timestamp resolution is microseconds.** `TIMESTAMPTZ` stores µs while
+  `Utc::now()` carries ns, so a value that round-trips the database differs below
+  the microsecond. Never compare a persisted `next_execution` / `execute_after`
+  against a freshly computed one at full precision — normalize first, or compare
+  at µs. A nanosecond-equality assert on a round-tripped instant fails against a
+  live server and passes against the in-memory store, so it must not be used.
+- **Live coverage**: `crates/uc-engine/tests/storage_integration.rs` →
+  `schedule_postgres_tests` exercises the legacy `ALTER` upgrade path inside a
+  throwaway schema (never touching `public.scheduled_tasks`, and cleaned up even
+  when an assertion fails) and round-trips retry state through the real store:
+  `docker compose -f docker/docker-compose.yml up -d postgres` then
+  `cargo test -p uc-engine -- --ignored schedule_postgres`.
 - **Deployment surfaces**: full-stack `docker/docker-compose.yml` defaults
   `UC_SCHEDULE_BACKEND=postgres` (durable); the standalone gateway
   (`docker-compose.gateway.yml` via `run-gateway.sh`) passes the var through
@@ -284,6 +435,13 @@ gateway binary (`uc-grpc-server/src/main.rs::create_schedule_store`), mirroring
 | `uc.scheduler.yaml` missing | (no error) | idle scheduler — opt-in, no behavior change |
 | `uc.scheduler.yaml` bad YAML / bad config | logged + skipped | gateway starts, scheduler idle |
 | cron-fire submit_task returns Err | `Failed` ExecutionHistory | appended by spawned task (fire-and-forget can't surface to dispatch return) |
+| scheduled one-shot dispatch returns Err | `Skipped` + re-arm at backoff instant | summary names `retry N of 3 at <instant>`; budget is durable |
+| same, with `dispatch_attempts` already at the bound | `Skipped`, `next_execution = None` | "retries exhausted after N attempts"; no further re-arm |
+| cron dispatch returns Err | `Skipped`, budget untouched | next cron tick is the retry |
+| manual trigger returns Err | `Skipped`, budget and plan untouched | `DispatchSource::Manual` may not reschedule |
+| one-shot expired during gateway downtime | `Skipped` ExecutionHistory | recorded at recovery with `started_at` = the missed instant; never back-fired |
+| `Deferred` row exists for that one-shot | `Skipped` miss still recorded | a deferral was never retried, so the run is still lost |
+| `list_executions` fails during recovery | (no record) | logged — without a dedup signal the write would repeat on every boot |
 | Duplicate task ID (save) | `AlreadyExists` | "Scheduled task already exists: {id}" |
 
 ### 5. Good/Base/Bad Cases
@@ -339,6 +497,23 @@ scheduler.create_cron_job(
 | Manual trigger of a paused job | Unit | `last_execution` set, `next_execution` stays `None` |
 | Pause survives a restart | Unit | Fresh service on the same store lists the paused job, does not register it, and resumes it |
 | Recovery loads all, registers only enabled | Unit | `job_count == 2`, paused job present with `next_execution=None` and no runtime registration |
+| Expired one-shot records one `Skipped` | Unit | row exists with `started_at == execute_after`, `status=Skipped`, `completed_at=None`, summary contains "Missed"; job stays listed with `next_execution=None` |
+| Missed one-shot is not re-recorded | Unit | two `start()` calls on the same store → still exactly one history row |
+| Already-dispatched one-shot | Unit | `last_execution >= execute_after` → no history written |
+| Deferred one-shot still records the miss | Unit | a pre-existing `Deferred` row does not suppress; the second restart does not duplicate |
+| Paused one-shot | Unit | `enabled=false` → no miss recorded |
+| Cron never produces a miss + ordered cache | Unit | cron job has no history rows; two recovered misses land ascending by `started_at` |
+| Deferred one-shot re-arms | Unit | deterministic always-closed window (`start == end`) → dispatch refused, `next_execution` becomes a future opening, exactly one `Deferred` record |
+| Re-arm survives a restart and is not a miss | Unit | gateway dies before the retry → recovery keeps `next_execution`, records no `Skipped` |
+| `one_shot_attempt_at` precedence | Unit | future `next_execution` beats a passed `execute_after`; falls back to `execute_after`; `None` when nothing is owed |
+| Failed dispatch re-arms one-shot | Unit | `dispatch_attempts == 1`, future `next_execution`, summary contains "retry 1 of" |
+| Retry budget is bounded | Unit | pre-seeded `dispatch_attempts = MAX` → no re-arm, `next_execution = None`, summary says "exhausted" |
+| Success resets the budget | Unit | `dispatch_attempts` back to 0 in memory **and** the durable row |
+| Manual trigger is inert | Unit | `DispatchSource::Manual` failure leaves `dispatch_attempts` and `next_execution` untouched, summary announces no retry |
+| Cron failure spends no budget | Unit | `dispatch_attempts == 0`, next tick still advertised |
+| Backoff schedule | Unit | 60/120/240s, capped at 900s (no overflow at attempt 64) |
+| Budget + owed retry survive a restart | Unit | fresh service on the same store keeps `dispatch_attempts == 1` and the future retry |
+| Recovery run-state discrimination (widened) | Unit | stale *past* `next_execution` on an expired one-shot is cleared in memory **and** the store, while a *future* (re-armed) one is preserved |
 | Orchestrator night exclusive mode | Unit | `night_window_active=True` → non-scheduled tasks queued |
 | Orchestrator flush pending | Unit | `flush_pending_tasks()` executes all queued tasks |
 | Orchestrator scheduled task bypass | Unit | Scheduled tasks execute even during night window |

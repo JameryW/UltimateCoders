@@ -33,7 +33,8 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
             next_execution TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
-            verify_command TEXT
+            verify_command TEXT,
+            dispatch_attempts INTEGER NOT NULL DEFAULT 0
         )
         "#,
     )
@@ -56,6 +57,23 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
     .map_err(|e| {
         EngineError::ConnectionError(format!(
             "Migration error (scheduled_tasks.verify_command): {}",
+            e
+        ))
+    })?;
+
+    // Same for the dispatch retry budget. DEFAULT 0 matters: a row written
+    // before this column existed never had a failed attempt recorded, so it
+    // starts with a full budget instead of NULL (the column is NOT NULL).
+    sqlx::query(
+        r#"
+        ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS dispatch_attempts INTEGER NOT NULL DEFAULT 0
+        "#,
+    )
+    .execute(pool.as_ref())
+    .await
+    .map_err(|e| {
+        EngineError::ConnectionError(format!(
+            "Migration error (scheduled_tasks.dispatch_attempts): {}",
             e
         ))
     })?;
