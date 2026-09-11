@@ -7,7 +7,13 @@
 //! Run manually:
 //!   docker compose -f docker/docker-compose.yml up -d --wait postgres
 //!   UC_PG_URL=postgresql://ultimate_coders:ultimate_coders@127.0.0.1:5432/ultimate_coders \
-//!     cargo test -p uc-engine --features storage -- --ignored postgres
+//!     cargo test -p uc-engine --features storage -- --ignored --test-threads=1 postgres
+//!
+//! Keep `--test-threads=1`: every store constructor runs the migrations, so on a
+//! **cold** database parallel test threads race in `CREATE TYPE` and Postgres
+//! rejects the loser with a `pg_type_typname_nsp_index` duplicate key, reported
+//! as "Migration error (repos)". Against an already-migrated database the race
+//! disappears — which makes it look like CI flakiness when it is not.
 //!
 //! Prefer 127.0.0.1 over `localhost` in UC_PG_URL: a `localhost` host makes the
 //! client try IPv6 first, and where that stalls each connection wastes ~10s —

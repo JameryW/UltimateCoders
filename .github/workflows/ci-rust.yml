@@ -126,7 +126,15 @@ jobs:
         # Covers the metadata store plus the scheduler's durable jobs
         # (`schedule_postgres_tests`): migrations, legacy ALTER upgrade, and
         # the retry-state round trip.
-        run: cargo test -p uc-engine --features storage -- --ignored postgres
+        #
+        # --test-threads=1 is correctness, not tuning. Every store constructor
+        # runs the migrations, so on a cold database parallel test threads race in
+        # `CREATE TYPE` and Postgres rejects the loser with
+        #   duplicate key value violates unique constraint "pg_type_typname_nsp_index"
+        # which surfaces as "Migration error (repos)". A warm database hides
+        # that, because every migration is then a no-op — which is how it passed
+        # locally and failed in CI.
+        run: cargo test -p uc-engine --features storage -- --ignored --test-threads=1 postgres
 
   storage-integration:
     name: storage integration tests
