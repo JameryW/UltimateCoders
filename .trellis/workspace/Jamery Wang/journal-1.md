@@ -38,3 +38,38 @@ Added the scheduler's missing reversible stop: SchedulerService::set_job_enabled
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: T1: execution envelope + contract_version handshake (#637)
+
+**Date**: 2026-09-12
+**Task**: T1: execution envelope + contract_version handshake (#637)
+**Branch**: `main`
+
+### Summary
+
+Stamped graph/node/attempt/idempotency/epoch/contract envelope on ALL THREE uc.subtask.execute publishers (incl. Python _dispatch_remote found by check); contract_version handshake refuses mismatched registration/heartbeat and gates dispatch (legacy workers accepted-but-never-dispatched, warn-only per accepted deviation). Rust 428/370/180+8/35, clippy clean, pytest 977. Both TS stubs regenerated. Next: T2 #638 unblocked (new context).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e1f207e8` | (see git log) |
+| `215e11d1` | (see git log) |
+| `30bba2e0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
