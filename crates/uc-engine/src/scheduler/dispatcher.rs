@@ -124,6 +124,38 @@ impl ScheduleDispatcher for OrchestratorDispatcher {
     }
 }
 
+/// Build the legacy publisher's `uc.subtask.execute` payload.
+///
+/// This is the second envelope publisher (T1 #637): the
+/// `OrchestratorDispatcher` scheduled-task path must emit the SAME envelope
+/// as the gRPC gateway (`NatsSubtaskExecute` in uc-grpc server.rs) so
+/// workers see identity-mapped `graph_id`/`node_id`/`attempt_id`, the
+/// deterministic `idempotency_key`, `worker_epoch = ""` and the gateway's
+/// `contract_version` regardless of which path dispatched them.
+#[cfg(feature = "messaging")]
+fn legacy_subtask_execute_message(
+    task_id: &str,
+    subtask_id: &str,
+    description: &str,
+    layer: usize,
+    retry_no: u32,
+) -> serde_json::Value {
+    let envelope = uc_types::ExecutionEnvelope::for_dispatch(task_id, subtask_id, retry_no);
+    serde_json::json!({
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "description": description,
+        "layer": layer,
+        // ── execution envelope (additive; legacy consumers ignore) ──
+        "graph_id": envelope.graph_id,
+        "node_id": envelope.node_id,
+        "attempt_id": envelope.attempt_id,
+        "idempotency_key": envelope.idempotency_key,
+        "worker_epoch": envelope.worker_epoch,
+        "contract_version": envelope.contract_version,
+    })
+}
+
 /// Parse the `subtasks` array from a decomposition reply into typed `Subtask`s.
 ///
 /// Returns `Err` if ANY subtask fails to deserialize — do NOT silently drop
@@ -196,12 +228,18 @@ impl OrchestratorDispatcher {
             for subtask_id in layer {
                 let st = parsed.iter().find(|s| &s.id == subtask_id);
                 let desc = st.map(|s| s.description.as_str()).unwrap_or("");
-                let msg = serde_json::json!({
-                    "task_id": reply_data.get("task_id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "subtask_id": subtask_id.0,
-                    "description": desc,
-                    "layer": layer_idx,
-                });
+                let retry_no = st.map(|s| s.dispatch_retry_count).unwrap_or(0);
+                let task_id = reply_data
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let msg = legacy_subtask_execute_message(
+                    task_id,
+                    &subtask_id.0,
+                    desc,
+                    layer_idx,
+                    retry_no,
+                );
                 let subject = "uc.subtask.execute".to_string();
                 let payload = serde_json::to_vec(&msg).map_err(|e| {
                     EngineError::InternalError(format!("Failed to serialize subtask: {e}"))
@@ -546,8 +584,38 @@ mod tests {
         assert_eq!(parsed[1].depends_on.len(), 1);
     }
 
-    // ── EngineSubmitDispatcher tests ──────────────────────────────
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn legacy_publisher_emits_deterministic_envelope() {
+        // T1 #637: the legacy json! publisher must carry the SAME envelope as
+        // the gRPC gateway publisher — identity mapping + deterministic key,
+        // byte-identical across rebuilds of the same dispatch.
+        let a = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 3);
+        let b = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 3);
+        assert_eq!(a, b);
+        // Pre-envelope keys preserved (legacy consumers unaffected).
+        assert_eq!(a["task_id"], "t-1");
+        assert_eq!(a["subtask_id"], "st-2");
+        assert_eq!(a["description"], "do it");
+        assert_eq!(a["layer"], 0);
+        // Envelope: identity mapping (graph=task, node=subtask,
+        // attempt=retry_no, epoch empty, version = gateway contract).
+        assert_eq!(a["graph_id"], "t-1");
+        assert_eq!(a["node_id"], "st-2");
+        assert_eq!(a["attempt_id"], "3");
+        assert_eq!(a["worker_epoch"], "");
+        assert_eq!(a["contract_version"], uc_types::CONTRACT_VERSION);
+        assert_eq!(
+            a["idempotency_key"].as_str().unwrap(),
+            uc_types::ExecutionEnvelope::derive_idempotency_key("t-1", "st-2", "3")
+        );
+        // No timestamp/randomness component: a different attempt changes the
+        // key, the same triple never does.
+        let c = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 4);
+        assert_ne!(c["idempotency_key"], a["idempotency_key"]);
+    }
 
+    // ── EngineSubmitDispatcher tests ──────────────────────────────
     #[tokio::test]
     async fn engine_submit_dispatcher_dispatch_returns_ok() {
         // The dispatcher is fire-and-forget: dispatch spawns a tokio task

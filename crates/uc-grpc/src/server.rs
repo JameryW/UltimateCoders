@@ -265,10 +265,89 @@ pub struct NatsSubtaskExecute {
     /// Project scope for cross-repo search and memory sharing.
     #[serde(default)]
     pub project_id: String,
+    // ── Execution envelope (T1 #637) ─────────────────────────────
+    // Identity of this dispatch in the future durable graph runtime.
+    // Transitional identity mapping: graph_id = task_id, node_id =
+    // subtask_id, attempt_id = dispatch_retry_count, worker_epoch = "".
+    // All additive + `serde(default)`: legacy consumers ignore them.
+    /// Graph (task) this execution belongs to.
+    #[serde(default)]
+    pub graph_id: String,
+    /// Node (subtask) being executed.
+    #[serde(default)]
+    pub node_id: String,
+    /// Attempt number within (graph_id, node_id), decimal string.
+    #[serde(default)]
+    pub attempt_id: String,
+    /// Deterministic sha256("{graph}:{node}:{attempt}") hex[:32] — identical
+    /// across re-sends of the same dispatch (unlike the millis-based
+    /// `message_id`).
+    #[serde(default)]
+    pub idempotency_key: String,
+    /// Worker fencing epoch (empty until T3).
+    #[serde(default)]
+    pub worker_epoch: String,
+    /// Execution contract the publisher speaks. Workers must not accept
+    /// dispatches from a gateway they cannot interoperate with (T4 enforces;
+    /// T1 only produces).
+    #[serde(default)]
+    pub contract_version: String,
 }
 
 fn default_timeout() -> u64 {
     600
+}
+
+/// Build the `uc.subtask.execute` dispatch payload for one ready subtask.
+///
+/// Both gateway publishers (`publish_ready_subtasks` and
+/// `dispatch_ready_subtasks`) go through this single constructor so the
+/// execution envelope (T1 #637) is emitted identically on every dispatch:
+/// identity mapping `graph_id = task_id`, `node_id = subtask_id`,
+/// `attempt_id = dispatch_retry_count` (carried as `retry_count` on the
+/// wire), `worker_epoch = ""`, plus the deterministic idempotency key and
+/// the gateway's `contract_version`. The envelope half of the payload is
+/// byte-identical across re-sends of the same dispatch — unlike `message_id`
+/// (T4 will key dedup on it).
+#[cfg(feature = "messaging")]
+fn subtask_execute_payload(
+    task_id: &str,
+    st: &uc_types::Subtask,
+    project_id: &str,
+    expected_output: &str,
+    file_constraints: &[String],
+) -> NatsSubtaskExecute {
+    let envelope =
+        uc_types::ExecutionEnvelope::for_dispatch(task_id, &st.id.0, st.dispatch_retry_count);
+    NatsSubtaskExecute {
+        message_id: Some(format!(
+            "{}:execute:{}:{}",
+            task_id,
+            st.id.0,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        )),
+        task_id: task_id.to_string(),
+        subtask_id: st.id.0.clone(),
+        description: st.description.clone(),
+        expected_output: expected_output.to_string(),
+        file_constraints: file_constraints.to_vec(),
+        timeout_seconds: 600,
+        retry_count: st.dispatch_retry_count,
+        dispatch_mode: st.dispatch_mode.clone(),
+        required_capabilities: st.required_capabilities.clone(),
+        agent_config_json: st.agent_config_json.clone(),
+        steps: st.steps.clone(),
+        project_id: project_id.to_string(),
+        graph_id: envelope.graph_id,
+        node_id: envelope.node_id,
+        attempt_id: envelope.attempt_id,
+        idempotency_key: envelope.idempotency_key,
+        worker_epoch: envelope.worker_epoch,
+        contract_version: envelope.contract_version,
+    }
 }
 
 /// Payload for `uc.heartbeat` messages.
@@ -2080,15 +2159,30 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
                     continue;
                 }
-                if !st.required_capabilities.is_empty() {
-                    let matching = registry.workers_with_capabilities(&st.required_capabilities);
-                    if matching.is_empty() {
+                // Capability + contract_version hard gate (T1 #637): only mark
+                // Assigned / publish when at least one capability-matching
+                // available worker declared the gateway's contract version.
+                match registry.dispatch_gate(&st.required_capabilities) {
+                    crate::worker_service::WorkerDispatchGate::Dispatch => {}
+                    crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                         tracing::info!(
                             subtask_id = %st.id.0,
                             required_capabilities = ?st.required_capabilities,
                             "No worker with matching capabilities, keeping subtask Pending"
                         );
                         continue; // skip — don't mark as Assigned
+                    }
+                    crate::worker_service::WorkerDispatchGate::NoVersionMatchedWorker {
+                        workers,
+                    } => {
+                        tracing::warn!(
+                            subtask_id = %st.id.0,
+                            gateway_contract_version = uc_types::CONTRACT_VERSION,
+                            worker_contract_versions = ?workers,
+                            "No capability-matching worker declared the gateway contract_version, \
+                             keeping subtask Pending — mixed-version cluster, upgrade workers in lockstep"
+                        );
+                        continue; // never dispatch silently
                     }
                 }
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
@@ -2113,29 +2207,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     continue;
                 }
 
-                let execute = NatsSubtaskExecute {
-                    message_id: Some(format!(
-                        "{}:execute:{}:{}",
-                        task_id,
-                        st.id.0,
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis()
-                    )),
-                    task_id: task_id.to_string(),
-                    subtask_id: st.id.0.clone(),
-                    description: st.description.clone(),
-                    expected_output: String::new(),
-                    file_constraints: Vec::new(),
-                    timeout_seconds: 600,
-                    retry_count: st.dispatch_retry_count,
-                    dispatch_mode: st.dispatch_mode.clone(),
-                    required_capabilities: st.required_capabilities.clone(),
-                    agent_config_json: st.agent_config_json.clone(),
-                    steps: st.steps.clone(),
-                    project_id: project_id.clone(),
-                };
+                let execute = subtask_execute_payload(task_id, &st, &project_id, "", &[]);
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
                         if let Err(e) = nats_client
@@ -2928,15 +3000,28 @@ async fn dispatch_ready_subtasks(
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
                 continue;
             }
-            if !st.required_capabilities.is_empty() {
-                let matching = registry.workers_with_capabilities(&st.required_capabilities);
-                if matching.is_empty() {
+            // Capability + contract_version hard gate (mirrors
+            // publish_ready_subtasks, T1 #637): never dispatch silently to a
+            // worker that has not confirmed the gateway's contract version.
+            match registry.dispatch_gate(&st.required_capabilities) {
+                crate::worker_service::WorkerDispatchGate::Dispatch => {}
+                crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                     tracing::info!(
                         subtask_id = %st.id.0,
                         required_capabilities = ?st.required_capabilities,
                         "No worker with matching capabilities, keeping subtask Pending"
                     );
                     continue; // skip — don't mark as Assigned
+                }
+                crate::worker_service::WorkerDispatchGate::NoVersionMatchedWorker { workers } => {
+                    tracing::warn!(
+                        subtask_id = %st.id.0,
+                        gateway_contract_version = uc_types::CONTRACT_VERSION,
+                        worker_contract_versions = ?workers,
+                        "No capability-matching worker declared the gateway contract_version, \
+                         keeping subtask Pending — mixed-version cluster, upgrade workers in lockstep"
+                    );
+                    continue;
                 }
             }
             store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
@@ -2955,35 +3040,19 @@ async fn dispatch_ready_subtasks(
             continue;
         }
 
-        let execute = NatsSubtaskExecute {
-            message_id: Some(format!(
-                "{}:execute:{}:{}",
-                task_id,
-                st.id.0,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-            )),
-            task_id: task_id.to_string(),
-            subtask_id: st.id.0.clone(),
-            description: st.description.clone(),
-            // Propagate expected_output so the worker's prompt includes the
-            // actual success criteria (not the generic fallback). Matches the
-            // gRPC upsert path.
-            expected_output: st.expected_output.clone(),
-            // Propagate file_constraints so the worker can do conflict detection
-            // and workspace isolation. Empty here used to defeat both — concurrent
-            // subtasks sharing files would race and corrupt/merge-conflict.
-            file_constraints: st.file_constraints.clone(),
-            timeout_seconds: 600,
-            retry_count: st.dispatch_retry_count,
-            dispatch_mode: st.dispatch_mode.clone(),
-            required_capabilities: st.required_capabilities.clone(),
-            agent_config_json: st.agent_config_json.clone(),
-            steps: st.steps.clone(),
-            project_id: project_id.clone(),
-        };
+        // Propagate expected_output so the worker's prompt includes the
+        // actual success criteria (not the generic fallback). Matches the
+        // gRPC upsert path. Propagate file_constraints so the worker can do
+        // conflict detection and workspace isolation (empty used to defeat
+        // both — concurrent subtasks sharing files would race and
+        // corrupt/merge-conflict).
+        let execute = subtask_execute_payload(
+            task_id,
+            &st,
+            &project_id,
+            &st.expected_output,
+            &st.file_constraints,
+        );
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
                 if let Err(e) = nats_client
@@ -5486,6 +5555,7 @@ mod tests {
                 vec!["rust".to_string()],
                 2,
                 String::new(),
+                String::new(),
             )
             .unwrap();
         store.update_worker_heartbeat("worker-stale");
@@ -6499,6 +6569,12 @@ mod tests {
                 parallel_group: None,
             }],
             project_id: "proj-1".to_string(),
+            graph_id: "t-1".to_string(),
+            node_id: "st-1".to_string(),
+            attempt_id: "0".to_string(),
+            idempotency_key: "00000000000000000000000000000000".to_string(),
+            worker_epoch: String::new(),
+            contract_version: uc_types::CONTRACT_VERSION.to_string(),
         };
         let json = serde_json::to_string(&payload).unwrap();
         // Subtask-level override key is agent_config_json (not agent_config).
@@ -6540,6 +6616,76 @@ mod tests {
         assert!(parsed.steps.is_empty());
         assert_eq!(parsed.agent_config_json, None);
         assert_eq!(parsed.message_id, None);
+    }
+
+    #[test]
+    fn nats_subtask_execute_envelope_roundtrip_and_legacy_tolerance() {
+        // T1 #637: the six envelope keys ride on every dispatch payload;
+        // ALL of them are serde(default), so a pre-envelope (legacy) payload
+        // still parses with empty envelope fields instead of failing.
+        let with_envelope = r#"{
+            "task_id": "t-1", "subtask_id": "st-1", "description": "x",
+            "graph_id": "t-1", "node_id": "st-1", "attempt_id": "2",
+            "idempotency_key": "abc", "worker_epoch": "", "contract_version": "v1"
+        }"#;
+        let parsed: NatsSubtaskExecute = serde_json::from_str(with_envelope).unwrap();
+        assert_eq!(parsed.graph_id, "t-1");
+        assert_eq!(parsed.node_id, "st-1");
+        assert_eq!(parsed.attempt_id, "2");
+        assert_eq!(parsed.idempotency_key, "abc");
+        assert_eq!(parsed.worker_epoch, "");
+        assert_eq!(parsed.contract_version, "v1");
+
+        let legacy = r#"{"task_id":"t-1","subtask_id":"st-1","description":"x"}"#;
+        let parsed: NatsSubtaskExecute = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.graph_id, "");
+        assert_eq!(parsed.contract_version, "");
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn subtask_execute_payload_emits_deterministic_envelope() {
+        // Both gateway publishers build through subtask_execute_payload; the
+        // envelope must carry the identity mapping and be byte-deterministic
+        // for the same (graph,node,attempt) — only message_id varies.
+        let st = uc_types::Subtask {
+            id: uc_types::TaskId("st-7".into()),
+            parent_id: uc_types::TaskId("t-3".into()),
+            description: "d".into(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: vec![],
+            file_constraints: vec!["*.lock".into()],
+            expected_output: "out".into(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            dispatch_retry_count: 2,
+            required_capabilities: vec![],
+            agent_config_json: None,
+            steps: vec![],
+            retry_count: 0,
+        };
+        let p1 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints);
+        let p2 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints);
+        assert_eq!(p1.graph_id, "t-3");
+        assert_eq!(p1.node_id, "st-7");
+        assert_eq!(p1.attempt_id, "2"); // identity mapping: attempt = dispatch_retry_count
+        assert_eq!(p1.worker_epoch, "");
+        assert_eq!(p1.contract_version, uc_types::CONTRACT_VERSION);
+        let expected_key = uc_types::ExecutionEnvelope::derive_idempotency_key("t-3", "st-7", "2");
+        assert_eq!(p1.idempotency_key, expected_key);
+
+        // Determinism: same triple → envelope half of the payload is
+        // byte-identical across builds (message_id deliberately excluded —
+        // it is the millis timestamp T4 will replace with the key).
+        let mut a = p1.clone();
+        let mut b = p2.clone();
+        a.message_id = None;
+        b.message_id = None;
+        assert_eq!(
+            serde_json::to_vec(&a).unwrap(),
+            serde_json::to_vec(&b).unwrap()
+        );
     }
 
     // ── task_backend write-path persistence tests ──────────────

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use tonic::{Request, Response, Status};
-use uc_types::EngineApi;
+use uc_types::{EngineApi, CONTRACT_VERSION};
 
 use crate::server::GrpcServer;
 use crate::ultimate_coders::worker_service_server::WorkerService;
@@ -32,6 +32,10 @@ pub struct RegisteredWorker {
     pub max_capacity: u32,
     pub current_load: u32,
     pub metadata: String,
+    /// Execution contract the worker declared at registration
+    /// ([`uc_types::CONTRACT_VERSION`] handshake). Empty = legacy
+    /// pre-handshake worker: accepted for observability, never dispatchable.
+    pub contract_version: String,
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
 }
@@ -67,15 +71,29 @@ impl WorkerRegistry {
     }
 
     /// Register a new worker or re-register an existing one.
+    ///
+    /// `contract_version` is the execution contract the worker speaks. A
+    /// non-empty version that differs from [`CONTRACT_VERSION`] is REFUSED
+    /// (mixed-version deployment must fail loudly at the handshake, not
+    /// silently at dispatch). Empty = legacy pre-handshake worker: accepted
+    /// (observability) but never dispatchable — see [`Self::dispatch_gate`].
     pub fn register(
         &mut self,
         worker_id: String,
         capabilities: Vec<String>,
         max_capacity: u32,
         metadata: String,
+        contract_version: String,
     ) -> Result<(), String> {
         if worker_id.is_empty() {
             return Err("worker_id cannot be empty".to_string());
+        }
+        if !contract_version.is_empty() && contract_version != CONTRACT_VERSION {
+            return Err(format!(
+                "contract_version mismatch: worker '{}' declares '{}', gateway speaks '{}' \
+                 — gateway and workers must be upgraded in lockstep",
+                worker_id, contract_version, CONTRACT_VERSION
+            ));
         }
         let now = chrono::Utc::now();
         let worker = RegisteredWorker {
@@ -84,6 +102,7 @@ impl WorkerRegistry {
             max_capacity,
             current_load: 0,
             metadata,
+            contract_version,
             registered_at: now,
             last_heartbeat: now,
         };
@@ -145,6 +164,49 @@ impl WorkerRegistry {
             .collect()
     }
 
+    /// Find workers that have ALL the specified capabilities AND declared the
+    /// gateway's [`CONTRACT_VERSION`] — the only workers dispatchable to.
+    pub fn dispatchable_workers_with_capabilities(
+        &self,
+        required: &[String],
+    ) -> Vec<&RegisteredWorker> {
+        self.workers_with_capabilities(required)
+            .into_iter()
+            .filter(|w| w.contract_version == CONTRACT_VERSION)
+            .collect()
+    }
+
+    /// The contract-version hard gate consulted by
+    /// `publish_ready_subtasks` / `dispatch_ready_subtasks` before marking a
+    /// subtask Assigned and publishing it.
+    pub fn dispatch_gate(&self, required: &[String]) -> WorkerDispatchGate {
+        let candidates = self.workers_with_capabilities(required);
+        if candidates.is_empty() {
+            // No capability-matching available worker. With required
+            // capabilities that is today's "keep Pending" case; without,
+            // preserve the legacy best-effort publish (queue-group
+            // subscribers may exist without ever gRPC-registering —
+            // NATS-only deployments).
+            return if required.is_empty() {
+                WorkerDispatchGate::Dispatch
+            } else {
+                WorkerDispatchGate::NoCapableWorker
+            };
+        }
+        if candidates
+            .iter()
+            .all(|w| w.contract_version != CONTRACT_VERSION)
+        {
+            return WorkerDispatchGate::NoVersionMatchedWorker {
+                workers: candidates
+                    .iter()
+                    .map(|w| (w.id.clone(), w.contract_version.clone()))
+                    .collect(),
+            };
+        }
+        WorkerDispatchGate::Dispatch
+    }
+
     /// Mark workers with stale heartbeats as unavailable (returns stale worker IDs).
     pub fn stale_worker_ids(&self) -> Vec<String> {
         self.workers
@@ -185,6 +247,24 @@ impl Default for WorkerRegistry {
     }
 }
 
+/// Outcome of the capability + contract-version dispatch gate for one subtask
+/// (see [`WorkerRegistry::dispatch_gate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerDispatchGate {
+    /// At least one available capability-matching worker declared the
+    /// gateway's contract version — safe to mark Assigned and publish.
+    Dispatch,
+    /// `required_capabilities` unmet by any available worker → keep Pending
+    /// (pre-T1 behavior).
+    NoCapableWorker,
+    /// Capability-matching workers are available, but NONE declared
+    /// [`CONTRACT_VERSION`] (mixed-version cluster: legacy workers with an
+    /// empty version, or a version skew that slipped past registration).
+    /// Keep Pending and surface it LOUDLY — never dispatch silently.
+    /// Carries `(worker_id, declared_version)` of the rejected candidates.
+    NoVersionMatchedWorker { workers: Vec<(String, String)> },
+}
+
 // ── WorkerService gRPC implementation ─────────────────────────────
 
 #[tonic::async_trait]
@@ -208,17 +288,30 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
             req.capabilities,
             req.max_capacity,
             req.metadata,
+            req.contract_version.clone(),
         ) {
-            Ok(()) => Ok(Response::new(RegisterWorkerResponse {
-                success: true,
-                worker_id: req.worker_id,
-                error: None,
-            })),
-            Err(e) => Ok(Response::new(RegisterWorkerResponse {
-                success: false,
-                worker_id: req.worker_id,
-                error: Some(e),
-            })),
+            Ok(()) => {
+                if req.contract_version.is_empty() {
+                    tracing::warn!(
+                        worker_id = %req.worker_id,
+                        "Worker registered without contract_version — accepted but NOT \
+                         dispatchable (legacy worker; upgrade in lockstep with the gateway)"
+                    );
+                }
+                Ok(Response::new(RegisterWorkerResponse {
+                    success: true,
+                    worker_id: req.worker_id,
+                    error: None,
+                }))
+            }
+            Err(e) => {
+                tracing::warn!(worker_id = %req.worker_id, error = %e, "Worker registration refused");
+                Ok(Response::new(RegisterWorkerResponse {
+                    success: false,
+                    worker_id: req.worker_id,
+                    error: Some(e),
+                }))
+            }
         }
     }
 
@@ -227,6 +320,21 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
         request: Request<WorkerHeartbeatRequest>,
     ) -> Result<Response<WorkerHeartbeatResponse>, Status> {
         let req = request.into_inner();
+        // Handshake is re-asserted on every heartbeat: a non-empty version
+        // that no longer matches the gateway means the pair has drifted —
+        // refuse loudly instead of keeping a non-dispatchable worker alive.
+        if !req.contract_version.is_empty() && req.contract_version != CONTRACT_VERSION {
+            let error = format!(
+                "contract_version mismatch: worker '{}' declares '{}', gateway speaks '{}' \
+                 — gateway and workers must be upgraded in lockstep",
+                req.worker_id, req.contract_version, CONTRACT_VERSION
+            );
+            tracing::warn!(worker_id = %req.worker_id, error = %error, "Worker heartbeat refused");
+            return Ok(Response::new(WorkerHeartbeatResponse {
+                accepted: false,
+                error: Some(error),
+            }));
+        }
         let mut registry = self.worker_registry().write().await;
         match registry.heartbeat(&req.worker_id, req.current_load) {
             Ok(()) => Ok(Response::new(WorkerHeartbeatResponse {
@@ -560,6 +668,7 @@ mod tests {
             vec!["python".to_string(), "docker".to_string()],
             5,
             String::new(),
+            String::new(),
         )
         .unwrap();
         assert!(reg.workers().contains_key("w-1"));
@@ -572,7 +681,7 @@ mod tests {
     fn registry_rejects_empty_id() {
         let mut reg = WorkerRegistry::new();
         assert!(reg
-            .register(String::new(), vec![], 1, String::new())
+            .register(String::new(), vec![], 1, String::new(), String::new())
             .is_err());
     }
 
@@ -583,6 +692,7 @@ mod tests {
             "w-1".to_string(),
             vec!["code".to_string()],
             3,
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -601,6 +711,7 @@ mod tests {
             vec!["code".to_string()],
             2, // max_capacity
             String::new(),
+            String::new(),
         )
         .unwrap();
         reg.heartbeat("full", 2).unwrap(); // load == capacity → saturated
@@ -613,6 +724,7 @@ mod tests {
             "zero".to_string(),
             vec!["code".to_string()],
             0, // max_capacity == 0 → can never take work
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -627,6 +739,7 @@ mod tests {
             "spare".to_string(),
             vec!["code".to_string()],
             3,
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -656,7 +769,7 @@ mod tests {
     #[test]
     fn registry_deregister() {
         let mut reg = WorkerRegistry::new();
-        reg.register("w-1".to_string(), vec![], 1, String::new())
+        reg.register("w-1".to_string(), vec![], 1, String::new(), String::new())
             .unwrap();
         reg.deregister("w-1").unwrap();
         assert!(!reg.workers().contains_key("w-1"));
@@ -676,6 +789,7 @@ mod tests {
             vec!["rust".to_string(), "docker".to_string()],
             3,
             String::new(),
+            String::new(),
         )
         .unwrap();
         reg.register(
@@ -683,12 +797,14 @@ mod tests {
             vec!["python".to_string()],
             3,
             String::new(),
+            String::new(),
         )
         .unwrap();
         reg.register(
             "w-both".to_string(),
             vec!["rust".to_string(), "python".to_string()],
             3,
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -708,6 +824,7 @@ mod tests {
             "w-1".to_string(),
             vec!["code".to_string()],
             3,
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -729,12 +846,14 @@ mod tests {
             vec!["code".to_string()],
             3,
             r#"{"hostname":"host-b","pid":42}"#.to_string(),
+            String::new(),
         )
         .unwrap();
         reg.register(
             "local-w2".to_string(),
             vec!["code".to_string()],
             3,
+            String::new(),
             String::new(),
         )
         .unwrap();
@@ -756,6 +875,7 @@ mod tests {
             vec!["python".to_string()],
             3,
             String::new(),
+            String::new(),
         )
         .unwrap();
         reg.heartbeat("w-1", 2).unwrap();
@@ -765,12 +885,237 @@ mod tests {
             vec!["rust".to_string()],
             5,
             String::new(),
+            String::new(),
         )
         .unwrap();
         let w = &reg.workers()["w-1"];
         assert_eq!(w.capabilities, vec!["rust"]);
         assert_eq!(w.max_capacity, 5);
         assert_eq!(w.current_load, 0); // reset on re-register
+    }
+
+    // ── contract_version handshake (T1 #637) ─────────────────────
+
+    #[test]
+    fn registry_refuses_mismatched_contract_version() {
+        let mut reg = WorkerRegistry::new();
+        let err = reg
+            .register(
+                "w-old".to_string(),
+                vec!["code".to_string()],
+                3,
+                String::new(),
+                "v0".to_string(),
+            )
+            .unwrap_err();
+        assert!(
+            err.contains("contract_version mismatch") && err.contains("v0"),
+            "error must name the offending version: {err}"
+        );
+        assert!(
+            !reg.workers().contains_key("w-old"),
+            "refused worker must not enter the registry"
+        );
+    }
+
+    #[test]
+    fn registry_accepts_matching_and_empty_contract_version() {
+        let mut reg = WorkerRegistry::new();
+        reg.register(
+            "w-new".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        reg.register(
+            "w-legacy".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+            String::new(), // empty = legacy pre-handshake worker
+        )
+        .unwrap();
+        assert_eq!(reg.workers()["w-new"].contract_version, CONTRACT_VERSION);
+        assert_eq!(reg.workers()["w-legacy"].contract_version, "");
+    }
+
+    #[test]
+    fn dispatch_gate_only_admits_version_matched_workers() {
+        let mut reg = WorkerRegistry::new();
+        let caps = |s: &str| vec![s.to_string()];
+
+        // Empty registry, no capabilities → today's best-effort publish
+        // (NATS-only deployments without gRPC registration).
+        assert_eq!(reg.dispatch_gate(&[]), WorkerDispatchGate::Dispatch);
+        // Empty registry, capabilities required → keep Pending (unchanged).
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust")),
+            WorkerDispatchGate::NoCapableWorker
+        );
+
+        // Legacy worker (empty version) is registered but NOT dispatchable.
+        reg.register(
+            "w-legacy".to_string(),
+            caps("rust"),
+            3,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust")),
+            WorkerDispatchGate::NoVersionMatchedWorker {
+                workers: vec![("w-legacy".to_string(), String::new())]
+            }
+        );
+        // Capability requirement still short-circuits before the version gate.
+        assert_eq!(
+            reg.dispatch_gate(&caps("docker")),
+            WorkerDispatchGate::NoCapableWorker
+        );
+
+        // A version-matched worker flips the gate back to Dispatch, even
+        // while the legacy worker remains registered.
+        reg.register(
+            "w-new".to_string(),
+            caps("rust"),
+            3,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust")),
+            WorkerDispatchGate::Dispatch
+        );
+        assert_eq!(reg.dispatch_gate(&[]), WorkerDispatchGate::Dispatch);
+
+        // dispatchable_workers_with_capabilities excludes the legacy worker.
+        let ids: Vec<_> = reg
+            .dispatchable_workers_with_capabilities(&caps("rust"))
+            .iter()
+            .map(|w| w.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["w-new"]);
+    }
+
+    #[tokio::test]
+    async fn register_worker_rpc_refuses_mismatched_version() {
+        let server = make_server();
+        let resp = server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-skew".to_string(),
+                capabilities: vec!["code".to_string()],
+                max_capacity: 2,
+                metadata: String::new(),
+                contract_version: "v2".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.success);
+        let err = resp.error.unwrap();
+        assert!(err.contains("contract_version mismatch") && err.contains("v2"));
+        assert!(!server
+            .worker_registry()
+            .read()
+            .await
+            .workers()
+            .contains_key("w-skew"));
+    }
+
+    #[tokio::test]
+    async fn register_worker_rpc_accepts_matched_and_empty_versions() {
+        let server = make_server();
+        let matched = server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-matched".to_string(),
+                capabilities: vec![],
+                max_capacity: 1,
+                metadata: String::new(),
+                contract_version: CONTRACT_VERSION.to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(matched.success, "{:?}", matched.error);
+
+        let legacy = server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-legacy".to_string(),
+                capabilities: vec![],
+                max_capacity: 1,
+                metadata: String::new(),
+                contract_version: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            legacy.success,
+            "empty version must stay accepted: {:?}",
+            legacy.error
+        );
+        let reg = server.worker_registry().read().await;
+        assert_eq!(reg.workers()["w-legacy"].contract_version, "");
+    }
+
+    #[tokio::test]
+    async fn heartbeat_rpc_refuses_mismatched_version_accepted_matched() {
+        let server = make_server();
+        server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-hb".to_string(),
+                capabilities: vec![],
+                max_capacity: 2,
+                metadata: String::new(),
+                contract_version: CONTRACT_VERSION.to_string(),
+            }))
+            .await
+            .unwrap();
+
+        // Mismatched non-empty version → refused loudly.
+        let refused = server
+            .worker_heartbeat(Request::new(WorkerHeartbeatRequest {
+                worker_id: "w-hb".to_string(),
+                current_load: 1,
+                contract_version: "v9".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!refused.accepted);
+        assert!(refused.error.unwrap().contains("contract_version mismatch"));
+
+        // Matching version → accepted.
+        let ok = server
+            .worker_heartbeat(Request::new(WorkerHeartbeatRequest {
+                worker_id: "w-hb".to_string(),
+                current_load: 1,
+                contract_version: CONTRACT_VERSION.to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(ok.accepted, "{:?}", ok.error);
+        assert_eq!(
+            server.worker_registry().read().await.workers()["w-hb"].current_load,
+            1
+        );
+
+        // Empty (legacy caller) → accepted, preserves prior behavior.
+        let legacy_ok = server
+            .worker_heartbeat(Request::new(WorkerHeartbeatRequest {
+                worker_id: "w-hb".to_string(),
+                current_load: 0,
+                contract_version: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(legacy_ok.accepted, "{:?}", legacy_ok.error);
     }
 
     // ── ScaleWorkers handler tests ──────────────────────────────────
@@ -793,6 +1138,7 @@ mod tests {
                 capabilities: vec!["python".to_string()],
                 max_capacity: 2,
                 metadata: String::new(),
+                contract_version: String::new(),
             }))
             .await
             .unwrap();

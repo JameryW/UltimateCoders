@@ -241,18 +241,25 @@ impl GrpcEngineClient {
     /// `metadata` is an optional JSON blob (hostname, pid, compose project,
     /// …) stored by the registry and echoed back in `WorkerProto.metadata`
     /// for cross-host observability.
+    ///
+    /// `contract_version` is the execution-contract handshake (T1 #637):
+    /// the gateway refuses a non-empty mismatch and treats empty (legacy
+    /// callers) as accepted-but-not-dispatchable. New workers should pass
+    /// [`uc_types::CONTRACT_VERSION`].
     pub async fn register_worker(
         &self,
         worker_id: &str,
         capabilities: &[String],
         max_capacity: u32,
         metadata: Option<&str>,
+        contract_version: Option<&str>,
     ) -> Result<bool, EngineError> {
         let request = tonic::Request::new(RegisterWorkerRequest {
             worker_id: worker_id.to_string(),
             capabilities: capabilities.to_vec(),
             max_capacity,
             metadata: metadata.unwrap_or_default().to_string(),
+            contract_version: contract_version.unwrap_or_default().to_string(),
         });
         match self.worker_client.clone().register_worker(request).await {
             Ok(response) => {
@@ -276,14 +283,19 @@ impl GrpcEngineClient {
     }
 
     /// Send a heartbeat to the gateway.
+    ///
+    /// `contract_version` re-asserts the handshake each tick (T1 #637);
+    /// legacy callers may pass `None` (wire default empty).
     pub async fn worker_heartbeat(
         &self,
         worker_id: &str,
         current_load: u32,
+        contract_version: Option<&str>,
     ) -> Result<bool, EngineError> {
         let request = tonic::Request::new(WorkerHeartbeatRequest {
             worker_id: worker_id.to_string(),
             current_load,
+            contract_version: contract_version.unwrap_or_default().to_string(),
         });
         match self.worker_client.clone().worker_heartbeat(request).await {
             Ok(response) => Ok(response.into_inner().accepted),

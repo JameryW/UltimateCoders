@@ -773,6 +773,11 @@ message RegisterWorkerRequest {
     repeated string capabilities = 2;
     uint32 max_capacity = 3;    // max concurrent subtasks
     string metadata = 4;        // optional JSON metadata
+    // Execution contract handshake (T1 #637). Must equal the gateway's
+    // CONTRACT_VERSION or registration is REFUSED. Empty = legacy
+    // pre-handshake worker: accepted for observability but never
+    // dispatched to (mixed-version clusters fail loudly, not silently).
+    string contract_version = 5;
 }
 
 message RegisterWorkerResponse {
@@ -784,6 +789,9 @@ message RegisterWorkerResponse {
 message WorkerHeartbeatRequest {
     string worker_id = 1;
     uint32 current_load = 2;    // current number of active subtasks
+    // Contract re-assertion (T1 #637): non-empty mismatch → heartbeat
+    // refused. Empty preserves legacy behavior.
+    string contract_version = 3;
 }
 
 message WorkerHeartbeatResponse {

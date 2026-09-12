@@ -1218,12 +1218,17 @@ impl PyEngine {
     ///     max_capacity: Maximum concurrent subtasks this worker can handle.
     ///     metadata: Optional JSON blob (hostname, pid, compose project, …)
     ///         stored by the gateway registry and echoed in WorkerProto.
+    ///     contract_version: Execution-contract handshake (T1 #637). New
+    ///         workers MUST pass the current version (``"v1"``); a
+    ///         non-empty mismatch is refused by the gateway. ``None``/empty
+    ///         keeps legacy behavior: accepted but never dispatched to.
     ///
     /// Returns:
     ///     True if registration succeeded.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode or registration fails.
+    #[pyo3(signature = (worker_id, capabilities, max_capacity, metadata=None, contract_version=None))]
     pub fn register_worker_async<'py>(
         &self,
         py: Python<'py>,
@@ -1231,6 +1236,7 @@ impl PyEngine {
         capabilities: Vec<String>,
         max_capacity: u32,
         metadata: Option<String>,
+        contract_version: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let grpc_client = self.grpc_client.clone();
         let client = grpc_client.ok_or_else(|| {
@@ -1238,7 +1244,13 @@ impl PyEngine {
         })?;
         future_into_py::<_, bool>(py, async move {
             client
-                .register_worker(&worker_id, &capabilities, max_capacity, metadata.as_deref())
+                .register_worker(
+                    &worker_id,
+                    &capabilities,
+                    max_capacity,
+                    metadata.as_deref(),
+                    contract_version.as_deref(),
+                )
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })
@@ -1249,17 +1261,22 @@ impl PyEngine {
     /// Args:
     ///     worker_id: Unique worker identifier.
     ///     current_load: Current number of active subtasks.
+    ///     contract_version: Optional handshake re-assertion (T1 #637);
+    ///         a non-empty mismatch is refused by the gateway, ``None``
+    ///         (legacy callers) is accepted unchanged.
     ///
     /// Returns:
     ///     True if heartbeat was accepted.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode or heartbeat fails.
+    #[pyo3(signature = (worker_id, current_load, contract_version=None))]
     pub fn worker_heartbeat_async<'py>(
         &self,
         py: Python<'py>,
         worker_id: String,
         current_load: u32,
+        contract_version: Option<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let grpc_client = self.grpc_client.clone();
         let client = grpc_client.ok_or_else(|| {
@@ -1267,7 +1284,7 @@ impl PyEngine {
         })?;
         future_into_py::<_, bool>(py, async move {
             client
-                .worker_heartbeat(&worker_id, current_load)
+                .worker_heartbeat(&worker_id, current_load, contract_version.as_deref())
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })
