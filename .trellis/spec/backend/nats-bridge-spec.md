@@ -71,6 +71,13 @@ pub struct NatsSubtaskExecute {
     pub timeout_seconds: u64,          // default 600
     pub retry_count: u32,
     pub dispatch_mode: DispatchMode,   // Local / Remote / PreferRemote
+    // ── Execution envelope (T1 #637; all serde(default), additive) ──
+    pub graph_id: String,              // transitional: = task_id
+    pub node_id: String,               // transitional: = subtask_id
+    pub attempt_id: String,            // transitional: = dispatch_retry_count
+    pub idempotency_key: String,       // sha256("{graph}:{node}:{attempt}") hex[:32], deterministic
+    pub worker_epoch: String,          // "" until T3
+    pub contract_version: String,      // = uc_types::CONTRACT_VERSION at publish time
 }
 
 pub struct NatsTaskEvent {
@@ -188,6 +195,32 @@ dispatch_mode == PreferRemote → NATS fail → revert to Pending (existing beha
 ```
 
 **Backward compat**: `#[serde(default)]` on both fields in Rust; Python `dataclass` defaults; TypeScript `dispatchMode?: string` (optional). Existing serialized subtasks deserialize as `PreferRemote` / `0`.
+
+### Execution Envelope & Contract-Version Gate (T1 #637)
+
+- Every `uc.subtask.execute` dispatch carries the six envelope fields above
+  (identity-mapped during the transition to the graph runtime). Both gateway
+  publishers (`GrpcServer::publish_ready_subtasks` and the free
+  `dispatch_ready_subtasks`, plus the legacy `OrchestratorDispatcher`
+  `json!` path in uc-engine) build the envelope through
+  `uc_types::ExecutionEnvelope::for_dispatch` — same triple ⇒ same bytes
+  (only `message_id` differs; `Nats-Msg-Id` adoption is T4). The Python
+  orchestrator-mode re-dispatch path (`NatsWorker._dispatch_remote`) stamps
+  the identical envelope via `_execution_envelope()` in
+  `python/ultimate_coders/nats_worker.py`; the cross-language golden in
+  `tests/python/test_nats_worker_helpers.py` pins its sha256 derivation to
+  the Rust one (`"g-1:n-1:0"` → `394e2a22ec4c60361079d90a62b8a9b7`).
+- `idempotency_key = sha256("{graph_id}:{node_id}:{attempt_id}")` hex,
+  first 32 chars. Deterministic; no timestamp/randomness.
+- Dispatch gate: a subtask is marked `Assigned`/published only when at
+  least one capability-matching available worker registered with
+  `contract_version == uc_types::CONTRACT_VERSION`. Otherwise it stays
+  `Pending` with a `tracing::warn` (never silent). Empty-registry +
+  no-capability subtasks keep the best-effort NATS-only publish.
+- Python worker behavior in T1: parse stays tolerant (unknown/missing
+  envelope keys ignored; envelope-less messages are logged, rejection is
+  T4). `uc.heartbeat` payloads additionally carry `contract_version` in
+  the worker info.
 
 ### Pause/Resume Loop Prevention
 

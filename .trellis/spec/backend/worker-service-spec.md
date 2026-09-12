@@ -28,6 +28,7 @@ message RegisterWorkerRequest {
     repeated string capabilities = 2;
     uint32 max_capacity = 3;
     string metadata = 4;        // optional JSON metadata
+    string contract_version = 5; // T1 #637 handshake (empty = legacy worker)
 }
 
 message RegisterWorkerResponse {
@@ -39,6 +40,7 @@ message RegisterWorkerResponse {
 message WorkerHeartbeatRequest {
     string worker_id = 1;
     uint32 current_load = 2;
+    string contract_version = 3; // re-asserted each heartbeat (T1 #637)
 }
 
 message WorkerHeartbeatResponse {
@@ -69,18 +71,21 @@ pub struct RegisteredWorker {
     pub max_capacity: u32,
     pub current_load: u32,
     pub metadata: String,
+    pub contract_version: String,
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
 }
 
 impl WorkerRegistry {
     pub fn new() -> Self
-    pub fn register(&mut self, worker_id, capabilities, max_capacity, metadata) -> Result<(), String>
+    pub fn register(&mut self, worker_id, capabilities, max_capacity, metadata, contract_version) -> Result<(), String>
     pub fn heartbeat(&mut self, worker_id, current_load) -> Result<(), String>
     pub fn deregister(&mut self, worker_id) -> Result<(), String>
     pub fn workers(&self) -> &HashMap<String, RegisteredWorker>
     pub fn available_workers(&self) -> Vec<&RegisteredWorker>
     pub fn workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker>
+    pub fn dispatchable_workers_with_capabilities(&self, required: &[String]) -> Vec<&RegisteredWorker>
+    pub fn dispatch_gate(&self, required: &[String]) -> WorkerDispatchGate
     pub fn to_worker_protos(&self) -> Vec<WorkerProto>
 }
 ```
@@ -109,9 +114,26 @@ class Engine:
 JSON blob in `RegisterWorkerRequest.metadata`; the registry stores it
 verbatim and `ListWorkers` echoes it in `WorkerProto.metadata`.
 Stable keys: `hostname` + `pid` always present; `compose_project` only
-when running under a compose project (`UC_COMPOSE_PROJECT`). Empty when
-the worker sends nothing. Consumers MUST treat it as opaque JSON with
-best-effort parsing.
+when running under a compose project (`UC_COMPOSE_PROJECT`);
+`contract_version` always present (T1 #637 echo — the authoritative value
+is the explicit `RegisterWorkerRequest.contract_version` proto field, not
+this key). Empty when the worker sends nothing. Consumers MUST treat it as
+opaque JSON with best-effort parsing.
+
+**Contract-version handshake (T1 #637, hard gate)**:
+- `uc_types::CONTRACT_VERSION` (Rust) == `nats_worker.CONTRACT_VERSION`
+  (Python) — bumped only together; AGENTS.md documents the lockstep order
+  (gateway first, then workers).
+- Register/heartbeat with a non-empty mismatched version → refused
+  (`success=false` / `accepted=false` + `tracing::warn`); worker never
+  enters the registry.
+- Empty version (legacy worker) → accepted (observability) but
+  **never dispatchable**: `publish_ready_subtasks` /
+  `dispatch_ready_subtasks` consult `WorkerRegistry::dispatch_gate` and
+  keep nodes `Pending` + `tracing::warn` while no capability-matching
+  available worker declares `CONTRACT_VERSION`. An entirely empty
+  registry with no capability requirements preserves the best-effort
+  NATS-only publish.
 
 ### Heartbeat Flow
 
@@ -144,6 +166,8 @@ best-effort parsing.
 | Condition | Behavior |
 |-----------|----------|
 | Empty worker_id in RegisterWorker | Returns `success=false, error="worker_id cannot be empty"` |
+| Non-empty `contract_version` ≠ gateway `CONTRACT_VERSION` (register OR heartbeat) | Refused: `success=false` / `accepted=false`, error names both versions; registry untouched |
+| Empty `contract_version` | Accepted (legacy) but excluded from dispatch gate — subtasks stay Pending + `tracing::warn` until a version-matched worker registers |
 | Duplicate worker_id in RegisterWorker | Re-registers (overwrites previous, resets current_load to 0) |
 | Heartbeat for unregistered worker | Returns `accepted=false, error="Worker not registered"` |
 | Deregister unknown worker_id | Returns `success=false, error="Worker not found"` |

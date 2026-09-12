@@ -214,10 +214,37 @@ is used).
   (`MergeArbiter`). Two workers on different hosts editing the same file
   are reconciled when their subtask branches merge into `main`.
 
+### Contract version lockstep (T1 #637)
+
+Gateway and workers speak an execution contract identified by
+`CONTRACT_VERSION` (`uc-types/src/envelope.rs` in Rust, `CONTRACT_VERSION`
+in `python/ultimate_coders/nats_worker.py` — these two MUST be bumped
+together). It is carried explicitly on `RegisterWorkerRequest` /
+`WorkerHeartbeatRequest` and echoed on `uc.heartbeat`, and every
+`uc.subtask.execute` dispatch carries an execution envelope
+(`graph_id / node_id / attempt_id / idempotency_key / worker_epoch /
+contract_version`).
+
+**Upgrade order (cross-host deployments): upgrade and restart the GATEWAY
+first, then the workers.** Enforcement:
+
+- Non-empty version mismatch → registration and heartbeats are **refused**
+  (`RegisterWorkerResponse.success=false` / `WorkerHeartbeatResponse.accepted=false`).
+  A new worker pointed at an old gateway fails loudly at startup instead of
+  half-working.
+- Legacy workers (no version, e.g. not yet restarted after the gateway
+  upgrade) are accepted for observability but are **never dispatched to**:
+  `publish_ready_subtasks` keeps subtasks `Pending` and emits
+  `tracing::warn` until a version-matched worker is online. Work queues
+  visibly; it is never silently routed to a mismatched worker.
+- Workers stay tolerant of envelope-less payloads during the window
+  (T4 makes the worker side enforce the envelope).
+
 ## Key Types
 
 - `EngineApi` trait (uc-types/src/engine.rs) — unified engine contract
 - `EngineError` (uc-types/src/error.rs) — shared error types
+- `ExecutionEnvelope` / `CONTRACT_VERSION` (uc-types/src/envelope.rs) — dispatch envelope + contract handshake
 - `SearchQuery/SearchResult` (uc-types/src/search.rs) — hybrid search
 - `MemoryKey/MemoryEntry` (uc-types/src/memory.rs) — layered memory
 - `Task/Subtask/AgentEvent` (uc-types/src/agent.rs) — orchestration
