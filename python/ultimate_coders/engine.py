@@ -1086,6 +1086,7 @@ class Engine:
         capabilities: list[str] | None = None,
         max_capacity: int = 3,
         metadata: str | None = None,
+        contract_version: str | None = None,
     ) -> bool:
         """Register this worker with the gateway via WorkerService RPC.
 
@@ -1096,6 +1097,10 @@ class Engine:
             metadata: Optional JSON blob (hostname, pid, compose project, …)
                 stored by the gateway registry and echoed back in
                 ``WorkerProto.metadata`` by ListWorkers.
+            contract_version: Execution-contract handshake (T1 #637). New
+                workers should pass ``nats_worker.CONTRACT_VERSION``; a
+                non-empty mismatch with the gateway is REFUSED and ``None``
+                (legacy) registers accepted-but-not-dispatchable.
 
         Returns:
             True if registration succeeded.
@@ -1105,7 +1110,11 @@ class Engine:
             return False
         try:
             return await self._grpc_engine.register_worker_async(
-                worker_id, capabilities or [], max_capacity, metadata
+                worker_id,
+                capabilities or [],
+                max_capacity,
+                metadata,
+                contract_version,
             )
         except Exception as exc:
             logger.warning("register_worker failed: %s", exc)
@@ -1115,12 +1124,16 @@ class Engine:
         self,
         worker_id: str,
         current_load: int = 0,
+        contract_version: str | None = None,
     ) -> bool:
         """Send a heartbeat to the gateway via WorkerService RPC.
 
         Args:
             worker_id: Unique worker identifier.
             current_load: Current number of active subtasks.
+            contract_version: Optional handshake re-assertion (T1 #637);
+                non-empty mismatch is refused by the gateway, ``None``
+                preserves legacy behavior.
 
         Returns:
             True if heartbeat was accepted.
@@ -1129,7 +1142,7 @@ class Engine:
             return False
         try:
             return await self._grpc_engine.worker_heartbeat_async(
-                worker_id, current_load
+                worker_id, current_load, contract_version
             )
         except Exception as exc:
             logger.debug("worker_heartbeat failed: %s", exc)

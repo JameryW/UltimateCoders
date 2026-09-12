@@ -72,6 +72,44 @@ NATS_SUBJECT_MEMORY_CHANGED: str = "uc.memory.changed"
 NATS_SUBJECT_WINDOW_OPENED: str = "schedule.window.opened"
 NATS_SUBJECT_WINDOW_CLOSED: str = "schedule.window.closed"
 
+# ── Execution contract handshake (T1 #637) ────────────────────
+#
+# Must equal ``uc_types::CONTRACT_VERSION`` in crates/uc-types
+# (Rust gateway). The gateway REFUSES registration/heartbeat on a
+# non-empty mismatch and treats empty (a pre-handshake worker) as
+# accepted-but-not-dispatchable. Gateway and workers are upgraded in
+# LOCKSTEP — when this value changes, both sides ship together.
+CONTRACT_VERSION: str = "v1"
+
+
+def _execution_envelope(graph_id: str, node_id: str, attempt: int) -> dict[str, str]:
+    """Execution-envelope fields for a ``uc.subtask.execute`` dispatch (T1 #637).
+
+    MUST stay byte-compatible with ``uc_types::ExecutionEnvelope::for_dispatch``
+    (Rust ``crates/uc-types/src/envelope.rs``): identity mapping
+    ``graph_id = task_id``, ``node_id = subtask_id``, ``attempt_id =
+    dispatch_retry_count``, ``worker_epoch = ""``, and
+    ``idempotency_key = sha256("{graph}:{node}:{attempt}")`` hex, first 32
+    chars — deterministic, no timestamp component. Every publisher of
+    ``uc.subtask.execute`` (Rust gateway AND this Python orchestrator-mode
+    re-dispatch path) merges these keys into the payload so workers always
+    see the envelope; the cross-language golden in
+    ``tests/python/test_nats_worker_helpers.py`` pins the digest.
+    """
+    import hashlib
+
+    attempt_id = str(attempt)
+    digest = hashlib.sha256(f"{graph_id}:{node_id}:{attempt_id}".encode()).hexdigest()
+    return {
+        "graph_id": graph_id,
+        "node_id": node_id,
+        "attempt_id": attempt_id,
+        "idempotency_key": digest[:32],
+        "worker_epoch": "",
+        "contract_version": CONTRACT_VERSION,
+    }
+
+
 # ── Payload types ───────────────────────────────────────────────
 
 
@@ -1838,6 +1876,13 @@ class NatsWorker:
                 "agent_config": subtask.agent_config,
                 "steps": [s.to_dict() for s in subtask.steps],
                 "project_id": subtask.project_id,
+                # Execution envelope (T1 #637): this re-publish path is a
+                # uc.subtask.execute publisher too — the envelope contract
+                # covers it. attempt = dispatch_retry_count, same identity
+                # mapping as the Rust publishers.
+                **_execution_envelope(
+                    subtask.parent_id, subtask.id, subtask.dispatch_retry_count
+                ),
             }
         ).encode()
 
@@ -1889,8 +1934,11 @@ class NatsWorker:
                             "capabilities": info.capabilities,
                             "current_load": info.current_load,
                             "max_capacity": info.max_capacity,
-                            "pending_subtask_count": info.current_load,
+                            # T1 #637: observers can see which execution
+                            # contract each heartbeat sender speaks.
+                            "contract_version": CONTRACT_VERSION,
                         }
+                        w_info["pending_subtask_count"] = info.current_load
                     # Include orchestrator pending count if available
                     if self._orchestrator is not None:
                         for task in self._orchestrator.tasks.values():
@@ -1916,7 +1964,7 @@ class NatsWorker:
                     if self._grpc_reg_engine is not None and self._worker is not None:
                         load = self._worker.get_info().current_load if self._worker else 0
                         hb_ok = await self._grpc_reg_engine.worker_heartbeat_async(
-                            self._worker.worker_id, load
+                            self._worker.worker_id, load, CONTRACT_VERSION
                         )
                         # ponytail: F53 — worker_heartbeat_async swallows errors
                         # (debug-logged inside the engine) and returns False. The
@@ -1967,16 +2015,25 @@ class NatsWorker:
                 max_capacity = info.max_capacity
 
             success = await self._grpc_reg_engine.register_worker_async(
-                worker_id, capabilities, max_capacity, self._registration_metadata()
+                worker_id,
+                capabilities,
+                max_capacity,
+                self._registration_metadata(),
+                CONTRACT_VERSION,
             )
             if success:
                 logger.info(
-                    "Registered with gateway (worker_id=%s, capabilities=%s)",
+                    "Registered with gateway (worker_id=%s, capabilities=%s, contract_version=%s)",
                     worker_id,
                     capabilities,
+                    CONTRACT_VERSION,
                 )
             else:
-                logger.warning("Gateway registration returned failure")
+                logger.warning(
+                    "Gateway registration returned failure — check gateway/worker "
+                    "contract_version lockstep (worker=%s)",
+                    CONTRACT_VERSION,
+                )
                 self._grpc_reg_engine = None
         except Exception:
             logger.warning("Gateway registration failed (non-fatal)", exc_info=True)
@@ -1990,7 +2047,8 @@ class NatsWorker:
         the gateway stores this and echoes it in WorkerProto.metadata so
         ops can tell which machine each registered worker lives on.
         Keys are stable API: hostname/pid always present, compose_project
-        only when running under a compose project.
+        only when running under a compose project, contract_version always
+        present (T1 #637 handshake echo — additive).
         """
         import json
         import socket
@@ -1998,6 +2056,7 @@ class NatsWorker:
         meta: dict = {
             "hostname": socket.gethostname(),
             "pid": os.getpid(),
+            "contract_version": CONTRACT_VERSION,
         }
         compose_project = os.environ.get("UC_COMPOSE_PROJECT", "")
         if compose_project:
@@ -2194,6 +2253,17 @@ class NatsWorker:
         if not task_id or not subtask_id:
             logger.warning("uc.subtask.execute missing task_id or subtask_id")
             return None
+
+        # T1 #637: envelopes ride on every dispatch (identity-mapped during
+        # the transition). This ticket keeps the worker TOLERANT of
+        # envelope-less messages from legacy publishers — rejection is T4's
+        # job. But log them so mixed-version deployments are observable.
+        if not data.get("idempotency_key"):
+            logger.info(
+                "uc.subtask.execute for subtask %s carries no execution "
+                "envelope (legacy publisher / mixed-version gateway)",
+                subtask_id[:8],
+            )
 
         logger.info(
             "Executing subtask %s (task %s): %s",

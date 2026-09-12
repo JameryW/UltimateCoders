@@ -1170,3 +1170,186 @@ def test_registration_metadata_shape(monkeypatch):
     monkeypatch.setenv("UC_COMPOSE_PROJECT", "uc-prod")
     meta = json.loads(NatsWorker._registration_metadata())
     assert meta["compose_project"] == "uc-prod"
+
+
+# ── T1 #637: contract_version handshake ─────────────────────────
+
+
+def test_registration_metadata_carries_contract_version():
+    """The registration metadata (stable keys, additive) must echo the
+    execution contract the worker speaks so ListWorkers consumers can see
+    per-worker versions during a lockstep upgrade."""
+    from ultimate_coders.nats_worker import CONTRACT_VERSION, NatsWorker
+
+    assert CONTRACT_VERSION == "v1"  # mirrors uc_types::CONTRACT_VERSION
+    meta = json.loads(NatsWorker._registration_metadata())
+    assert meta["contract_version"] == CONTRACT_VERSION
+
+
+def test_gateway_registration_sends_contract_version():
+    """_register_with_gateway must hand the handshake version to the
+    WorkerService RPC (explicit proto field, not metadata-only)."""
+    from ultimate_coders import nats_worker as nw_mod
+
+    nw = _make_worker()
+    nw._grpc_endpoint = "http://gateway:50051"
+    captured: dict = {}
+
+    class FakeEngine:
+        def __init__(self, mode: str = "", grpc_endpoint: str = "") -> None:
+            pass
+
+        async def register_worker_async(
+            self, worker_id, capabilities, max_capacity, metadata, contract_version=None
+        ) -> bool:
+            captured["contract_version"] = contract_version
+            captured["metadata"] = metadata
+            return True
+
+    with patch.object(nw_mod, "Engine", FakeEngine):
+        asyncio.run(nw._register_with_gateway())
+
+    assert captured["contract_version"] == nw_mod.CONTRACT_VERSION
+    assert json.loads(captured["metadata"])["contract_version"] == nw_mod.CONTRACT_VERSION
+
+
+async def test_heartbeat_w_info_and_grpc_hb_carry_contract_version():
+    """Both heartbeat paths — the NATS ``uc.heartbeat`` w_info and the gRPC
+    WorkerHeartbeat — must carry contract_version (gateway gates stale
+    handling and dispatch on it)."""
+    nw = _make_worker()
+    nw._running = True
+    worker = MagicMock()
+    worker.send_heartbeat = AsyncMock(return_value={})
+    worker.worker_id = "w-hb"
+    worker.get_info = MagicMock(
+        return_value=MagicMock(
+            id="w-hb", capabilities=[], current_load=1, max_capacity=3
+        )
+    )
+    nw._worker = worker
+    nw._publisher = MagicMock()
+    nw._publisher.publish_heartbeat = AsyncMock(return_value=True)
+    nw._orchestrator = None
+    nw._grpc_reg_engine = MagicMock()
+    nw._grpc_reg_engine.worker_heartbeat_async = AsyncMock(return_value=True)
+
+    task = asyncio.create_task(nw._heartbeat_loop())
+    await asyncio.sleep(0.05)  # one tick runs before the 30s sleep
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    from ultimate_coders.nats_worker import CONTRACT_VERSION
+
+    args, _kwargs = nw._publisher.publish_heartbeat.await_args
+    w_info = args[1]
+    assert w_info["contract_version"] == CONTRACT_VERSION
+
+    hb_args, _ = nw._grpc_reg_engine.worker_heartbeat_async.await_args
+    assert hb_args[2] == CONTRACT_VERSION
+
+
+def test_parse_subtask_message_tolerates_envelope_and_legacy():
+    """T1: the worker parses envelope-bearing dispatches without regressions
+    and STAYS tolerant of envelope-less legacy messages (rejection is T4)."""
+    nw = _make_worker()
+    with_envelope = json.dumps(
+        {
+            "task_id": "t-1",
+            "subtask_id": "st-1",
+            "description": "d",
+            "graph_id": "t-1",
+            "node_id": "st-1",
+            "attempt_id": "0",
+            "idempotency_key": "abc",
+            "worker_epoch": "",
+            "contract_version": "v1",
+        }
+    ).encode()
+    parsed = nw._parse_subtask_message(with_envelope)
+    assert parsed is not None
+    task_id, subtask_id, data = parsed
+    assert (task_id, subtask_id) == ("t-1", "st-1")
+    assert data["idempotency_key"] == "abc"
+    assert data["contract_version"] == "v1"
+
+    legacy = json.dumps(
+        {"task_id": "t-1", "subtask_id": "st-1", "description": "d"}
+    ).encode()
+    assert nw._parse_subtask_message(legacy) is not None
+
+
+# ── T1 #637: Python envelope derivation + re-publish path ──────
+
+
+def test_execution_envelope_matches_rust_golden():
+    """Cross-language golden: ``_execution_envelope`` must derive the SAME
+    idempotency key as Rust ``ExecutionEnvelope::derive_idempotency_key``
+    (crates/uc-types/src/envelope.rs pins sha256("g-1:n-1:0") hex[:32] as
+    ``394e2a22ec4c60361079d90a62b8a9b7``). If either side changes the preimage
+    format or truncation, this test and the Rust one fail together."""
+    from ultimate_coders.nats_worker import _execution_envelope
+
+    env = _execution_envelope("g-1", "n-1", 0)
+    assert env["idempotency_key"] == "394e2a22ec4c60361079d90a62b8a9b7"
+    assert len(env["idempotency_key"]) == 32
+    # Deterministic: same triple → identical envelope bytes (re-publish safe).
+    assert env == _execution_envelope("g-1", "n-1", 0)
+    # Each identity component participates: different attempt → different key.
+    assert _execution_envelope("g-1", "n-1", 1)["idempotency_key"] != env["idempotency_key"]
+    # Identity mapping + transitional defaults (attempt as decimal string).
+    assert env == {
+        "graph_id": "g-1",
+        "node_id": "n-1",
+        "attempt_id": "0",
+        "idempotency_key": "394e2a22ec4c60361079d90a62b8a9b7",
+        "worker_epoch": "",
+        "contract_version": "v1",
+    }
+
+
+def test_dispatch_remote_publishes_execution_envelope():
+    """T1 #637 deviation fix: ``_dispatch_remote`` is a uc.subtask.execute
+    publisher too — it must stamp the same six envelope fields (identity
+    mapping: graph_id = wire task_id, node_id = subtask_id, attempt =
+    dispatch_retry_count) instead of leaking envelope-less payloads."""
+    nw = _make_worker()
+    nw._orchestrator = MagicMock()
+    nw._orchestrator.assign_subtask = AsyncMock()
+    nw._orchestrator.conflict_detector = MagicMock()
+
+    captured: dict[str, bytes] = {}
+
+    class FakeNc:
+        async def publish(self, subject: str, payload: bytes) -> None:
+            captured["subject"] = subject
+            captured["payload"] = payload
+
+    nw._nc = FakeNc()  # type: ignore[assignment]
+    nw._publisher = MagicMock()
+
+    from ultimate_coders.nats_worker import _execution_envelope
+
+    subtask = Subtask(
+        id="st-9",
+        parent_id="t-9",
+        description="d",
+        dispatch_retry_count=2,
+    )
+    asyncio.run(nw._dispatch_remote(subtask))
+
+    assert "payload" in captured, "NATS publish was not called"
+    payload = json.loads(captured["payload"])
+    # graph_id matches the wire task_id, node_id the subtask_id.
+    assert payload["task_id"] == payload["graph_id"] == "t-9"
+    assert payload["subtask_id"] == payload["node_id"] == "st-9"
+    assert payload["attempt_id"] == "2"
+    assert payload["worker_epoch"] == ""
+    assert payload["contract_version"] == "v1"
+    assert (
+        payload["idempotency_key"]
+        == _execution_envelope("t-9", "st-9", 2)["idempotency_key"]
+    )
