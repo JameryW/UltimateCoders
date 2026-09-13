@@ -73,3 +73,37 @@ Stamped graph/node/attempt/idempotency/epoch/contract envelope on ALL THREE uc.s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: T2: graph row tables + one-shot import (#638)
+
+**Date**: 2026-09-13
+**Task**: T2: graph row tables + one-shot import (#638)
+**Branch**: `main`
+
+### Summary
+
+Five-table GraphStore (incl. reserved cost/tokens/duration + schema-only node_completions) on the #631 advisory-lock template; idempotent dual-source backfill (PG JSONB auto + opt-in .uc/tasks newer-savedAt); warn-only shadow plane default off, HashMap still behavioral authority till T6. Check fixed backfill fatal-abort on malformed rows and NOW() determinism hole. Gates 435/377/182+8/36/28, clippy both modes clean, 7 real-PG integration tests actually executed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `28b66e92` | (see git log) |
+| `8f82b7bb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
