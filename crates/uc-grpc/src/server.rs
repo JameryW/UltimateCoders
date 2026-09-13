@@ -454,6 +454,12 @@ pub struct TaskStore {
     /// the read source of truth). Startup recovery via `load_tasks_from_backend`
     /// reloads the HashMap from PG; runtime reads never hit PG directly.
     task_backend: Option<Arc<dyn uc_engine::TaskStoreBackend>>,
+    /// Optional graph-table shadow writer (T2, `UC_GRAPH_SHADOW=on` only).
+    /// When wired at the assembly point, every `persist_task` also upserts
+    /// the graph row tables fire-and-forget, warn-only. `None` (default)
+    /// means zero behavior change. Object-safe trait so this crate needs no
+    /// `storage` feature of its own.
+    graph_shadow: Option<Arc<dyn uc_engine::GraphShadowSink>>,
     /// Last heartbeat timestamp from Python NATS consumer.
     last_heartbeat: Option<chrono::DateTime<chrono::Utc>>,
     /// Per-Worker heartbeat timestamps (worker_id -> last seen).
@@ -484,6 +490,7 @@ impl TaskStore {
             events: Vec::new(),
             event_store: Arc::new(uc_engine::InMemoryEventStore::new()),
             task_backend: None,
+            graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
@@ -498,6 +505,7 @@ impl TaskStore {
             events: Vec::new(),
             event_store,
             task_backend: None,
+            graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
@@ -515,6 +523,7 @@ impl TaskStore {
             events: Vec::new(),
             event_store,
             task_backend: Some(task_backend),
+            graph_shadow: None,
             last_heartbeat: None,
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
@@ -653,6 +662,11 @@ impl TaskStore {
     /// running (e.g. sync unit tests). The HashMap remains the read source of
     /// truth; PG is write-ahead for restart recovery (`load_tasks_from_backend`
     /// reloads it on startup).
+    ///
+    /// T2 shadow: when a graph sink is wired (only with `UC_GRAPH_SHADOW=on`
+    /// at the assembly point), the same task is ALSO upserted into the graph
+    /// row tables, fire-and-forget and warn-only. The sink never feeds back
+    /// into this path — read behavior is untouched.
     fn persist_task(&self, task: &uc_types::Task) {
         if let Some(backend) = &self.task_backend {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -665,6 +679,22 @@ impl TaskStore {
                 });
             }
         }
+        if let Some(sink) = &self.graph_shadow {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let sink = sink.clone();
+                let task = task.clone();
+                handle.spawn(async move {
+                    sink.shadow_persist(&task).await;
+                });
+            }
+        }
+    }
+
+    /// Inject the graph-table shadow writer (startup assembly only, gated by
+    /// `UC_GRAPH_SHADOW=on`). Until set, `persist_task` has no graph-path
+    /// cost at all.
+    pub fn set_graph_shadow(&mut self, sink: Arc<dyn uc_engine::GraphShadowSink>) {
+        self.graph_shadow = Some(sink);
     }
 
     /// Fire-and-forget INSERT of a newly-created task to the backend via
@@ -6920,5 +6950,59 @@ mod tests {
         let mut store = TaskStore::new();
         let count = store.load_from_backend().await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    // ── T2 graph shadow write (fake sink, no PG) ───────────────────
+
+    #[derive(Default)]
+    struct RecordingGraphSink {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl uc_engine::GraphShadowSink for RecordingGraphSink {
+        async fn shadow_persist(&self, task: &uc_types::Task) {
+            self.seen.lock().unwrap().push(task.id.0.clone());
+        }
+    }
+
+    fn shadow_test_task(id: &str) -> uc_types::Task {
+        uc_types::Task {
+            id: uc_types::TaskId(id.to_string()),
+            description: "shadow".to_string(),
+            project_id: "p".to_string(),
+            status: uc_types::TaskStatus::InProgress,
+            subtasks: Vec::new(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    /// With the sink wired (UC_GRAPH_SHADOW=on at the assembly point), every
+    /// persist_task must also reach the graph writer.
+    #[tokio::test]
+    async fn persist_task_fans_out_to_graph_shadow_sink() {
+        let mut store = TaskStore::new();
+        let sink = Arc::new(RecordingGraphSink::default());
+        store.set_graph_shadow(sink.clone());
+
+        let task = shadow_test_task("shadow-1");
+        store.persist_task(&task);
+
+        // Yield so the fire-and-forget spawn runs (same convention as the
+        // EventStore append tests).
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(sink.seen.lock().unwrap().as_slice(), ["shadow-1"]);
+    }
+
+    /// Default (no sink): persist_task must not touch the graph path at all.
+    #[tokio::test]
+    async fn persist_task_without_graph_sink_is_unchanged() {
+        let store = TaskStore::new();
+        let task = shadow_test_task("shadow-2");
+        store.persist_task(&task);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // No panic, no backend writes — the HashMap/PG path is untouched.
+        assert!(store.get_task("shadow-2").is_none());
     }
 }

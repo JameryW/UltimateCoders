@@ -326,6 +326,75 @@ async fn create_schedule_store() -> Option<Arc<dyn ScheduleStore>> {
     }
 }
 
+// ── Graph row tables (T2: `UC_DATABASE_URL` / `UC_GRAPH_SHADOW` / `UC_GRAPH_IMPORT_DIR`) ──
+
+/// Graph shadow mode activates on the exact value `"on"` — anything else
+/// (unset, empty, `0`, `false`, garbage) stays off. Off is the default and
+/// the only behavior-safe setting; this is a decision function so the matrix
+/// is unit-tested without touching the process environment.
+fn resolve_graph_shadow_choice(shadow: Option<&str>) -> bool {
+    matches!(shadow, Some("on"))
+}
+
+/// Construct the graph store on the task backend's database
+/// (`UC_DATABASE_URL` — same source; the `UC_PG_URL` split lives in
+/// metadata and is being unified under P1, not here). `connect` runs the
+/// graph migrations under the #631 advisory lock; then:
+///
+/// - Source A: backfill from the PG `tasks` table — idempotent
+///   (`ON CONFLICT DO NOTHING`), re-runs are no-ops.
+/// - Source B (only when `UC_GRAPH_IMPORT_DIR` is explicitly set): one-time
+///   import of `.uc/tasks/*.json` for graphs that are NOT already in PG.
+///   Files are never written back — the direction is strictly files→graph.
+///
+/// Any failure degrades to `None` with a warning; startup never aborts.
+#[cfg(feature = "storage")]
+async fn setup_graph_store() -> Option<Arc<uc_engine::GraphStore>> {
+    let url = match std::env::var("UC_DATABASE_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            tracing::info!("UC_DATABASE_URL not set — graph row tables skipped");
+            return None;
+        }
+    };
+    let store = match uc_engine::GraphStore::connect(&url).await {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            tracing::warn!("Graph store unavailable: {} — graph row tables skipped", e);
+            return None;
+        }
+    };
+
+    match store.backfill_from_tasks_table().await {
+        Ok(stats) => tracing::info!(
+            graphs = stats.graphs,
+            nodes = stats.nodes,
+            attempts = stats.attempts,
+            completions = stats.completions,
+            skipped_existing = stats.skipped_existing,
+            "Graph backfill (source A: tasks table) complete"
+        ),
+        Err(e) => tracing::warn!("Graph backfill (source A) failed: {}", e),
+    }
+
+    if let Ok(dir) = std::env::var("UC_GRAPH_IMPORT_DIR") {
+        if !dir.is_empty() {
+            match store.import_tasks_dir(std::path::Path::new(&dir)).await {
+                Ok(stats) => tracing::info!(
+                    graphs = stats.graphs,
+                    nodes = stats.nodes,
+                    skipped_existing = stats.skipped_existing,
+                    path = %dir,
+                    "Graph import (source B: .uc dir) complete"
+                ),
+                Err(e) => tracing::warn!("Graph import (source B) failed: {}", e),
+            }
+        }
+    }
+
+    Some(store)
+}
+
 /// Load `uc.repos.yaml` and index all configured workspace repos into the engine.
 ///
 /// Resolution order: `UC_REPOS_CONFIG` env, then `./uc.repos.yaml`, then
@@ -673,6 +742,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(n) if n > 0 => tracing::info!("Recovered {} tasks from backend", n),
         Ok(_) => {}
         Err(e) => tracing::warn!("Failed to load tasks from backend: {}", e),
+    }
+
+    // Graph row tables (T2): migrations + idempotent source-A backfill (+ the
+    // opt-in one-time source-B `.uc` import) ran inside setup_graph_store.
+    // When UC_GRAPH_SHADOW=on, every persist_task additionally upserts the
+    // graph tables (fire-and-forget) and the startup shadow-read compares the
+    // row projection against the just-recovered HashMap — diffs are
+    // warn-ONLY, the HashMap stays the runtime authority.
+    #[cfg(feature = "storage")]
+    {
+        if let Some(graph_store) = setup_graph_store().await {
+            if resolve_graph_shadow_choice(std::env::var("UC_GRAPH_SHADOW").ok().as_deref()) {
+                grpc_server
+                    .task_store()
+                    .lock()
+                    .await
+                    .set_graph_shadow(graph_store.clone());
+                let tasks = grpc_server.task_store().lock().await.list_tasks();
+                let mut diff_count = 0usize;
+                for task in &tasks {
+                    match graph_store.shadow_diff(task).await {
+                        Ok(diffs) => {
+                            for d in diffs {
+                                tracing::warn!(
+                                    graph_id = %task.id.0,
+                                    diff = %d,
+                                    "Graph shadow diff (warn-only, behavior unchanged)"
+                                );
+                                diff_count += 1;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(graph_id = %task.id.0, error = %e, "Graph shadow diff read failed")
+                        }
+                    }
+                }
+                tracing::info!(
+                    tasks = tasks.len(),
+                    diffs = diff_count,
+                    "Graph shadow mode enabled (UC_GRAPH_SHADOW=on)"
+                );
+            }
+        }
+    }
+    #[cfg(not(feature = "storage"))]
+    {
+        if resolve_graph_shadow_choice(std::env::var("UC_GRAPH_SHADOW").ok().as_deref()) {
+            tracing::warn!(
+                "UC_GRAPH_SHADOW=on but storage feature not enabled — graph shadow skipped"
+            );
+        }
     }
 
     // Load uc.scheduler.yaml (if present), wire the dispatcher, add configured
@@ -1047,6 +1167,26 @@ mod tests {
                 }
                 other => panic!("task backend {backend:?} must stay in-memory, got {other:?}"),
             }
+        }
+    }
+
+    // ── resolve_graph_shadow_choice: exact "on" gate (T2, default off) ────
+
+    #[test]
+    fn graph_shadow_only_enables_on_exact_value() {
+        assert!(resolve_graph_shadow_choice(Some("on")));
+        for value in [
+            None,
+            Some(""),
+            Some("OFF"),
+            Some("On"),
+            Some("1"),
+            Some("true"),
+        ] {
+            assert!(
+                !resolve_graph_shadow_choice(value),
+                "graph shadow must stay OFF for {value:?} (default off, exact \"on\" only)"
+            );
         }
     }
 }
