@@ -7,6 +7,7 @@ pub mod agent;
 pub mod engine;
 pub mod envelope;
 pub mod error;
+pub mod graph;
 pub mod index;
 pub mod memory;
 pub mod scheduler;
@@ -22,6 +23,7 @@ pub use async_trait::async_trait;
 pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState, SearchStream};
 pub use envelope::{ExecutionEnvelope, CONTRACT_VERSION};
 pub use error::EngineError;
+pub use graph::{can_transition, NodeStatus};
 pub use index::{
     ChunkType, CodeChunk, IndexHealth, IndexRequest, IndexResponse, IndexState, RepoSpec,
 };
