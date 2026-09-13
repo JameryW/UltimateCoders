@@ -8,6 +8,7 @@ pub mod config;
 pub mod conflict;
 pub mod events;
 pub mod git;
+pub mod graph_store;
 pub mod indexer;
 pub mod local;
 pub mod memory;
@@ -33,6 +34,9 @@ pub use events::NatsEventStore;
 pub use events::{
     AgentEventType, EventStore, InMemoryEventStore, LineRange, RecordedEvent, TaskSnapshot,
 };
+pub use graph_store::GraphShadowSink;
+#[cfg(feature = "storage")]
+pub use graph_store::{BackfillStats, GraphStore};
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};
 pub use indexer::IndexPipeline;
 pub use local::LocalEngine;

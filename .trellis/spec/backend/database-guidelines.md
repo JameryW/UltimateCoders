@@ -230,6 +230,18 @@ let _migrations =
   `crates/uc-engine/tests/storage_integration.rs` (four concurrent constructors
   against a freshly created database; `#[ignore]`d, needs a live PostgreSQL).
 
+**Graph-state row tables (T2, #638)** — `crates/uc-engine/src/graph_store.rs`
+(storage feature) owns `execution_graphs` / `graph_nodes` / `task_attempts` /
+`execution_events` / `node_completions`, migrated via the same
+`hold_schema_migrations_lock(pool, "graph")` template. The graph store connects
+with **`UC_DATABASE_URL`** — the same env as the task/schedule backends.
+
+**Known env split (P1, not yet unified):** the metadata store uses
+**`UC_PG_URL`** (`config.rs`, default localhost) while the task/schedule/graph
+backends use **`UC_DATABASE_URL`**. A deployment must set both to the same
+database until P1 unifies them. New task-family stores always take
+`UC_DATABASE_URL`.
+
 **Upsert pattern** uses `ON CONFLICT ... DO UPDATE`:
 
 ```sql
