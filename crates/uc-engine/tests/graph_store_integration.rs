@@ -1,4 +1,5 @@
-//! Integration tests for the T2 graph-state row tables (#638).
+//! Integration tests for the T2 graph-state row tables (#638) and the T3
+//! attempt-lifecycle transitions (#639).
 //!
 //! These need a **real PostgreSQL** — the graph store has no in-memory
 //! fallback (`GraphStore::connect` errors when the DB is unreachable), which
@@ -1004,4 +1005,692 @@ async fn graph_row_order_matches_in_memory_order() {
 
     delete_tasks_rows(&store, &ids).await;
     purge_graphs(&store, &ids).await;
+}
+
+// ══ T3 (#639): attempt lifecycle — CAS transitions, commit-once, fence ══
+
+/// Seed one execution graph + node rows at exact states (independent of the
+/// shadow-mirror mapping), so every transition test starts from a known
+/// state/version (nodes start at version 1 via the schema default).
+async fn seed_graph_t3(store: &GraphStore, gid: &str, nodes: &[(&str, &str, &[&str], bool)]) {
+    sqlx::query(
+        "INSERT INTO execution_graphs (graph_id, project_id, status, version) \
+         VALUES ($1, 't3', 'RUNNING', 1) ON CONFLICT (graph_id) DO NOTHING",
+    )
+    .bind(gid)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("seed graph row");
+    for (nid, state, deps, optional) in nodes {
+        let deps_json = serde_json::Value::Array(
+            deps.iter()
+                .map(|d| serde_json::Value::String(d.to_string()))
+                .collect(),
+        );
+        sqlx::query(
+            "INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, optional) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (node_id, graph_id) DO NOTHING",
+        )
+        .bind(gid)
+        .bind(nid)
+        .bind(state)
+        .bind(deps_json)
+        .bind(optional)
+        .execute(store.pool().as_ref())
+        .await
+        .expect("seed node row");
+    }
+}
+
+/// Seed an attempt row directly (status: RUNNING/FAILED/…), returning the
+/// deterministic PK id used by the store.
+async fn seed_attempt_t3(
+    store: &GraphStore,
+    gid: &str,
+    nid: &str,
+    retry_no: i32,
+    status: &str,
+) -> String {
+    let aid = format!("{gid}:{nid}:{retry_no}");
+    sqlx::query(
+        "INSERT INTO task_attempts \
+             (attempt_id, graph_id, node_id, worker_id, worker_epoch, status, retry_no, \
+              started_at, heartbeat_at) \
+         VALUES ($1, $2, $3, 'w-seed', $4, $5, $6, NOW(), NOW()) \
+         ON CONFLICT (attempt_id) DO NOTHING",
+    )
+    .bind(&aid)
+    .bind(gid)
+    .bind(nid)
+    .bind(i64::from(retry_no) + 1)
+    .bind(status)
+    .bind(retry_no)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("seed attempt row");
+    aid
+}
+
+async fn seed_completion_t3(store: &GraphStore, gid: &str, nid: &str, winning_attempt: &str) {
+    sqlx::query(
+        "INSERT INTO node_completions (node_id, graph_id, winning_attempt_id) \
+         VALUES ($1, $2, $3) ON CONFLICT (node_id) DO NOTHING",
+    )
+    .bind(nid)
+    .bind(gid)
+    .bind(winning_attempt)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("seed completion row");
+}
+
+async fn t3_node_state(store: &GraphStore, gid: &str, nid: &str) -> (String, i64) {
+    let row: Option<(String, i64)> = sqlx::query_as(
+        "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2",
+    )
+    .bind(gid)
+    .bind(nid)
+    .fetch_optional(store.pool().as_ref())
+    .await
+    .expect("node state read");
+    row.expect("node row exists")
+}
+
+async fn t3_attempt_status(store: &GraphStore, aid: &str) -> Option<(String, Option<i64>)> {
+    sqlx::query_as("SELECT status, worker_epoch FROM task_attempts WHERE attempt_id = $1")
+        .bind(aid)
+        .fetch_optional(store.pool().as_ref())
+        .await
+        .expect("attempt read")
+}
+
+async fn t3_graph_version(store: &GraphStore, gid: &str) -> i64 {
+    let (v,): (i64,) = sqlx::query_as("SELECT version FROM execution_graphs WHERE graph_id = $1")
+        .bind(gid)
+        .fetch_one(store.pool().as_ref())
+        .await
+        .expect("graph version read");
+    v
+}
+
+async fn t3_event_types(store: &GraphStore, gid: &str) -> Vec<String> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT event_type FROM execution_events WHERE graph_id = $1 ORDER BY seq")
+            .bind(gid)
+            .fetch_all(store.pool().as_ref())
+            .await
+            .expect("event scan");
+    rows.into_iter().map(|(t,)| t).collect()
+}
+
+async fn t3_age_heartbeat(store: &GraphStore, aid: &str, seconds: f64) {
+    sqlx::query("UPDATE task_attempts SET heartbeat_at = NOW() - make_interval(secs => $2) WHERE attempt_id = $1")
+        .bind(aid)
+        .bind(seconds)
+        .execute(store.pool().as_ref())
+        .await
+        .expect("age heartbeat");
+}
+
+async fn t3_heartbeat_is_fresh(store: &GraphStore, aid: &str) -> bool {
+    let (fresh,): (bool,) = sqlx::query_as(
+        "SELECT heartbeat_at > NOW() - interval '60 seconds' FROM task_attempts WHERE attempt_id = $1",
+    )
+    .bind(aid)
+    .fetch_one(store.pool().as_ref())
+    .await
+    .expect("heartbeat freshness");
+    fresh
+}
+
+/// `execution_events` has no FK, so purge it explicitly before the cascading
+/// graph delete.
+async fn purge_t3(store: &GraphStore, gid: &str) {
+    sqlx::query("DELETE FROM execution_events WHERE graph_id = $1")
+        .bind(gid)
+        .execute(store.pool().as_ref())
+        .await
+        .expect("events cleanup");
+    purge_graphs(store, std::slice::from_ref(&gid.to_string())).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_schedule_attempt_runs_ready_node() {
+    let Some(store) = connect_or_skip("t3_schedule").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+
+    let attempt = store
+        .schedule_attempt(&g, &n, Some("w1"))
+        .await
+        .expect("schedule_attempt")
+        .expect("READY node schedules");
+    assert_eq!(attempt, format!("{g}:{n}:0"));
+
+    // READY → SCHEDULED → RUNNING collapsed into one dispatch: the node ends
+    // RUNNING having crossed two CAS versions (1 → 2 → 3).
+    let (state, version) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "RUNNING");
+    assert_eq!(version, 3);
+    let (status, epoch) = t3_attempt_status(&store, &attempt)
+        .await
+        .expect("attempt row");
+    assert_eq!(status, "RUNNING");
+    assert_eq!(epoch, Some(1), "first attempt carries worker_epoch 1");
+    assert!(
+        t3_heartbeat_is_fresh(&store, &attempt).await,
+        "schedule stamps heartbeat_at"
+    );
+
+    // A non-READY node must not schedule again (graph plane re-dispatch goes
+    // through the fail→READY re-arm, never a second attempt on RUNNING).
+    assert!(store
+        .schedule_attempt(&g, &n, None)
+        .await
+        .expect("second schedule")
+        .is_none());
+
+    let (gv,): (i64,) = sqlx::query_as("SELECT version FROM execution_graphs WHERE graph_id = $1")
+        .bind(&g)
+        .fetch_one(store.pool().as_ref())
+        .await
+        .unwrap();
+    assert_eq!(gv, 2, "one graph-level version bump per transition tx");
+
+    let events = t3_event_types(&store, &g).await;
+    for want in ["node_scheduled", "node_running", "attempt_started"] {
+        assert!(
+            events.contains(&want.to_string()),
+            "events {events:?} miss {want}"
+        );
+    }
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_concurrent_double_commits_have_exactly_one_winner() {
+    let Some(store) = connect_or_skip("t3_commit_once").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "RUNNING", &[], false)]).await;
+    let a0 = seed_attempt_t3(&store, &g, &n, 0, "RUNNING").await;
+    let a1 = seed_attempt_t3(&store, &g, &n, 1, "RUNNING").await;
+
+    // Two rivals, two connections, one node — commit-once must crown exactly
+    // one (the dual-write race the PRD demands the graph plane kill TODAY).
+    let store_b = GraphStore::with_pool(store.pool().clone());
+    let (r0, r1) = tokio::join!(
+        store.commit_once(&g, &n, &a0, Some("result-a")),
+        store_b.commit_once(&g, &n, &a1, Some("result-b")),
+    );
+    let w0 = r0.expect("commit 0 runs");
+    let w1 = r1.expect("commit 1 runs");
+    assert!(w0 ^ w1, "exactly one commit wins: got {w0}/{w1}");
+
+    let (completions,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM node_completions WHERE graph_id = $1")
+            .bind(&g)
+            .fetch_one(store.pool().as_ref())
+            .await
+            .unwrap();
+    assert_eq!(completions, 1, "the node has exactly one completion row");
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "SUCCEEDED");
+
+    let events = t3_event_types(&store, &g).await;
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.as_str() == "late_result")
+            .count()
+            >= 1,
+        "the loser must be recorded as late_result: {events:?}"
+    );
+    let winner_attempt = if w0 { &a0 } else { &a1 };
+    let loser_attempt = if w0 { &a1 } else { &a0 };
+    let (ws, _) = t3_attempt_status(&store, winner_attempt)
+        .await
+        .expect("winner attempt");
+    assert_eq!(ws, "SUCCEEDED");
+    let (ls, _) = t3_attempt_status(&store, loser_attempt)
+        .await
+        .expect("loser attempt");
+    assert_eq!(ls, "RUNNING", "the loser attempt row is not rewritten");
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_late_fail_after_commit_is_fenced_with_late_result() {
+    let Some(store) = connect_or_skip("t3_late_fail").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+    let a = store
+        .schedule_attempt(&g, &n, Some("w1"))
+        .await
+        .unwrap()
+        .expect("schedule");
+    assert!(store
+        .commit_once(&g, &n, &a, Some("ok"))
+        .await
+        .expect("commit"));
+
+    // The dead worker's late FAIL: node stays SUCCEEDED, the committed
+    // attempt stays SUCCEEDED — only a late_result event is appended.
+    let outcome = store
+        .fail_attempt(&g, &n, &a, 3, "late-worker-fail")
+        .await
+        .expect("fail_attempt");
+    assert_eq!(outcome, uc_engine::FailOutcome::Fenced);
+    let (state, version) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "SUCCEEDED");
+    assert_eq!(
+        version, 4,
+        "the fenced fail must not add another version bump"
+    );
+    let (status, _) = t3_attempt_status(&store, &a).await.expect("attempt");
+    assert_eq!(status, "SUCCEEDED");
+    let events = t3_event_types(&store, &g).await;
+    assert!(
+        events.contains(&"late_result".to_string()),
+        "late fail must leave a late_result event: {events:?}"
+    );
+    assert!(
+        !events.contains(&"node_failed".to_string()),
+        "no fail transitions on a committed node: {events:?}"
+    );
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_diamond_downstream_readies_without_sibling() {
+    let Some(store) = connect_or_skip("t3_diamond").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let a = format!("{p}-A");
+    let b = format!("{p}-B");
+    let c = format!("{p}-C");
+    let d = format!("{p}-D");
+    purge_t3(&store, &g).await;
+    // Diamond A → (B, C) → D, and D depends ONLY on B.
+    seed_graph_t3(
+        &store,
+        &g,
+        &[
+            (&a, "SUCCEEDED", &[], false),
+            (&b, "RUNNING", &[a.as_str()], false),
+            (&c, "RUNNING", &[a.as_str()], false),
+            (&d, "CREATED", &[b.as_str()], false),
+        ],
+    )
+    .await;
+    seed_completion_t3(&store, &g, &a, &format!("{g}:{a}:0")).await;
+    let b_attempt = seed_attempt_t3(&store, &g, &b, 0, "RUNNING").await;
+    seed_attempt_t3(&store, &g, &c, 0, "RUNNING").await;
+
+    assert!(store
+        .commit_once(&g, &b, &b_attempt, Some("b-done"))
+        .await
+        .expect("commit B"));
+    // B committed → D's only dependency is satisfied → D READY, without
+    // waiting for the still-RUNNING sibling C.
+    let (d_state, _) = t3_node_state(&store, &g, &d).await;
+    assert_eq!(d_state, "READY", "diamond: D readies on B alone");
+    let (c_state, _) = t3_node_state(&store, &g, &c).await;
+    assert_eq!(c_state, "RUNNING", "C is untouched by B's commit");
+    let events = t3_event_types(&store, &g).await;
+    assert!(events.contains(&"node_ready".to_string()), "{events:?}");
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_fail_attempt_budget_rearms_and_exhaustion_fails_node() {
+    let Some(store) = connect_or_skip("t3_fail_budget").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n1 = format!("{p}-n1");
+    let n2 = format!("{p}-n2");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(
+        &store,
+        &g,
+        &[(&n1, "READY", &[], false), (&n2, "READY", &[], false)],
+    )
+    .await;
+
+    // Budget left (retry 0 of 3): attempt FAILED, node re-armed to READY.
+    let a0 = store
+        .schedule_attempt(&g, &n1, Some("w1"))
+        .await
+        .unwrap()
+        .expect("schedule n1");
+    let outcome = store
+        .fail_attempt(&g, &n1, &a0, 3, "worker-crashed")
+        .await
+        .expect("fail n1");
+    assert_eq!(outcome, uc_engine::FailOutcome::RearmedToReady);
+    let (status, _) = t3_attempt_status(&store, &a0).await.expect("a0");
+    assert_eq!(status, "FAILED");
+    let (state, version) = t3_node_state(&store, &g, &n1).await;
+    assert_eq!(state, "READY", "retry budget keeps the node schedulable");
+    assert_eq!(version, 4, "3 transition edges crossed +1 for FAILED→READY");
+    // A re-armed node schedules again — and the retry counter moves.
+    let a1 = store
+        .schedule_attempt(&g, &n1, Some("w2"))
+        .await
+        .unwrap()
+        .expect("second attempt on re-armed node");
+    assert_eq!(a1, format!("{g}:{n1}:1"));
+
+    // Budget exhausted (max_attempts = 1): the node itself fails.
+    let b0 = store
+        .schedule_attempt(&g, &n2, Some("w1"))
+        .await
+        .unwrap()
+        .expect("schedule n2");
+    let outcome = store
+        .fail_attempt(&g, &n2, &b0, 1, "no-retry-policy")
+        .await
+        .expect("fail n2");
+    assert_eq!(outcome, uc_engine::FailOutcome::NodeFailed);
+    let (state, _) = t3_node_state(&store, &g, &n2).await;
+    assert_eq!(state, "FAILED");
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_heartbeat_attempt_refreshes_and_fences_terminals() {
+    let Some(store) = connect_or_skip("t3_heartbeat").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+    let a = store
+        .schedule_attempt(&g, &n, Some("w1"))
+        .await
+        .unwrap()
+        .expect("schedule");
+
+    t3_age_heartbeat(&store, &a, 3600.0).await;
+    assert!(!t3_heartbeat_is_fresh(&store, &a).await);
+    assert!(store
+        .heartbeat_attempt(&a)
+        .await
+        .expect("heartbeat accepted"));
+    assert!(
+        t3_heartbeat_is_fresh(&store, &a).await,
+        "heartbeat_attempt refreshes heartbeat_at"
+    );
+
+    // Fenced: a terminal attempt and an unknown id both refuse heartbeats
+    // without touching anything.
+    store
+        .fail_attempt(&g, &n, &a, 1, "exhausted")
+        .await
+        .expect("fail");
+    assert!(!store
+        .heartbeat_attempt(&a)
+        .await
+        .expect("terminal heartbeat"));
+    assert!(!store
+        .heartbeat_attempt("no-such-attempt")
+        .await
+        .expect("unknown heartbeat"));
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_same_version_cas_single_winner_for_concurrent_schedules() {
+    let Some(store) = connect_or_skip("t3_cas").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+
+    // Two dispatchers race on the same READY node (same expected version):
+    // the node-row CAS + FOR UPDATE must crown exactly one.
+    let store_b = GraphStore::with_pool(store.pool().clone());
+    let (r0, r1) = tokio::join!(
+        store.schedule_attempt(&g, &n, Some("wA")),
+        store_b.schedule_attempt(&g, &n, Some("wB")),
+    );
+    let s0 = r0.expect("schedule A completes");
+    let s1 = r1.expect("schedule B completes");
+    assert!(
+        s0.is_some() ^ s1.is_some(),
+        "same-version CAS: exactly one schedule wins ({s0:?} / {s1:?})"
+    );
+    let (attempts,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM task_attempts WHERE graph_id = $1")
+            .bind(&g)
+            .fetch_one(store.pool().as_ref())
+            .await
+            .unwrap();
+    assert_eq!(attempts, 1, "loser wrote no attempt row");
+    let (state, version) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "RUNNING");
+    assert_eq!(version, 3, "only the winner crossed the two CAS edges");
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_recompute_ready_is_idempotent_and_honors_optional_skipped() {
+    let Some(store) = connect_or_skip("t3_recompute").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let x = format!("{p}-X");
+    let y = format!("{p}-Y");
+    let z = format!("{p}-Z");
+    let d1 = format!("{p}-D1");
+    let d2 = format!("{p}-D2");
+    let d3 = format!("{p}-D3");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(
+        &store,
+        &g,
+        &[
+            (&x, "SUCCEEDED", &[], false),
+            (&y, "SKIPPED", &[], true),
+            (&z, "RUNNING", &[], false),
+            (&d1, "CREATED", &[x.as_str()], false),
+            (&d2, "CREATED", &[y.as_str()], false),
+            (&d3, "CREATED", &[x.as_str(), z.as_str()], false),
+        ],
+    )
+    .await;
+    seed_completion_t3(&store, &g, &x, &format!("{g}:{x}:0")).await;
+
+    let flipped = store.recompute_ready(&g).await.expect("recompute");
+    let mut want = vec![d1.clone(), d2.clone()];
+    want.sort();
+    assert_eq!(
+        flipped, want,
+        "SUCCEEDED + optional-SKIPPED deps unblock; Z does not"
+    );
+    let (d3_state, _) = t3_node_state(&store, &g, &d3).await;
+    assert_eq!(d3_state, "CREATED");
+
+    // Idempotent: nothing new to flip → zero rows touched, graph version
+    // stable (the probe finds no candidates and writes nothing).
+    let version_after_first = t3_graph_version(&store, &g).await;
+    let flipped_again = store.recompute_ready(&g).await.expect("recompute 2");
+    assert!(
+        flipped_again.is_empty(),
+        "second sweep flips nothing: {flipped_again:?}"
+    );
+    assert_eq!(
+        t3_graph_version(&store, &g).await,
+        version_after_first,
+        "an empty recompute must not bump the graph version"
+    );
+
+    purge_t3(&store, &g).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_sink_verbs_drive_the_transitions_through_the_trait_object() {
+    let Some(store) = connect_or_skip("t3_sink_verbs").await else {
+        return;
+    };
+    // Exactly the gateway's shape: an Option<Arc<dyn GraphShadowSink>>
+    // around the concrete store, verbs riding T1 envelopes.
+    let sink: std::sync::Arc<dyn uc_engine::GraphShadowSink> =
+        std::sync::Arc::new(GraphStore::with_pool(store.pool().clone()));
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+
+    let env = uc_types::ExecutionEnvelope::for_dispatch(&g, &n, 0);
+    sink.on_schedule(&env, Some("w1")).await;
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "RUNNING", "on_schedule dispatches the READY node");
+    let a = format!("{g}:{n}:0");
+
+    t3_age_heartbeat(&store, &a, 3600.0).await;
+    sink.on_heartbeat(&env).await;
+    assert!(
+        t3_heartbeat_is_fresh(&store, &a).await,
+        "on_heartbeat refreshes the running attempt"
+    );
+
+    sink.on_commit(&env, Some("sink-result")).await;
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "SUCCEEDED");
+    assert!(
+        !store
+            .commit_once(&g, &n, &a, Some("again"))
+            .await
+            .expect("duplicate commit"),
+        "a second commit for the same node never wins again"
+    );
+
+    // A late on_fail after the commit is a pure no-op on state.
+    sink.on_fail(&env, "late-sink-fail").await;
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "SUCCEEDED");
+
+    // Verbs against never-seen identities must be inert, never a panic.
+    let ghost = uc_types::ExecutionEnvelope::for_dispatch(&format!("{p}-ghost"), "n", 0);
+    sink.on_schedule(&ghost, None).await;
+    sink.on_heartbeat(&ghost).await;
+    sink.on_commit(&ghost, None).await;
+    sink.on_fail(&ghost, "ghost").await;
+
+    purge_t3(&store, &g).await;
+    purge_t3(&store, &format!("{p}-ghost")).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn graph_t3_timeout_sweep_fences_and_rearms_on_a_probe_db() {
+    // Isolated probe database: timeout_sweep is a GLOBAL reaper (all stale
+    // RUNNING attempts), so unlike the other T3 tests it must not share the
+    // database with concurrent fixtures.
+    let name = format!("uc_git_{}", unique_prefix());
+    if create_probe_db(&name).await.is_none() {
+        return;
+    }
+    let store = connect_probe(&name).await;
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+    let a0 = store
+        .schedule_attempt(&g, &n, Some("w1"))
+        .await
+        .unwrap()
+        .expect("schedule");
+    t3_age_heartbeat(&store, &a0, 7200.0).await;
+
+    let swept = store
+        .timeout_sweep(std::time::Duration::from_secs(60), 3)
+        .await
+        .expect("sweep");
+    assert_eq!(swept, vec![a0.clone()], "the stale attempt is swept");
+    let (status, _) = t3_attempt_status(&store, &a0).await.expect("a0");
+    assert_eq!(status, "FAILED");
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "READY", "budget left → node re-armed");
+
+    // Re-schedulable, and the fence moves: the new attempt carries a higher
+    // worker_epoch than the revoked one.
+    let a1 = store
+        .schedule_attempt(&g, &n, Some("w2"))
+        .await
+        .unwrap()
+        .expect("re-schedule after sweep");
+    let (_, epoch0) = t3_attempt_status(&store, &a0).await.expect("a0");
+    let (_, epoch1) = t3_attempt_status(&store, &a1).await.expect("a1");
+    assert_eq!(
+        epoch1,
+        Some(epoch0.expect("epoch0") + 1),
+        "epoch bump is the fence"
+    );
+
+    // The swept attempt is permanently fenced: its late commit changes
+    // nothing and lands as late_result.
+    assert!(!store
+        .commit_once(&g, &n, &a0, Some("late-win"))
+        .await
+        .expect("late commit"));
+    let (state, _) = t3_node_state(&store, &g, &n).await;
+    assert_eq!(state, "RUNNING", "the live attempt keeps running");
+    let events = t3_event_types(&store, &g).await;
+    assert!(events.contains(&"late_result".to_string()), "{events:?}");
+
+    // A second sweep finds nothing stale (the fresh heartbeat of a1).
+    let swept_again = store
+        .timeout_sweep(std::time::Duration::from_secs(60), 3)
+        .await
+        .expect("sweep 2");
+    assert!(
+        swept_again.is_empty(),
+        "fresh attempts are not swept: {swept_again:?}"
+    );
+
+    drop(store);
+    drop_force(&name).await;
 }

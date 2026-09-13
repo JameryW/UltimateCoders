@@ -65,9 +65,28 @@
 //! never writes another value). Attempt ids are deterministic
 //! (`<graph_id>:<node_id>:<retry_no>`), which is what makes the importers
 //! idempotent (`ON CONFLICT DO NOTHING`) and byte-stable across runs.
+//!
+//! # T3 (#639): real transition logic on the graph plane
+//!
+//! [`GraphStore`] now owns the attempt-lifecycle verbs — each is ONE
+//! transaction doing version-CAS node updates (`UPDATE … WHERE version = $n`,
+//! guarded by [`uc_types::can_transition`]), an append of `execution_events`
+//! rows (event_type + graph_version; the reserved cost/tokens columns stay
+//! NULL), and `node_completions` commit-once via `INSERT … ON CONFLICT
+//! DO NOTHING` rows-affected. Fencing rides the per-node `worker_epoch`
+//! (each new attempt carries `max(epoch)+1`): a late commit/fail for an
+//! attempt that is no longer `RUNNING` never changes node state and only
+//! appends a `late_result` event.
+//!
+//! The legacy HashMap reaper is **untouched** (dual-plane ruling, research
+//! §3): `uc-grpc` fans the same moments out through the new
+//! [`GraphShadowSink`] verbs (`on_schedule` / `on_heartbeat` / `on_commit` /
+//! `on_fail`, all default no-ops so the always-compiled surface — and every
+//! T2 fake — keeps compiling). The sink plane grows the *correct* logic now;
+//! T6 deletes the legacy side.
 
 use serde::Deserialize;
-use uc_types::{Subtask, Task, TaskStatus};
+use uc_types::{can_transition, ExecutionEnvelope, NodeStatus, Subtask, Task, TaskStatus};
 
 // ── Status token mapping (pure, always compiled) ─────────────────────
 
@@ -123,6 +142,17 @@ pub fn graph_status_of_task_status(status: &TaskStatus) -> String {
 
 fn node_status_of_subtask(subtask: &Subtask) -> String {
     node_state_token(&format!("{:?}", subtask.status))
+}
+
+/// Whether a `from → to` move between raw state tokens is legal per the
+/// 9-state machine in `uc_types`. Unknown tokens (the T2 passthrough
+/// vocabulary — `PAUSED`, `PLANNING`, anything unrecognized) never allow a
+/// transition: the graph plane refuses to move rows it does not understand.
+pub fn transition_ok(from: &str, to: &str) -> bool {
+    match (NodeStatus::from_token(from), NodeStatus::from_token(to)) {
+        (Some(f), Some(t)) => can_transition(f, t),
+        _ => false,
+    }
 }
 
 // ── Projection shapes (pure) ─────────────────────────────────────────
@@ -391,10 +421,42 @@ pub fn pick_newer_saved(
 /// false` — can hold an `Option<Arc<dyn GraphShadowSink>>` with **no**
 /// feature of its own. Implementations must be warn-only internally:
 /// the shadow path can never change primary-path behavior.
+///
+/// T3 (#639) adds the attempt-lifecycle verbs. New parameters ride the T1
+/// [`ExecutionEnvelope`] identity (`graph_id = task_id`, `node_id =
+/// subtask_id`, `attempt_id = dispatch_retry_count`), so the always-
+/// compiled surface carries no storage types. All four verbs have **no-op
+/// default implementations** — a shadow-only sink (and every T2 fake)
+/// keeps compiling untouched; the real-graph verbs are opt-in per
+/// implementation. Callers fan these out fire-and-forget: a verb can never
+/// fail the legacy path.
 #[async_trait::async_trait]
 pub trait GraphShadowSink: Send + Sync {
     /// Upsert the task's graph/node rows (shadow copy; never authoritative).
     async fn shadow_persist(&self, task: &Task);
+
+    /// A node was dispatched (legacy `Assigned` marking at the publish /
+    /// dispatch waypoints). Graph plane: `READY → SCHEDULED → RUNNING` plus
+    /// a fresh attempt row. `worker_id` is `None` at publish time (queue
+    /// group dispatch — the picking worker is not yet known).
+    async fn on_schedule(&self, _envelope: &ExecutionEnvelope, _worker_id: Option<&str>) {}
+
+    /// The worker driving this node's attempt is alive (legacy update
+    /// surfaced `InProgress`). Graph plane: refresh `heartbeat_at` on the
+    /// attempt — the datum `timeout_sweep` judges staleness by.
+    async fn on_heartbeat(&self, _envelope: &ExecutionEnvelope) {}
+
+    /// A node reached a terminal-success derivation (legacy `Completed`).
+    /// Graph plane: commit-once into `node_completions`; only the winner
+    /// moves the node to `SUCCEEDED` and recomputes downstream `READY`.
+    async fn on_commit(&self, _envelope: &ExecutionEnvelope, _result_ref: Option<&str>) {}
+
+    /// A node reached a terminal-failure derivation (legacy `Failed` /
+    /// `Conflicted`) or a reaper path revoked its attempt (stale worker /
+    /// stale `Assigned`). Graph plane: attempt `FAILED` + fence; node back
+    /// to `READY` while the retry budget lasts, else `FAILED`. `reason` is
+    /// a free-form diagnostic carried into the event payload.
+    async fn on_fail(&self, _envelope: &ExecutionEnvelope, _reason: &str) {}
 }
 
 // ── Migrations (storage) ─────────────────────────────────────────────
@@ -628,6 +690,19 @@ impl GraphStore {
             .execute(self.pool.as_ref())
             .await
             .is_ok()
+    }
+
+    /// Begin one transition transaction (T3 verbs). The `what` label only
+    /// serves the error message — a dropped (un-committed) transaction is
+    /// the rollback path every `?` early-return relies on.
+    async fn begin_tx(
+        &self,
+        what: &str,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, EngineError> {
+        self.pool
+            .begin()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("{what} tx begin: {}", e)))
     }
 
     async fn graph_exists(&self, graph_id: &str) -> Result<bool, EngineError> {
@@ -995,6 +1070,760 @@ impl GraphStore {
         .map_err(|e| EngineError::StorageError(format!("graph list: {}", e)))?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
+
+    // ── T3 (#639): attempt-lifecycle transitions ─────────────────────
+    //
+    // Every method below is exactly ONE transaction: node rows are moved by
+    // a version-CAS `UPDATE … WHERE version = $n` (guarded by
+    // `transition_ok`, i.e. `uc_types::can_transition` on the 9-state
+    // machine), each state move appends `execution_events` rows carrying
+    // `event_type` + `graph_version` (the reserved cost/tokens columns stay
+    // NULL — P2 Optimizer owns writers), and commit-once rides the
+    // `node_completions` PK via `INSERT … ON CONFLICT DO NOTHING` rows
+    // affected. Lock order everywhere is graph → node → attempt
+    // (`SELECT … FOR UPDATE`), so the mutation methods serialize per node
+    // instead of dead-locking against each other. The legacy HashMap paths
+    // are untouched: this is the graph plane growing the real logic beside
+    // it (dual-plane ruling, research §3).
+
+    /// Dispatch `(graph, node)` in one transaction: `READY → SCHEDULED →
+    /// RUNNING` ("派发即跑" — the two edges share one tx), insert a fresh
+    /// `RUNNING` attempt row whose `retry_no` is `max(retry_no)+1` per node
+    /// (0 for a never-attempted node) and whose `worker_epoch` is
+    /// `max(epoch)+1` — the monotonic fence token. Returns the new attempt
+    /// id, or `None` when the node is absent from the row tables or not
+    /// `READY` (CAS lost / shadow-mirror still catching up): a no-op, never
+    /// an error on the fire-and-forget path.
+    pub async fn schedule_attempt(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        worker_id: Option<&str>,
+    ) -> Result<Option<String>, EngineError> {
+        let mut tx = self.begin_tx("schedule_attempt").await?;
+
+        let node: Option<(String, i64)> = sqlx::query_as(
+            "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("schedule: node lock: {}", e)))?;
+        let Some((state, version)) = node else {
+            return Ok(None); // node not in the row tables yet — no-op
+        };
+        if state != NodeStatus::Ready.as_str()
+            || !transition_ok(state.as_str(), NodeStatus::Scheduled.as_str())
+            || !transition_ok(NodeStatus::Scheduled.as_str(), NodeStatus::Running.as_str())
+        {
+            return Ok(None);
+        }
+
+        let (retry_no, worker_epoch): (i32, i64) = sqlx::query_as(
+            "SELECT COALESCE(MAX(retry_no), -1) + 1, COALESCE(MAX(worker_epoch), 0) + 1 \
+             FROM task_attempts WHERE graph_id = $1 AND node_id = $2",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("schedule: retry probe: {}", e)))?;
+
+        // READY → SCHEDULED → RUNNING: two CAS moves, both inside this tx.
+        let gv = bump_graph_version_tx(&mut tx, graph_id).await?;
+        let scheduled = cas_node_state_tx(
+            &mut tx,
+            graph_id,
+            node_id,
+            NodeStatus::Ready.as_str(),
+            version,
+            NodeStatus::Scheduled.as_str(),
+        )
+        .await?;
+        if !scheduled {
+            // Version moved under us despite the FOR UPDATE (impossible
+            // against this store, kept honest for trigger-mutated schemas):
+            // roll the tx back by dropping without commit.
+            return Ok(None);
+        }
+        append_event_tx(
+            &mut tx,
+            graph_id,
+            Some(node_id),
+            None,
+            Some(gv),
+            "node_scheduled",
+            serde_json::json!({ "worker_id": worker_id, "retry_no": retry_no }),
+        )
+        .await?;
+        let running = cas_node_state_tx(
+            &mut tx,
+            graph_id,
+            node_id,
+            NodeStatus::Scheduled.as_str(),
+            version + 1,
+            NodeStatus::Running.as_str(),
+        )
+        .await?;
+        if !running {
+            return Ok(None);
+        }
+        append_event_tx(
+            &mut tx,
+            graph_id,
+            Some(node_id),
+            None,
+            Some(gv),
+            "node_running",
+            serde_json::json!({ "worker_id": worker_id, "retry_no": retry_no }),
+        )
+        .await?;
+
+        let attempt = attempt_id(graph_id, node_id, retry_no);
+        sqlx::query(
+            "INSERT INTO task_attempts \
+                 (attempt_id, graph_id, node_id, worker_id, worker_epoch, status, retry_no, \
+                  started_at, heartbeat_at, result_ref) \
+             VALUES ($1, $2, $3, $4, $5, 'RUNNING', $6, NOW(), NOW(), $7)",
+        )
+        .bind(&attempt)
+        .bind(graph_id)
+        .bind(node_id)
+        .bind(worker_id)
+        .bind(worker_epoch)
+        .bind(retry_no)
+        .bind(format!("{graph_id}/{node_id}/{retry_no}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("schedule: attempt insert: {}", e)))?;
+        append_event_tx(
+            &mut tx,
+            graph_id,
+            Some(node_id),
+            Some(&attempt),
+            Some(gv),
+            "attempt_started",
+            serde_json::json!({ "worker_id": worker_id, "worker_epoch": worker_epoch }),
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("schedule tx commit: {}", e)))?;
+        Ok(Some(attempt))
+    }
+
+    /// Refresh `heartbeat_at = NOW()` on a still-`RUNNING` attempt. Returns
+    /// false (no state written) for unknown or already-terminal attempts —
+    /// the fence makes heartbeats from revoked workers harmless.
+    pub async fn heartbeat_attempt(&self, attempt_id: &str) -> Result<bool, EngineError> {
+        let mut tx = self.begin_tx("heartbeat_attempt").await?;
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT graph_id, node_id FROM task_attempts WHERE attempt_id = $1 FOR UPDATE",
+        )
+        .bind(attempt_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("heartbeat: attempt lock: {}", e)))?;
+        let Some((graph_id, node_id)) = row else {
+            return Ok(false);
+        };
+        let res = sqlx::query("UPDATE task_attempts SET heartbeat_at = NOW() WHERE attempt_id = $1 AND status = 'RUNNING'")
+            .bind(attempt_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| EngineError::StorageError(format!("heartbeat update: {}", e)))?;
+        if res.rows_affected() == 1 {
+            let (graph_version,): (i64,) =
+                sqlx::query_as("SELECT version FROM execution_graphs WHERE graph_id = $1")
+                    .bind(&graph_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| {
+                        EngineError::StorageError(format!("heartbeat: version read: {}", e))
+                    })?
+                    .unwrap_or((0,));
+            append_event_tx(
+                &mut tx,
+                &graph_id,
+                Some(&node_id),
+                Some(attempt_id),
+                Some(graph_version),
+                "attempt_heartbeat",
+                serde_json::json!({}),
+            )
+            .await?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("heartbeat tx commit: {}", e)))?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// The node's currently-`RUNNING` attempt id (highest `retry_no`), when
+    /// one exists. Sink-verb resolution helper: the gateway envelope carries
+    /// the dispatch-level counter, the graph plane owns the execution
+    /// numbering, so commit/fail heartbeats resolve identity through this.
+    pub async fn running_attempt_id(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<String>, EngineError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT attempt_id FROM task_attempts \
+             WHERE graph_id = $1 AND node_id = $2 AND status = 'RUNNING' \
+             ORDER BY retry_no DESC LIMIT 1",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("running attempt probe: {}", e)))?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// Commit-once for `(graph, node)` attributed to `winning_attempt_id`.
+    ///
+    /// Winner path (returns `true`): `INSERT INTO node_completions … ON
+    /// CONFLICT (node_id) DO NOTHING` rows-affected == 1 → attempt marked
+    /// `SUCCEEDED`, node CAS `RUNNING → SUCCEEDED`, downstream
+    /// `recompute_ready` flips newly-unblocked `CREATED` nodes to
+    /// `READY` — all in the same transaction. Loser / fenced / late path
+    /// (returns `false`): the attempt row is unknown or no longer `RUNNING`
+    /// (fence via the monotonic `worker_epoch` bump) or another attempt
+    /// already owns the completion — node state is NOT touched and only a
+    /// `late_result` event is appended. The dual-write race this closes:
+    /// two concurrent commits for one node can never both win.
+    pub async fn commit_once(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        winning_attempt_id: &str,
+        result_ref: Option<&str>,
+    ) -> Result<bool, EngineError> {
+        let mut tx = self.begin_tx("commit_once").await?;
+
+        let node: Option<(String, i64)> = sqlx::query_as(
+            "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("commit: node lock: {}", e)))?;
+        let attempt_status: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM task_attempts WHERE attempt_id = $1 FOR UPDATE")
+                .bind(winning_attempt_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| EngineError::StorageError(format!("commit: attempt lock: {}", e)))?;
+
+        let fenced = match (&node, &attempt_status) {
+            (Some((state, _)), Some((attempt,))) => {
+                state.as_str() == NodeStatus::Succeeded.as_str() || attempt.as_str() != "RUNNING"
+            }
+            _ => true, // node/attempt unknown to the graph plane
+        };
+        if fenced {
+            append_event_tx(
+                &mut tx,
+                graph_id,
+                Some(node_id),
+                Some(winning_attempt_id),
+                None,
+                "late_result",
+                serde_json::json!({ "reason": "fenced_or_unknown_attempt" }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|e| EngineError::StorageError(format!("commit tx commit: {}", e)))?;
+            return Ok(false);
+        }
+        let (node_state, node_version) = node.expect("fenced matched above");
+
+        let res = sqlx::query(
+            "INSERT INTO node_completions (node_id, graph_id, winning_attempt_id, result_ref) \
+             VALUES ($1, $2, $3, $4) ON CONFLICT (node_id) DO NOTHING",
+        )
+        .bind(node_id)
+        .bind(graph_id)
+        .bind(winning_attempt_id)
+        .bind(result_ref)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("commit: completion insert: {}", e)))?;
+        if res.rows_affected() == 0 {
+            // Commit-once loser: someone else owns the completion row.
+            append_event_tx(
+                &mut tx,
+                graph_id,
+                Some(node_id),
+                Some(winning_attempt_id),
+                None,
+                "late_result",
+                serde_json::json!({ "reason": "lost_commit_once" }),
+            )
+            .await?;
+            tx.commit()
+                .await
+                .map_err(|e| EngineError::StorageError(format!("commit tx commit: {}", e)))?;
+            return Ok(false);
+        }
+
+        let gv = bump_graph_version_tx(&mut tx, graph_id).await?;
+        sqlx::query(
+            "UPDATE task_attempts SET status = 'SUCCEEDED', finished_at = NOW(), \
+                 result_ref = COALESCE($2, result_ref) \
+             WHERE attempt_id = $1 AND status = 'RUNNING'",
+        )
+        .bind(winning_attempt_id)
+        .bind(result_ref)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("commit: attempt update: {}", e)))?;
+        if transition_ok(&node_state, NodeStatus::Succeeded.as_str()) {
+            let moved = cas_node_state_tx(
+                &mut tx,
+                graph_id,
+                node_id,
+                &node_state,
+                node_version,
+                NodeStatus::Succeeded.as_str(),
+            )
+            .await?;
+            if !moved {
+                tracing::warn!(
+                    graph_id,
+                    node_id,
+                    "commit_once won the completion but the node CAS missed (state {:?}) — dual-plane shadow clobber?",
+                    node_state
+                );
+            }
+        } else {
+            tracing::warn!(
+                graph_id,
+                node_id,
+                state = %node_state,
+                "commit_once won with a node in a non-transitionable state — completion recorded, state untouched"
+            );
+        }
+        append_event_tx(
+            &mut tx,
+            graph_id,
+            Some(node_id),
+            Some(winning_attempt_id),
+            Some(gv),
+            "node_succeeded",
+            serde_json::json!({ "result_ref": result_ref }),
+        )
+        .await?;
+        // Downstream dependency recompute rides the same transaction (the
+        // winner's graph version for its `node_ready` events).
+        recompute_ready_tx(&mut tx, graph_id, Some(gv)).await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("commit tx commit: {}", e)))?;
+        Ok(true)
+    }
+
+    /// Fail one attempt: `RUNNING → FAILED` on the attempt row plus the
+    /// fence (the next `schedule_attempt` carries `max(worker_epoch)+1` —
+    /// monotonic epoch bump), then the node follows the retry budget:
+    /// `retry_no < max_attempts - 1` re-arms the node to `READY`
+    /// (timeout/dispatch retry), else the node itself goes `FAILED`.
+    ///
+    /// Late or already-terminal attempts (and any fail against a node that
+    /// already `SUCCEEDED` — the committed winner is immutable) return
+    /// [`FailOutcome::Fenced`]: state is NOT touched, only a `late_result`
+    /// event is appended.
+    pub async fn fail_attempt(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        attempt_id: &str,
+        max_attempts: i32,
+        reason: &str,
+    ) -> Result<FailOutcome, EngineError> {
+        let mut tx = self.begin_tx("fail_attempt").await?;
+        let outcome =
+            fail_attempt_tx(&mut tx, graph_id, node_id, attempt_id, max_attempts, reason).await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("fail tx commit: {}", e)))?;
+        Ok(outcome)
+    }
+
+    /// Graph-plane reaper: every `RUNNING` attempt whose `heartbeat_at`
+    /// (falling back to `started_at`) is older than `heartbeat_timeout`
+    /// goes through the [`Self::fail_attempt`] path (attempt `FAILED` +
+    /// fence via the next attempt's epoch bump + node back to `READY` while
+    /// budget lasts, else `FAILED`). Returns the attempt ids actually swept
+    /// (fenced no-ops are excluded).
+    pub async fn timeout_sweep(
+        &self,
+        heartbeat_timeout: std::time::Duration,
+        max_attempts: i32,
+    ) -> Result<Vec<String>, EngineError> {
+        let secs = heartbeat_timeout.as_secs_f64();
+        let stale: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT attempt_id, graph_id, node_id FROM task_attempts \
+             WHERE status = 'RUNNING' \
+               AND COALESCE(heartbeat_at, started_at) < NOW() - ($1::double precision * INTERVAL '1 second') \
+             ORDER BY attempt_id",
+        )
+        .bind(secs)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("timeout sweep scan: {}", e)))?;
+        let mut swept = Vec::new();
+        for (attempt, graph_id, node_id) in stale {
+            let outcome = self
+                .fail_attempt(
+                    &graph_id,
+                    &node_id,
+                    &attempt,
+                    max_attempts,
+                    "heartbeat_timeout",
+                )
+                .await?;
+            if outcome != FailOutcome::Fenced {
+                swept.push(attempt);
+            }
+        }
+        Ok(swept)
+    }
+
+    /// Dependency recomputation at the node layer (absorbs the semantics of
+    /// the legacy `get_ready_subtasks` onto the graph rows — the legacy
+    /// function itself is untouched): every `CREATED` node whose
+    /// dependencies are all `SUCCEEDED` (or `SKIPPED` **and** `optional`)
+    /// flips to `READY`. Idempotent — a node already `READY` is not a
+    /// candidate, and a second sweep finds nothing new. Returns the flipped
+    /// node ids.
+    pub async fn recompute_ready(&self, graph_id: &str) -> Result<Vec<String>, EngineError> {
+        let mut tx = self.begin_tx("recompute_ready").await?;
+        let flipped = recompute_ready_tx(&mut tx, graph_id, None).await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("recompute tx commit: {}", e)))?;
+        Ok(flipped)
+    }
+}
+
+/// Default attempt budget for the graph plane's `fail_attempt` path —
+/// mirrors the legacy gateway's dispatch-retry cap of 3 (`Remote` mode /
+/// stale-`Assigned` revert storm guard), so the two planes converge on the
+/// same "give up" point while T6 does the authority switch.
+#[cfg(feature = "storage")]
+pub const DEFAULT_MAX_ATTEMPTS: i32 = 3;
+
+/// Result of [`GraphStore::fail_attempt`] / the timeout sweep per attempt.
+#[cfg(feature = "storage")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailOutcome {
+    /// The attempt was unknown / already terminal / the node already
+    /// committed: no state change, only a `late_result` event was appended.
+    Fenced,
+    /// Retry budget left: attempt `FAILED`, node re-armed to `READY`
+    /// (fence rides the next attempt's `worker_epoch` bump).
+    RearmedToReady,
+    /// Budget exhausted: attempt `FAILED` and the node itself `FAILED`.
+    NodeFailed,
+}
+
+/// Bump (or lazily materialize) the graph row's version and return it. The
+/// insert-on-conflict shape keeps the T3 verbs working against graphs the
+/// shadow write has not mirrored yet — the mirror overwrites `status` on
+/// its next pass anyway.
+#[cfg(feature = "storage")]
+async fn bump_graph_version_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+) -> Result<i64, EngineError> {
+    let (version,): (i64,) = sqlx::query_as(
+        "INSERT INTO execution_graphs (graph_id, status, version) VALUES ($1, 'RUNNING', 1) \
+         ON CONFLICT (graph_id) DO UPDATE SET version = execution_graphs.version + 1, \
+             updated_at = NOW() \
+         RETURNING version",
+    )
+    .bind(graph_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("graph version bump: {}", e)))?;
+    Ok(version)
+}
+
+/// Append one `execution_events` row. `cost` / `tokens` / `duration_ms` are
+/// deliberately never bound — they stay NULL for their reserved writers.
+#[cfg(feature = "storage")]
+#[allow(clippy::too_many_arguments)]
+async fn append_event_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    node_id: Option<&str>,
+    attempt_id: Option<&str>,
+    graph_version: Option<i64>,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Result<(), EngineError> {
+    sqlx::query(
+        "INSERT INTO execution_events (graph_id, node_id, attempt_id, graph_version, event_type, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(graph_id)
+    .bind(node_id)
+    .bind(attempt_id)
+    .bind(graph_version)
+    .bind(event_type)
+    .bind(payload)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("event append ({event_type}): {}", e)))?;
+    Ok(())
+}
+
+/// Version-CAS node state move: succeeds only while the row still carries
+/// the expected state AND version (the caller holds the row lock, so a miss
+/// means a concurrent writer — the loser returns without mutating).
+#[cfg(feature = "storage")]
+async fn cas_node_state_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    node_id: &str,
+    expect_state: &str,
+    expect_version: i64,
+    new_state: &str,
+) -> Result<bool, EngineError> {
+    debug_assert!(
+        transition_ok(expect_state, new_state),
+        "cas {expect_state} -> {new_state} bypasses the transition table — caller must gate"
+    );
+    if !transition_ok(expect_state, new_state) {
+        return Err(uc_types::EngineError::InvalidOperation(format!(
+            "illegal node transition {expect_state} -> {new_state}"
+        )));
+    }
+    let res = sqlx::query(
+        "UPDATE graph_nodes SET state = $3, version = version + 1 \
+         WHERE graph_id = $1 AND node_id = $2 AND state = $4 AND version = $5",
+    )
+    .bind(graph_id)
+    .bind(node_id)
+    .bind(new_state)
+    .bind(expect_state)
+    .bind(expect_version)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("node CAS update: {}", e)))?;
+    Ok(res.rows_affected() == 1)
+}
+
+/// The shared body of [`GraphStore::fail_attempt`] (runs inside the caller's
+/// transaction; lock order node → attempt, matching every other verb).
+#[cfg(feature = "storage")]
+#[allow(clippy::too_many_arguments)]
+async fn fail_attempt_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    node_id: &str,
+    attempt_id: &str,
+    max_attempts: i32,
+    reason: &str,
+) -> Result<FailOutcome, EngineError> {
+    let node: Option<(String, i64)> = sqlx::query_as(
+        "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
+    )
+    .bind(graph_id)
+    .bind(node_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("fail: node lock: {}", e)))?;
+    let attempt: Option<(String, i32)> = sqlx::query_as(
+        "SELECT status, retry_no FROM task_attempts WHERE attempt_id = $1 FOR UPDATE",
+    )
+    .bind(attempt_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("fail: attempt lock: {}", e)))?;
+
+    let live = match (&node, &attempt) {
+        (Some((state, _)), Some((status, _))) => {
+            status.as_str() == "RUNNING" && state.as_str() != NodeStatus::Succeeded.as_str()
+        }
+        _ => false,
+    };
+    if !live {
+        // Late fail (after commit, after its own terminal write, or for an
+        // attempt the graph plane never saw): the only trace is the event.
+        append_event_tx(
+            tx,
+            graph_id,
+            Some(node_id),
+            Some(attempt_id),
+            None,
+            "late_result",
+            serde_json::json!({ "reason": format!("late_fail: {reason}") }),
+        )
+        .await?;
+        return Ok(FailOutcome::Fenced);
+    }
+    let (node_state, node_version) = node.expect("live matched above");
+    let (_status, retry_no) = attempt.expect("live matched above");
+
+    sqlx::query(
+        "UPDATE task_attempts SET status = 'FAILED', finished_at = NOW() WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("fail: attempt update: {}", e)))?;
+    let gv = bump_graph_version_tx(tx, graph_id).await?;
+    append_event_tx(
+        tx,
+        graph_id,
+        Some(node_id),
+        Some(attempt_id),
+        Some(gv),
+        "attempt_failed",
+        serde_json::json!({ "reason": reason, "retry_no": retry_no }),
+    )
+    .await?;
+
+    let target = if retry_no < max_attempts.saturating_sub(1) {
+        NodeStatus::Ready.as_str()
+    } else {
+        NodeStatus::Failed.as_str()
+    };
+    let outcome = if target == NodeStatus::Ready.as_str() {
+        FailOutcome::RearmedToReady
+    } else {
+        FailOutcome::NodeFailed
+    };
+    if transition_ok(&node_state, target) {
+        let moved =
+            cas_node_state_tx(tx, graph_id, node_id, &node_state, node_version, target).await?;
+        if !moved {
+            tracing::warn!(
+                graph_id,
+                node_id,
+                "fail_attempt node CAS missed (version moved under the lock)"
+            );
+        }
+        append_event_tx(
+            tx,
+            graph_id,
+            Some(node_id),
+            Some(attempt_id),
+            Some(gv),
+            if outcome == FailOutcome::RearmedToReady {
+                "node_ready"
+            } else {
+                "node_failed"
+            },
+            serde_json::json!({ "reason": reason }),
+        )
+        .await?;
+    } else {
+        tracing::warn!(
+            graph_id,
+            node_id,
+            state = %node_state,
+            target,
+            "fail_attempt kept the node state — transition not legal from it"
+        );
+    }
+    Ok(outcome)
+}
+
+/// Shared body of [`GraphStore::recompute_ready`] and the winner path of
+/// [`GraphStore::commit_once`]. Flips every `CREATED` node whose
+/// dependencies are all satisfied (`SUCCEEDED`, or `SKIPPED` + `optional`)
+/// to `READY`, appending one `node_ready` event each. `graph_version` is
+/// supplied when the caller already bumped the graph row in this tx; else a
+/// bump happens here, but only when at least one node actually flips — the
+/// no-candidate path writes nothing, which is what makes the method
+/// idempotent and version-stable across repeat sweeps.
+#[cfg(feature = "storage")]
+async fn recompute_ready_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    graph_version: Option<i64>,
+) -> Result<Vec<String>, EngineError> {
+    let candidates: Vec<(String, serde_json::Value, i64)> = sqlx::query_as(
+        "SELECT node_id, dependencies, version FROM graph_nodes \
+         WHERE graph_id = $1 AND state = 'CREATED' ORDER BY node_id FOR UPDATE",
+    )
+    .bind(graph_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("recompute: candidate scan: {}", e)))?;
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let satisfied_rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT node_id, state, optional FROM graph_nodes \
+         WHERE graph_id = $1 AND state IN ('SUCCEEDED', 'SKIPPED')",
+    )
+    .bind(graph_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| EngineError::StorageError(format!("recompute: done-set scan: {}", e)))?;
+
+    let mut gv = graph_version;
+    let mut flipped = Vec::new();
+    for (node_id, deps, version) in candidates {
+        let dep_ids: Vec<String> = deps
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let all_satisfied = dep_ids.iter().all(|dep| {
+            satisfied_rows
+                .iter()
+                .any(|(id, state, optional)| id == dep && (state == "SUCCEEDED" || *optional))
+        });
+        if !all_satisfied {
+            continue;
+        }
+        let moved = cas_node_state_tx(
+            tx,
+            graph_id,
+            &node_id,
+            NodeStatus::Created.as_str(),
+            version,
+            NodeStatus::Ready.as_str(),
+        )
+        .await?;
+        if !moved {
+            continue;
+        }
+        // The graph row is bumped lazily — a sweep that finds satisfied
+        // candidates writes a version, an unsatisfied one writes nothing.
+        let version_for_event = match gv {
+            Some(v) => v,
+            None => {
+                let v = bump_graph_version_tx(tx, graph_id).await?;
+                gv = Some(v);
+                v
+            }
+        };
+        append_event_tx(
+            tx,
+            graph_id,
+            Some(&node_id),
+            None,
+            Some(version_for_event),
+            "node_ready",
+            serde_json::json!({ "dependencies_satisfied": dep_ids }),
+        )
+        .await?;
+        flipped.push(node_id);
+    }
+    Ok(flipped)
 }
 
 /// `tasks.status` TEXT → `TaskStatus` (same mapping as
@@ -1027,6 +1856,102 @@ impl GraphShadowSink for GraphStore {
         if let Err(e) = self.upsert_task_shadow(task).await {
             // Warn-only: the shadow path can never alter primary-path behavior.
             tracing::warn!("graph shadow persist failed: {}", e);
+        }
+    }
+
+    /// Graph-plane verb: dispatch = `READY → SCHEDULED → RUNNING` + fresh
+    /// attempt row. The envelope's transitional `attempt_id` is a
+    /// *dispatch-level* counter; execution numbering is owned by the graph
+    /// plane (`max(retry_no)+1`), so it is intentionally not consulted.
+    /// Every failure mode is a no-op or a warn — the legacy path can never
+    /// be failed by this fan-out.
+    async fn on_schedule(&self, envelope: &ExecutionEnvelope, worker_id: Option<&str>) {
+        match self
+            .schedule_attempt(&envelope.graph_id, &envelope.node_id, worker_id)
+            .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => tracing::debug!(
+                graph_id = %envelope.graph_id,
+                node_id = %envelope.node_id,
+                "graph on_schedule no-op (node absent or not READY — shadow mirror may lag)"
+            ),
+            Err(e) => tracing::warn!("graph on_schedule failed: {}", e),
+        }
+    }
+
+    async fn on_heartbeat(&self, envelope: &ExecutionEnvelope) {
+        match self
+            .running_attempt_id(&envelope.graph_id, &envelope.node_id)
+            .await
+        {
+            Ok(Some(attempt)) => {
+                if let Err(e) = self.heartbeat_attempt(&attempt).await {
+                    tracing::warn!("graph on_heartbeat failed: {}", e);
+                }
+            }
+            Ok(None) => tracing::debug!(
+                graph_id = %envelope.graph_id,
+                node_id = %envelope.node_id,
+                "graph on_heartbeat no-op (no running attempt)"
+            ),
+            Err(e) => tracing::warn!("graph on_heartbeat probe failed: {}", e),
+        }
+    }
+
+    async fn on_commit(&self, envelope: &ExecutionEnvelope, result_ref: Option<&str>) {
+        // The winning attempt is the node's current RUNNING attempt (the
+        // graph plane's own numbering); a commit with nothing running is
+        // already fenced and commit_once records it as a `late_result`.
+        let attempt = match self
+            .running_attempt_id(&envelope.graph_id, &envelope.node_id)
+            .await
+        {
+            Ok(Some(attempt)) => attempt,
+            Ok(None) => attempt_id(&envelope.graph_id, &envelope.node_id, -1),
+            Err(e) => {
+                tracing::warn!("graph on_commit probe failed: {}", e);
+                return;
+            }
+        };
+        match self
+            .commit_once(&envelope.graph_id, &envelope.node_id, &attempt, result_ref)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(
+                graph_id = %envelope.graph_id,
+                node_id = %envelope.node_id,
+                "graph on_commit fenced (late or lost commit-once) — late_result event recorded"
+            ),
+            Err(e) => tracing::warn!("graph on_commit failed: {}", e),
+        }
+    }
+
+    async fn on_fail(&self, envelope: &ExecutionEnvelope, reason: &str) {
+        let attempt = match self
+            .running_attempt_id(&envelope.graph_id, &envelope.node_id)
+            .await
+        {
+            Ok(Some(attempt)) => attempt,
+            Ok(None) => attempt_id(&envelope.graph_id, &envelope.node_id, -1),
+            Err(e) => {
+                tracing::warn!("graph on_fail probe failed: {}", e);
+                return;
+            }
+        };
+        match self
+            .fail_attempt(
+                &envelope.graph_id,
+                &envelope.node_id,
+                &attempt,
+                DEFAULT_MAX_ATTEMPTS,
+                reason,
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => tracing::warn!("graph on_fail failed: {}", e),
         }
     }
 }
@@ -1083,6 +2008,58 @@ mod tests {
     fn attempt_ids_are_deterministic() {
         assert_eq!(attempt_id("g1", "n1", 0), "g1:n1:0");
         assert_eq!(attempt_id("g1", "n1", 2), "g1:n1:2");
+    }
+
+    #[test]
+    fn transition_ok_wires_the_state_machine_to_tokens() {
+        // Legal edges in the exact tokens the row tables carry.
+        assert!(transition_ok("CREATED", "READY"));
+        assert!(transition_ok("READY", "SCHEDULED"));
+        assert!(transition_ok("SCHEDULED", "RUNNING"));
+        assert!(transition_ok("RUNNING", "SUCCEEDED"));
+        assert!(transition_ok("RUNNING", "READY"), "fence re-arm edge");
+        assert!(transition_ok("RUNNING", "FAILED"));
+        assert!(transition_ok("FAILED", "READY"));
+        // Illegal edges rejected.
+        assert!(!transition_ok("CREATED", "SUCCEEDED"));
+        assert!(!transition_ok("SUCCEEDED", "RUNNING"), "no resurrection");
+        assert!(!transition_ok("READY", "READY"), "no self-loop");
+        // T2-only shadow tokens and unknown passthroughs never transition —
+        // the state machine refuses to move rows it does not understand.
+        assert!(!transition_ok("PAUSED", "READY"));
+        assert!(!transition_ok("WEIRD_STATE", "READY"));
+        assert!(!transition_ok("READY", "PAUSED"));
+        // lowercase (legacy wire form) is not the DB token vocabulary.
+        assert!(!transition_ok("ready", "running"));
+    }
+
+    /// The T3 sink verbs are default no-ops: a shadow-only implementation
+    /// (every T2 fake) keeps compiling and running unchanged, and calling
+    /// the verbs is structurally incapable of failing the legacy path.
+    #[derive(Default)]
+    struct ShadowOnlySink {
+        persisted: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl GraphShadowSink for ShadowOnlySink {
+        async fn shadow_persist(&self, _task: &uc_types::Task) {
+            *self.persisted.lock().unwrap() += 1;
+        }
+    }
+
+    #[tokio::test]
+    async fn sink_verbs_default_to_noop() {
+        let sink = ShadowOnlySink::default();
+        let env = uc_types::ExecutionEnvelope::for_dispatch("g", "n", 0);
+        // All four verbs resolve to their no-op defaults — nothing to
+        // assert beyond "compiles and returns" (that IS the contract:
+        // no graph plane required to keep the gateway compiling).
+        sink.on_schedule(&env, Some("w1")).await;
+        sink.on_heartbeat(&env).await;
+        sink.on_commit(&env, Some("r")).await;
+        sink.on_fail(&env, "boom").await;
+        assert_eq!(*sink.persisted.lock().unwrap(), 0);
     }
 
     fn sample_task() -> Task {
