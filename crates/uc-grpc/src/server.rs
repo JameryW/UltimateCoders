@@ -697,6 +697,88 @@ impl TaskStore {
         self.graph_shadow = Some(sink);
     }
 
+    // ── T3 (#639) graph-plane verb fan-out ───────────────────────────
+    //
+    // Fire-and-forget, `None` zero-overhead: when no sink is wired the
+    // helpers return before touching anything, and the tokio-runtime guard
+    // makes sync callers/tests no-ops. Sinks can never fail the legacy
+    // path — verb trait defaults are no-ops and the GraphStore impls are
+    // warn-only internally. Identity rides the T1 `ExecutionEnvelope`
+    // (transitional mapping: `graph_id = task_id`, `node_id = subtask_id`,
+    // `attempt_id = dispatch_retry_count`).
+
+    fn graph_verb<F, Fut>(&self, make: F)
+    where
+        F: FnOnce(Arc<dyn uc_engine::GraphShadowSink>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let Some(sink) = &self.graph_shadow else {
+            return;
+        };
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let sink = sink.clone();
+            handle.spawn(async move {
+                make(sink).await;
+            });
+        }
+    }
+
+    /// Publish/dispatch marked the subtask `Assigned` → graph plane
+    /// `READY → SCHEDULED → RUNNING` + fresh attempt.
+    fn fanout_graph_schedule(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        attempt: u32,
+        worker_id: Option<String>,
+    ) {
+        let (graph_id, node_id) = (graph_id.to_string(), node_id.to_string());
+        self.graph_verb(move |sink| async move {
+            let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
+            sink.on_schedule(&env, worker_id.as_deref()).await;
+        });
+    }
+
+    /// A worker reported the subtask running → refresh the attempt heartbeat
+    /// (the datum the graph plane's `timeout_sweep` judges staleness by).
+    fn fanout_graph_heartbeat(&self, graph_id: &str, node_id: &str, attempt: u32) {
+        let (graph_id, node_id) = (graph_id.to_string(), node_id.to_string());
+        self.graph_verb(move |sink| async move {
+            let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
+            sink.on_heartbeat(&env).await;
+        });
+    }
+
+    /// Terminal-success derivation → commit-once for the node.
+    fn fanout_graph_commit(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        attempt: u32,
+        result_ref: Option<String>,
+    ) {
+        let (graph_id, node_id) = (graph_id.to_string(), node_id.to_string());
+        self.graph_verb(move |sink| async move {
+            let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
+            sink.on_commit(&env, result_ref.as_deref()).await;
+        });
+    }
+
+    /// Terminal-failure derivation or a reaper revoke → attempt FAILED +
+    /// fence; the sink re-arms the node to READY while the retry budget
+    /// lasts, else fails it.
+    fn fanout_graph_fail(&self, graph_id: &str, node_id: &str, attempt: u32, reason: &str) {
+        let (graph_id, node_id, reason) = (
+            graph_id.to_string(),
+            node_id.to_string(),
+            reason.to_string(),
+        );
+        self.graph_verb(move |sink| async move {
+            let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
+            sink.on_fail(&env, &reason).await;
+        });
+    }
+
     /// Fire-and-forget INSERT of a newly-created task to the backend via
     /// `submit_task`.
     ///
@@ -1256,6 +1338,28 @@ impl TaskStore {
             // but we update the timestamp to reflect the change.
         }
 
+        // T3 (#639): graph-plane fan-out collected during the subtask loop,
+        // emitted after the `task` borrow ends (fire-and-forget, `None` sink
+        // = zero overhead; legacy behavior above and below untouched).
+        enum PendingGraphVerb {
+            Heartbeat,
+            Commit(Option<String>),
+            Fail(&'static str),
+        }
+        let mut graph_fanout: Vec<(String, u32, PendingGraphVerb)> = Vec::new();
+        let graph_verb_for = |status: &uc_types::SubtaskStatus, prev: &uc_types::SubtaskStatus| {
+            if status == prev {
+                return None;
+            }
+            match status {
+                uc_types::SubtaskStatus::InProgress => Some(PendingGraphVerb::Heartbeat),
+                uc_types::SubtaskStatus::Completed => Some(PendingGraphVerb::Commit(None)),
+                uc_types::SubtaskStatus::Failed => Some(PendingGraphVerb::Fail("worker_failed")),
+                uc_types::SubtaskStatus::Conflicted => Some(PendingGraphVerb::Fail("conflicted")),
+                _ => None,
+            }
+        };
+
         // Update subtasks — full upsert
         for subtask_update in &update.subtasks {
             if let Some(subtask) = task
@@ -1265,6 +1369,9 @@ impl TaskStore {
             {
                 // Existing subtask — update all provided fields
                 if let Some(status) = subtask_status_from_str(&subtask_update.status) {
+                    let prev_status = subtask.status.clone();
+                    let verb = graph_verb_for(&status, &prev_status);
+                    let attempt = subtask.dispatch_retry_count;
                     // Clear assigned-at tracking on any transition out of Assigned
                     // (we bypass update_subtask_status here, which would otherwise
                     // clear it). This is the highest-frequency path (worker pick-up
@@ -1280,6 +1387,18 @@ impl TaskStore {
                             .insert(subtask.id.0.clone(), chrono::Utc::now());
                     }
                     subtask.status = status;
+                    if let Some(verb) = verb {
+                        let verb = match verb {
+                            PendingGraphVerb::Commit(_) => PendingGraphVerb::Commit(
+                                subtask_update
+                                    .result
+                                    .clone()
+                                    .or_else(|| subtask.result.as_ref().map(|r| r.summary.clone())),
+                            ),
+                            other => other,
+                        };
+                        graph_fanout.push((subtask.id.0.clone(), attempt, verb));
+                    }
                 } else {
                     tracing::warn!(
                         subtask_id = %subtask_update.subtask_id,
@@ -1318,6 +1437,15 @@ impl TaskStore {
                 // New subtask from Python Orchestrator — use the same
                 // conversion as the rehydration path.
                 let new_subtask = nats_subtask_to_domain(&task.id.0, subtask_update);
+                if let Some(verb) =
+                    graph_verb_for(&new_subtask.status, &uc_types::SubtaskStatus::Pending)
+                {
+                    graph_fanout.push((
+                        new_subtask.id.0.clone(),
+                        new_subtask.dispatch_retry_count,
+                        verb,
+                    ));
+                }
                 task.subtasks.push(new_subtask);
                 // If a brand-new subtask arrives already Assigned (rare — usually
                 // Pending until dispatch_ready_subtasks marks it), track assigned-at
@@ -1382,6 +1510,22 @@ impl TaskStore {
         self.evict_completed_tasks();
         // Persist the updated task to the backend (fire-and-forget upsert).
         self.persist_task(&task_snapshot);
+        // T3: emit the collected graph-plane verbs now that the `task`
+        // borrow is dead (fire-and-forget; never fails the legacy update).
+        let graph_id = task_snapshot.id.0.clone();
+        for (node_id, attempt, verb) in graph_fanout {
+            match verb {
+                PendingGraphVerb::Heartbeat => {
+                    self.fanout_graph_heartbeat(&graph_id, &node_id, attempt);
+                }
+                PendingGraphVerb::Commit(result) => {
+                    self.fanout_graph_commit(&graph_id, &node_id, attempt, result);
+                }
+                PendingGraphVerb::Fail(reason) => {
+                    self.fanout_graph_fail(&graph_id, &node_id, attempt, reason);
+                }
+            }
+        }
     }
 
     /// Record an event from NATS (`uc.task.event`).
@@ -1477,6 +1621,10 @@ impl TaskStore {
         let mut affected_tasks = Vec::new();
         let mut reassigned = Vec::new();
         let mut snapshots: Vec<uc_types::Task> = Vec::new();
+        // T3 graph-plane waypoint: a dead worker's in-flight attempt must be
+        // fenced on the graph rows too (attempt FAILED + node re-armed or
+        // failed by budget). Collected here, emitted after the borrow ends.
+        let mut graph_fails: Vec<(String, String, u32)> = Vec::new();
         for task in self.tasks.values_mut() {
             let mut task_changed = false;
             for st in &mut task.subtasks {
@@ -1486,6 +1634,11 @@ impl TaskStore {
                 ) {
                     if let Some(ref w) = st.assigned_worker {
                         if stale_worker_ids.contains(&w.0) {
+                            graph_fails.push((
+                                task.id.0.clone(),
+                                st.id.0.clone(),
+                                st.dispatch_retry_count,
+                            ));
                             // Clear assigned-at tracking (we bypass
                             // update_subtask_status here, which would otherwise
                             // clear it on the Assigned→Pending transition).
@@ -1510,6 +1663,10 @@ impl TaskStore {
         }
         for task in &snapshots {
             self.persist_task(task);
+        }
+        let reaper_reason = "stale_worker";
+        for (graph_id, node_id, attempt) in graph_fails {
+            self.fanout_graph_fail(&graph_id, &node_id, attempt, reaper_reason);
         }
         (affected_tasks, reassigned)
     }
@@ -1565,11 +1722,22 @@ impl TaskStore {
             Some(t) => t,
             None => return,
         };
+        let mut schedule_attempt: Option<u32> = None;
         {
             let st = match task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) {
                 Some(s) => s,
                 None => return,
             };
+            // T3 graph-plane waypoint: both dispatch mouths
+            // (`publish_ready_subtasks` / `dispatch_ready_subtasks`) mark
+            // Assigned exactly here, so the schedule verb rides the single
+            // shared mutation (first-time marking only — a re- Assigned of
+            // an already-Assigned subtask is not a new attempt).
+            let going_assigned = new_status == uc_types::SubtaskStatus::Assigned
+                && st.status != uc_types::SubtaskStatus::Assigned;
+            if going_assigned {
+                schedule_attempt = Some(st.dispatch_retry_count);
+            }
             // Track Assigned-at so stale Assigned subtasks (no worker ever
             // picked them up) can be reverted to Pending by the heartbeat
             // monitor. Clear on any transition out of Assigned.
@@ -1584,6 +1752,9 @@ impl TaskStore {
         }
         // st borrow dropped — safe to clone task for persist.
         let task_snapshot = task.clone();
+        if let Some(attempt) = schedule_attempt {
+            self.fanout_graph_schedule(task_id, subtask_id, attempt, None);
+        }
         self.persist_task(&task_snapshot);
     }
 
@@ -1612,10 +1783,16 @@ impl TaskStore {
         }
         let mut affected = Vec::new();
         let mut snapshots: Vec<uc_types::Task> = Vec::new();
+        // T3 graph-plane waypoint (300s stale-Assigned reaper): the dispatch
+        // never reached a live worker — fence the attempt on the graph rows
+        // with the *pre-increment* dispatch attempt id (that is the attempt
+        // that was scheduled), before `dispatch_retry_count` moves forward.
+        let mut graph_fails: Vec<(String, String, u32)> = Vec::new();
         for task in self.tasks.values_mut() {
             let mut task_changed = false;
             for st in &mut task.subtasks {
                 if stale_ids.contains(&st.id.0) && st.status == uc_types::SubtaskStatus::Assigned {
+                    graph_fails.push((task.id.0.clone(), st.id.0.clone(), st.dispatch_retry_count));
                     st.status = uc_types::SubtaskStatus::Pending;
                     st.assigned_worker = None;
                     st.dispatch_retry_count = st.dispatch_retry_count.saturating_add(1);
@@ -1640,6 +1817,9 @@ impl TaskStore {
         }
         for task in &snapshots {
             self.persist_task(task);
+        }
+        for (graph_id, node_id, attempt) in graph_fails {
+            self.fanout_graph_fail(&graph_id, &node_id, attempt, "stale_assigned_timeout");
         }
         affected
     }
@@ -6952,17 +7132,52 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    // ── T2 graph shadow write (fake sink, no PG) ───────────────────
+    // ── T2 graph shadow write + T3 graph verb fan-out (fake sink, no PG) ──
 
     #[derive(Default)]
     struct RecordingGraphSink {
         seen: std::sync::Mutex<Vec<String>>,
+        verbs: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingGraphSink {
+        fn take_verbs(&self) -> Vec<String> {
+            std::mem::take(&mut *self.verbs.lock().unwrap())
+        }
     }
 
     #[async_trait::async_trait]
     impl uc_engine::GraphShadowSink for RecordingGraphSink {
         async fn shadow_persist(&self, task: &uc_types::Task) {
             self.seen.lock().unwrap().push(task.id.0.clone());
+        }
+        async fn on_schedule(&self, env: &uc_types::ExecutionEnvelope, worker: Option<&str>) {
+            self.verbs.lock().unwrap().push(format!(
+                "schedule {}:{}:{}",
+                env.graph_id,
+                env.node_id,
+                worker.unwrap_or("-")
+            ));
+        }
+        async fn on_heartbeat(&self, env: &uc_types::ExecutionEnvelope) {
+            self.verbs
+                .lock()
+                .unwrap()
+                .push(format!("heartbeat {}:{}", env.graph_id, env.node_id));
+        }
+        async fn on_commit(&self, env: &uc_types::ExecutionEnvelope, result: Option<&str>) {
+            self.verbs.lock().unwrap().push(format!(
+                "commit {}:{}:{}",
+                env.graph_id,
+                env.node_id,
+                result.unwrap_or("-")
+            ));
+        }
+        async fn on_fail(&self, env: &uc_types::ExecutionEnvelope, reason: &str) {
+            self.verbs
+                .lock()
+                .unwrap()
+                .push(format!("fail {}:{}:{}", env.graph_id, env.node_id, reason));
         }
     }
 
@@ -7004,5 +7219,266 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         // No panic, no backend writes — the HashMap/PG path is untouched.
         assert!(store.get_task("shadow-2").is_none());
+    }
+
+    // ── T3 (#639): graph-plane verb fan-out at the mutation waypoints ──
+
+    fn yielded() -> impl std::future::Future<Output = ()> {
+        // Yield so the fire-and-forget verb spawns run (same convention as
+        // the EventStore append + T2 shadow-fanout tests).
+        tokio::time::sleep(std::time::Duration::from_millis(50))
+    }
+
+    fn wired_store() -> (TaskStore, Arc<RecordingGraphSink>) {
+        let mut store = TaskStore::new();
+        let sink = Arc::new(RecordingGraphSink::default());
+        store.set_graph_shadow(sink.clone());
+        (store, sink)
+    }
+
+    /// Publish/dispatch mark subtasks `Assigned` through
+    /// `update_subtask_status` (both mouths), so the schedule verb rides the
+    /// shared mutation — once per fresh dispatch, never on re-marking.
+    #[tokio::test]
+    async fn graph_schedule_verb_fires_on_assigned_marking() {
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        yielded().await;
+        assert_eq!(
+            sink.take_verbs(),
+            vec![format!("schedule {task_id}:{st_id}:-")],
+            "Assigned marking fans out exactly one schedule verb"
+        );
+
+        // Re-marking the same subtask Assigned is not a new attempt.
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        yielded().await;
+        assert!(
+            sink.take_verbs().is_empty(),
+            "Assigned→Assigned must not re-schedule"
+        );
+
+        // Non-Assigned transitions never fire schedule.
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::InProgress);
+        yielded().await;
+        assert!(sink.take_verbs().is_empty());
+    }
+
+    /// The `uc.task.update` terminal-derivation path fans
+    /// InProgress→heartbeat, Completed→commit (with the result as
+    /// result_ref), Failed/Conflicted→fail — one verb per real transition.
+    #[tokio::test]
+    async fn graph_verbs_fire_at_update_waypoints() {
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        sink.take_verbs();
+
+        let mut update = NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "in_progress".to_string(),
+                assigned_worker: Some("w1".to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+            }],
+            result: None,
+        };
+        store.apply_update(&update);
+        yielded().await;
+        assert_eq!(
+            sink.take_verbs(),
+            vec![format!("heartbeat {task_id}:{st_id}")]
+        );
+
+        // Duplicate report of the same status is not a transition — no verb.
+        store.apply_update(&update);
+        yielded().await;
+        assert!(sink.take_verbs().is_empty());
+
+        update.subtasks[0].status = "completed".to_string();
+        update.subtasks[0].result = Some("did it".to_string());
+        store.apply_update(&update);
+        yielded().await;
+        assert_eq!(
+            sink.take_verbs(),
+            vec![format!("commit {task_id}:{st_id}:did it")],
+            "terminal Completed derives commit_once with the result"
+        );
+
+        // A brand-new already-failed subtask (late worker result for an
+        // unknown node) derives fail on creation.
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "late-fail".to_string(),
+                status: "failed".to_string(),
+                assigned_worker: None,
+                description: Some("late".to_string()),
+                depends_on: None,
+                result: None,
+            }],
+            result: None,
+        });
+        yielded().await;
+        assert_eq!(
+            sink.take_verbs(),
+            vec![format!("fail {task_id}:late-fail:worker_failed")]
+        );
+    }
+
+    /// Both reaper paths (stale worker + 300s stale Assigned) fan a
+    /// `fail` verb with the pre-increment dispatch attempt — the legacy
+    /// reassign behavior itself stays byte-identical.
+    #[tokio::test]
+    async fn graph_fail_verbs_fire_at_reaper_waypoints() {
+        // Stale worker path.
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-1".to_string()));
+        }
+        let (_affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
+        assert_eq!(reassigned, vec![st_id.clone()]);
+        yielded().await;
+        assert_eq!(
+            sink.take_verbs(),
+            vec![format!("fail {task_id}:{st_id}:stale_worker")]
+        );
+
+        // Stale Assigned (300s) path — schedule fires on the marking, fail
+        // fires on the revert with the attempt that was scheduled (0), and
+        // the next dispatch would carry attempt 1 (increment untouched).
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
+        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
+        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        assert_eq!(affected, vec![task_id.clone()]);
+        yielded().await;
+        let verbs = sink.take_verbs();
+        assert_eq!(verbs.len(), 2, "schedule then fail, got {verbs:?}");
+        assert_eq!(verbs[0], format!("schedule {task_id}:{st_id}:-"));
+        assert_eq!(
+            verbs[1],
+            format!("fail {task_id}:{st_id}:stale_assigned_timeout")
+        );
+        // Legacy increment semantics preserved (fail rode the OLD attempt).
+        let got = store.get_task(&task_id).unwrap();
+        assert_eq!(got.subtasks[0].dispatch_retry_count, 1);
+    }
+
+    /// All four verbs fire across the three waypoint families, and the
+    /// shadow_persist fan-out keeps running beside them (persist_task
+    /// untouched by T3).
+    #[tokio::test]
+    async fn graph_all_four_verbs_fan_out_at_waypoints() {
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "completed".to_string(),
+                assigned_worker: Some("w1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("ok".to_string()),
+            }],
+            result: None,
+        });
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
+        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
+        store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        yielded().await;
+
+        let verbs = sink.take_verbs();
+        let kinds: Vec<&str> = verbs
+            .iter()
+            .map(|v| v.split(' ').next().unwrap_or("?"))
+            .collect();
+        assert!(kinds.contains(&"schedule"), "verbs: {verbs:?}");
+        assert!(kinds.contains(&"commit"), "verbs: {verbs:?}");
+        assert!(kinds.contains(&"fail"), "verbs: {verbs:?}");
+        // heartbeat already exercised separately; here InProgress was never
+        // reported, so assert the three that must exist and that every verb
+        // string is well-formed.
+        assert!(
+            verbs.iter().all(|v| v.starts_with("schedule ")
+                || v.starts_with("heartbeat ")
+                || v.starts_with("commit ")
+                || v.starts_with("fail ")),
+            "verbs: {verbs:?}"
+        );
+        assert!(
+            !sink.seen.lock().unwrap().is_empty(),
+            "shadow_persist must keep fanning out beside the verbs"
+        );
+    }
+
+    /// With no sink wired, every T3 hook site must be structurally inert
+    /// (sync test — no runtime, no spawn, no panic): legacy behavior is the
+    /// whole surface.
+    #[test]
+    fn graph_verb_hooks_inert_without_sink() {
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "completed".to_string(),
+                assigned_worker: None,
+                description: None,
+                depends_on: None,
+                result: Some("r".to_string()),
+            }],
+            result: None,
+        });
+        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
+        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
+        store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("w9".to_string()));
+        }
+        store.reassign_stale_subtasks(&["w9".to_string()]);
+        let got = store.get_task(&task_id).unwrap();
+        assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Pending);
     }
 }
