@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-09-13
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~109 | Active |
+| `journal-1.md` | ~148 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-09-13 | T3: graph state machine + NodeCompletion commit-once + attempt lifecycle (#639) | `53983b1e`, `fa56066d`, `1857316b` | `main` |
 | 3 | 2026-09-13 | T2: graph row tables + one-shot import (#638) | `28b66e92`, `8f82b7bb` | `main` |
 | 2 | 2026-09-12 | T1: execution envelope + contract_version handshake (#637) | `e1f207e8`, `215e11d1`, `30bba2e0` | `main` |
 | 1 | 2026-09-08 | Scheduler job pause/resume | `12b8cf6` | `main` |
