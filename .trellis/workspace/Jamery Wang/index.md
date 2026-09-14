@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~427 | Active |
+| `journal-1.md` | ~460 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-09-14 | T8 ExecutionScope delivered (#650) | `80714d3` | `main` |
 | 8 | 2026-09-14 | T7 #643 node/attempt 级取消 + cancel-attempt-keep-node | `b15c4c8`, `12c0944`, `029ceb9` | `main` |
 | 7 | 2026-09-14 | T6 #642 authority flip: C1-C7 + D6 delivered, task archived | `df8a8e9`, `c353c5f`, `33f9724`, `765068b`, `5ea60df`, `e4cb8f6`, `217c49f`, `7d3b207` | `main` |
 | 6 | 2026-09-14 | T5 #641 统一 Executor trait 落地完成（JetStream 硬依赖 / effect_class 白名单 / 分解分叉删除） | `feca89f`, `c3d067f`, `91c7d2d`, `8db5ef8`, `4215799`, `8cd7e01e`, `7ce2e758` | `main` |

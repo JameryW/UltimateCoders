@@ -425,3 +425,36 @@ C1-C5 全切片交付：graph 取消原语、网关三路分派、worker killpg 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: T8 ExecutionScope delivered (#650)
+
+**Date**: 2026-09-14
+**Task**: T8 ExecutionScope delivered (#650)
+**Branch**: `main`
+
+### Summary
+
+D8 #645 落地：submit 三入口 project_id 非空校验+创建后不可变；upsert_task_shadow 拒空 scope（graph_scope_is_valid）；RegisterWorkerRequest.projects（open worker 语义）+UC_WORKER_PROJECTS 全链贯穿；dispatch_gate 扩 scope 硬过滤（NoScopeMatchedWorker，keep Pending）。基线只增：Rust 439/381/204+8/36/35，pytest 997+5。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80714d3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
