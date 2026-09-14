@@ -145,6 +145,10 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				return currentStatus
 					? `${verb} failed: task "${tid}" is ${currentStatus}, not ${verb.toLowerCase()}-able`
 					: `${verb} failed: task "${tid}" is not in a ${verb.toLowerCase()}-able state`;
+			case "rpc_failed":
+				// T6 #642 C3 — authority flip: the Rust RPC is the mutation; when it
+				// fails nothing changed locally (and nothing will until it succeeds).
+				return `${verb} failed: the Rust gateway did not confirm the request — local state left unchanged`;
 		}
 	}
 

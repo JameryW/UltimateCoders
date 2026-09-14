@@ -16,7 +16,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
 import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef, type WorkflowStepDef, type DispatchMode } from "./scheduler";
-import { GrpcBridge } from "./grpc-bridge";
+import { GrpcBridge, type TaskSync } from "./grpc-bridge";
 import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
 import { ControlSignalSubscriber, type ControlSignalHandler } from "./control-signal-subscriber";
@@ -187,7 +187,7 @@ export function parseReviewOutput(
  */
 export type ControlOutcome =
 	| { ok: true; taskId: string }
-	| { ok: false; reason: "not_found" | "ambiguous" | "subtask_not_found" | "bad_state"; candidates?: string[] };
+	| { ok: false; reason: "not_found" | "ambiguous" | "subtask_not_found" | "bad_state" | "rpc_failed"; candidates?: string[] };
 
 interface OrchestratorConfig {
 	enableReview: boolean;
@@ -315,9 +315,13 @@ export class UCOrchestrator {
 		// Wire connection state events — works for both external and default bridge
 		this.bridge.setOnConnectionChange((connected: boolean) => {
 			this.events.emit("connection_state", { connected });
-			// On reconnect, bulk resync local tasks to the (now-empty) server
+			// T6 #642 C3 — authority flip: on connection rise the orchestrator
+			// PULLS task state from the Rust server (listTasks) instead of
+			// pushing local state up. From here on the local Map is a projection
+			// of the server; actively-executing local tasks are kept until C4's
+			// claim loop replaces local execution wholesale.
 			if (connected && !this.wasConnected) {
-				this.resyncAllTasksToGrpc();
+				void this.pullTasksFromGrpc();
 			}
 			this.wasConnected = connected;
 		});
@@ -334,37 +338,18 @@ export class UCOrchestrator {
 		this.controlSubscriber = new ControlSignalSubscriber(this as ControlSignalHandler, this.bridge);
 	}
 
-	/** Restore recoverable tasks from disk. Call once at startup. */
+	/**
+	 * Initialize session resources. Call once at startup.
+	 *
+	 * T6 #642 C3 — `.uc/tasks` is a UI projection cache now: disk restore no
+	 * longer seeds the task map. The authority is the Rust server, and the
+	 * connection-rise pull (pullTasksFromGrpc) populates the map when the
+	 * gateway is reachable. Deleting the cache files is safe — the UI view
+	 * rebuilds from Rust (the T2 startup import covers the gateway's own
+	 * cold-start recovery).
+	 */
 	async restore(): Promise<void> {
 		await this.store.init();
-		const recoverable = await this.store.loadRecoverable();
-		for (const p of recoverable) {
-			const cp = await this.store.loadCheckpoint(p.id);
-			// ponytail: F46 — prefer the NEWER artifact, not blindly the
-			// checkpoint. Checkpoints are only written at wave boundaries while
-			// the task file is persisted on every state transition; after a
-			// mid-wave crash the old unconditional checkpoint preference rolled
-			// completed subtasks back to the previous boundary, re-running them
-			// on files they had already edited. Legacy checkpoints without
-			// savedAt keep the historical preference (treated as newest).
-			let source = p;
-			if (cp) {
-				const taskTs = p.savedAt ?? 0;
-				const cpTs = cp.savedAt ?? Infinity;
-				if (cpTs >= taskTs) source = cp;
-			}
-			const task = this.fromPersisted(source);
-			this.tasks.set(task.id, task);
-			// Update counter to avoid ID collision
-			const counterPart = task.id.match(/^uc-(\d+)-/)?.[1];
-			if (counterPart) {
-				const n = parseInt(counterPart, 10);
-				if (n > this.taskCounter) this.taskCounter = n;
-			}
-		}
-		if (recoverable.length > 0) {
-			this.pi.logger.info(`Restored ${recoverable.length} task(s) from disk`);
-		}
 		// Start NATS control subscriber (or polling fallback) — non-blocking
 		this.controlSubscriber.start().catch((err) => {
 			this.pi.logger.warn(`ControlSubscriber start failed: ${err}`);
@@ -1173,11 +1158,14 @@ export class UCOrchestrator {
 		const task = resolved;
 		if (task.status !== "in_progress" && task.status !== "planning") return { ok: false, reason: "bad_state" };
 
+		// T6 #642 C3 — authority flip: the pause takes effect via the Rust RPC
+		// first; the local mirror is only updated when the server confirms. On
+		// RPC failure the local state is left untouched (no persist, no cache).
+		const ok = await this.bridge.pauseTask(task.id);
+		if (!ok) return { ok: false, reason: "rpc_failed" };
 		task.controlState = "paused";
 		await this.persist(task);
-		this.syncTaskToGrpc(task);
-		this.bridge.pauseTask(task.id).catch((err) => { this.pi.logger.warn(`Failed to sync pause to gRPC: ${err}`); });
-		ctx?.ui.notify(`Task ${task.id} pausing (will stop after current wave)`, "info");
+		ctx?.ui.notify(`Task ${task.id} pausing (server dispatch gate closed)`, "info");
 		return { ok: true, taskId: task.id };
 	}
 
@@ -1187,54 +1175,28 @@ export class UCOrchestrator {
 		const task = resolved;
 		if (task.controlState !== "paused" && task.status !== "failed") return { ok: false, reason: "bad_state" };
 
+		// T6 #642 C3 — authority flip: resume takes effect via the Rust RPC
+		// first; node-state surgery (failed→pending reset, wave rebuild,
+		// re-execution) is the server's job now. The local mirror adopts only
+		// the control flip; C4's claim loop re-enters execution from Rust state.
+		const ok = await this.bridge.resumeTask(task.id);
+		if (!ok) return { ok: false, reason: "rpc_failed" };
+
 		task.controlState = "running";
-		task.status = "in_progress";
 		task.error = undefined;
-		task.resumeFromWave = undefined;
-		this.abortControllers.set(task.id, new AbortController());
-		this.bridge.resumeTask(task.id).catch((err) => { this.pi.logger.warn(`Failed to sync resume to gRPC: ${err}`); });
-		this.syncTaskToGrpc(task);
-
-		// Reset failed subtasks back to pending (skip completed ones)
-		for (const st of task.subtasks) {
-			if (st.status === "failed") {
-				st.status = "pending";
-				st.error = undefined;
-				st.result = undefined;
-				st.retryCount = 0;
-			}
-		}
-
-		// Rebuild waves from current subtask state (pending + running, skip completed/cancelled)
-		const pendingDefs: SubtaskDef[] = task.subtasks
-			.filter((s) => s.status === "pending" || s.status === "running")
-			.map((s) => ({
-				id: s.id,
-				description: s.description,
-				dependsOn: s.dependsOn,
-				files: s.files,
-				dispatchMode: s.dispatchMode,
-				requiredCapabilities: s.requiredCapabilities,
-				steps: s.steps,
-			}));
-
-		if (pendingDefs.length === 0) {
+		// Terminal-inference kept from the legacy path: nothing left to run →
+		// the task completes (pause/cancel of a completed task must keep
+		// failing bad_state, and the server projection will agree).
+		const hasOpen = task.subtasks.some((s) => s.status !== "completed" && s.status !== "cancelled");
+		if (hasOpen) {
+			task.status = "in_progress";
+		} else {
 			task.status = "completed";
 			task.completedAt = Date.now();
-			await this.persist(task);
-			this.syncTaskToGrpc(task);
-			ctx?.ui.notify(`Task ${task.id}: all subtasks already completed`, "info");
-			return { ok: true, taskId: task.id };
 		}
-
-		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
-		ctx?.ui.notify(`Task ${task.id}: resuming with ${pendingDefs.length} pending subtask(s)`, "info");
-			this.events.emit("task_resumed", { taskId: task.id });
-
-		// Execute remaining waves — stub ctx if not provided (ponytail: rpc server doesn't have omp context)
-		const execCtx = ctx ?? stubContext();
-		await this.executeWaves(task, waves, execCtx);
+		ctx?.ui.notify(`Task ${task.id}: resumed (Rust re-dispatches ready nodes)`, "info");
+		this.events.emit("task_resumed", { taskId: task.id });
 		return { ok: true, taskId: task.id };
 	}
 
@@ -2099,15 +2061,75 @@ export class UCOrchestrator {
 		});
 	}
 
-	/** Bulk resync all local tasks to gRPC server after reconnect. Fire-and-forget. */
-	private resyncAllTasksToGrpc(): void {
-		const count = this.tasks.size;
-		if (count === 0) return;
-		this.pi.logger.info(`gRPC reconnected — resyncing ${count} local task(s) to server`);
-		for (const task of this.tasks.values()) {
-			this.bridge.upsertTask(this.toPersisted(task)).catch((err) => {
-				this.pi.logger.warn(`Resync failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-			});
+	/**
+	 * Convert a server TaskSync projection into a local TaskState mirror entry.
+	 * T6 #642 C3 — the server is the authority; the conversion is lossy by
+	 * design (files/steps/timestamps are dispatch metadata the server owns —
+	 * the mirror carries only what the UI renders).
+	 */
+	private fromServerSync(t: TaskSync): TaskState {
+		return {
+			id: t.taskId,
+			description: String(t.description ?? "").replace(/\s+/g, " ").trim(),
+			status: t.status as TaskState["status"],
+			controlState: "running",
+			subtasks: (t.subtasks ?? []).map((s) => ({
+				id: String(s.id ?? "").replace(/\s+/g, "").trim(),
+				description: String(s.description ?? "").replace(/\s+/g, " ").trim(),
+				status: s.status as SubtaskResult["status"],
+				dependsOn: (s.dependsOn ?? []).map((d) => String(d).trim()).filter(Boolean),
+				files: [], // server projection carries no file constraints (dispatch metadata)
+				result: s.result || undefined,
+				retryCount: s.retryCount,
+			})),
+			createdAt: Date.now(),
+		};
+	}
+
+	/**
+	 * T6 #642 C3 — authority flip: on connection rise, PULL the server's task
+	 * list and backfill the local map as a read-only projection. Replaces the
+	 * legacy push-resync (deleted): TS no longer
+	 * bulk-pushes local state to the server. Locally-executing tasks (this
+	 * session holds an AbortController for them) are kept until C4's claim
+	 * loop replaces local execution — per-transition syncs keep converging
+	 * the server rows in the meantime.
+	 */
+	private async pullTasksFromGrpc(): Promise<void> {
+		try {
+			const serverTasks = await this.bridge.listTasks();
+			let adopted = 0;
+			let keptActive = 0;
+			for (const t of serverTasks) {
+				const local = this.tasks.get(t.taskId);
+				if (local && this.abortControllers.has(t.taskId)
+					&& (local.status === "in_progress" || local.status === "planning")) {
+					keptActive++;
+					continue;
+				}
+				this.tasks.set(t.taskId, this.fromServerSync(t));
+				adopted++;
+			}
+			// ID-counter recovery now rides the pull (disk restore no longer does it)
+			for (const id of this.tasks.keys()) {
+				const n = parseInt(/^uc-(\d+)-/.exec(id)?.[1] ?? "", 10);
+				if (Number.isFinite(n) && n > this.taskCounter) this.taskCounter = n;
+			}
+			// Refresh the .uc/tasks projection cache for adopted tasks (UI offline view)
+			for (const t of serverTasks) {
+				const mirror = this.tasks.get(t.taskId);
+				if (mirror) {
+					this.persist(mirror).catch((err) => {
+						this.pi.logger.warn(`Cache refresh failed for ${t.taskId}: ${err instanceof Error ? err.message : String(err)}`);
+					});
+				}
+			}
+			this.pi.logger.info(
+				`gRPC pull: adopted ${adopted} task(s) from server`
+				+ (keptActive > 0 ? ` (${keptActive} actively-executing local task(s) kept)` : ""),
+			);
+		} catch (err) {
+			this.pi.logger.warn(`gRPC pull failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
 

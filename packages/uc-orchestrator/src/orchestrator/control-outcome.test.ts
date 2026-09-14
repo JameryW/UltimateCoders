@@ -36,8 +36,12 @@ function makeOrchestrator(): Promise<UCOrchestrator> {
 		setOnReconnectAttempt: () => {},
 		startWatchTask: () => ({ abort: () => {} }),
 		upsertTask: () => Promise.resolve(),
-		pauseTask: () => Promise.resolve(),
-		resumeTask: () => Promise.resolve(),
+		// T6 #642 C3 — pause/resume are RPC-first now: the orchestrator gates
+		// the local mirror on the bridge response, so the stub must honor the
+		// real GrpcBridge contract (Promise<boolean>).
+		pauseTask: () => Promise.resolve(true),
+		resumeTask: () => Promise.resolve(true),
+		listTasks: () => Promise.resolve([]),
 	} as unknown as GrpcBridge;
 	const orch = new UCOrchestrator(pi as never, undefined, bridge);
 	return orch.restore().then(() => orch);
