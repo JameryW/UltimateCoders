@@ -87,6 +87,17 @@ pub enum EffectClass {
     RequiresWorker,
 }
 
+impl EffectClass {
+    /// Column/wire token (`graph_nodes.effect_class` values).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EffectClass::ReadOnly => "read_only",
+            EffectClass::LocalSafe => "local_safe",
+            EffectClass::RequiresWorker => "requires_worker",
+        }
+    }
+}
+
 /// A subtask assigned to a worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subtask {

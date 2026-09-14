@@ -13,6 +13,7 @@
 pub mod config;
 pub mod dependency;
 pub mod dispatcher;
+pub mod executor;
 pub mod lock;
 pub mod migration;
 pub mod night_window;
@@ -21,6 +22,10 @@ pub mod store;
 
 pub use dependency::resolve_execution_order;
 pub use dispatcher::{EngineSubmitDispatcher, OrchestratorDispatcher, WindowEventType};
+pub use executor::{
+    AttemptOutcome, AttemptStatus, Executor, ExecutorError, ExecutorSelector, LocalExecutor,
+    LocalNodeHandler, RemoteExecutor, RouteDecision, SandboxExecutor,
+};
 pub use lock::{LockProvider, NoOpLockProvider};
 pub use night_window::{NightWindow, NightWindowError};
 pub use service::{
@@ -33,3 +38,5 @@ pub use store::PostgresScheduleStore;
 
 #[cfg(feature = "messaging")]
 pub use dispatcher::publish_window_event;
+#[cfg(feature = "messaging")]
+pub use executor::NatsExecutor;

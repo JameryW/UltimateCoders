@@ -170,6 +170,9 @@ pub struct NodeRow {
     pub state: String,
     pub dependencies: serde_json::Value,
     pub required_capabilities: serde_json::Value,
+    /// D4 #633 Q2: governs local-execution eligibility on transport loss.
+    /// Legacy projections default to 'requires_worker'.
+    pub effect_class: String,
 }
 
 #[derive(Debug, Clone)]
@@ -269,6 +272,7 @@ pub fn project_task(task: &Task) -> GraphProjection {
                     .collect(),
             ),
             required_capabilities: serde_json::json!(st.required_capabilities),
+            effect_class: st.effect_class.as_str().to_string(),
         });
         let worker_id = st
             .result
@@ -347,6 +351,9 @@ pub struct TsSubtask {
     pub retry_count: Option<u32>,
     #[serde(default)]
     pub required_capabilities: Option<Vec<String>>,
+    /// D4 #633 Q2 — additive; absent in legacy TS snapshots.
+    #[serde(default)]
+    pub effect_class: Option<String>,
 }
 
 /// Project a TS `PersistedTask` (camelCase) into the row shape.
@@ -375,6 +382,12 @@ pub fn project_ts_task(task: &TsPersistedTask) -> GraphProjection {
                 .required_capabilities
                 .clone()
                 .unwrap_or_default()),
+            // TS planner does not emit effect_class yet (additive field);
+            // legacy projections stay 'requires_worker'.
+            effect_class: st
+                .effect_class
+                .clone()
+                .unwrap_or_else(|| "requires_worker".to_string()),
         });
         let (attempt, completion) = attempt_and_completion(
             &graph_id,
@@ -760,15 +773,16 @@ impl GraphStore {
         stats.graphs = res.rows_affected();
 
         let node_sql = if shadow {
-            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class)
+               VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (node_id, graph_id) DO UPDATE SET
                    state = EXCLUDED.state,
                    dependencies = EXCLUDED.dependencies,
-                   required_capabilities = EXCLUDED.required_capabilities"#
+                   required_capabilities = EXCLUDED.required_capabilities,
+                   effect_class = EXCLUDED.effect_class"#
         } else {
-            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class)
+               VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (node_id, graph_id) DO NOTHING"#
         };
         for node in &p.nodes {
@@ -778,6 +792,7 @@ impl GraphStore {
                 .bind(&node.state)
                 .bind(&node.dependencies)
                 .bind(&node.required_capabilities)
+                .bind(&node.effect_class)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| EngineError::StorageError(format!("node insert: {}", e)))?;
