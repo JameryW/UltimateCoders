@@ -316,6 +316,16 @@ message ResumeTaskResponse {
 
 message CancelTaskRequest {
     string task_id = 1;
+    // T7 #643 — cancel granularity. Both absent = task-level (existing
+    // semantics: task → Failed, all open subtasks → Failed).
+    // subtask_id present = node-level cancel: the node goes CANCELLED
+    // (terminal) together with its downstream dependency closure; siblings
+    // are untouched. attempt_no present (requires subtask_id) =
+    // attempt-level cancel-attempt-keep-node: the attempt is fenced and
+    // the node returns to READY for re-dispatch (the pause grace-timeout
+    // escalation is the first internal caller, D6 #635).
+    optional string subtask_id = 2;
+    optional uint32 attempt_no = 3;
 }
 
 message CancelTaskResponse {

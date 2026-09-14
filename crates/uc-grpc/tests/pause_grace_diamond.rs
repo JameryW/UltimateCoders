@@ -215,6 +215,7 @@ async fn diamond_pause_commit_branch_grace_hard_stop_resume_redispatch() {
         Duration::from_millis(80),
         legacy.clone(),
         timers.clone(),
+        uc_grpc::server::no_pause_grace_nats(),
     );
     tokio::time::sleep(Duration::from_millis(400)).await;
 

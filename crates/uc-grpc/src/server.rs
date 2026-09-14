@@ -1803,6 +1803,43 @@ impl TaskStore {
         self.last_heartbeat
     }
 
+    /// T7 #643 — legacy mirror of a node-level cancel: the listed subtasks
+    /// (the graph plane's CANCELLED closure) go to `Failed` — the wire
+    /// vocabulary has no distinct cancelled row (T4 mapping: mirror
+    /// `cancelled` rides Failed semantics), so the graph `CANCELLED` state
+    /// and a legacy `Failed` row are the same fact on the wire. Completed
+    /// subtasks are untouched. Returns how many rows moved.
+    pub fn fail_subtasks(&mut self, task_id: &str, subtask_ids: &[String]) -> usize {
+        let Some(task) = self.tasks.get_mut(task_id) else {
+            return 0;
+        };
+        let mut moved = 0;
+        for st in &mut task.subtasks {
+            if !subtask_ids.iter().any(|id| id == &st.id.0) {
+                continue;
+            }
+            if matches!(
+                st.status,
+                uc_types::SubtaskStatus::InProgress
+                    | uc_types::SubtaskStatus::Pending
+                    | uc_types::SubtaskStatus::Assigned
+            ) {
+                if st.status == uc_types::SubtaskStatus::Assigned {
+                    self.assigned_subtask_times.remove(&st.id.0);
+                }
+                st.status = uc_types::SubtaskStatus::Failed;
+                st.assigned_worker = None;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            task.updated_at = chrono::Utc::now();
+            let snapshot = task.clone();
+            self.persist_task(&snapshot);
+        }
+        moved
+    }
+
     /// Get subtasks that are ready to be dispatched for a given task.
     ///
     /// A subtask is "ready" when:
@@ -2358,51 +2395,231 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
     /// the NATS subscriber skips the echo of our own message.
     #[cfg(feature = "messaging")]
     async fn publish_task_status_event(&self, task_id: &str, event_type: &str) {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        if let Some(nats_client) = &self.inner.nats_client {
-            let ts_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            let message_id = format!("{}:{}::{}", task_id, event_type, ts_ms);
-            let event = NatsTaskEvent {
-                v: default_event_version(),
-                message_id: Some(message_id.clone()),
-                r#type: event_type.to_string(),
-                task_id: task_id.to_string(),
-                subtask_id: None,
-                data: serde_json::Map::new(),
-            };
-            match serde_json::to_vec(&event) {
-                Ok(bytes) => {
-                    if let Err(e) = nats_client
-                        .publish(NATS_SUBJECT_TASK_EVENT.to_string(), bytes.into())
-                        .await
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            event_type = %event_type,
-                            "Failed to publish NATS task status event"
-                        );
-                    } else {
-                        // Register message_id in dedup map so the NATS
-                        // subscriber skips the echo of our own message.
-                        let mut store = self.inner.task_store.lock().await;
-                        store.check_and_record_message_id(&Some(message_id));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to serialize NATS task status event"
-                    );
-                }
-            }
-        }
+        publish_task_control_event(
+            self.inner.nats_client.as_ref(),
+            &self.inner.task_store,
+            task_id,
+            event_type,
+            None,
+            serde_json::Map::new(),
+        )
+        .await;
     }
 
     #[cfg(not(feature = "messaging"))]
     async fn publish_task_status_event(&self, _task_id: &str, _event_type: &str) {}
+
+    /// T7 #643 — granular variant of `publish_task_status_event`: the
+    /// subtask/node identity rides the `subtask_id` slot and extra detail
+    /// (attempt_id, reason, rearm state, ...) rides the `data` map. Same
+    /// dedup discipline as the coarse event: the message_id is registered
+    /// so the gateway's own NATS subscriber skips the echo.
+    #[cfg(feature = "messaging")]
+    async fn publish_task_control_event(
+        &self,
+        task_id: &str,
+        event_type: &str,
+        subtask_id: Option<&str>,
+        data: serde_json::Map<String, serde_json::Value>,
+    ) {
+        publish_task_control_event(
+            self.inner.nats_client.as_ref(),
+            &self.inner.task_store,
+            task_id,
+            event_type,
+            subtask_id,
+            data,
+        )
+        .await;
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    async fn publish_task_control_event(
+        &self,
+        _task_id: &str,
+        _event_type: &str,
+        _subtask_id: Option<&str>,
+        _data: serde_json::Map<String, serde_json::Value>,
+    ) {
+    }
+
+    /// T7 #643 — attempt-level cancel (`subtask_id` + `attempt_no`):
+    /// cancel-attempt-keep-node (D6 #635). The graph plane fences the
+    /// node's RUNNING attempt (epoch bump; the standard retry budget drives
+    /// RearmedToReady vs NodeFailed), the legacy mirror requeues the
+    /// subtask row (rearmed → Pending) or marks it Failed, and an
+    /// `attempt_cancelled` control event tells the worker to kill the
+    /// running process. `attempt_no` is informational — the graph plane
+    /// fences whatever attempt is currently RUNNING (the wire has no
+    /// per-attempt selector; the epoch is the fence). When the node
+    /// re-arms and the task is still InProgress, ready work is re-dispatched
+    /// immediately — the node stays alive, only the attempt was cancelled.
+    async fn cancel_task_attempt_granular(
+        &self,
+        task_id: &str,
+        node_id: &str,
+    ) -> CancelTaskResponse {
+        let swept = {
+            let store = self.inner.task_store.lock().await;
+            match store.graph_shadow() {
+                Some(sink) => sink.cancel_running_attempt(task_id, node_id).await,
+                None => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        node_id = %node_id,
+                        "Attempt-level cancel: no graph shadow wired"
+                    );
+                    None
+                }
+            }
+        };
+        let Some(s) = swept else {
+            return CancelTaskResponse {
+                success: false,
+                task_id: task_id.to_string(),
+                status: String::new(),
+                error: Some(format!(
+                    "no running attempt to cancel for node {node_id} (shadow off, terminal already, or the cancel lost a race with a commit)"
+                )),
+            };
+        };
+        // Legacy mirror: requeue the subtask row when the node re-armed so
+        // the dispatch read path sees a fresh Pending (committed winners
+        // are never touched by the bridge).
+        let bridged = {
+            let mut store = self.inner.task_store.lock().await;
+            store.revert_swept_subtask(task_id, node_id, s.rearmed)
+        };
+        // Worker kill trigger + WatchTask broadcast.
+        let mut data = serde_json::Map::new();
+        data.insert(
+            "attempt_id".to_string(),
+            serde_json::Value::String(s.attempt_id.clone()),
+        );
+        data.insert("rearmed".to_string(), serde_json::Value::Bool(s.rearmed));
+        data.insert(
+            "reason".to_string(),
+            serde_json::Value::String("cancelled".to_string()),
+        );
+        data.insert("bridged".to_string(), serde_json::Value::Bool(bridged));
+        self.publish_task_control_event(task_id, "attempt_cancelled", Some(node_id), data.clone())
+            .await;
+        let _ = self.inner.event_tx.send(TaskEvent {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            r#type: "attempt_cancelled".to_string(),
+            task_id: task_id.to_string(),
+            subtask_id: Some(node_id.to_string()),
+            data: data
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string()))
+                .collect(),
+        });
+        if s.rearmed {
+            #[cfg(feature = "messaging")]
+            if let Some(client) = self.inner.nats_client.clone() {
+                dispatch_ready_subtasks(
+                    &self.inner.task_store,
+                    &self.inner.worker_registry,
+                    &client,
+                    task_id,
+                )
+                .await;
+            }
+        }
+        CancelTaskResponse {
+            success: true,
+            task_id: task_id.to_string(),
+            status: if s.rearmed { "rearmed" } else { "failed" }.to_string(),
+            error: None,
+        }
+    }
+
+    /// T7 #643 — node-level cancel (bare `subtask_id`): the downstream
+    /// dependency closure of the node (computed on the graph plane —
+    /// cascade cancel is a runtime computation, not client bookkeeping)
+    /// goes `CANCELLED` — terminal, no re-arm — and each cancelled node's
+    /// RUNNING attempt is failed. The legacy rows mirror to `Failed`
+    /// (the wire vocabulary has no distinct cancelled row — T4 mapping).
+    /// Terminal nodes and completed siblings are untouched.
+    async fn cancel_task_nodes_granular(
+        &self,
+        task_id: &str,
+        roots: &[String],
+    ) -> CancelTaskResponse {
+        let (closure, cancelled) = {
+            let store = self.inner.task_store.lock().await;
+            match store.graph_shadow() {
+                Some(sink) => {
+                    let closure = sink.downstream_closure(task_id, roots).await;
+                    let cancelled = sink.cancel_nodes(task_id, &closure).await;
+                    (closure, cancelled)
+                }
+                None => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        roots = ?roots,
+                        "Node-level cancel: no graph shadow wired"
+                    );
+                    (Vec::new(), Vec::new())
+                }
+            }
+        };
+        if cancelled.is_empty() {
+            return CancelTaskResponse {
+                success: false,
+                task_id: task_id.to_string(),
+                status: String::new(),
+                error: Some(
+                    "nothing cancelled (no graph shadow, or every node in the closure is already terminal)"
+                        .to_string(),
+                ),
+            };
+        }
+        // Legacy mirror: the cancelled subtask rows go Failed so the legacy
+        // dispatch/claim read paths see the same fact (T4 mapping).
+        let moved = {
+            let mut store = self.inner.task_store.lock().await;
+            store.fail_subtasks(task_id, &cancelled)
+        };
+        let cancelled_csv = cancelled.join(",");
+        for root in roots {
+            let mut data = serde_json::Map::new();
+            data.insert(
+                "cancelled_nodes".to_string(),
+                serde_json::Value::String(cancelled_csv.clone()),
+            );
+            data.insert(
+                "reason".to_string(),
+                serde_json::Value::String("cancelled".to_string()),
+            );
+            self.publish_task_control_event(task_id, "subtask_cancelled", Some(root), data.clone())
+                .await;
+            let _ = self.inner.event_tx.send(TaskEvent {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                r#type: "subtask_cancelled".to_string(),
+                task_id: task_id.to_string(),
+                subtask_id: Some(root.clone()),
+                data: data
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_string()))
+                    .collect(),
+            });
+        }
+        tracing::warn!(
+            task_id = %task_id,
+            roots = ?roots,
+            closure = closure.len(),
+            cancelled = cancelled.len(),
+            subtasks_bridged = moved,
+            "Node-level cancel applied (graph plane + legacy mirror)"
+        );
+        CancelTaskResponse {
+            success: true,
+            task_id: task_id.to_string(),
+            status: "cancelled".to_string(),
+            error: None,
+        }
+    }
 
     /// Dispatch ready subtasks for a task to the NATS `uc.subtask.execute` subject.
     ///
@@ -3166,14 +3383,95 @@ fn pause_grace_secs_from_env() -> u64 {
 /// gate (`get_ready_subtasks` requires InProgress) stays shut — the re-armed
 /// nodes are picked up when the task resumes. Re-pausing a task replaces its
 /// timer. Worker-side cooperative cancellation is T7 #643's seam.
+/// T7 #643 — granular control-plane event on `uc.task.event`: the
+/// subtask/node identity rides the `subtask_id` slot, extra detail
+/// (attempt_id, reason, rearm state, ...) rides the `data` map. The
+/// message_id is registered in the TaskStore dedup map so the gateway's
+/// own NATS subscriber skips the echo of its own message.
+#[cfg(feature = "messaging")]
+async fn publish_task_control_event(
+    nats_client: Option<&async_nats::Client>,
+    task_store: &Arc<Mutex<TaskStore>>,
+    task_id: &str,
+    event_type: &str,
+    subtask_id: Option<&str>,
+    data: serde_json::Map<String, serde_json::Value>,
+) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let Some(nats_client) = nats_client else {
+        return;
+    };
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let message_id = format!(
+        "{}:{}:{}::{}",
+        task_id,
+        event_type,
+        subtask_id.unwrap_or("-"),
+        ts_ms
+    );
+    let event = NatsTaskEvent {
+        v: default_event_version(),
+        message_id: Some(message_id.clone()),
+        r#type: event_type.to_string(),
+        task_id: task_id.to_string(),
+        subtask_id: subtask_id.map(|s| s.to_string()),
+        data,
+    };
+    match serde_json::to_vec(&event) {
+        Ok(bytes) => {
+            if let Err(e) = nats_client
+                .publish(NATS_SUBJECT_TASK_EVENT.to_string(), bytes.into())
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    event_type = %event_type,
+                    "Failed to publish NATS task control event"
+                );
+            } else {
+                let mut store = task_store.lock().await;
+                store.check_and_record_message_id(&Some(message_id));
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to serialize NATS task control event");
+        }
+    }
+}
+
+/// NATS handle threaded into the pause-grace timer: a real client under
+/// `messaging` (used to emit `attempt_cancelled` kill triggers), unit
+/// under `not(messaging)` so the signature stays uniform.
+#[cfg(feature = "messaging")]
+type PauseGraceNats = Option<async_nats::Client>;
+#[cfg(not(feature = "messaging"))]
+type PauseGraceNats = ();
+
+/// The "no NATS" value for [`PauseGraceNats`], uniform across feature
+/// configurations (integration tests and non-messaging callers).
+pub fn no_pause_grace_nats() -> PauseGraceNats {
+    #[cfg(feature = "messaging")]
+    {
+        None
+    }
+    #[cfg(not(feature = "messaging"))]
+    {}
+}
+
 pub fn spawn_pause_grace_timer(
     task_id: String,
     grace: std::time::Duration,
     task_store: Arc<Mutex<TaskStore>>,
     timers: Arc<std::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    nats_client: PauseGraceNats,
 ) {
     // Replace any in-flight timer for this task.
     cancel_pause_grace_timer(&task_id, timers.clone());
+    #[cfg(not(feature = "messaging"))]
+    let _ = nats_client; // unit placeholder — no control plane to publish to
     let tid = task_id.clone();
     let handle = tokio::spawn(async move {
         tokio::time::sleep(grace).await;
@@ -3216,6 +3514,35 @@ pub fn spawn_pause_grace_timer(
             subtasks_bridged = bridged,
             "Pause grace expired — running attempts hard-stopped via the graph plane"
         );
+        // T7 #643 — the hard stop above fenced the attempts on the graph
+        // rows, but the worker processes are still alive until they hit the
+        // fence on their next report. Emit `attempt_cancelled` per swept
+        // attempt so the worker kills the process immediately (cooperative
+        // cancel, C3) instead of discovering the fence at commit time.
+        #[cfg(feature = "messaging")]
+        if let Some(client) = &nats_client {
+            for s in &swept {
+                let mut data = serde_json::Map::new();
+                data.insert(
+                    "attempt_id".to_string(),
+                    serde_json::Value::String(s.attempt_id.clone()),
+                );
+                data.insert("rearmed".to_string(), serde_json::Value::Bool(s.rearmed));
+                data.insert(
+                    "reason".to_string(),
+                    serde_json::Value::String("pause_grace_expired".to_string()),
+                );
+                publish_task_control_event(
+                    Some(client),
+                    &task_store,
+                    &tid,
+                    "attempt_cancelled",
+                    Some(&s.node_id),
+                    data,
+                )
+                .await;
+            }
+        }
     });
     if let Ok(mut map) = timers.lock() {
         map.insert(task_id, handle.abort_handle());
@@ -4393,11 +4720,16 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 // (`pause_grace_expired`) once the window lapses; resume
                 // cancels the timer. Re-pause replaces it.
                 let grace = std::time::Duration::from_secs(pause_grace_secs_from_env());
+                #[cfg(feature = "messaging")]
+                let pause_nats = self.inner.nats_client.clone();
+                #[cfg(not(feature = "messaging"))]
+                let pause_nats = ();
                 spawn_pause_grace_timer(
                     task_id.clone(),
                     grace,
                     self.inner.task_store.clone(),
                     self.inner.pause_grace_timers.clone(),
+                    pause_nats,
                 );
                 // Publish NATS event for Python side
                 self.publish_task_status_event(&task_id, "task_paused")
@@ -4562,6 +4894,20 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
     ) -> Result<Response<CancelTaskResponse>, Status> {
         let req = request.into_inner();
         let task_id = req.task_id.clone();
+
+        // T7 #643 — granularity dispatch. `subtask_id` + `attempt_no` →
+        // attempt-level cancel (cancel-attempt-keep-node); bare
+        // `subtask_id` → node-level cancel (downstream closure goes
+        // CANCELLED); neither → legacy task-level cancel.
+        if let Some(node_id) = req.subtask_id.clone() {
+            let response = if req.attempt_no.is_some() {
+                self.cancel_task_attempt_granular(&task_id, &node_id).await
+            } else {
+                self.cancel_task_nodes_granular(&task_id, &[node_id]).await
+            };
+            return Ok(Response::new(response));
+        }
+
         let result = {
             let mut store = self.inner.task_store.lock().await;
             match store.cancel_task(&task_id) {
@@ -4584,6 +4930,38 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 // Publish NATS event for Python side
                 self.publish_task_status_event(&task_id, "task_cancelled")
                     .await;
+                // T7 #643 — a task-level cancel must also stop the worker
+                // processes already running for it: fail every RUNNING
+                // attempt through the graph plane and emit
+                // `attempt_cancelled` per swept attempt (the worker's kill
+                // trigger). The graph nodes re-arm to READY, but the
+                // cancelled task's dispatch gate is shut so nothing re-runs.
+                let swept = {
+                    let store = self.inner.task_store.lock().await;
+                    match store.graph_shadow() {
+                        Some(sink) => sink.fail_running_attempts(&task_id, "task_cancelled").await,
+                        None => Vec::new(),
+                    }
+                };
+                for s in &swept {
+                    let mut data = serde_json::Map::new();
+                    data.insert(
+                        "attempt_id".to_string(),
+                        serde_json::Value::String(s.attempt_id.clone()),
+                    );
+                    data.insert("rearmed".to_string(), serde_json::Value::Bool(s.rearmed));
+                    data.insert(
+                        "reason".to_string(),
+                        serde_json::Value::String("task_cancelled".to_string()),
+                    );
+                    self.publish_task_control_event(
+                        &task_id,
+                        "attempt_cancelled",
+                        Some(&s.node_id),
+                        data,
+                    )
+                    .await;
+                }
                 Ok(Response::new(CancelTaskResponse {
                     success: true,
                     task_id: task.id.0,
@@ -7605,6 +7983,12 @@ mod tests {
 
     // ── T2 graph shadow write + T3 graph verb fan-out (fake sink, no PG) ──
 
+    /// T7 #643 — pause-grace timer's new NATS handle: `None` under
+    /// `messaging` (no client in unit tests), unit otherwise.
+    fn timer_nats() -> PauseGraceNats {
+        no_pause_grace_nats()
+    }
+
     #[derive(Default)]
     struct RecordingGraphSink {
         seen: std::sync::Mutex<Vec<String>>,
@@ -7910,6 +8294,7 @@ mod tests {
             std::time::Duration::from_millis(50),
             store.clone(),
             timers.clone(),
+            timer_nats(),
         );
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         assert_eq!(
@@ -7956,6 +8341,7 @@ mod tests {
             std::time::Duration::from_millis(100),
             store.clone(),
             timers.clone(),
+            timer_nats(),
         );
         assert!({ store.lock().await.resume_task(&task_id).is_ok() });
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -7990,6 +8376,7 @@ mod tests {
             std::time::Duration::from_secs(60),
             store.clone(),
             timers.clone(),
+            timer_nats(),
         );
         assert!(
             timers.lock().unwrap().contains_key(&task_id),

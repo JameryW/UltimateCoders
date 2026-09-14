@@ -515,6 +515,33 @@ pub trait GraphShadowSink: Send + Sync {
     async fn fail_running_attempts(&self, _graph_id: &str, _reason: &str) -> Vec<SweptAttempt> {
         Vec::new()
     }
+
+    /// T7 #643 — attempt-level cancel, the formal cancel-attempt-keep-node
+    /// entry (D6 #635): the node's RUNNING attempt is fenced with reason
+    /// `cancelled` and the node re-arms per the standard retry budget
+    /// (READY while budget lasts, else FAILED). Default no-op.
+    async fn cancel_running_attempt(
+        &self,
+        _graph_id: &str,
+        _node_id: &str,
+    ) -> Option<SweptAttempt> {
+        None
+    }
+
+    /// T7 #643 — node-level cancel: every listed live node goes to
+    /// `CANCELLED` (terminal — no re-arm), its RUNNING attempt failed with
+    /// reason `cancelled`. Terminal nodes are skipped (siblings untouched).
+    /// Default no-op.
+    async fn cancel_nodes(&self, _graph_id: &str, _node_ids: &[String]) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// T7 #643 — downstream dependency closure of `roots` within one graph
+    /// (cascade cancel is a runtime computation, not client bookkeeping).
+    /// Default empty.
+    async fn downstream_closure(&self, _graph_id: &str, _roots: &[String]) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 // ── Migrations (storage) ─────────────────────────────────────────────
@@ -1617,6 +1644,132 @@ impl GraphStore {
         Ok(swept)
     }
 
+    /// T7 #643 — the id of the `RUNNING` attempt for one node, if any.
+    /// The lookup behind attempt-level cancel (the gateway resolves the
+    /// proto's `(subtask_id, attempt_no)` pair — attempt_no defaults to the
+    /// live attempt when the caller did not pin one).
+    #[cfg(feature = "storage")]
+    pub async fn running_attempt(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<String>, EngineError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT attempt_id FROM task_attempts \
+             WHERE graph_id = $1 AND node_id = $2 AND status = 'RUNNING' \
+             ORDER BY attempt_id LIMIT 1",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("running_attempt read: {}", e)))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// T7 #643 — attempt-level cancel, the formal cancel-attempt-keep-node
+    /// entry (D6 #635): the node's RUNNING attempt goes through the exact
+    /// [`Self::fail_attempt`] path with reason `cancelled` — fenced (epoch
+    /// semantics) per the standard retry budget, node back to `READY` while
+    /// budget lasts, else `FAILED`. Deliberately NOT budget-free: the
+    /// pause-grace hard stop (T6) already shipped these semantics and the
+    /// diamond acceptance baseline rides on them. Returns `None` when the
+    /// node has no RUNNING attempt (terminal already, or the cancel lost a
+    /// race with a completion).
+    #[cfg(feature = "storage")]
+    pub async fn cancel_running_attempt(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        max_attempts: i32,
+    ) -> Result<Option<SweptAttempt>, EngineError> {
+        let Some(attempt_id) = self.running_attempt(graph_id, node_id).await? else {
+            return Ok(None);
+        };
+        let outcome = self
+            .fail_attempt(graph_id, node_id, &attempt_id, max_attempts, "cancelled")
+            .await?;
+        if outcome == FailOutcome::Fenced {
+            return Ok(None);
+        }
+        Ok(Some(SweptAttempt {
+            graph_id: graph_id.to_string(),
+            node_id: node_id.to_string(),
+            attempt_id,
+            rearmed: outcome == FailOutcome::RearmedToReady,
+        }))
+    }
+
+    /// T7 #643 — node-level cancel: every listed node that is still live
+    /// (`Created`/`Ready`/`Scheduled`/`Running`/`Waiting`) transitions to
+    /// `Cancelled` (terminal — a user-cancelled node must NOT re-arm to
+    /// `READY`); its `RUNNING` attempt, if any, is failed with reason
+    /// `cancelled`. Terminal nodes are skipped (siblings and completed
+    /// work are untouched — the gateway computes the downstream closure,
+    /// this method just applies it row by row). Returns the nodes actually
+    /// cancelled.
+    #[cfg(feature = "storage")]
+    pub async fn cancel_nodes(
+        &self,
+        graph_id: &str,
+        node_ids: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        let mut tx = self.begin_tx("cancel_nodes").await?;
+        let cancelled = cancel_nodes_tx(&mut tx, graph_id, node_ids).await?;
+        tx.commit()
+            .await
+            .map_err(|e| EngineError::StorageError(format!("cancel_nodes tx commit: {}", e)))?;
+        Ok(cancelled)
+    }
+
+    /// T7 #643 — downstream dependency closure of `roots` within one graph:
+    /// the roots themselves plus every node transitively depending on them
+    /// (BFS over `graph_nodes.dependencies`, loaded in one query — graphs
+    /// are tens of nodes at most). The gateway passes this to
+    /// [`Self::cancel_nodes`]; cascade cancel is a runtime computation, not
+    /// client bookkeeping.
+    #[cfg(feature = "storage")]
+    pub async fn downstream_closure(
+        &self,
+        graph_id: &str,
+        roots: &[String],
+    ) -> Result<Vec<String>, EngineError> {
+        let rows: Vec<(String, serde_json::Value)> =
+            sqlx::query_as("SELECT node_id, dependencies FROM graph_nodes WHERE graph_id = $1")
+                .bind(graph_id)
+                .fetch_all(self.pool.as_ref())
+                .await
+                .map_err(|e| EngineError::StorageError(format!("closure scan: {}", e)))?;
+        let deps: std::collections::HashMap<&str, Vec<&str>> = rows
+            .iter()
+            .map(|(id, json)| {
+                let list = json
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<&str>>())
+                    .unwrap_or_default();
+                (id.as_str(), list)
+            })
+            .collect();
+        let mut closure: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
+        for root in roots {
+            if deps.contains_key(root.as_str()) && seen.insert(root.as_str()) {
+                queue.push_back(root.as_str());
+            }
+        }
+        while let Some(id) = queue.pop_front() {
+            closure.push(id.to_string());
+            for (node_id, node_deps) in &deps {
+                if !seen.contains(node_id) && node_deps.contains(&id) {
+                    seen.insert(node_id);
+                    queue.push_back(node_id);
+                }
+            }
+        }
+        Ok(closure)
+    }
+
     /// Public read helper (integration-test + ops surface): the current state
     /// token of one node (`READY` / `RUNNING` / `SUCCEEDED` / `FAILED` / ...).
     pub async fn node_state(
@@ -1879,6 +2032,84 @@ async fn fail_attempt_tx(
     Ok(outcome)
 }
 
+/// Shared body of [`GraphStore::cancel_nodes`] (T7 #643): per listed node —
+/// fail its `RUNNING` attempt (reason `cancelled`), CAS the node to
+/// `CANCELLED`, append one `node_cancelled` event. Terminal nodes and
+/// unknown ids are skipped silently (the gateway's closure may include
+/// nodes that completed in the meantime — the user's intent is "these must
+/// not run", which a completed node already satisfies).
+#[cfg(feature = "storage")]
+async fn cancel_nodes_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    node_ids: &[String],
+) -> Result<Vec<String>, EngineError> {
+    let mut cancelled = Vec::new();
+    for node_id in node_ids {
+        let node: Option<(String, i64)> = sqlx::query_as(
+            "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("cancel_nodes: node lock: {}", e)))?;
+        let Some((node_state, node_version)) = node else {
+            continue;
+        };
+        // `transition_ok` doubles as the terminal guard: every edge OUT of
+        // a terminal state is illegal, and `Cancelled` has no self-loop.
+        if !transition_ok(&node_state, uc_types::NodeStatus::Cancelled.as_str()) {
+            continue;
+        }
+
+        let running: Option<(String,)> = sqlx::query_as(
+            "SELECT attempt_id FROM task_attempts \
+             WHERE graph_id = $1 AND node_id = $2 AND status = 'RUNNING' \
+             ORDER BY attempt_id LIMIT 1",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("cancel_nodes: attempt scan: {}", e)))?;
+        let mut attempt_id: Option<String> = None;
+        if let Some((attempt,)) = running {
+            sqlx::query(
+                "UPDATE task_attempts SET status = 'FAILED', finished_at = NOW() WHERE attempt_id = $1",
+            )
+            .bind(&attempt)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| EngineError::StorageError(format!("cancel_nodes: attempt update: {}", e)))?;
+            attempt_id = Some(attempt);
+        }
+
+        let gv = bump_graph_version_tx(tx, graph_id).await?;
+        cas_node_state_tx(
+            tx,
+            graph_id,
+            node_id,
+            &node_state,
+            node_version,
+            uc_types::NodeStatus::Cancelled.as_str(),
+        )
+        .await?;
+        append_event_tx(
+            tx,
+            graph_id,
+            Some(node_id),
+            attempt_id.as_deref(),
+            Some(gv),
+            "node_cancelled",
+            serde_json::json!({ "reason": "cancelled" }),
+        )
+        .await?;
+        cancelled.push(node_id.clone());
+    }
+    Ok(cancelled)
+}
+
 /// Shared body of [`GraphStore::recompute_ready`] and the winner path of
 /// [`GraphStore::commit_once`]. Flips every `CREATED` node whose
 /// dependencies are all satisfied (`SUCCEEDED`, or `SKIPPED` + `optional`)
@@ -2118,6 +2349,38 @@ impl GraphShadowSink for GraphStore {
             Ok(swept) => swept,
             Err(e) => {
                 tracing::warn!("graph fail_running_attempts failed: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn cancel_running_attempt(&self, graph_id: &str, node_id: &str) -> Option<SweptAttempt> {
+        match GraphStore::cancel_running_attempt(self, graph_id, node_id, DEFAULT_MAX_ATTEMPTS)
+            .await
+        {
+            Ok(swept) => swept,
+            Err(e) => {
+                tracing::warn!("graph cancel_running_attempt failed: {}", e);
+                None
+            }
+        }
+    }
+
+    async fn cancel_nodes(&self, graph_id: &str, node_ids: &[String]) -> Vec<String> {
+        match GraphStore::cancel_nodes(self, graph_id, node_ids).await {
+            Ok(cancelled) => cancelled,
+            Err(e) => {
+                tracing::warn!("graph cancel_nodes failed: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn downstream_closure(&self, graph_id: &str, roots: &[String]) -> Vec<String> {
+        match GraphStore::downstream_closure(self, graph_id, roots).await {
+            Ok(closure) => closure,
+            Err(e) => {
+                tracing::warn!("graph downstream_closure failed: {}", e);
                 Vec::new()
             }
         }
