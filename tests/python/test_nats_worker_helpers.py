@@ -463,7 +463,7 @@ async def test_handle_subtask_execute_js_dispatches_to_background():
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_execute(subtask):
+    async def slow_execute(subtask, gateway_context_block=None):
         started.set()
         await release.wait()
         result = MagicMock()

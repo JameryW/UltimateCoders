@@ -22,7 +22,9 @@ pub use agent::{
 };
 pub use async_trait::async_trait;
 pub use engine::{ComponentHealth, EngineApi, HealthStatus, RepoIndexState, SearchStream};
-pub use envelope::{ExecutionEnvelope, CONTRACT_VERSION};
+pub use envelope::{
+    ContextBlock, ContextEntry, ExecutionEnvelope, CONTEXT_BLOCK_MAX_BYTES, CONTRACT_VERSION,
+};
 pub use error::EngineError;
 pub use graph::{can_transition, NodeStatus};
 pub use index::{

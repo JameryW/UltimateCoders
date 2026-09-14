@@ -234,6 +234,41 @@ def _build_friendly_error(e: Exception) -> tuple[str, str]:
     return f"Execution error: {root[:200]}", root[:2000]
 
 
+def _render_gateway_context_block(block: dict) -> str:
+    """Render a gateway-composed context block into prompt text (T10 #652).
+
+    Mirrors the ``ContextInjector.build_context`` style so prompts look the
+    same whichever side composed the context. An empty entry list renders to
+    "" (the caller then effectively has no context); the ``truncated`` marker
+    is surfaced so the model knows the block is partial.
+
+    Args:
+        block: The ``context_block`` dict from the dispatch envelope —
+            ``{"entries": [{node_id, success, summary}, ...],
+            "truncated": bool}``.
+
+    Returns:
+        Formatted context string (possibly empty).
+    """
+    entries = block.get("entries") or []
+    if not entries:
+        return ""
+    parts: list[str] = []
+    parts.append("## Context from completed subtasks (gateway-composed)\n")
+    parts.append("The following subtasks have completed. Use their results as context:\n")
+    for entry in entries:
+        node_id = str(entry.get("node_id", "") or "")
+        success = bool(entry.get("success", False))
+        parts.append(f"### Subtask {node_id[:8]} ({'✓' if success else '✗'})\n")
+        summary = str(entry.get("summary", "") or "")
+        if summary:
+            parts.append(f"Summary: {summary[:1000]}\n")
+        parts.append("")
+    if block.get("truncated"):
+        parts.append("... (context truncated by gateway)\n")
+    return "\n".join(parts)
+
+
 class Worker:
     """Executes subtasks via sandbox agent.
 
@@ -641,7 +676,9 @@ class Worker:
             )
             return False
 
-    async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
+    async def execute_subtask(
+        self, subtask: Subtask, gateway_context_block: dict | None = None,
+    ) -> SubtaskResult:
         """Execute a subtask via sandbox agent.
 
         Includes workspace isolation, context injection, checkpoint support,
@@ -651,6 +688,15 @@ class Worker:
         - Saves intermediate results as checkpoints for resume
         - Broadcasts file change events for distributed state sync
         - Retries up to MAX_RETRIES times with backoff on failure
+
+        T10 #652 / D10 #647: ``gateway_context_block`` is the gateway-composed
+        dependency context from the dispatch envelope (dict with ``entries`` +
+        ``truncated``). When present it is preferred over the local
+        ``_context_injector`` — the graph plane's committed outputs are the
+        single source of truth, and worker-only mode (no Orchestrator state)
+        gains dependency context. When absent (in-flight envelopes, legacy
+        gateway) the local injector fallback keeps behavior identical to
+        before.
         """
         self.current_task = subtask
         self._active_count += 1
@@ -691,8 +737,14 @@ class Worker:
                     stderr_tail=checkpoint.get("stderr_tail", ""),
                 )
 
-            # Inject context from completed dependencies
-            context_block = self._context_injector.build_context(subtask.depends_on)
+            # Inject context from completed dependencies. T10 #652: prefer
+            # the gateway-composed block (committed graph outputs) when the
+            # dispatch carried one; fall back to the local injector otherwise
+            # (in-flight envelopes / legacy gateway — behavior unchanged).
+            if gateway_context_block is not None:
+                context_block = _render_gateway_context_block(gateway_context_block)
+            else:
+                context_block = self._context_injector.build_context(subtask.depends_on)
 
             # Auto-inject cross-repo search context (when engine is available)
             search_block = await self._build_search_context(subtask)

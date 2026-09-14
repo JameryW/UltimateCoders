@@ -26,6 +26,71 @@ pub const CONTRACT_VERSION: &str = "v1";
 /// idempotency key (32 × 4 = 128 bits — plenty for dedup, keeps payloads small).
 const IDEMPOTENCY_KEY_LEN: usize = 32;
 
+/// Hard cap on the serialized `context_block` (T10 #652 / D10 #647): an
+/// 8 KiB budget keeps dispatch payloads small no matter how chatty the
+/// dependency summaries are. Overflow drops whole entries (never splits one)
+/// and sets `ContextBlock::truncated` — never a failed dispatch.
+pub const CONTEXT_BLOCK_MAX_BYTES: usize = 8 * 1024;
+
+/// One committed dependency output in a gateway-composed context block
+/// (T10 #652). `summary` is the dependency's committed `result_ref` (the
+/// winning attempt's result summary); empty when the node committed nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextEntry {
+    pub node_id: String,
+    pub success: bool,
+    #[serde(default)]
+    pub summary: String,
+}
+
+/// Gateway-composed dependency context riding on `uc.subtask.execute`
+/// (additive — legacy workers ignore unknown keys, same path as effect_class
+/// in T5). Entries are ordered by `node_id` (byte order) so the block is a
+/// deterministic function of the committed graph state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContextBlock {
+    pub entries: Vec<ContextEntry>,
+    /// `true` when at least one entry was dropped to honour the
+    /// [`CONTEXT_BLOCK_MAX_BYTES`] budget.
+    pub truncated: bool,
+}
+
+impl ContextBlock {
+    /// Compose a context block from dependency outputs. Entries are sorted
+    /// by `node_id` and greedily packed under the 8 KiB serialized budget;
+    /// entries that would overflow are dropped and `truncated` is set.
+    /// Returns `None` for an empty input (the field is omitted on the wire —
+    /// no context, no block).
+    pub fn compose(mut entries: Vec<ContextEntry>) -> Option<Self> {
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+        let mut block = ContextBlock {
+            entries: Vec::new(),
+            truncated: false,
+        };
+        for entry in entries {
+            let mut candidate = block.entries.clone();
+            candidate.push(entry);
+            let probe = ContextBlock {
+                entries: candidate,
+                truncated: false,
+            };
+            let size = serde_json::to_vec(&probe)
+                .map(|v| v.len())
+                .unwrap_or(usize::MAX);
+            if size > CONTEXT_BLOCK_MAX_BYTES {
+                block.truncated = true;
+                break;
+            }
+            block.entries = probe.entries;
+        }
+        Some(block)
+    }
+}
+
 /// Envelope attached to every subtask dispatch.
 ///
 /// Transitional identity mapping until the graph runtime lands (T2/T3):
@@ -47,6 +112,12 @@ pub struct ExecutionEnvelope {
     pub worker_epoch: String,
     /// Execution contract the sender/worker speaks ([`CONTRACT_VERSION`]).
     pub contract_version: String,
+    /// Gateway-composed dependency context (T10 #652 / D10 #647). Additive —
+    /// `None` on legacy dispatches and when the gateway has nothing to say;
+    /// workers fall back to their local injector. Omitted on the wire when
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_block: Option<ContextBlock>,
 }
 
 impl ExecutionEnvelope {
@@ -61,6 +132,7 @@ impl ExecutionEnvelope {
             idempotency_key: Self::derive_idempotency_key(graph_id, node_id, attempt_id),
             worker_epoch: String::new(),
             contract_version: CONTRACT_VERSION.to_string(),
+            context_block: None,
         }
     }
 
@@ -146,8 +218,72 @@ mod tests {
     #[test]
     fn envelope_deserializes_from_empty_json() {
         // All-envelope-fields-optional on the wire: a payload without any of
-        // the six keys still parses (legacy publishers during rollout).
+        // the keys still parses (legacy publishers during rollout).
         let env: ExecutionEnvelope = serde_json::from_str("{}").unwrap();
         assert_eq!(env, ExecutionEnvelope::default());
+        assert!(env.context_block.is_none());
+    }
+
+    // ── T10 #652 — context block (compose + wire round-trip) ───────────
+
+    fn entry(id: &str, success: bool, summary: &str) -> ContextEntry {
+        ContextEntry {
+            node_id: id.to_string(),
+            success,
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn context_block_compose_is_none_for_empty_and_sorted_for_content() {
+        assert!(ContextBlock::compose(Vec::new()).is_none());
+        let block = ContextBlock::compose(vec![
+            entry("n-2", true, "second"),
+            entry("n-1", true, "first"),
+        ])
+        .unwrap();
+        let ids: Vec<&str> = block.entries.iter().map(|e| e.node_id.as_str()).collect();
+        assert_eq!(ids, ["n-1", "n-2"], "entries ordered by node_id");
+        assert!(!block.truncated);
+    }
+
+    #[test]
+    fn context_block_compose_truncates_at_budget_and_never_splits_an_entry() {
+        // Each entry is ~1 KiB of payload; ten of them blow the 8 KiB budget.
+        let big = "x".repeat(1000);
+        let entries: Vec<ContextEntry> = (0..10)
+            .map(|i| entry(&format!("n-{i:02}"), true, &big))
+            .collect();
+        let block = ContextBlock::compose(entries).unwrap();
+        assert!(block.truncated, "overflow must set the marker");
+        assert!(
+            block.entries.len() < 10,
+            "overflow must drop entries, not fail"
+        );
+        let serialized = serde_json::to_vec(&block).unwrap();
+        assert!(
+            serialized.len() <= CONTEXT_BLOCK_MAX_BYTES,
+            "composed block must fit the budget (got {} bytes)",
+            serialized.len()
+        );
+    }
+
+    #[test]
+    fn context_block_wire_round_trip_and_legacy_absence() {
+        let mut env = ExecutionEnvelope::for_dispatch("t-1", "n-1", 0);
+        env.context_block = ContextBlock::compose(vec![entry("n-0", true, "done")]);
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("context_block"));
+        let back: ExecutionEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.context_block, env.context_block);
+
+        // A pre-T10 dispatch without the key parses with context_block=None
+        // (additive upgrade path — same as effect_class in T5).
+        let legacy: ExecutionEnvelope =
+            serde_json::from_str(r#"{"graph_id":"t-1","node_id":"n-1"}"#).unwrap();
+        assert!(legacy.context_block.is_none());
+        // ...and serializes back without the key (skip_serializing_if).
+        let legacy_json = serde_json::to_string(&legacy).unwrap();
+        assert!(!legacy_json.contains("context_block"));
     }
 }

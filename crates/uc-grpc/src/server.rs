@@ -306,6 +306,11 @@ pub struct NatsSubtaskExecute {
     /// T1 only produces).
     #[serde(default)]
     pub contract_version: String,
+    /// Gateway-composed dependency context (T10 #652 / D10 #647). Additive —
+    /// legacy workers ignore unknown keys; absent when the node has no
+    /// dependencies or the graph plane has nothing committed to say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_block: Option<uc_types::ContextBlock>,
 }
 
 fn default_timeout() -> u64 {
@@ -330,9 +335,11 @@ fn subtask_execute_payload(
     project_id: &str,
     expected_output: &str,
     file_constraints: &[String],
+    context_block: Option<uc_types::ContextBlock>,
 ) -> NatsSubtaskExecute {
-    let envelope =
+    let mut envelope =
         uc_types::ExecutionEnvelope::for_dispatch(task_id, &st.id.0, st.dispatch_retry_count);
+    envelope.context_block = context_block.clone();
     NatsSubtaskExecute {
         message_id: Some(format!(
             "{}:execute:{}:{}",
@@ -363,7 +370,31 @@ fn subtask_execute_payload(
         idempotency_key: envelope.idempotency_key,
         worker_epoch: envelope.worker_epoch,
         contract_version: envelope.contract_version,
+        context_block,
     }
+}
+
+/// T10 #652 / D10 #647 — compose the dependency context block for one ready
+/// subtask from the graph plane's committed outputs (the single source of
+/// truth), before it is handed to the payload builder. Depth-1 deps only;
+/// an empty dep set, no graph shadow, or a read failure all degrade to
+/// `None` — composing context must never fail (or delay) a dispatch.
+#[cfg(feature = "messaging")]
+async fn compose_context_block(
+    task_store: &Arc<Mutex<TaskStore>>,
+    graph_id: &str,
+    dep_ids: &[String],
+) -> Option<uc_types::ContextBlock> {
+    if dep_ids.is_empty() {
+        return None;
+    }
+    let entries = {
+        let store = task_store.lock().await;
+        // No graph plane → no composed context (never a failed dispatch).
+        let sink = store.graph_shadow()?;
+        sink.committed_dep_outputs(graph_id, dep_ids).await
+    };
+    uc_types::ContextBlock::compose(entries)
 }
 
 /// JetStream dedup headers for one dispatch (T4 #640).
@@ -2707,7 +2738,12 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         if let Some(nats_client) = &self.inner.nats_client {
             for st in ready {
-                let execute = subtask_execute_payload(task_id, &st, &project_id, "", &[]);
+                // T10 #652: compose the dependency context from committed
+                // graph outputs before publishing (None when no deps / no
+                // graph plane — never a failed dispatch).
+                let dep_ids: Vec<String> = st.depends_on.iter().map(|d| d.0.clone()).collect();
+                let ctx = compose_context_block(&self.inner.task_store, task_id, &dep_ids).await;
+                let execute = subtask_execute_payload(task_id, &st, &project_id, "", &[], ctx);
                 // T4 #640: Nats-Msg-Id = idempotency_key activates the
                 // stream's duplicate_window — re-sends collapse to one.
                 let dedup = dispatch_dedup_headers(&execute.idempotency_key);
@@ -3753,12 +3789,17 @@ async fn dispatch_ready_subtasks(
         // conflict detection and workspace isolation (empty used to defeat
         // both — concurrent subtasks sharing files would race and
         // corrupt/merge-conflict).
+        // T10 #652: dependency context composed from committed graph outputs
+        // (None when no deps / no graph plane — never a failed dispatch).
+        let dep_ids: Vec<String> = st.depends_on.iter().map(|d| d.0.clone()).collect();
+        let ctx = compose_context_block(task_store, task_id, &dep_ids).await;
         let execute = subtask_execute_payload(
             task_id,
             &st,
             &project_id,
             &st.expected_output,
             &st.file_constraints,
+            ctx,
         );
         // T4 #640: same dedup header on the second dispatch mouth.
         let dedup = dispatch_dedup_headers(&execute.idempotency_key);
@@ -7766,6 +7807,7 @@ mod tests {
             idempotency_key: "00000000000000000000000000000000".to_string(),
             worker_epoch: String::new(),
             contract_version: uc_types::CONTRACT_VERSION.to_string(),
+            context_block: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         // Subtask-level override key is agent_config_json (not agent_config).
@@ -7859,8 +7901,8 @@ mod tests {
             steps: vec![],
             retry_count: 0,
         };
-        let p1 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints);
-        let p2 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints);
+        let p1 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints, None);
+        let p2 = subtask_execute_payload("t-3", &st, "proj", "out", &st.file_constraints, None);
         assert_eq!(p1.graph_id, "t-3");
         assert_eq!(p1.node_id, "st-7");
         assert_eq!(p1.attempt_id, "2"); // identity mapping: attempt = dispatch_retry_count
@@ -7909,7 +7951,7 @@ mod tests {
         );
         let mut st_next = st.clone();
         st_next.dispatch_retry_count = 3;
-        let p3 = subtask_execute_payload("t-3", &st_next, "proj", "out", &[]);
+        let p3 = subtask_execute_payload("t-3", &st_next, "proj", "out", &[], None);
         let next_headers = dispatch_dedup_headers(&p3.idempotency_key);
         assert_ne!(
             next_headers.get("Nats-Msg-Id").map(|v| v.as_str()),
@@ -7917,6 +7959,65 @@ mod tests {
             "a new attempt must NOT be deduped against the previous one — \
              that would break T3's fence → READY → re-dispatch"
         );
+    }
+
+    // ── T10 #652 — context block: payload presence + composition ────
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn subtask_execute_payload_carries_context_block() {
+        let st = uc_types::Subtask {
+            id: uc_types::TaskId("st-7".into()),
+            parent_id: uc_types::TaskId("t-3".into()),
+            description: "d".into(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: vec![],
+            file_constraints: vec![],
+            expected_output: "out".into(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: vec![],
+            agent_config_json: None,
+            steps: vec![],
+            retry_count: 0,
+        };
+        let block = uc_types::ContextBlock::compose(vec![uc_types::ContextEntry {
+            node_id: "n-1".into(),
+            success: true,
+            summary: "done".into(),
+        }])
+        .unwrap();
+        let p = subtask_execute_payload("t-3", &st, "proj", "out", &[], Some(block.clone()));
+        assert_eq!(p.context_block.as_ref(), Some(&block));
+        let wire = serde_json::to_value(&p).unwrap();
+        assert_eq!(wire["context_block"]["entries"][0]["node_id"], "n-1");
+        assert_eq!(wire["context_block"]["entries"][0]["summary"], "done");
+        assert_eq!(wire["context_block"]["truncated"], false);
+
+        // No context → the key is omitted from the wire entirely
+        // (additive field, legacy workers never see it).
+        let p0 = subtask_execute_payload("t-3", &st, "proj", "out", &[], None);
+        assert!(p0.context_block.is_none());
+        let wire0 = serde_json::to_value(&p0).unwrap();
+        assert!(
+            wire0.get("context_block").is_none(),
+            "context_block must be absent (not null) when nothing was composed"
+        );
+    }
+
+    #[cfg(feature = "messaging")]
+    #[tokio::test]
+    async fn compose_context_block_degrades_to_none_without_graph_plane() {
+        let (store, _backend, _events) = make_store_with_backend();
+        let store = Arc::new(Mutex::new(store));
+        // No deps → None without touching the (absent) sink.
+        assert!(compose_context_block(&store, "t-1", &[]).await.is_none());
+        // Deps but no graph shadow → fail-soft None (never a failed dispatch).
+        let deps = vec!["n-1".to_string(), "n-2".to_string()];
+        assert!(compose_context_block(&store, "t-1", &deps).await.is_none());
     }
 
     // ── task_backend write-path persistence tests ──────────────

@@ -580,6 +580,19 @@ pub trait GraphShadowSink: Send + Sync {
             idempotent_replay: false,
         }
     }
+
+    /// T10 #652 — committed outputs for the given nodes (the depth-1
+    /// dependencies of a node about to be dispatched). `success` mirrors the
+    /// node state (`SUCCEEDED`), `summary` is the committed `result_ref`
+    /// ("" when the node committed nothing). Fail-soft: an empty Vec simply
+    /// means "no gateway-composed context" — never a failed dispatch.
+    async fn committed_dep_outputs(
+        &self,
+        _graph_id: &str,
+        _node_ids: &[String],
+    ) -> Vec<uc_types::ContextEntry> {
+        Vec::new()
+    }
 }
 
 // ── Migrations (storage) ─────────────────────────────────────────────
@@ -1998,6 +2011,42 @@ impl GraphStore {
         })
     }
 
+    /// T10 #652 / D10 #647 — read committed outputs for context composition.
+    ///
+    /// The single source of truth for a dependency's summary is the graph
+    /// plane's own commit record (`node_completions.result_ref`), NOT the
+    /// in-memory task mirror the legacy worker-side injector re-derived.
+    /// Nodes unknown to the plane or without a completion simply carry
+    /// `success=false` / empty `summary`.
+    pub async fn committed_dep_outputs(
+        &self,
+        graph_id: &str,
+        node_ids: &[String],
+    ) -> Result<Vec<uc_types::ContextEntry>, EngineError> {
+        if node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT n.node_id, n.state, c.result_ref \
+             FROM graph_nodes n \
+             LEFT JOIN node_completions c ON c.node_id = n.node_id AND c.graph_id = n.graph_id \
+             WHERE n.graph_id = $1 AND n.node_id = ANY($2)",
+        )
+        .bind(graph_id)
+        .bind(node_ids)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("committed_dep_outputs: {}", e)))?;
+        Ok(rows
+            .into_iter()
+            .map(|(node_id, state, result_ref)| uc_types::ContextEntry {
+                node_id,
+                success: state == NodeStatus::Succeeded.as_str(),
+                summary: result_ref.unwrap_or_default(),
+            })
+            .collect())
+    }
+
     /// Public read helper (integration-test + ops surface): the current state
     /// token of one node (`READY` / `RUNNING` / `SUCCEEDED` / `FAILED` / ...).
     pub async fn node_state(
@@ -2644,6 +2693,22 @@ impl GraphShadowSink for GraphStore {
                     accepted: false,
                     idempotent_replay: false,
                 }
+            }
+        }
+    }
+
+    async fn committed_dep_outputs(
+        &self,
+        graph_id: &str,
+        node_ids: &[String],
+    ) -> Vec<uc_types::ContextEntry> {
+        match GraphStore::committed_dep_outputs(self, graph_id, node_ids).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                // Fail-soft: a context read failure degrades to "no composed
+                // context", never a failed dispatch.
+                tracing::warn!("graph committed_dep_outputs failed: {}", e);
+                Vec::new()
             }
         }
     }

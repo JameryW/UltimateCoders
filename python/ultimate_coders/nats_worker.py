@@ -1460,9 +1460,14 @@ class NatsWorker:
         self,
         subtask: Subtask,
         js_msg: Any | None = None,
+        gateway_context_block: dict | None = None,
     ) -> asyncio.Task[Any]:
         """Start and retain an execution so its task cancellation can stop it."""
-        execution = self._spawn_bg(self._execute_and_report(subtask, js_msg=js_msg))
+        execution = self._spawn_bg(
+            self._execute_and_report(
+                subtask, js_msg=js_msg, gateway_context_block=gateway_context_block,
+            )
+        )
         self._running_subtask_tasks.setdefault(subtask.parent_id, set()).add(execution)
         execution.add_done_callback(
             lambda done: self._remove_running_subtask(subtask.parent_id, done)
@@ -2362,8 +2367,11 @@ class NatsWorker:
 
         # Dispatch execution with the JetStream msg so ack/term happens
         # AFTER execution completes (success → ack, failure → ack, crash →
-        # no ack → redelivery).
-        self._spawn_subtask_execution(subtask, js_msg=js_msg)
+        # no ack → redelivery). T10 #652: the gateway-composed context block
+        # rides the dispatch — worker prefers it over the local injector.
+        self._spawn_subtask_execution(
+            subtask, js_msg=js_msg, gateway_context_block=data.get("context_block"),
+        )
 
     @staticmethod
     def _is_stale_dispatch(data: dict[str, Any]) -> bool:
@@ -2536,10 +2544,29 @@ class NatsWorker:
         except Exception:
             logger.debug("JetStream ack/nak/term failed", exc_info=True)
 
+    async def _execute_subtask_with_context(
+        self,
+        subtask: Subtask,
+        gateway_context_block: dict | None = None,
+    ) -> SubtaskResult:
+        """Run one subtask, forwarding the gateway-composed context block
+        when the dispatch carried one (T10 #652 / D10 #647).
+
+        With no block the call is byte-identical to the pre-T10 path
+        (``execute_subtask(subtask)``) — worker implementations that do not
+        know the new keyword keep working unchanged.
+        """
+        if gateway_context_block is None:
+            return await self._worker.execute_subtask(subtask)
+        return await self._worker.execute_subtask(
+            subtask, gateway_context_block=gateway_context_block,
+        )
+
     async def _execute_and_report(
         self,
         subtask: Subtask,
         js_msg: Any | None = None,
+        gateway_context_block: dict | None = None,
     ) -> None:
         """Run one subtask (semaphore-bounded) and publish its result.
 
@@ -2574,9 +2601,13 @@ class NatsWorker:
                         if js_msg is not None:
                             await self._js_ack_safe(js_msg, ack=True)
                         return
-                    result = await self._worker.execute_subtask(subtask)
+                    result = await self._execute_subtask_with_context(
+                        subtask, gateway_context_block
+                    )
             else:
-                result = await self._worker.execute_subtask(subtask)
+                result = await self._execute_subtask_with_context(
+                    subtask, gateway_context_block
+                )
         except asyncio.CancelledError:
             logger.info("Cancelled running subtask %s", subtask_id[:8])
             if js_msg is not None:
