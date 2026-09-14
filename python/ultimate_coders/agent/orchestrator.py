@@ -90,6 +90,7 @@ class Orchestrator:
         llm_client: Any = None,
         codegraph_client: Any = None,
         merge_arbiter: Any = None,
+        merge_gate: Any = None,
     ) -> None:
         self.engine = engine
         self.nats_publisher = nats_publisher
@@ -99,6 +100,13 @@ class Orchestrator:
         # external remote is configured (UC_REPO_URL). When None, the
         # Orchestrator behaves exactly as before (local-only, no remote sync).
         self.merge_arbiter = merge_arbiter
+        # Phase 2.5: merge-barrier gate (T9 #651 / D9 #646). Opt-in — wired
+        # by nats_worker when a gRPC gateway endpoint is configured. Must
+        # expose ``issue_merge_grant(graph_id)`` and
+        # ``report_merge_outcome(graph_id, key, outcome)`` (async, dict-out).
+        # The arbiter must hold a grant BEFORE merging; when None, legacy
+        # un-gated arbitration is preserved (no-gateway deployments).
+        self.merge_gate = merge_gate
         # Advisory in-memory result aggregator. Runs at task completion
         # (before MergeArbiter) to surface same-file conflicts between
         # concurrent subtasks early. Advisory only — does NOT write merged
@@ -724,12 +732,36 @@ class Orchestrator:
     ) -> None:
         """Run merge arbitration for a completed task (non-fatal).
 
+        T9 #651 / D9 #646: when a merge gate is wired (gRPC gateway), the
+        arbiter must hold a grant BEFORE merging. ``granted=False`` → log
+        and skip (never merge unauthorized); ``idempotent_replay=True`` →
+        the merge already reported — skip execution AND the report. On a
+        fresh grant, arbitrate then report with the grant key (the report
+        itself is non-fatal). Without a gate, legacy un-gated arbitration
+        is preserved.
+
         Wrapped in try/except so arbitration failures never propagate to
         the task-completion path.
         """
         if self.merge_arbiter is None:
             return
         try:
+            grant: dict[str, Any] | None = None
+            if self.merge_gate is not None:
+                grant = await self.merge_gate.issue_merge_grant(task_id)
+                if not grant.get("granted", False):
+                    logger.warning(
+                        "Merge grant refused for task %s: %s — merge skipped "
+                        "(graph not quiescent or gate error)",
+                        task_id, grant.get("error") or "unspecified",
+                    )
+                    return
+                if grant.get("idempotent_replay", False):
+                    logger.info(
+                        "Merge grant already consumed for task %s (replay) "
+                        "— merge skipped, no-op report", task_id,
+                    )
+                    return
             logger.info(
                 "Starting merge arbitration for task %s (%d branches)",
                 task_id, len(branches),
@@ -743,6 +775,26 @@ class Orchestrator:
                 len(result.get("conflict_branches", [])),
                 result.get("push_status"),
             )
+            if self.merge_gate is not None and grant is not None:
+                key = grant.get("merge_idempotency_key", "")
+                report = await self.merge_gate.report_merge_outcome(
+                    task_id,
+                    key,
+                    {
+                        "status": str(result.get("status", "")),
+                        "merged_branches": list(
+                            result.get("merged_branches", [])),
+                        "conflict_branches": list(
+                            result.get("conflict_branches", [])),
+                        "push_status": str(result.get("push_status", "")),
+                    },
+                )
+                if not report.get("accepted", False):
+                    logger.warning(
+                        "Merge report rejected for task %s (key=%s…): "
+                        "unknown/superseded key — stale aggregation loses",
+                        task_id, key[:8],
+                    )
         except Exception:
             logger.exception(
                 "Merge arbitration failed for task %s (non-fatal)", task_id,

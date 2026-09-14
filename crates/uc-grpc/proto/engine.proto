@@ -35,6 +35,14 @@ service TaskService {
     rpc CreateCheckpoint(CreateCheckpointRequest) returns (CreateCheckpointResponse);
     // Recover a task's state from the latest snapshot + event replay.
     rpc RecoverTask(RecoverTaskRequest) returns (RecoverTaskResponse);
+    // ── Merge barrier (T9 #651 / D9 #646 on D5 #634) ──
+    // The Python MergeArbiter must hold a grant BEFORE merging. Issuance is
+    // gated on graph quiescence; the key binds the grant to the exact
+    // SUCCEEDED node set + per-node output hashes.
+    rpc IssueMergeGrant(IssueMergeGrantRequest) returns (IssueMergeGrantResponse);
+    // Report the merge outcome with the grant's key. Unknown/superseded key
+    // → accepted=false; consumed-key replay → accepted=true + idempotent_replay.
+    rpc ReportMergeOutcome(ReportMergeOutcomeRequest) returns (ReportMergeOutcomeResponse);
 }
 
 // ── Worker Service (Worker registration + lifecycle) ──
@@ -373,6 +381,43 @@ message RecoverTaskResponse {
     optional TaskSnapshotProto snapshot = 3;
     optional string error = 4;
 }
+
+// ── Merge Barrier Messages (T9 #651 / D9 #646) ─────────────
+
+message IssueMergeGrantRequest {
+    // Graph (task) the arbiter wants to merge for.
+    string graph_id = 1;
+}
+
+message IssueMergeGrantResponse {
+    bool granted = 1;
+    // Deterministic key binding the grant to the merged graph state
+    // (sha256("merge:{graph_id}:{SUCCEEDED ids CSV}:{node=sha pairs}")[:32]).
+    // Empty when granted == false.
+    string merge_idempotency_key = 2;
+    // true = the grant was already issued AND consumed for this exact key —
+    // the merge already reported; the arbiter must skip execution.
+    bool idempotent_replay = 3;
+    optional string error = 4;
+}
+
+message ReportMergeOutcomeRequest {
+    string graph_id = 1;
+    string merge_idempotency_key = 2;
+    string status = 3;
+    repeated string merged_branches = 4;
+    repeated string conflict_branches = 5;
+    string push_status = 6;
+}
+
+message ReportMergeOutcomeResponse {
+    // false = unknown/superseded key (stale aggregation loses like a late
+    // commit_once loser).
+    bool accepted = 1;
+    // true = key matched an already-consumed grant; the report was a no-op.
+    bool idempotent_replay = 2;
+}
+
 
 message TaskSnapshotProto {
     string task_id = 1;

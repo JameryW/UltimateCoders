@@ -550,6 +550,36 @@ pub trait GraphShadowSink: Send + Sync {
     async fn downstream_closure(&self, _graph_id: &str, _roots: &[String]) -> Vec<String> {
         Vec::new()
     }
+
+    /// T9 #651 — merge-barrier grant (D9 #646 on D5 #634): issue a fenced
+    /// single-writer merge authorization for `graph_id`, gated on graph
+    /// quiescence (all nodes terminal). The key binds the grant to the exact
+    /// SUCCEEDED node set + per-node output hashes. Default fail-closed:
+    /// a sink that does not implement the barrier never authorizes a merge.
+    async fn issue_merge_grant(&self, _graph_id: &str) -> uc_types::MergeGrantDecision {
+        uc_types::MergeGrantDecision {
+            granted: false,
+            merge_idempotency_key: String::new(),
+            idempotent_replay: false,
+            error: "graph sink does not support merge grants".to_string(),
+        }
+    }
+
+    /// T9 #651 — merge-barrier report: consume the grant keyed by
+    /// `merge_idempotency_key`, recording the outcome. Unknown/superseded
+    /// key → `accepted=false`; consumed-key replay → `accepted=true,
+    /// idempotent_replay=true` (no-op). Default fail-closed.
+    async fn report_merge_outcome(
+        &self,
+        _graph_id: &str,
+        _merge_idempotency_key: &str,
+        _outcome: &uc_types::MergeOutcomeReport,
+    ) -> uc_types::MergeReportDecision {
+        uc_types::MergeReportDecision {
+            accepted: false,
+            idempotent_replay: false,
+        }
+    }
 }
 
 // ── Migrations (storage) ─────────────────────────────────────────────
@@ -690,6 +720,25 @@ pub async fn run_migrations(pool: &Arc<PgPool>) -> Result<(), EngineError> {
     .map_err(|e| {
         EngineError::ConnectionError(format!("Migration error (node_completions): {}", e))
     })?;
+
+    // merge_grants (T9 #651 / D9 #646): one CURRENT merge-barrier grant per
+    // graph. `graph_id` as PK means a re-issued grant for a changed
+    // SUCCEEDED set REPLACES the row — the superseded key becomes unknown
+    // (its report is accepted=false), exactly like a late commit_once loser.
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS merge_grants (
+            graph_id TEXT PRIMARY KEY,
+            merge_idempotency_key TEXT NOT NULL,
+            issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            consumed_at TIMESTAMPTZ,
+            outcome JSONB
+        )
+        "#,
+    )
+    .execute(pool.as_ref())
+    .await
+    .map_err(|e| EngineError::ConnectionError(format!("Migration error (merge_grants): {}", e)))?;
 
     let indexes = [
         "CREATE INDEX IF NOT EXISTS idx_execution_graphs_project ON execution_graphs(project_id)",
@@ -1791,6 +1840,164 @@ impl GraphStore {
         Ok(closure)
     }
 
+    /// T9 #651 / D9 #646 — merge-barrier grant issuance.
+    ///
+    /// Gated on graph quiescence (every `graph_nodes` row of the graph in a
+    /// terminal state). The key binds the grant to the exact SUCCEEDED node
+    /// set + per-node output hashes (`node_completions.result_ref`, NULL →
+    /// empty string). Re-issue with the same key: consumed → replay decision
+    /// (arbiter skips); unconsumed → fresh grant (crash-before-merge recovery
+    /// proceeds normally). Re-issue with a DIFFERENT key (changed SUCCEEDED
+    /// set) REPLACES the row — the superseded key becomes unknown.
+    pub async fn issue_merge_grant(
+        &self,
+        graph_id: &str,
+    ) -> Result<uc_types::MergeGrantDecision, EngineError> {
+        // 1. Quiescence: any non-terminal node → refuse.
+        let states: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT state FROM graph_nodes WHERE graph_id = $1")
+                .bind(graph_id)
+                .fetch_all(self.pool.as_ref())
+                .await
+                .map_err(|e| EngineError::StorageError(format!("merge grant quiescence: {}", e)))?;
+        let terminal = ["SUCCEEDED", "FAILED", "CANCELLED"];
+        if states.iter().any(|(s,)| !terminal.contains(&s.as_str())) {
+            return Ok(uc_types::MergeGrantDecision {
+                granted: false,
+                merge_idempotency_key: String::new(),
+                idempotent_replay: false,
+                error: format!("graph {graph_id} is not quiescent (non-terminal nodes present)"),
+            });
+        }
+        if states.is_empty() {
+            return Ok(uc_types::MergeGrantDecision {
+                granted: false,
+                merge_idempotency_key: String::new(),
+                idempotent_replay: false,
+                error: format!("graph {graph_id} not found"),
+            });
+        }
+
+        // 2. SUCCEEDED set + outputs (canonical order decided by the key fn).
+        let succeeded: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT n.node_id, c.result_ref FROM graph_nodes n \
+             LEFT JOIN node_completions c ON c.node_id = n.node_id AND c.graph_id = n.graph_id \
+             WHERE n.graph_id = $1 AND n.state = 'SUCCEEDED'",
+        )
+        .bind(graph_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("merge grant succeeded set: {}", e)))?;
+        let pairs: Vec<(String, String)> = succeeded
+            .into_iter()
+            .map(|(id, out)| (id, uc_types::sha256_hex(out.unwrap_or_default().as_bytes())))
+            .collect();
+        let key = uc_types::derive_merge_idempotency_key(graph_id, &pairs);
+
+        // 3. Compare with the current grant row (single row per graph).
+        let current: Option<(String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+            "SELECT merge_idempotency_key, consumed_at FROM merge_grants WHERE graph_id = $1",
+        )
+        .bind(graph_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("merge grant read: {}", e)))?;
+
+        if let Some((existing_key, consumed_at)) = current {
+            if existing_key == key {
+                return Ok(uc_types::MergeGrantDecision {
+                    granted: true,
+                    merge_idempotency_key: key,
+                    idempotent_replay: consumed_at.is_some(),
+                    error: String::new(),
+                });
+            }
+        }
+
+        // Fresh grant (first issue or superseded key): replace the row.
+        sqlx::query(
+            "INSERT INTO merge_grants (graph_id, merge_idempotency_key, issued_at, consumed_at, outcome) \
+             VALUES ($1, $2, NOW(), NULL, NULL) \
+             ON CONFLICT (graph_id) DO UPDATE SET \
+                 merge_idempotency_key = EXCLUDED.merge_idempotency_key, \
+                 issued_at = NOW(), consumed_at = NULL, outcome = NULL",
+        )
+        .bind(graph_id)
+        .bind(&key)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("merge grant upsert: {}", e)))?;
+
+        Ok(uc_types::MergeGrantDecision {
+            granted: true,
+            merge_idempotency_key: key,
+            idempotent_replay: false,
+            error: String::new(),
+        })
+    }
+
+    /// T9 #651 / D9 #646 — merge-barrier outcome report.
+    ///
+    /// Unknown or superseded key → `accepted=false`. Matching unconsumed key
+    /// → consume (set `consumed_at` + outcome JSONB). Matching consumed key
+    /// → `accepted=true, idempotent_replay=true` without writing (D5: replay
+    /// of a consumed key = no-op).
+    pub async fn report_merge_outcome(
+        &self,
+        graph_id: &str,
+        merge_idempotency_key: &str,
+        outcome: &uc_types::MergeOutcomeReport,
+    ) -> Result<uc_types::MergeReportDecision, EngineError> {
+        let current: Option<(String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+            "SELECT merge_idempotency_key, consumed_at FROM merge_grants WHERE graph_id = $1",
+        )
+        .bind(graph_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("merge report read: {}", e)))?;
+
+        let Some((existing_key, consumed_at)) = current else {
+            return Ok(uc_types::MergeReportDecision {
+                accepted: false,
+                idempotent_replay: false,
+            });
+        };
+        if existing_key != merge_idempotency_key {
+            return Ok(uc_types::MergeReportDecision {
+                accepted: false,
+                idempotent_replay: false,
+            });
+        }
+        if consumed_at.is_some() {
+            return Ok(uc_types::MergeReportDecision {
+                accepted: true,
+                idempotent_replay: true,
+            });
+        }
+
+        let outcome_json = serde_json::json!({
+            "status": outcome.status,
+            "merged_branches": outcome.merged_branches,
+            "conflict_branches": outcome.conflict_branches,
+            "push_status": outcome.push_status,
+        });
+        sqlx::query(
+            "UPDATE merge_grants SET consumed_at = NOW(), outcome = $2 \
+             WHERE graph_id = $1 AND merge_idempotency_key = $3 AND consumed_at IS NULL",
+        )
+        .bind(graph_id)
+        .bind(serde_json::to_value(outcome_json).unwrap_or(serde_json::Value::Null))
+        .bind(merge_idempotency_key)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("merge report consume: {}", e)))?;
+
+        Ok(uc_types::MergeReportDecision {
+            accepted: true,
+            idempotent_replay: false,
+        })
+    }
+
     /// Public read helper (integration-test + ops surface): the current state
     /// token of one node (`READY` / `RUNNING` / `SUCCEEDED` / `FAILED` / ...).
     pub async fn node_state(
@@ -2403,6 +2610,40 @@ impl GraphShadowSink for GraphStore {
             Err(e) => {
                 tracing::warn!("graph downstream_closure failed: {}", e);
                 Vec::new()
+            }
+        }
+    }
+
+    async fn issue_merge_grant(&self, graph_id: &str) -> uc_types::MergeGrantDecision {
+        match GraphStore::issue_merge_grant(self, graph_id).await {
+            Ok(decision) => decision,
+            Err(e) => {
+                tracing::warn!("graph issue_merge_grant failed: {}", e);
+                uc_types::MergeGrantDecision {
+                    granted: false,
+                    merge_idempotency_key: String::new(),
+                    idempotent_replay: false,
+                    error: format!("issue_merge_grant storage error: {e}"),
+                }
+            }
+        }
+    }
+
+    async fn report_merge_outcome(
+        &self,
+        graph_id: &str,
+        merge_idempotency_key: &str,
+        outcome: &uc_types::MergeOutcomeReport,
+    ) -> uc_types::MergeReportDecision {
+        match GraphStore::report_merge_outcome(self, graph_id, merge_idempotency_key, outcome).await
+        {
+            Ok(decision) => decision,
+            Err(e) => {
+                tracing::warn!("graph report_merge_outcome failed: {}", e);
+                uc_types::MergeReportDecision {
+                    accepted: false,
+                    idempotent_replay: false,
+                }
             }
         }
     }

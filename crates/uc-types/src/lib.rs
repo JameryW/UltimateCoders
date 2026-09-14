@@ -10,6 +10,7 @@ pub mod error;
 pub mod graph;
 pub mod index;
 pub mod memory;
+pub mod merge;
 pub mod scheduler;
 pub mod search;
 
@@ -31,6 +32,10 @@ pub use memory::{
     MemoryContent, MemoryEntry, MemoryId, MemoryKey, MemoryMetadata, MemoryReadRequest,
     MemorySearchRequest, MemorySearchResponse, MemorySearchResult, MemorySearchScope,
     MemoryWriteRequest,
+};
+pub use merge::{
+    derive_merge_idempotency_key, sha256_hex, MergeGrantDecision, MergeOutcomeReport,
+    MergeReportDecision,
 };
 pub use scheduler::{
     AddCronJobApiRequest, AddCronJobResult, ExecutionHistory, ExecutionStatus, NightWindowConfig,

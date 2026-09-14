@@ -1321,4 +1321,87 @@ impl PyEngine {
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })
     }
+
+    /// T9 #651 / D9 #646 — request a merge-barrier grant for `graph_id`.
+    ///
+    /// Returns:
+    ///     dict(granted, merge_idempotency_key, idempotent_replay, error).
+    ///     A refusal (granted=False) is a normal gate outcome, not an error.
+    ///
+    /// Raises:
+    ///     RuntimeError: If not in gRPC mode or the RPC transport fails.
+    #[pyo3(signature = (graph_id))]
+    pub fn issue_merge_grant_async<'py>(
+        &self,
+        py: Python<'py>,
+        graph_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("issue_merge_grant requires gRPC mode")
+        })?;
+        future_into_py::<_, pyo3::PyObject>(py, async move {
+            let decision = client
+                .issue_merge_grant(&graph_id)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            Ok(Python::with_gil(|py| {
+                let d = pyo3::types::PyDict::new(py);
+                let _ = d.set_item("granted", decision.granted);
+                let _ = d.set_item("merge_idempotency_key", decision.merge_idempotency_key);
+                let _ = d.set_item("idempotent_replay", decision.idempotent_replay);
+                let _ = d.set_item("error", decision.error);
+                d.into()
+            }))
+        })
+    }
+
+    /// T9 #651 / D9 #646 — report the merge outcome carrying the grant key.
+    ///
+    /// Args:
+    ///     graph_id: The graph (task) that was merged.
+    ///     merge_idempotency_key: Key from the grant (binds report to state).
+    ///     status: Terminal status string (e.g. "merged", "conflict").
+    ///     merged_branches: Branches merged cleanly.
+    ///     conflict_branches: Branches left in conflict.
+    ///     push_status: "pushed" / "no_push" / "push_failed".
+    ///
+    /// Returns:
+    ///     dict(accepted, idempotent_replay). Unknown/superseded key →
+    ///     accepted=False (stale aggregation loses).
+    #[pyo3(signature = (graph_id, merge_idempotency_key, status, merged_branches=None, conflict_branches=None, push_status="no_push"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn report_merge_outcome_async<'py>(
+        &self,
+        py: Python<'py>,
+        graph_id: String,
+        merge_idempotency_key: String,
+        status: String,
+        merged_branches: Option<Vec<String>>,
+        conflict_branches: Option<Vec<String>>,
+        push_status: Option<&str>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let grpc_client = self.grpc_client.clone();
+        let client = grpc_client.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("report_merge_outcome requires gRPC mode")
+        })?;
+        let outcome = uc_types::MergeOutcomeReport {
+            status,
+            merged_branches: merged_branches.unwrap_or_default(),
+            conflict_branches: conflict_branches.unwrap_or_default(),
+            push_status: push_status.unwrap_or("no_push").to_string(),
+        };
+        future_into_py::<_, pyo3::PyObject>(py, async move {
+            let decision = client
+                .report_merge_outcome(&graph_id, &merge_idempotency_key, &outcome)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            Ok(Python::with_gil(|py| {
+                let d = pyo3::types::PyDict::new(py);
+                let _ = d.set_item("accepted", decision.accepted);
+                let _ = d.set_item("idempotent_replay", decision.idempotent_replay);
+                d.into()
+            }))
+        })
+    }
 }

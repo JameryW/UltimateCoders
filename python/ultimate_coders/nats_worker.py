@@ -273,6 +273,41 @@ def _dispatch_mode_from_payload(raw: Any) -> DispatchMode:
     }.get(key, DispatchMode.PREFER_REMOTE)
 
 
+# ── MergeGate (T9 #651 / D9 #646) ───────────────────────────────
+
+
+class MergeGate:
+    """Merge-barrier gate adapter over the gRPC Engine.
+
+    The Orchestrator's merge arbitration consults this gate BEFORE merging:
+    ``issue_merge_grant`` returns the gateway's decision (granted +
+    deterministic ``merge_idempotency_key``), and ``report_merge_outcome``
+    reports the outcome carrying that key. Opt-in — only wired when a gRPC
+    gateway endpoint is configured; without a gate, legacy un-gated
+    arbitration is preserved (no-gateway deployments).
+    """
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    async def issue_merge_grant(self, graph_id: str) -> dict:
+        """Ask the gateway for a merge grant (fail-closed on any error)."""
+        return await self._engine.issue_merge_grant_async(graph_id)
+
+    async def report_merge_outcome(
+        self, graph_id: str, merge_idempotency_key: str, outcome: dict,
+    ) -> dict:
+        """Report the merge outcome carrying the grant key (non-fatal)."""
+        return await self._engine.report_merge_outcome_async(
+            graph_id,
+            merge_idempotency_key,
+            str(outcome.get("status", "")),
+            list(outcome.get("merged_branches", [])),
+            list(outcome.get("conflict_branches", [])),
+            str(outcome.get("push_status", "no_push")),
+        )
+
+
 # ── NatsPublisher ───────────────────────────────────────────────
 
 
@@ -1211,13 +1246,22 @@ class NatsWorker:
             except Exception:
                 logger.debug("MergeArbiter unavailable, no merge arbitration")
 
-        # Orchestrator with NATS publisher + LLM + Codegraph + MergeArbiter
+        # Orchestrator with NATS publisher + LLM + Codegraph + MergeArbiter.
+        # T9 #651 / D9 #646: when a gRPC gateway endpoint is configured, the
+        # arbiter runs behind the merge barrier — grants are issued by the
+        # gateway gated on graph quiescence. No endpoint → legacy un-gated.
+        merge_gate = None
+        if merge_arbiter is not None and (self._grpc_endpoint or os.environ.get("UC_GRPC_ENDPOINT")):
+            merge_gate = MergeGate(self._engine)
+            logger.info("MergeGate wired (gRPC gateway) — merges require a grant")
+
         self._orchestrator = Orchestrator(
             engine=self._engine,
             nats_publisher=self._publisher,
             llm_client=llm_client,
             codegraph_client=codegraph_client,
             merge_arbiter=merge_arbiter,
+            merge_gate=merge_gate,
         )
 
         # Worker — sandbox-only, always

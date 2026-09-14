@@ -5115,6 +5115,88 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
             })),
         }
     }
+
+    /// T9 #651 / D9 #646 — merge-barrier grant issuance. The gateway is the
+    /// single writer: the arbiter must hold a grant BEFORE merging. The grant
+    /// is gated on graph quiescence and carries a deterministic
+    /// `merge_idempotency_key` binding it to the exact SUCCEEDED set + output
+    /// hashes, so a stale aggregation presents a key the gateway no longer
+    /// knows.
+    async fn issue_merge_grant(
+        &self,
+        request: Request<IssueMergeGrantRequest>,
+    ) -> Result<Response<IssueMergeGrantResponse>, Status> {
+        let req = request.into_inner();
+        let graph_id = req.graph_id;
+        if graph_id.trim().is_empty() {
+            return Ok(Response::new(IssueMergeGrantResponse {
+                granted: false,
+                merge_idempotency_key: String::new(),
+                idempotent_replay: false,
+                error: Some("graph_id cannot be empty".to_string()),
+            }));
+        }
+        let decision = {
+            let store = self.inner.task_store.lock().await;
+            match store.graph_shadow() {
+                Some(sink) => sink.issue_merge_grant(&graph_id).await,
+                None => uc_types::MergeGrantDecision {
+                    granted: false,
+                    merge_idempotency_key: String::new(),
+                    idempotent_replay: false,
+                    error: "graph plane not configured".to_string(),
+                },
+            }
+        };
+        Ok(Response::new(IssueMergeGrantResponse {
+            granted: decision.granted,
+            merge_idempotency_key: decision.merge_idempotency_key,
+            idempotent_replay: decision.idempotent_replay,
+            error: if decision.error.is_empty() {
+                None
+            } else {
+                Some(decision.error)
+            },
+        }))
+    }
+
+    /// T9 #651 / D9 #646 — merge-barrier outcome report. Unknown/superseded
+    /// key → `accepted=false` (the report is dropped loudly); consumed-key
+    /// replay → `accepted=true, idempotent_replay=true` (no-op).
+    async fn report_merge_outcome(
+        &self,
+        request: Request<ReportMergeOutcomeRequest>,
+    ) -> Result<Response<ReportMergeOutcomeResponse>, Status> {
+        let req = request.into_inner();
+        let graph_id = req.graph_id;
+        let key = req.merge_idempotency_key;
+        if graph_id.trim().is_empty() {
+            return Ok(Response::new(ReportMergeOutcomeResponse {
+                accepted: false,
+                idempotent_replay: false,
+            }));
+        }
+        let outcome = uc_types::MergeOutcomeReport {
+            status: req.status,
+            merged_branches: req.merged_branches,
+            conflict_branches: req.conflict_branches,
+            push_status: req.push_status,
+        };
+        let decision = {
+            let store = self.inner.task_store.lock().await;
+            match store.graph_shadow() {
+                Some(sink) => sink.report_merge_outcome(&graph_id, &key, &outcome).await,
+                None => uc_types::MergeReportDecision {
+                    accepted: false,
+                    idempotent_replay: false,
+                },
+            }
+        };
+        Ok(Response::new(ReportMergeOutcomeResponse {
+            accepted: decision.accepted,
+            idempotent_replay: decision.idempotent_replay,
+        }))
+    }
 }
 
 impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {}

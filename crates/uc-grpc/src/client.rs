@@ -204,6 +204,55 @@ impl GrpcEngineClient {
             timestamp: proto.timestamp,
         })
     }
+
+    /// T9 #651 / D9 #646 — request a merge-barrier grant for `graph_id`.
+    /// Returns the gateway decision (granted + deterministic key); never
+    /// errors on refusal — a refused merge is a normal gate outcome.
+    pub async fn issue_merge_grant(
+        &self,
+        graph_id: &str,
+    ) -> Result<uc_types::MergeGrantDecision, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = IssueMergeGrantRequest {
+            graph_id: graph_id.to_string(),
+        };
+        let response = client.issue_merge_grant(req).await.map_err(from_status)?;
+        let resp = response.into_inner();
+        Ok(uc_types::MergeGrantDecision {
+            granted: resp.granted,
+            merge_idempotency_key: resp.merge_idempotency_key,
+            idempotent_replay: resp.idempotent_replay,
+            error: resp.error.unwrap_or_default(),
+        })
+    }
+
+    /// T9 #651 / D9 #646 — report the merge outcome carrying the grant key.
+    /// Unknown/superseded key → `accepted=false` (stale aggregation loses).
+    pub async fn report_merge_outcome(
+        &self,
+        graph_id: &str,
+        merge_idempotency_key: &str,
+        outcome: &uc_types::MergeOutcomeReport,
+    ) -> Result<uc_types::MergeReportDecision, EngineError> {
+        let mut client = self.task_client.clone();
+        let req = ReportMergeOutcomeRequest {
+            graph_id: graph_id.to_string(),
+            merge_idempotency_key: merge_idempotency_key.to_string(),
+            status: outcome.status.clone(),
+            merged_branches: outcome.merged_branches.clone(),
+            conflict_branches: outcome.conflict_branches.clone(),
+            push_status: outcome.push_status.clone(),
+        };
+        let response = client
+            .report_merge_outcome(req)
+            .await
+            .map_err(from_status)?;
+        let resp = response.into_inner();
+        Ok(uc_types::MergeReportDecision {
+            accepted: resp.accepted,
+            idempotent_replay: resp.idempotent_replay,
+        })
+    }
 }
 
 fn from_status(status: tonic::Status) -> EngineError {

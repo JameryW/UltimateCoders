@@ -1170,6 +1170,75 @@ class Engine:
             logger.warning("deregister_worker failed: %s", exc)
             return False
 
+    # ── Merge barrier (gRPC mode only, T9 #651 / D9 #646) ────────
+
+    async def issue_merge_grant_async(self, graph_id: str) -> dict:
+        """Request a merge-barrier grant for ``graph_id`` from the gateway.
+
+        The gateway authorizes merges gated on graph quiescence and returns
+        a deterministic ``merge_idempotency_key`` binding the grant to the
+        exact SUCCEEDED node set + output hashes. A refusal (``granted=False``)
+        is a normal gate outcome, never an exception.
+
+        Returns:
+            dict(granted, merge_idempotency_key, idempotent_replay, error).
+            Transport/mode failures degrade to ``granted=False`` (fail-closed:
+            the arbiter must never merge without a grant).
+        """
+        if self._mode != "grpc" or self._grpc_engine is None:
+            return {
+                "granted": False,
+                "merge_idempotency_key": "",
+                "idempotent_replay": False,
+                "error": "merge gate requires gRPC mode",
+            }
+        try:
+            return dict(await self._grpc_engine.issue_merge_grant_async(graph_id))
+        except Exception as exc:
+            logger.warning("issue_merge_grant failed: %s", exc)
+            return {
+                "granted": False,
+                "merge_idempotency_key": "",
+                "idempotent_replay": False,
+                "error": str(exc),
+            }
+
+    async def report_merge_outcome_async(
+        self,
+        graph_id: str,
+        merge_idempotency_key: str,
+        status: str,
+        merged_branches: list[str] | None = None,
+        conflict_branches: list[str] | None = None,
+        push_status: str = "no_push",
+    ) -> dict:
+        """Report the merge outcome carrying the grant key (non-fatal).
+
+        Unknown/superseded key → ``accepted=False`` (a stale aggregation
+        loses exactly like a late ``commit_once`` loser); consumed-key
+        replay → ``accepted=True, idempotent_replay=True`` (no-op).
+
+        Returns:
+            dict(accepted, idempotent_replay). Transport/mode failures
+            degrade to ``accepted=False``.
+        """
+        if self._mode != "grpc" or self._grpc_engine is None:
+            return {"accepted": False, "idempotent_replay": False}
+        try:
+            return dict(
+                await self._grpc_engine.report_merge_outcome_async(
+                    graph_id,
+                    merge_idempotency_key,
+                    status,
+                    merged_branches,
+                    conflict_branches,
+                    push_status,
+                )
+            )
+        except Exception as exc:
+            logger.warning("report_merge_outcome failed: %s", exc)
+            return {"accepted": False, "idempotent_replay": False}
+
 
     # ── Multi-Repo Configuration ─────────────────────────────────
 
