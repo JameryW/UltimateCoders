@@ -491,3 +491,36 @@ D9 #646 落地：uc-types merge.rs 确定性 key（跨语言 golden 7094…）+ 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: T10 context compiler delivered (#652)
+
+**Date**: 2026-09-14
+**Task**: T10 context compiler delivered (#652)
+**Branch**: `main`
+
+### Summary
+
+D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装箱、node_id 字典序、truncated marker）+ envelope 加性 context_block + GraphShadowSink.committed_dep_outputs（node_completions 唯一事实源）+ 两发布嘴发布前组装 + worker 优先消费/无则回退 injector。基线：types 43(+3)、uc-grpc 206(+2)、pytest 1016+5(+7)；PG 集成再 +1 ignored。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5a68a17` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
