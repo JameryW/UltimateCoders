@@ -6,7 +6,12 @@
 
 use std::collections::HashMap;
 use uc_types::error::EngineError;
-use uc_types::{Subtask, Task, TaskId, TaskStatus};
+use uc_types::{Task, TaskId, TaskStatus};
+
+// `Subtask` is only materialized by the storage backend's row mapping
+// (T5 #641 removed the in-process decompose path that otherwise used it).
+#[cfg(feature = "storage")]
+use uc_types::Subtask;
 
 #[cfg(feature = "storage")]
 use std::sync::Arc;

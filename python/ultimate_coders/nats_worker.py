@@ -251,10 +251,14 @@ def _dispatch_mode_from_payload(raw: Any) -> DispatchMode:
     """Parse a dispatch_mode from a NATS payload into a DispatchMode.
 
     Rust serializes the DispatchMode enum as its variant NAME
-    (``"PreferRemote"`` / ``"Remote"`` / ``"Local"`` — PascalCase), while
-    Python's enum values are lowercase (``"prefer_remote"``). Accept either
-    form, case-insensitively, and fall back to PreferRemote (the default)
-    on anything unrecognized so a bad value never crashes the worker.
+    (``"PreferRemote"`` / ``"Remote"`` — PascalCase), while Python's enum
+    values are lowercase (``"prefer_remote"``). Accept either form,
+    case-insensitively, and fall back to PreferRemote (the default) on
+    anything unrecognized so a bad value never crashes the worker.
+
+    T5 #641 / D4 #633 Q1: ``DispatchMode.Local`` was removed — a legacy
+    wire value of ``"local"`` falls back to PreferRemote during the
+    upgrade window (same policy as the Rust side's ``_ => PreferRemote``).
 
     ponytail: case-insensitive match over a small map; upgrade path is
     making DispatchMode itself tolerant via _missing_.
@@ -266,7 +270,6 @@ def _dispatch_mode_from_payload(raw: Any) -> DispatchMode:
         "preferremote": DispatchMode.PREFER_REMOTE,
         "prefer_remote": DispatchMode.PREFER_REMOTE,
         "remote": DispatchMode.REMOTE,
-        "local": DispatchMode.LOCAL,
     }.get(key, DispatchMode.PREFER_REMOTE)
 
 
@@ -456,19 +459,26 @@ class NatsWorker:
         self._stale_dispatch_dropped: int = 0
         # JetStream Event Sourcing: last acked sequence for replay
         self._js_last_seq: int = 0
-        # JetStream durable consumer for uc.subtask.execute (work-queue retention).
-        # When available, subtasks are delivered via pull-subscribe with ack-after-
-        # execution — a worker crash mid-subtask triggers redelivery to another
-        # worker (cross-host recovery). Falls back to core NATS queue group if JS
-        # is unavailable.
+        # T5 #641 / D4 #633 Q1: JetStream durable pull consumer for
+        # uc.subtask.execute (work-queue retention) — a hard dependency, no
+        # core-NATS fallback. Until the durable consumer is bound the worker
+        # refuses gateway registration (it could not consume dispatches) and
+        # retries in the background; the state is surfaced on every heartbeat.
         self._subtask_js_available: bool = False
         self._subtask_pull_sub: Any | None = None  # nats.js.PullSubscription
         self._subtask_fetch_task: asyncio.Task[None] | None = None
+        self._subtask_transport_task: asyncio.Task[bool] | None = None
+        # Set by stop() so background startup loops (the subtask transport
+        # bind loop) can exit even before start() has flipped _running.
+        self._stopping = False
 
     # Constants for JetStream subtask delivery
     _SUBTASK_STREAM_NAME: str = "UC_SUBTASKS"
     _SUBTASK_CONSUMER_DURABLE: str = "subtask-workers"
     _SUBTASK_MAX_DELIVER: int = 5
+    # T5 #641: how often the transport bind loop retries while JetStream is
+    # unavailable (the worker refuses gateway registration in the meantime).
+    _SUBTASK_TRANSPORT_RETRY_SECONDS: float = 5.0
 
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
@@ -495,18 +505,21 @@ class NatsWorker:
         await self._ensure_jetstream_stream()
         await self._ensure_jetstream_consumer()
 
-        # Set up JetStream durable consumer for uc.subtask.execute (work-queue
-        # retention, ack-after-execution, redelivery on crash). Falls back to
-        # core NATS queue group if JetStream is unavailable.
-        if self._mode == "worker":
-            await self._ensure_jetstream_subtask_stream()
-            await self._ensure_jetstream_subtask_consumer()
-
         # Initialize publisher
         self._publisher = NatsPublisher(self._nc)
 
         # Initialize Engine, Orchestrator, Worker
         await self._init_components()
+
+        # T5 #641 / D4 #633 Q1: JetStream is a hard dependency for subtask
+        # dispatch — the core-NATS queue-group fallback is gone. Bind the
+        # durable pull consumer in the background (retrying until JetStream
+        # answers); gateway registration is refused until it is usable, so
+        # the gateway never dispatches to a worker that cannot consume.
+        if self._mode == "worker":
+            self._subtask_transport_task = asyncio.create_task(
+                self._ensure_subtask_transport()
+            )
 
         # Register with gateway via gRPC WorkerService (if endpoint configured)
         await self._register_with_gateway()
@@ -530,24 +543,11 @@ class NatsWorker:
             await self._replay_missed_events()
 
         if self._mode == "worker":
-            # Worker mode: subscribe to subtask execution.
-            # Prefer JetStream durable pull consumer (ack-after-execution,
-            # redelivery on crash). Fall back to core NATS queue group if JS
-            # is unavailable (mixed-mode coexistence per ADR 3).
-            subtask_subscribed = await self._start_subtask_consumer()
-            if not subtask_subscribed:
-                # Fallback: core NATS queue group (no redelivery on crash)
-                sub = await self._nc.subscribe(
-                    NATS_SUBJECT_SUBTASK_EXECUTE,
-                    queue="workers",
-                    cb=self._handle_subtask_execute,
-                )
-                self._subscriptions.append(sub)
-                logger.info(
-                    "Subscribed to %s (core NATS queue group: workers, "
-                    "fallback — no redelivery on crash)",
-                    NATS_SUBJECT_SUBTASK_EXECUTE,
-                )
+            # Worker mode: subtask delivery is the JetStream durable pull
+            # consumer bound by _ensure_subtask_transport (spawned above).
+            # T5 #641 / D4 #633 Q1: there is no core-NATS fallback — if
+            # JetStream is unavailable the worker stays unregistered and
+            # retries until the transport binds.
 
             # A remote Worker must receive cancellation control events too.
             # Otherwise a JetStream delivery that was queued before CancelTask
@@ -671,6 +671,10 @@ class NatsWorker:
         """Gracefully shut down the worker."""
         logger.info("Stopping NatsWorker")
         self._running = False
+        # T5 #641: also flag stopping so background startup loops (the
+        # subtask transport bind loop) exit even though start() may not
+        # have reached the _running flip yet.
+        self._stopping = True
 
         # Deregister from gateway via gRPC WorkerService
         await self._deregister_from_gateway()
@@ -701,6 +705,16 @@ class NatsWorker:
             except asyncio.CancelledError:
                 pass
             self._cleanup_task = None
+
+        # Cancel the subtask transport bind loop (may still be retrying
+        # if JetStream never came up). T5 #641.
+        if self._subtask_transport_task is not None:
+            self._subtask_transport_task.cancel()
+            try:
+                await self._subtask_transport_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._subtask_transport_task = None
 
         # Cancel JetStream subtask fetch loop FIRST — prevents it from
         # dispatching new bg tasks after we've already snapshotted and
@@ -779,7 +793,7 @@ class NatsWorker:
 
         # Drain and close NATS connection.
         # Bounded drain: nats-py's drain() waits for all in-flight message
-        # callbacks to finish — a long-running _handle_subtask_execute (up to
+        # callbacks to finish — a long-running _execute_and_report (up to
         # 600s subtask timeout) would block stop() for the full duration. Cap
         # at 10s so graceful shutdown doesn't hang; in-flight subtasks are
         # abandoned (the sandbox subprocess kill-on-cancel from execute_subtask
@@ -869,126 +883,84 @@ class NatsWorker:
 
     # ── JetStream subtask delivery (work-queue, ack-after-exec) ───────
 
-    async def _ensure_jetstream_subtask_stream(self) -> None:
-        """Ensure the UC_SUBTASKS JetStream stream exists for subtask delivery.
+    async def _ensure_subtask_transport(self) -> bool:
+        """Bind the JetStream subtask transport, retrying until usable.
 
-        Work-queue retention gives exactly-one delivery semantics: each
-        uc.subtask.execute message is delivered to one consumer and deleted
-        on ack. Combined with ack-after-execution, a worker crash mid-subtask
-        (no ack) triggers redelivery to another worker — cross-host recovery.
+        T5 #641 / D4 #633 Q1: JetStream is a hard dependency for subtask
+        dispatch — the core-NATS queue-group fallback was removed. The
+        UC_SUBTASKS stream is provisioned by the gateway (uc-grpc-server);
+        this worker only asserts its durable pull consumer (explicit ack
+        policy, max_deliver poison guard) and binds it. Until that succeeds
+        the worker refuses gateway registration — a worker that cannot
+        consume uc.subtask.execute must not appear dispatchable — and the
+        transport state is surfaced on every heartbeat (``subtask_transport``)
+        so operators can see why a worker is idle.
 
-        ponytail: non-fatal — if JetStream is unavailable, the worker falls
-        back to core NATS queue group (current behavior, no redelivery).
+        Runs as a background task (spawned in start()); returns True once
+        the transport is bound and the fetch loop is running, False when
+        the worker stopped first.
         """
         if self._nc is None:
-            return
-        try:
-            js = self._nc.jetstream()
-            await js.add_stream(
-                name=self._SUBTASK_STREAM_NAME,
-                subjects=[NATS_SUBJECT_SUBTASK_EXECUTE],
-                retention="workqueue",  # RetentionPolicy.WORK_QUEUE value
-                max_age=7 * 24 * 3600,  # 7 days in seconds
-                duplicate_window=120,  # 2 min dedup window
-            )
-            logger.info(
-                "JetStream stream %s created (work-queue retention)", self._SUBTASK_STREAM_NAME
-            )
-        except Exception as e:
-            err_msg = str(e)
-            if "stream already exists" in err_msg.lower():
-                logger.debug("JetStream stream %s already exists", self._SUBTASK_STREAM_NAME)
-            else:
-                logger.warning(
-                    "JetStream subtask stream setup failed (non-fatal): %s",
-                    err_msg,
-                )
-
-    async def _ensure_jetstream_subtask_consumer(self) -> None:
-        """Ensure a shared durable pull consumer exists for subtask delivery.
-
-        Creates consumer "subtask-workers" on UC_SUBTASKS with:
-        - ack_policy=explicit (worker must ack/nak/term each message)
-        - max_deliver=5 (poison-subtask guard — after 5 redeliveries the
-          worker term-acks and publishes subtask_failed)
-
-        Shared durable means all workers pulling this consumer compete for
-        messages (queue-group semantics at the consumer level).
-
-        ponytail: non-fatal — JetStream unavailable = fall back to core NATS.
-        """
-        if self._nc is None:
-            return
-        try:
-            js = self._nc.jetstream()
+            return False
+        js = self._nc.jetstream()
+        attempt = 0
+        while not self._stopping and not self._subtask_js_available:
             try:
+                # Create-or-update the shared durable pull consumer. The
+                # stream itself is the gateway's responsibility (D4 Q1) —
+                # if it is missing this raises and we retry below.
                 await js.add_consumer(
                     stream=self._SUBTASK_STREAM_NAME,
                     durable_name=self._SUBTASK_CONSUMER_DURABLE,
                     ack_policy="explicit",
                     max_deliver=self._SUBTASK_MAX_DELIVER,
                 )
-                logger.info(
-                    "JetStream consumer %s created (max_deliver=%d)",
-                    self._SUBTASK_CONSUMER_DURABLE,
-                    self._SUBTASK_MAX_DELIVER,
+                self._subtask_pull_sub = await js.pull_subscribe(
+                    NATS_SUBJECT_SUBTASK_EXECUTE,
+                    durable=self._SUBTASK_CONSUMER_DURABLE,
+                    stream=self._SUBTASK_STREAM_NAME,
                 )
             except Exception as e:
-                if "consumer already exists" in str(e).lower():
-                    logger.debug(
-                        "JetStream consumer %s already exists",
-                        self._SUBTASK_CONSUMER_DURABLE,
-                    )
-                else:
+                attempt += 1
+                self._subtask_pull_sub = None
+                self._subtask_js_available = False
+                # Log the first failure and then once a minute (12 × 5s)
+                # so a long outage is visible without spamming the log.
+                if attempt == 1 or attempt % 12 == 0:
                     logger.warning(
-                        "JetStream subtask consumer setup failed (non-fatal): %s",
+                        "JetStream subtask transport unavailable — refusing "
+                        "gateway registration, retrying every %ss "
+                        "(attempt %d): %s",
+                        self._SUBTASK_TRANSPORT_RETRY_SECONDS,
+                        attempt,
                         e,
                     )
-        except Exception as e:
-            logger.warning(
-                "JetStream subtask consumer setup failed (non-fatal): %s",
-                e,
-            )
-
-    async def _start_subtask_consumer(self) -> bool:
-        """Start the JetStream pull-subscribe fetch loop for subtask delivery.
-
-        Returns True if JetStream delivery is active, False if the caller
-        should fall back to core NATS queue group.
-
-        The fetch loop pulls batches of messages and dispatches each to
-        _handle_subtask_execute_js (which spawns _execute_and_report and
-        acks/naks/terms based on the outcome). ACK happens AFTER execution
-        completes — crash mid-subtask = no ack = redelivery.
-        """
-        if self._nc is None:
-            return False
-        try:
-            js = self._nc.jetstream()
-            self._subtask_pull_sub = await js.pull_subscribe(
-                NATS_SUBJECT_SUBTASK_EXECUTE,
-                durable=self._SUBTASK_CONSUMER_DURABLE,
-                stream=self._SUBTASK_STREAM_NAME,
-            )
+                # CancelledError propagates: stop() cancels this task, and
+                # cancellation must interrupt the retry loop promptly.
+                await asyncio.sleep(self._SUBTASK_TRANSPORT_RETRY_SECONDS)
+                continue
             self._subtask_js_available = True
-            self._subtask_fetch_task = asyncio.create_task(self._subtask_fetch_loop())
+            self._subtask_fetch_task = asyncio.create_task(
+                self._subtask_fetch_loop()
+            )
             logger.info(
-                "Subscribed to %s via JetStream durable consumer '%s' "
-                "(ack-after-execution, redelivery on crash, max_deliver=%d)",
+                "Subtask transport ready: %s via JetStream durable consumer "
+                "'%s' (ack-after-execution, redelivery on crash, "
+                "max_deliver=%d)",
                 NATS_SUBJECT_SUBTASK_EXECUTE,
                 self._SUBTASK_CONSUMER_DURABLE,
                 self._SUBTASK_MAX_DELIVER,
             )
+            # Transport just became usable — (re-)register with the gateway
+            # now instead of waiting for the next heartbeat tick. While the
+            # transport was down, registration was refused (see
+            # _register_with_gateway), so this is the point where the worker
+            # becomes dispatchable. Idempotent with the start()/heartbeat
+            # registration paths (gateway upserts by worker_id).
+            await self._register_with_gateway()
             return True
-        except Exception as e:
-            logger.warning(
-                "JetStream subtask pull_subscribe failed (falling back to "
-                "core NATS queue group): %s",
-                e,
-            )
-            self._subtask_js_available = False
-            self._subtask_pull_sub = None
-            return False
+        logger.info("Subtask transport bind aborted (worker stopping)")
+        return False
 
     async def _subtask_fetch_loop(self) -> None:
         """Pull-fetch loop for JetStream subtask delivery.
@@ -1723,10 +1695,9 @@ class NatsWorker:
                         break
                 if st is None:
                     continue
-                # DispatchMode.Local → always local
-                if st.dispatch_mode == DispatchMode.LOCAL:
-                    local_batch.append(sid)
-                    continue
+                # T5 #641 / D4 #633 Q1: DispatchMode.Local is gone — the
+                # split below (remote-capable / Remote-strict / PreferRemote
+                # local fallback) is the whole decision surface.
                 # Check if remote workers with matching capabilities exist
                 if self._has_remote_workers(st.required_capabilities or None):
                     remote_batch.append(sid)
@@ -1959,6 +1930,15 @@ class NatsWorker:
                             # metadata in the heartbeat fallback path).
                             "stale_dispatch_dropped": self._stale_dispatch_dropped,
                         }
+                        # T5 #641 / D4 #633 Q1: subtask transport state on
+                        # every heartbeat, so an operator can see a worker
+                        # that is alive but not consuming dispatches (and
+                        # therefore intentionally unregistered).
+                        if self._mode == "worker":
+                            w_info["subtask_transport"] = (
+                                "jetstream" if self._subtask_js_available
+                                else "unavailable"
+                            )
                         w_info["pending_subtask_count"] = info.current_load
                     # Include orchestrator pending count if available
                     if self._orchestrator is not None:
@@ -2023,6 +2003,20 @@ class NatsWorker:
             logger.debug("No gRPC endpoint configured, skipping gateway registration")
             return
 
+        # T5 #641 / D4 #633 Q1: a worker-mode worker without a usable
+        # JetStream subtask transport must not register — the gateway would
+        # dispatch subtasks it cannot consume (the core-NATS fallback is
+        # gone). The heartbeat loop retries registration every tick (and
+        # _ensure_subtask_transport registers on a successful bind), so the
+        # worker joins the registry as soon as the transport is up.
+        if self._mode == "worker" and not self._subtask_js_available:
+            logger.warning(
+                "Subtask transport not ready — refusing gateway registration "
+                "(worker cannot consume %s without JetStream)",
+                NATS_SUBJECT_SUBTASK_EXECUTE,
+            )
+            return
+
         try:
             self._grpc_reg_engine = Engine(mode="grpc", grpc_endpoint=endpoint)
             worker_id = self._consumer_id
@@ -2060,8 +2054,7 @@ class NatsWorker:
             logger.warning("Gateway registration failed (non-fatal)", exc_info=True)
             self._grpc_reg_engine = None
 
-    @staticmethod
-    def _registration_metadata() -> str:
+    def _registration_metadata(self) -> str:
         """JSON blob identifying WHERE this worker runs.
 
         Cross-host scaling (#607) makes worker→host mapping non-obvious;
@@ -2069,7 +2062,10 @@ class NatsWorker:
         ops can tell which machine each registered worker lives on.
         Keys are stable API: hostname/pid always present, compose_project
         only when running under a compose project, contract_version always
-        present (T1 #637 handshake echo — additive).
+        present (T1 #637 handshake echo — additive), subtask_transport
+        present since T5 #641 (D4 Q1 observability — worker-mode
+        registration is refused before the JetStream consumer binds, so a
+        registered worker-mode worker always reports "jetstream").
         """
         import json
         import socket
@@ -2078,6 +2074,12 @@ class NatsWorker:
             "hostname": socket.gethostname(),
             "pid": os.getpid(),
             "contract_version": CONTRACT_VERSION,
+            # T5 #641 / D4 #633 Q1: how this worker consumes
+            # uc.subtask.execute. "unavailable" on a non-worker-mode worker
+            # is expected (it does not consume that subject).
+            "subtask_transport": (
+                "jetstream" if self._subtask_js_available else "unavailable"
+            ),
         }
         compose_project = os.environ.get("UC_COMPOSE_PROJECT", "")
         if compose_project:
@@ -2105,64 +2107,11 @@ class NatsWorker:
 
     # ── Worker mode: subtask execution handler ────────────────────
 
-    async def _handle_subtask_execute(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
-        """Handle ``uc.subtask.execute`` messages (Worker mode only).
-
-        Consumed via NATS queue group ``workers`` so each subtask is
-        processed by exactly one worker.  Executes the subtask in a
-        sandbox and publishes the result via ``uc.task.update``.
-
-        This is the core NATS fallback path (no redelivery on crash).
-        JetStream delivery uses _handle_subtask_execute_js instead.
-        """
-        parsed = self._parse_subtask_message(msg.data)
-        if parsed is None:
-            return
-
-        task_id, subtask_id, data = parsed
-
-        if self._worker is None:
-            logger.error("No worker initialized, cannot execute subtask")
-            return
-
-        if task_id in self._cancelled_task_ids:
-            logger.info("Skipping cancelled subtask %s", subtask_id[:8])
-            return
-
-        # Capability check: worker must have ALL required_capabilities
-        missing_caps = self._check_capabilities(data, task_id, subtask_id)
-        if missing_caps is not None:
-            # Capability miss — publish rejection event (core NATS has no
-            # nak/redelivery; the rejection event lets the orchestrator keep
-            # the subtask Pending for re-dispatch).
-            self._spawn_bg(
-                self._publish_capability_rejection(
-                    task_id,
-                    subtask_id,
-                    missing_caps,
-                )
-            )
-            return
-
-        subtask = self._build_subtask_from_data(task_id, subtask_id, data)
-        if subtask is None:
-            return
-
-        # ponytail: F54 — dispatch the execution to a background task and
-        # return. nats-py awaits this callback INLINE on the subscription's
-        # single reader task, so awaiting execute_subtask here (up to 600s)
-        # serialized ALL subtasks — max_capacity was dead code and queued
-        # messages past pending_msgs_limit were silently dropped (lost
-        # subtasks, tasks stuck forever). With the callback thin, the reader
-        # drains instantly and the semaphore inside _execute_and_report does
-        # the real concurrency limiting. Bonus: bg tasks are tracked in
-        # _bg_tasks, so stop()'s cancellation finally reaches executions.
-        self._spawn_subtask_execution(subtask)
-
     async def _handle_subtask_execute_js(self, js_msg: Any) -> None:
         """Handle a JetStream ``uc.subtask.execute`` message (Worker mode).
 
-        JetStream durable pull consumer path. Key differences from core NATS:
+        The only subtask dispatch path (T5 #641 / D4 #633 Q1 — the core-NATS
+        queue-group fallback was removed). Delivery semantics:
         - max_deliver cap: if num_delivered >= max_deliver, term-ack + publish
           subtask_failed (poison-subtask guard — no hot-loop).
         - Capability miss: msg.nak() so NATS redelivers to another worker
@@ -2329,10 +2278,10 @@ class NatsWorker:
             return None
 
         # T1 #637 → T4 #640: envelopes ride on every dispatch (identity-mapped
-        # during the transition). The JS handler now REJECTS envelope-less
+        # during the transition). The JS handler REJECTS envelope-less
         # dispatches (term + counter + event, see _is_stale_dispatch); this
-        # parse path stays tolerant so the core-NATS (non-durable) legacy
-        # path keeps working, but logs the mixed-version signal loudly.
+        # parse path stays tolerant so pre-T4 messages still parse far enough
+        # to be term-dropped, but logs the mixed-version signal loudly.
         if not data.get("idempotency_key"):
             logger.info(
                 "uc.subtask.execute for subtask %s carries no execution "

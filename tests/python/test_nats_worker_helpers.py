@@ -445,12 +445,14 @@ async def test_heartbeat_success_resets_failure_counter(monkeypatch):
 # ── F54: NATS callback must not await execution ───────────────────
 
 
-async def test_handle_subtask_execute_dispatches_to_background():
+async def test_handle_subtask_execute_js_dispatches_to_background():
     """HIGH regression: nats-py awaits the subscription callback inline on
     its single reader task, so awaiting execute_subtask in the callback
     serialized all subtasks (max_capacity dead) and queued messages past
-    pending_msgs_limit were silently dropped. The callback must hand the
-    execution to a background task and return immediately.
+    pending_msgs_limit were silently dropped. The handler must hand the
+    execution to a background task and return immediately. (T5 #641: the
+    JetStream handler is the only subtask dispatch path — the core-NATS
+    queue-group fallback is gone.)
     """
     import asyncio
 
@@ -482,19 +484,28 @@ async def test_handle_subtask_execute_dispatches_to_background():
     msg = MagicMock()
     msg.data = json.dumps(
         {
-            "task_id": "t-1",
-            "subtask_id": "st-1",
             "description": "do the thing",
             "timeout_seconds": 600,
             "dispatch_mode": "prefer_remote",
             "steps": [],
+            "required_capabilities": [],
+            "graph_id": "t-1",
+            "node_id": "st-1",
+            "attempt_id": 0,
+            "idempotency_key": "t-1:st-1:0",
+            "worker_epoch": "",
+            "contract_version": "v1",
         }
     ).encode()
+    msg.metadata.num_delivered = 1
+    msg.ack = AsyncMock()
+    msg.nak = AsyncMock()
+    msg.term = AsyncMock()
 
-    # Callback must return while execution is still blocked on `release`.
-    # (wait_for succeeding at all proves the callback didn't await the
+    # Handler must return while execution is still blocked on `release`.
+    # (wait_for succeeding at all proves the handler didn't await the
     # execution; the poll gives the spawned task its first loop tick.)
-    await asyncio.wait_for(nw._handle_subtask_execute(msg), timeout=2)
+    await asyncio.wait_for(nw._handle_subtask_execute_js(msg), timeout=2)
     for _ in range(50):
         if started.is_set():
             break
@@ -1176,13 +1187,14 @@ def test_registration_metadata_shape(monkeypatch):
     from ultimate_coders.nats_worker import NatsWorker
 
     monkeypatch.delenv("UC_COMPOSE_PROJECT", raising=False)
-    meta = json.loads(NatsWorker._registration_metadata())
+    # T5 #641: instance method now — reads _subtask_js_available state.
+    meta = json.loads(_make_worker()._registration_metadata())
     assert isinstance(meta["hostname"], str) and meta["hostname"]
     assert isinstance(meta["pid"], int)
     assert "compose_project" not in meta
 
     monkeypatch.setenv("UC_COMPOSE_PROJECT", "uc-prod")
-    meta = json.loads(NatsWorker._registration_metadata())
+    meta = json.loads(_make_worker()._registration_metadata())
     assert meta["compose_project"] == "uc-prod"
 
 
@@ -1196,7 +1208,7 @@ def test_registration_metadata_carries_contract_version():
     from ultimate_coders.nats_worker import CONTRACT_VERSION, NatsWorker
 
     assert CONTRACT_VERSION == "v1"  # mirrors uc_types::CONTRACT_VERSION
-    meta = json.loads(NatsWorker._registration_metadata())
+    meta = json.loads(_make_worker()._registration_metadata())
     assert meta["contract_version"] == CONTRACT_VERSION
 
 

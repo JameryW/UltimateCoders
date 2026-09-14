@@ -2383,66 +2383,6 @@ class TestNatsWorkerRemoteResults:
         asyncio.run(run())
 
 
-class TestNatsWorkerSubtaskCapabilityReject:
-    """Regression: _handle_subtask_execute called msg.nack() on a core NATS
-    subscription message. nats-py has no ``nack`` method (it's ``nak``), and even
-    ``nak`` raises NotJSMessageError on core (non-JetStream) messages. So a
-    worker that received a subtask it lacked capabilities for would raise an
-    unhandled AttributeError out of the message handler. The fix publishes the
-    rejection event and returns without touching the message."""
-
-    def test_capability_reject_publishes_event_without_raising(self):
-        import asyncio
-        import json
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
-
-        from ultimate_coders.nats_worker import NatsWorker
-
-        async def run():
-            nw = NatsWorker()
-            # Worker lacks the required capability.
-            worker = MagicMock()
-            worker.worker_id = "w-underpowered"
-            worker.capabilities = ["python"]
-            nw._worker = worker
-
-            published: list[dict] = []
-            publisher = MagicMock()
-            publisher.publish_event = AsyncMock(
-                side_effect=lambda event_type, **kw: published.append({"type": event_type, **kw})
-            )
-            nw._publisher = publisher
-
-            msg = SimpleNamespace(data=json.dumps({
-                "task_id": "t-1",
-                "subtask_id": "st-1",
-                "description": "do rust thing",
-                "required_capabilities": ["rust"],
-                "timeout_seconds": 60,
-            }).encode())
-            # Crucially, msg has NO nack/nak/ack attribute — a core NATS message
-            # before the fix would AttributeError on msg.nack().
-
-            # Must not raise.
-            await nw._handle_subtask_execute(msg)
-
-            # The rejection is published via _spawn_bg (background task), so
-            # we need to yield control to let it complete.
-            for _ in range(50):
-                if published:
-                    break
-                await asyncio.sleep(0.02)
-
-            # Rejection event published so the default-mode worker keeps it Pending.
-            assert any(p["type"] == "subtask_dispatch_rejected" for p in published)
-            reject = next(p for p in published if p["type"] == "subtask_dispatch_rejected")
-            assert reject["task_id"] == "t-1"
-            assert reject["subtask_id"] == "st-1"
-
-        asyncio.run(run())
-
-
 class TestNatsWorkerConnectOptions:
     """Regression: nats.connect() used defaults (max_reconnect_attempts=60,
     ~2s apart). After a NATS outage longer than ~120s the client closed
@@ -2631,12 +2571,13 @@ class TestNatsWorkerSubtaskConcurrency:
     """Regression: uc.subtask.execute messages were processed concurrently with
     no bound — a worker with max_capacity=3 would run 5+ agent subprocesses at
     once if 5 messages arrived, OOM-ing/CPU-starving the worker (session
-    interruption). The capacity semaphore now caps concurrent executions."""
+    interruption). The capacity semaphore now caps concurrent executions.
+    (T5 #641: exercised through the JetStream handler — the only subtask
+    dispatch path since the core-NATS fallback was removed.)"""
 
     def test_concurrent_subtasks_capped_at_max_capacity(self):
         import asyncio
         import json
-        from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
 
         from ultimate_coders.agent.types import SubtaskResult
@@ -2644,6 +2585,7 @@ class TestNatsWorkerSubtaskConcurrency:
 
         async def run():
             nw = NatsWorker()
+            nw._running = True
             nw._dispatch_event = asyncio.Event()
 
             worker = MagicMock()
@@ -2676,18 +2618,40 @@ class TestNatsWorkerSubtaskConcurrency:
 
             worker.execute_subtask = execute_subtask
 
-            # Dispatch 6 subtasks concurrently (3x capacity).
+            # Dispatch 6 subtasks concurrently (3x capacity), as JetStream
+            # deliveries (the only path since T5 #641).
             msgs = []
             for i in range(6):
-                msg = SimpleNamespace(data=json.dumps({
-                    "task_id": "t-1",
-                    "subtask_id": f"st-{i}",
+                msg = MagicMock()
+                msg.data = json.dumps({
+                    # T4 #640 execution envelope (identity source).
                     "description": f"task {i}",
                     "timeout_seconds": 60,
-                }).encode())
+                    "graph_id": "t-1",
+                    "node_id": f"st-{i}",
+                    "attempt_id": 0,
+                    "idempotency_key": f"t-1:st-{i}:0",
+                    "contract_version": "v1",
+                }).encode()
+                msg.metadata.num_delivered = 1
+                msg.ack = AsyncMock()
+                msg.nak = AsyncMock()
+                msg.term = AsyncMock()
                 msgs.append(msg)
 
-            await asyncio.gather(*(nw._handle_subtask_execute(m) for m in msgs))
+            await asyncio.gather(*(nw._handle_subtask_execute_js(m) for m in msgs))
+
+            # Let the spawned executions run (bg tasks start after the
+            # handlers return) and settle.
+            for _ in range(50):
+                if peak["n"] >= 2:
+                    break
+                await asyncio.sleep(0.02)
+            for bg in list(nw._bg_tasks):
+                try:
+                    await bg
+                except Exception:
+                    pass
 
             # Peak concurrent executions must not exceed max_capacity (2).
             assert peak["n"] <= worker.max_capacity, (

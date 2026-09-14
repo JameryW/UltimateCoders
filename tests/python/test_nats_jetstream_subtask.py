@@ -1,19 +1,20 @@
-"""Tests for JetStream subtask delivery (PR1: stream + consumer + ACK refactor).
+"""Tests for JetStream subtask delivery.
 
 Covers:
-- UC_SUBTASKS stream + subtask-workers consumer setup (non-fatal on failure)
-- _start_subtask_consumer: JS available → fetch loop; JS unavailable → fallback
+- _ensure_subtask_transport: JetStream is a hard dependency (T5 #641 /
+  D4 #633 Q1) — the durable pull consumer is bound with periodic retries,
+  gateway registration is refused until it is usable, and there is no
+  core-NATS fallback
 - _handle_subtask_execute_js: max_deliver cap → term + subtask_failed
 - _handle_subtask_execute_js: capability miss → nak (redeliver to another worker)
 - _execute_and_report: ACK-after-execution (success → ack, failure → ack)
-- Fallback: JS unavailable → core NATS queue group subscribe
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from ultimate_coders.agent.types import Subtask
 from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
@@ -67,113 +68,47 @@ def _make_subtask_payload(
     }
 
 
-# ── Stream / consumer setup ─────────────────────────────────────
+# ── _ensure_subtask_transport: hard dependency, no fallback (T5 #641) ──
 
 
-async def test_ensure_subtask_stream_creates_workqueue_stream():
-    """_ensure_jetstream_subtask_stream calls add_stream with workqueue retention."""
+async def test_ensure_subtask_transport_binds_and_starts_fetch_loop():
+    """JetStream usable → durable consumer asserted, pull sub bound, fetch
+    loop started, transport flagged available, registration triggered."""
     nw = _make_worker()
+    nw._running = True
 
-    js = MagicMock()
-    js.add_stream = AsyncMock()
-    nw._nc = MagicMock()
-    nw._nc.jetstream = MagicMock(return_value=js)
-
-    await nw._ensure_jetstream_subtask_stream()
-
-    js.add_stream.assert_awaited_once()
-    call_kwargs = js.add_stream.call_args.kwargs
-    assert call_kwargs["name"] == "UC_SUBTASKS"
-    assert call_kwargs["subjects"] == ["uc.subtask.execute"]
-    assert call_kwargs["retention"] == "workqueue"
-    assert call_kwargs["max_age"] == 7 * 24 * 3600
-    assert call_kwargs["duplicate_window"] == 120
-
-
-async def test_ensure_subtask_stream_already_exists_is_non_fatal():
-    """Stream already exists → debug log, no crash."""
-    nw = _make_worker()
-
-    js = MagicMock()
-    js.add_stream = AsyncMock(side_effect=Exception("stream already exists"))
-    nw._nc = MagicMock()
-    nw._nc.jetstream = MagicMock(return_value=js)
-
-    # Must not raise
-    await nw._ensure_jetstream_subtask_stream()
-
-
-async def test_ensure_subtask_stream_js_unavailable_is_non_fatal():
-    """JetStream unavailable → warning, no crash."""
-    nw = _make_worker()
-
-    js = MagicMock()
-    js.add_stream = AsyncMock(side_effect=Exception("JetStream unavailable"))
-    nw._nc = MagicMock()
-    nw._nc.jetstream = MagicMock(return_value=js)
-
-    # Must not raise
-    await nw._ensure_jetstream_subtask_stream()
-
-
-async def test_ensure_subtask_consumer_creates_durable():
-    """_ensure_jetstream_subtask_consumer creates subtask-workers with max_deliver=5."""
-    nw = _make_worker()
-
+    pull_sub = MagicMock()
     js = MagicMock()
     js.add_consumer = AsyncMock()
+    js.pull_subscribe = AsyncMock(return_value=pull_sub)
     nw._nc = MagicMock()
     nw._nc.jetstream = MagicMock(return_value=js)
+    nw._register_with_gateway = AsyncMock()
 
-    await nw._ensure_jetstream_subtask_consumer()
+    worker = MagicMock()
+    worker.max_capacity = 3
+    nw._worker = worker
 
+    result = await nw._ensure_subtask_transport()
+
+    assert result is True
+    assert nw._subtask_js_available is True
+    assert nw._subtask_pull_sub is pull_sub
+    assert nw._subtask_fetch_task is not None
+
+    # D4 Q1: the durable consumer is asserted explicitly (ack policy +
+    # max_deliver poison guard live server-side) before the pull
+    # subscription binds.
     js.add_consumer.assert_awaited_once()
     call_kwargs = js.add_consumer.call_args.kwargs
     assert call_kwargs["stream"] == "UC_SUBTASKS"
     assert call_kwargs["durable_name"] == "subtask-workers"
     assert call_kwargs["ack_policy"] == "explicit"
     assert call_kwargs["max_deliver"] == 5
-
-
-async def test_ensure_subtask_consumer_already_exists_is_non_fatal():
-    """Consumer already exists → debug log, no crash."""
-    nw = _make_worker()
-
-    js = MagicMock()
-    js.add_consumer = AsyncMock(
-        side_effect=Exception("consumer already exists")
-    )
-    nw._nc = MagicMock()
-    nw._nc.jetstream = MagicMock(return_value=js)
-
-    # Must not raise
-    await nw._ensure_jetstream_subtask_consumer()
-
-
-# ── _start_subtask_consumer: JS available vs fallback ───────────
-
-
-async def test_start_subtask_consumer_js_available_starts_fetch_loop():
-    """JS available → pull_subscribe + fetch loop task started, returns True."""
-    nw = _make_worker()
-    nw._running = True
-
-    pull_sub = MagicMock()
-    js = MagicMock()
-    js.pull_subscribe = AsyncMock(return_value=pull_sub)
-    nw._nc = MagicMock()
-    nw._nc.jetstream = MagicMock(return_value=js)
-
-    worker = MagicMock()
-    worker.max_capacity = 3
-    nw._worker = worker
-
-    result = await nw._start_subtask_consumer()
-
-    assert result is True
-    assert nw._subtask_js_available is True
-    assert nw._subtask_pull_sub is pull_sub
-    assert nw._subtask_fetch_task is not None
+    js.pull_subscribe.assert_awaited_once()
+    # Transport became usable → (re-)register with the gateway immediately
+    # instead of waiting for the next heartbeat tick.
+    nw._register_with_gateway.assert_awaited_once()
 
     # Cleanup
     nw._subtask_fetch_task.cancel()
@@ -183,21 +118,67 @@ async def test_start_subtask_consumer_js_available_starts_fetch_loop():
         pass
 
 
-async def test_start_subtask_consumer_js_unavailable_returns_false():
-    """JS unavailable → pull_subscribe raises, returns False (fallback signal)."""
+async def test_ensure_subtask_transport_retries_while_js_unavailable():
+    """JetStream unavailable → stays unbound, retries periodically, never
+    flips _subtask_js_available (a worker that cannot consume dispatches
+    must not look dispatchable). The test double raises exactly like the
+    real JS client does when the stream/consumer is missing."""
     nw = _make_worker()
+    nw._SUBTASK_TRANSPORT_RETRY_SECONDS = 0.01  # test-speed retry cadence
 
     js = MagicMock()
-    js.pull_subscribe = AsyncMock(side_effect=Exception("JetStream unavailable"))
+    js.add_consumer = AsyncMock(side_effect=Exception("JetStream unavailable"))
     nw._nc = MagicMock()
     nw._nc.jetstream = MagicMock(return_value=js)
+    nw._register_with_gateway = AsyncMock()
 
-    result = await nw._start_subtask_consumer()
+    bind_task = asyncio.create_task(nw._ensure_subtask_transport())
+    try:
+        for _ in range(50):
+            if js.add_consumer.await_count >= 3:
+                break
+            await asyncio.sleep(0.02)
+        assert js.add_consumer.await_count >= 3, "transport never retried"
 
-    assert result is False
-    assert nw._subtask_js_available is False
-    assert nw._subtask_pull_sub is None
-    assert nw._subtask_fetch_task is None
+        assert nw._subtask_js_available is False
+        assert nw._subtask_pull_sub is None
+        assert nw._subtask_fetch_task is None
+        # Refused registration: never attempted while the transport is down.
+        nw._register_with_gateway.assert_not_awaited()
+    finally:
+        bind_task.cancel()
+        try:
+            await bind_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_register_with_gateway_refused_while_transport_down():
+    """D4 Q1: a worker-mode worker without a usable subtask transport must
+    not register with the gateway — it would receive dispatches it cannot
+    consume (the core-NATS fallback is gone)."""
+    nw = _make_worker()  # mode="worker"
+    nw._subtask_js_available = False
+    nw._grpc_endpoint = "http://127.0.0.1:50051"
+
+    with patch("ultimate_coders.nats_worker.Engine") as engine_cls:
+        await nw._register_with_gateway()
+        engine_cls.assert_not_called()
+
+    assert nw._grpc_reg_engine is None
+
+
+async def test_registration_metadata_reports_subtask_transport():
+    """Registration metadata carries subtask_transport (D4 Q1 observability)."""
+    nw = _make_worker()
+
+    nw._subtask_js_available = False
+    meta = json.loads(nw._registration_metadata())
+    assert meta["subtask_transport"] == "unavailable"
+
+    nw._subtask_js_available = True
+    meta = json.loads(nw._registration_metadata())
+    assert meta["subtask_transport"] == "jetstream"
 
 
 # ── _handle_subtask_execute_js: max_deliver cap ─────────────────
@@ -541,7 +522,7 @@ async def test_execute_and_report_acks_on_publish_update_failure():
 
 
 async def test_execute_and_report_no_js_msg_no_ack():
-    """Core NATS path (js_msg=None) → no ack attempt (core NATS has no ack)."""
+    """js_msg=None → no ack attempt (defensive: nothing to ack)."""
     nw = _make_worker()
     nw._running = True
 
@@ -623,94 +604,6 @@ async def test_cancel_event_stops_running_remote_execution():
     assert execution.cancelled()
     orchestrator.cancel_task.assert_awaited_once_with("t-1")
     assert nw._dispatch_event.is_set()
-
-
-# ── Core NATS fallback path still works ─────────────────────────
-
-
-async def test_handle_subtask_execute_core_nats_still_works():
-    """The core NATS fallback path (_handle_subtask_execute) still dispatches."""
-    nw = _make_worker()
-    nw._running = True
-    nw._dispatch_event = asyncio.Event()
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def slow_execute(subtask):
-        started.set()
-        await release.wait()
-        result = MagicMock()
-        result.success = True
-        result.summary = "done"
-        result.modified_files = []
-        return result
-
-    worker = MagicMock()
-    worker.worker_id = "w-1"
-    worker.capabilities = []
-    worker.execute_subtask = slow_execute
-    nw._worker = worker
-
-    publisher = MagicMock()
-    publisher.publish_event = AsyncMock()
-    publisher.publish_update = AsyncMock()
-    nw._publisher = publisher
-
-    msg = MagicMock()
-    msg.data = json.dumps(_make_subtask_payload()).encode()
-
-    await nw._handle_subtask_execute(msg)
-
-    for _ in range(50):
-        if started.is_set():
-            break
-        await asyncio.sleep(0.02)
-    assert started.is_set()
-
-    release.set()
-    for _ in range(50):
-        if publisher.publish_event.await_count >= 1:
-            break
-        await asyncio.sleep(0.02)
-    assert publisher.publish_event.await_count >= 1
-
-
-async def test_core_nats_capability_miss_publishes_rejection_no_nak():
-    """Core NATS capability miss → rejection event, no nak (core NATS has no nak)."""
-    nw = _make_worker()
-    nw._running = True
-
-    worker = MagicMock()
-    worker.worker_id = "w-1"
-    worker.capabilities = ["python"]
-    worker.execute_subtask = AsyncMock()
-    nw._worker = worker
-
-    publisher = MagicMock()
-    publisher.publish_event = AsyncMock()
-    nw._publisher = publisher
-
-    msg = MagicMock()
-    msg.data = json.dumps(
-        _make_subtask_payload(required_capabilities=["rust"])
-    ).encode()
-
-    await nw._handle_subtask_execute(msg)
-
-    # The rejection is published via _spawn_bg(_publish_capability_rejection),
-    # so wait for the bg task to complete.
-    for _ in range(50):
-        if publisher.publish_event.await_count >= 1:
-            break
-        await asyncio.sleep(0.02)
-
-    # Rejection event published
-    publisher.publish_event.assert_awaited_once()
-    assert publisher.publish_event.call_args.args[0] == "subtask_dispatch_rejected"
-
-    # Execution NOT started
-    worker.execute_subtask.assert_not_awaited()
 
 
 # ── Malformed message handling ──────────────────────────────────

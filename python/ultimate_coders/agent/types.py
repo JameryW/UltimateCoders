@@ -40,9 +40,10 @@ class ChangeType(Enum):
 
 class DispatchMode(Enum):
     """How a subtask should be dispatched to workers."""
-    LOCAL = "local"            # Execute locally (reserved, currently no-op)
     REMOTE = "remote"          # Must execute on remote worker, fail after 3 retries
     PREFER_REMOTE = "prefer_remote"  # Prefer remote, fallback to Pending (default)
+    # T5 #641 / D4 #633 Q1: DispatchMode.Local was removed (Rust deleted the
+    # variant first; legacy "local" wire values parse back to PREFER_REMOTE).
 
 
 @dataclass

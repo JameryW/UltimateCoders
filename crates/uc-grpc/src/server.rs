@@ -4906,8 +4906,8 @@ mod tests {
         assert!(events.is_empty());
     }
 
-    // decompose_task tests removed — Rust-side decomposition no longer exists;
-    // all decomposition goes through Python Orchestrator via NATS/bridge.
+    // Rust-side task decomposition was removed in T5 #641 — all
+    // decomposition goes through the Python Orchestrator via NATS/bridge.
 
     #[test]
     fn task_status_to_proto_conversion() {

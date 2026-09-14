@@ -581,7 +581,7 @@ def test_nats_payload_with_steps_round_trips_to_subtask():
       agent_config_json: Option<String>   (JSON string)
       steps: Vec<WorkflowStep>            (each with agent_config_json: Option<String>)
 
-    Python's _handle_subtask_execute builds a Subtask from this dict. We
+    Python's _parse_subtask_message builds a Subtask from this dict. We
     replicate that field extraction (same code path) to prove the full
     wire format round-trips: steps survive, and step-level agent_config
     parses from the JSON string.
@@ -611,7 +611,7 @@ def test_nats_payload_with_steps_round_trips_to_subtask():
         "project_id": "proj-1",
     }
 
-    # Mirror _handle_subtask_execute's Subtask construction (same field reads).
+    # Mirror _parse_subtask_message's Subtask construction (same field reads).
     subtask = Subtask(
         id=payload["subtask_id"],
         parent_id=payload["task_id"],
@@ -664,7 +664,9 @@ def test_dispatch_mode_from_payload_accepts_rust_pascalcase():
 
     assert _dispatch_mode_from_payload("PreferRemote") is DispatchMode.PREFER_REMOTE
     assert _dispatch_mode_from_payload("Remote") is DispatchMode.REMOTE
-    assert _dispatch_mode_from_payload("Local") is DispatchMode.LOCAL
+    # T5 #641 / D4 #633 Q1: DispatchMode.Local was removed — a legacy wire
+    # value falls back to the default, never crashing the worker.
+    assert _dispatch_mode_from_payload("Local") is DispatchMode.PREFER_REMOTE
 
 
 def test_dispatch_mode_from_payload_accepts_python_lowercase():
