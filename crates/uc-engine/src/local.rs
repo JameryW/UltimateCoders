@@ -1989,7 +1989,11 @@ fn load_index() -> Index { Index::new() }"#,
             .await
             .unwrap();
 
-        assert_eq!(task.subtasks.len(), 2);
+        assert_eq!(
+            task.subtasks.len(),
+            0,
+            "insert-only: decomposition belongs to the TS planner (T5 #641)"
+        );
         assert_eq!(task.status, uc_types::TaskStatus::InProgress);
         assert_eq!(task.project_id, "project-1");
 

@@ -170,7 +170,7 @@ fn nats_down_routing_never_mutates_what() {
     // WHAT is frozen: the projection (description, dependencies,
     // capabilities, effect_class per node) must be byte-identical before
     // and after a full routing pass on the down transport.
-    let mut task = make_task();
+    let task = make_task();
     let before = project_task(&task);
     let sel = selector(false);
 
