@@ -131,6 +131,10 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
             "status": _subtask_status_to_nats(st.status),
             "description": st.description,
             "depends_on": st.depends_on,
+            # T4 #640: attempt identity of the reporting side — the gateway
+            # fences partial (worker-sourced) updates whose attempt is older
+            # than the subtask's current one (fenced/re-dispatched attempt).
+            "attempt_id": st.dispatch_retry_count,
         }
         if st.assigned_worker is not None:
             entry["assigned_worker"] = st.assigned_worker
@@ -446,6 +450,10 @@ class NatsWorker:
         # ponytail: F53 — consecutive gRPC heartbeat failures; at the threshold
         # the worker forces gateway re-registration (see _heartbeat_loop).
         self._consecutive_heartbeat_failures: int = 0
+        # T4 #640 / D7: cumulative count of old-envelope dispatches this
+        # worker term-dropped (legacy publisher / upgrade window). Reported
+        # on every heartbeat so the gateway can surface it per worker.
+        self._stale_dispatch_dropped: int = 0
         # JetStream Event Sourcing: last acked sequence for replay
         self._js_last_seq: int = 0
         # JetStream durable consumer for uc.subtask.execute (work-queue retention).
@@ -1862,6 +1870,9 @@ class NatsWorker:
                     EditIntent(worker_id="remote", file_path=fp)
                 )
 
+        envelope = _execution_envelope(
+            subtask.parent_id, subtask.id, subtask.dispatch_retry_count
+        )
         msg = json.dumps(
             {
                 "task_id": subtask.parent_id,
@@ -1880,14 +1891,20 @@ class NatsWorker:
                 # uc.subtask.execute publisher too — the envelope contract
                 # covers it. attempt = dispatch_retry_count, same identity
                 # mapping as the Rust publishers.
-                **_execution_envelope(
-                    subtask.parent_id, subtask.id, subtask.dispatch_retry_count
-                ),
+                **envelope,
             }
         ).encode()
 
         try:
-            await self._nc.publish(NATS_SUBJECT_SUBTASK_EXECUTE, msg)
+            # T4 #640: Nats-Msg-Id = idempotency_key activates the UC_SUBTASKS
+            # stream's duplicate_window (120s), so a re-dispatch of the same
+            # (graph, node, attempt) cannot reach a worker twice. The key is
+            # deterministic; message_id is not, hence it can never be the key.
+            await self._nc.publish(
+                NATS_SUBJECT_SUBTASK_EXECUTE,
+                msg,
+                headers={"Nats-Msg-Id": envelope["idempotency_key"]},
+            )
         except Exception as e:
             # ponytail: F56 — a failed publish used to leave the subtask
             # ASSIGNED to "remote" forever (the exception escaped into the
@@ -1937,6 +1954,10 @@ class NatsWorker:
                             # T1 #637: observers can see which execution
                             # contract each heartbeat sender speaks.
                             "contract_version": CONTRACT_VERSION,
+                            # T4 #640 / D7: cumulative stale-envelope drops,
+                            # surfaced per worker by the gateway (ListWorkers
+                            # metadata in the heartbeat fallback path).
+                            "stale_dispatch_dropped": self._stale_dispatch_dropped,
                         }
                         w_info["pending_subtask_count"] = info.current_load
                     # Include orchestrator pending count if available
@@ -2177,6 +2198,36 @@ class NatsWorker:
             await self._js_ack_safe(js_msg, ack=True)
             return
 
+        # T4 #640 / D7: stale-envelope drop. A dispatch without the graph
+        # envelope (idempotency_key + contract_version + graph identity) is
+        # an old-envelope message left in the stream by a legacy publisher or
+        # an upgrade window. Term it (ack-no-redelivery) WITHOUT publishing
+        # subtask_failed — unlike the max_deliver cap below, the authoritative
+        # re-dispatch comes from READY nodes, not from this queue — count it,
+        # and publish a user-visible event (T4 owns the event surface per the
+        # D6/T4 note; the gateway maps it to a TaskUpdated event).
+        if self._is_stale_dispatch(data):
+            self._stale_dispatch_dropped += 1
+            logger.warning(
+                "Term-dropping stale-envelope dispatch for subtask %s "
+                "(no execution envelope; dropped=%d)",
+                subtask_id[:8],
+                self._stale_dispatch_dropped,
+            )
+            if self._publisher is not None:
+                await self._publisher.publish_event(
+                    "stale_dispatch_dropped",
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    data={
+                        "reason": "missing_execution_envelope",
+                        "worker_id": self._worker.worker_id if self._worker else "",
+                        "stale_dispatch_dropped": self._stale_dispatch_dropped,
+                    },
+                )
+            await self._js_ack_safe(js_msg, term=True)
+            return
+
         # Max-deliver cap: poison subtask. Term-ack (stop redelivery) +
         # publish subtask_failed so the orchestrator marks it terminal Failed.
         if num_delivered >= self._SUBTASK_MAX_DELIVER:
@@ -2231,6 +2282,24 @@ class NatsWorker:
         # no ack → redelivery).
         self._spawn_subtask_execution(subtask, js_msg=js_msg)
 
+    @staticmethod
+    def _is_stale_dispatch(data: dict[str, Any]) -> bool:
+        """True when a dispatch lacks the execution envelope (T4 #640 / D7).
+
+        D7's upgrade-window-inflight policy: new-contract workers term any
+        dispatch missing contract_version / graph-envelope fields. Only
+        PRESENCE is enforced (not version equality) — version skew is already
+        refused at registration, and presence-only keeps a rolling gateway
+        upgrade from dropping dispatches it legitimately owns.
+        """
+        return not (
+            data.get("idempotency_key")
+            and data.get("contract_version")
+            and data.get("graph_id")
+            and data.get("node_id")
+            and data.get("attempt_id") is not None
+        )
+
     def _parse_subtask_message(
         self,
         raw_data: bytes,
@@ -2254,10 +2323,11 @@ class NatsWorker:
             logger.warning("uc.subtask.execute missing task_id or subtask_id")
             return None
 
-        # T1 #637: envelopes ride on every dispatch (identity-mapped during
-        # the transition). This ticket keeps the worker TOLERANT of
-        # envelope-less messages from legacy publishers — rejection is T4's
-        # job. But log them so mixed-version deployments are observable.
+        # T1 #637 → T4 #640: envelopes ride on every dispatch (identity-mapped
+        # during the transition). The JS handler now REJECTS envelope-less
+        # dispatches (term + counter + event, see _is_stale_dispatch); this
+        # parse path stays tolerant so the core-NATS (non-durable) legacy
+        # path keeps working, but logs the mixed-version signal loudly.
         if not data.get("idempotency_key"):
             logger.info(
                 "uc.subtask.execute for subtask %s carries no execution "
@@ -2325,6 +2395,16 @@ class NatsWorker:
 
         from ultimate_coders.agent.types import SubtaskStatus
 
+        # T4 #640: attempt identity chain — the gateway's dispatch envelope
+        # carries attempt_id = dispatch_retry_count (also mirrored on
+        # `retry_count`). Without reading it here every attempt would
+        # reconstruct as 0 and the attempt-scoped checkpoint key would
+        # collapse all attempts into one (stale-result bug returns).
+        try:
+            attempt = int(data.get("retry_count", data.get("attempt_id", 0)) or 0)
+        except (TypeError, ValueError):
+            attempt = 0
+
         return Subtask(
             id=subtask_id,
             parent_id=task_id,
@@ -2342,6 +2422,7 @@ class NatsWorker:
             agent_config=_resolve_agent_config_field(data),
             steps=[WorkflowStep.from_dict(s) for s in data.get("steps", [])],
             project_id=data.get("project_id", ""),
+            dispatch_retry_count=attempt,
         )
 
     async def _js_ack_safe(
@@ -2492,6 +2573,7 @@ class NatsWorker:
                         subtask_id,
                         status,
                         summary,
+                        dispatch_retry_count=subtask.dispatch_retry_count,
                     ),
                     partial=True,
                 )
@@ -2519,6 +2601,7 @@ class NatsWorker:
         subtask_id: str,
         status: str,
         summary: str,
+        dispatch_retry_count: int = 0,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -2527,6 +2610,10 @@ class NatsWorker:
         status intentionally remains InProgress because this is a partial
         update; the ``partial=True`` marker prevents the gateway from treating
         the known one-subtask subset as the complete parent task.
+
+        ``dispatch_retry_count`` (T4 #640) is the attempt the worker actually
+        executed under — stamped onto the subtask so ``_make_task_update_payload``
+        emits ``attempt_id`` and the gateway can fence late results.
         """
         from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
 
@@ -2540,6 +2627,7 @@ class NatsWorker:
             depends_on=[],
             file_constraints=[],
             expected_output="",
+            dispatch_retry_count=dispatch_retry_count,
             result=SubtaskResult(
                 subtask_id=subtask_id,
                 worker_id=self._worker.worker_id if self._worker else "",

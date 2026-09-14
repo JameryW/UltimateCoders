@@ -635,12 +635,19 @@ class Worker:
         subtask.status = SubtaskStatus.IN_PROGRESS
 
         try:
-            # Check for existing checkpoint — skip if already completed
-            checkpoint = await self._load_checkpoint(subtask.id)
+            # Check for an existing result for THIS ATTEMPT — skip if already
+            # completed. T4 #640: the key is attempt-scoped; a subtask-scoped
+            # key was a real bug, because T3's fence -> READY -> re-dispatch
+            # mints a new attempt whose execution would hit the previous
+            # attempt's successful checkpoint and return a stale result
+            # without running anything at all.
+            checkpoint = await self._load_checkpoint(subtask)
             if checkpoint is not None and checkpoint.get("success"):
                 logger.info(
-                    "Subtask %s has completed checkpoint, skipping execution",
+                    "Subtask %s attempt %s already has a result, replaying it "
+                    "instead of re-executing (duplicate delivery)",
                     subtask.id[:8],
+                    subtask.dispatch_retry_count,
                 )
                 # Restore full SubtaskResult from checkpoint
                 from ultimate_coders.agent.types import ChangeType, FileChange
@@ -739,8 +746,8 @@ class Worker:
                             error=f"Subtask timed out after {timeout_secs}s",
                         )
 
-                    # Save checkpoint for resume
-                    await self._save_checkpoint(subtask.id, result)
+                    # Save checkpoint for resume (attempt-scoped, T4 #640)
+                    await self._save_checkpoint(subtask, result)
 
                     # Record result in context injector for dependent subtasks
                     self._context_injector.add_result(
@@ -936,8 +943,20 @@ class Worker:
             self.current_task = None
             self._active_count = max(0, self._active_count - 1)
 
-    async def _save_checkpoint(self, subtask_id: str, result: SubtaskResult) -> None:
-        """Persist subtask result to engine memory for checkpoint/resume.
+    @staticmethod
+    def _attempt_checkpoint_key(subtask: Subtask) -> str:
+        """Memory key scoped to ONE attempt (T4 #640).
+
+        The identity triple is the transitional envelope mapping
+        ``graph_id = parent_id``, ``node_id = id``, ``attempt_id =
+        dispatch_retry_count`` — the same one every ``uc.subtask.execute``
+        publisher stamps. Scoping on the subtask alone made a re-dispatched
+        attempt inherit the previous attempt's result.
+        """
+        return f"attempt:{subtask.parent_id}:{subtask.id}:{subtask.dispatch_retry_count}"
+
+    async def _save_checkpoint(self, subtask: Subtask, result: SubtaskResult) -> None:
+        """Persist this attempt's result to engine memory for resume.
 
         Stores full result including modified_files, tool_calls, and error
         so that resume can reconstruct a complete SubtaskResult.
@@ -949,7 +968,8 @@ class Worker:
             return
         try:
             data: dict[str, Any] = {
-                "subtask_id": subtask_id,
+                "subtask_id": subtask.id,
+                "attempt_id": subtask.dispatch_retry_count,
                 "worker_id": result.worker_id,
                 "summary": result.summary,
                 "success": result.success,
@@ -964,28 +984,33 @@ class Worker:
             await _engine_call(
                 self.engine, "write_memory", "write_memory_async",
                 key_scope="checkpoint",
-                key=f"subtask:{subtask_id}",
+                key=self._attempt_checkpoint_key(subtask),
                 content=json.dumps(data),
                 content_type="structured",
                 source_agent="worker",
             )
         except Exception:
-            logger.debug("Failed to save checkpoint for subtask %s", subtask_id[:8])
+            logger.debug("Failed to save checkpoint for subtask %s", subtask.id[:8])
 
-    async def _load_checkpoint(self, subtask_id: str) -> dict | None:
-        """Load checkpoint from engine memory (F59: async, see _save_checkpoint)."""
+    async def _load_checkpoint(self, subtask: Subtask) -> dict | None:
+        """Load THIS attempt's checkpoint (F59: async, see _save_checkpoint).
+
+        Returns ``None`` for a fresh attempt — that is the whole point of the
+        T4 fix: re-dispatch after a fence must execute, not replay the
+        previous attempt's result.
+        """
         if self.engine is None:
             return None
         try:
             raw = await _engine_call(
                 self.engine, "read_memory", "read_memory_async",
                 key_scope="checkpoint",
-                key=f"subtask:{subtask_id}",
+                key=self._attempt_checkpoint_key(subtask),
             )
             if raw is not None:
                 return json.loads(raw) if isinstance(raw, str) else raw
         except Exception:
-            logger.debug("Failed to load checkpoint for subtask %s", subtask_id[:8])
+            logger.debug("Failed to load checkpoint for subtask %s", subtask.id[:8])
         return None
 
     async def _execute_in_sandbox(

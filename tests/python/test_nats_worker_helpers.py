@@ -284,11 +284,19 @@ def test_dispatch_remote_serializes_steps_in_nats_payload():
 
     # Mock NATS client to capture the published payload.
     captured: dict[str, bytes] = {}
+    captured_headers: dict[str, str] = {}
 
     class FakeNc:
-        async def publish(self, subject: str, payload: bytes) -> None:
+        async def publish(
+            self,
+            subject: str,
+            payload: bytes,
+            headers: dict | None = None,
+        ) -> None:
             captured["subject"] = subject
             captured["payload"] = payload
+            captured_headers.clear()
+            captured_headers.update(headers or {})
 
     nw._nc = FakeNc()  # type: ignore[assignment]
     nw._publisher = MagicMock()  # truthy so the early return is skipped
@@ -326,6 +334,12 @@ def test_dispatch_remote_serializes_steps_in_nats_payload():
     assert payload["steps"][0]["abort_on_failure"] is True
     assert payload["steps"][1]["agent"] == "codex"
     assert payload["steps"][1]["abort_on_failure"] is False
+    # T4 #640: the dispatch carries Nats-Msg-Id = idempotency_key so the
+    # stream's duplicate_window collapses re-sends of this attempt. Without
+    # the header a re-publish reaches a worker twice.
+    assert (
+        captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"]
+    ), "dispatch must carry the idempotency key as Nats-Msg-Id"
 
 
 # ── F52: worker liveness refresh in the heartbeat tick ────────────
@@ -1282,6 +1296,89 @@ def test_parse_subtask_message_tolerates_envelope_and_legacy():
     assert nw._parse_subtask_message(legacy) is not None
 
 
+# ── T4 #640: stale-envelope drop + attempt identity chain ──────
+
+
+def test_is_stale_dispatch_requires_full_envelope():
+    """D7: a dispatch missing ANY envelope field counts as stale."""
+    full = {
+        "task_id": "t-1",
+        "subtask_id": "st-1",
+        "graph_id": "t-1",
+        "node_id": "st-1",
+        "attempt_id": "0",
+        "idempotency_key": "abc",
+        "contract_version": "v1",
+    }
+    assert _NatsWorker._is_stale_dispatch(full) is False
+
+    for missing in ("graph_id", "node_id", "attempt_id", "idempotency_key", "contract_version"):
+        broken = dict(full)
+        del broken[missing]
+        assert _NatsWorker._is_stale_dispatch(broken) is True, f"missing {missing} must be stale"
+
+
+def test_build_subtask_reads_attempt_from_dispatch():
+    """T4 attempt identity chain: the worker's Subtask must carry the
+    dispatch envelope's attempt (retry_count), or the attempt-scoped
+    checkpoint key collapses every attempt into attempt 0."""
+    nw = _make_worker()
+    nw._worker = MagicMock(worker_id="w-1")
+
+    data = json.dumps(
+        {
+            "task_id": "t-att",
+            "subtask_id": "st-att",
+            "retry_count": 2,
+            "graph_id": "t-att",
+            "node_id": "st-att",
+            "attempt_id": "2",
+        }
+    )
+    subtask = nw._build_subtask_from_data("t-att", "st-att", json.loads(data))
+    assert subtask is not None
+    assert subtask.dispatch_retry_count == 2
+
+    # Fallback to the envelope's attempt_id when retry_count is absent.
+    data = json.dumps(
+        {
+            "task_id": "t-att",
+            "subtask_id": "st-att",
+            "attempt_id": "3",
+        }
+    )
+    subtask = nw._build_subtask_from_data("t-att", "st-att", json.loads(data))
+    assert subtask is not None
+    assert subtask.dispatch_retry_count == 3
+
+    # Garbage attempt fields degrade to 0, never crash.
+    data = json.dumps({"task_id": "t-att", "subtask_id": "st-att", "retry_count": "x"})
+    subtask = nw._build_subtask_from_data("t-att", "st-att", json.loads(data))
+    assert subtask is not None
+    assert subtask.dispatch_retry_count == 0
+
+
+def test_task_update_payload_stamps_attempt_id():
+    """The gateway fences on attempt_id — the payload must always stamp it."""
+    st = Subtask(
+        id="st-stamp",
+        description="d",
+        status=SubtaskStatus.COMPLETED,
+        dispatch_retry_count=2,
+    )
+    task = Task(
+        id="t-stamp",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+
+    payload = _make_task_update_payload(task, partial=True)
+    entry = payload["subtasks"][0]
+    assert entry["attempt_id"] == 2
+
+
 # ── T1 #637: Python envelope derivation + re-publish path ──────
 
 
@@ -1322,11 +1419,19 @@ def test_dispatch_remote_publishes_execution_envelope():
     nw._orchestrator.conflict_detector = MagicMock()
 
     captured: dict[str, bytes] = {}
+    captured_headers: dict[str, str] = {}
 
     class FakeNc:
-        async def publish(self, subject: str, payload: bytes) -> None:
+        async def publish(
+            self,
+            subject: str,
+            payload: bytes,
+            headers: dict | None = None,
+        ) -> None:
             captured["subject"] = subject
             captured["payload"] = payload
+            captured_headers.clear()
+            captured_headers.update(headers or {})
 
     nw._nc = FakeNc()  # type: ignore[assignment]
     nw._publisher = MagicMock()
@@ -1353,3 +1458,8 @@ def test_dispatch_remote_publishes_execution_envelope():
         payload["idempotency_key"]
         == _execution_envelope("t-9", "st-9", 2)["idempotency_key"]
     )
+    # T4 #640: same key on the wire header — this is the publisher half of
+    # the dedup contract (the broker half is test_nats_dedup_integration.py).
+    assert (
+        captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"]
+    ), "dispatch must carry the idempotency key as Nats-Msg-Id"

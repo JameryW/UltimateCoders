@@ -68,14 +68,54 @@ async def test_checkpoint_save_load_use_async_variants():
     engine.write_memory_async = fake_write
     engine.read_memory_async = fake_read
     w = _make_worker(engine)
+    st = Subtask(id="s1", parent_id="t1", description="implement auth")
     result = SubtaskResult(
         subtask_id="s1", worker_id="w-test", summary="done", success=True,
     )
-    await w._save_checkpoint("s1", result)
+    await w._save_checkpoint(st, result)
     assert calls.count("write_memory_async") == 1
-    loaded = await w._load_checkpoint("s1")
+    loaded = await w._load_checkpoint(st)
     assert loaded == {"summary": "done"}
     assert calls.count("read_memory_async") == 1
+
+
+async def test_checkpoint_key_is_scoped_to_the_attempt_not_the_subtask():
+    """T4 #640: a new attempt must NOT inherit the previous attempt's result.
+
+    T3's fence -> READY -> re-dispatch mints a new attempt. With the old
+    subtask-scoped key the worker would find the previous attempt's
+    successful checkpoint and replay it, so the "re-run" T3 made possible
+    would never actually execute anything.
+    """
+    seen: list[str] = []
+    engine = MagicMock()
+
+    async def fake_write(*args, **kwargs):
+        seen.append(kwargs.get("key") or args[-1])
+        return None
+
+    async def fake_read(*args, **kwargs):
+        seen.append(kwargs.get("key") or args[-1])
+        return None
+
+    engine.write_memory_async = fake_write
+    engine.read_memory_async = fake_read
+    w = _make_worker(engine)
+
+    attempt0 = Subtask(id="s1", parent_id="t1", description="x", dispatch_retry_count=0)
+    attempt1 = Subtask(id="s1", parent_id="t1", description="x", dispatch_retry_count=1)
+    result = SubtaskResult(subtask_id="s1", worker_id="w-test", summary="d", success=True)
+
+    await w._save_checkpoint(attempt0, result)
+    key0 = w._attempt_checkpoint_key(attempt0)
+    await w._save_checkpoint(attempt1, result)
+    key1 = w._attempt_checkpoint_key(attempt1)
+
+    assert key0 != key1, "attempts must not share a checkpoint key"
+    assert ":0" in key0 and ":1" in key1
+    assert key0 == "attempt:t1:s1:0"
+    assert key1 == "attempt:t1:s1:1"
+    assert key0 in seen and key1 in seen
 
 
 async def test_final_failure_event_error_is_truncated():

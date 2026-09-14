@@ -48,6 +48,9 @@ def _make_subtask_payload(
     description: str = "do the thing",
     required_capabilities: list[str] | None = None,
 ) -> dict:
+    # T4 #640: dispatches carry the execution envelope; identity mapping
+    # matches the Rust publishers: graph_id = task_id, node_id = subtask_id,
+    # attempt_id = dispatch retry counter (0 for a fresh dispatch).
     return {
         "task_id": task_id,
         "subtask_id": subtask_id,
@@ -56,6 +59,12 @@ def _make_subtask_payload(
         "dispatch_mode": "prefer_remote",
         "steps": [],
         "required_capabilities": required_capabilities or [],
+        "graph_id": task_id,
+        "node_id": subtask_id,
+        "attempt_id": 0,
+        "idempotency_key": f"{task_id}:{subtask_id}:0",
+        "worker_epoch": "",
+        "contract_version": "v1",
     }
 
 
@@ -730,7 +739,7 @@ async def test_js_malformed_message_terminates():
 
 
 async def test_js_missing_ids_terminates():
-    """JS message missing task_id/subtask_id → term()."""
+    """JS message without a full execution envelope → term() (T4 #640 / D7)."""
     nw = _make_worker()
     nw._running = True
 
