@@ -450,6 +450,40 @@ async fn index_workspace_repos(engine: &LocalEngine) {
     );
 }
 
+/// Provision the `UC_SUBTASKS` JetStream stream (T5 #641 / D4 #633 Q1).
+///
+/// Stream creation moved to the gateway provisioning side: workers fail
+/// fast on their durable consumer instead of creating the stream themselves
+/// (and silently falling back to a core-NATS at-most-once path). Idempotent
+/// get-or-create — an existing stream is left untouched. A failure does not
+/// abort startup, but it is logged as an error: the dispatch plane will
+/// report `TransportUnavailable` and the executor selector will hold
+/// `requires_worker` nodes in READY until the stream exists.
+#[cfg(feature = "messaging")]
+async fn ensure_subtasks_stream(client: &async_nats::Client) {
+    use async_nats::jetstream::stream::{Config, RetentionPolicy};
+    let js = async_nats::jetstream::new(client.clone());
+    let config = Config {
+        name: "UC_SUBTASKS".to_string(),
+        subjects: vec![uc_grpc::server::NATS_SUBJECT_SUBTASK_EXECUTE.to_string()],
+        retention: RetentionPolicy::WorkQueue,
+        max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+        duplicate_window: std::time::Duration::from_secs(120),
+        ..Default::default()
+    };
+    match js.get_or_create_stream(config).await {
+        Ok(_) => tracing::info!(
+            "JetStream stream UC_SUBTASKS provisioned \
+             (work-queue retention, 7d max_age, 120s dedup window)"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            "Failed to provision UC_SUBTASKS stream — subtask dispatch will report \
+             TransportUnavailable and requires_worker nodes stay READY until JetStream recovers"
+        ),
+    }
+}
+
 /// Load `uc.scheduler.yaml` (if present), wire the scheduler dispatcher,
 /// add configured jobs + night window, and start the scheduler service.
 ///
@@ -729,10 +763,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrpcServer::with_nats_and_backends(engine, &nats_url, task_backend, event_store).await
         }
         Err(_) => {
-            tracing::info!("No UC_NATS_URL set, TaskService using local decomposition");
+            tracing::info!(
+                "No UC_NATS_URL set, TaskService running without NATS (tasks stored insert-only)"
+            );
             GrpcServer::with_backends(engine, task_backend, event_store)
         }
     };
+
+    // Provision the UC_SUBTASKS JetStream stream (T5 #641 / D4 #633 Q1):
+    // stream creation is the gateway's job now — workers fail fast on their
+    // durable consumer instead of creating the stream and silently falling
+    // back to core NATS.
+    #[cfg(feature = "messaging")]
+    if let Some(client) = grpc_server.nats_client() {
+        ensure_subtasks_stream(&client).await;
+    }
 
     // Recover tasks persisted by prior runs from the backend (PG/in-memory)
     // into TaskStore's in-memory HashMap. No-op when no backend is configured.

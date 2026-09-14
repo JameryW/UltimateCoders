@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use uc_types::error::EngineError;
-use uc_types::{Task, TaskId, TaskStatus};
+use uc_types::{Subtask, Task, TaskId, TaskStatus};
 
 #[cfg(feature = "storage")]
 use std::sync::Arc;
