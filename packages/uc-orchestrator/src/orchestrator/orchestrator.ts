@@ -103,7 +103,11 @@ export interface SubtaskResult {
 	files: string[];
 	result?: string;
 	error?: string;
-	review?: ReviewResult;
+	/** Supervisor review verdict — T6 #642 C7 retired the TS review pipeline
+	 *  (nothing produces this anymore); the field stays for the UI to render
+	 *  review data from older caches and for the future Rust-side pipeline
+	 *  to repopulate. */
+	review?: { approved: boolean; issues: string[]; suggestions: string[] };
 	startedAt?: number;
 	completedAt?: number;
 	/** Files modified by this subtask (populated on completion). */
@@ -125,40 +129,6 @@ export interface SubtaskResult {
 	agentConfig?: Record<string, unknown>;
 	/** Ordered multi-agent workflow steps (mirrors SubtaskDef.steps). */
 	steps?: WorkflowStepDef[];
-}
-
-interface ReviewResult {
-	approved: boolean;
-	issues: string[];
-	suggestions: string[];
-}
-
-/**
- * Parse a supervisor-review agent's JSON output into a ReviewResult.
- *
- * Fail-CLOSED: only an explicit `approved: true` approves. A missing or
- * non-boolean `approved`, or an unparseable output, rejects the subtask
- * (was `?? true` + `catch → approved: true` — fail-open, silently approving
- * a possibly-defective subtask whose review couldn't be read). Same anti-
- * pattern PR #347 fixed in gRPC (success defaulted true).
- *
- * Exported for unit testing.
- */
-export function parseReviewOutput(
-	raw: unknown,
-	onParseError?: (err: unknown) => void,
-): ReviewResult {
-	try {
-		const parsed = JSON.parse(raw as string);
-		return {
-			approved: parsed.approved === true,
-			issues: parsed.issues ?? [],
-			suggestions: parsed.suggestions ?? [],
-		};
-	} catch (err) {
-		onParseError?.(err);
-		return { approved: false, issues: ["Review output could not be parsed"], suggestions: [] };
-	}
 }
 
 /**
@@ -189,8 +159,6 @@ function normalizeServerDispatchMode(raw: string | undefined): DispatchMode | un
 }
 
 interface OrchestratorConfig {
-	enableReview: boolean;
-	reviewTimeoutMs: number;
 	maxConcurrency: number;
 	maxRetries: number;
 	retryBaseDelayMs: number;
@@ -326,8 +294,6 @@ export class UCOrchestrator {
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
 		this.config = {
-			enableReview: true,
-			reviewTimeoutMs: 60_000,
 			maxConcurrency: 3,
 			maxRetries: 2,
 			retryBaseDelayMs: 5_000,
@@ -1016,7 +982,6 @@ export class UCOrchestrator {
 			local.status = result.status;
 			local.result = result.result;
 			local.error = result.error;
-			local.review = result.review;
 			local.retryCount = result.retryCount;
 			local.completedAt = result.completedAt;
 			await this.persist(task);
@@ -1026,17 +991,6 @@ export class UCOrchestrator {
 					"task", `subtask_result_${result.id}`,
 					result.result, "text", "uc-orchestrator", task.id,
 				).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
-			}
-			if (result.review) {
-				this.bridge.writeMemory(
-					"task", `subtask_review_${result.id}`,
-					JSON.stringify({
-						approved: result.review.approved,
-						issues: result.review.issues,
-						suggestions: result.review.suggestions,
-					}),
-					"structured", "uc-orchestrator", task.id,
-				).catch((err) => { this.pi.logger.warn(`Failed to write subtask review: ${err}`); });
 			}
 
 			// Report the outcome (authority). "cancelled" maps to Failed on the
@@ -1735,7 +1689,9 @@ export class UCOrchestrator {
 			const result = await this.executeSubtaskLocal(def, task, ctx);
 			result.retryCount = attempt;
 
-			if (result.status === "completed" || result.status === "cancelled" || (result.error?.startsWith("Review rejected"))) {
+			// T6 #642 C7 — the "Review rejected" short-circuit died with the
+			// TS review pipeline; only real execution outcomes remain.
+			if (result.status === "completed" || result.status === "cancelled") {
 				return result;
 			}
 
@@ -1844,148 +1800,13 @@ export class UCOrchestrator {
 	}
 
 	// ── Supervisor Review ──────────────────────────────────────────
-
-	private async reviewSubtask(
-		def: SubtaskDef,
-		workerOutput: string,
-		ctx: ExtensionCommandContext,
-		taskId: string,
-	): Promise<ReviewResult> {
-		// Try remote review if workers with "review" capability are available
-		const workersAvailable = await this.checkWorkerAvailability();
-		if (workersAvailable) {
-			const workers = await this.bridge.listWorkers();
-			const hasReviewWorker = workers.workers.some(
-				(w) => w.isAvailable && w.capabilities.includes("review"),
-			);
-			if (hasReviewWorker) {
-				try {
-					return await this.reviewSubtaskRemote(def, workerOutput, ctx, taskId);
-				} catch (err) {
-					this.pi.logger.warn(`Remote review failed, falling back to local: ${err instanceof Error ? err.message : String(err)}`);
-				}
-			}
-		}
-
-		// Local fallback via runSubprocess
-		return this.reviewSubtaskLocal(def, workerOutput, ctx, taskId);
-	}
-
-	/** Local review via runSubprocess (original implementation). */
-	private async reviewSubtaskLocal(
-		def: SubtaskDef,
-		workerOutput: string,
-		ctx: ExtensionCommandContext,
-		taskId: string,
-	): Promise<ReviewResult> {
-		const abortCtrl = this.abortControllers.get(taskId);
-		const result = await runSubprocess({
-			cwd: ctx.cwd,
-			agent: {
-				name: "supervisor",
-				description: `Review subtask result: ${def.description}`,
-				systemPrompt: SUPERVISOR_PROMPT,
-				source: "project" as const,
-				output: {
-					type: "object",
-					properties: {
-						approved: { type: "boolean" },
-						issues: { type: "array", items: { type: "string" } },
-						suggestions: { type: "array", items: { type: "string" } },
-					},
-				},
-			},
-			task: [
-				`## Subtask: ${def.description}`,
-				`## Files: ${def.files.join(", ") || "(auto-detected)"}`,
-				`## Worker Output:`,
-				workerOutput,
-			].join("\n"),
-			id: `review-${def.id}`,
-			index: 0,
-			signal: abortWithTimeout(abortCtrl?.signal, this.config.reviewTimeoutMs),
-			modelRegistry: ctx.modelRegistry,
-			settings: this.pi.pi.settings,
-			enableLsp: true,
-		});
-
-		if (result.exitCode !== 0) {
-			throw new Error(`Supervisor agent failed: ${result.stderr.slice(0, 500)}`);
-		}
-
-		return parseReviewOutput(result.output, (err) =>
-			this.pi.logger.warn(`Supervisor review output unparseable — rejecting (fail-closed): ${err}`),
-		);
-	}
-
-	/**
-	 * Remote review — dispatch to a worker with "review" capability.
-	 * ponytail: reuses existing pipeline — creates pseudo-subtask, polls for result.
-	 */
-	private async reviewSubtaskRemote(
-		def: SubtaskDef,
-		workerOutput: string,
-		ctx: ExtensionCommandContext,
-		taskId: string,
-	): Promise<ReviewResult> {
-		const pseudoTaskId = `review-task-${Date.now().toString(36)}`;
-		const pseudoSubtaskId = `review-${def.id}`;
-		const reviewPrompt = [
-			`## Subtask: ${def.description}`,
-			`## Files: ${def.files.join(", ") || "(auto-detected)"}`,
-			`## Worker Output:`,
-			workerOutput,
-		].join("\n");
-
-		const pseudoTask: TaskState = {
-			id: pseudoTaskId,
-			description: `Review: ${def.description}`,
-			status: "in_progress",
-			controlState: "running",
-			subtasks: [{
-				id: pseudoSubtaskId,
-				description: `Review subtask result: ${def.description}`,
-				status: "running",
-				dependsOn: [],
-				files: def.files,
-				dispatchMode: "remote",
-				requiredCapabilities: ["review"],
-				startedAt: Date.now(),
-			}],
-			createdAt: Date.now(),
-		};
-
-		this.abortControllers.set(pseudoTaskId, new AbortController());
-
-		try {
-			await this.bridge.upsertTask(this.toPersisted(pseudoTask));
-
-			const pollIntervalMs = 2000;
-			const timeoutMs = this.config.reviewTimeoutMs;
-			const startTime = Date.now();
-
-			while (Date.now() - startTime < timeoutMs) {
-				const remoteTask = await this.bridge.getTask(pseudoTaskId);
-				if (remoteTask) {
-					const st = remoteTask.subtasks.find(s => s.id === pseudoSubtaskId);
-					if (st) {
-						const status = st.status.toLowerCase();
-						if (status === "completed" && st.result) {
-							return parseReviewOutput(st.result, (err) =>
-								this.pi.logger.warn(`Supervisor review output unparseable — rejecting (fail-closed): ${err}`),
-							);
-						} else if (status === "failed") {
-							throw new Error(st.result || "Remote review failed");
-						}
-					}
-				}
-				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-			}
-			throw new Error("Remote review timed out");
-		} finally {
-			this.abortControllers.delete(pseudoTaskId);
-		}
-	}
+	// T6 #642 C7 — the TS review pipeline is gone (reviewSubtask /
+	// reviewSubtaskLocal / reviewSubtaskRemote + parseReviewOutput +
+	// WORKER_PROMPT/SUPERVISOR_PROMPT). Nothing in this session ever
+	// invoked it after the wave machine died; review semantics will be
+	// re-established by the Rust ready-node pipeline (out of scope here).
+	// The SubtaskResult.review field stays so the UI keeps rendering
+	// review data from older caches and the future producer can repopulate.
 
 	// ── Persistence ──────────────────────────────────────────────────
 
@@ -2309,36 +2130,9 @@ Output a JSON object with a "subtasks" array. Each item has:
 - steps: array (optional) — each item: { agent: "grok-build"|"grok"|"codex", prompt: string, abort_on_failure?: boolean }
   Omit steps for simple subtasks. Emit 3-step chain for moderate/complex code-writing subtasks.`;
 
-const WORKER_PROMPT = `You are a coding worker agent. Execute the assigned subtask:
-
-1. Read and understand the relevant code
-2. Make the necessary changes
-3. Verify your changes work (run tests if available)
-4. Report what you did
-
-If the prompt includes [Completed prerequisite subtasks], use that context
-to understand what was already done by previous workers. You can also use
-the uc_memory tool to read detailed results from prior subtasks:
-  - uc_memory(action="read", scope="task", key="subtask_result_<id>") for full output
-  - uc_memory(action="read", scope="task", key="subtask_review_<id>") for review feedback
-  - uc_memory(action="search", scope="task", key="<query>") for semantic search across results
-
-Be thorough but efficient. Focus on the specific subtask — do not expand scope.`;
-
-const SUPERVISOR_PROMPT = `You are a code review specialist. Given a subtask and its result:
-
-1. Verify the changes accomplish the stated goal
-2. Check for bugs, style issues, missing error handling
-3. Confirm tests (if any) pass logically
-4. Output structured approval result
-
-Be strict but fair. Minor style nits are not blockers.
-Focus on correctness, security, and completeness.
-
-Output a JSON object with:
-- approved: boolean (true if the subtask is satisfactorily completed)
-- issues: string[] (list of problems found, empty if approved)
-- suggestions: string[] (optional improvements, not blockers)`;
+// T6 #642 C7: WORKER_PROMPT and SUPERVISOR_PROMPT removed — dead config
+// since the wave machine died (workers carry their own prompts; the TS
+// supervisor review pipeline is retired, see the review section above).
 
 /**
  * Reverse cascadeCancel over a subtask list: un-cancel subtasks whose deps are

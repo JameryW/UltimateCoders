@@ -354,16 +354,10 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("F19 tight width drops elapsed before parallel", !tightLine.includes("(1m"));
 }
 
-// ponytail: F24 — wave row: progress leads, wave identity trails (the bar
-// counts task-wide completion — leading with "Wave X/Y" read as per-wave).
-// Long LLM-chosen subtask ids budget by actual id length, not a fixed 12.
+// ponytail: F24 — long LLM-chosen subtask ids budget by actual id length,
+// not a fixed 12. T6 #642 C7 — the wave row case is gone with the wave
+// machine (waveIdx/totalWaves no longer exist on the widget state).
 {
-	const stW = { id: "s1", description: "w", status: "completed", dependsOn: [], files: [] } as unknown as SubtaskResult;
-	const taskW = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [stW] } as unknown as TaskState;
-	const wLines = (createProgressWidget(() => ({ task: taskW, waveIdx: 0, totalWaves: 2 }))(undefined, theme) as any).render(80) as string[];
-	const waveLine = wLines.find((l) => l.includes("wave")) ?? "";
-	check("F24 wave row: progress first, '· wave 1/2' trails", waveLine.includes("1/1") && waveLine.includes("· wave 1/2"));
-
 	const longId = "implement-auth-subtask-with-a-very-long-id";
 	const stL = { id: longId, description: "d".repeat(60), status: "running", dependsOn: [], files: [] } as unknown as SubtaskResult;
 	const taskL = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [stL] } as unknown as TaskState;
@@ -374,15 +368,14 @@ function renderRunningWithProgress(prog: Record<string, unknown>, width: number)
 	check("F24 long-id running row desc shows ellipsis", runLine.includes("…"));
 }
 
-// ponytail: progress bar shows WITHOUT wave info — restored/resumed tasks (or
-// single-wave tasks with missing wave data) had no bar despite completed/total
-// being computable. Now the bar + count render whenever subtasks exist; the
-// wave tag is optional trailing context.
+// ponytail: progress bar shows for restored/resumed tasks (or tasks with no
+// wave metadata) — they had no bar despite completed/total being computable.
+// Now the bar + count render whenever subtasks exist. T6 #642 C7 — the wave
+// tag no longer exists at all.
 {
 	const st1 = { id: "s1", description: "d", status: "completed", dependsOn: [], files: [] } as unknown as SubtaskResult;
 	const st2 = { id: "s2", description: "d", status: "pending", dependsOn: [], files: [] } as unknown as SubtaskResult;
 	const task = { id: "T", description: "t", status: "in_progress", controlState: "running", createdAt: 0, subtasks: [st1, st2] } as unknown as TaskState;
-	// no waveIdx/totalWaves — the pre-fix gate hid the bar entirely
 	const lines = (createProgressWidget(() => ({ task }))(undefined, theme) as any).render(80) as string[];
 	const barLine = lines.find((l) => l.includes("1/2")) ?? "";
 	check("no-wave: progress bar + count shown", barLine.length > 0 && barLine.includes("1/2"));

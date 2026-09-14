@@ -86,7 +86,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 		const progressEvents: OrchestratorEventType[] = [
 			"task_planning", "task_decomposed", "task_complete",
 			"task_resumed", "task_cancelled",
-			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+			"subtask_start", "subtask_end", "subtask_failed",
 			"subtask_progress",
 			"connection_state",
 			"reconnect_progress",
@@ -230,21 +230,6 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 						ps.task = task;
 						// Clear progress entry for terminal subtasks (completed/failed)
 						ps.progressBySubtask?.delete(d.subtaskId);
-						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
-					}
-				}
-				break;
-			}
-			case "subtask_reviewing": {
-				// ponytail: F12 — reviewing is NOT terminal: keep the progress entry
-				// (agent/step/percent tags stay visible during review). The old shared
-				// end/failed/reviewing branch deleted it, blanking the live tags.
-				const d = data as OrchestratorEvents["subtask_reviewing"];
-				const task = orchestrator.getTaskState(d.taskId);
-				if (task) {
-					const ps = progressState.get(d.taskId);
-					if (ps) {
-						ps.task = task;
 						ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
 					}
 				}

@@ -40,8 +40,6 @@ function progressBar(completed: number, failed: number, total: number, width: nu
 
 export interface ProgressWidgetState {
 	task: TaskState;
-	waveIdx?: number;
-	totalWaves?: number;
 	/**
 	 * Live subtask progress keyed by subtaskId (from subtask_progress events via
 	 * WatchTask). Used by the widget to show phase/percent/agent for running
@@ -98,7 +96,7 @@ class ProgressWidgetComponent {
 			return [this.theme.fg("dim", "  UC: idle") + hint];
 		}
 
-		const { task, waveIdx, totalWaves } = s;
+		const { task } = s;
 		const lines: string[] = [];
 
 		// Header: task ID + status + description (what the task IS, not just a UUID)
@@ -168,10 +166,11 @@ class ProgressWidgetComponent {
 		);
 
 		// ponytail: progress bar — show whenever there are subtasks, not only when
-		// wave info is present. Restored/resumed tasks (or single-wave tasks with
+		// wave info was present. Restored/resumed tasks (or single-wave tasks with
 		// missing wave data) had NO bar despite completed/total being computable,
-		// so the glanceable widget lost its most useful element. Wave X/Y is now
-		// optional trailing context (appended only when waveIdx/totalWaves exist).
+		// so the glanceable widget lost its most useful element.
+		// T6 #642 C7 — the wave X/Y trailing tag is gone with the wave machine
+		// (nothing sets waveIdx/totalWaves anymore).
 		const total = task.subtasks.length;
 		// ponytail: blocked-subtask detection shared by the bar tag (·N⏳, #488)
 		// and the blocked summary line below. Deps checked against the task's own
@@ -185,12 +184,8 @@ class ProgressWidgetComponent {
 			const completed = task.subtasks.filter((s) => s.status === "completed").length;
 			const failed = task.subtasks.filter((s) => s.status === "failed").length;
 			const bar = progressBar(completed, failed, total, Math.max(0, Math.min(width - 20, 30)), this.theme);
-			// ponytail: F24 — the bar counts TASK-wide completion; leading with
-			// "Wave X/Y" read as if the bar measured the current wave. Progress
-			// first, wave identity as trailing context.
-			const waveTag = (waveIdx !== undefined && totalWaves !== undefined && totalWaves > 0)
-				? this.theme.fg("dim", ` · wave ${waveIdx + 1}/${totalWaves}`)
-				: "";
+			// ponytail: the bar counts TASK-wide completion (F24 kept it that way
+			// when the wave tag still existed — progress first, identity second).
 			// ponytail: failed-count marker next to the count text — the bar shows the
 			// failed segment in red (#427), but the count text "3/5" didn't surface the
 			// number. Append " ·N✗" only when failed > 0 (no noise on healthy tasks).
@@ -207,7 +202,7 @@ class ProgressWidgetComponent {
 			// when blocked>0.
 			const blockTag = blockedSubs.length > 0 ? this.theme.fg("dim", ` ·${blockedSubs.length}⏳`) : "";
 			lines.push(
-				`  ${bar} ${completed}/${total}${failTag}${runTag}${blockTag}${waveTag}`,
+				`  ${bar} ${completed}/${total}${failTag}${runTag}${blockTag}`,
 			);
 		}
 

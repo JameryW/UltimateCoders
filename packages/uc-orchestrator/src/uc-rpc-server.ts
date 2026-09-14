@@ -118,7 +118,7 @@ export class RpcServer {
 		const eventTypes: OrchestratorEventType[] = [
 			"task_planning", "task_decomposed", "task_complete",
 			"task_resumed", "task_cancelled",
-			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
+			"subtask_start", "subtask_end", "subtask_failed",
 		];
 		for (const type of eventTypes) {
 			this.orchestrator.events.on(type, (data) => {

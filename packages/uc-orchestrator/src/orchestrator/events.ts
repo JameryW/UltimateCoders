@@ -28,9 +28,6 @@ export interface OrchestratorEvents {
 	/** A subtask failed */
 	subtask_failed: { taskId: string; subtaskId: string; error?: string; retryCount?: number };
 
-	/** A subtask is being reviewed */
-	subtask_reviewing: { taskId: string; subtaskId: string };
-
 	/** Real-time subtask execution progress (phase/percent/agent) */
 	subtask_progress: {
 		taskId: string;

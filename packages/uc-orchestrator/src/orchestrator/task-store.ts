@@ -82,6 +82,9 @@ export class TaskStore {
 		}
 	}
 
+	/** Monotonic tmp-suffix counter — see save(). */
+	private tmpSeq = 0;
+
 	async save(task: PersistedTask): Promise<void> {
 		this.assertSafeId(task.id);
 		// ponytail: F42 — atomic write. Direct writeFile leaves a truncated/empty
@@ -92,8 +95,15 @@ export class TaskStore {
 		// ponytail: F46 — stamp savedAt on the WRITTEN copy (don't mutate the
 		// caller's in-memory object).
 		const stamped = { ...task, savedAt: Date.now() };
-		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(stamped, null, 2), "utf-8");
-		await fs.rename(`${filePath}.tmp`, filePath);
+		// T6 #642 C7 — unique tmp name per call: a task-level cancel can race
+		// an in-flight runClaimed's outcome persist (two concurrent saves of
+		// the SAME task file); a shared `${filePath}.tmp` made the second
+		// rename fail with ENOENT (first rename consumed it). Per-call suffix
+		// keeps each write→rename pair self-contained; last rename wins, which
+		// is fine — both writes carry equivalent state snapshots.
+		const tmpPath = `${filePath}.${++this.tmpSeq}-${Date.now().toString(36)}.tmp`;
+		await fs.writeFile(tmpPath, JSON.stringify(stamped, null, 2), "utf-8");
+		await fs.rename(tmpPath, filePath);
 	}
 
 	async load(taskId: string): Promise<PersistedTask | null> {
