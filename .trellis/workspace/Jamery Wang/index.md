@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~460 | Active |
+| `journal-1.md` | ~493 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-14 | T9 merge barrier delivered (#651) | `677b7bc` | `main` |
 | 9 | 2026-09-14 | T8 ExecutionScope delivered (#650) | `80714d3` | `main` |
 | 8 | 2026-09-14 | T7 #643 node/attempt 级取消 + cancel-attempt-keep-node | `b15c4c8`, `12c0944`, `029ceb9` | `main` |
 | 7 | 2026-09-14 | T6 #642 authority flip: C1-C7 + D6 delivered, task archived | `df8a8e9`, `c353c5f`, `33f9724`, `765068b`, `5ea60df`, `e4cb8f6`, `217c49f`, `7d3b207` | `main` |

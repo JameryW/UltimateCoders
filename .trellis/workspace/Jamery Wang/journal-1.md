@@ -458,3 +458,36 @@ D8 #645 落地：submit 三入口 project_id 非空校验+创建后不可变；u
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: T9 merge barrier delivered (#651)
+
+**Date**: 2026-09-14
+**Task**: T9 merge barrier delivered (#651)
+**Branch**: `main`
+
+### Summary
+
+D9 #646 落地：uc-types merge.rs 确定性 key（跨语言 golden 7094…）+ proto 双动词 + merge_grants 表（graph_id PK 单行授权）+ 静止闸/消费重放语义 + Python arbiter 授权流（refuse→skip、replay→no-op、fresh→report 携 key）。基线：types 40(+5)、pytest 1009+5(+12)、PG 集成 +4 ignored 并入欠账。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `677b7bc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
