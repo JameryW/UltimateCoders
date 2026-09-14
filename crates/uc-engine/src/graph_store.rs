@@ -505,10 +505,14 @@ pub trait GraphShadowSink: Send + Sync {
     /// the window in either case). The heartbeat monitor bridges each
     /// swept attempt back into the legacy store and re-dispatches. No-op
     /// default (shadow-only sinks and test fakes sweep nothing).
-    async fn sweep_timeouts(
-        &self,
-        _heartbeat_timeout: std::time::Duration,
-    ) -> Vec<SweptAttempt> {
+    async fn sweep_timeouts(&self, _heartbeat_timeout: std::time::Duration) -> Vec<SweptAttempt> {
+        Vec::new()
+    }
+
+    /// D6 pause-grace verb (T6 #642): fail every `RUNNING` attempt of ONE
+    /// graph (the paused task) regardless of heartbeat age. Default no-op —
+    /// only a storage-backed sink can act on it.
+    async fn fail_running_attempts(&self, _graph_id: &str, _reason: &str) -> Vec<SweptAttempt> {
         Vec::new()
     }
 }
@@ -1571,6 +1575,83 @@ impl GraphStore {
             .map_err(|e| EngineError::StorageError(format!("recompute tx commit: {}", e)))?;
         Ok(flipped)
     }
+
+    /// D6 pause-grace hard stop (T6 #642): fail every `RUNNING` attempt of
+    /// ONE graph regardless of heartbeat age — the authoritative side of
+    /// "cancel attempt, keep node" when a paused task's grace window
+    /// (`UC_PAUSE_GRACE_SECS`) expires. The node follows the retry budget
+    /// exactly like [`Self::fail_attempt`]: re-armed to `READY` while budget
+    /// lasts (re-dispatch happens on resume — the paused task's gate blocks
+    /// dispatch meanwhile), else `FAILED`. Committed winners are immutable
+    /// (fenced). Returns the attempts actually failed (fenced no-ops
+    /// excluded) so the caller can bridge each one into the legacy store.
+    pub async fn fail_running_attempts(
+        &self,
+        graph_id: &str,
+        max_attempts: i32,
+        reason: &str,
+    ) -> Result<Vec<SweptAttempt>, EngineError> {
+        let stale: Vec<(String, String)> = sqlx::query_as(
+            "SELECT attempt_id, node_id FROM task_attempts \
+             WHERE graph_id = $1 AND status = 'RUNNING' \
+             ORDER BY attempt_id",
+        )
+        .bind(graph_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("pause-grace scan: {}", e)))?;
+        let mut swept = Vec::new();
+        for (attempt, node_id) in stale {
+            let outcome = self
+                .fail_attempt(graph_id, &node_id, &attempt, max_attempts, reason)
+                .await?;
+            if outcome != FailOutcome::Fenced {
+                swept.push(SweptAttempt {
+                    graph_id: graph_id.to_string(),
+                    node_id,
+                    attempt_id: attempt,
+                    rearmed: outcome == FailOutcome::RearmedToReady,
+                });
+            }
+        }
+        Ok(swept)
+    }
+
+    /// Public read helper (integration-test + ops surface): the current state
+    /// token of one node (`READY` / `RUNNING` / `SUCCEEDED` / `FAILED` / ...).
+    pub async fn node_state(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<String>, EngineError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT state FROM graph_nodes WHERE graph_id = $1 AND node_id = $2")
+                .bind(graph_id)
+                .bind(node_id)
+                .fetch_optional(self.pool.as_ref())
+                .await
+                .map_err(|e| EngineError::StorageError(format!("node_state read: {}", e)))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Public read helper: status tokens of a node's attempt rows, oldest
+    /// first (`RUNNING` / `FAILED` / `SUCCEEDED`).
+    pub async fn attempt_states(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Vec<String>, EngineError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT status FROM task_attempts WHERE graph_id = $1 AND node_id = $2 \
+             ORDER BY attempt_id",
+        )
+        .bind(graph_id)
+        .bind(node_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| EngineError::StorageError(format!("attempt_states read: {}", e)))?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
 }
 
 /// Default attempt budget for the graph plane's `fail_attempt` path —
@@ -2021,14 +2102,22 @@ impl GraphShadowSink for GraphStore {
     /// the shared default attempt budget (converges with the legacy
     /// dispatch-retry cap of 3 while T6 flips the authority). Warn-only on
     /// error — the reaper can never fail the monitor tick.
-    async fn sweep_timeouts(
-        &self,
-        heartbeat_timeout: std::time::Duration,
-    ) -> Vec<SweptAttempt> {
+    async fn sweep_timeouts(&self, heartbeat_timeout: std::time::Duration) -> Vec<SweptAttempt> {
         match GraphStore::timeout_sweep(self, heartbeat_timeout, DEFAULT_MAX_ATTEMPTS).await {
             Ok(swept) => swept,
             Err(e) => {
                 tracing::warn!("graph sweep_timeouts failed: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn fail_running_attempts(&self, graph_id: &str, reason: &str) -> Vec<SweptAttempt> {
+        match GraphStore::fail_running_attempts(self, graph_id, DEFAULT_MAX_ATTEMPTS, reason).await
+        {
+            Ok(swept) => swept,
+            Err(e) => {
+                tracing::warn!("graph fail_running_attempts failed: {}", e);
                 Vec::new()
             }
         }

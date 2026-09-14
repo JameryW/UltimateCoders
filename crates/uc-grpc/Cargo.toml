@@ -29,6 +29,8 @@ async-nats = { workspace = true, optional = true }
 [features]
 default = []
 messaging = ["async-nats", "uc-engine/messaging"]
+# Graph-plane access (shadow wiring + the D6 pause-grace diamond test).
+storage = ["uc-engine/storage"]
 
 [build-dependencies]
 tonic-build = { workspace = true }
@@ -38,3 +40,6 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tokio-stream = "0.1"
+# D6 pause-grace diamond integration test: probe-database helpers
+# (CREATE/DROP DATABASE) run directly against sqlx.
+sqlx = { workspace = true }

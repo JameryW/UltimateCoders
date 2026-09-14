@@ -2000,6 +2000,11 @@ struct GrpcServerInner<E: EngineApi + Send + Sync + 'static> {
     checkpoint_manager: Arc<uc_engine::CheckpointManager>,
     /// Worker registry — source of truth for WorkerService and capability-aware dispatch.
     worker_registry: Arc<RwLock<WorkerRegistry>>,
+    /// Per-task pause-grace timers (D6, T6 #642): AbortHandle per paused
+    /// task. Resume aborts the timer; firing fails the paused task's still-
+    /// RUNNING graph attempts (`pause_grace_expired`) through the graph plane
+    /// and bridges the outcomes back into the legacy store.
+    pause_grace_timers: Arc<std::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
     /// NATS client for task submission and status subscriptions.
     /// Present when the `messaging` feature is enabled and NATS connection succeeded.
     #[cfg(feature = "messaging")]
@@ -2053,6 +2058,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 task_store,
                 checkpoint_manager,
                 worker_registry,
+                pause_grace_timers: Arc::new(std::sync::Mutex::new(HashMap::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
@@ -2095,6 +2101,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 task_store,
                 checkpoint_manager,
                 worker_registry,
+                pause_grace_timers: Arc::new(std::sync::Mutex::new(HashMap::new())),
                 #[cfg(feature = "messaging")]
                 nats_client: None,
                 event_tx,
@@ -2159,6 +2166,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             task_store: task_store.clone(),
             checkpoint_manager,
             worker_registry: worker_registry.clone(),
+            pause_grace_timers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
@@ -2205,6 +2213,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             task_store: task_store.clone(),
             checkpoint_manager,
             worker_registry: worker_registry.clone(),
+            pause_grace_timers: Arc::new(std::sync::Mutex::new(HashMap::new())),
             nats_client: nats_client.clone(),
             event_tx: event_tx.clone(),
         });
@@ -3138,6 +3147,94 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
 /// Spawn a background task that periodically checks for heartbeat timeouts,
 /// reaps stale attempts through the graph-plane timeout sweep, and marks
 /// stale tasks as Failed.
+/// D6 pause-grace width (T6 #642): seconds a paused task's still-RUNNING
+/// attempts are allowed to finish before the authoritative side hard-stops
+/// them. `UC_PAUSE_GRACE_SECS` overrides the 120s default (tests set it small
+/// by passing the duration directly — this helper is the production path).
+fn pause_grace_secs_from_env() -> u64 {
+    std::env::var("UC_PAUSE_GRACE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120)
+}
+
+/// Arm the D6 pause-grace timer for a paused task (T6 #642). When the grace
+/// window lapses and the task is STILL paused, every RUNNING graph attempt of
+/// its graph is failed (`pause_grace_expired` — fence attempt, node back to
+/// READY while the retry budget lasts) and each outcome is bridged back into
+/// the legacy store. No re-dispatch happens here: the paused task's dispatch
+/// gate (`get_ready_subtasks` requires InProgress) stays shut — the re-armed
+/// nodes are picked up when the task resumes. Re-pausing a task replaces its
+/// timer. Worker-side cooperative cancellation is T7 #643's seam.
+pub fn spawn_pause_grace_timer(
+    task_id: String,
+    grace: std::time::Duration,
+    task_store: Arc<Mutex<TaskStore>>,
+    timers: Arc<std::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+) {
+    // Replace any in-flight timer for this task.
+    cancel_pause_grace_timer(&task_id, timers.clone());
+    let tid = task_id.clone();
+    let handle = tokio::spawn(async move {
+        tokio::time::sleep(grace).await;
+        // Drop discipline: the tokio Mutex is not reentrant — check → sink →
+        // bridge each hold its own lock acquisition.
+        let still_paused = {
+            let store = task_store.lock().await;
+            store
+                .get_task(&tid)
+                .map(|t| t.status == uc_types::TaskStatus::Paused)
+                .unwrap_or(false)
+        };
+        if !still_paused {
+            return; // resumed before the grace lapsed — nothing to do
+        }
+        let swept: Vec<uc_engine::SweptAttempt> = {
+            let store = task_store.lock().await;
+            match store.graph_shadow() {
+                Some(sink) => {
+                    sink.fail_running_attempts(&tid, "pause_grace_expired")
+                        .await
+                }
+                None => Vec::new(),
+            }
+        };
+        if swept.is_empty() {
+            return;
+        }
+        let bridged = {
+            let mut store = task_store.lock().await;
+            swept
+                .iter()
+                .filter(|s| store.revert_swept_subtask(&tid, &s.node_id, s.rearmed))
+                .count()
+        };
+        tracing::warn!(
+            task_id = %tid,
+            grace_secs = grace.as_secs(),
+            attempts_failed = swept.len(),
+            subtasks_bridged = bridged,
+            "Pause grace expired — running attempts hard-stopped via the graph plane"
+        );
+    });
+    if let Ok(mut map) = timers.lock() {
+        map.insert(task_id, handle.abort_handle());
+    }
+}
+
+/// Cancel (and forget) a task's pause-grace timer. Called on resume — and
+/// defensively before re-arming on a second pause.
+pub fn cancel_pause_grace_timer(
+    task_id: &str,
+    timers: Arc<std::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+) {
+    if let Ok(mut map) = timers.lock() {
+        if let Some(handle) = map.remove(task_id) {
+            handle.abort();
+        }
+    }
+}
+
 #[cfg(feature = "messaging")]
 fn spawn_heartbeat_monitor(
     nats_client: async_nats::Client,
@@ -4291,6 +4388,17 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         };
         match result {
             Ok(task) => {
+                // T6 #642 D6 — soft pause + grace hard stop: arm the timer.
+                // A still-RUNNING attempt is failed via the graph plane
+                // (`pause_grace_expired`) once the window lapses; resume
+                // cancels the timer. Re-pause replaces it.
+                let grace = std::time::Duration::from_secs(pause_grace_secs_from_env());
+                spawn_pause_grace_timer(
+                    task_id.clone(),
+                    grace,
+                    self.inner.task_store.clone(),
+                    self.inner.pause_grace_timers.clone(),
+                );
                 // Publish NATS event for Python side
                 self.publish_task_status_event(&task_id, "task_paused")
                     .await;
@@ -4335,6 +4443,23 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
         };
         match result {
             Ok(task) => {
+                // T6 #642 D6 — resume disarms the pause-grace timer and
+                // re-dispatches immediately: the paused task's dispatch gate
+                // is open again, and every node that re-armed (grace expiry)
+                // or flipped READY while paused (commit-time recompute is
+                // transactional, so no extra graph recompute is needed here)
+                // goes out to workers in the same breath.
+                cancel_pause_grace_timer(&task_id, self.inner.pause_grace_timers.clone());
+                #[cfg(feature = "messaging")]
+                if let Some(client) = self.inner.nats_client.clone() {
+                    dispatch_ready_subtasks(
+                        &self.inner.task_store,
+                        &self.inner.worker_registry,
+                        &client,
+                        &task_id,
+                    )
+                    .await;
+                }
                 // Best-effort: recover from the event log and log any drift
                 // between the in-memory TaskStore and the reconstructed state.
                 // ponytail: recover is advisory here — full state reconciliation
@@ -6008,10 +6133,7 @@ mod tests {
 
         assert!(!store.revert_swept_subtask(&task_id, &st_id, true));
         let task = store.get_task(&task_id).unwrap();
-        assert_eq!(
-            task.subtasks[0].status,
-            uc_types::SubtaskStatus::Completed
-        );
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Completed);
     }
 
     #[test]
@@ -7487,11 +7609,19 @@ mod tests {
     struct RecordingGraphSink {
         seen: std::sync::Mutex<Vec<String>>,
         verbs: std::sync::Mutex<Vec<String>>,
+        /// (graph_id, reason) of every `fail_running_attempts` call (D6).
+        fail_running_calls: std::sync::Mutex<Vec<(String, String)>>,
+        /// Seeded SweptAttempts the D6 verb returns (drives bridge assertions).
+        fail_running_swept: std::sync::Mutex<Vec<uc_engine::SweptAttempt>>,
     }
 
     impl RecordingGraphSink {
         fn take_verbs(&self) -> Vec<String> {
             std::mem::take(&mut *self.verbs.lock().unwrap())
+        }
+
+        fn take_fail_running_calls(&self) -> Vec<(String, String)> {
+            std::mem::take(&mut *self.fail_running_calls.lock().unwrap())
         }
     }
 
@@ -7499,6 +7629,18 @@ mod tests {
     impl uc_engine::GraphShadowSink for RecordingGraphSink {
         async fn shadow_persist(&self, task: &uc_types::Task) {
             self.seen.lock().unwrap().push(task.id.0.clone());
+        }
+
+        async fn fail_running_attempts(
+            &self,
+            graph_id: &str,
+            reason: &str,
+        ) -> Vec<uc_engine::SweptAttempt> {
+            self.fail_running_calls
+                .lock()
+                .unwrap()
+                .push((graph_id.to_string(), reason.to_string()));
+            std::mem::take(&mut *self.fail_running_swept.lock().unwrap())
         }
         async fn on_schedule(&self, env: &uc_types::ExecutionEnvelope, worker: Option<&str>) {
             self.verbs.lock().unwrap().push(format!(
@@ -7719,6 +7861,146 @@ mod tests {
         assert!(
             !sink.seen.lock().unwrap().is_empty(),
             "persist_task fan-out keeps running beside the bridge"
+        );
+    }
+
+    // ── D6 pause-grace timer (T6 #642) ──────────────────────────────
+
+    /// Shared-arc variant of `wired_store` for the timer tests: the spawned
+    /// timer needs `Arc<Mutex<TaskStore>>`, the test needs the same store.
+    async fn wired_shared_store() -> (
+        Arc<Mutex<TaskStore>>,
+        Arc<RecordingGraphSink>,
+        Arc<std::sync::Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    ) {
+        let sink = Arc::new(RecordingGraphSink::default());
+        let mut store = TaskStore::new();
+        store.set_graph_shadow(sink.clone());
+        (
+            Arc::new(Mutex::new(store)),
+            sink,
+            Arc::new(std::sync::Mutex::new(HashMap::new())),
+        )
+    }
+
+    /// The grace timer fires after the window, drives the graph plane's
+    /// fail_running_attempts verb, and bridges each outcome into the legacy
+    /// store (InProgress → Pending on re-arm).
+    #[tokio::test]
+    async fn pause_grace_timer_fires_and_bridges_after_grace() {
+        let (store, sink, timers) = wired_shared_store().await;
+        let (task_id, st_id) = {
+            let mut s = store.lock().await;
+            let task = s.submit_task("Test task".to_string(), "p1".to_string());
+            let ids = (task.id.0.clone(), task.subtasks[0].id.0.clone());
+            if let Some(t) = s.tasks.get_mut(&ids.0) {
+                t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            }
+            assert!(s.pause_task(&ids.0).is_ok());
+            ids
+        };
+        *sink.fail_running_swept.lock().unwrap() = vec![uc_engine::SweptAttempt {
+            graph_id: task_id.clone(),
+            node_id: st_id.clone(),
+            attempt_id: "g:n:0".to_string(),
+            rearmed: true,
+        }];
+        spawn_pause_grace_timer(
+            task_id.clone(),
+            std::time::Duration::from_millis(50),
+            store.clone(),
+            timers.clone(),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert_eq!(
+            sink.take_fail_running_calls(),
+            vec![(task_id.clone(), "pause_grace_expired".to_string())],
+            "the grace hard stop must hit the graph plane with the D6 reason"
+        );
+        let bridged = {
+            let s = store.lock().await;
+            s.get_task(&task_id).unwrap().clone()
+        };
+        assert_eq!(
+            bridged.subtasks[0].status,
+            uc_types::SubtaskStatus::Pending,
+            "re-armed attempt bridges the legacy subtask back to Pending"
+        );
+        assert!(bridged.subtasks[0].assigned_worker.is_none());
+    }
+
+    /// Resuming before the grace lapses leaves the attempts untouched: the
+    /// still-paused guard inside the timer observes the resumed task and
+    /// no-ops.
+    #[tokio::test]
+    async fn pause_grace_timer_skips_when_task_resumed_before_fire() {
+        let (store, sink, timers) = wired_shared_store().await;
+        let task_id = {
+            let mut s = store.lock().await;
+            let task = s.submit_task("Test task".to_string(), "p1".to_string());
+            let id = task.id.0.clone();
+            if let Some(t) = s.tasks.get_mut(&id) {
+                t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
+            }
+            assert!(s.pause_task(&id).is_ok());
+            id
+        };
+        *sink.fail_running_swept.lock().unwrap() = vec![uc_engine::SweptAttempt {
+            graph_id: task_id.clone(),
+            node_id: "st-1".to_string(),
+            attempt_id: "g:n:0".to_string(),
+            rearmed: true,
+        }];
+        spawn_pause_grace_timer(
+            task_id.clone(),
+            std::time::Duration::from_millis(100),
+            store.clone(),
+            timers.clone(),
+        );
+        assert!({ store.lock().await.resume_task(&task_id).is_ok() });
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert!(
+            sink.take_fail_running_calls().is_empty(),
+            "a resumed task must not be hard-stopped by its own grace timer"
+        );
+        let after = {
+            let s = store.lock().await;
+            s.get_task(&task_id).unwrap().clone()
+        };
+        assert_eq!(
+            after.subtasks[0].status,
+            uc_types::SubtaskStatus::InProgress
+        );
+    }
+
+    /// Resume cancels the armed timer: the window lapses with the task
+    /// running and the graph plane is never asked to fail anything.
+    #[tokio::test]
+    async fn resume_cancels_pause_grace_timer() {
+        let (store, sink, timers) = wired_shared_store().await;
+        let task_id = {
+            let mut s = store.lock().await;
+            let task = s.submit_task("Test task".to_string(), "p1".to_string());
+            let id = task.id.0.clone();
+            assert!(s.pause_task(&id).is_ok());
+            id
+        };
+        spawn_pause_grace_timer(
+            task_id.clone(),
+            std::time::Duration::from_secs(60),
+            store.clone(),
+            timers.clone(),
+        );
+        assert!(
+            timers.lock().unwrap().contains_key(&task_id),
+            "arming registers an abortable timer"
+        );
+        cancel_pause_grace_timer(&task_id, timers.clone());
+        assert!(!timers.lock().unwrap().contains_key(&task_id));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(
+            sink.take_fail_running_calls().is_empty(),
+            "a cancelled timer must never fire"
         );
     }
 
