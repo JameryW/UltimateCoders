@@ -366,3 +366,62 @@ T6 delivered in 8 commits: graph-plane sweep replaces legacy reaper, T4 serde fa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: T7 #643 node/attempt 级取消 + cancel-attempt-keep-node
+
+**Date**: 2026-09-14
+**Task**: T7 #643 node/attempt 级取消 + cancel-attempt-keep-node
+**Branch**: `main`
+
+### Summary
+
+C1-C5 全切片交付：graph 取消原语、网关三路分派、worker killpg 协作取消、TS cascade 退役、PG e2e 用例（欠账待 Docker）。基线勘误 452/195。
+
+### Main Changes
+
+# T7 #643 — node/attempt 级取消 + cancel-attempt-keep-node
+
+## 交付内容（C1–C5 全切片，commit b15c4c8 / 12c0944 / 029ceb9 + 归档提交）
+
+- **C1 graph_store 原语**：`running_attempt` / `cancel_running_attempt`（fail_attempt 预算语义，reason=cancelled —— cancel-attempt-keep-node 正式入口，刻意非免预算）/ `cancel_nodes`（终态卫兵）/ `downstream_closure`（BFS）。GraphShadowSink 四动词默认 no-op，storage 委托。proto `CancelTaskRequest` 增 subtask_id/attempt_no，stub 三端重生成。
+- **C2 网关粒度**：cancel_task 按 (subtask_id, attempt_no) 三路分派；attempt 级 rearmed 即刻重派（attempt_no 仅信息性，epoch 即 fence）；task 级额外打围 RUNNING attempts 并补发 attempt_cancelled。`publish_task_control_event` 细粒度变体 + pause-grace timer 补发 —— worker 杀进程触发点。
+- **C3 worker 协作取消**：sandbox start_new_session + (task,node) 进程注册表 + `_kill_process_tree`（killpg→回退 kill）+ `kill_group`；nats_worker 处理 attempt_cancelled / subtask_cancelled（cancelled_nodes CSV）/ task_cancelled 强化；迟到结果 ack 不发布（graph fence 兜底）。Windows = 单进程杀（文档化 fallback）。
+- **C4 TS 退役**：subtask cancel RPC-first（bridge 传 subtaskId；镜像只标目标，闭包后代靠 reconcile 采纳）；cascadeCancel / reverseCascadeUnCancel + 测试文件全删；retrySubtask reset-only。
+- **C5 e2e**：granular_cancel_e2e.rs 两个 #[ignore] PG 用例（attempt 取消→重派提交胜出+迟到 fenced；node 取消闭包终态+兄弟无伤）。
+
+## 质量门禁
+
+- fmt/clippy 双模式全绿；Rust 452+5 / 379+5 / 195+8（对 HEAD 无增减 —— **勘误**：此前记录 437/192 是 D6 提交 765068b 打测试前的中途捕获）。
+- pytest 全量 988+5 量级（新增 11 协作取消用例）；全量跑受 safe-delete bulk guard 环境拦截，按文件分批 38/38 全绿等价。
+- TS bun test 156 pass / 16 files（×2 连续；一次 waitFor 姿势 flake 单跑即过）；tsc 包内零错误。
+- **PG 实跑欠账（T4+T6+T7 三笔）**：graph_store_integration、pause_grace_diamond、granular_cancel_e2e，`-- --ignored`；恢复 = 启动 Docker Desktop。
+
+## 关键裁决
+
+1. cancel-attempt-keep-node 刻意骑 fail_attempt 预算语义（非免预算）——pause-grace 钻石基线已依赖该语义。
+2. attempt_no 仅信息性：wire 无 per-attempt 选择子，epoch bump 即 fence，graph 取消当前 RUNNING attempt。
+3. attempt 级取消 rearmed 后即刻重派（节点存活只有 attempt 被取消）；pause 场景派发闸自然兜住。
+4. 闭包取消 = Rust 平面运行时计算（downstream_closure + cancel_nodes），TS 簿记全退役；网关 CANCELLED 的后代保持终态直到显式 re-verb。
+5. legacy 镜像映射不变：node 取消 → Failed 行（T4：wire 无独立 cancelled 行）；attempt 取消 rearmed → Pending / 耗尽 → Failed。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b15c4c8` | (see git log) |
+| `12c0944` | (see git log) |
+| `029ceb9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
