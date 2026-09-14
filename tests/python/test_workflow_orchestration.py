@@ -305,7 +305,8 @@ async def test_execute_steps_runs_chain_in_order_and_threads_output():
     calls: list[tuple[str, str]] = []  # (agent, prompt)
 
     async def fake_execute(
-        prompt, *, working_dir=None, on_stdout_line=None, subtask_config=None, agent=None
+        prompt, *, working_dir=None, on_stdout_line=None, subtask_config=None,
+        agent=None, cancel_key=None,
     ):
         calls.append((agent, prompt))
         # Return distinct summaries so we can assert they were threaded.

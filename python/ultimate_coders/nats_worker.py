@@ -447,6 +447,10 @@ class NatsWorker:
         # Active remote executions keyed by parent task, used to terminate an
         # already-running sandbox when its task is cancelled.
         self._running_subtask_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+        # T7 #643 — active remote executions keyed by (task_id, node_id) for
+        # attempt/node-level cooperative cancel (attempt_cancelled /
+        # subtask_cancelled control events kill exactly the target node).
+        self._running_node_tasks: dict[tuple[str, str], asyncio.Task[Any]] = {}
         # Capacity semaphore — lazy-constructed in _init_components (Semaphore
         # binds a loop on Py3.9). Caps concurrent subtask executions.
         self._exec_semaphore: asyncio.Semaphore | None = None
@@ -1419,6 +1423,11 @@ class NatsWorker:
         execution.add_done_callback(
             lambda done: self._remove_running_subtask(subtask.parent_id, done)
         )
+        # T7 #643 — per-node registration for attempt/node-level cancel.
+        self._running_node_tasks[(subtask.parent_id, subtask.id)] = execution
+        execution.add_done_callback(
+            lambda done: self._remove_node_task(subtask.parent_id, subtask.id, done)
+        )
         return execution
 
     def _remove_running_subtask(
@@ -1434,11 +1443,60 @@ class NatsWorker:
         if not running:
             self._running_subtask_tasks.pop(task_id, None)
 
+    def _remove_node_task(
+        self,
+        task_id: str,
+        node_id: str,
+        execution: asyncio.Task[Any],
+    ) -> None:
+        """Release a settled execution from the per-node cancel registry."""
+        key = (task_id, node_id)
+        if self._running_node_tasks.get(key) is execution:
+            self._running_node_tasks.pop(key, None)
+
+    def _cancel_node_executions(self, task_id: str, node_ids: list[str]) -> int:
+        """T7 #643 — cooperative cancel for attempt/node-level control events.
+
+        Kills the agent process group(s) (sandbox kill_group) and cancels the
+        execution task(s) for exactly the given nodes. Late results stay
+        fenced on the graph plane (`commit_once`), so a killed attempt can
+        never commit. Task-level cancellation state is deliberately NOT
+        touched — the node may legitimately re-run (attempt re-arm) and
+        siblings keep going.
+        """
+        cancelled = 0
+        for node_id in node_ids:
+            if not node_id:
+                continue
+            key = (task_id, node_id)
+            killed = False
+            if self._worker is not None:
+                killed = self._worker.kill_node(task_id, node_id)
+            execution = self._running_node_tasks.pop(key, None)
+            if execution is not None and not execution.done():
+                execution.cancel()
+                cancelled += 1
+            if killed or execution is not None:
+                logger.info(
+                    "Cooperative cancel: task=%s node=%s (killed=%s, execution_cancelled=%s)",
+                    task_id[:8],
+                    node_id[:8],
+                    killed,
+                    execution is not None,
+                )
+        return cancelled
+
     def _cancel_task_executions(self, task_id: str) -> None:
         """Remember a cancellation and terminate remote executions for the task."""
         self._cancelled_task_ids.add(task_id)
         for execution in self._running_subtask_tasks.pop(task_id, set()):
             execution.cancel()
+        # T7 #643 — also kill the agent process groups: cancelling the
+        # asyncio task alone leaves the spawned CLI running until its own
+        # cleanup notices (and orphans its tool children entirely).
+        node_keys = [k for k in self._running_node_tasks if k[0] == task_id]
+        if node_keys:
+            self._cancel_node_executions(task_id, [k[1] for k in node_keys])
 
     async def _handle_submit(self, msg: nats.aio.msg.Msg) -> None:  # type: ignore[name-defined]
         """Handle a ``uc.task.submit`` message.
@@ -2657,6 +2715,33 @@ class NatsWorker:
             # local task terminal so _execute_subtasks stops dispatching.
             self._cancel_task_executions(task_id)
             await self._orchestrator.cancel_task(task_id)
+            if self._dispatch_event is not None:
+                self._dispatch_event.set()
+        elif event_type == "attempt_cancelled":
+            # T7 #643 — attempt-level cancel (cancel-attempt-keep-node): kill
+            # this node's process group + execution task. Task-level
+            # cancellation state is untouched — the node re-arms to READY on
+            # the gateway and may be re-dispatched with a fresh attempt; any
+            # late result from the killed execution stays fenced
+            # (graph-plane commit_once).
+            node_id = data.get("subtask_id", "")
+            if node_id:
+                self._cancel_node_executions(task_id, [node_id])
+            if self._dispatch_event is not None:
+                self._dispatch_event.set()
+        elif event_type == "subtask_cancelled":
+            # T7 #643 — node-level cancel: the gateway already moved the
+            # downstream closure to CANCELLED; `cancelled_nodes` (CSV) in the
+            # data map carries every affected node. Kill whatever is still
+            # running for them here.
+            inner = data.get("data", {}) or {}
+            raw = str(inner.get("cancelled_nodes", "") or "")
+            node_ids = [n for n in raw.split(",") if n]
+            root = data.get("subtask_id", "")
+            if root and root not in node_ids:
+                node_ids.insert(0, root)
+            if node_ids:
+                self._cancel_node_executions(task_id, node_ids)
             if self._dispatch_event is not None:
                 self._dispatch_event.set()
         elif event_type in ("subtask_completed", "subtask_failed"):

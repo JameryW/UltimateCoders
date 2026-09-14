@@ -176,6 +176,32 @@ class TokenUsage:
     total_cost_usd: float | None = None
 
 
+def _kill_process_tree(proc: Any) -> None:
+    """Kill a subprocess and, on POSIX, its whole process group.
+
+    T7 #643 cooperative cancel: the agent CLI spawns tool subprocesses, so
+    killing only the direct child orphans the rest of the group. Spawns use
+    ``start_new_session`` on POSIX, making the child a group leader — one
+    ``killpg`` reaps the entire tree. Windows has no process groups; the
+    single-process kill is the documented fallback.
+    """
+    import os
+    import signal
+
+    if proc.returncode is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
 class SandboxManager:
     """Manages sandbox creation, execution, and cleanup.
 
@@ -211,10 +237,30 @@ class SandboxManager:
         self._pool: list[SandboxHandle] = []
         self._active: dict[str, SandboxHandle] = {}
         self._adapter = self._create_adapter(config.agent)
+        # T7 #643 — live agent subprocesses keyed by (task_id, node_id) so
+        # the cooperative-cancel control events can kill the right process
+        # group. Registered by _execute_subprocess when the request carries
+        # a cancel_key; popped when the process settles.
+        self._active_procs: dict[tuple[str, str], Any] = {}
 
     def _create_adapter(self, agent: str) -> AgentAdapter:
         """Create an agent adapter via the plugin registry."""
         return create_adapter(agent)
+
+    def kill_group(self, cancel_key: tuple[str, str]) -> bool:
+        """T7 #643 cooperative cancel: kill the agent subprocess group
+        registered under (task_id, node_id).
+
+        Returns True when a live process was found and killed. A late result
+        from the killed execution stays fenced on the graph plane
+        (commit_once), so it can never commit.
+        """
+        proc = self._active_procs.pop(cancel_key, None)
+        if proc is None:
+            return False
+        killed = proc.returncode is None
+        _kill_process_tree(proc)
+        return killed
 
     async def acquire(self) -> SandboxHandle:
         """Acquire a sandbox instance from the pool or create a new one.
@@ -257,6 +303,7 @@ class SandboxManager:
         on_stdout_line: Any | None = None,
         subtask_config: dict[str, Any] | None = None,
         agent: str | None = None,
+        cancel_key: tuple[str, str] | None = None,
     ) -> AgentOutput:
         """Execute an agent prompt in a sandbox.
 
@@ -271,6 +318,9 @@ class SandboxManager:
                 the manager's default is "grok-build"). Used by multi-step
                 workflows where each step may run a different agent. None = use
                 the manager's configured adapter (default behavior).
+            cancel_key: Optional (task_id, node_id) identity for the T7
+                cooperative-cancel registry — makes the spawned subprocess
+                group killable by kill_group() while it runs.
 
         Returns:
             AgentOutput with summary, file changes, and success status.
@@ -422,6 +472,8 @@ class SandboxManager:
         timeout_secs = request.get("timeout_secs", self.config.max_cpu_seconds)
         env_vars = request.get("env_vars", {})
         working_dir = request.get("working_dir", self.config.project_path)
+        # T7 #643 — (task_id, node_id) identity for the cancel registry.
+        cancel_key: tuple[str, str] | None = request.get("cancel_key")
 
         # Log the command being executed (truncate long prompts)
         display_args = []
@@ -449,7 +501,15 @@ class SandboxManager:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
                 env=env,
+                # T7 #643 — own process group on POSIX so a cooperative
+                # cancel can kill the agent AND its children (the coding
+                # CLI spawns tool subprocesses) with one killpg. Windows
+                # has no process groups; the single-process kill in the
+                # cancel path is the documented fallback.
+                start_new_session=(os.name == "posix"),
             )
+            if cancel_key is not None:
+                self._active_procs[cancel_key] = proc
 
             try:
                 # Stream stdout line-by-line if callback provided
@@ -575,11 +635,12 @@ class SandboxManager:
             # Exception). Without this, the OS subprocess (the coding agent)
             # keeps running as an orphan — consuming CPU/memory and eventually
             # OOM-killing the worker (an OMP session-interruption cause).
+            if cancel_key is not None:
+                registered = self._active_procs.get(cancel_key)
+                if registered is proc:
+                    self._active_procs.pop(cancel_key, None)
             if proc is not None and proc.returncode is None:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
+                _kill_process_tree(proc)
                 try:
                     await proc.wait()
                 except Exception:

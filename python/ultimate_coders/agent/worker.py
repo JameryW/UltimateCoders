@@ -619,6 +619,28 @@ class Worker:
     MAX_RETRIES: int = 3
     RETRY_DELAYS: list[float] = [2.0, 4.0]  # delays before retry 1, 2
 
+    def kill_node(self, task_id: str, subtask_id: str) -> bool:
+        """T7 #643 cooperative cancel: kill the agent process group for one
+        node (the sandbox registers spawned subprocesses under
+        (task_id, node_id) via the execute cancel_key).
+
+        Returns True when a live process was found and killed. Any late
+        result from the killed execution stays fenced on the graph plane.
+        """
+        kill = getattr(self._sandbox_manager, "kill_group", None)
+        if kill is None:
+            return False
+        try:
+            return kill((task_id, subtask_id))
+        except Exception:
+            logger.warning(
+                "kill_node failed for task=%s node=%s",
+                task_id[:8],
+                subtask_id[:8],
+                exc_info=True,
+            )
+            return False
+
     async def execute_subtask(self, subtask: Subtask) -> SubtaskResult:
         """Execute a subtask via sandbox agent.
 
@@ -1070,9 +1092,13 @@ class Worker:
             # Multi-agent workflow: run ordered steps, threading each step's
             # output into the next step's prompt template. Empty steps = the
             # legacy single-agent path (backward compatible).
+            # T7 #643 — cancel_key registers the spawned agent process group
+            # under (task_id, node_id) so control events can kill it.
+            cancel_key = (subtask.parent_id, subtask.id)
             if subtask.steps:
                 output = await self._execute_steps(
-                    subtask, working_dir, _on_stdout_line, context_block
+                    subtask, working_dir, _on_stdout_line, context_block,
+                    cancel_key=cancel_key,
                 )
             else:
                 # Build prompt with context injection
@@ -1091,6 +1117,7 @@ class Worker:
                     working_dir=working_dir,
                     on_stdout_line=_on_stdout_line,
                     subtask_config=self._resolve_agent_config(subtask) or None,
+                    cancel_key=cancel_key,
                 )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
@@ -1135,6 +1162,7 @@ class Worker:
         working_dir: str | None,
         on_stdout_line: Any,
         context_block: str,
+        cancel_key: tuple[str, str] | None = None,
     ) -> AgentOutput:
         """Run a subtask's ordered multi-agent workflow steps.
 
@@ -1179,6 +1207,7 @@ class Worker:
                     step, idx, total, step_outputs, prev,
                     context_block, file_constraints_str,
                     subtask, working_dir, on_stdout_line,
+                    cancel_key=cancel_key,
                     parallel_group=step.parallel_group or "",
                     parallel_step_count=1,
                 )
@@ -1266,6 +1295,7 @@ class Worker:
                     gs, si, total, prev_snapshot, prev,
                     context_block, file_constraints_str,
                     subtask, working_dir, on_stdout_line,
+                    cancel_key=cancel_key,
                     parallel_group=group,
                     parallel_step_count=group_size,
                 )
@@ -1339,6 +1369,7 @@ class Worker:
         subtask: Subtask,
         working_dir: str | None,
         on_stdout_line: Any,
+        cancel_key: tuple[str, str] | None = None,
         parallel_group: str = "",
         parallel_step_count: int = 1,
     ) -> AgentOutput | None:
@@ -1443,6 +1474,7 @@ class Worker:
                 on_stdout_line=on_stdout_line,
                 subtask_config=merged_cfg,
                 agent=step.agent,
+                cancel_key=cancel_key,
             )
             if output.success or attempt == max_attempts - 1:
                 break
