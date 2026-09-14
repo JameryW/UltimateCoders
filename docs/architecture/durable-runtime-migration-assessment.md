@@ -104,7 +104,7 @@ MergeArbiter 在 Python。方案要求 merge 是 single-writer 事务。选项�
 | T6 | 权威反转（D2 一刀切）：TS 状态转移全部改为经 Rust API 生效、删 `resyncAllTasksToGrpc`、删 TS wave 循环与 wave 快照（ready-node 由 Rust 独任）、按 D6 实现软暂停/宽限硬停/node 态重算 resume、发布说明按 D7 四要点（自动续跑+回滚步骤） | T3, T4 |
 | T7 | 取消下沉：node/attempt 级 cancel RPC + NATS 控制信号 + worker 响应；含 D6 的 cancel-attempt-keep-node（fence attempt→node 回 READY）；TS cascadeCancel 删除 | T6 |
 
-P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）在 P0 验收后另开地图，不在本件展开。
+P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）在 P0 验收后另开地图，不在本件展开。**P1 地图已建（2026-09-14，#644）**：决策票 D8=#645（ExecutionScope 模型）、D9=#646（barrier grant wire/storage，D5 后续）、D10=#647（Context Compiler 归属与契约）、D11=#648（sandbox env allowlist）、D12=#649（PlacementScore 维度与计算位置）；五票全闭后建 T8–T12 实现票。
 
 **wayfinder 地图开放决策**：无。D4（#633）、D6（#635）、D7（#636）、D5（#634，2026-09-14 裁决：hybrid——Python 保留 MergeArbiter 执行，Rust 签发 fenced merge-barrier 授权，`merge_idempotency_key` 走 envelope 同族确定性派生）已全部闭环。
 
