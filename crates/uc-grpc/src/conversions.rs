@@ -908,7 +908,6 @@ impl From<Subtask> for SubtaskProto {
                 })
             }),
             dispatch_mode: Some(match st.dispatch_mode {
-                uc_types::DispatchMode::Local => "Local".to_string(),
                 uc_types::DispatchMode::Remote => "Remote".to_string(),
                 uc_types::DispatchMode::PreferRemote => "PreferRemote".to_string(),
             }),
@@ -1303,11 +1302,13 @@ impl From<SubtaskProto> for Subtask {
             dispatch_mode: proto.dispatch_mode.as_deref().map_or_else(
                 uc_types::DispatchMode::default,
                 |s| match s {
-                    "Local" => uc_types::DispatchMode::Local,
                     "Remote" => uc_types::DispatchMode::Remote,
                     _ => uc_types::DispatchMode::PreferRemote,
                 },
             ),
+            // Not carried by SubtaskProto — legacy rows default to
+            // RequiresWorker (never gateway-local executable).
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: proto.dispatch_retry_count.unwrap_or(0),
             retry_count: proto.retry_count.unwrap_or(0),
             required_capabilities: proto.required_capabilities,

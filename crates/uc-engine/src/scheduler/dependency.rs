@@ -94,6 +94,7 @@ mod tests {
             expected_output: String::new(),
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: 0,
             retry_count: 0,
             required_capabilities: Vec::new(),

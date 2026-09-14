@@ -195,6 +195,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
         expected_output: String::new(),
         result,
         dispatch_mode: uc_types::DispatchMode::default(),
+        effect_class: uc_types::EffectClass::default(),
         dispatch_retry_count: 0,
         retry_count: 0,
         required_capabilities: Vec::new(),
@@ -900,6 +901,7 @@ impl TaskStore {
             expected_output: String::new(),
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: 0,
             retry_count: 0,
             required_capabilities: Vec::new(),
@@ -2531,15 +2533,6 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
 
         if let Some(nats_client) = &self.inner.nats_client {
             for st in ready {
-                // Local mode: skip NATS publish entirely
-                if st.dispatch_mode == uc_types::DispatchMode::Local {
-                    tracing::info!(
-                        subtask_id = %st.id.0,
-                        "Subtask dispatch_mode=Local, skipping NATS publish"
-                    );
-                    continue;
-                }
-
                 let execute = subtask_execute_payload(task_id, &st, &project_id, "", &[]);
                 // T4 #640: Nats-Msg-Id = idempotency_key activates the
                 // stream's duplicate_window — re-sends collapse to one.
@@ -3374,15 +3367,6 @@ async fn dispatch_ready_subtasks(
     };
 
     for st in ready {
-        // Local mode: skip NATS publish entirely
-        if st.dispatch_mode == uc_types::DispatchMode::Local {
-            tracing::info!(
-                subtask_id = %st.id.0,
-                "Subtask dispatch_mode=Local, skipping NATS publish"
-            );
-            continue;
-        }
-
         // Propagate expected_output so the worker's prompt includes the
         // actual success criteria (not the generic fallback). Matches the
         // gRPC upsert path. Propagate file_constraints so the worker can do
@@ -4588,11 +4572,11 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                     dispatch_mode: st.dispatch_mode.as_deref().map_or_else(
                         uc_types::DispatchMode::default,
                         |s| match s {
-                            "Local" => uc_types::DispatchMode::Local,
                             "Remote" => uc_types::DispatchMode::Remote,
                             _ => uc_types::DispatchMode::PreferRemote,
                         },
                     ),
+                    effect_class: uc_types::EffectClass::default(),
                     dispatch_retry_count: st.dispatch_retry_count.unwrap_or(0),
                     retry_count: st.retry_count.unwrap_or(0),
                     required_capabilities: st.required_capabilities,
@@ -5284,6 +5268,7 @@ mod tests {
             expected_output: String::new(),
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: 0,
             retry_count: 0,
             required_capabilities: Vec::new(),
@@ -5946,6 +5931,7 @@ mod tests {
                 expected_output: String::new(),
                 result: None,
                 dispatch_mode: uc_types::DispatchMode::default(),
+                effect_class: uc_types::EffectClass::default(),
                 dispatch_retry_count: 0,
                 retry_count: 0,
                 required_capabilities: Vec::new(),
@@ -5980,6 +5966,7 @@ mod tests {
                 expected_output: String::new(),
                 result: None,
                 dispatch_mode: uc_types::DispatchMode::default(),
+                effect_class: uc_types::EffectClass::default(),
                 dispatch_retry_count: 0,
                 retry_count: 0,
                 required_capabilities: Vec::new(),
@@ -7280,6 +7267,7 @@ mod tests {
             expected_output: "out".into(),
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: 2,
             required_capabilities: vec![],
             agent_config_json: None,
@@ -7463,6 +7451,7 @@ mod tests {
             expected_output: String::new(),
             result: None,
             dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
             dispatch_retry_count: 0,
             retry_count: 0,
             required_capabilities: Vec::new(),

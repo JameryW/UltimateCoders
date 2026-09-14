@@ -176,6 +176,7 @@ fn subtask(
             result: None,
         }),
         dispatch_mode: DispatchMode::default(),
+        effect_class: uc_types::EffectClass::default(),
         dispatch_retry_count: 0,
         retry_count: retry,
         required_capabilities: vec!["rust".to_string()],

@@ -62,14 +62,29 @@ pub enum TaskStatus {
 /// Dispatch mode for a subtask — controls how it is routed to workers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum DispatchMode {
-    /// Execute locally (reserved for future use; currently no-op).
-    Local,
     /// Must execute on a remote worker via NATS. Revert to Pending on
     /// NATS failure with retry_count increment; mark Failed after 3 retries.
     Remote,
     /// Prefer remote dispatch; fall back to Pending on NATS failure (default).
     #[default]
     PreferRemote,
+}
+
+/// Effect class of a node/subtask — governs local-execution eligibility when
+/// the remote transport (NatsExecutor) is unavailable (D4 #633 Q2). Serialized
+/// snake_case to match the `graph_nodes.effect_class` column values.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectClass {
+    /// Pure read (no side effects) — always eligible for local execution.
+    ReadOnly,
+    /// Tool-class effect with no worktree/CLI dependency — eligible for local
+    /// execution when NatsExecutor is unavailable.
+    LocalSafe,
+    /// Requires a remote worker (coding work: worktree/CLI dependency) —
+    /// never executes locally; stays READY with an alert on transport loss.
+    #[default]
+    RequiresWorker,
 }
 
 /// A subtask assigned to a worker.
@@ -89,9 +104,14 @@ pub struct Subtask {
     pub expected_output: String,
     /// Result from the worker.
     pub result: Option<SubtaskResult>,
-    /// How this subtask should be dispatched (local / remote / prefer-remote).
+    /// How this subtask should be dispatched (remote / prefer-remote).
     #[serde(default)]
     pub dispatch_mode: DispatchMode,
+    /// Effect class governing local-execution eligibility on transport loss
+    /// (D4 #633 Q2). Defaults to `RequiresWorker` (legacy rows never ran
+    /// locally via the gateway).
+    #[serde(default)]
+    pub effect_class: EffectClass,
     /// How many times dispatch has been retried (for Remote mode).
     #[serde(default)]
     pub dispatch_retry_count: u32,
@@ -377,6 +397,29 @@ mod tests {
         let st: Subtask = serde_json::from_str(json).unwrap();
         assert!(st.steps.is_empty());
         assert_eq!(st.dispatch_mode, DispatchMode::PreferRemote);
+        // Legacy rows carry no effect_class — must default to RequiresWorker
+        // (never eligible for gateway-local execution).
+        assert_eq!(st.effect_class, EffectClass::RequiresWorker);
+    }
+
+    #[test]
+    fn effect_class_serializes_snake_case() {
+        // T5 #641: wire values must match the graph_nodes.effect_class column
+        // values ('read_only' / 'local_safe' / 'requires_worker').
+        assert_eq!(
+            serde_json::to_string(&EffectClass::ReadOnly).unwrap(),
+            "\"read_only\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EffectClass::LocalSafe).unwrap(),
+            "\"local_safe\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EffectClass::RequiresWorker).unwrap(),
+            "\"requires_worker\""
+        );
+        let back: EffectClass = serde_json::from_str("\"local_safe\"").unwrap();
+        assert_eq!(back, EffectClass::LocalSafe);
     }
 
     #[test]
@@ -423,6 +466,7 @@ mod tests {
             expected_output: String::new(),
             result: None,
             dispatch_mode: DispatchMode::PreferRemote,
+            effect_class: EffectClass::default(),
             dispatch_retry_count: 0,
             retry_count: 0,
             required_capabilities: Vec::new(),
