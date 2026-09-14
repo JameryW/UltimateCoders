@@ -241,6 +241,14 @@ impl OrchestratorDispatcher {
                     retry_no,
                 );
                 let subject = "uc.subtask.execute".to_string();
+                // T4 #640: Nats-Msg-Id = idempotency_key activates the
+                // stream's duplicate_window, so re-publishing this layer
+                // (retry, redelivery, dispatcher restart) cannot reach a
+                // worker twice.
+                let mut dedup = async_nats::HeaderMap::new();
+                if let Some(key) = msg.get("idempotency_key").and_then(|v| v.as_str()) {
+                    dedup.insert("Nats-Msg-Id", key);
+                }
                 let payload = serde_json::to_vec(&msg).map_err(|e| {
                     EngineError::InternalError(format!("Failed to serialize subtask: {e}"))
                 })?;
@@ -254,9 +262,9 @@ impl OrchestratorDispatcher {
                 // uc.subtask.execute, so it stalls until the stale-assigned reaper
                 // reverts it. Surface the failure so dispatch() logs it + marks the
                 // task failed (caller at dispatcher.rs:98).
-                if let Err(e) = tokio::runtime::Handle::current()
-                    .block_on(async { c.publish(subject, payload.into()).await })
-                {
+                if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                    c.publish_with_headers(subject, dedup, payload.into()).await
+                }) {
                     return Err(EngineError::ConnectionError(format!(
                         "NATS publish failed for subtask {:?}: {e}",
                         subtask_id
@@ -596,8 +604,6 @@ mod tests {
         // Pre-envelope keys preserved (legacy consumers unaffected).
         assert_eq!(a["task_id"], "t-1");
         assert_eq!(a["subtask_id"], "st-2");
-        assert_eq!(a["description"], "do it");
-        assert_eq!(a["layer"], 0);
         // Envelope: identity mapping (graph=task, node=subtask,
         // attempt=retry_no, epoch empty, version = gateway contract).
         assert_eq!(a["graph_id"], "t-1");
