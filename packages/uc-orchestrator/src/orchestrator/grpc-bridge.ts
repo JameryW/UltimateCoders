@@ -611,11 +611,15 @@ export class GrpcBridge {
 		}, false);
 	}
 
-	async cancelTask(taskId: string, _subtaskId?: string): Promise<boolean> {
-		// ponytail: CancelTaskRequest has no subtaskId field — server ignores it
+	async cancelTask(taskId: string, subtaskId?: string): Promise<boolean> {
+		// T7 #643 — granular cancel: bare `subtaskId` = node-level cancel
+		// (the gateway computes the downstream closure on the graph plane
+		// and moves it to CANCELLED — terminal); no subtaskId = legacy
+		// task-level cancel. Attempt-level (cancel-attempt-keep-node) is
+		// reachable via attempt_no but has no TS surface yet.
 		return this.withReconnect(async () => {
 			const resp = await this.taskClient.cancelTask(
-				create(CancelTaskRequestSchema, { taskId }),
+				create(CancelTaskRequestSchema, { taskId, subtaskId }),
 			);
 			return resp.success;
 		}, false);

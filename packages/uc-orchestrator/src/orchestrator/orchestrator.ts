@@ -1207,12 +1207,23 @@ export class UCOrchestrator {
 				return { ok: false, reason: "subtask_not_found", candidates: task.subtasks.map((s) => s.id) };
 			}
 
+			// T7 #643 — RPC-first + cascade retirement: the server is the
+			// cancel authority. Bare subtaskId = node-level cancel — the
+			// gateway computes the downstream closure on the graph plane
+			// (runtime computation, not client bookkeeping) and moves it to
+			// CANCELLED (terminal, no re-arm), mirroring the live rows to
+			// Failed. The local mirror marks the target immediately for UI
+			// feedback; the closure's descendants are adopted on the next
+			// reconcile via server-transition adoption. On RPC failure the
+			// mirror is left untouched.
+			const rpcOk = await this.bridge.cancelTask(task.id, matchedId);
+			if (!rpcOk) return { ok: false, reason: "rpc_failed" };
+
 			st.status = "cancelled";
 			st.completedAt = Date.now();
-			this.cascadeCancel(task, [matchedId]);
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
-			ctx?.ui.notify(`Subtask ${subtaskId} cancelled (cascade applied)`, "info");
+			ctx?.ui.notify(`Subtask ${matchedId} cancelled (server closure applied)`, "info");
 			return { ok: true, taskId: task.id };
 		}
 
@@ -1312,24 +1323,6 @@ export class UCOrchestrator {
 		return { ok: true, taskId: task.id };
 	}
 
-	/** Cascade cancel to all downstream subtasks that depend on cancelled ones. */
-	private cascadeCancel(task: TaskState, cancelledIds: string[]): void {
-		const cancelled = new Set(cancelledIds);
-		let changed = true;
-		while (changed) {
-			changed = false;
-			for (const st of task.subtasks) {
-				if (st.status === "cancelled") continue;
-				if (st.dependsOn.some((dep) => cancelled.has(dep))) {
-					st.status = "cancelled";
-					st.completedAt = Date.now();
-					cancelled.add(st.id);
-					changed = true;
-				}
-			}
-		}
-	}
-
 	/** Reset a subtask to pending (clears error/result/retryCount/timestamps). */
 	// ponytail: delegates to the module-level pure fn so reset logic has one home.
 	private resetToPending(st: SubtaskResult): void {
@@ -1337,32 +1330,22 @@ export class UCOrchestrator {
 	}
 
 	/**
-	 * Reverse cascadeCancel: un-cancel subtasks whose deps are now satisfied
-	 * (completed, or just-reset to pending in `reset`). Iterated to a fixed point
-	 * so a chain of downstream cancels recovers in one pass. A downstream whose
-	 * deps include ANOTHER still-failed subtask stays cancelled (deps unsatisfied).
-	 *
-	 * Delegates to the module-level pure fn (unit-testable without UCOrchestrator).
-	 */
-	private reverseCascadeUnCancel(task: TaskState, reset: Set<string>): void {
-		return reverseCascadeUnCancel(task.subtasks, reset);
-	}
-
-	/**
-	 * Retry a SINGLE failed subtask: reset it (and the downstream cancelled
-	 * solely because it failed) to pending and re-dispatch, leaving other
-	 * failed/cancelled subtasks untouched. Distinct from task-scoped resumeTask.
+	 * Retry a SINGLE failed subtask: reset it to pending and re-dispatch,
+	 * leaving other failed/cancelled subtasks untouched. Distinct from
+	 * task-scoped resumeTask.
 	 *
 	 * Flow (see task prd: 07-15-feat-per-subtask-retry-...):
 	 * 1. Guard: task exists, target status === "failed".
 	 * 2. Refuse if target's own deps aren't all completed (can't re-dispatch).
 	 * 3. Reset target → pending (error/result undefined, retryCount=0).
-	 * 4. Reverse cascade-un-cancel: a cancelled subtask whose deps are now all
-	 *    (completed OR in the reset-pending set) goes back to pending, iterated
-	 *    to a fixed point. Recovers the downstream cancelled ONLY because X
-	 *    failed; a downstream depending on ANOTHER still-failed subtask stays.
-	 * 5. Upsert the updated snapshot (the reset Pending nodes re-enter the
+	 * 4. Upsert the updated snapshot (the reset Pending node re-enters the
 	 *    server's publish path) and let the claim loop drive execution.
+	 *
+	 * T7 #643 — reverse-cascade retirement: un-cancelling downstream
+	 * cancelled-by-dependency subtasks was client bookkeeping over a graph
+	 * the Rust plane owns. After the upsert, re-dispatch is driven by the
+	 * server's publish path (deps recomputed there); descendants that the
+	 * gateway had CANCELLED stay terminal until an explicit re-verb.
 	 */
 	async retrySubtask(taskId: string, subtaskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
 		const task = this.tasks.get(taskId);
@@ -1382,9 +1365,7 @@ export class UCOrchestrator {
 		}
 
 		// Reset target → pending.
-		const reset = new Set<string>([subtaskId]);
 		this.resetToPending(target);
-		this.reverseCascadeUnCancel(task, reset);
 
 		task.controlState = "running";
 		task.status = "in_progress";
@@ -1393,7 +1374,7 @@ export class UCOrchestrator {
 		this.abortControllers.set(taskId, new AbortController());
 
 		await this.persist(task);
-		ctx?.ui.notify(`Task ${taskId}: retrying ${subtaskId} (${reset.size} subtask(s) re-dispatched)`, "info");
+		ctx?.ui.notify(`Task ${taskId}: retrying ${subtaskId}`, "info");
 		this.events.emit("task_resumed", { taskId });
 
 		// T6 #642 C4 — authority handoff: push the updated snapshot so the
@@ -2133,36 +2114,9 @@ Output a JSON object with a "subtasks" array. Each item has:
 // T6 #642 C7: WORKER_PROMPT and SUPERVISOR_PROMPT removed — dead config
 // since the wave machine died (workers carry their own prompts; the TS
 // supervisor review pipeline is retired, see the review section above).
-
-/**
- * Reverse cascadeCancel over a subtask list: un-cancel subtasks whose deps are
- * now satisfied (completed, or just-reset to pending via `reset`). Iterated to
- * a fixed point so a downstream chain recovers in one pass. A downstream whose
- * deps include ANOTHER still-failed subtask stays cancelled.
- *
- * Module-level (pure over `subtasks`) so it is unit-testable without
- * instantiating UCOrchestrator. Called by retrySubtask.
- *
- * ponytail: O(passes × n²); n is tens at most. Pre-index by dependsOn if huge.
- */
-export function reverseCascadeUnCancel(subtasks: SubtaskResult[], reset: Set<string>): void {
-	let changed = true;
-	while (changed) {
-		changed = false;
-		for (const st of subtasks) {
-			if (st.status !== "cancelled") continue;
-			const depsOk = st.dependsOn.every((depId) => {
-				const dep = subtasks.find((s) => s.id === depId);
-				return dep?.status === "completed" || reset.has(depId);
-			});
-			if (depsOk) {
-				resetSubtaskToPending(st);
-				reset.add(st.id);
-				changed = true;
-			}
-		}
-	}
-}
+// T7 #643: reverseCascadeUnCancel removed with the TS cascade machinery —
+// cascade cancel/un-cancel is a Rust graph-plane runtime computation now
+// (downstream_closure / cancel_nodes), not client bookkeeping.
 
 /** Reset a subtask to pending (clears error/result/retryCount/timestamps). */
 function resetSubtaskToPending(st: SubtaskResult): void {
