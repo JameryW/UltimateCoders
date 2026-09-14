@@ -1,0 +1,7 @@
+{"check": "cargo fmt --all -- --check 全绿", "gate": true}
+{"check": "clippy -D warnings：uc-types、uc-engine（默认 + --no-default-features）、uc-grpc --all-features、uc-grpc-server", "gate": true}
+{"check": "Rust 测试基线只增不减（T5 终值 437+5 / 379+5 / 192+8 / 36 / 35；T4 基线 437/379/192+8/36/34）", "gate": true}
+{"check": "pytest 全量（默认 TMPDIR；merge_arbiter/workspace bypass + 浅 basetemp 单跑）", "gate": true}
+{"check": "NATS-down 集成测试：local_safe 推进、coding 停 READY + 告警、WHAT 字节级不变", "gate": true}
+{"check": "JS 不可用：worker 拒注册 + 周期重试 + subtask_transport 可观测（替身镜像真实 JS 行为）", "gate": true}
+{"check": "无头 grep：decompose_task / DispatchMode::Local / queue=\"workers\" / Falls back to core NATS 生产代码零匹配", "gate": true}

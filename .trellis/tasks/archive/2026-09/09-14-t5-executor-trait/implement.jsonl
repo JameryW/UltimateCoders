@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "JetStream 派发语义与 UC_SUBTASKS 流约定（T5 硬依赖改造对象）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "告警/降级错误语义与用户可见事件约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试纪律与基线只增不减约定"}
+{"file": ".trellis/tasks/09-14-t5-executor-trait/research/recon-2026-09-14.md", "reason": "T5 全量勘察：D4 决议落地现状、DispatchMode::Local/decompose 分叉/Core 回退的 file:line 清单、seam 定稿"}
