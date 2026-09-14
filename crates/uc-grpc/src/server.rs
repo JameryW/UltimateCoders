@@ -260,6 +260,10 @@ pub struct NatsSubtaskExecute {
     /// Dispatch mode — controls routing behavior.
     #[serde(default)]
     pub dispatch_mode: uc_types::DispatchMode,
+    /// Effect class — governs local-execution eligibility on transport loss
+    /// (T5 #641 / D4 #633 Q2). Additive: legacy workers ignore it.
+    #[serde(default)]
+    pub effect_class: uc_types::EffectClass,
     /// Capabilities required by this subtask (e.g., "rust", "python", "docker").
     /// Worker must possess ALL listed capabilities to accept this subtask.
     #[serde(default)]
@@ -353,6 +357,7 @@ fn subtask_execute_payload(
         timeout_seconds: 600,
         retry_count: st.dispatch_retry_count,
         dispatch_mode: st.dispatch_mode.clone(),
+        effect_class: st.effect_class,
         required_capabilities: st.required_capabilities.clone(),
         agent_config_json: st.agent_config_json.clone(),
         steps: st.steps.clone(),
@@ -478,8 +483,10 @@ fn json_bool_or_default(
 /// In-memory store for tasks and events, used by TaskService.
 ///
 /// When NATS is available, the store is updated by the Python Orchestrator
-/// via `apply_update()`. When NATS is unavailable, tasks are decomposed
-/// locally using a newline-split heuristic.
+/// via `apply_update()`. Task submission is insert-only on the Rust side:
+/// decomposition belongs to the TS planner / Python orchestrator (D2; the
+/// newline-split fork was removed in T5 #641 — NATS availability must not
+/// change WHAT).
 ///
 /// Events are recorded via `Arc<dyn EventStore>` (unified with uc-engine's
 /// EventStore trait). WatchTask streams replay from EventStore then switch
@@ -7164,6 +7171,7 @@ mod tests {
             timeout_seconds: 600,
             retry_count: 0,
             dispatch_mode: uc_types::DispatchMode::PreferRemote,
+            effect_class: uc_types::EffectClass::default(),
             required_capabilities: Vec::new(),
             agent_config_json: Some(r#"{"agent_name":"coder"}"#.to_string()),
             steps: vec![uc_types::WorkflowStep {
@@ -7294,6 +7302,10 @@ mod tests {
             wire.get("subtask_id").is_none(),
             "legacy subtask_id must not be emitted"
         );
+        // T5 #641 (D4 Q2): effect_class rides the dispatch payload
+        // (snake_case, additive) so workers can honor local-execution
+        // eligibility without a schema bump.
+        assert_eq!(wire["effect_class"], "requires_worker");
 
         // Determinism: same triple → envelope half of the payload is
         // byte-identical across builds (message_id deliberately excluded —
