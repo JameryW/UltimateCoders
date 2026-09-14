@@ -142,11 +142,12 @@ fn legacy_subtask_execute_message(
 ) -> serde_json::Value {
     let envelope = uc_types::ExecutionEnvelope::for_dispatch(task_id, subtask_id, retry_no);
     serde_json::json!({
-        "task_id": task_id,
-        "subtask_id": subtask_id,
         "description": description,
         "layer": layer,
-        // ── execution envelope (additive; legacy consumers ignore) ──
+        // ── execution envelope ──────────────────────────────────────
+        // T4 #640 (D3 lockstep): the envelope is the single identity
+        // source on the wire — legacy `task_id`/`subtask_id` keys are
+        // no longer emitted; workers read `graph_id`/`node_id`.
         "graph_id": envelope.graph_id,
         "node_id": envelope.node_id,
         "attempt_id": envelope.attempt_id,
@@ -601,9 +602,6 @@ mod tests {
         let a = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 3);
         let b = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 3);
         assert_eq!(a, b);
-        // Pre-envelope keys preserved (legacy consumers unaffected).
-        assert_eq!(a["task_id"], "t-1");
-        assert_eq!(a["subtask_id"], "st-2");
         // Envelope: identity mapping (graph=task, node=subtask,
         // attempt=retry_no, epoch empty, version = gateway contract).
         assert_eq!(a["graph_id"], "t-1");
@@ -615,6 +613,18 @@ mod tests {
             a["idempotency_key"].as_str().unwrap(),
             uc_types::ExecutionEnvelope::derive_idempotency_key("t-1", "st-2", "3")
         );
+        // T4 #640 (D3 lockstep): legacy identity keys are gone from the wire —
+        // the envelope is the single identity source.
+        assert!(
+            a.get("task_id").is_none(),
+            "legacy task_id must not be emitted"
+        );
+        assert!(
+            a.get("subtask_id").is_none(),
+            "legacy subtask_id must not be emitted"
+        );
+        assert_eq!(a["description"], "do it");
+        assert_eq!(a["layer"], 0);
         // No timestamp/randomness component: a different attempt changes the
         // key, the same triple never does.
         let c = legacy_subtask_execute_message("t-1", "st-2", "do it", 0, 4);

@@ -1875,8 +1875,8 @@ class NatsWorker:
         )
         msg = json.dumps(
             {
-                "task_id": subtask.parent_id,
-                "subtask_id": subtask.id,
+                # T4 #640 (D3 lockstep): no legacy task_id/subtask_id — the
+                # envelope below is the single identity source on the wire.
                 "description": subtask.description,
                 "depends_on": subtask.depends_on,
                 "file_constraints": subtask.file_constraints,
@@ -2315,8 +2315,13 @@ class NatsWorker:
             logger.warning("Failed to parse uc.subtask.execute message", exc_info=True)
             return None
 
-        task_id = data.get("task_id", "")
-        subtask_id = data.get("subtask_id", "")
+        # T4 #640 (D3 lockstep): the graph envelope is the single identity
+        # source on the wire. Read `graph_id`/`node_id` first; the legacy
+        # `task_id`/`subtask_id` keys remain as a fallback so pre-T4 archive
+        # replays and any straggler legacy publisher still parse (those
+        # messages are then term-dropped by the stale-envelope check).
+        task_id = data.get("graph_id") or data.get("task_id", "")
+        subtask_id = data.get("node_id") or data.get("subtask_id", "")
         description = data.get("description", "")
 
         if not task_id or not subtask_id:

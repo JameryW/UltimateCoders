@@ -48,12 +48,11 @@ def _make_subtask_payload(
     description: str = "do the thing",
     required_capabilities: list[str] | None = None,
 ) -> dict:
-    # T4 #640: dispatches carry the execution envelope; identity mapping
+    # T4 #640 (D3 lockstep): the wire no longer carries task_id/subtask_id —
+    # the execution envelope is the single identity source. Identity mapping
     # matches the Rust publishers: graph_id = task_id, node_id = subtask_id,
     # attempt_id = dispatch retry counter (0 for a fresh dispatch).
     return {
-        "task_id": task_id,
-        "subtask_id": subtask_id,
         "description": description,
         "timeout_seconds": 600,
         "dispatch_mode": "prefer_remote",

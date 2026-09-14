@@ -239,12 +239,12 @@ pub struct NatsSubtaskExecute {
     /// Deduplication key for at-least-once NATS delivery.
     #[serde(default)]
     pub message_id: Option<String>,
-    /// Legacy identity (T4 #640): emitted until the item-5 wire flip — the
-    /// graph envelope (`graph_id`/`node_id`) rides alongside during the
-    /// transition; T6 cleans the fields up.
-    #[serde(default)]
+    /// Legacy identity (T4 #640): no longer emitted — the graph envelope
+    /// (`graph_id`/`node_id`) is the single identity source on the wire.
+    /// Fields stay for T6 cleanup + deserializing pre-T4 archives.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub subtask_id: String,
     pub description: String,
     #[serde(default)]
@@ -340,8 +340,12 @@ fn subtask_execute_payload(
                 .unwrap_or_default()
                 .as_millis()
         )),
-        task_id: task_id.to_string(),
-        subtask_id: st.id.0.clone(),
+        // T4 #640 (D3 lockstep): the graph envelope is now the single
+        // identity source on the wire — the legacy `task_id`/`subtask_id`
+        // keys are no longer emitted (skipped when empty). Workers read
+        // `graph_id`/`node_id`.
+        task_id: String::new(),
+        subtask_id: String::new(),
         description: st.description.clone(),
         expected_output: expected_output.to_string(),
         file_constraints: file_constraints.to_vec(),
@@ -7291,6 +7295,17 @@ mod tests {
         assert_eq!(p1.contract_version, uc_types::CONTRACT_VERSION);
         let expected_key = uc_types::ExecutionEnvelope::derive_idempotency_key("t-3", "st-7", "2");
         assert_eq!(p1.idempotency_key, expected_key);
+        // T4 #640 (D3 lockstep): legacy identity keys are gone from the wire —
+        // workers read graph_id/node_id from the envelope.
+        let wire = serde_json::to_value(&p1).unwrap();
+        assert!(
+            wire.get("task_id").is_none(),
+            "legacy task_id must not be emitted"
+        );
+        assert!(
+            wire.get("subtask_id").is_none(),
+            "legacy subtask_id must not be emitted"
+        );
 
         // Determinism: same triple → envelope half of the payload is
         // byte-identical across builds (message_id deliberately excluded —

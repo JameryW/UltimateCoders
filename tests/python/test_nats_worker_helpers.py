@@ -1379,6 +1379,69 @@ def test_task_update_payload_stamps_attempt_id():
     assert entry["attempt_id"] == 2
 
 
+def test_parse_subtask_message_prefers_graph_identity():
+    """T4 #640 (D3 lockstep): the wire no longer carries task_id/subtask_id —
+    the parser must read identity from the graph envelope. Legacy keys remain
+    a fallback so pre-T4 messages still parse (and are then term-dropped by
+    the stale-envelope check)."""
+    nw = _make_worker()
+
+    graph_only = json.dumps(
+        {
+            "graph_id": "t-graph",
+            "node_id": "st-graph",
+            "description": "d",
+            "attempt_id": "1",
+            "idempotency_key": "abc",
+            "contract_version": "v1",
+        }
+    ).encode()
+    parsed = nw._parse_subtask_message(graph_only)
+    assert parsed is not None
+    task_id, subtask_id, _ = parsed
+    assert (task_id, subtask_id) == ("t-graph", "st-graph")
+
+    # Mixed legacy payload (old archive replay): legacy keys win the fallback.
+    legacy = json.dumps(
+        {
+            "task_id": "t-legacy",
+            "subtask_id": "st-legacy",
+            "description": "d",
+        }
+    ).encode()
+    parsed = nw._parse_subtask_message(legacy)
+    assert parsed is not None
+    task_id, subtask_id, _ = parsed
+    assert (task_id, subtask_id) == ("t-legacy", "st-legacy")
+
+
+def test_dispatch_remote_omits_legacy_identity_keys():
+    """T4 #640 (D3 lockstep): the publisher must NOT emit task_id/subtask_id —
+    the graph envelope is the single identity source on the wire."""
+    nw = _make_worker()
+    nw._orchestrator = MagicMock()
+    nw._orchestrator.assign_subtask = AsyncMock()
+    nw._orchestrator.conflict_detector = MagicMock()
+
+    captured: dict[str, bytes] = {}
+
+    class FakeNc:
+        async def publish(self, subject, payload, headers=None):
+            captured["payload"] = payload
+
+    nw._nc = FakeNc()  # type: ignore[assignment]
+    nw._publisher = MagicMock()
+
+    subtask = Subtask(id="st-nolegacy", description="d", parent_id="t-nolegacy")
+    asyncio.run(nw._dispatch_remote(subtask))
+
+    payload = json.loads(captured["payload"])
+    assert "task_id" not in payload, "legacy task_id must not be published"
+    assert "subtask_id" not in payload, "legacy subtask_id must not be published"
+    assert payload["graph_id"] == "t-nolegacy"
+    assert payload["node_id"] == "st-nolegacy"
+
+
 # ── T1 #637: Python envelope derivation + re-publish path ──────
 
 
@@ -1448,9 +1511,12 @@ def test_dispatch_remote_publishes_execution_envelope():
 
     assert "payload" in captured, "NATS publish was not called"
     payload = json.loads(captured["payload"])
-    # graph_id matches the wire task_id, node_id the subtask_id.
-    assert payload["task_id"] == payload["graph_id"] == "t-9"
-    assert payload["subtask_id"] == payload["node_id"] == "st-9"
+    # T4 #640 (D3 lockstep): legacy identity keys are gone from the wire —
+    # the envelope is the single identity source.
+    assert payload.get("task_id") is None, "legacy task_id must not be emitted"
+    assert payload.get("subtask_id") is None, "legacy subtask_id must not be emitted"
+    assert payload["graph_id"] == "t-9"
+    assert payload["node_id"] == "st-9"
     assert payload["attempt_id"] == "2"
     assert payload["worker_epoch"] == ""
     assert payload["contract_version"] == "v1"
