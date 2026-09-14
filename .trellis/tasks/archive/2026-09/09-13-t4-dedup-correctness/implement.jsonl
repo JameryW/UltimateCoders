@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/nats-bridge-spec.md", "reason": "NATS 发布/订阅路径与 JetStream 语义约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "迟到结果/旧信封拒绝的错误语义与事件"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试纪律与基线约定"}
+{"file": ".trellis/tasks/09-13-t4-dedup-correctness/research/idempotency-current-state.md", "reason": "四处发布点 file:line、流配置、worker 去重粒度 bug"}
