@@ -240,13 +240,11 @@ pub struct NatsSubtaskExecute {
     /// Deduplication key for at-least-once NATS delivery.
     #[serde(default)]
     pub message_id: Option<String>,
-    /// Legacy identity (T4 #640): no longer emitted — the graph envelope
-    /// (`graph_id`/`node_id`) is the single identity source on the wire.
-    /// Fields stay for T6 cleanup + deserializing pre-T4 archives.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub task_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub subtask_id: String,
+    // T6 #642 (D2/D3 follow-through): the legacy `task_id`/`subtask_id`
+    // identity keys are gone — the graph envelope (`graph_id`/`node_id`) is
+    // the single identity source on the wire. Pre-T4 archives carrying the
+    // old keys still parse (unknown keys are ignored); their identity was
+    // never read after T4 made the envelope authoritative.
     pub description: String,
     #[serde(default)]
     pub expected_output: String,
@@ -345,12 +343,9 @@ fn subtask_execute_payload(
                 .unwrap_or_default()
                 .as_millis()
         )),
-        // T4 #640 (D3 lockstep): the graph envelope is now the single
+        // T4 #640 (D3 lockstep) + T6 #642: the graph envelope is the single
         // identity source on the wire — the legacy `task_id`/`subtask_id`
-        // keys are no longer emitted (skipped when empty). Workers read
-        // `graph_id`/`node_id`.
-        task_id: String::new(),
-        subtask_id: String::new(),
+        // keys no longer exist. Workers read `graph_id`/`node_id`.
         description: st.description.clone(),
         expected_output: expected_output.to_string(),
         file_constraints: file_constraints.to_vec(),
@@ -759,6 +754,13 @@ impl TaskStore {
     /// cost at all.
     pub fn set_graph_shadow(&mut self, sink: Arc<dyn uc_engine::GraphShadowSink>) {
         self.graph_shadow = Some(sink);
+    }
+
+    /// Clone of the graph shadow sink, if wired. The heartbeat monitor uses
+    /// this as its storage-free handle to the graph rows for the timeout
+    /// sweep (T6 #642).
+    pub fn graph_shadow(&self) -> Option<Arc<dyn uc_engine::GraphShadowSink>> {
+        self.graph_shadow.clone()
     }
 
     // ── T3 (#639) graph-plane verb fan-out ───────────────────────────
@@ -1744,63 +1746,56 @@ impl TaskStore {
         stale
     }
 
-    /// Reassign subtasks assigned to stale workers back to Pending.
-    /// Returns (task_ids_affected, subtask_ids_reassigned).
-    pub fn reassign_stale_subtasks(
-        &mut self,
-        stale_worker_ids: &[String],
-    ) -> (Vec<String>, Vec<String>) {
-        let mut affected_tasks = Vec::new();
-        let mut reassigned = Vec::new();
-        let mut snapshots: Vec<uc_types::Task> = Vec::new();
-        // T3 graph-plane waypoint: a dead worker's in-flight attempt must be
-        // fenced on the graph rows too (attempt FAILED + node re-armed or
-        // failed by budget). Collected here, emitted after the borrow ends.
-        let mut graph_fails: Vec<(String, String, u32)> = Vec::new();
-        for task in self.tasks.values_mut() {
-            let mut task_changed = false;
-            for st in &mut task.subtasks {
-                if matches!(
-                    st.status,
-                    uc_types::SubtaskStatus::InProgress | uc_types::SubtaskStatus::Assigned
-                ) {
-                    if let Some(ref w) = st.assigned_worker {
-                        if stale_worker_ids.contains(&w.0) {
-                            graph_fails.push((
-                                task.id.0.clone(),
-                                st.id.0.clone(),
-                                st.dispatch_retry_count,
-                            ));
-                            // Clear assigned-at tracking (we bypass
-                            // update_subtask_status here, which would otherwise
-                            // clear it on the Assigned→Pending transition).
-                            if st.status == uc_types::SubtaskStatus::Assigned {
-                                self.assigned_subtask_times.remove(&st.id.0);
-                            }
-                            st.status = uc_types::SubtaskStatus::Pending;
-                            st.assigned_worker = None;
-                            reassigned.push(st.id.0.clone());
-                            if !affected_tasks.contains(&task.id.0) {
-                                affected_tasks.push(task.id.0.clone());
-                            }
-                            task_changed = true;
-                        }
-                    }
-                }
-            }
-            if task_changed {
-                task.updated_at = chrono::Utc::now();
-                snapshots.push(task.clone());
-            }
+    /// Bridge one graph-plane swept attempt back into the legacy store
+    /// (T6 #642). The sweep already fenced the attempt on the graph rows
+    /// (fail + epoch bump), so this only mirrors the outcome onto the
+    /// legacy subtask — the dispatch read path stays legacy until the
+    /// planes fully converge.
+    ///
+    /// `rearmed` (retry budget left) reverts the subtask to `Pending`;
+    /// the budget-exhausted outcome marks it `Failed`. A subtask that is
+    /// no longer `InProgress`/`Assigned` (e.g. a commit landed between the
+    /// sweep and this bridge) is never touched — committed winners are
+    /// immutable. Returns `true` when the legacy row moved (the caller
+    /// re-dispatches the task).
+    pub fn revert_swept_subtask(&mut self, task_id: &str, subtask_id: &str, rearmed: bool) -> bool {
+        let new_status = if rearmed {
+            uc_types::SubtaskStatus::Pending
+        } else {
+            uc_types::SubtaskStatus::Failed
+        };
+        let Some(task) = self.tasks.get_mut(task_id) else {
+            return false;
+        };
+        let Some(st) = task.subtasks.iter_mut().find(|s| s.id.0 == subtask_id) else {
+            return false;
+        };
+        if !matches!(
+            st.status,
+            uc_types::SubtaskStatus::InProgress | uc_types::SubtaskStatus::Assigned
+        ) {
+            return false;
         }
-        for task in &snapshots {
-            self.persist_task(task);
-        }
-        let reaper_reason = "stale_worker";
-        for (graph_id, node_id, attempt) in graph_fails {
-            self.fanout_graph_fail(&graph_id, &node_id, attempt, reaper_reason);
-        }
-        (affected_tasks, reassigned)
+        // The graph fail already rode the sweep itself; this transition
+        // only leaves the Assigned-at tracker consistent.
+        self.assigned_subtask_times.remove(subtask_id);
+        st.status = new_status;
+        st.assigned_worker = None;
+        task.updated_at = chrono::Utc::now();
+        let snapshot = task.clone();
+        let reason = if rearmed {
+            "heartbeat_timeout"
+        } else {
+            "attempts_exhausted"
+        };
+        tracing::warn!(
+            task_id = %task_id,
+            subtask_id = %subtask_id,
+            rearmed,
+            "Graph-plane sweep bridged to legacy store ({reason})"
+        );
+        self.persist_task(&snapshot);
+        true
     }
 
     /// Get the last heartbeat timestamp.
@@ -1888,72 +1883,6 @@ impl TaskStore {
             self.fanout_graph_schedule(task_id, subtask_id, attempt, None);
         }
         self.persist_task(&task_snapshot);
-    }
-
-    /// Revert Assigned subtasks that have been stuck (no worker picked them up)
-    /// for longer than `timeout` back to Pending so they can be re-dispatched.
-    /// Returns the task IDs whose subtasks were reverted.
-    /// Distinct from reassign_stale_subtasks (which handles Assigned-to-a-dead-
-    /// worker); this handles Assigned-with-no-worker-at-all (queue group had no
-    /// subscriber, or all workers were too busy to ack).
-    pub fn reassign_stale_assigned_subtasks(
-        &mut self,
-        timeout: std::time::Duration,
-    ) -> Vec<String> {
-        if self.assigned_subtask_times.is_empty() {
-            return Vec::new();
-        }
-        let now = chrono::Utc::now();
-        let stale_ids: Vec<String> = self
-            .assigned_subtask_times
-            .iter()
-            .filter(|(_, ts)| (now - **ts).to_std().unwrap_or_default() > timeout)
-            .map(|(id, _)| id.clone())
-            .collect();
-        if stale_ids.is_empty() {
-            return Vec::new();
-        }
-        let mut affected = Vec::new();
-        let mut snapshots: Vec<uc_types::Task> = Vec::new();
-        // T3 graph-plane waypoint (300s stale-Assigned reaper): the dispatch
-        // never reached a live worker — fence the attempt on the graph rows
-        // with the *pre-increment* dispatch attempt id (that is the attempt
-        // that was scheduled), before `dispatch_retry_count` moves forward.
-        let mut graph_fails: Vec<(String, String, u32)> = Vec::new();
-        for task in self.tasks.values_mut() {
-            let mut task_changed = false;
-            for st in &mut task.subtasks {
-                if stale_ids.contains(&st.id.0) && st.status == uc_types::SubtaskStatus::Assigned {
-                    graph_fails.push((task.id.0.clone(), st.id.0.clone(), st.dispatch_retry_count));
-                    st.status = uc_types::SubtaskStatus::Pending;
-                    st.assigned_worker = None;
-                    st.dispatch_retry_count = st.dispatch_retry_count.saturating_add(1);
-                    if !affected.contains(&task.id.0) {
-                        affected.push(task.id.0.clone());
-                    }
-                    tracing::warn!(
-                        subtask_id = %st.id.0,
-                        retry_count = st.dispatch_retry_count,
-                        "Reverting stale Assigned subtask to Pending (no worker picked it up)"
-                    );
-                    task_changed = true;
-                }
-            }
-            if task_changed {
-                task.updated_at = chrono::Utc::now();
-                snapshots.push(task.clone());
-            }
-        }
-        for id in &stale_ids {
-            self.assigned_subtask_times.remove(id);
-        }
-        for task in &snapshots {
-            self.persist_task(task);
-        }
-        for (graph_id, node_id, attempt) in graph_fails {
-            self.fanout_graph_fail(&graph_id, &node_id, attempt, "stale_assigned_timeout");
-        }
-        affected
     }
 
     /// Increment a subtask's dispatch_retry_count within a task.
@@ -3206,8 +3135,9 @@ fn spawn_file_changed_subscriber<E: EngineApi + Send + Sync + 'static>(
     });
 }
 
-/// Spawn a background task that periodically checks for heartbeat timeouts
-/// and marks stale tasks as Failed.
+/// Spawn a background task that periodically checks for heartbeat timeouts,
+/// reaps stale attempts through the graph-plane timeout sweep, and marks
+/// stale tasks as Failed.
 #[cfg(feature = "messaging")]
 fn spawn_heartbeat_monitor(
     nats_client: async_nats::Client,
@@ -3222,79 +3152,74 @@ fn spawn_heartbeat_monitor(
         loop {
             interval.tick().await;
 
-            let mut store = task_store.lock().await;
-            let failed = store.mark_stale_tasks_failed(heartbeat_timeout);
-            if !failed.is_empty() {
-                tracing::warn!(
-                    task_ids = ?failed,
-                    "Marked tasks as Failed due to heartbeat timeout"
+            let stale_workers = {
+                let mut store = task_store.lock().await;
+                let failed = store.mark_stale_tasks_failed(heartbeat_timeout);
+                if !failed.is_empty() {
+                    tracing::warn!(
+                        task_ids = ?failed,
+                        "Marked tasks as Failed due to heartbeat timeout"
+                    );
+                }
+
+                // Worker staleness now only drives registry hygiene — the
+                // subtask-level fallout is owned by the graph-plane sweep
+                // below (T6 #642), which replaces both legacy reassign
+                // reapers (dead-worker AND Assigned-never-picked-up: the
+                // attempt row is created RUNNING at schedule time, so
+                // `COALESCE(heartbeat_at, started_at)` ages past the sweep
+                // window in either case).
+                store.mark_stale_workers(heartbeat_timeout)
+                // store dropped here — tokio::sync::Mutex is not reentrant,
+                // and the sweep + bridge below re-acquire it.
+            };
+
+            // Remove stale workers from the registry so listWorkers stops
+            // reporting them (is_available=false). Without this, a worker
+            // that went silent stays in the registry forever, polluting the
+            // dashboard and polluting capability queries.
+            if !stale_workers.is_empty() {
+                let mut registry = worker_registry.write().await;
+                for wid in &stale_workers {
+                    let _ = registry.deregister(wid);
+                }
+                tracing::info!(
+                    worker_ids = ?stale_workers,
+                    "Removed stale workers from registry (subtask fallout owned by the graph sweep)"
                 );
             }
 
-            // Worker-level failover: detect stale workers and reassign their subtasks.
-            let stale_workers = store.mark_stale_workers(heartbeat_timeout);
-            if !stale_workers.is_empty() {
-                let (affected_tasks, reassigned) = store.reassign_stale_subtasks(&stale_workers);
-                // Remove stale workers from the registry so listWorkers stops
-                // reporting them (is_available=false). Without this, a worker
-                // that went silent stays in the registry forever, polluting the
-                // dashboard and polluting capability queries.
-                drop(store);
+            // Graph-plane reaper (T6 #642): sweep stale RUNNING attempts and
+            // bridge the outcomes back into the legacy store, then
+            // re-dispatch the affected tasks so live workers pick the
+            // re-armed nodes up. With no graph shadow wired (shadow mode
+            // off) the sweep is a no-op — the legacy monitor semantics end
+            // here, which is the documented T6 posture.
+            let swept: Vec<uc_engine::SweptAttempt> = {
+                let store = task_store.lock().await;
+                match store.graph_shadow() {
+                    Some(sink) => sink.sweep_timeouts(heartbeat_timeout).await,
+                    None => Vec::new(),
+                }
+            };
+            if !swept.is_empty() {
+                let mut affected: Vec<String> = Vec::new();
                 {
-                    let mut registry = worker_registry.write().await;
-                    for wid in &stale_workers {
-                        let _ = registry.deregister(wid);
+                    let mut store = task_store.lock().await;
+                    for s in &swept {
+                        if store.revert_swept_subtask(&s.graph_id, &s.node_id, s.rearmed)
+                            && !affected.contains(&s.graph_id)
+                        {
+                            affected.push(s.graph_id.clone());
+                        }
                     }
                 }
-                if !reassigned.is_empty() {
-                    tracing::warn!(
-                        worker_ids = ?stale_workers,
-                        tasks_affected = affected_tasks.len(),
-                        subtasks_reassigned = reassigned.len(),
-                        "Reassigned subtasks from stale workers back to Pending"
-                    );
-                    // Re-dispatch reassigned subtasks so live workers pick them up
-                    for task_id in &affected_tasks {
-                        dispatch_ready_subtasks(
-                            &task_store,
-                            &worker_registry,
-                            &nats_client,
-                            task_id,
-                        )
-                        .await;
-                    }
-                } else {
-                    tracing::info!(
-                        worker_ids = ?stale_workers,
-                        "Removed stale workers from registry (no active subtasks to reassign)"
-                    );
-                }
-            } else {
-                // No stale workers — still must release the lock before the
-                // reassign_stale_assigned_subtasks call below re-acquires it.
-                // tokio::sync::Mutex is not reentrant: without this drop, the
-                // second `task_store.lock().await` deadlocks forever on the
-                // first clean tick (no stale workers), freezing the entire
-                // heartbeat monitor — stale-task/worker detection stops.
-                drop(store);
-            }
-
-            // Revert Assigned subtasks no worker ever picked up (queue group had
-            // no subscriber, or all workers too busy). These have no assigned
-            // worker, so reassign_stale_subtasks (dead-worker path) never touches
-            // them — they'd stay Assigned forever. Re-dispatch after revert.
-            //
-            // Use a longer window than heartbeat_timeout: a worker can be alive
-            // (heartbeating) but temporarily saturated, so a 120s revert would
-            // churn a subtask through Pending→Assigned→Pending while it's simply
-            // queued behind other work. 5 min gives busy workers room to drain
-            // before we treat "no pickup" as a dispatch failure.
-            let mut store = task_store.lock().await;
-            let stale_assigned =
-                store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(300));
-            if !stale_assigned.is_empty() {
-                drop(store);
-                for task_id in &stale_assigned {
+                tracing::warn!(
+                    swept = swept.len(),
+                    tasks_affected = affected.len(),
+                    "Graph-plane timeout sweep reaped stale attempts"
+                );
+                for task_id in &affected {
                     dispatch_ready_subtasks(&task_store, &worker_registry, &nats_client, task_id)
                         .await;
                 }
@@ -3306,7 +3231,8 @@ fn spawn_heartbeat_monitor(
 /// Dispatch ready subtasks for a task by publishing them to `uc.subtask.execute`.
 ///
 /// Called by the NATS subscriber after processing a `uc.task.update` —
-/// completing a subtask may unblock dependents.
+/// completing a subtask may unblock dependents — and by the heartbeat
+/// monitor after a graph-plane sweep bridge re-armed nodes (T6 #642).
 #[cfg(feature = "messaging")]
 async fn dispatch_ready_subtasks(
     task_store: &Arc<Mutex<TaskStore>>,
@@ -3330,8 +3256,8 @@ async fn dispatch_ready_subtasks(
         let mut dispatchable = Vec::new();
         for st in &subtasks {
             // Cap dispatch retries: if a subtask has been reverted to Pending
-            // this many times (no worker ever picked it up — see
-            // reassign_stale_assigned_subtasks), mark Failed to stop an
+            // this many times (publish failures, or the graph-plane sweep
+            // re-dispatch path), mark Failed to stop an
             // infinite dispatch storm (publish → Assigned → revert → publish,
             // every 30s). Mirrors the Remote-mode publish-failure cap of 3.
             if st.dispatch_retry_count >= 3 {
@@ -6024,100 +5950,78 @@ mod tests {
         assert!(stale.contains(&"worker-2".to_string()));
     }
 
+    // ── T6 (#642) sweep bridge ──────────────────────────────────────────
+    //
+    // The legacy reassign reapers are gone; the graph-plane sweep owns the
+    // staleness verdict and `revert_swept_subtask` only mirrors the outcome.
+
     #[test]
-    fn reassign_stale_subtasks_resets_to_pending() {
+    fn sweep_bridge_reverts_in_progress_to_pending() {
         let mut store = TaskStore::new();
         let task = store.submit_task("Test task".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
         let subtask_id = task.subtasks[0].id.0.clone();
 
-        // Assign subtask to worker-1
         {
             let t = store.tasks.get_mut(&task_id).unwrap();
             t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
             t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-1".to_string()));
         }
 
-        let (affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
-        assert_eq!(affected, vec![task_id]);
-        assert_eq!(reassigned, vec![subtask_id]);
+        assert!(store.revert_swept_subtask(&task_id, &subtask_id, true));
 
         // Verify subtask is back to Pending with no assigned worker
-        let task = store.get_task(&affected[0]).unwrap();
+        let task = store.get_task(&task_id).unwrap();
         assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Pending);
         assert!(task.subtasks[0].assigned_worker.is_none());
     }
 
     #[test]
-    fn reassign_skips_non_stale_workers() {
+    fn sweep_bridge_marks_failed_when_budget_exhausted() {
         let mut store = TaskStore::new();
-        let task = store.submit_task("Test task".to_string(), "p1".to_string());
+        let task = store.submit_task("Test".to_string(), "p".to_string());
         let task_id = task.id.0.clone();
-
-        // Assign to worker-2 (not stale)
+        let st_id = task.subtasks[0].id.0.clone();
         {
             let t = store.tasks.get_mut(&task_id).unwrap();
-            t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
-            t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-2".to_string()));
+            t.subtasks[0].status = uc_types::SubtaskStatus::Assigned;
         }
 
-        // Only worker-1 is stale
-        let (affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
-        assert!(affected.is_empty());
-        assert!(reassigned.is_empty());
-
-        // Subtask still assigned to worker-2
+        assert!(store.revert_swept_subtask(&task_id, &st_id, false));
         let task = store.get_task(&task_id).unwrap();
-        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::InProgress);
+        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Failed);
+    }
+
+    #[test]
+    fn sweep_bridge_never_touches_committed_nodes() {
+        // A commit landing between the sweep and the bridge wins: the
+        // bridged revert only moves InProgress/Assigned rows — committed
+        // winners are immutable on the legacy side too.
+        let mut store = TaskStore::new();
+        let task = store.submit_task("Test".to_string(), "p".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+        {
+            let t = store.tasks.get_mut(&task_id).unwrap();
+            t.subtasks[0].status = uc_types::SubtaskStatus::Completed;
+        }
+
+        assert!(!store.revert_swept_subtask(&task_id, &st_id, true));
+        let task = store.get_task(&task_id).unwrap();
         assert_eq!(
-            task.subtasks[0].assigned_worker,
-            Some(uc_types::WorkerId("worker-2".to_string()))
+            task.subtasks[0].status,
+            uc_types::SubtaskStatus::Completed
         );
     }
 
-    // ── Stale worker registry eviction ──────────────────────
-
     #[test]
-    fn reassign_stale_assigned_subtasks_reverts_to_pending() {
-        // Regression: a subtask marked Assigned (dispatch_ready_subtasks) but
-        // never picked up by any worker (queue group had no subscriber, or all
-        // workers busy) stayed Assigned forever — get_ready_subtasks only
-        // returns Pending, and reassign_stale_subtasks (dead-worker path) only
-        // touches subtasks with an assigned_worker. The assigned-at tracker now
-        // reverts these to Pending after a timeout.
-        let mut store = TaskStore::new();
-        // submit_task (not submit_task_pending) creates a task with one subtask.
-        let task = store.submit_task("Test".to_string(), "p".to_string());
-        let task_id = task.id.0.clone();
-        let st_id = task.subtasks[0].id.0.clone();
-
-        // Mark Assigned (records assigned-at) and backdate it.
-        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
-        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
-        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
-
-        // A 30s timeout should revert a 600s-old Assigned subtask.
-        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
-        assert_eq!(affected, vec![task_id.clone()]);
-        let task = store.get_task(&task_id).unwrap();
-        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Pending);
-        assert!(task.subtasks[0].assigned_worker.is_none());
-        // Tracking entry cleaned up.
-        assert!(!store.assigned_subtask_times.contains_key(&st_id));
-    }
-
-    #[test]
-    fn reassign_stale_assigned_skips_fresh_assigned() {
+    fn sweep_bridge_ignores_unknown_task_or_subtask() {
         let mut store = TaskStore::new();
         let task = store.submit_task("Test".to_string(), "p".to_string());
         let task_id = task.id.0.clone();
         let st_id = task.subtasks[0].id.0.clone();
-        // Just assigned — should NOT be reverted with a 30s timeout.
-        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
-        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
-        assert!(affected.is_empty());
-        let task = store.get_task(&task_id).unwrap();
-        assert_eq!(task.subtasks[0].status, uc_types::SubtaskStatus::Assigned);
+        assert!(!store.revert_swept_subtask("no-such-task", &st_id, true));
+        assert!(!store.revert_swept_subtask(&task_id, "no-such-subtask", true));
     }
 
     #[test]
@@ -7163,8 +7067,6 @@ mod tests {
         // on the Python side (covered by test_workflow_orchestration.py).
         let payload = NatsSubtaskExecute {
             message_id: Some("m1".to_string()),
-            task_id: "t-1".to_string(),
-            subtask_id: "st-1".to_string(),
             description: "implement X".to_string(),
             expected_output: "code".to_string(),
             file_constraints: Vec::new(),
@@ -7200,9 +7102,11 @@ mod tests {
         // DispatchMode serializes as the variant name (PascalCase) — the Python
         // side's _dispatch_mode_from_payload handles this case-insensitively.
         assert!(json.contains("\"PreferRemote\""));
-        // Round-trips back losslessly.
+        // Round-trips back losslessly (identity rides the envelope — the
+        // legacy task_id/subtask_id keys are gone since T6 #642).
         let back: NatsSubtaskExecute = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.task_id, "t-1");
+        assert_eq!(back.graph_id, "t-1");
+        assert_eq!(back.node_id, "st-1");
         assert_eq!(back.steps.len(), 1);
         assert_eq!(back.steps[0].agent, "codex");
         assert!(!back.steps[0].abort_on_failure);
@@ -7787,12 +7691,13 @@ mod tests {
         );
     }
 
-    /// Both reaper paths (stale worker + 300s stale Assigned) fan a
-    /// `fail` verb with the pre-increment dispatch attempt — the legacy
-    /// reassign behavior itself stays byte-identical.
+    /// T6 (#642): the reaper fail-verb waypoint is gone — the graph fail
+    /// rides the sweep itself (inside the sink), and the legacy bridge
+    /// (`revert_swept_subtask`) only mirrors the outcome onto the legacy
+    /// row: no legacy fail verb, status moved, worker cleared, shadow
+    /// persist still flowing.
     #[tokio::test]
-    async fn graph_fail_verbs_fire_at_reaper_waypoints() {
-        // Stale worker path.
+    async fn sweep_bridge_replaces_reaper_fail_verb_waypoint() {
         let (mut store, sink) = wired_store();
         let task = store.submit_task("Test task".to_string(), "p1".to_string());
         let task_id = task.id.0.clone();
@@ -7802,37 +7707,19 @@ mod tests {
             t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
             t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("worker-1".to_string()));
         }
-        let (_affected, reassigned) = store.reassign_stale_subtasks(&["worker-1".to_string()]);
-        assert_eq!(reassigned, vec![st_id.clone()]);
+        assert!(store.revert_swept_subtask(&task_id, &st_id, true));
         yielded().await;
-        assert_eq!(
-            sink.take_verbs(),
-            vec![format!("fail {task_id}:{st_id}:stale_worker")]
+        assert!(
+            sink.take_verbs().is_empty(),
+            "the bridge must not fan a legacy fail verb — the graph fail rides the sweep"
         );
-
-        // Stale Assigned (300s) path — schedule fires on the marking, fail
-        // fires on the revert with the attempt that was scheduled (0), and
-        // the next dispatch would carry attempt 1 (increment untouched).
-        let (mut store, sink) = wired_store();
-        let task = store.submit_task("Test".to_string(), "p".to_string());
-        let task_id = task.id.0.clone();
-        let st_id = task.subtasks[0].id.0.clone();
-        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
-        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
-        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
-        let affected = store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
-        assert_eq!(affected, vec![task_id.clone()]);
-        yielded().await;
-        let verbs = sink.take_verbs();
-        assert_eq!(verbs.len(), 2, "schedule then fail, got {verbs:?}");
-        assert_eq!(verbs[0], format!("schedule {task_id}:{st_id}:-"));
-        assert_eq!(
-            verbs[1],
-            format!("fail {task_id}:{st_id}:stale_assigned_timeout")
-        );
-        // Legacy increment semantics preserved (fail rode the OLD attempt).
         let got = store.get_task(&task_id).unwrap();
-        assert_eq!(got.subtasks[0].dispatch_retry_count, 1);
+        assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Pending);
+        assert!(got.subtasks[0].assigned_worker.is_none());
+        assert!(
+            !sink.seen.lock().unwrap().is_empty(),
+            "persist_task fan-out keeps running beside the bridge"
+        );
     }
 
     /// All four verbs fire across the three waypoint families, and the
@@ -7863,9 +7750,25 @@ mod tests {
             result: None,
         });
         store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
-        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
-        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
-        store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        // T6 (#642): the fail verb driver is a terminal-failure derivation on
+        // the update path — the reaper fail-verb waypoint is gone (the graph
+        // fail rides the sweep itself now).
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "failed".to_string(),
+                assigned_worker: Some("w1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("boom".to_string()),
+                attempt_id: None,
+            }],
+            result: None,
+        });
         yielded().await;
 
         let verbs = sink.take_verbs();
@@ -7918,15 +7821,15 @@ mod tests {
             }],
             result: None,
         });
-        let old_ts = chrono::Utc::now() - chrono::Duration::seconds(600);
-        store.assigned_subtask_times.insert(st_id.clone(), old_ts);
-        store.reassign_stale_assigned_subtasks(std::time::Duration::from_secs(30));
+        // T6 (#642): the sweep bridge replaces both reaper call sites —
+        // structurally inert without a sink (no panic, no verbs), pure
+        // legacy-row mirroring.
         {
             let t = store.tasks.get_mut(&task_id).unwrap();
             t.subtasks[0].status = uc_types::SubtaskStatus::InProgress;
             t.subtasks[0].assigned_worker = Some(uc_types::WorkerId("w9".to_string()));
         }
-        store.reassign_stale_subtasks(&["w9".to_string()]);
+        store.revert_swept_subtask(&task_id, &st_id, true);
         let got = store.get_task(&task_id).unwrap();
         assert_eq!(got.subtasks[0].status, uc_types::SubtaskStatus::Pending);
     }

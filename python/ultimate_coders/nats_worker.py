@@ -2264,13 +2264,13 @@ class NatsWorker:
             logger.warning("Failed to parse uc.subtask.execute message", exc_info=True)
             return None
 
-        # T4 #640 (D3 lockstep): the graph envelope is the single identity
-        # source on the wire. Read `graph_id`/`node_id` first; the legacy
-        # `task_id`/`subtask_id` keys remain as a fallback so pre-T4 archive
-        # replays and any straggler legacy publisher still parse (those
-        # messages are then term-dropped by the stale-envelope check).
-        task_id = data.get("graph_id") or data.get("task_id", "")
-        subtask_id = data.get("node_id") or data.get("subtask_id", "")
+        # T4 #640 (D3 lockstep) + T6 #642: the graph envelope is the single
+        # identity source on the wire — `graph_id`/`node_id` only. The
+        # legacy `task_id`/`subtask_id` fallback is gone; pre-T4 archive
+        # replays parse with empty identity and are term-dropped by the
+        # stale-envelope check below.
+        task_id = data.get("graph_id", "")
+        subtask_id = data.get("node_id", "")
         description = data.get("description", "")
 
         if not task_id or not subtask_id:

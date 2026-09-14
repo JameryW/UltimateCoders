@@ -1278,9 +1278,11 @@ async def test_heartbeat_w_info_and_grpc_hb_carry_contract_version():
     assert hb_args[2] == CONTRACT_VERSION
 
 
-def test_parse_subtask_message_tolerates_envelope_and_legacy():
-    """T1: the worker parses envelope-bearing dispatches without regressions
-    and STAYS tolerant of envelope-less legacy messages (rejection is T4)."""
+def test_parse_subtask_message_reads_graph_identity_and_drops_legacy():
+    """T1: the worker parses envelope-bearing dispatches without regressions.
+    T6 #642: the legacy task_id/subtask_id fallback is gone — an envelope-less
+    legacy payload parses to None (empty graph identity) and is term-dropped
+    by the stale-envelope check in the JS handler."""
     nw = _make_worker()
     with_envelope = json.dumps(
         {
@@ -1305,7 +1307,9 @@ def test_parse_subtask_message_tolerates_envelope_and_legacy():
     legacy = json.dumps(
         {"task_id": "t-1", "subtask_id": "st-1", "description": "d"}
     ).encode()
-    assert nw._parse_subtask_message(legacy) is not None
+    # T6 #642: legacy identity keys are no longer read — no graph envelope,
+    # no identity, no execution.
+    assert nw._parse_subtask_message(legacy) is None
 
 
 # ── T4 #640: stale-envelope drop + attempt identity chain ──────
@@ -1392,10 +1396,9 @@ def test_task_update_payload_stamps_attempt_id():
 
 
 def test_parse_subtask_message_prefers_graph_identity():
-    """T4 #640 (D3 lockstep): the wire no longer carries task_id/subtask_id —
-    the parser must read identity from the graph envelope. Legacy keys remain
-    a fallback so pre-T4 messages still parse (and are then term-dropped by
-    the stale-envelope check)."""
+    """T4 #640 (D3 lockstep) + T6 #642: the parser reads identity from the
+    graph envelope only. Legacy task_id/subtask_id keys are no longer a
+    fallback — a legacy-only payload yields None (then term-dropped)."""
     nw = _make_worker()
 
     graph_only = json.dumps(
@@ -1413,7 +1416,7 @@ def test_parse_subtask_message_prefers_graph_identity():
     task_id, subtask_id, _ = parsed
     assert (task_id, subtask_id) == ("t-graph", "st-graph")
 
-    # Mixed legacy payload (old archive replay): legacy keys win the fallback.
+    # Legacy payload (old archive replay): no fallback — identity is None.
     legacy = json.dumps(
         {
             "task_id": "t-legacy",
@@ -1421,10 +1424,7 @@ def test_parse_subtask_message_prefers_graph_identity():
             "description": "d",
         }
     ).encode()
-    parsed = nw._parse_subtask_message(legacy)
-    assert parsed is not None
-    task_id, subtask_id, _ = parsed
-    assert (task_id, subtask_id) == ("t-legacy", "st-legacy")
+    assert nw._parse_subtask_message(legacy) is None
 
 
 def test_dispatch_remote_omits_legacy_identity_keys():
