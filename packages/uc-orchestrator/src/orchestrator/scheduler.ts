@@ -1,11 +1,13 @@
 /**
- * DAG Scheduler — Topological sort with wave-based parallel execution.
+ * DAG Scheduler — decomposer-input validation + shared execution utilities.
  *
- * Inspired by omp swarm-extension's DAG engine but with dynamic
- * scheduling support for UC's orchestrator pattern.
+ * T6 #642 C4: the wave machine was removed — execution ordering (ready-node
+ * selection) is the Rust gateway's job (get_ready_subtasks → publish/dispatch;
+ * the TS claim loop picks up what no worker took). buildDAG survives purely
+ * as decomposer-output validation: duplicate ids, unknown deps, and cycles
+ * throw BEFORE anything is upserted to the server.
  *
- * ponytail: Kahn's algorithm for topological sort — O(V+E),
- * upgrade to incremental if tasks get huge.
+ * Inspired by omp swarm-extension's DAG engine (Kahn's algorithm — O(V+E)).
  */
 
 import * as path from "node:path";
@@ -57,17 +59,19 @@ export interface SubtaskDef {
 	steps?: WorkflowStepDef[];
 }
 
-/** A wave is a group of subtasks that can execute in parallel. */
+/** A topological level of the dependency graph (Kahn layering). Retained as
+ *  buildDAG's shape for validation ordering + recursiveDecompose tests. */
 export type DAGWave = SubtaskDef[];
 
 // ── DAG Construction ───────────────────────────────────────────────
 
 /**
- * Build execution waves from subtask definitions.
+ * Build topological levels from subtask definitions (Kahn's algorithm).
  *
- * Uses Kahn's algorithm to topologically sort the dependency graph,
- * then groups subtasks into waves where all subtasks in a wave
- * have their dependencies satisfied by earlier waves.
+ * T6 #642 C4: retained for VALIDATION only — duplicate ids, unknown deps,
+ * and cycles throw here before anything reaches the server. The returned
+ * layering is no longer an execution plan (the Rust gateway owns
+ * ready-node selection); call sites discard the result.
  *
  * @throws Error if circular dependencies are detected
  */
@@ -200,169 +204,23 @@ export function detectCycles(subtasks: SubtaskDef[]): string[] | null {
 	return null;
 }
 
-// ── File-Aware Wave Splitting ───────────────────────────────────────
-
-/**
- * Split waves so that no two subtasks in the same sub-wave share files.
- *
- * Within each wave from buildDAG(), further partition into sub-waves
- * where all subtasks have disjoint file sets. Subtasks with no files
- * (empty array) are always safe to parallelize.
- *
- * Uses greedy graph coloring: subtasks sharing files get an edge,
- * then each color class becomes a sub-wave.
- *
- * ponytail: O(V²) greedy — fine for ≤10 subtasks per wave.
- */
-export function splitWavesByFileOverlap(waves: DAGWave[]): DAGWave[] {
-	const result: DAGWave[] = [];
-	for (const wave of waves) {
-		if (wave.length <= 1 || wave.every((s) => s.files.length === 0)) {
-			result.push(wave);
-			continue;
-		}
-		// Build conflict graph: edge if two subtasks share any file
-		const conflictPairs = new Set<string>();
-		for (let i = 0; i < wave.length; i++) {
-			for (let j = i + 1; j < wave.length; j++) {
-				if (hasFileOverlap(wave[i].files, wave[j].files)) {
-					conflictPairs.add(`${i}:${j}`);
-				}
-			}
-		}
-		if (conflictPairs.size === 0) {
-			result.push(wave);
-			continue;
-		}
-		// Greedy coloring
-		const colorAssignment = new Map<number, number>(); // index → color
-		for (let i = 0; i < wave.length; i++) {
-			const neighborColors = new Set<number>();
-			for (let j = 0; j < wave.length; j++) {
-				if (i === j) continue;
-				const key = i < j ? `${i}:${j}` : `${j}:${i}`;
-				if (conflictPairs.has(key) && colorAssignment.has(j)) {
-					neighborColors.add(colorAssignment.get(j)!);
-				}
-			}
-			// Assign lowest available color
-			let color = 0;
-			while (neighborColors.has(color)) color++;
-			colorAssignment.set(i, color);
-		}
-		// Group by color → sub-waves
-		const colorGroups = new Map<number, SubtaskDef[]>();
-		for (const [idx, color] of colorAssignment) {
-			if (!colorGroups.has(color)) colorGroups.set(color, []);
-			colorGroups.get(color)!.push(wave[idx]);
-		}
-		// Insert sub-waves in color order
-		const maxColor = Math.max(...colorAssignment.values());
-		for (let c = 0; c <= maxColor; c++) {
-			const group = colorGroups.get(c);
-			if (group) result.push(group);
-		}
-	}
-	return result;
-}
+// ── File Intent Normalization ───────────────────────────────────────
 
 // ponytail: F47 — decomposer `files` arrays are LLM output with no
 // normalization guarantee: "./src/a.ts" vs "src/a.ts", "src/a.ts" vs
 // "src/A.ts" (darwin/win32 filesystems are case-insensitive), relative vs
-// absolute. Raw string equality judged all of those disjoint, scheduling two
-// subtasks that write the SAME file into the same wave (last-write-wins
-// corruption). Normalize before comparing. Ceiling: no workspace-root
-// relativization (needs root context at every call site); normalize + case
-// fold covers the variants LLMs actually emit.
+// absolute. Raw string equality judged all of those disjoint. Normalize
+// before comparing. Ceiling: no workspace-root relativization (needs root
+// context at every call site); normalize + case fold covers the variants
+// LLMs actually emit.
+//
+// T6 #642 C4: the wave splitter and runtime FileIntentTracker were removed
+// (file-overlap parallel gating moves to C5's conflict_risk grading, which
+// consumes this normalizer at decomposition time).
 export function normalizeFileIntent(file: string): string {
 	let n = path.normalize(file.trim());
 	if (process.platform === "darwin" || process.platform === "win32") n = n.toLowerCase();
 	return n;
-}
-
-function hasFileOverlap(a: string[], b: string[]): boolean {
-	if (a.length === 0 || b.length === 0) return false;
-	const setB = new Set(b.map(normalizeFileIntent));
-	return a.some((f) => setB.has(normalizeFileIntent(f)));
-}
-
-// ── Runtime File Intent Tracking ────────────────────────────────────
-
-/**
- * Track which files each running subtask intends to modify.
- *
- * Used at execution time to defer subtasks whose files conflict
- * with already-running subtasks. Complements the static
- * splitWavesByFileOverlap by handling cases where actual modified
- * files differ from declared files.
- */
-export class FileIntentTracker {
-	/** subtaskId → Set of file paths */
-	private intents = new Map<string, Set<string>>();
-	/** filePath → Set of subtask IDs owning it */
-	private fileOwners = new Map<string, Set<string>>();
-
-	/** Declare that a subtask intends to modify the given files.
-	 *  If the subtask already has declared intents, releases old ones first.
-	 *  ponytail: F47 — keys are normalized, so "./src/a.ts" and "src/A.ts"
-	 *  (darwin) collide correctly. getOwnedFiles() therefore shows normalized
-	 *  keys — fine for its debug/status purpose. */
-	declare(subtaskId: string, files: string[]): void {
-		// Release any previous intents for this subtask to avoid stale entries
-		if (this.intents.has(subtaskId)) {
-			this.release(subtaskId);
-		}
-		const normalized = files.map(normalizeFileIntent);
-		const fileSet = new Set(normalized);
-		this.intents.set(subtaskId, fileSet);
-		for (const f of fileSet) {
-			if (!this.fileOwners.has(f)) this.fileOwners.set(f, new Set());
-			this.fileOwners.get(f)!.add(subtaskId);
-		}
-	}
-
-	/** Release all file intents for a completed/failed/cancelled subtask. */
-	release(subtaskId: string): void {
-		const files = this.intents.get(subtaskId);
-		if (!files) return;
-		for (const f of files) {
-			const owners = this.fileOwners.get(f);
-			if (owners) {
-				owners.delete(subtaskId);
-				if (owners.size === 0) this.fileOwners.delete(f);
-			}
-		}
-		this.intents.delete(subtaskId);
-	}
-
-	/** Check if any of the given files conflict with running subtasks.
-	 *  Returns the set of conflicting subtask IDs (empty if no conflict).
-	 *  ponytail: F47 — normalize the query to match normalized declare() keys. */
-	isConflicting(files: string[]): Set<string> {
-		const conflicting = new Set<string>();
-		for (const f of files) {
-			const owners = this.fileOwners.get(normalizeFileIntent(f));
-			if (owners) {
-				for (const id of owners) conflicting.add(id);
-			}
-		}
-		return conflicting;
-	}
-
-	/** Get all currently tracked file ownerships (for debugging/status). */
-	getOwnedFiles(): Map<string, string[]> {
-		const result = new Map<string, string[]>();
-		for (const [file, owners] of this.fileOwners) {
-			result.set(file, [...owners]);
-		}
-		return result;
-	}
-
-	/** Clear all intents. */
-	clear(): void {
-		this.intents.clear();
-		this.fileOwners.clear();
-	}
 }
 
 // ── Circuit Breaker ─────────────────────────────────────────────────

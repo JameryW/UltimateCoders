@@ -81,6 +81,11 @@ export interface TaskSync {
 		assignedWorker?: string;
 		result?: string;
 		retryCount?: number;
+		/** T6 #642 C4 — dispatch metadata for claim gating (dispatchMode)
+		 *  and upsert fidelity (files/caps) on adopted tasks. */
+		files?: string[];
+		dispatchMode?: string;
+		requiredCapabilities?: string[];
 		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }>;
 	}>;
 }
@@ -175,6 +180,45 @@ export type BridgeError =
 
 /** Result of submitTask — either success or structured error. */
 export type SubmitResult = { ok: true; task: TaskSync } | { ok: false; error: BridgeError };
+
+// ── Status wire mapping (T6 #642 C4) ────────────────────────────────
+
+/**
+ * The server parses status strings case-sensitively —
+ * proto_status_to_task_status / proto_subtask_status_from_str accept exactly
+ * "Planning"/"InProgress"/"Completed"/… (fail-loud since #350). The
+ * orchestrator's mirror is lowercase; translate at the protocol boundary so
+ * UpdateTask upserts (task bootstrap, claim/reports, terminal syncs) are
+ * accepted and the gateway's publish/dispatch path fires.
+ *
+ * "cancelled" has no server variant: the authoritative cancel is CancelTask,
+ * which maps the task AND its non-terminal subtasks to Failed server-side —
+ * so an upserted cancelled task/subtask reports Failed (same semantics).
+ */
+export function taskStatusToWire(status: string): string {
+	switch (status) {
+		case "planning": return "Planning";
+		case "in_progress": return "InProgress";
+		case "completed": return "Completed";
+		case "failed": return "Failed";
+		case "cancelled": return "Failed";
+		default: return status;
+	}
+}
+
+/** Mirror statuses → server SubtaskStatus strings. "running" (locally
+ *  claimed) and "assigned" (worker took it) both mean execution in flight →
+ *  InProgress. "reviewing" is transitional (dies with the review machinery). */
+export function subtaskStatusToWire(status: string): string {
+	switch (status) {
+		case "pending": return "Pending";
+		case "running": case "assigned": case "reviewing": return "InProgress";
+		case "completed": return "Completed";
+		case "failed": return "Failed";
+		case "cancelled": return "Failed";
+		default: return status;
+	}
+}
 
 // ── Bridge ─────────────────────────────────────────────────────────
 
@@ -515,13 +559,13 @@ export class GrpcBridge {
 			const resp = await this.taskClient.updateTask(
 				create(UpdateTaskRequestSchema, {
 					taskId: task.id,
-					status: task.status,
+					status: taskStatusToWire(task.status),
 					description: task.description,
 					projectId: task.projectId ?? "",
 					subtasks: task.subtasks.map((st) => ({
 						id: st.id,
 						description: st.description,
-						status: st.status,
+						status: subtaskStatusToWire(st.status),
 						dependsOn: st.dependsOn,
 						result: st.result ?? "",
 						parentId: task.id,
@@ -985,7 +1029,7 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; fileConstraints?: string[]; dispatchMode?: string; requiredCapabilities?: string[]; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -1003,6 +1047,9 @@ export class GrpcBridge {
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				retryCount: st.retryCount,
+				files: st.fileConstraints,
+				dispatchMode: st.dispatchMode,
+				requiredCapabilities: st.requiredCapabilities,
 				steps: st.steps?.map((s) => ({
 					agent: s.agent,
 					prompt: s.prompt,
@@ -1037,6 +1084,9 @@ export class GrpcBridge {
 				assignedWorker: st.assignedWorker,
 				result: st.result,
 				retryCount: st.retryCount,
+				files: st.fileConstraints,
+				dispatchMode: st.dispatchMode,
+				requiredCapabilities: st.requiredCapabilities,
 				steps: st.steps?.map((s) => ({
 					agent: s.agent,
 					prompt: s.prompt,

@@ -53,15 +53,6 @@ describe("TaskStore", () => {
 		expect(loaded?.description).toBe("task t-1");
 	});
 
-	it("F42: saveCheckpoint is atomic too", async () => {
-		await store.saveCheckpoint(makeTask("t-2"));
-		const files = readdirSync(join(ws, ".uc", "checkpoints"));
-		expect(files).toContain("t-2.snap.json");
-		expect(files.some((f) => f.endsWith(".tmp"))).toBe(false);
-		const loaded = await store.loadCheckpoint("t-2");
-		expect(loaded?.id).toBe("t-2");
-	});
-
 	it("F42: removeStale sweeps .tmp orphans a crash can leave", async () => {
 		await store.save(makeTask("keep"));
 		writeFileSync(join(ws, ".uc", "tasks", "ghost.json.tmp"), "orphan");
@@ -82,8 +73,5 @@ describe("TaskStore", () => {
 		const loaded = await store.load("t-9");
 		expect(typeof loaded?.savedAt).toBe("number");
 		expect(loaded!.savedAt!).toBeGreaterThanOrEqual(before);
-		await store.saveCheckpoint(makeTask("t-9"));
-		const cp = await store.loadCheckpoint("t-9");
-		expect(typeof cp?.savedAt).toBe("number");
 	});
 });

@@ -85,8 +85,7 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 
 		const progressEvents: OrchestratorEventType[] = [
 			"task_planning", "task_decomposed", "task_complete",
-			"task_paused", "task_resumed", "task_cancelled",
-			"wave_start", "wave_end",
+			"task_resumed", "task_cancelled",
 			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
 			"subtask_progress",
 			"connection_state",
@@ -183,14 +182,9 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			case "task_decomposed": {
 				const d = data as OrchestratorEvents["task_decomposed"];
 				lastWorkingTaskId = d.taskId;
-				ctx.ui.setWorkingMessage(`UC: ${d.subtaskCount} subtasks, ${d.waveCount} waves`);
-				break;
-			}
-			case "wave_start": {
-				const d = data as OrchestratorEvents["wave_start"];
-				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
-				lastWorkingTaskId = d.taskId;
-				ctx.ui.setWorkingMessage(`UC: Wave ${d.waveIdx + 1}/${d.totalWaves}`);
+				// T6 #642 C4 — no waveCount: execution ordering is the Rust
+				// gateway's job now (publish dispatch + claim loop).
+				ctx.ui.setWorkingMessage(`UC: ${d.subtaskCount} subtasks (server-dispatched)`);
 				break;
 			}
 			case "subtask_start": {
@@ -284,20 +278,6 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps!));
 				break;
 			}
-			case "wave_end": {
-				const d = data as OrchestratorEvents["wave_end"];
-				updateProgressState(d.taskId, { waveIdx: d.waveIdx, totalWaves: d.totalWaves });
-				// ponytail: F12 — refresh the widget so completed-wave rows render
-				// immediately. Before, state changed but nothing re-rendered until
-				// the next subtask event (the wave row stayed stale).
-				const task = orchestrator.getTaskState(d.taskId);
-				const ps = progressState.get(d.taskId);
-				if (task && ps) {
-					ps.task = task;
-					ctx.ui.setWidget(`uc-${d.taskId}`, createProgressWidget(() => ps));
-				}
-				break;
-			}
 			case "task_complete": {
 				const d = data as OrchestratorEvents["task_complete"];
 				ctx.ui.setWidget(`uc-${d.taskId}`, undefined);
@@ -322,11 +302,11 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 				);
 				break;
 			}
-			case "task_paused":
 			case "task_resumed":
 			case "task_cancelled": {
-				// ponytail: F32 — attribute; events all carry taskId.
-				const d = data as OrchestratorEvents["task_paused"];
+				// ponytail: F32 — attribute; events all carry taskId. (task_paused
+				// died with the wave machine — pause is gate-side now, C3.)
+				const d = data as OrchestratorEvents["task_resumed"];
 				statusRenderer?.setField("active", `UC: ${d.taskId.slice(0, 8)} · ${type.replace("task_", "")}`);
 				break;
 			}
@@ -352,11 +332,6 @@ export default function ucOrchestratorExtension(pi: ExtensionAPI): void {
 			id: taskId, description: "", status: "planning", controlState: "running",
 			subtasks: [], createdAt: Date.now(),
 		};
-	}
-
-	function updateProgressState(taskId: string, update: Partial<ProgressWidgetState>): void {
-		const ps = progressState.get(taskId);
-		if (ps) Object.assign(ps, update);
 	}
 
 	// ── Keyboard shortcuts ──────────────────────────────────────

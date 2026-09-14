@@ -3,19 +3,22 @@
  *
  * Manages the lifecycle of a task:
  * 1. Decompose task into subtasks via omp decomposer agent
- * 2. Build DAG from subtask dependencies
- * 3. Execute waves of subtasks via remote worker cluster (gRPC → NATS)
- * 4. Optionally review subtask results via supervisor agent
+ * 2. Validate the decomposer output (buildDAG — cycles/dups/unknown deps)
+ * 3. Upsert the task all-Pending to the Rust gateway, which owns execution
+ *    ordering: its publish path dispatches ready nodes to NATS workers
+ * 4. Claim loop (T6 #642 C4): poll getTask / WatchTask for READY nodes no
+ *    worker took, claim → execute locally → report via the UpdateTask RPC;
+ *    the gateway's publish path advances subsequent ready nodes
  * 5. Collect results and inject summary into conversation
- * 6. Persist state to local JSON + sync to UC gRPC TaskStore
+ * 6. Persist state to local JSON (UI projection cache) — authority is Rust
  *
- * Supports: cancel/pause/resume, subtask-level control,
+ * Supports: cancel/pause/resume (all RPC-first), subtask-level control,
  * context injection from completed subtasks.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, type SubtaskDef, type WorkflowStepDef, type DispatchMode } from "./scheduler";
+import { buildDAG, CircuitBreaker, type SubtaskDef, type WorkflowStepDef, type DispatchMode } from "./scheduler";
 import { GrpcBridge, type TaskSync } from "./grpc-bridge";
 import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
@@ -26,6 +29,11 @@ import { sleepBackoff } from "./backoff";
 
 /** Delay before starting a fresh WatchTask recovery cycle after exhaustion. */
 const WATCH_TASK_RECOVERY_DELAY_MS = 30_000;
+
+/** Delay between retries when the gateway rejects a claimed subtask's outcome report. */
+const CLAIM_REPORT_RETRY_MS = 500;
+/** Bounded retries for reporting a claimed subtask's outcome. */
+const CLAIM_REPORT_MAX_ATTEMPTS = 3;
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -71,32 +79,6 @@ export function sleepCancellable(ms: number, signal?: AbortSignal): Promise<bool
 
 type ControlState = "running" | "paused" | "cancelled";
 
-// ponytail: heuristic extractors — parse agent output for checkpoint fields
-/** Extract file paths mentioned in tool_use / Edit / Write blocks from agent output. */
-function extractModifiedFiles(output: string): string[] {
-	const files: string[] = [];
-	// Match common patterns: file_path, file_path in tool calls
-	for (const m of output.matchAll(/(?:file_path|path|file):\s*["']([^"']+)["']/g)) {
-		if (m[1] && !files.includes(m[1])) files.push(m[1]);
-	}
-	return files.slice(0, 20);
-}
-
-/** Extract last N tool call names from agent output. */
-function extractRecentToolCalls(output: string, n: number): string[] {
-	const calls: string[] = [];
-	for (const m of output.matchAll(/"type"\s*:\s*"tool_use"[^}]*"name"\s*:\s*"([^"]+)"/g)) {
-		calls.push(m[1]);
-	}
-	// Fallback: match tool_use lines in text
-	if (calls.length === 0) {
-		for (const m of output.matchAll(/Using tool:\s*(\w+)/g)) {
-			calls.push(m[1]);
-		}
-	}
-	return calls.slice(-n);
-}
-
 export interface TaskState {
 	id: string;
 	description: string;
@@ -106,8 +88,6 @@ export interface TaskState {
 	createdAt: number;
 	completedAt?: number;
 	error?: string;
-	/** Which wave to resume from (for pause/resume). */
-	resumeFromWave?: number;
 	/** Whether re-decomposition has been attempted (one-shot guard). */
 	redecomposed?: boolean;
 	/** Project scope for cross-repo search and memory sharing. */
@@ -128,11 +108,11 @@ export interface SubtaskResult {
 	completedAt?: number;
 	/** Files modified by this subtask (populated on completion). */
 	modifiedFiles?: string[];
-	/** Recent tool calls (last 5, for checkpoint + debugging). */
+	/** Recent tool calls (last 5, for debugging). */
 	recentToolCalls?: string[];
 	/** Last lines of stderr (for failure context). */
 	stderrTail?: string;
-	/** How many retries this subtask has used (for checkpoint). */
+	/** How many retries this subtask has used. */
 	retryCount?: number;
 	/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
 	dispatchMode?: DispatchMode;
@@ -189,6 +169,22 @@ export type ControlOutcome =
 	| { ok: true; taskId: string }
 	| { ok: false; reason: "not_found" | "ambiguous" | "subtask_not_found" | "bad_state" | "rpc_failed"; candidates?: string[] };
 
+/**
+ * T6 #642 C4 — normalize a server-provided dispatch_mode into the TS
+ * DispatchMode vocabulary. SubtaskProto documents "Local"|"Remote"|
+ * "PreferRemote"; the T5 ruling maps the legacy "local" wire value to
+ * prefer_remote. Unknown values fall back to prefer_remote (the default).
+ */
+function normalizeServerDispatchMode(raw: string | undefined): DispatchMode | undefined {
+	if (!raw) return undefined;
+	switch (raw.toLowerCase()) {
+		case "remote": return "remote";
+		case "prefer_remote": case "preferremote": return "prefer_remote";
+		case "auto": return "auto";
+		default: return "prefer_remote";
+	}
+}
+
 interface OrchestratorConfig {
 	enableReview: boolean;
 	reviewTimeoutMs: number;
@@ -197,6 +193,9 @@ interface OrchestratorConfig {
 	retryBaseDelayMs: number;
 	/** Per-subtask execution timeout (ms). Default: 600000 (10min). */
 	subtaskTimeoutMs: number;
+	/** Claim-loop poll interval (ms). Default: 2000. WatchTask events kick
+	 *  ticks between polls; tests crank this up and drive ticks manually. */
+	claimPollMs: number;
 }
 
 // ── Orchestrator ───────────────────────────────────────────────────
@@ -230,6 +229,15 @@ export function parseSubtaskOutput(raw: string): SubtaskDef[] {
 					dependsOn: ((st.depends_on as unknown[]) ?? []).map((d) => String(d).trim()).filter(Boolean),
 					files: ((st.files as unknown[]) ?? []).map((f) => String(f).trim()).filter(Boolean),
 				};
+				// T6 #642 C4 — optional dispatch hint from the decomposer JSON
+				// (snake_case, matching depends_on/files). The claim loop gates
+				// local execution on it; without a producer here the remote-only
+				// gate could never fire for locally decomposed tasks. Normalized
+				// by the same rules as server wire values (unknown/"local" →
+				// prefer_remote, per the T5 fallback ruling).
+				if (typeof st.dispatch_mode === "string" && st.dispatch_mode.trim()) {
+					def.dispatchMode = normalizeServerDispatchMode(st.dispatch_mode.trim());
+				}
 				// ponytail: read optional steps array from decomposer JSON —
 				// unknown fields ignored, missing steps key = undefined (backward compat)
 				if (Array.isArray(st.steps)) {
@@ -285,7 +293,6 @@ export class UCOrchestrator {
 	private config: OrchestratorConfig;
 	private bridge: GrpcBridge;
 	private store: TaskStore;
-	private runningCount = 0;
 	private wasConnected = false;
 	private circuitBreaker = new CircuitBreaker();
 	private controlSubscriber: ControlSignalSubscriber;
@@ -299,6 +306,19 @@ export class UCOrchestrator {
 	private watchTaskRecoveryTimer?: ReturnType<typeof setTimeout>;
 	/** Internal event emitter — decouples orchestration from presentation */
 	readonly events = new OrchestratorEventEmitter();
+	// ── Claim loop state (T6 #642 C4) ──
+	/** Interval driving claim ticks; started lazily, self-stops when idle. */
+	private claimLoopTimer?: ReturnType<typeof setInterval>;
+	/** Re-entrancy guard: the in-flight tick's promise (null when idle);
+	 *  kicks arriving mid-tick coalesce into tickQueued. */
+	private tickInFlight: Promise<void> | null = null;
+	private tickQueued = false;
+	/** Locally-claimed (in-flight) subtask ids per task. Distinct from the
+	 *  server's Assigned/InProgress: only these run in THIS session. */
+	private claimed = new Map<string, Set<string>>();
+	/** ExtensionCommandContext captured at submit/resume time — the claim
+	 *  loop and task finalization need it after submitTask returns. */
+	private taskContexts = new Map<string, ExtensionCommandContext>();
 
 	constructor(pi: ExtensionAPI, config?: Partial<OrchestratorConfig>, bridge?: GrpcBridge) {
 		this.pi = pi;
@@ -309,6 +329,7 @@ export class UCOrchestrator {
 			maxRetries: 2,
 			retryBaseDelayMs: 5_000,
 			subtaskTimeoutMs: 600_000,
+			claimPollMs: 2_000,
 			...config,
 		};
 		this.bridge = bridge ?? new GrpcBridge();
@@ -318,8 +339,7 @@ export class UCOrchestrator {
 			// T6 #642 C3 — authority flip: on connection rise the orchestrator
 			// PULLS task state from the Rust server (listTasks) instead of
 			// pushing local state up. From here on the local Map is a projection
-			// of the server; actively-executing local tasks are kept until C4's
-			// claim loop replaces local execution wholesale.
+			// of the server; the claim loop owns locally-executing tasks.
 			if (connected && !this.wasConnected) {
 				void this.pullTasksFromGrpc();
 			}
@@ -473,6 +493,11 @@ export class UCOrchestrator {
 	 * deduped per event-pipeline-spec), so re-emitting is safe and useful.
 	 */
 	private handleWatchTaskEvent(ev: TaskEvent): void {
+		// T6 #642 C4 — any WatchTask event may carry a server-side transition
+		// (worker claimed/completed a subtask, sweep re-armed a node). Wake the
+		// claim loop so local claiming reacts without waiting out the poll
+		// interval; kickClaimLoop coalesces bursts via the in-flight guard.
+		this.kickClaimLoop();
 		if (ev.type !== "subtask_progress") return;
 		const d = ev.data;
 		// ponytail: F20 — missing/empty percent means "no data", not 0%. Emit -1;
@@ -546,8 +571,11 @@ export class UCOrchestrator {
 			return taskId;
 		}
 
-		// ── Step 2: Build DAG ──
-		const waves = splitWavesByFileOverlap(buildDAG(subtaskDefs));
+		// ── Step 2: Validate decomposer output ──
+		// T6 #642 C4: buildDAG is input validation only (duplicate ids /
+		// unknown deps / cycles throw here). The wave plan is discarded —
+		// execution ordering is the Rust gateway's job.
+		buildDAG(subtaskDefs);
 
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
@@ -561,16 +589,21 @@ export class UCOrchestrator {
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
-		this.syncTaskToGrpc(task);
 
-		execCtx.ui.notify(
-			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
-			"info",
-		);
-		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length, waveCount: waves.length });
+		// ── Step 3: Authority handoff ──
+		// Upsert all-Pending; the gateway's publish path immediately dispatches
+		// ready nodes to NATS workers, and the claim loop picks up whatever no
+		// worker took. submitTask returns without awaiting execution — task
+		// completion flows through events (claim loop runs on its own).
+		this.taskContexts.set(taskId, execCtx);
+		const upserted = await this.bridge.upsertTask(this.toPersisted(task));
+		if (!upserted) {
+			this.pi.logger.warn(`Task ${taskId}: server upsert rejected — claim loop will retry via per-subtask reports`);
+		}
 
-		// ── Step 3: Execute waves ──
-		await this.executeWaves(task, waves, execCtx);
+		execCtx.ui.notify(`Task ${taskId}: ${subtaskDefs.length} subtasks (server-dispatched)`, "info");
+		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length });
+		this.ensureClaimLoop();
 		return taskId;
 	}
 
@@ -597,8 +630,12 @@ export class UCOrchestrator {
 	}
 
 	/**
-	 * Run the full lifecycle (decompose + execute) for a task created by createTask().
-	 * Designed to be called fire-and-forget from the RPC server.
+	 * Run the full lifecycle (decompose + handoff) for a task created by
+	 * createTask(). Designed to be called fire-and-forget from the RPC server.
+	 * T6 #642 C4 — same authority contract as submitTask: upsert all-Pending
+	 * (the gateway's publish path dispatches ready nodes), then let the claim
+	 * loop drive whatever no worker took. Returns once decomposition + upsert
+	 * settle; execution/completion flows through events.
 	 */
 	async runTask(taskId: string, ctx?: ExtensionCommandContext): Promise<void> {
 		const task = this.tasks.get(taskId);
@@ -617,11 +654,17 @@ export class UCOrchestrator {
 			execCtx.ui.notify(`Task ${taskId} failed: ${task.error}`, "error");
 			await this.persist(task);
 			this.syncTaskToGrpc(task);
+			// ponytail: F13 parity with submitTask — without task_complete the
+			// "UC: planning" working state stays stranded (only task_complete
+			// cleans it up).
+			this.events.emit("task_complete", { taskId, status: task.status, summary: task.error });
 			return;
 		}
 
-		// Step 2: Build DAG
-		const waves = splitWavesByFileOverlap(buildDAG(subtaskDefs));
+		// Step 2: Validate decomposer output (buildDAG throws on duplicate
+		// ids / unknown deps / cycles); the wave plan is discarded — execution
+		// ordering is the Rust gateway's job now.
+		buildDAG(subtaskDefs);
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
 			description: def.description,
@@ -634,16 +677,17 @@ export class UCOrchestrator {
 		}));
 		task.status = "in_progress";
 		await this.persist(task);
-		this.syncTaskToGrpc(task);
 
-		execCtx.ui.notify(
-			`Task ${taskId}: ${subtaskDefs.length} subtasks, ${waves.length} wave(s)`,
-			"info",
-		);
-		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length, waveCount: waves.length });
+		// Step 3: Authority handoff — same contract as submitTask.
+		this.taskContexts.set(taskId, execCtx);
+		const upserted = await this.bridge.upsertTask(this.toPersisted(task));
+		if (!upserted) {
+			this.pi.logger.warn(`Task ${taskId}: server upsert rejected — claim loop will retry via per-subtask reports`);
+		}
 
-		// Step 3: Execute waves
-		await this.executeWaves(task, waves, execCtx);
+		execCtx.ui.notify(`Task ${taskId}: ${subtaskDefs.length} subtasks (server-dispatched)`, "info");
+		this.events.emit("task_decomposed", { taskId, subtaskCount: subtaskDefs.length });
+		this.ensureClaimLoop();
 	}
 
 	// ── Worker Availability Check ────────────────────────────────────
@@ -668,157 +712,355 @@ export class UCOrchestrator {
 		}
 	}
 
-	// ── Wave Execution ───────────────────────────────────────────────
+	// ── Claim Loop (T6 #642 C4) ──────────────────────────────────────
+	//
+	// The wave machine is gone. Locally-executable work is driven by a
+	// poll+event loop: the gateway's publish path dispatches ready nodes to
+	// NATS workers on upsert, and this loop claims whatever the server still
+	// shows Pending that is allowed to run locally (dispatchMode !==
+	// "remote"). The server is the authority — every tick adopts server-side
+	// transitions into the mirror (completed/failed/assigned), infers task
+	// terminal state, and claims newly-ready nodes behind an RPC-confirmed
+	// status write (the UpdateTask upsert is the report channel — no
+	// per-subtask RPC exists).
 
-	private async executeWaves(
-		task: TaskState,
-		waves: SubtaskDef[][],
-		ctx: ExtensionCommandContext,
-	): Promise<void> {
-		const startWave = task.resumeFromWave ?? 0;
-		// ponytail: F11 — widget rendering is owned exclusively by extension.ts
-		// (rich progress widget on `uc-${task.id}`). The old plain-text
-		// updateWidget() here wrote the same key and clobbered the rich widget
-		// after every wave (OMP per-key map is last-writer-wins).
+	private ensureClaimLoop(): void {
+		if (this.claimLoopTimer) return;
+		this.claimLoopTimer = setInterval(() => this.kickClaimLoop(), this.config.claimPollMs);
+		// An idle poll timer must not keep the host process alive (same
+		// rationale as the WatchTask recovery timer).
+		const t = this.claimLoopTimer as unknown as { unref?: () => void };
+		if (typeof t?.unref === "function") t.unref();
+	}
 
-		try {
-			for (let waveIdx = startWave; waveIdx < waves.length; waveIdx++) {
-				// Check control state before each wave
-				if (task.controlState === "cancelled") {
-					task.status = "cancelled";
-					await this.persist(task);
-					break;
+	/** Self-stop when nothing is locally owned; submit/resume/retry restart
+	 *  the loop via ensureClaimLoop(). */
+	private stopClaimLoop(): void {
+		if (this.claimLoopTimer) {
+			clearInterval(this.claimLoopTimer);
+			this.claimLoopTimer = undefined;
+		}
+	}
+
+	/**
+	 * Coalescing tick scheduler — the poll interval and WatchTask events both
+	 * funnel here. An in-flight tick swallows concurrent triggers; one queued
+	 * drain runs after it settles (no tick pileup during event bursts).
+	 */
+	private kickClaimLoop(): void {
+		if (this.tickInFlight) {
+			this.tickQueued = true;
+			return;
+		}
+		this.tickQueued = false;
+		const tick = this.claimTick()
+			.catch((err) => {
+				this.pi.logger.warn(`Claim tick failed: ${err instanceof Error ? err.message : String(err)}`);
+			})
+			.finally(() => {
+				if (this.tickInFlight === tick) this.tickInFlight = null;
+				if (this.tickQueued) {
+					this.tickQueued = false;
+					this.kickClaimLoop();
 				}
-				if (task.controlState === "paused") {
-					task.resumeFromWave = waveIdx;
-					await this.persist(task);
-					ctx.ui.notify(`Task ${task.id}: paused at wave ${waveIdx + 1}`, "info");
-					this.events.emit("task_paused", { taskId: task.id, waveIdx });
-					return; // Exit without completing — resume will re-enter
-				}
+			});
+		this.tickInFlight = tick;
+	}
 
-				const wave = waves[waveIdx];
+	/**
+	 * Test seam + explicit drive: run one claim tick to completion, serialized
+	 * behind any in-flight tick. Tests crank claimPollMs up and drive ticks
+	 * manually through this — no real-interval races.
+	 */
+	async runClaimTick(): Promise<void> {
+		while (this.tickInFlight) {
+			await this.tickInFlight;
+		}
+		await this.claimTick();
+	}
 
-				// Check worker availability before executing wave
-				// ponytail: no longer hard-fail — prefer_remote subtasks fallback to local
-				const workersAvailable = await this.checkWorkerAvailability();
-				if (!workersAvailable) {
-					// Check if ALL subtasks in this wave require remote (dispatchMode="remote")
-					const allRequireRemote = wave.every((s) => s.dispatchMode === "remote");
-					if (allRequireRemote) {
-						task.status = "failed";
-						task.error = "No workers available and all subtasks require remote execution";
-						ctx.ui.notify(`Task ${task.id}: failed — no workers for remote-only wave`, "error");
-						break;
-					}
-					this.pi.logger.warn(`Task ${task.id}: no remote workers — local/prefer_remote subtasks will execute locally`);
-				}
-				ctx.ui.notify(
-					`Task ${task.id}: wave ${waveIdx + 1}/${waves.length} — [${wave.map((s) => s.id).join(", ")}]`,
-					"info",
+	private async claimTick(): Promise<void> {
+		// Owned tasks only: this session holds the AbortController (ownership
+		// marker) and the task is executing under claim-loop control.
+		const owned = [...this.tasks.values()].filter(
+			(t) =>
+				this.abortControllers.has(t.id) &&
+				t.status === "in_progress" &&
+				t.controlState === "running",
+		);
+		if (owned.length === 0) {
+			this.stopClaimLoop();
+			return;
+		}
+		for (const task of owned) {
+			try {
+				const serverTask = await this.bridge.getTask(task.id);
+				if (!serverTask) continue;
+				await this.reconcileTask(task, serverTask);
+			} catch (err) {
+				this.pi.logger.warn(
+					`Claim tick: task ${task.id} reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
 				);
-					this.events.emit("wave_start", { taskId: task.id, waveIdx, totalWaves: waves.length, subtaskIds: wave.map(s => s.id) });
-
-				const results = await this.executeWave(wave, task, ctx);
-
-				for (const result of results) {
-					const st = task.subtasks.find((s) => s.id === result.id);
-					if (st) {
-						st.status = result.status;
-						st.result = result.result;
-						st.error = result.error;
-						st.review = result.review;
-						st.completedAt = result.completedAt;
-						// ponytail: S7 — copy retryCount from SubtaskResult so the
-						// progress-widget + subtask-tree-overlay show retry count.
-						// Local-exec: executeSubtaskWithRetry sets it (attempt counter).
-						// Remote-exec: executeSubtaskRemote sets it from
-						// remoteSubtask.retryCount (SubtaskProto field 15, populated
-						// by worker). executeSubtaskWithRetry preserves remote
-						// retryCount (only overwrites when undefined).
-						st.retryCount = result.retryCount;
-					}
-				}
-
-				await this.persist(task);
-				this.syncTaskToGrpc(task);
-					this.events.emit("wave_end", { taskId: task.id, waveIdx, totalWaves: waves.length, results });
-
-				// Auto-checkpoint after wave completes (dual storage)
-				await this.checkpoint(task);
-				// Reset circuit breaker between waves — avoid cascading failure
-				this.circuitBreaker.reset();
-
-				// Subtask results/reviews already written per-subtask in executeWave
-				// (moved to subtask-level for real-time Dashboard visibility)
-
-				const failed = results.filter((r) => r.status === "failed");
-				const cancelled = results.filter((r) => r.status === "cancelled");
-				if (cancelled.length > 0) {
-					// Cascade cancel to downstream subtasks
-					this.cascadeCancel(task, cancelled.map((r) => r.id));
-					// Only cancel the whole task if this was a task-level cancel
-					// @ts-expect-error TS2367 — controlState is mutable, TS narrowing is wrong
-					if (task.controlState === "cancelled") {
-						task.status = "cancelled";
-						task.error = `Cancelled: ${cancelled.map((f) => f.id).join(", ")}`;
-						break;
-					}
-					// Subtask-level cancel: continue with remaining non-cancelled paths
-				}
-				if (failed.length > 0) {
-					// Try re-decomposing failed subtasks before giving up
-					const redecomposed = await this.tryRedecompose(task, ctx);
-					if (redecomposed) {
-						// Re-execute with new subtasks
-						const pendingDefs: SubtaskDef[] = task.subtasks
-							.filter((s) => s.status === "pending" || s.status === "running")
-							.map((s) => ({
-								id: s.id,
-								description: s.description,
-								dependsOn: s.dependsOn,
-								files: s.files,
-								dispatchMode: s.dispatchMode,
-								requiredCapabilities: s.requiredCapabilities,
-								steps: s.steps,
-							}));
-						const newWaves = splitWavesByFileOverlap(buildDAG(pendingDefs));
-						ctx.ui.notify(
-							`Task ${task.id}: re-decomposed ${failed.length} failed subtask(s) into ${pendingDefs.length} new one(s)`,
-							"info",
-						);
-						await this.executeWaves(task, newWaves, ctx);
-						return;
-					}
-					task.status = "failed";
-					task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
-					break;
-				}
-			}
-
-			if (task.status === "in_progress") {
-				task.status = "completed";
-				task.completedAt = Date.now();
-			}
-		} catch (err) {
-			if ((err as Error).name === "AbortError") {
-				task.status = "cancelled";
-			} else {
-				task.status = "failed";
-				task.error = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
 			}
 		}
+	}
 
+	/**
+	 * Reconcile one owned task against the server snapshot (the authority):
+	 * 1. Adopt server transitions for subtasks this session has NOT claimed
+	 *    (worker outcomes arrive via NATS; the mirror follows).
+	 * 2. Infer task terminal state once nothing is open and no claim is in
+	 *    flight (tryRedecompose gets its one shot at failed sets first).
+	 * 3. Claim newly-ready Pending nodes — server Pending + deps Completed on
+	 *    the SERVER snapshot + dispatchMode !== "remote" + under the
+	 *    concurrency cap — behind an RPC-confirmed running report.
+	 */
+	private async reconcileTask(task: TaskState, serverTask: TaskSync): Promise<void> {
+		const claimedIds = this.claimed.get(task.id) ?? new Set<string>();
+		const serverById = new Map(serverTask.subtasks.map((s) => [s.id, s]));
+		let mirrorDirty = false;
+
+		if (task.controlState !== "running" || task.status !== "in_progress") return;
+
+		// ── 1. Adopt server transitions for unclaimed subtasks.
+		for (const sst of serverTask.subtasks) {
+			const local = task.subtasks.find((s) => s.id === sst.id);
+			if (!local || claimedIds.has(sst.id)) continue;
+			const serverStatus = sst.status.toLowerCase();
+			if (serverStatus === "completed" && local.status !== "completed") {
+				local.status = "completed";
+				if (sst.result) local.result = sst.result;
+				local.completedAt = Date.now();
+				mirrorDirty = true;
+				this.events.emit("subtask_end", { taskId: task.id, subtaskId: local.id, result: local.result });
+				if (local.result) {
+					this.bridge.writeMemory(
+						"task", `subtask_result_${local.id}`,
+						local.result, "text", "uc-orchestrator", task.id,
+					).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
+				}
+			} else if (serverStatus === "failed" && local.status !== "failed") {
+				local.status = "failed";
+				local.error = sst.result || local.error || "Failed server-side";
+				local.completedAt = Date.now();
+				mirrorDirty = true;
+				this.events.emit("subtask_failed", { taskId: task.id, subtaskId: local.id, error: local.error });
+			} else if (
+				(serverStatus === "assigned" || serverStatus === "inprogress" || serverStatus === "in_progress")
+				&& (local.status === "pending" || local.status === "reviewing")
+			) {
+				// A worker took it (dispatch path) — mirror execution-in-flight.
+				local.status = "running";
+				local.startedAt = local.startedAt ?? Date.now();
+				mirrorDirty = true;
+			} else if (serverStatus === "pending" && (local.status === "running" || local.status === "reviewing")) {
+				// Server reset the node (resume/retry path) — adopt the reset so
+				// the claim step below can re-claim it cleanly.
+				local.status = "pending";
+				mirrorDirty = true;
+			}
+		}
+		if (mirrorDirty) {
+			// Cache refresh only — the server already holds these transitions;
+			// pushing them back would just echo.
+			await this.persist(task);
+		}
+
+		// ── 2. Terminal inference (in-flight claims must drain first — their
+		// outcomes are still pending).
+		const open = task.subtasks.filter(
+			(s) => s.status !== "completed" && s.status !== "failed" && s.status !== "cancelled",
+		);
+		if (open.length === 0 && claimedIds.size === 0) {
+			const failed = task.subtasks.filter((s) => s.status === "failed");
+			if (failed.length > 0 && !task.redecomposed) {
+				const ctx = this.taskContexts.get(task.id) ?? stubContext();
+				const redecomposed = await this.tryRedecompose(task, ctx);
+				if (redecomposed) {
+					// Push the new Pending set — publish re-dispatches ready
+					// nodes, the claim loop picks up the rest on later ticks.
+					await this.bridge.upsertTask(this.toPersisted(task));
+					return;
+				}
+			}
+			await this.finishTask(task, failed.length > 0 ? "failed" : "completed");
+			return;
+		}
+
+		// ── 3. Claim newly-ready nodes (under the concurrency cap).
+		for (const local of task.subtasks) {
+			if (claimedIds.size >= this.config.maxConcurrency) break;
+			if (local.status !== "pending") continue;
+			if (claimedIds.has(local.id)) continue;
+			if ((local.dispatchMode ?? "prefer_remote") === "remote") continue; // worker-only
+			const sst = serverById.get(local.id);
+			if (!sst || sst.status.toLowerCase() !== "pending") continue;
+			// Readiness is judged on the SERVER snapshot: the server only
+			// publishes nodes whose deps are Completed, so judging on mirror
+			// state alone could claim ahead of worker execution.
+			const depsReady = local.dependsOn.every((depId) => {
+				const dep = serverById.get(depId);
+				return dep !== undefined && dep.status.toLowerCase() === "completed";
+			});
+			if (!depsReady) continue;
+
+			// Claim: flip the mirror to running, push via UpdateTask. On
+			// rejection revert to Pending — another writer (worker dispatch,
+			// control signal) owns the transition this tick; retry next tick.
+			local.status = "running";
+			local.startedAt = Date.now();
+			const ok = await this.reportSubtaskStatus(task, local.id, "running");
+			if (!ok) {
+				local.status = "pending";
+				continue;
+			}
+			claimedIds.add(local.id);
+			this.claimed.set(task.id, claimedIds);
+			await this.persist(task);
+			this.events.emit("subtask_start", { taskId: task.id, subtaskId: local.id, description: local.description });
+			const ctx = this.taskContexts.get(task.id) ?? stubContext();
+			this.runClaimed(task, local, ctx);
+		}
+	}
+
+	/**
+	 * Report a subtask status transition to the server. T6 #642 C4: no
+	 * per-subtask RPC exists — the UpdateTask upsert IS the report channel
+	 * (the gateway's publish handler advances downstream ready nodes on
+	 * success). The caller mutates the mirror BEFORE calling; retries cover
+	 * transient rejections. Returns true when the server accepted the upsert.
+	 */
+	private async reportSubtaskStatus(
+		task: TaskState,
+		subtaskId: string,
+		status: "running" | "completed" | "failed",
+	): Promise<boolean> {
+		for (let attempt = 1; attempt <= CLAIM_REPORT_MAX_ATTEMPTS; attempt++) {
+			if (attempt > 1) {
+				await new Promise((r) => setTimeout(r, CLAIM_REPORT_RETRY_MS));
+			}
+			const ok = await this.bridge.upsertTask(this.toPersisted(task));
+			if (ok) return true;
+			this.pi.logger.warn(
+				`Task ${task.id}: subtask ${subtaskId} → ${status} report rejected (attempt ${attempt}/${CLAIM_REPORT_MAX_ATTEMPTS})`,
+			);
+		}
+		return false;
+	}
+
+	/**
+	 * Execute a claimed subtask locally (fire-and-forget). The claim is
+	 * RPC-confirmed (server shows InProgress); the outcome is mirrored, then
+	 * reported with retries. A finally-failed report unclaims WITHOUT
+	 * reverting the mirror (loud warn): the server may keep showing
+	 * InProgress, and since TS-claimed nodes get no graph attempt nothing
+	 * sweeps them — recovery rides the next reconcile/pull instead.
+	 */
+	private runClaimed(task: TaskState, local: SubtaskResult, ctx: ExtensionCommandContext): void {
+		void (async () => {
+			let result: SubtaskResult;
+			// Circuit breaker: kept at the executor level — the claim loop
+			// itself never trips it.
+			if (!this.circuitBreaker.canExecute()) {
+				result = {
+					id: local.id,
+					description: local.description,
+					status: "failed",
+					dependsOn: local.dependsOn,
+					files: local.files,
+					error: "Circuit breaker open — too many consecutive failures",
+					startedAt: Date.now(),
+					completedAt: Date.now(),
+				};
+			} else {
+				result = await this.executeSubtaskWithRetry(local, task, ctx);
+				if (result.status === "failed") {
+					this.circuitBreaker.recordFailure();
+				} else {
+					this.circuitBreaker.recordSuccess();
+				}
+			}
+
+			// Mirror the outcome.
+			local.status = result.status;
+			local.result = result.result;
+			local.error = result.error;
+			local.review = result.review;
+			local.retryCount = result.retryCount;
+			local.completedAt = result.completedAt;
+			await this.persist(task);
+
+			if (result.result) {
+				this.bridge.writeMemory(
+					"task", `subtask_result_${result.id}`,
+					result.result, "text", "uc-orchestrator", task.id,
+				).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
+			}
+			if (result.review) {
+				this.bridge.writeMemory(
+					"task", `subtask_review_${result.id}`,
+					JSON.stringify({
+						approved: result.review.approved,
+						issues: result.review.issues,
+						suggestions: result.review.suggestions,
+					}),
+					"structured", "uc-orchestrator", task.id,
+				).catch((err) => { this.pi.logger.warn(`Failed to write subtask review: ${err}`); });
+			}
+
+			// Report the outcome (authority). "cancelled" maps to Failed on the
+			// wire — consistent with the server's cancel semantics.
+			const reportStatus = result.status === "completed" ? "completed" : "failed";
+			const reported = await this.reportSubtaskStatus(task, local.id, reportStatus);
+
+			// Unclaim either way; a failed report leaves the mirror at the
+			// outcome status for recovery (see doc).
+			const claimedIds = this.claimed.get(task.id);
+			claimedIds?.delete(local.id);
+			if (claimedIds && claimedIds.size === 0) this.claimed.delete(task.id);
+
+			if (result.status === "completed") {
+				this.events.emit("subtask_end", { taskId: task.id, subtaskId: local.id, result: result.result });
+			} else if (result.status === "failed") {
+				this.events.emit("subtask_failed", { taskId: task.id, subtaskId: local.id, error: result.error, retryCount: result.retryCount });
+			}
+
+			if (reported) {
+				this.kickClaimLoop(); // prompt the next readiness check
+			} else {
+				this.pi.logger.warn(
+					`Task ${task.id} subtask ${local.id}: outcome report failed after ${CLAIM_REPORT_MAX_ATTEMPTS} attempts — server may still show InProgress; recovery rides the next reconcile/pull`,
+				);
+			}
+		})();
+	}
+
+	/**
+	 * Claim-loop tail: stamp terminal state and run the completion side
+	 * effects (persist, notify, task_complete, memory, summary message,
+	 * eviction). Mirrors the old wave-loop epilogue — minus the wave
+	 * machinery.
+	 */
+	private async finishTask(
+		task: TaskState,
+		terminal: "completed" | "failed",
+	): Promise<void> {
+		task.status = terminal;
+		task.completedAt = Date.now();
+		if (terminal === "failed" && !task.error) {
+			const failed = task.subtasks.filter((s) => s.status === "failed");
+			task.error = `${failed.length} subtask(s) failed: ${failed.map((f) => f.id).join(", ")}`;
+		}
 		// ponytail: F11 — widget teardown is owned by extension.ts's task_complete
-		// handler (setWidget(key, undefined)); the old setWidget(widgetKey, …) here
-		// was the last orchestrator-side write to the extension-owned key.
+		// handler (setWidget(key, undefined)); the orchestrator never writes the
+		// extension-owned widget key.
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
 
+		const ctx = this.taskContexts.get(task.id) ?? stubContext();
 		const summary = this.buildSummary(task);
-		const notifyType = task.status === "completed" ? "info" : "error";
-		ctx.ui.notify(`Task ${task.id}: ${task.status}`, notifyType);
-			this.events.emit("task_complete", { taskId: task.id, status: task.status, summary });
+		ctx.ui.notify(`Task ${task.id}: ${task.status}`, terminal === "completed" ? "info" : "error");
+		this.events.emit("task_complete", { taskId: task.id, status: task.status, summary });
 
 		this.bridge.writeMemory(
 			"task", `task_result_${task.id}`,
@@ -839,148 +1081,13 @@ export class UCOrchestrator {
 			{ triggerTurn: false },
 		);
 
+		// Release ownership: the claim loop no longer drives this task.
+		this.abortControllers.delete(task.id);
+		this.claimed.delete(task.id);
+		this.taskContexts.delete(task.id);
+
 		// Evict old terminal tasks to prevent unbounded memory growth
 		this.evictCompletedTasks();
-	}
-
-	private async executeWave(
-		wave: SubtaskDef[],
-		task: TaskState,
-		ctx: ExtensionCommandContext,
-	): Promise<SubtaskResult[]> {
-		// Filter out already-cancelled subtasks
-		const activeWave = wave.filter((def) => {
-			const existing = task.subtasks.find((s) => s.id === def.id);
-			return !existing || existing.status !== "cancelled";
-		});
-
-		if (activeWave.length === 0) return [];
-
-		const abortCtrl = this.abortControllers.get(task.id);
-		const results: SubtaskResult[] = [];
-		const queue = [...activeWave];
-		const intentTracker = new FileIntentTracker();
-
-		const runNext = async (): Promise<void> => {
-			while (queue.length > 0) {
-				// Check cancel before picking next
-				if (task.controlState === "cancelled") {
-					abortCtrl?.abort();
-					this.runningCount--;
-					return;
-				}
-
-				// Find next subtask without file conflict
-				let def: SubtaskDef | undefined;
-				let defIdx = -1;
-				for (let i = 0; i < queue.length; i++) {
-					const candidate = queue[i];
-					if (intentTracker.isConflicting(candidate.files).size === 0) {
-						def = candidate;
-						defIdx = i;
-						break;
-					}
-				}
-				if (!def) {
-					// All remaining subtasks conflict — wait for a running one to finish
-					await new Promise((resolve) => setTimeout(resolve, 100));
-					continue;
-				}
-				queue.splice(defIdx, 1);
-
-				// Declare file intent before execution
-				intentTracker.declare(def.id, def.files);
-				let result: SubtaskResult;
-				try {
-					// Circuit breaker: fail fast if service is degraded
-					if (!this.circuitBreaker.canExecute()) {
-						result = {
-							id: def.id,
-							description: def.description,
-							status: "failed",
-							dependsOn: def.dependsOn,
-							files: def.files,
-							error: "Circuit breaker open — too many consecutive failures",
-							startedAt: Date.now(),
-							completedAt: Date.now(),
-						};
-					} else {
-						this.events.emit("subtask_start", { taskId: task.id, subtaskId: def.id, description: def.description });
-						result = await this.executeSubtaskWithRetry(def, task, ctx);
-						if (result.status === "failed") {
-							this.circuitBreaker.recordFailure();
-						} else {
-							this.circuitBreaker.recordSuccess();
-						}
-					}
-				} catch (err) {
-					// executeSubtaskWithRetry threw unexpectedly — synthesize a
-					// failed result so the wave continues instead of aborting
-					// (an uncaught throw left `result` undefined → result.id
-					// TypeError + runningCount never decremented → leak).
-					this.circuitBreaker.recordFailure();
-					result = {
-						id: def.id,
-						description: def.description,
-						status: "failed",
-						dependsOn: def.dependsOn,
-						files: def.files,
-						error: `Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
-						startedAt: Date.now(),
-						completedAt: Date.now(),
-					};
-				} finally {
-					// Release file intent even on unexpected error to prevent livelock
-					intentTracker.release(def.id);
-				}
-				results.push(result);
-				this.runningCount--;
-				// Subtask-level event: sync to gRPC + write memory for Dashboard visibility
-				const st = task.subtasks.find((s) => s.id === result.id);
-				if (st) {
-					st.status = result.status;
-					st.result = result.result;
-					st.error = result.error;
-					st.review = result.review;
-					st.completedAt = result.completedAt;
-					// ponytail: S7 — copy retryCount (see comment at the wave-level
-					// copy block above). Local-exec: set by executeSubtaskWithRetry.
-					// Remote-exec: set by executeSubtaskRemote from worker proto.
-					st.retryCount = result.retryCount;
-				}
-				this.syncTaskToGrpc(task);
-				if (result.result) {
-					this.bridge.writeMemory(
-						"task", `subtask_result_${result.id}`,
-						result.result, "text", "uc-orchestrator", task.id,
-					).catch((err) => { this.pi.logger.warn(`Failed to write subtask result: ${err}`); });
-				}
-				if (result.review) {
-					this.bridge.writeMemory(
-						"task", `subtask_review_${result.id}`,
-						JSON.stringify({
-							approved: result.review.approved,
-							issues: result.review.issues,
-							suggestions: result.review.suggestions,
-						}),
-						"structured", "uc-orchestrator", task.id,
-					).catch((err) => { this.pi.logger.warn(`Failed to write subtask review: ${err}`); });
-				}
-			}
-		};
-
-		const starters = Math.min(this.config.maxConcurrency, activeWave.length);
-		const workers: Promise<void>[] = [];
-		for (let i = 0; i < starters; i++) {
-			this.runningCount++;
-			workers.push(runNext());
-		}
-		await Promise.all(workers);
-
-		intentTracker.clear();
-		const order = new Map(wave.map((d, i) => [d.id, i]));
-		results.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
-		return results;
 	}
 
 	// ── Re-decompose Failed Subtasks ────────────────────────────────────
@@ -1130,6 +1237,13 @@ export class UCOrchestrator {
 		}
 
 		// Task-level cancel
+		// T6 #642 C4 — RPC-first (C3 discipline): the server is the cancel
+		// authority (task→Failed + non-terminal subtasks→Failed server-side;
+		// the local mirror keeps the "cancelled" label, which the bridge maps
+		// to Failed on the wire). On RPC failure the mirror is left untouched.
+		const rpcOk = await this.bridge.cancelTask(task.id);
+		if (!rpcOk) return { ok: false, reason: "rpc_failed" };
+
 		task.controlState = "cancelled";
 		task.status = "cancelled";
 		task.completedAt = Date.now();
@@ -1137,18 +1251,21 @@ export class UCOrchestrator {
 		const abortCtrl = this.abortControllers.get(taskId);
 		abortCtrl?.abort();
 
-		// Mark running subtasks as cancelled
+		// Mark open subtasks cancelled and release in-flight claim bookkeeping
+		// (an executing runClaimed finishes into the aborted signal; its
+		// outcome report converges with the server's Failed rows either way).
 		for (const st of task.subtasks) {
 			if (st.status === "running" || st.status === "pending" || st.status === "reviewing") {
 				st.status = "cancelled";
 				st.completedAt = Date.now();
 			}
 		}
+		this.claimed.delete(task.id);
 
 		await this.persist(task);
 		this.syncTaskToGrpc(task);
 		ctx?.ui.notify(`Task ${task.id} cancelled`, "info");
-			this.events.emit("task_cancelled", { taskId: task.id });
+		this.events.emit("task_cancelled", { taskId: task.id });
 		return { ok: true, taskId: task.id };
 	}
 
@@ -1184,6 +1301,9 @@ export class UCOrchestrator {
 
 		task.controlState = "running";
 		task.error = undefined;
+		// Re-arm ownership: finishTask released the AbortController, so a
+		// failed→resumed task needs a fresh one for the claim loop to own it.
+		this.abortControllers.set(task.id, new AbortController());
 		// Terminal-inference kept from the legacy path: nothing left to run →
 		// the task completes (pause/cancel of a completed task must keep
 		// failing bad_state, and the server projection will agree).
@@ -1197,6 +1317,11 @@ export class UCOrchestrator {
 		await this.persist(task);
 		ctx?.ui.notify(`Task ${task.id}: resumed (Rust re-dispatches ready nodes)`, "info");
 		this.events.emit("task_resumed", { taskId: task.id });
+		if (task.status === "in_progress") {
+			// T6 #642 C4 — resumed locally-executable work is claim-loop driven.
+			this.ensureClaimLoop();
+			this.kickClaimLoop();
+		}
 		return { ok: true, taskId: task.id };
 	}
 
@@ -1249,7 +1374,8 @@ export class UCOrchestrator {
 	 *    (completed OR in the reset-pending set) goes back to pending, iterated
 	 *    to a fixed point. Recovers the downstream cancelled ONLY because X
 	 *    failed; a downstream depending on ANOTHER still-failed subtask stays.
-	 * 5. Rebuild waves from pending+running, executeWaves.
+	 * 5. Upsert the updated snapshot (the reset Pending nodes re-enter the
+	 *    server's publish path) and let the claim loop drive execution.
 	 */
 	async retrySubtask(taskId: string, subtaskId: string, ctx?: ExtensionCommandContext): Promise<boolean> {
 		const task = this.tasks.get(taskId);
@@ -1276,42 +1402,22 @@ export class UCOrchestrator {
 		task.controlState = "running";
 		task.status = "in_progress";
 		task.error = undefined;
-		task.resumeFromWave = undefined;
+		// Re-arm ownership (finishTask released it) for the claim loop.
 		this.abortControllers.set(taskId, new AbortController());
-		// Reuse the task-scoped resume bridge call for state sync — it just pushes
-		// the updated task snapshot; no per-subtask RPC exists.
-		this.bridge.resumeTask(taskId).catch((err) => { this.pi.logger.warn(`Failed to sync retrySubtask to gRPC: ${err}`); });
-		this.syncTaskToGrpc(task);
 
-		const pendingDefs: SubtaskDef[] = task.subtasks
-			.filter((s) => s.status === "pending" || s.status === "running")
-			.map((s) => ({
-				id: s.id,
-				description: s.description,
-				dependsOn: s.dependsOn,
-				files: s.files,
-				dispatchMode: s.dispatchMode,
-				requiredCapabilities: s.requiredCapabilities,
-				steps: s.steps,
-			}));
-
-		if (pendingDefs.length === 0) {
-			// Shouldn't happen (target was reset), but guard anyway.
-			task.status = "completed";
-			task.completedAt = Date.now();
-			await this.persist(task);
-			this.syncTaskToGrpc(task);
-			return true;
-		}
-
-		const waves = splitWavesByFileOverlap(buildDAG(pendingDefs));
 		await this.persist(task);
 		ctx?.ui.notify(`Task ${taskId}: retrying ${subtaskId} (${reset.size} subtask(s) re-dispatched)`, "info");
 		this.events.emit("task_resumed", { taskId });
 
-		const execCtx = ctx ?? stubContext();
-		// Fire-and-forget so the TUI overlay handler returns immediately.
-		void this.executeWaves(task, waves, execCtx);
+		// T6 #642 C4 — authority handoff: push the updated snapshot so the
+		// server's publish path re-dispatches, then let the claim loop run
+		// whatever no worker took.
+		const upserted = await this.bridge.upsertTask(this.toPersisted(task));
+		if (!upserted) {
+			this.pi.logger.warn(`Task ${taskId}: retry upsert rejected — claim loop will retry via per-subtask reports`);
+		}
+		this.ensureClaimLoop();
+		this.kickClaimLoop();
 		return true;
 	}
 
@@ -1465,7 +1571,8 @@ export class UCOrchestrator {
 	/**
 	 * Remote decomposition — dispatch to a worker with "decompose" capability.
 	 * Creates a pseudo-subtask, syncs to gRPC, and polls for completion.
-	 * ponytail: reuses existing executeSubtaskRemote pipeline — just different prompt and capability.
+	 * ponytail: reuses the pseudo-task + poll pipeline (same shape the old
+	 * remote subtask execution used) — just different prompt and capability.
 	 */
 	private async decomposeRemote(
 		description: string,
@@ -1589,14 +1696,11 @@ export class UCOrchestrator {
 		let lastResult: SubtaskResult | null = null;
 
 		for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-			const result = await this.executeSubtask(def, task, ctx);
-			// Only set orchestrator-side attempt count for local execution.
-			// Remote execution sets result.retryCount from the worker's proto
-			// (remoteSubtask.retryCount) — don't clobber it with the local
-			// retry loop counter. When undefined (local path), use attempt.
-			if (result.retryCount === undefined) {
-				result.retryCount = attempt;
-			}
+			// T6 #642 C4 — the local arm is the only arm: remote-only nodes are
+			// never claimed by the loop (they belong to NATS workers), so every
+			// execution here runs locally via runSubprocess.
+			const result = await this.executeSubtaskLocal(def, task, ctx);
+			result.retryCount = attempt;
 
 			if (result.status === "completed" || result.status === "cancelled" || (result.error?.startsWith("Review rejected"))) {
 				return result;
@@ -1623,11 +1727,7 @@ export class UCOrchestrator {
 		}
 
 		// Retries exhausted — mark failed and notify Dashboard
-		// Preserve remote worker's retryCount if set (from proto); only
-		// overwrite with maxRetries for local path (undefined).
-		if (lastResult!.retryCount === undefined) {
-			lastResult!.retryCount = this.config.maxRetries;
-		}
+		lastResult!.retryCount = this.config.maxRetries;
 		this.pi.logger.warn(
 			`Subtask ${def.id} failed permanently after ${this.config.maxRetries} retries`,
 		);
@@ -1646,35 +1746,11 @@ export class UCOrchestrator {
 		return lastResult!;
 	}
 
-	private async executeSubtask(
-		def: SubtaskDef,
-		task: TaskState,
-		ctx: ExtensionCommandContext,
-	): Promise<SubtaskResult> {
-		const mode = def.dispatchMode ?? "prefer_remote";
-
-		// "local" → always local
-		if (mode === "local") {
-			return this.executeSubtaskLocal(def, task, ctx);
-		}
-
-		// "remote" → must go remote, fail if no workers
-		if (mode === "remote") {
-			return this.executeSubtaskRemote(def, task, ctx);
-		}
-
-		// "prefer_remote" → try remote, fallback to local if no workers
-		const workersAvailable = await this.checkWorkerAvailability();
-		if (workersAvailable) {
-			return this.executeSubtaskRemote(def, task, ctx);
-		}
-		this.pi.logger.info(`Subtask ${def.id}: no remote workers, falling back to local execution`);
-		return this.executeSubtaskLocal(def, task, ctx);
-	}
-
 	/**
 	 * Execute a subtask locally via runSubprocess (coding agent).
-	 * Used when dispatchMode="local" or as fallback when no remote workers available.
+	 * T6 #642 C4 — the claim loop's only execution arm: remote-only nodes
+	 * are never claimed here (they belong to NATS workers); everything the
+	 * loop claims runs through runSubprocess.
 	 */
 	private async executeSubtaskLocal(
 		def: SubtaskDef,
@@ -1732,89 +1808,6 @@ export class UCOrchestrator {
 
 		result.completedAt = Date.now();
 		return result;
-	}
-
-	/**
-	 * Dispatch a subtask to the remote worker cluster via gRPC server → NATS.
-	 * Polls gRPC for remote subtask status until completion, failure, or timeout.
-	 */
-	private async executeSubtaskRemote(
-		def: SubtaskDef,
-		task: TaskState,
-		ctx: ExtensionCommandContext,
-	): Promise<SubtaskResult> {
-		const result: SubtaskResult = {
-			id: def.id,
-			description: def.description,
-			status: "running",
-			dependsOn: def.dependsOn,
-			files: def.files,
-			startedAt: Date.now(),
-		};
-
-		// 1. Ensure task is synced to gRPC (upsertTask handles create-if-not-exists)
-		await this.bridge.upsertTask(this.toPersisted(task));
-
-		// 2. Poll for remote subtask completion
-		const pollIntervalMs = 2000;
-		const timeoutMs = this.config.subtaskTimeoutMs;
-		const startTime = Date.now();
-		const abortCtrl = this.abortControllers.get(task.id);
-
-		try {
-			while (Date.now() - startTime < timeoutMs) {
-				// Check cancel
-				if (abortCtrl?.signal.aborted || task.controlState === "cancelled") {
-					result.status = "cancelled";
-					result.completedAt = Date.now();
-					return result;
-				}
-
-				// Poll gRPC for task state
-				const remoteTask = await this.bridge.getTask(task.id);
-				if (remoteTask) {
-					const remoteSubtask = remoteTask.subtasks.find(st => st.id === def.id);
-					if (remoteSubtask) {
-						const status = remoteSubtask.status.toLowerCase();
-						if (status === "completed") {
-							result.status = "completed";
-							result.result = remoteSubtask.result || "(completed remotely)";
-							result.retryCount = remoteSubtask.retryCount;
-							result.completedAt = Date.now();
-							this.events.emit("subtask_end", { taskId: task.id, subtaskId: result.id, result: result.result });
-							return result;
-						} else if (status === "failed") {
-							result.status = "failed";
-							result.error = remoteSubtask.result || "Remote execution failed";
-							result.retryCount = remoteSubtask.retryCount;
-							result.completedAt = Date.now();
-							this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error });
-							return result;
-						}
-						// Still running/pending/assigned — continue polling
-					}
-				}
-
-				// Wait before next poll
-				await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-			}
-
-			// Timeout
-			result.status = "failed";
-			result.error = `Remote subtask timed out after ${timeoutMs / 1000}s`;
-			result.completedAt = Date.now();
-			this.events.emit("subtask_failed", { taskId: task.id, subtaskId: result.id, error: result.error });
-			return result;
-		} catch (err) {
-			if ((err as Error).name === "AbortError") {
-				result.status = "cancelled";
-			} else {
-				result.status = "failed";
-				result.error = err instanceof Error ? err.message : String(err);
-			}
-			result.completedAt = Date.now();
-			return result;
-		}
 	}
 
 	// ── Supervisor Review ──────────────────────────────────────────
@@ -1967,19 +1960,6 @@ export class UCOrchestrator {
 		await this.store.save(this.toPersisted(task));
 	}
 
-	/** Auto-checkpoint: local file (primary) + gRPC sync (secondary, fire-and-forget). */
-	private async checkpoint(task: TaskState): Promise<void> {
-		const snap = this.toPersisted(task);
-		// Primary: local file
-		await this.store.saveCheckpoint(snap);
-		// Secondary: gRPC sync (fire-and-forget)
-		this.bridge.writeMemory(
-			"task", `checkpoint_snap-${task.id}-${Date.now().toString(36)}`,
-			JSON.stringify({ ...snap, _v: 1 }),
-			"structured", "uc-orchestrator", task.id,
-		).catch((err) => { this.pi.logger.warn(`Failed to write checkpoint to memory: ${err}`); });
-	}
-
 	private toPersisted(task: TaskState): PersistedTask {
 		return {
 			id: task.id,
@@ -1987,7 +1967,6 @@ export class UCOrchestrator {
 			status: task.status,
 			error: task.error,
 			controlState: task.controlState,
-			resumeFromWave: task.resumeFromWave,
 			redecomposed: task.redecomposed,
 			projectId: task.projectId,
 			subtasks: task.subtasks.map((s) => ({
@@ -2024,7 +2003,6 @@ export class UCOrchestrator {
 			status: p.status as TaskState["status"],
 			controlState: p.controlState,
 			error: p.error,
-			resumeFromWave: p.resumeFromWave,
 			redecomposed: p.redecomposed,
 			projectId: p.projectId,
 			subtasks: p.subtasks.map((s) => ({
@@ -2078,9 +2056,24 @@ export class UCOrchestrator {
 				description: String(s.description ?? "").replace(/\s+/g, " ").trim(),
 				status: s.status as SubtaskResult["status"],
 				dependsOn: (s.dependsOn ?? []).map((d) => String(d).trim()).filter(Boolean),
-				files: [], // server projection carries no file constraints (dispatch metadata)
+				// T6 #642 C4 — dispatch metadata rides the projection so an
+				// adopted-then-resumed task can be claim-gated (dispatchMode)
+				// and re-upserted without losing fidelity (files/steps/caps).
+				files: s.files ?? [],
 				result: s.result || undefined,
 				retryCount: s.retryCount,
+				dispatchMode: normalizeServerDispatchMode(s.dispatchMode),
+				requiredCapabilities: s.requiredCapabilities?.length ? [...s.requiredCapabilities] : undefined,
+				steps: s.steps?.length ? s.steps.map((st) => ({
+					agent: st.agent,
+					prompt: st.prompt,
+					...(st.agentConfigJson != null ? { agent_config_json: st.agentConfigJson } : {}),
+					...(st.abortOnFailure != null ? { abort_on_failure: st.abortOnFailure } : {}),
+					...(st.retryCount != null ? { retryCount: st.retryCount } : {}),
+					...(st.retryDelayMs != null ? { retryDelayMs: Number(st.retryDelayMs) } : {}),
+					...(st.condition != null ? { condition: st.condition } : {}),
+					...(st.parallelGroup != null ? { parallelGroup: st.parallelGroup } : {}),
+				})) : undefined,
 			})),
 			createdAt: Date.now(),
 		};
@@ -2091,8 +2084,8 @@ export class UCOrchestrator {
 	 * list and backfill the local map as a read-only projection. Replaces the
 	 * legacy push-resync (deleted): TS no longer
 	 * bulk-pushes local state to the server. Locally-executing tasks (this
-	 * session holds an AbortController for them) are kept until C4's claim
-	 * loop replaces local execution — per-transition syncs keep converging
+	 * session holds an AbortController for them) are kept — the claim loop
+	 * (C4) owns their local execution; per-transition syncs keep converging
 	 * the server rows in the meantime.
 	 */
 	private async pullTasksFromGrpc(): Promise<void> {
@@ -2166,6 +2159,11 @@ export class UCOrchestrator {
 			clearTimeout(this.watchTaskRecoveryTimer);
 			this.watchTaskRecoveryTimer = undefined;
 		}
+		// Stop the claim loop (T6 #642 C4) — an in-flight tick may still run;
+		// it fails against the closed bridge and logs a warning.
+		this.stopClaimLoop();
+		this.tickInFlight = null;
+		this.tickQueued = false;
 		// Stop NATS/polling subscriber
 		await this.controlSubscriber.stop();
 		// Abort all running tasks
@@ -2175,7 +2173,8 @@ export class UCOrchestrator {
 		this.abortControllers.clear();
 		// Clear in-memory state
 		this.tasks.clear();
-		this.runningCount = 0;
+		this.claimed.clear();
+		this.taskContexts.clear();
 		this.circuitBreaker.reset();
 		// Close gRPC bridge
 		this.bridge.close();

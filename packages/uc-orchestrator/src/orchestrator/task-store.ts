@@ -18,8 +18,6 @@ export interface PersistedTask {
 	status: string;
 	error?: string;
 	controlState: "running" | "paused" | "cancelled";
-	/** Which wave to resume from (persisted — fixes resume-from-wave-0 bug). */
-	resumeFromWave?: number;
 	/** Whether re-decomposition has been attempted (one-shot guard, persisted). */
 	redecomposed?: boolean;
 	/** Project scope for cross-repo search and memory sharing. */
@@ -50,10 +48,8 @@ export interface PersistedTask {
 	createdAt: number;
 	completedAt?: number;
 	/**
-	 * Write timestamp stamped by save()/saveCheckpoint() (F46). restore()
-	 * prefers the NEWER of task file vs checkpoint — checkpoints are only
-	 * written at wave boundaries, so an unconditional checkpoint preference
-	 * rolled mid-wave progress back after a crash. Absent on legacy files.
+	 * Write timestamp stamped by save(). Absent on legacy files — the UI
+	 * cache-refresh path uses it to reason about projection freshness.
 	 */
 	savedAt?: number;
 }
@@ -62,16 +58,13 @@ export interface PersistedTask {
 
 export class TaskStore {
 	private dir: string;
-	private checkpointDir: string;
 
 	constructor(cwd: string) {
 		this.dir = path.join(cwd, ".uc", "tasks");
-		this.checkpointDir = path.join(cwd, ".uc", "checkpoints");
 	}
 
 	async init(): Promise<void> {
 		await fs.mkdir(this.dir, { recursive: true });
-		await fs.mkdir(this.checkpointDir, { recursive: true });
 	}
 
 	/**
@@ -152,46 +145,19 @@ export class TaskStore {
 		}
 	}
 
-	/** Load tasks that are recoverable (not completed/cancelled). */
-	async loadRecoverable(): Promise<PersistedTask[]> {
-		const all = await this.loadAll();
-		return all.filter(
-			(t) => t.status === "planning" || t.status === "in_progress" || t.status === "failed" || t.controlState === "paused",
-		);
-	}
-
-	/** Save a wave-boundary checkpoint snapshot (latest-wins). */
-	async saveCheckpoint(task: PersistedTask): Promise<void> {
-		this.assertSafeId(task.id);
-		// ponytail: F42 — atomic write, same rationale as save().
-		// F46 — savedAt stamp so restore() can pick the newer artifact.
-		const filePath = path.join(this.checkpointDir, `${task.id}.snap.json`);
-		const stamped = { ...task, savedAt: Date.now() };
-		await fs.writeFile(`${filePath}.tmp`, JSON.stringify(stamped, null, 2), "utf-8");
-		await fs.rename(`${filePath}.tmp`, filePath);
-	}
-
-	/** Load the latest checkpoint for a task, or null if none exists. */
-	async loadCheckpoint(taskId: string): Promise<PersistedTask | null> {
-		this.assertSafeId(taskId);
-		try {
-			const filePath = path.join(this.checkpointDir, `${taskId}.snap.json`);
-			const raw = await fs.readFile(filePath, "utf-8");
-			return JSON.parse(raw) as PersistedTask;
-		} catch (err) {
-			if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
-				console.warn(`TaskStore loadCheckpoint failed for ${taskId}: ${err instanceof Error ? err.message : err}`);
-			}
-			return null;
-		}
-	}
-
-	/** Remove task files and checkpoint files not in the keep set. */
+	/**
+	 * T6 #642 C4 — wave-boundary checkpoints retired: the Rust gateway is the
+	 * execution authority (crash recovery = graph-plane committed-state +
+	 * T2's startup import), so `.uc/checkpoints` is gone. This file remains
+	 * a pure UI projection cache (C3).
+	 *
+	 * Remove task files not in the keep set.
+	 */
 	async removeStale(taskIdsToKeep: Set<string>): Promise<number> {
 		let removed = 0;
-		for (const dir of [this.dir, this.checkpointDir]) {
+		{
 			try {
-				const files = await fs.readdir(dir);
+				const files = await fs.readdir(this.dir);
 				for (const file of files) {
 					// ponytail: F42 — also sweep .tmp orphans a crash can leave
 					// behind from the atomic-write rename.
@@ -200,7 +166,7 @@ export class TaskStore {
 					const taskId = file.replace(/\.json\.tmp$|\.snap\.json$|\.json$/, "");
 					if (!taskIdsToKeep.has(taskId)) {
 						try {
-							await fs.unlink(path.join(dir, file));
+							await fs.unlink(path.join(this.dir, file));
 							removed++;
 						} catch (err) {
 							if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {

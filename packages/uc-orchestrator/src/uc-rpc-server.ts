@@ -117,8 +117,7 @@ export class RpcServer {
 		// Subscribe orchestrator events → JSONL stdout for Python bridge
 		const eventTypes: OrchestratorEventType[] = [
 			"task_planning", "task_decomposed", "task_complete",
-			"task_paused", "task_resumed", "task_cancelled",
-			"wave_start", "wave_end",
+			"task_resumed", "task_cancelled",
 			"subtask_start", "subtask_end", "subtask_failed", "subtask_reviewing",
 		];
 		for (const type of eventTypes) {

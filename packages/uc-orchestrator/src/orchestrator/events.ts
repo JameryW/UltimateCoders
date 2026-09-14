@@ -7,7 +7,7 @@
  * 2. JSONL stdout (structured event payloads for Python bridge)
  */
 
-import type { TaskState, SubtaskResult } from "./orchestrator";
+import type { TaskState } from "./orchestrator";
 
 // ── Event Types ──────────────────────────────────────────────────
 
@@ -15,14 +15,9 @@ export interface OrchestratorEvents {
 	/** Task entered planning phase */
 	task_planning: { taskId: string; description: string };
 
-	/** Task decomposition complete, DAG built */
-	task_decomposed: { taskId: string; subtaskCount: number; waveCount: number };
-
-	/** A wave is starting */
-	wave_start: { taskId: string; waveIdx: number; totalWaves: number; subtaskIds: string[] };
-
-	/** A wave completed */
-	wave_end: { taskId: string; waveIdx: number; totalWaves: number; results: SubtaskResult[] };
+	/** Task decomposition complete (T6 #642 C4 — waveCount died with the
+	 *  wave machine; execution ordering is the Rust gateway's job) */
+	task_decomposed: { taskId: string; subtaskCount: number };
 
 	/** A subtask started executing */
 	subtask_start: { taskId: string; subtaskId: string; description: string };
@@ -54,9 +49,6 @@ export interface OrchestratorEvents {
 
 	/** Task reached terminal state */
 	task_complete: { taskId: string; status: TaskState["status"]; summary: string };
-
-	/** Task paused */
-	task_paused: { taskId: string; waveIdx: number };
 
 	/** Task resumed */
 	task_resumed: { taskId: string };

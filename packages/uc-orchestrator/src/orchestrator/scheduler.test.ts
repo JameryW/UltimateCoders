@@ -1,11 +1,16 @@
 /**
  * Scheduler + TaskStore self-check — validates DAG construction and persistence logic.
  *
+ * T6 #642 C4: the wave-splitter / FileIntentTracker / checkpoint / recoverable
+ * suites were removed with the wave machine they tested (PRD-mandated deletes;
+ * recorded in implement.jsonl). buildDAG survives as decomposer-output
+ * validation; normalizeFileIntent stays for C5's conflict_risk grading.
+ *
  * Run: bun test src/orchestrator/scheduler.test.ts
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, splitWavesByFileOverlap, FileIntentTracker, CircuitBreaker, normalizeFileIntent, recursiveDecompose, type SubtaskDef } from "./scheduler";
+import { buildDAG, detectCycles, CircuitBreaker, normalizeFileIntent, recursiveDecompose, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -156,20 +161,6 @@ describe("TaskStore", () => {
 		expect(all.length).toBe(2);
 	});
 
-	it("filters recoverable tasks", async () => {
-		const store = new TaskStore(testDir);
-		await store.init();
-
-		await store.save(makeTask({ id: "uc-recoverable", status: "in_progress", controlState: "running" }));
-		await store.save(makeTask({ id: "uc-paused", status: "in_progress", controlState: "paused" }));
-		await store.save(makeTask({ id: "uc-done", status: "completed", controlState: "running" }));
-		await store.save(makeTask({ id: "uc-failed", status: "failed", controlState: "running" }));
-
-		const recoverable = await store.loadRecoverable();
-		expect(recoverable.length).toBe(3);
-		expect(recoverable.map((t) => t.id).sort()).toEqual(["uc-failed", "uc-paused", "uc-recoverable"]);
-	});
-
 	it("removes a task", async () => {
 		const store = new TaskStore(testDir);
 		await store.init();
@@ -182,33 +173,11 @@ describe("TaskStore", () => {
 		expect(await store.load(task.id)).toBeNull();
 	});
 
-		it("recovers planning tasks", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			await store.save(makeTask({ id: "uc-planning", status: "planning", controlState: "running" }));
-
-			const recoverable = await store.loadRecoverable();
-			expect(recoverable.length).toBe(1);
-			expect(recoverable[0].id).toBe("uc-planning");
-		});
-
-		it("does not recover cancelled tasks", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			await store.save(makeTask({ id: "uc-cancelled", status: "cancelled", controlState: "cancelled" }));
-
-			const recoverable = await store.loadRecoverable();
-			expect(recoverable.length).toBe(0);
-		});
-
 		it("handles empty directory gracefully", async () => {
 			const store = new TaskStore(testDir);
 			await store.init();
 
 			expect(await store.loadAll()).toEqual([]);
-			expect(await store.loadRecoverable()).toEqual([]);
 		});
 
 		it("overwrites existing task on save", async () => {
@@ -252,34 +221,9 @@ describe("TaskStore", () => {
 			expect(loaded!.subtasks[0].completedAt).toBe(2000);
 		});
 
-		// ── resumeFromWave round-trip ──────────────────────────────────
-
-		it("persists and restores resumeFromWave", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			const task = makeTask({
-				id: "uc-wave-persist",
-				controlState: "paused",
-				resumeFromWave: 3,
-			});
-			await store.save(task);
-
-			const loaded = await store.load("uc-wave-persist");
-			expect(loaded!.resumeFromWave).toBe(3);
-			expect(loaded!.controlState).toBe("paused");
-		});
-
-		it("resumeFromWave undefined when not set", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			const task = makeTask({ id: "uc-no-wave" });
-			await store.save(task);
-
-			const loaded = await store.load("uc-no-wave");
-			expect(loaded!.resumeFromWave).toBeUndefined();
-		});
+		// ── wave-checkpoint machinery (resumeFromWave) removed with the wave
+		// machine — T6 #642 C4. The persist/load contract it covered is still
+		// locked by the files/steps round-trip tests below.
 
 		it("persists and restores subtask files", async () => {
 			const store = new TaskStore(testDir);
@@ -349,233 +293,6 @@ describe("TaskStore", () => {
 			const loaded = await store.load("uc-no-steps");
 			expect(loaded!.subtasks[0].steps).toBeUndefined();
 		});
-
-		// ── Checkpoint save/load ───────────────────────────────────────
-
-		it("saves and loads a checkpoint", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			const task = makeTask({
-				id: "uc-cp-test",
-				controlState: "paused",
-				resumeFromWave: 2,
-			});
-			await store.saveCheckpoint(task);
-
-			const cp = await store.loadCheckpoint("uc-cp-test");
-			expect(cp).not.toBeNull();
-			expect(cp!.id).toBe("uc-cp-test");
-			expect(cp!.resumeFromWave).toBe(2);
-			expect(cp!.controlState).toBe("paused");
-		});
-
-		it("returns null for nonexistent checkpoint", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			expect(await store.loadCheckpoint("no-such-task")).toBeNull();
-		});
-
-		it("checkpoint overwrites on second save (latest-wins)", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			await store.saveCheckpoint(makeTask({ id: "uc-cp-ow", resumeFromWave: 1 }));
-			await store.saveCheckpoint(makeTask({ id: "uc-cp-ow", resumeFromWave: 4 }));
-
-			const cp = await store.loadCheckpoint("uc-cp-ow");
-			expect(cp!.resumeFromWave).toBe(4);
-		});
-
-		it("checkpoint is independent from task file", async () => {
-			const store = new TaskStore(testDir);
-			await store.init();
-
-			const task = makeTask({ id: "uc-cp-indep", resumeFromWave: 2 });
-			await store.save(task);
-			await store.saveCheckpoint(task);
-
-			// Update task file — checkpoint should still have old value
-			await store.save(makeTask({ id: "uc-cp-indep", resumeFromWave: 5 }));
-			const cp = await store.loadCheckpoint("uc-cp-indep");
-			expect(cp!.resumeFromWave).toBe(2);
-		});
-});
-
-// ── File-Aware Wave Splitting tests ────────────────────────────────
-
-describe("splitWavesByFileOverlap", () => {
-	it("no-op when all subtasks have no files", () => {
-		const waves = buildDAG([st("a", "a"), st("b", "b"), st("c", "c")]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(1);
-		expect(split[0].length).toBe(3);
-	});
-
-	it("no-op when no file overlap", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["file1.ts"]),
-			st("b", "b", [], ["file2.ts"]),
-			st("c", "c", [], ["file3.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(1);
-		expect(split[0].length).toBe(3);
-	});
-
-	it("splits wave when two subtasks share a file", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["file1.ts", "file2.ts"]),
-			st("b", "b", [], ["file2.ts", "file3.ts"]),
-			st("c", "c", [], ["file4.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		// a and b conflict, c is independent → 2 sub-waves
-		expect(split.length).toBe(2);
-		const sizes = split.map((w) => w.length).sort();
-		expect(sizes).toEqual([1, 2]);
-	});
-
-	it("fully sequential when all subtasks share a file", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["shared.ts"]),
-			st("b", "b", [], ["shared.ts"]),
-			st("c", "c", [], ["shared.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(3);
-		for (const w of split) {
-			expect(w.length).toBe(1);
-		}
-	});
-
-	it("subtasks with empty files never conflict", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["file1.ts"]),
-			st("b", "b", [], []),
-			st("c", "c", [], ["file1.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(2);
-	});
-
-	it("preserves dependency ordering across waves", () => {
-		const waves = buildDAG([
-			st("a", "a"),
-			st("b", "b", ["a"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(2);
-		expect(split[0][0].id).toBe("a");
-		expect(split[1][0].id).toBe("b");
-	});
-
-	it("handles multi-wave input where only middle wave needs splitting", () => {
-		// Wave 1: [a] (no split needed), Wave 2: [b, c] (share file, needs split), Wave 3: [d]
-		const waves = buildDAG([
-			st("a", "a", [], ["file1.ts"]),
-			st("b", "b", ["a"], ["file2.ts"]),
-			st("c", "c", ["a"], ["file2.ts"]),
-			st("d", "d", ["b", "c"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		// Wave 1 [a] unchanged, Wave 2 [b,c] split into 2, Wave 3 [d] unchanged = 4 sub-waves
-		expect(split.length).toBe(4);
-		expect(split[0].map((s) => s.id)).toEqual(["a"]);
-		expect(split[3].map((s) => s.id)).toEqual(["d"]);
-	});
-
-	it("partial overlap causes split", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["x.ts"]),
-			st("b", "b", [], ["y.ts"]),
-			st("c", "c", [], ["x.ts", "y.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		// c conflicts with both a and b; a and b don't conflict with each other
-		// Greedy coloring: a=0, b=0, c=1 -> 2 sub-waves: [a,b] and [c]
-		expect(split.length).toBe(2);
-		expect(split[0].length).toBe(2);
-		expect(split[1].length).toBe(1);
-	});
-});
-
-// ── FileIntentTracker tests ────────────────────────────────────────
-
-describe("FileIntentTracker", () => {
-	it("declares and releases intents", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts", "b.ts"]);
-		expect(tracker.isConflicting(["a.ts"]).size).toBe(1);
-		tracker.release("st-1");
-		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
-	});
-
-	it("detects conflict across multiple subtasks", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts"]);
-		tracker.declare("st-2", ["b.ts"]);
-		expect(tracker.isConflicting(["a.ts"])).toEqual(new Set(["st-1"]));
-		expect(tracker.isConflicting(["b.ts"])).toEqual(new Set(["st-2"]));
-		expect(tracker.isConflicting(["c.ts"]).size).toBe(0);
-	});
-
-	it("no conflict for empty files", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts"]);
-		expect(tracker.isConflicting([]).size).toBe(0);
-	});
-
-	it("release is idempotent", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts"]);
-		tracker.release("st-1");
-		tracker.release("st-1");
-		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
-	});
-
-	it("getOwnedFiles returns correct map", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts", "b.ts"]);
-		tracker.declare("st-2", ["a.ts"]);
-		const owned = tracker.getOwnedFiles();
-		expect(owned.get("a.ts")!.sort()).toEqual(["st-1", "st-2"]);
-		expect(owned.get("b.ts")).toEqual(["st-1"]);
-	});
-
-	it("clear removes all intents", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts"]);
-		tracker.clear();
-		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
-		expect(tracker.getOwnedFiles().size).toBe(0);
-	});
-
-	it("re-declare releases old intents first", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["a.ts", "b.ts"]);
-		// Re-declare with different files — old intents should be released
-		tracker.declare("st-1", ["c.ts"]);
-		expect(tracker.isConflicting(["a.ts"]).size).toBe(0);
-		expect(tracker.isConflicting(["b.ts"]).size).toBe(0);
-		expect(tracker.isConflicting(["c.ts"]).size).toBe(1);
-		const owned = tracker.getOwnedFiles();
-		expect(owned.has("a.ts")).toBe(false);
-		expect(owned.has("b.ts")).toBe(false);
-		expect(owned.get("c.ts")).toEqual(["st-1"]);
-	});
-
-	it("same file owned by multiple subtasks", () => {
-		const tracker = new FileIntentTracker();
-		tracker.declare("st-1", ["shared.ts"]);
-		tracker.declare("st-2", ["shared.ts"]);
-		const conflicting = tracker.isConflicting(["shared.ts"]);
-		expect(conflicting).toEqual(new Set(["st-1", "st-2"]));
-		// Releasing one should still leave the other
-		tracker.release("st-1");
-		expect(tracker.isConflicting(["shared.ts"])).toEqual(new Set(["st-2"]));
-	});
 });
 
 // ── CircuitBreaker tests ────────────────────────────────────────────
@@ -633,7 +350,9 @@ describe("CircuitBreaker", () => {
 });
 
 // ponytail: F47 — decomposer files arrive unnormalized; raw string equality
-// missed same-file variants, scheduling concurrent writers on one file.
+// missed same-file variants. T6 #642 C4: the runtime consumers (wave splitter
+// + FileIntentTracker) are gone — the normalizer stays for C5's conflict_risk
+// grading at decomposition time.
 describe("file intent normalization (F47)", () => {
 	it("normalizes ./ prefixes and redundant separators", () => {
 		expect(normalizeFileIntent("./src/a.ts")).toBe(normalizeFileIntent("src/a.ts"));
@@ -647,26 +366,6 @@ describe("file intent normalization (F47)", () => {
 		} else {
 			expect(normalizeFileIntent("src/A.ts")).not.toBe(normalizeFileIntent("src/a.ts"));
 		}
-	});
-
-	it("splitWavesByFileOverlap treats ./-prefixed and plain paths as the same file", () => {
-		const waves = buildDAG([
-			st("a", "a", [], ["./src/shared.ts"]),
-			st("b", "b", [], ["src/shared.ts"]),
-			st("c", "c", [], ["other.ts"]),
-		]);
-		const split = splitWavesByFileOverlap(waves);
-		expect(split.length).toBe(2);
-		const sizes = split.map((w) => w.length).sort();
-		expect(sizes).toEqual([1, 2]);
-	});
-
-	it("FileIntentTracker matches case variants on darwin/win32", () => {
-		if (process.platform !== "darwin" && process.platform !== "win32") return;
-		const tracker = new FileIntentTracker();
-		tracker.declare("s1", ["src/Config.ts"]);
-		expect(tracker.isConflicting(["src/config.ts"]).has("s1")).toBe(true);
-		expect(tracker.isConflicting(["./src/CONFIG.ts"]).has("s1")).toBe(true);
 	});
 });
 
