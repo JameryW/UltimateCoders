@@ -289,3 +289,80 @@ T5 六提交落 main：Rust Executor trait/Selector/effect_class 投影 + 删 Di
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: T6 #642 authority flip: C1-C7 + D6 delivered, task archived
+
+**Date**: 2026-09-14
+**Task**: T6 #642 authority flip: C1-C7 + D6 delivered, task archived
+**Branch**: `main`
+
+### Summary
+
+T6 delivered in 8 commits: graph-plane sweep replaces legacy reaper, T4 serde fallbacks dropped, TS authority flipped to Rust (claim loop replaces the wave machine), graded conflict_risk, D7 release notes, dead review pipeline retired. Baselines: Rust unchanged, TS 179->162 (deaths recorded), pytest 977+4 equivalent green. PG-dependent runs pending Docker recovery.
+
+### Main Changes
+
+# T6 #642 — 权威一刀切反转 + TS wave 拆除 + D6 暂停语义 + D7 发布说明
+
+## 交付概览（8 提交，全部直落 main，Tracker: #642）
+
+| 切片 | 提交 | 内容 |
+| --- | --- | --- |
+| C1 | df8a8e9 | `timeout_sweep` 返回 per-attempt outcome 结构（graph_store） |
+| C1/C2 | c353c5f | sweep 接管 heartbeat monitor（legacy reaper 换血）+ T4 serde 回落删除（Rust） |
+| C3 | 33f9724 | TS 权威反转：`.uc/tasks` 只读化、bootstrap 改拉取、pause/resume RPC-first |
+| C4-Rust/D6 | 765068b | D6 暂停语义：`UC_PAUSE_GRACE_SECS` 宽限硬停（fence attempt + node 回 READY）+ resume 重派 + 菱形验收测试代码 |
+| C2 | （并入 c353c5f） | Python `_parse_subtask_message` legacy 回落删除 |
+| C4-TS | 5ea60df | wave 机器全拆 + claim loop（upsert 即上报通道）+ TaskSync 派发元数据保真 |
+| C5 | e4cb8f6 | conflict_risk 分级替代文件重叠硬禁并行（0.4/0.8 阈值，本地并行集约束） |
+| C6 | 217c49f | D7 发布说明四要点 + C1 reaper 窗口合并记录（docs/architecture/durable-runtime-upgrade-notes.md） |
+| C7 | 7d3b207 | TS review 生产管线退役 + progress-widget wave tag 清除 + TaskStore tmp 写竞争修复 |
+
+## 门禁终值
+
+- fmt / clippy 五目标全绿（C1/C2/D6 提交时验证）。
+- Rust 基线：437+5 / 379+5 / 192+8 / 36 / 35（T5 终值，只增不减 ✓）。
+- TS（bun test）：**162 pass / 17 files**（C3 开工基线 179；删 wave/checkpoint/recoverable 28+1、parse-review 9；新增 claim-loop 14、conflict 分级/gating 6；净减全部随死机制，理由记录于 implement.jsonl）。
+- pytest：**970 passed 全量 + 11 单跑复核（merge_arbiter 5 + workspace 6）= 977 + 4 skipped 等价全绿**。全量跑中 7 个失败 100% 为 safe-delete 监视器 turn 累计删除拦截（seed 目录 69 文件 > 50 阈值，监视器独立于 bypass），非代码回归。
+- tsc：uc-orchestrator 本包零错误（18 个 vendor 预存噪音）。
+
+## 环境欠账（恢复跑法）
+
+- Docker Desktop / PG 宕机（与 T4 收尾时相同），两笔 PG 实跑未执行：
+  - `cargo test -p uc-grpc --all-features --test pause_grace_diamond -- --ignored`（菱形 TS-free 验收：暂停→单分支 commit→宽限硬停→resume 重派；测试代码已交付）
+  - `cargo test -p uc-engine --features storage --test graph_store_integration -- --ignored`
+- 恢复跑法：手动/管理员启动 Docker Desktop → 起 PG → 实跑上述两条。
+
+## 关键架构裁决（沉淀进长期 memory）
+
+- TS orchestrator 权威彻底移交：submitTask/runTask 只 upsert all-Pending；claim loop 三步 reconcile（采纳/终态推断/认领）；proto 无单子任务 RPC，UpdateTask upsert 就是上报通道（TOCTOU 接受）。
+- FileIntentTracker → C5 `classifyConflicts`（分解期一次计算）；约束语义单位是本地并行执行集而非轮询 tick。
+- review 语义未来由 Rust ready-node 管线重立；`SubtaskResult.review` 字段保留（UI 渲染历史缓存）。
+- TaskStore.save 的共享 tmp 文件名在并发写者下是错的（cancel persist × in-flight outcome persist 竞争 → ENOENT），per-call 唯一 tmp 名修复。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df8a8e9` | (see git log) |
+| `c353c5f` | (see git log) |
+| `33f9724` | (see git log) |
+| `765068b` | (see git log) |
+| `5ea60df` | (see git log) |
+| `e4cb8f6` | (see git log) |
+| `217c49f` | (see git log) |
+| `7d3b207` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

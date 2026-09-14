@@ -1,0 +1,10 @@
+{"check": "cargo fmt --all -- --check 全绿", "gate": true}
+{"check": "clippy -D warnings：uc-types、uc-engine（默认 + --no-default-features）、uc-grpc --all-features、uc-grpc-server", "gate": true}
+{"check": "Rust 测试基线只增不减（T5 终值 437+5 / 379+5 / 192+8 / 36 / 35）", "gate": true}
+{"check": "pytest 全量 977 passed + 4 skipped 基线（bypass + 浅 basetemp .scratch/pytest-tmp）", "gate": true}
+{"check": "TS 测试基线记录 pre-change 数并只增不减（packages/uc-orchestrator）", "gate": true}
+{"check": "崩溃注入恢复测试：重启后无重复执行已 commit node、无丢失 READY 节点", "gate": true}
+{"check": "菱形图 TS-free 端到端：经 Rust API 暂停→单分支 commit→宽限硬停→resume 重派", "gate": true}
+{"check": "UC_PAUSE_GRACE_SECS 默认 120s；超时对仍 RUNNING attempt 走 fail_attempt fence + node 回 READY", "gate": true}
+{"check": "无头 grep：resumeFromWave / checkpoints / splitWavesByFileOverlap / resyncAllTasksToGrpc 全仓零匹配", "gate": true}
+{"check": ".uc/tasks 缓存重建证据：删除文件后 UI 可由 Rust 重建", "gate": true}

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~291 | Active |
+| `journal-1.md` | ~368 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-09-14 | T6 #642 authority flip: C1-C7 + D6 delivered, task archived | `df8a8e9`, `c353c5f`, `33f9724`, `765068b`, `5ea60df`, `e4cb8f6`, `217c49f`, `7d3b207` | `main` |
 | 6 | 2026-09-14 | T5 #641 统一 Executor trait 落地完成（JetStream 硬依赖 / effect_class 白名单 / 分解分叉删除） | `feca89f`, `c3d067f`, `91c7d2d`, `8db5ef8`, `4215799`, `8cd7e01e`, `7ce2e758` | `main` |
 | 5 | 2026-09-14 | T4 #640: idempotency closed loop + attempt dedup + late-result fencing | `99176380`, `04b6162b`, `2041e683`, `5940e42`, `1c3f448` | `main` |
 | 4 | 2026-09-13 | T3: graph state machine + NodeCompletion commit-once + attempt lifecycle (#639) | `53983b1e`, `fa56066d`, `1857316b` | `main` |
