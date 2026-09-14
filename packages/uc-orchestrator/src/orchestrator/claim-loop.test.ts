@@ -490,3 +490,62 @@ describe("claim loop", () => {
 		expect(server.getTaskCalls).toBe(0); // nothing owned → no snapshots fetched
 	});
 });
+
+// ── C5 conflict_risk gating ────────────────────────────────────────
+
+describe("conflict risk claim gating", () => {
+	it("low-risk nodes claim freely in one tick", async () => {
+		const { orch, server } = await tracked();
+		decomposeQueue = [defsJson([
+			{ id: "st-1", description: "a", files: ["a.ts"] },
+			{ id: "st-2", description: "b", files: ["b.ts"] },
+		])];
+		const taskId = await orch.submitTask("free parallel task");
+		const task = orch.getTaskState(taskId)!;
+		expect(task.subtasks.map((s) => s.conflictRisk)).toEqual(["low", "low"]);
+
+		await orch.runClaimTick();
+		expect(task.subtasks.every((s) => s.status === "running")).toBe(true);
+		await waitFor(() => server.snapshot(taskId)!.subtasks.every((s) => s.status === "Completed"));
+	});
+
+	it("high-risk nodes run alone — nothing claims alongside, next node waits for the set to drain", async () => {
+		const { orch, server } = await tracked();
+		decomposeQueue = [defsJson([
+			{ id: "st-1", description: "hot", files: ["shared.ts", "x.ts"] },
+			{ id: "st-2", description: "also hot", files: ["shared.ts", "x.ts"] }, // overlap 1.0 → high
+		])];
+		const taskId = await orch.submitTask("high risk task");
+		const task = orch.getTaskState(taskId)!;
+		expect(task.subtasks.map((s) => s.conflictRisk)).toEqual(["high", "high"]);
+
+		await orch.runClaimTick();
+		expect(task.subtasks[0].status).toBe("running");
+		expect(task.subtasks[1].status).toBe("pending"); // high yields the whole batch
+
+		await waitFor(() => server.snapshot(taskId)!.subtasks[0].status === "Completed");
+		await orch.runClaimTick(); // parallel set drained → st-2 may run alone
+		expect(task.subtasks[1].status).toBe("running");
+		await waitFor(() => server.snapshot(taskId)!.subtasks[1].status === "Completed");
+	});
+
+	it("medium-risk nodes claim at most one per parallel set", async () => {
+		const { orch, server } = await tracked();
+		decomposeQueue = [defsJson([
+			{ id: "st-1", description: "warm a", files: ["w.ts", "a.ts"] },
+			{ id: "st-2", description: "warm b", files: ["w.ts", "b.ts"] },
+		])];
+		const taskId = await orch.submitTask("medium risk task");
+		const task = orch.getTaskState(taskId)!;
+		expect(task.subtasks.map((s) => s.conflictRisk)).toEqual(["medium", "medium"]);
+
+		await orch.runClaimTick();
+		expect(task.subtasks[0].status).toBe("running");
+		expect(task.subtasks[1].status).toBe("pending"); // one medium already in the set
+
+		await waitFor(() => server.snapshot(taskId)!.subtasks[0].status === "Completed");
+		await orch.runClaimTick();
+		expect(task.subtasks[1].status).toBe("running");
+		await waitFor(() => server.snapshot(taskId)!.subtasks[1].status === "Completed");
+	});
+});

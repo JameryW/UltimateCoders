@@ -18,6 +18,15 @@ import * as path from "node:path";
  *  "local" based on worker availability (see resolveDispatchMode). */
 export type DispatchMode = "local" | "remote" | "prefer_remote" | "auto";
 
+/**
+ * File-overlap parallelism grade, computed at decomposition time (C5).
+ * "high" runs alone, "medium" at most one in the local parallel set,
+ * "low" (the default) is unconstrained. Derived data only — never sent
+ * to the server (no graph schema column; P1 affinity scheduling will
+ * reuse it as its interface).
+ */
+export type ConflictRisk = "low" | "medium" | "high";
+
 /** A single step in a subtask's multi-agent workflow chain.
  *  Field names mirror Rust `WorkflowStep` (snake_case) — proto-generated
  *  TS types use camelCase, but the decomposer JSON + persistence use snake_case.
@@ -38,6 +47,9 @@ export interface SubtaskDef {
 	description: string;
 	dependsOn: string[];
 	files: string[];
+	/** File-overlap parallelism grade (C5) — stamped by classifyConflicts()
+	 *  right after decomposition, before the defs become SubtaskResults. */
+	conflictRisk?: ConflictRisk;
 	/** How this subtask should be dispatched: "local" | "remote" | "prefer_remote" (default) | "auto" */
 	dispatchMode?: DispatchMode;
 	/** Capabilities required by this subtask (e.g. "rust", "python", "docker"). Worker must have ALL. */
@@ -221,6 +233,61 @@ export function normalizeFileIntent(file: string): string {
 	let n = path.normalize(file.trim());
 	if (process.platform === "darwin" || process.platform === "win32") n = n.toLowerCase();
 	return n;
+}
+
+// ── Conflict Risk Grading (C5) ──────────────────────────────────────
+
+/**
+ * Replaces the wave machine's hard "no shared file → different wave" rule
+ * with a graded signal the claim loop consumes at batch-claim time:
+ *
+ *   max pairwise overlap ≥ 0.8 → "high"   (runs alone)
+ *   max pairwise overlap ≥ 0.4 → "medium" (at most one in the local set)
+ *   otherwise                  → "low"    (unconstrained)
+ *
+ * Overlap is the shared-file count normalized by the SMALLER of the two
+ * normalized file sets, so a 1-file subtask touching a 10-file subtask's
+ * file grades high (the small one is fully covered — last-write-wins risk).
+ * Empty file sets are always safe (the wave splitter's old rule) and
+ * normalize through F47's normalizer first, so "./src/a.ts" vs "src/A.ts"
+ * collide correctly on case-insensitive filesystems.
+ *
+ * Computed once per decomposition (O(n²), fine for ≤10 subtasks), stamped
+ * onto the defs, and rides SubtaskDef → SubtaskResult → persisted cache.
+ * It never crosses the wire — the server has no column for it, and P1
+ * affinity scheduling will consume the same field.
+ */
+
+const CONFLICT_MEDIUM_THRESHOLD = 0.4;
+const CONFLICT_HIGH_THRESHOLD = 0.8;
+
+export function fileOverlapRatio(filesA: string[], filesB: string[]): number {
+	const a = new Set(filesA.map(normalizeFileIntent));
+	const b = new Set(filesB.map(normalizeFileIntent));
+	if (a.size === 0 || b.size === 0) return 0;
+	let shared = 0;
+	for (const f of a) {
+		if (b.has(f)) shared++;
+	}
+	return shared / Math.min(a.size, b.size);
+}
+
+/** Stamp a conflict risk onto every subtask of a freshly decomposed set.
+ *  Each node's grade comes from its WORST pairwise overlap within the set. */
+export function classifyConflicts(subtasks: Array<{ id: string; files: string[] }>): Map<string, ConflictRisk> {
+	const risks = new Map<string, ConflictRisk>();
+	for (const s of subtasks) {
+		let max = 0;
+		for (const o of subtasks) {
+			if (o.id === s.id) continue;
+			max = Math.max(max, fileOverlapRatio(s.files, o.files));
+		}
+		risks.set(
+			s.id,
+			max >= CONFLICT_HIGH_THRESHOLD ? "high" : max >= CONFLICT_MEDIUM_THRESHOLD ? "medium" : "low",
+		);
+	}
+	return risks;
 }
 
 // ── Circuit Breaker ─────────────────────────────────────────────────

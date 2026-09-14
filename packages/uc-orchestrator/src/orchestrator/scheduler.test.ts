@@ -4,13 +4,13 @@
  * T6 #642 C4: the wave-splitter / FileIntentTracker / checkpoint / recoverable
  * suites were removed with the wave machine they tested (PRD-mandated deletes;
  * recorded in implement.jsonl). buildDAG survives as decomposer-output
- * validation; normalizeFileIntent stays for C5's conflict_risk grading.
+ * validation; normalizeFileIntent now feeds C5's conflict_risk grading.
  *
  * Run: bun test src/orchestrator/scheduler.test.ts
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { buildDAG, detectCycles, CircuitBreaker, normalizeFileIntent, recursiveDecompose, type SubtaskDef } from "./scheduler";
+import { buildDAG, classifyConflicts, detectCycles, CircuitBreaker, fileOverlapRatio, normalizeFileIntent, recursiveDecompose, type SubtaskDef } from "./scheduler";
 import { TaskStore, type PersistedTask } from "./task-store";
 
 function st(id: string, description: string, dependsOn: string[] = [], files: string[] = []): SubtaskDef {
@@ -351,8 +351,8 @@ describe("CircuitBreaker", () => {
 
 // ponytail: F47 — decomposer files arrive unnormalized; raw string equality
 // missed same-file variants. T6 #642 C4: the runtime consumers (wave splitter
-// + FileIntentTracker) are gone — the normalizer stays for C5's conflict_risk
-// grading at decomposition time.
+// + FileIntentTracker) are gone — the normalizer now feeds C5's conflict_risk
+// grading at decomposition time (see classifyConflicts).
 describe("file intent normalization (F47)", () => {
 	it("normalizes ./ prefixes and redundant separators", () => {
 		expect(normalizeFileIntent("./src/a.ts")).toBe(normalizeFileIntent("src/a.ts"));
@@ -366,6 +366,64 @@ describe("file intent normalization (F47)", () => {
 		} else {
 			expect(normalizeFileIntent("src/A.ts")).not.toBe(normalizeFileIntent("src/a.ts"));
 		}
+	});
+});
+
+// T6 #642 C5 — the wave machine's hard file-disjoint waves became a graded
+// signal consumed by the claim loop's batch gate. The thresholds and the
+// min-set normalization are the contract: 1 shared of 3 grades by the
+// smaller set, so a single-file node touching a big node's file is HIGH
+// (fully covered → last-write-wins risk), not a rounding footnote.
+describe("conflict risk grading (C5)", () => {
+	it("fileOverlapRatio: disjoint/empty are 0, min-normalization is symmetric, F47 variants collide", () => {
+		expect(fileOverlapRatio(["src/a.ts"], ["src/b.ts"])).toBe(0);
+		// Empty file sets are always safe (the old wave splitter's rule).
+		expect(fileOverlapRatio([], ["src/a.ts"])).toBe(0);
+		expect(fileOverlapRatio(["src/a.ts"], [])).toBe(0);
+		// min-set normalization: 1 shared of 3 either direction.
+		expect(fileOverlapRatio(["a", "b", "c"], ["a", "x", "y"])).toBeCloseTo(1 / 3);
+		expect(fileOverlapRatio(["a", "x", "y"], ["a", "b", "c"])).toBeCloseTo(1 / 3);
+		// LLM files arrays dedupe before grading.
+		expect(fileOverlapRatio(["a", "a"], ["a"])).toBe(1);
+		if (process.platform === "darwin" || process.platform === "win32") {
+			// F47: "./src/a.ts" and "src/A.ts" are the same file here.
+			expect(fileOverlapRatio(["./src/a.ts"], ["src/A.ts"])).toBe(1);
+		}
+	});
+
+	it("classifies by worst pairwise overlap: low / medium(0.4) / high(0.8)", () => {
+		// All disjoint → unconstrained.
+		const free = [{ id: "a", files: ["a.ts"] }, { id: "b", files: ["b.ts"] }];
+		expect([...classifyConflicts(free).values()]).toEqual(["low", "low"]);
+		// Full overlap → both high.
+		const hot = [{ id: "a", files: ["a.ts", "b.ts"] }, { id: "b", files: ["a.ts", "b.ts"] }];
+		expect([...classifyConflicts(hot).values()]).toEqual(["high", "high"]);
+		// Partial overlap (1/2 = 0.5) → both medium.
+		const warm = [{ id: "a", files: ["a.ts", "b.ts"] }, { id: "b", files: ["a.ts", "c.ts"] }];
+		expect([...classifyConflicts(warm).values()]).toEqual(["medium", "medium"]);
+		// A lone node has no peers → low regardless of its file count.
+		expect([...classifyConflicts([{ id: "a", files: ["a.ts", "b.ts"] }]).values()]).toEqual(["low"]);
+	});
+
+	it("honors the exact 0.4/0.8 thresholds (>= is inclusive)", () => {
+		// 2 shared of 5 = 0.4 exactly → medium.
+		const atMedium = [
+			{ id: "a", files: ["f1", "f2", "f3", "f4", "f5"] },
+			{ id: "b", files: ["f1", "f2", "g1", "g2", "g3"] },
+		];
+		expect([...classifyConflicts(atMedium).values()]).toEqual(["medium", "medium"]);
+		// 4 shared of 5 = 0.8 exactly → high.
+		const atHigh = [
+			{ id: "a", files: ["f1", "f2", "f3", "f4", "f5"] },
+			{ id: "b", files: ["f1", "f2", "f3", "f4", "g1"] },
+		];
+		expect([...classifyConflicts(atHigh).values()]).toEqual(["high", "high"]);
+		// 3 shared of 5 = 0.6 → medium, and the pair stays symmetric.
+		const mid = [
+			{ id: "a", files: ["f1", "f2", "f3", "f4", "f5"] },
+			{ id: "b", files: ["f1", "f2", "f3", "g1", "g2"] },
+		];
+		expect([...classifyConflicts(mid).values()]).toEqual(["medium", "medium"]);
 	});
 });
 

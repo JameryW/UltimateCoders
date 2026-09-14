@@ -18,7 +18,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
-import { buildDAG, CircuitBreaker, type SubtaskDef, type WorkflowStepDef, type DispatchMode } from "./scheduler";
+import { buildDAG, CircuitBreaker, classifyConflicts, type SubtaskDef, type WorkflowStepDef, type DispatchMode, type ConflictRisk } from "./scheduler";
 import { GrpcBridge, type TaskSync } from "./grpc-bridge";
 import type { TaskEvent } from "../grpc/engine_pb.js";
 import { TaskStore, type PersistedTask } from "./task-store";
@@ -116,6 +116,9 @@ export interface SubtaskResult {
 	retryCount?: number;
 	/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
 	dispatchMode?: DispatchMode;
+	/** File-overlap parallelism grade (C5) — decomposition-time derived data,
+	 *  consumed by the claim loop's batch-claim gate. Server-agnostic. */
+	conflictRisk?: ConflictRisk;
 	/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
 	requiredCapabilities?: string[];
 	/** Per-subtask agent configuration overrides (mirrors SubtaskDef.agentConfig). */
@@ -577,6 +580,8 @@ export class UCOrchestrator {
 		// execution ordering is the Rust gateway's job.
 		buildDAG(subtaskDefs);
 
+		// T6 #642 C5: grade file overlap once per decomposition set.
+		const risks = classifyConflicts(subtaskDefs);
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
 			description: def.description,
@@ -584,6 +589,7 @@ export class UCOrchestrator {
 			dependsOn: def.dependsOn,
 			files: def.files,
 			dispatchMode: def.dispatchMode,
+			conflictRisk: risks.get(def.id),
 			requiredCapabilities: def.requiredCapabilities,
 			steps: def.steps,
 		}));
@@ -665,6 +671,7 @@ export class UCOrchestrator {
 		// ids / unknown deps / cycles); the wave plan is discarded — execution
 		// ordering is the Rust gateway's job now.
 		buildDAG(subtaskDefs);
+		const risks = classifyConflicts(subtaskDefs); // T6 #642 C5
 		task.subtasks = subtaskDefs.map((def) => ({
 			id: def.id,
 			description: def.description,
@@ -672,6 +679,7 @@ export class UCOrchestrator {
 			dependsOn: def.dependsOn,
 			files: def.files,
 			dispatchMode: def.dispatchMode,
+			conflictRisk: risks.get(def.id),
 			requiredCapabilities: def.requiredCapabilities,
 			steps: def.steps,
 		}));
@@ -888,6 +896,14 @@ export class UCOrchestrator {
 		}
 
 		// ── 3. Claim newly-ready nodes (under the concurrency cap).
+		// T6 #642 C5: the conflict_risk grade gates the LOCAL parallel
+		// execution set — in-flight claims ∪ this tick's picks. The wave
+		// machine enforced file disjointness with hard waves; the graded
+		// version keeps overlapping work moving without last-write-wins
+		// corruption: high runs alone, medium at most one, low unconstrained.
+		const localById = new Map(task.subtasks.map((s) => [s.id, s]));
+		const inflightMedium = [...claimedIds].filter((id) => localById.get(id)?.conflictRisk === "medium").length;
+		const batchSelected: SubtaskResult[] = [];
 		for (const local of task.subtasks) {
 			if (claimedIds.size >= this.config.maxConcurrency) break;
 			if (local.status !== "pending") continue;
@@ -903,6 +919,19 @@ export class UCOrchestrator {
 				return dep !== undefined && dep.status.toLowerCase() === "completed";
 			});
 			if (!depsReady) continue;
+
+			// C5 gate (after the basic eligibility checks so a graded node
+			// still yields to genuinely-ready peers without stalling the loop).
+			const risk = local.conflictRisk ?? "low";
+			if (risk === "high") {
+				// High-overlap: needs an EMPTY local parallel set, and ends
+				// this tick's batch — nothing else starts alongside it.
+				if (claimedIds.size > 0 || batchSelected.length > 0) continue;
+			} else if (risk === "medium") {
+				const mediumCount = inflightMedium
+					+ batchSelected.filter((s) => (s.conflictRisk ?? "low") === "medium").length;
+				if (mediumCount >= 1) continue;
+			}
 
 			// Claim: flip the mirror to running, push via UpdateTask. On
 			// rejection revert to Pending — another writer (worker dispatch,
@@ -920,6 +949,8 @@ export class UCOrchestrator {
 			this.events.emit("subtask_start", { taskId: task.id, subtaskId: local.id, description: local.description });
 			const ctx = this.taskContexts.get(task.id) ?? stubContext();
 			this.runClaimed(task, local, ctx);
+			batchSelected.push(local);
+			if (risk === "high") break; // high runs alone
 		}
 	}
 
@@ -1136,6 +1167,7 @@ export class UCOrchestrator {
 				.filter((s) => s.status === "completed")
 				.map((s) => s.id);
 
+			const newRisks = classifyConflicts(newDefs); // T6 #642 C5
 			const newSubtasks: SubtaskResult[] = newDefs.map((def) => ({
 				id: def.id,
 				description: def.description,
@@ -1144,6 +1176,7 @@ export class UCOrchestrator {
 				files: def.files,
 				retryCount: this.config.maxRetries, // no further retries
 				dispatchMode: def.dispatchMode,
+				conflictRisk: newRisks.get(def.id),
 				requiredCapabilities: def.requiredCapabilities,
 				agentConfig: def.agentConfig,
 				steps: def.steps,
@@ -1985,6 +2018,7 @@ export class UCOrchestrator {
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
 				dispatchMode: s.dispatchMode,
+				conflictRisk: s.conflictRisk,
 				requiredCapabilities: s.requiredCapabilities,
 				steps: s.steps,
 			})),
@@ -2021,6 +2055,7 @@ export class UCOrchestrator {
 				stderrTail: s.stderrTail,
 				retryCount: s.retryCount,
 				dispatchMode: s.dispatchMode,
+				conflictRisk: s.conflictRisk,
 				requiredCapabilities: s.requiredCapabilities,
 				steps: s.steps,
 			})),

@@ -7,7 +7,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { WorkflowStepDef, DispatchMode } from "./scheduler";
+import type { WorkflowStepDef, DispatchMode, ConflictRisk } from "./scheduler";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -40,6 +40,9 @@ export interface PersistedTask {
 		retryCount?: number;
 		/** Dispatch mode: "local" | "remote" | "prefer_remote" | "auto" */
 		dispatchMode?: DispatchMode;
+		/** File-overlap parallelism grade (C5) — rides the cache so the claim
+		 *  gate survives a restore. Never sent to the server. */
+		conflictRisk?: ConflictRisk;
 		/** Capabilities required by this subtask (e.g. "rust", "python"). Worker must have ALL. */
 		requiredCapabilities?: string[];
 		/** Ordered multi-agent workflow steps. Empty/undefined = single-agent (backward compatible). */
