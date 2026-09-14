@@ -34,7 +34,7 @@ pub use events::NatsEventStore;
 pub use events::{
     AgentEventType, EventStore, InMemoryEventStore, LineRange, RecordedEvent, TaskSnapshot,
 };
-pub use graph_store::{transition_ok, GraphShadowSink};
+pub use graph_store::{transition_ok, GraphShadowSink, SweptAttempt};
 #[cfg(feature = "storage")]
 pub use graph_store::{BackfillStats, FailOutcome, GraphStore, DEFAULT_MAX_ATTEMPTS};
 pub use indexer::semantic::{EmbeddingService, SemanticIndexer};

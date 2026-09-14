@@ -437,8 +437,32 @@ pub fn pick_newer_saved(
 ///
 /// T3 (#639) adds the attempt-lifecycle verbs. New parameters ride the T1
 /// [`ExecutionEnvelope`] identity (`graph_id = task_id`, `node_id =
+/// subtask_id`, `attempt_id = dispatch_retry_count`).
+///
+/// One attempt reaped by the graph-plane timeout sweep ([`GraphStore::
+/// timeout_sweep`], surfaced to the monitor through the [`GraphShadowSink::
+/// sweep_timeouts`] verb). Fenced no-ops (unknown / already-terminal attempt,
+/// node already committed) are excluded by the sweep itself — every returned
+/// attempt actually moved.
+#[derive(Debug, Clone)]
+pub struct SweptAttempt {
+    /// Graph (task) the swept attempt belonged to (`graph_id == task_id`).
+    pub graph_id: String,
+    /// Node (subtask) the swept attempt belonged to (`node_id == subtask_id`).
+    pub node_id: String,
+    /// The swept (now FAILED) attempt id.
+    pub attempt_id: String,
+    /// `true` = the node was re-armed to READY (retry budget left);
+    /// `false` = the budget was exhausted and the node itself FAILED.
+    pub rearmed: bool,
+}
+
+/// Subtask-plane write verbs fanned out fire-and-forget from the legacy
+/// mutation waypoints (T3 #639), plus the graph-plane reaper (T6 #642).
+///
+/// The envelope is the transitional identity mapping (`graph_id =
 /// subtask_id`, `attempt_id = dispatch_retry_count`), so the always-
-/// compiled surface carries no storage types. All four verbs have **no-op
+/// compiled surface carries no storage types. All verbs have **no-op
 /// default implementations** — a shadow-only sink (and every T2 fake)
 /// keeps compiling untouched; the real-graph verbs are opt-in per
 /// implementation. Callers fan these out fire-and-forget: a verb can never
@@ -465,11 +489,28 @@ pub trait GraphShadowSink: Send + Sync {
     async fn on_commit(&self, _envelope: &ExecutionEnvelope, _result_ref: Option<&str>) {}
 
     /// A node reached a terminal-failure derivation (legacy `Failed` /
-    /// `Conflicted`) or a reaper path revoked its attempt (stale worker /
-    /// stale `Assigned`). Graph plane: attempt `FAILED` + fence; node back
-    /// to `READY` while the retry budget lasts, else `FAILED`. `reason` is
-    /// a free-form diagnostic carried into the event payload.
+    /// `Conflicted` on the NATS update path). Graph plane: attempt `FAILED`
+    /// + fence; node back to `READY` while the retry budget lasts, else
+    /// `FAILED`. `reason` is a free-form diagnostic carried into the event
+    /// payload.
     async fn on_fail(&self, _envelope: &ExecutionEnvelope, _reason: &str) {}
+
+    /// Graph-plane reaper (T6 #642): sweep every `RUNNING` attempt whose
+    /// heartbeat (`heartbeat_at`, falling back to `started_at`) is older
+    /// than `heartbeat_timeout` through the fail path — attempt `FAILED` +
+    /// fence, node re-armed to `READY` while the retry budget lasts, else
+    /// the node itself `FAILED`. Replaces both legacy TaskStore reassign
+    /// reapers (dead-worker AND Assigned-never-picked-up: the attempt row
+    /// is created `RUNNING` at schedule time, so `started_at` ages past
+    /// the window in either case). The heartbeat monitor bridges each
+    /// swept attempt back into the legacy store and re-dispatches. No-op
+    /// default (shadow-only sinks and test fakes sweep nothing).
+    async fn sweep_timeouts(
+        &self,
+        _heartbeat_timeout: std::time::Duration,
+    ) -> Vec<SweptAttempt> {
+        Vec::new()
+    }
 }
 
 // ── Migrations (storage) ─────────────────────────────────────────────
@@ -1473,13 +1514,14 @@ impl GraphStore {
     /// (falling back to `started_at`) is older than `heartbeat_timeout`
     /// goes through the [`Self::fail_attempt`] path (attempt `FAILED` +
     /// fence via the next attempt's epoch bump + node back to `READY` while
-    /// budget lasts, else `FAILED`). Returns the attempt ids actually swept
-    /// (fenced no-ops are excluded).
+    /// budget lasts, else `FAILED`). Returns the attempts actually swept
+    /// (fenced no-ops are excluded) with their outcomes, so the monitor can
+    /// bridge each one back into the legacy store (T6 #642).
     pub async fn timeout_sweep(
         &self,
         heartbeat_timeout: std::time::Duration,
         max_attempts: i32,
-    ) -> Result<Vec<String>, EngineError> {
+    ) -> Result<Vec<SweptAttempt>, EngineError> {
         let secs = heartbeat_timeout.as_secs_f64();
         let stale: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT attempt_id, graph_id, node_id FROM task_attempts \
@@ -1503,7 +1545,12 @@ impl GraphStore {
                 )
                 .await?;
             if outcome != FailOutcome::Fenced {
-                swept.push(attempt);
+                swept.push(SweptAttempt {
+                    graph_id,
+                    node_id,
+                    attempt_id: attempt,
+                    rearmed: outcome == FailOutcome::RearmedToReady,
+                });
             }
         }
         Ok(swept)
@@ -1967,6 +2014,23 @@ impl GraphShadowSink for GraphStore {
         {
             Ok(_) => {}
             Err(e) => tracing::warn!("graph on_fail failed: {}", e),
+        }
+    }
+
+    /// The real sweep: stale RUNNING attempts through the fail path with
+    /// the shared default attempt budget (converges with the legacy
+    /// dispatch-retry cap of 3 while T6 flips the authority). Warn-only on
+    /// error — the reaper can never fail the monitor tick.
+    async fn sweep_timeouts(
+        &self,
+        heartbeat_timeout: std::time::Duration,
+    ) -> Vec<SweptAttempt> {
+        match GraphStore::timeout_sweep(self, heartbeat_timeout, DEFAULT_MAX_ATTEMPTS).await {
+            Ok(swept) => swept,
+            Err(e) => {
+                tracing::warn!("graph sweep_timeouts failed: {}", e);
+                Vec::new()
+            }
         }
     }
 }

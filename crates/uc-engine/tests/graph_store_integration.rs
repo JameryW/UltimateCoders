@@ -1650,7 +1650,12 @@ async fn graph_t3_timeout_sweep_fences_and_rearms_on_a_probe_db() {
         .timeout_sweep(std::time::Duration::from_secs(60), 3)
         .await
         .expect("sweep");
-    assert_eq!(swept, vec![a0.clone()], "the stale attempt is swept");
+    let swept_ids: Vec<String> = swept.iter().map(|s| s.attempt_id.clone()).collect();
+    assert_eq!(swept_ids, vec![a0.clone()], "the stale attempt is swept");
+    assert!(
+        swept.iter().all(|s| s.rearmed),
+        "budget left → every sweep outcome is a re-arm"
+    );
     let (status, _) = t3_attempt_status(&store, &a0).await.expect("a0");
     assert_eq!(status, "FAILED");
     let (state, _) = t3_node_state(&store, &g, &n).await;
