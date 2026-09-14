@@ -1,7 +1,7 @@
 # Durable Agent Runtime 迁移评估件
 
 > 状态：**已批准（2026-09-11）**。本文件不是实现计划，也不是工单，只回答三个问题：方案与现状的差距到底在哪、迁移有哪些必须显式做出的取舍、P0 阶段建议怎么拆。
-> 决策结果：D1=状态表权威+事件审计；D2=**一刀切反转**；D3=**一刀切新契约**；起步=wayfinder 地图+决策票（剩余开放决策见第四节）。D5（Commit barrier 归属）仍开放，留待 P1。
+> 决策结果：D1=状态表权威+事件审计；D2=**一刀切反转**；D3=**一刀切新契约**；D4–D7 全部闭环（D5 于 2026-09-14 裁决：Python 保留 MergeArbiter 执行 + Rust 签发 fenced barrier 授权，见 #634）；起步=wayfinder 地图+决策票。P0（T1–T7，#637–#643）已全部交付并关闭（2026-09-14），map #632 已关。
 >
 > 方案原文：《UltimateCoders 下一阶段：统一 Durable Agent Runtime》（2026-09-11，用户提供）。
 > 现状勘察基于 commit `115caae`（main）。所有"现状"结论均附文件路径，可复核。
@@ -106,10 +106,10 @@ MergeArbiter 在 Python。方案要求 merge 是 single-writer 事务。选项�
 
 P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）在 P0 验收后另开地图，不在本件展开。
 
-**wayfinder 地图开放决策**：仅剩 D5（Commit barrier 归属，#634，P1-2 前置，不阻塞 P0）。D4（#633）、D6（#635）、D7（#636）已全部闭环。
+**wayfinder 地图开放决策**：无。D4（#633）、D6（#635）、D7（#636）、D5（#634，2026-09-14 裁决：hybrid——Python 保留 MergeArbiter 执行，Rust 签发 fenced merge-barrier 授权，`merge_idempotency_key` 走 envelope 同族确定性派生）已全部闭环。
 
 **T1–T7 已建票（2026-09-11）**：T1=#637, T2=#638, T3=#639, T4=#640, T5=#641, T6=#642, T7=#643；原生 blockedBy 边：638←637，639←638，640←639，641←639+633(D4)，642←640，643←642。**当前唯一可开工票：#637（T1）**。
 
 ## 六、执行状态
 
-评估件已批准（2026-09-11）。Tracker：map #632 + 决策票 #633–#636（D4/D6/D7 已闭环关闭）+ 实现票 #637–#643（依赖边已挂）。下一步：从 #637（T1）开始，每张票单独开新上下文走 Trellis 生命周期。D5/#634 保持开放至 P1-2 前置；map #632 待 P0 验收后关闭。
+评估件已批准（2026-09-11）。**P0 已全部交付并关闭（2026-09-14）**：T1–T7（#637–#643）逐票关闭并归档（journal session 1–8），D4–D7 四张决策票全闭环，map #632 已关。遗留：三笔 `#[ignore]` PG e2e 实跑（T4 graph_store_integration / T6 pause_grace_diamond / T7 granular_cancel_e2e，`-- --ignored`）待 Docker 恢复补跑。P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）按上节另开地图；D5 裁决即 P1-2 的输入。
