@@ -213,3 +213,79 @@ T5 #641 (Executor trait unification) then T6 #642 (authority flip; depends on T4
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: T5 #641 统一 Executor trait 落地完成（JetStream 硬依赖 / effect_class 白名单 / 分解分叉删除）
+
+**Date**: 2026-09-14
+**Task**: T5 #641 统一 Executor trait 落地完成（JetStream 硬依赖 / effect_class 白名单 / 分解分叉删除）
+**Branch**: `main`
+
+### Summary
+
+T5 六提交落 main：Rust Executor trait/Selector/effect_class 投影 + 删 DispatchMode::Local 与分解分叉 + gateway 供给 UC_SUBTASKS + Python worker JS 硬依赖（拒注册/重试/可观测）。门禁全绿（Rust 437+5/379+5/192+8/36/35，pytest 977+4skip），无头 grep 验收通过，#641 关闭，任务归档 2026-09。
+
+### Main Changes
+
+# T5 #641 收尾 session — 统一 Executor trait 落地完成
+
+日期：2026-09-14。T5 六个提交全部落 main，票关闭，任务归档。
+
+## 交付内容（六提交）
+
+1. `feca89f` feat(types)!: EffectClass 类型（read_only/local_safe/requires_worker，snake_case serde）+ 删 DispatchMode::Local + 下游机械修复（uc-grpc conversions match arm、字面量补字段）。
+2. `c3d067f` feat(engine): Executor trait + NatsExecutor/LocalExecutor/Sandbox/Remote 占位 + ExecutorSelector 路由权威 + NodeRow.effect_class 投影 + tests/executor_nats_down.rs（5 测试：NATS-down 推进/READY+告警/WHAT 不变/up 全走 Nats/effect_class 投影/unwired StayReady）。
+3. `91c7d2d` feat(engine)!: 删分解分叉 —— TaskStore::submit_task 改 insert-only（subtasks: Vec::new()），Python splice 删 decompose_task/strip_workflow_marker 等 185 行 + 9 个 decompose 测试。
+4. `8db5ef8` feat(grpc): wire 携带 effect_class（NatsSubtaskExecute 字段 + payload），TaskStore 注释修正。
+5. `4215799` feat(grpc-server): ensure_subtasks_stream —— gateway 侧启动时 get_or_create UC_SUBTASKS（WorkQueue/7d/120s dedup）。
+6. `8cd7e01e` feat(worker)!: Python worker JS 硬依赖 —— 删 core-NATS 回退（queue="workers" 订阅 + _handle_subtask_execute）；新增 _ensure_subtask_transport 后台绑定循环（add_consumer(max_deliver=5) + pull_subscribe，失败 5s 重试）；transport 未就绪拒注册 _register_with_gateway 门禁 + 心跳 re-register；绑定成功立即注册；subtask_transport 进 registration metadata + 心跳 w_info；Python 删 DispatchMode.LOCAL（legacy "local" → PreferRemote）+ 编排器 LOCAL 分支；task_store.rs Subtask import 加 storage gate。
+
+## 门禁终值
+
+- fmt OK；clippy -D warnings：uc-types / uc-engine(默认+nodefault) / uc-grpc --all-features / uc-grpc-server 全绿。
+- Rust 基线：uc-engine 437 lib + 5 executor 集成 + 17/18 ignored（PG/NATS 宕机）；nodefault 379+5；grpc 192+8；grpc-server 36；uc-types 35。T4 基线 437/379/192+8/36/34，只增不减 ✅。
+- pytest 全量（bypass + 浅 basetemp）：977 passed + 4 skipped。T4 基线 978：净 -4 = 随 core 回退删除的 5 个测试（3 stream + 2 consumer + start 两个重写 + sandbox capability-reject 1 个）被 4 个新 transport 测试部分抵消，属预期删减。
+
+## 验收对照（票面三条）
+
+- (a) NATS-down：executor_nats_down.rs 覆盖 local_safe 图推进、coding 停 READY+告警、WHAT 字节级不变 ✅
+- (b) JS 不可用：worker 拒注册（_register_with_gateway 门禁 + 心跳重试）+ 周期重试（5s，日志 1min 一次）+ subtask_transport 可观测（metadata + heartbeat）；测试替身 add_consumer/pull_subscribe 抛错镜像真实 JS 行为 ✅
+- (c) 无头 grep：crates/ 与 python/ 中 decompose_task / DispatchMode::Local / queue="workers" / Falls back to core NATS / _handle_subtask_execute( 生产代码零匹配 ✅（orchestrator._decompose_task 为 default 模式 LLM 分解产品功能，非分叉，保留）
+
+## 本 session 踩坑
+
+- 同文件并行 Edit 丢失第三次复现风险区（本轮全部串行执行，未再发生）。
+- 大块替换用 Python splice（splitlines(keepends=True) + 行号断言 + eol 感知）——注意 CRLF：锚点字符串必须按文件实际 eol 构造，否则 assert 失败（本轮 t5-splice-core-handler.py 首跑即此原因失败，未写盘，重跑成功）。
+- nodefault 模式 unused import：storage-only 类型（Subtask row mapping）必须 cfg(feature="storage") 门禁导入——删除导入前要先想清楚双 feature 组合。
+- CancelledError 语义：后台重试循环让取消传播（stop() 侧已有捕获），不要在循环内吞掉返回 False——否则测试断言 cancelled() 会失败。
+
+## 状态
+
+- 票 #641 关闭（close comment 附交付提交+门禁+验收 notes）。
+- 任务目录归档 .trellis/tasks/archive/2026-09/09-14-t5-executor-trait/（task.json completed）。
+- T6（切主 + 删 legacy reassign/reaper）就绪：依赖 T5 的 envelope-唯一身份源 + effect_class 白名单已全部落地。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `feca89f` | (see git log) |
+| `c3d067f` | (see git log) |
+| `91c7d2d` | (see git log) |
+| `8db5ef8` | (see git log) |
+| `4215799` | (see git log) |
+| `8cd7e01e` | (see git log) |
+| `7ce2e758` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
