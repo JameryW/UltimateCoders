@@ -147,6 +147,12 @@ pub struct NatsSubtaskUpdate {
     pub depends_on: Option<Vec<String>>,
     #[serde(default)]
     pub result: Option<String>,
+    /// Attempt number the reporting worker executed under (T4 #640) — the
+    /// worker echoes the `retry_count` from the dispatch envelope. Stamped
+    /// only on worker-sourced partial updates; `None` = legacy publisher
+    /// without the stamp (fencing skipped, upgrade-window compat).
+    #[serde(default)]
+    pub attempt_id: Option<u64>,
 }
 
 /// Convert the wire representation of a subtask into the domain type used by
@@ -233,7 +239,12 @@ pub struct NatsSubtaskExecute {
     /// Deduplication key for at-least-once NATS delivery.
     #[serde(default)]
     pub message_id: Option<String>,
+    /// Legacy identity (T4 #640): emitted until the item-5 wire flip — the
+    /// graph envelope (`graph_id`/`node_id`) rides alongside during the
+    /// transition; T6 cleans the fields up.
+    #[serde(default)]
     pub task_id: String,
+    #[serde(default)]
     pub subtask_id: String,
     pub description: String,
     #[serde(default)]
@@ -350,6 +361,27 @@ fn subtask_execute_payload(
     }
 }
 
+/// JetStream dedup headers for one dispatch (T4 #640).
+///
+/// `Nats-Msg-Id` is set to the deterministic `idempotency_key`, so
+/// JetStream's `duplicate_window` (120s on `UC_SUBTASKS`) collapses re-sends
+/// of the same dispatch into a single stored message — a re-dispatch caused
+/// by a retry, a re-publish, or a gateway restart no longer reaches a worker
+/// twice. The key is stable across re-sends by construction; `message_id` is
+/// not (it carries a millis stamp), which is exactly why it can never be the
+/// dedup key.
+///
+/// Measured against a live stream during T4 research: the header is honoured
+/// on plain `Client::publish` as well as on `jetstream.publish` — dedup is
+/// stream-side, not publisher-side — so the gateway keeps its core-NATS
+/// publish path and only gains a header.
+#[cfg(feature = "messaging")]
+fn dispatch_dedup_headers(idempotency_key: &str) -> async_nats::HeaderMap {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", idempotency_key);
+    headers
+}
+
 /// Payload for `uc.heartbeat` messages.
 ///
 /// Published periodically by the Python NATS consumer. The gRPC server
@@ -359,6 +391,11 @@ fn subtask_execute_payload(
 pub struct NatsHeartbeat {
     pub consumer_id: String,
     pub timestamp: String,
+    /// Worker's cumulative `stale_dispatch_dropped` counter (T4 #640 / D7):
+    /// old-envelope dispatches the worker term-dropped. Flat field on the
+    /// heartbeat payload; `None` = legacy worker without it.
+    #[serde(default)]
+    pub stale_dispatch_dropped: Option<u64>,
 }
 
 /// Payload for `uc.file.changed` messages.
@@ -475,6 +512,15 @@ pub struct TaskStore {
     /// Keys are message_id strings; values are insertion timestamps.
     /// Entries older than 5 minutes are purged on each check.
     seen_messages: HashMap<String, Instant>,
+    /// Late-result fencing counter (T4 #640): worker results rejected because
+    /// their stamped attempt is older than the subtask's current attempt
+    /// (the attempt was fenced and re-dispatched). Surfaced via the getter +
+    /// a `stale_result_rejected` task event per rejection.
+    stale_dispatch_dropped: u64,
+    /// Per-worker cumulative `stale_dispatch_dropped` reported via heartbeat
+    /// (T4 #640 / D7): the worker terms old-envelope dispatches and reports
+    /// its running total here. Keyed by consumer_id.
+    worker_stale_dispatch_dropped: HashMap<String, u64>,
 }
 
 impl Default for TaskStore {
@@ -495,6 +541,8 @@ impl TaskStore {
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
+            stale_dispatch_dropped: 0,
+            worker_stale_dispatch_dropped: HashMap::new(),
         }
     }
 
@@ -510,6 +558,8 @@ impl TaskStore {
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
+            stale_dispatch_dropped: 0,
+            worker_stale_dispatch_dropped: HashMap::new(),
         }
     }
 
@@ -528,6 +578,8 @@ impl TaskStore {
             worker_heartbeats: HashMap::new(),
             assigned_subtask_times: HashMap::new(),
             seen_messages: HashMap::new(),
+            stale_dispatch_dropped: 0,
+            worker_stale_dispatch_dropped: HashMap::new(),
         }
     }
 
@@ -1347,6 +1399,10 @@ impl TaskStore {
             Fail(&'static str),
         }
         let mut graph_fanout: Vec<(String, u32, PendingGraphVerb)> = Vec::new();
+        // T4 #640: late-result fencing rejects, collected during the loop
+        // (subtask_id, received_attempt, current_attempt) — settled after the
+        // `task` borrow ends.
+        let mut stale_rejects: Vec<(String, u64, u64)> = Vec::new();
         let graph_verb_for = |status: &uc_types::SubtaskStatus, prev: &uc_types::SubtaskStatus| {
             if status == prev {
                 return None;
@@ -1367,6 +1423,23 @@ impl TaskStore {
                 .iter_mut()
                 .find(|st| st.id.0 == subtask_update.subtask_id)
             {
+                // T4 #640: late-result fencing. A worker-sourced (partial)
+                // update stamped with an attempt OLDER than the subtask's
+                // current one comes from a fenced/re-dispatched attempt — its
+                // redelivery raced with the replacement dispatch. Reject the
+                // whole entry: no status change, no result overwrite, no
+                // graph verb. Attempt equality/greater passes (the tracker
+                // may lag the wire during re-dispatch), and unstamped legacy
+                // updates are never fenced (upgrade-window compat).
+                if update.partial {
+                    if let Some(received) = subtask_update.attempt_id {
+                        let current = subtask.dispatch_retry_count as u64;
+                        if received < current {
+                            stale_rejects.push((subtask.id.0.clone(), received, current));
+                            continue;
+                        }
+                    }
+                }
                 // Existing subtask — update all provided fields
                 if let Some(status) = subtask_status_from_str(&subtask_update.status) {
                     let prev_status = subtask.status.clone();
@@ -1510,6 +1583,25 @@ impl TaskStore {
         self.evict_completed_tasks();
         // Persist the updated task to the backend (fire-and-forget upsert).
         self.persist_task(&task_snapshot);
+        // T4 #640: settle the late-result fencing rejects — count them and
+        // leave a user-visible event per rejection (node state untouched).
+        if !stale_rejects.is_empty() {
+            self.stale_dispatch_dropped += stale_rejects.len() as u64;
+            for (subtask_id, received, current) in &stale_rejects {
+                tracing::warn!(
+                    task_id = %task_snapshot.id.0,
+                    subtask_id = %subtask_id,
+                    received_attempt = received,
+                    current_attempt = current,
+                    stale_dispatch_dropped = self.stale_dispatch_dropped,
+                    "Rejected late result from a fenced/re-dispatched attempt (T4 #640)"
+                );
+                self.record_event(uc_engine::AgentEventType::TaskUpdated {
+                    task_id: task_snapshot.id.clone(),
+                    status: "stale_result_rejected".to_string(),
+                });
+            }
+        }
         // T3: emit the collected graph-plane verbs now that the `task`
         // borrow is dead (fire-and-forget; never fails the legacy update).
         let graph_id = task_snapshot.id.0.clone();
@@ -1585,9 +1677,36 @@ impl TaskStore {
     }
 
     /// Update per-worker heartbeat timestamp.
-    pub fn update_worker_heartbeat(&mut self, worker_id: &str) {
+    ///
+    /// `stale_dispatch_dropped` (T4 #640 / D7) is the worker's cumulative
+    /// count of old-envelope dispatches it term-dropped; `None` = legacy
+    /// heartbeat without the field. Monotonic max is kept per worker.
+    pub fn update_worker_heartbeat(
+        &mut self,
+        worker_id: &str,
+        stale_dispatch_dropped: Option<u64>,
+    ) {
         self.worker_heartbeats
             .insert(worker_id.to_string(), chrono::Utc::now());
+        if let Some(n) = stale_dispatch_dropped {
+            let slot = self
+                .worker_stale_dispatch_dropped
+                .entry(worker_id.to_string())
+                .or_insert(0);
+            if n > *slot {
+                *slot = n;
+            }
+        }
+    }
+
+    /// Gateway-side count of late results rejected by attempt fencing (T4).
+    pub fn stale_dispatch_dropped(&self) -> u64 {
+        self.stale_dispatch_dropped
+    }
+
+    /// Per-worker cumulative stale-dispatch drops reported via heartbeat.
+    pub fn worker_stale_dispatch_dropped(&self) -> &HashMap<String, u64> {
+        &self.worker_stale_dispatch_dropped
     }
 
     /// Access per-worker heartbeat timestamps.
@@ -2418,10 +2537,17 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 }
 
                 let execute = subtask_execute_payload(task_id, &st, &project_id, "", &[]);
+                // T4 #640: Nats-Msg-Id = idempotency_key activates the
+                // stream's duplicate_window — re-sends collapse to one.
+                let dedup = dispatch_dedup_headers(&execute.idempotency_key);
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
                         if let Err(e) = nats_client
-                            .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                            .publish_with_headers(
+                                NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
+                                dedup,
+                                bytes.into(),
+                            )
                             .await
                         {
                             tracing::warn!(
@@ -2857,7 +2983,10 @@ fn spawn_nats_subscriber(
                         store.update_last_heartbeat();
                         // Also track per-worker heartbeat for failover detection.
                         if let Ok(hb) = serde_json::from_slice::<NatsHeartbeat>(&message.payload) {
-                            store.update_worker_heartbeat(&hb.consumer_id);
+                            store.update_worker_heartbeat(
+                                &hb.consumer_id,
+                                hb.stale_dispatch_dropped,
+                            );
                         }
                     }
                     NatsSubscriberInput::SubscriptionEnded(subject) => {
@@ -3263,10 +3392,16 @@ async fn dispatch_ready_subtasks(
             &st.expected_output,
             &st.file_constraints,
         );
+        // T4 #640: same dedup header on the second dispatch mouth.
+        let dedup = dispatch_dedup_headers(&execute.idempotency_key);
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
                 if let Err(e) = nats_client
-                    .publish(NATS_SUBJECT_SUBTASK_EXECUTE.to_string(), bytes.into())
+                    .publish_with_headers(
+                        NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
+                        dedup,
+                        bytes.into(),
+                    )
                     .await
                 {
                     tracing::warn!(
@@ -3576,6 +3711,16 @@ fn nats_event_to_agent_event(event: &NatsTaskEvent) -> Option<uc_engine::AgentEv
         "task_cancelled" => {
             let task_id = uc_types::TaskId(event.task_id.clone());
             Some(uc_engine::AgentEventType::TaskCancelled { task_id })
+        }
+        // T4 #640 / D7: a worker term-dropped an old-envelope dispatch left
+        // in the stream (legacy publisher / upgrade window). Surfaced as a
+        // task-level event so the drop is user-visible, not just a log line.
+        "stale_dispatch_dropped" => {
+            let task_id = uc_types::TaskId(event.task_id.clone());
+            Some(uc_engine::AgentEventType::TaskUpdated {
+                task_id,
+                status: "stale_dispatch_dropped".to_string(),
+            })
         }
         _ => {
             tracing::debug!(
@@ -4845,6 +4990,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -4900,11 +5046,17 @@ mod tests {
         let msg = NatsHeartbeat {
             consumer_id: "consumer-1".to_string(),
             timestamp: "2026-06-16T12:00:00Z".to_string(),
+            stale_dispatch_dropped: Some(2),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: NatsHeartbeat = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.consumer_id, "consumer-1");
         assert_eq!(parsed.timestamp, "2026-06-16T12:00:00Z");
+        assert_eq!(parsed.stale_dispatch_dropped, Some(2));
+        // Legacy heartbeat without the counter field parses with None.
+        let legacy: NatsHeartbeat =
+            serde_json::from_str(r#"{"consumer_id":"c","timestamp":"t"}"#).unwrap();
+        assert_eq!(legacy.stale_dispatch_dropped, None);
     }
 
     #[test]
@@ -4970,6 +5122,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -5055,6 +5208,7 @@ mod tests {
                 description: Some("only one result".to_string()),
                 depends_on: None,
                 result: Some("done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         };
@@ -5167,6 +5321,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: Some("Done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         };
@@ -5202,6 +5357,7 @@ mod tests {
                     description: Some("first".to_string()),
                     depends_on: None,
                     result: None,
+                    attempt_id: None,
                 },
                 NatsSubtaskUpdate {
                     subtask_id: "st-b".to_string(),
@@ -5210,6 +5366,7 @@ mod tests {
                     description: Some("second".to_string()),
                     depends_on: None,
                     result: None,
+                    attempt_id: None,
                 },
             ],
             result: None,
@@ -5227,6 +5384,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: Some("first done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });
@@ -5247,6 +5405,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: Some("second done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });
@@ -5274,6 +5433,7 @@ mod tests {
                 description: Some("fails".to_string()),
                 depends_on: None,
                 result: Some("boom".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });
@@ -5302,6 +5462,7 @@ mod tests {
                 description: Some("partial result".to_string()),
                 depends_on: None,
                 result: Some("done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });
@@ -5310,6 +5471,245 @@ mod tests {
             store.get_task(&task_id).map(|task| task.status.clone()),
             Some(uc_types::TaskStatus::InProgress)
         );
+    }
+
+    // ── T4 #640: late-result fencing ─────────────────────────────
+
+    /// A worker-sourced (partial) result stamped with an attempt OLDER than
+    /// the subtask's current attempt is rejected: status unchanged, counter
+    /// bumped, a user-visible event recorded.
+    #[test]
+    fn task_store_fences_late_result_from_older_attempt() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        // Move the subtask to Assigned and re-dispatch once (attempt 1).
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-late".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+                attempt_id: None,
+            }],
+            result: None,
+        });
+        store.increment_dispatch_retry(&task_id, "st-late");
+
+        let events_before = store.event_count();
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-late".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("stale attempt 0 result".to_string()),
+                attempt_id: Some(0),
+            }],
+            result: None,
+        });
+
+        let st = store
+            .get_task(&task_id)
+            .unwrap()
+            .subtasks
+            .iter()
+            .find(|st| st.id.0 == "st-late")
+            .unwrap();
+        assert_eq!(st.status, uc_types::SubtaskStatus::Assigned);
+        assert!(st.result.is_none(), "stale result must not overwrite");
+        assert_eq!(store.stale_dispatch_dropped(), 1);
+        assert_eq!(store.event_count(), events_before + 1);
+    }
+
+    /// The CURRENT attempt's result passes the fence and lands normally.
+    #[test]
+    fn task_store_accepts_result_from_current_attempt() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-cur".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+                attempt_id: None,
+            }],
+            result: None,
+        });
+        store.increment_dispatch_retry(&task_id, "st-cur");
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-cur".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("current attempt result".to_string()),
+                attempt_id: Some(1),
+            }],
+            result: None,
+        });
+
+        let st = store
+            .get_task(&task_id)
+            .unwrap()
+            .subtasks
+            .iter()
+            .find(|st| st.id.0 == "st-cur")
+            .unwrap();
+        assert_eq!(st.status, uc_types::SubtaskStatus::Completed);
+        assert_eq!(store.stale_dispatch_dropped(), 0);
+    }
+
+    /// Unstamped (legacy publisher) updates are never fenced, and complete
+    /// snapshots (partial=false) bypass the fence entirely — the orchestrator
+    /// does not track the gateway's attempt counter.
+    #[test]
+    fn task_store_unstamped_and_full_updates_pass_the_fence() {
+        let mut store = TaskStore::new();
+        let (task, _) = store.submit_task_pending("Test task".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-legacy".to_string(),
+                status: "Assigned".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: None,
+                attempt_id: None,
+            }],
+            result: None,
+        });
+        store.increment_dispatch_retry(&task_id, "st-legacy");
+
+        // Partial but UNSTAMPED (legacy worker): passes.
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: true,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-legacy".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("legacy result".to_string()),
+                attempt_id: None,
+            }],
+            result: None,
+        });
+        let st = store
+            .get_task(&task_id)
+            .unwrap()
+            .subtasks
+            .iter()
+            .find(|st| st.id.0 == "st-legacy")
+            .unwrap();
+        assert_eq!(st.status, uc_types::SubtaskStatus::Completed);
+        assert_eq!(store.stale_dispatch_dropped(), 0);
+
+        // Complete snapshot stamped with an old attempt: NOT fenced.
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: "st-legacy".to_string(),
+                status: "Completed".to_string(),
+                assigned_worker: Some("worker-1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("snapshot result".to_string()),
+                attempt_id: Some(0),
+            }],
+            result: None,
+        });
+        let st = store
+            .get_task(&task_id)
+            .unwrap()
+            .subtasks
+            .iter()
+            .find(|st| st.id.0 == "st-legacy")
+            .unwrap();
+        assert_eq!(st.status, uc_types::SubtaskStatus::Completed);
+        assert_eq!(store.stale_dispatch_dropped(), 0);
+    }
+
+    /// Heartbeat-reported stale-dispatch counters keep the monotonic max per
+    /// worker (T4 #640 / D7).
+    #[test]
+    fn task_store_worker_stale_dispatch_counter_is_monotonic() {
+        let mut store = TaskStore::new();
+        store.update_worker_heartbeat("w1", Some(3));
+        store.update_worker_heartbeat("w1", Some(1)); // older report — ignored
+        store.update_worker_heartbeat("w1", None); // legacy heartbeat — ignored
+        assert_eq!(store.worker_stale_dispatch_dropped().get("w1"), Some(&3));
+        assert!(store.worker_stale_dispatch_dropped().get("w2").is_none());
+        store.update_worker_heartbeat("w2", Some(7));
+        assert_eq!(store.worker_stale_dispatch_dropped().get("w2"), Some(&7));
+        assert_eq!(store.stale_dispatch_dropped(), 0);
+    }
+
+    /// Worker-published `stale_dispatch_dropped` events map to a task-level
+    /// TaskUpdated so the drop is user-visible in the event feed (T4/D7).
+    #[test]
+    fn nats_event_to_agent_event_stale_dispatch_dropped() {
+        let event = NatsTaskEvent {
+            v: default_event_version(),
+            message_id: None,
+            r#type: "stale_dispatch_dropped".to_string(),
+            task_id: "t-stale".to_string(),
+            subtask_id: Some("st-1".to_string()),
+            data: serde_json::json!({
+                "reason": "missing_execution_envelope",
+                "stale_dispatch_dropped": 2,
+            })
+            .as_object()
+            .cloned()
+            .unwrap(),
+        };
+        let mapped = nats_event_to_agent_event(&event).expect("must map");
+        match mapped {
+            uc_engine::AgentEventType::TaskUpdated { task_id, status } => {
+                assert_eq!(task_id.0, "t-stale");
+                assert_eq!(status, "stale_dispatch_dropped");
+            }
+            other => panic!("expected TaskUpdated, got {:?}", other),
+        }
     }
 
     #[test]
@@ -5600,8 +6000,8 @@ mod tests {
             .mark_stale_workers(std::time::Duration::from_secs(1))
             .is_empty());
 
-        store.update_worker_heartbeat("worker-1");
-        store.update_worker_heartbeat("worker-2");
+        store.update_worker_heartbeat("worker-1", None);
+        store.update_worker_heartbeat("worker-2", None);
 
         // With long timeout, none stale
         let stale = store.mark_stale_workers(std::time::Duration::from_secs(9999));
@@ -5768,7 +6168,7 @@ mod tests {
                 String::new(),
             )
             .unwrap();
-        store.update_worker_heartbeat("worker-stale");
+        store.update_worker_heartbeat("worker-stale", None);
         assert!(registry.workers().contains_key("worker-stale"));
 
         // Backdate heartbeat so the worker is stale.
@@ -6160,6 +6560,7 @@ mod tests {
                     description: None,
                     depends_on: None,
                     result: None,
+                    attempt_id: None,
                 }],
                 result: None,
             };
@@ -6250,6 +6651,7 @@ mod tests {
                     description: None,
                     depends_on: None,
                     result: None,
+                    attempt_id: None,
                 }],
                 result: None,
             };
@@ -6572,6 +6974,7 @@ mod tests {
                 description: Some("Updated description".to_string()),
                 depends_on: Some(vec!["other-st".to_string()]),
                 result: Some("Work done".to_string()),
+                attempt_id: None,
             }],
             result: None,
         };
@@ -6607,6 +7010,7 @@ mod tests {
                 description: Some("New subtask from Python".to_string()),
                 depends_on: Some(vec!["dep-1".to_string(), "dep-2".to_string()]),
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -6647,6 +7051,7 @@ mod tests {
                 description: Some("Failed new subtask".to_string()),
                 depends_on: None,
                 result: Some("error: something broke".to_string()),
+                attempt_id: None,
             }],
             result: None,
         };
@@ -6692,6 +7097,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -6726,6 +7132,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -6895,6 +7302,28 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&a).unwrap(),
             serde_json::to_vec(&b).unwrap()
+        );
+
+        // T4 #640: the dispatch carries that deterministic key as
+        // `Nats-Msg-Id`, which is what makes the stream's duplicate_window
+        // collapse re-sends. Same triple → same header, so a re-dispatch
+        // (retry / re-publish / gateway restart) never reaches a worker
+        // twice; a different attempt → a different header → it does.
+        let headers = dispatch_dedup_headers(&p1.idempotency_key);
+        assert_eq!(
+            headers.get("Nats-Msg-Id").map(|v| v.as_str()),
+            Some(expected_key.as_str()),
+            "dispatch must carry the idempotency key as Nats-Msg-Id"
+        );
+        let mut st_next = st.clone();
+        st_next.dispatch_retry_count = 3;
+        let p3 = subtask_execute_payload("t-3", &st_next, "proj", "out", &[]);
+        let next_headers = dispatch_dedup_headers(&p3.idempotency_key);
+        assert_ne!(
+            next_headers.get("Nats-Msg-Id").map(|v| v.as_str()),
+            headers.get("Nats-Msg-Id").map(|v| v.as_str()),
+            "a new attempt must NOT be deduped against the previous one — \
+             that would break T3's fence → READY → re-dispatch"
         );
     }
 
@@ -7291,6 +7720,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         };
@@ -7330,6 +7760,7 @@ mod tests {
                 description: Some("late".to_string()),
                 depends_on: None,
                 result: None,
+                attempt_id: None,
             }],
             result: None,
         });
@@ -7411,6 +7842,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: Some("ok".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });
@@ -7466,6 +7898,7 @@ mod tests {
                 description: None,
                 depends_on: None,
                 result: Some("r".to_string()),
+                attempt_id: None,
             }],
             result: None,
         });

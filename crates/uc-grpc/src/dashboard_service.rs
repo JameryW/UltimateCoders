@@ -72,6 +72,10 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                     let store = self.task_store().lock().await;
                     let now = chrono::Utc::now();
                     let mut workers: Vec<WorkerProto> = Vec::new();
+                    // T4 #640: surface each worker's cumulative stale-dispatch
+                    // drops (D7) through the metadata JSON, same convention as
+                    // the gRPC registration metadata.
+                    let stale_drops = store.worker_stale_dispatch_dropped().clone();
                     for (id, ts) in store.worker_heartbeats() {
                         let age = (now - *ts).num_seconds() as f64;
                         workers.push(WorkerProto {
@@ -84,8 +88,11 @@ impl<E: EngineApi + Send + Sync + 'static> DashboardService for GrpcServer<E> {
                             heartbeat_age_seconds: age,
                             heartbeat_stale: age > 60.0,
                             is_available: age <= 60.0,
-                            // NATS-heartbeat fallback has no metadata payload.
-                            metadata: String::new(),
+                            metadata: serde_json::json!({
+                                "stale_dispatch_dropped":
+                                    stale_drops.get(id).copied().unwrap_or(0)
+                            })
+                            .to_string(),
                         });
                     }
                     drop(store);
