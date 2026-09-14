@@ -1532,6 +1532,17 @@ class NatsWorker:
             )
             return
 
+        # ExecutionScope (T8 #650 / D8 #645): project_id is mandatory on the
+        # NATS submit path too — reject empty/whitespace so every task the
+        # Orchestrator touches is born with a concrete scope.
+        if not str(project_id or "").strip():
+            logger.warning(
+                "Submit message has empty project_id (task_id=%s), ignoring — "
+                "every task must declare a project scope (D8 #645)",
+                task_id,
+            )
+            return
+
         logger.info(
             "Received task submit: task_id=%s description=%.80s project_id=%s scheduled=%s",
             task_id,
@@ -2093,13 +2104,17 @@ class NatsWorker:
                 max_capacity,
                 self._registration_metadata(),
                 CONTRACT_VERSION,
+                self._worker_projects(),
             )
             if success:
+                projects = self._worker_projects()
                 logger.info(
-                    "Registered with gateway (worker_id=%s, capabilities=%s, contract_version=%s)",
+                    "Registered with gateway (worker_id=%s, capabilities=%s, contract_version=%s, "
+                    "projects=%s)",
                     worker_id,
                     capabilities,
                     CONTRACT_VERSION,
+                    projects if projects else "<open — any scope>",
                 )
             else:
                 logger.warning(
@@ -2111,6 +2126,23 @@ class NatsWorker:
         except Exception:
             logger.warning("Gateway registration failed (non-fatal)", exc_info=True)
             self._grpc_reg_engine = None
+
+    def _worker_projects(self) -> list[str]:
+        """Execution scopes this worker serves (T8 #650 / D8 #645).
+
+        Read from ``UC_WORKER_PROJECTS`` (comma/semicolon-separated
+        project_ids) at registration time. Unset/empty = OPEN worker: the
+        gateway may dispatch tasks of ANY scope to it. Entries are trimmed
+        and blanks dropped (the gateway re-normalizes on arrival; this just
+        keeps the registration log honest).
+        """
+        raw = os.environ.get("UC_WORKER_PROJECTS", "")
+        projects: list[str] = []
+        for entry in raw.replace(";", ",").split(","):
+            entry = entry.strip()
+            if entry and entry not in projects:
+                projects.append(entry)
+        return projects
 
     def _registration_metadata(self) -> str:
         """JSON blob identifying WHERE this worker runs.

@@ -128,6 +128,11 @@ impl NatsSubmitDispatcher {
 #[cfg(feature = "messaging")]
 impl ScheduleDispatcher for NatsSubmitDispatcher {
     fn dispatch(&self, task: &ScheduledTask) -> Result<(), EngineError> {
+        // ExecutionScope (T8 #650 / D8 #645): project_id is mandatory on the
+        // NATS submit path too — a scheduled task without a concrete scope
+        // fails loudly here (recorded as Skipped/Failed by dispatch_with_guard)
+        // instead of silently dispatching an unscoped task.
+        validate_scheduled_task_scope(task)?;
         let payload = Self::build_payload(task);
         let task_id = Uuid::parse_str(&payload.task_id).map_err(|e| {
             EngineError::InternalError(format!(
@@ -422,6 +427,21 @@ impl Default for NatsKvLockProvider {
         Self::new()
     }
 }
+/// ExecutionScope gate (T8 #650 / D8 #645): a scheduled task must carry a
+/// concrete project scope before it is published to `uc.task.submit`.
+/// Free fn (not feature-gated) so it is unit-testable without a NATS client.
+#[cfg_attr(not(feature = "messaging"), allow(dead_code))]
+fn validate_scheduled_task_scope(task: &ScheduledTask) -> Result<(), EngineError> {
+    if task.project_id.trim().is_empty() {
+        return Err(EngineError::InternalError(format!(
+            "NatsSubmitDispatcher: scheduled task '{}' has empty project_id — every task \
+             must declare a project scope (D8 #645)",
+            task.id
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +711,28 @@ mod tests {
             result.is_err(),
             "stub should error without messaging feature"
         );
+    }
+
+    // ── ExecutionScope: scheduled-task submit gate (T8 #650 / D8 #645) ──
+
+    #[test]
+    fn scheduled_task_scope_gate_rejects_empty_and_blank() {
+        let mut task = make_cron_task();
+        task.project_id = String::new();
+        let err = validate_scheduled_task_scope(&task).unwrap_err();
+        assert!(
+            err.to_string().contains("empty project_id"),
+            "error must name the violated invariant: {err}"
+        );
+
+        task.project_id = "   ".to_string();
+        assert!(validate_scheduled_task_scope(&task).is_err());
+    }
+
+    #[test]
+    fn scheduled_task_scope_gate_accepts_concrete_scope() {
+        let task = make_cron_task(); // project_id = "test-project"
+        assert!(validate_scheduled_task_scope(&task).is_ok());
     }
 
     // ── NatsKvLockProvider tests ──────────────────────────────────

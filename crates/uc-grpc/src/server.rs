@@ -2656,16 +2656,28 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
                     continue;
                 }
-                // Capability + contract_version hard gate (T1 #637): only mark
-                // Assigned / publish when at least one capability-matching
-                // available worker declared the gateway's contract version.
-                match registry.dispatch_gate(&st.required_capabilities) {
+                // Capability + scope + contract_version hard gate (T1 #637;
+                // scope hard filter T8 #650): only mark Assigned / publish
+                // when at least one capability-matching available worker
+                // serves the task's project scope and declared the gateway's
+                // contract version.
+                match registry.dispatch_gate(&st.required_capabilities, &project_id) {
                     crate::worker_service::WorkerDispatchGate::Dispatch => {}
                     crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                         tracing::info!(
                             subtask_id = %st.id.0,
                             required_capabilities = ?st.required_capabilities,
                             "No worker with matching capabilities, keeping subtask Pending"
+                        );
+                        continue; // skip — don't mark as Assigned
+                    }
+                    crate::worker_service::WorkerDispatchGate::NoScopeMatchedWorker { workers } => {
+                        tracing::info!(
+                            subtask_id = %st.id.0,
+                            project_id = %project_id,
+                            scope_capable_workers = ?workers,
+                            "No scope-matching worker serves this project_id, keeping subtask \
+                             Pending — scoped workers never receive foreign-scope nodes (T8 #650)"
                         );
                         continue; // skip — don't mark as Assigned
                     }
@@ -3693,16 +3705,27 @@ async fn dispatch_ready_subtasks(
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Failed);
                 continue;
             }
-            // Capability + contract_version hard gate (mirrors
-            // publish_ready_subtasks, T1 #637): never dispatch silently to a
-            // worker that has not confirmed the gateway's contract version.
-            match registry.dispatch_gate(&st.required_capabilities) {
+            // Capability + scope + contract_version hard gate (mirrors
+            // publish_ready_subtasks, T1 #637; scope filter T8 #650): never
+            // dispatch silently to a worker that has not confirmed the
+            // gateway's contract version or does not serve the task's scope.
+            match registry.dispatch_gate(&st.required_capabilities, &project_id) {
                 crate::worker_service::WorkerDispatchGate::Dispatch => {}
                 crate::worker_service::WorkerDispatchGate::NoCapableWorker => {
                     tracing::info!(
                         subtask_id = %st.id.0,
                         required_capabilities = ?st.required_capabilities,
                         "No worker with matching capabilities, keeping subtask Pending"
+                    );
+                    continue; // skip — don't mark as Assigned
+                }
+                crate::worker_service::WorkerDispatchGate::NoScopeMatchedWorker { workers } => {
+                    tracing::info!(
+                        subtask_id = %st.id.0,
+                        project_id = %project_id,
+                        scope_capable_workers = ?workers,
+                        "No scope-matching worker serves this project_id, keeping subtask \
+                         Pending — scoped workers never receive foreign-scope nodes (T8 #650)"
                     );
                     continue; // skip — don't mark as Assigned
                 }
@@ -4409,6 +4432,24 @@ impl<E: EngineApi + Send + Sync + 'static> TaskService for GrpcServer<E> {
                 subtask_count: 0,
                 subtasks: Vec::new(),
                 error: Some("Task description cannot be empty".to_string()),
+            }));
+        }
+
+        // ExecutionScope (T8 #650 / D8 #645): project_id is mandatory and
+        // immutable after creation — reject empty/whitespace at the gate so
+        // every task is born with a concrete scope.
+        if req.project_id.trim().is_empty() {
+            return Ok(Response::new(SubmitTaskResponse {
+                success: false,
+                task_id: String::new(),
+                status: String::new(),
+                subtask_count: 0,
+                subtasks: Vec::new(),
+                error: Some(
+                    "project_id cannot be empty — every task must declare a project scope \
+                     (D8 #645)"
+                        .to_string(),
+                ),
             }));
         }
 
@@ -6927,6 +6968,56 @@ mod tests {
         }
         // If this compiles, new() is sync
         _assert_sync::<GrpcServer<uc_engine::LocalEngine>>();
+    }
+
+    // ── ExecutionScope: submit validation (T8 #650 / D8 #645) ────
+
+    #[tokio::test]
+    async fn submit_task_rejects_empty_and_blank_project_id() {
+        use uc_engine::LocalEngine;
+
+        let server = GrpcServer::new(LocalEngine::new_fallback());
+
+        for project_id in ["", "   ", "\t\n"] {
+            let resp = server
+                .submit_task(tonic::Request::new(SubmitTaskRequest {
+                    description: "Scoped task".to_string(),
+                    project_id: project_id.to_string(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(
+                !resp.success,
+                "empty/blank project_id must be rejected: {project_id:?}"
+            );
+            let err = resp.error.unwrap_or_default();
+            assert!(
+                err.contains("project_id cannot be empty"),
+                "error must name the violated invariant, got: {err}"
+            );
+            assert!(resp.task_id.is_empty(), "no task may be created");
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_task_accepts_concrete_project_id() {
+        use uc_engine::LocalEngine;
+
+        // Non-messaging fallback path: submit_task decomposes locally.
+        let server = GrpcServer::new(LocalEngine::new_fallback());
+        let resp = server
+            .submit_task(tonic::Request::new(SubmitTaskRequest {
+                description: "Scoped task".to_string(),
+                project_id: "proj-1".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.success, "{:?}", resp.error);
+        let store = server.inner.task_store.lock().await;
+        let task = store.get_task(&resp.task_id).expect("task created");
+        assert_eq!(task.project_id, "proj-1");
     }
 
     // ── NATS task update broadcast tests ────────────────────────

@@ -246,6 +246,11 @@ impl GrpcEngineClient {
     /// the gateway refuses a non-empty mismatch and treats empty (legacy
     /// callers) as accepted-but-not-dispatchable. New workers should pass
     /// [`uc_types::CONTRACT_VERSION`].
+    ///
+    /// `projects` is the worker's execution scopes (T8 #650 / D8 #645).
+    /// Empty = OPEN worker (serves any scope); non-empty = only tasks whose
+    /// project_id is listed. The gateway normalizes (trims, drops blanks,
+    /// dedupes) on arrival.
     pub async fn register_worker(
         &self,
         worker_id: &str,
@@ -253,6 +258,7 @@ impl GrpcEngineClient {
         max_capacity: u32,
         metadata: Option<&str>,
         contract_version: Option<&str>,
+        projects: &[String],
     ) -> Result<bool, EngineError> {
         let request = tonic::Request::new(RegisterWorkerRequest {
             worker_id: worker_id.to_string(),
@@ -260,6 +266,7 @@ impl GrpcEngineClient {
             max_capacity,
             metadata: metadata.unwrap_or_default().to_string(),
             contract_version: contract_version.unwrap_or_default().to_string(),
+            projects: projects.to_vec(),
         });
         match self.worker_client.clone().register_worker(request).await {
             Ok(response) => {

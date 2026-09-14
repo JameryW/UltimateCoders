@@ -1226,10 +1226,17 @@ def test_gateway_registration_sends_contract_version():
             pass
 
         async def register_worker_async(
-            self, worker_id, capabilities, max_capacity, metadata, contract_version=None
+            self,
+            worker_id,
+            capabilities,
+            max_capacity,
+            metadata,
+            contract_version=None,
+            projects=None,
         ) -> bool:
             captured["contract_version"] = contract_version
             captured["metadata"] = metadata
+            captured["projects"] = projects
             return True
 
     with patch.object(nw_mod, "Engine", FakeEngine):
@@ -1237,6 +1244,8 @@ def test_gateway_registration_sends_contract_version():
 
     assert captured["contract_version"] == nw_mod.CONTRACT_VERSION
     assert json.loads(captured["metadata"])["contract_version"] == nw_mod.CONTRACT_VERSION
+    # T8 #650: default (no UC_WORKER_PROJECTS) registers as an open worker.
+    assert captured["projects"] == []
 
 
 async def test_heartbeat_w_info_and_grpc_hb_carry_contract_version():

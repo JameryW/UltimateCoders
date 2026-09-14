@@ -1087,6 +1087,7 @@ class Engine:
         max_capacity: int = 3,
         metadata: str | None = None,
         contract_version: str | None = None,
+        projects: list[str] | None = None,
     ) -> bool:
         """Register this worker with the gateway via WorkerService RPC.
 
@@ -1101,6 +1102,9 @@ class Engine:
                 workers should pass ``nats_worker.CONTRACT_VERSION``; a
                 non-empty mismatch with the gateway is REFUSED and ``None``
                 (legacy) registers accepted-but-not-dispatchable.
+            projects: Execution scopes (T8 #650 / D8 #645). Empty/None =
+                OPEN worker (serves any scope); non-empty = only tasks
+                whose project_id is listed match this worker.
 
         Returns:
             True if registration succeeded.
@@ -1115,6 +1119,7 @@ class Engine:
                 max_capacity,
                 metadata,
                 contract_version,
+                projects or [],
             )
         except Exception as exc:
             logger.warning("register_worker failed: %s", exc)

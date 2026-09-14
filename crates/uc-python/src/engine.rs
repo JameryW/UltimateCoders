@@ -1222,13 +1222,16 @@ impl PyEngine {
     ///         workers MUST pass the current version (``"v1"``); a
     ///         non-empty mismatch is refused by the gateway. ``None``/empty
     ///         keeps legacy behavior: accepted but never dispatched to.
+    ///     projects: Execution scopes (T8 #650 / D8 #645). Empty/``None``
+    ///         = OPEN worker (serves any scope); non-empty = only tasks
+    ///         whose project_id is listed are matched to this worker.
     ///
     /// Returns:
     ///     True if registration succeeded.
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode or registration fails.
-    #[pyo3(signature = (worker_id, capabilities, max_capacity, metadata=None, contract_version=None))]
+    #[pyo3(signature = (worker_id, capabilities, max_capacity, metadata=None, contract_version=None, projects=None))]
     pub fn register_worker_async<'py>(
         &self,
         py: Python<'py>,
@@ -1237,6 +1240,7 @@ impl PyEngine {
         max_capacity: u32,
         metadata: Option<String>,
         contract_version: Option<String>,
+        projects: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let grpc_client = self.grpc_client.clone();
         let client = grpc_client.ok_or_else(|| {
@@ -1250,6 +1254,7 @@ impl PyEngine {
                     max_capacity,
                     metadata.as_deref(),
                     contract_version.as_deref(),
+                    &projects.unwrap_or_default(),
                 )
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))

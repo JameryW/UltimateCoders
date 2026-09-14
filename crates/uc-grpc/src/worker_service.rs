@@ -36,6 +36,9 @@ pub struct RegisteredWorker {
     /// ([`uc_types::CONTRACT_VERSION`] handshake). Empty = legacy
     /// pre-handshake worker: accepted for observability, never dispatchable.
     pub contract_version: String,
+    /// Execution scopes (T8 #650 / D8 #645): normalized project_ids the
+    /// worker serves. Empty = OPEN worker (accepts any scope).
+    pub projects: Vec<String>,
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
 }
@@ -57,6 +60,17 @@ impl RegisteredWorker {
             return 100;
         }
         (self.current_load * 100) / self.max_capacity
+    }
+
+    /// Whether this worker serves tasks of the given scope (T8 #650).
+    ///
+    /// OPEN workers (empty `projects`) serve every scope — including the
+    /// legacy empty scope. A scoped worker matches only when its declared
+    /// project list contains `project_id`; because registration trims and
+    /// drops blank entries, a scoped worker can never claim the empty scope,
+    /// so empty-scope tasks only ever go to open workers.
+    pub fn serves_scope(&self, project_id: &str) -> bool {
+        self.projects.is_empty() || self.projects.iter().any(|p| p == project_id)
     }
 }
 
@@ -85,6 +99,30 @@ impl WorkerRegistry {
         metadata: String,
         contract_version: String,
     ) -> Result<(), String> {
+        self.register_with_projects(
+            worker_id,
+            capabilities,
+            max_capacity,
+            metadata,
+            contract_version,
+            Vec::new(),
+        )
+    }
+
+    /// Register with explicit execution scopes (T8 #650 / D8 #645).
+    ///
+    /// `projects` is normalized on entry: entries are trimmed, blank entries
+    /// dropped, duplicates removed (order preserved). An empty list means an
+    /// OPEN worker that serves every scope.
+    pub fn register_with_projects(
+        &mut self,
+        worker_id: String,
+        capabilities: Vec<String>,
+        max_capacity: u32,
+        metadata: String,
+        contract_version: String,
+        projects: Vec<String>,
+    ) -> Result<(), String> {
         if worker_id.is_empty() {
             return Err("worker_id cannot be empty".to_string());
         }
@@ -103,6 +141,7 @@ impl WorkerRegistry {
             current_load: 0,
             metadata,
             contract_version,
+            projects: normalize_projects(projects),
             registered_at: now,
             last_heartbeat: now,
         };
@@ -176,10 +215,14 @@ impl WorkerRegistry {
             .collect()
     }
 
-    /// The contract-version hard gate consulted by
+    /// The capability + scope + contract-version hard gate consulted by
     /// `publish_ready_subtasks` / `dispatch_ready_subtasks` before marking a
     /// subtask Assigned and publishing it.
-    pub fn dispatch_gate(&self, required: &[String]) -> WorkerDispatchGate {
+    ///
+    /// Filter order (T8 #650 / D8 #645): capability match first (unchanged),
+    /// then the scope hard filter, then the contract-version check — a
+    /// worker that does not serve `project_id` is never a dispatch candidate.
+    pub fn dispatch_gate(&self, required: &[String], project_id: &str) -> WorkerDispatchGate {
         let candidates = self.workers_with_capabilities(required);
         if candidates.is_empty() {
             // No capability-matching available worker. With required
@@ -193,12 +236,23 @@ impl WorkerRegistry {
                 WorkerDispatchGate::NoCapableWorker
             };
         }
-        if candidates
+        // Scope hard filter: scoped workers must serve the task's project.
+        let scope_matched: Vec<&RegisteredWorker> = candidates
+            .iter()
+            .copied()
+            .filter(|w| w.serves_scope(project_id))
+            .collect();
+        if scope_matched.is_empty() {
+            return WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: candidates.iter().map(|w| w.id.clone()).collect(),
+            };
+        }
+        if scope_matched
             .iter()
             .all(|w| w.contract_version != CONTRACT_VERSION)
         {
             return WorkerDispatchGate::NoVersionMatchedWorker {
-                workers: candidates
+                workers: scope_matched
                     .iter()
                     .map(|w| (w.id.clone(), w.contract_version.clone()))
                     .collect(),
@@ -247,8 +301,21 @@ impl Default for WorkerRegistry {
     }
 }
 
-/// Outcome of the capability + contract-version dispatch gate for one subtask
-/// (see [`WorkerRegistry::dispatch_gate`]).
+/// Normalize a raw `projects` registration list (T8 #650): trim each entry,
+/// drop blanks, remove duplicates preserving first-seen order.
+fn normalize_projects(raw: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for p in raw {
+        let t = p.trim();
+        if !t.is_empty() && !out.iter().any(|e| e == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Outcome of the capability + scope + contract-version dispatch gate for one
+/// subtask (see [`WorkerRegistry::dispatch_gate`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerDispatchGate {
     /// At least one available capability-matching worker declared the
@@ -257,7 +324,12 @@ pub enum WorkerDispatchGate {
     /// `required_capabilities` unmet by any available worker → keep Pending
     /// (pre-T1 behavior).
     NoCapableWorker,
-    /// Capability-matching workers are available, but NONE declared
+    /// Capability-matching workers are available, but NONE serve the task's
+    /// scope (T8 #650): every candidate is scoped to other project_ids and
+    /// the task's scope matches none. Keep Pending — a scoped worker must
+    /// never receive a foreign-scope node. Carries the rejected candidate ids.
+    NoScopeMatchedWorker { workers: Vec<String> },
+    /// Capability- and scope-matching workers are available, but NONE declared
     /// [`CONTRACT_VERSION`] (mixed-version cluster: legacy workers with an
     /// empty version, or a version skew that slipped past registration).
     /// Keep Pending and surface it LOUDLY — never dispatch silently.
@@ -283,12 +355,13 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
         }
 
         let mut registry = self.worker_registry().write().await;
-        match registry.register(
+        match registry.register_with_projects(
             req.worker_id.clone(),
             req.capabilities,
             req.max_capacity,
             req.metadata,
             req.contract_version.clone(),
+            req.projects,
         ) {
             Ok(()) => {
                 if req.contract_version.is_empty() {
@@ -948,10 +1021,10 @@ mod tests {
 
         // Empty registry, no capabilities → today's best-effort publish
         // (NATS-only deployments without gRPC registration).
-        assert_eq!(reg.dispatch_gate(&[]), WorkerDispatchGate::Dispatch);
+        assert_eq!(reg.dispatch_gate(&[], ""), WorkerDispatchGate::Dispatch);
         // Empty registry, capabilities required → keep Pending (unchanged).
         assert_eq!(
-            reg.dispatch_gate(&caps("rust")),
+            reg.dispatch_gate(&caps("rust"), ""),
             WorkerDispatchGate::NoCapableWorker
         );
 
@@ -965,14 +1038,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reg.dispatch_gate(&caps("rust")),
+            reg.dispatch_gate(&caps("rust"), ""),
             WorkerDispatchGate::NoVersionMatchedWorker {
                 workers: vec![("w-legacy".to_string(), String::new())]
             }
         );
         // Capability requirement still short-circuits before the version gate.
         assert_eq!(
-            reg.dispatch_gate(&caps("docker")),
+            reg.dispatch_gate(&caps("docker"), ""),
             WorkerDispatchGate::NoCapableWorker
         );
 
@@ -987,10 +1060,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reg.dispatch_gate(&caps("rust")),
+            reg.dispatch_gate(&caps("rust"), ""),
             WorkerDispatchGate::Dispatch
         );
-        assert_eq!(reg.dispatch_gate(&[]), WorkerDispatchGate::Dispatch);
+        assert_eq!(reg.dispatch_gate(&[], ""), WorkerDispatchGate::Dispatch);
 
         // dispatchable_workers_with_capabilities excludes the legacy worker.
         let ids: Vec<_> = reg
@@ -1011,6 +1084,7 @@ mod tests {
                 max_capacity: 2,
                 metadata: String::new(),
                 contract_version: "v2".to_string(),
+                projects: vec![],
             }))
             .await
             .unwrap()
@@ -1036,6 +1110,7 @@ mod tests {
                 max_capacity: 1,
                 metadata: String::new(),
                 contract_version: CONTRACT_VERSION.to_string(),
+                projects: vec![],
             }))
             .await
             .unwrap()
@@ -1049,6 +1124,7 @@ mod tests {
                 max_capacity: 1,
                 metadata: String::new(),
                 contract_version: String::new(),
+                projects: vec![],
             }))
             .await
             .unwrap()
@@ -1072,6 +1148,7 @@ mod tests {
                 max_capacity: 2,
                 metadata: String::new(),
                 contract_version: CONTRACT_VERSION.to_string(),
+                projects: vec![],
             }))
             .await
             .unwrap();
@@ -1139,6 +1216,7 @@ mod tests {
                 max_capacity: 2,
                 metadata: String::new(),
                 contract_version: String::new(),
+                projects: vec![],
             }))
             .await
             .unwrap();
@@ -1405,5 +1483,187 @@ mod tests {
             split_target_across_hosts(0, &two),
             vec![("a".to_string(), 0), ("b".to_string(), 0)]
         );
+    }
+
+    // ── ExecutionScope: worker projects registration (T8 #650 / D8 #645) ──
+
+    #[test]
+    fn normalize_projects_trims_drops_blanks_and_dedupes() {
+        assert_eq!(normalize_projects(vec![]), Vec::<String>::new());
+        assert_eq!(
+            normalize_projects(vec!["  alpha ".to_string(), "beta".to_string()]),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+        // Blank entries dropped — a scoped worker can never claim "".
+        assert_eq!(
+            normalize_projects(vec!["".to_string(), "  ".to_string(), "alpha".to_string()]),
+            vec!["alpha".to_string()]
+        );
+        // Duplicates removed, first-seen order kept.
+        assert_eq!(
+            normalize_projects(vec![
+                "b".to_string(),
+                "a".to_string(),
+                " b ".to_string(),
+                "a".to_string()
+            ]),
+            vec!["b".to_string(), "a".to_string()]
+        );
+    }
+
+    #[test]
+    fn register_with_projects_normalizes_and_serves_scope() {
+        let mut reg = WorkerRegistry::new();
+        reg.register_with_projects(
+            "w-scoped".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+            String::new(),
+            vec![" alpha ".to_string(), "".to_string(), "alpha".to_string()],
+        )
+        .unwrap();
+        let w = &reg.workers()["w-scoped"];
+        assert_eq!(w.projects, vec!["alpha".to_string()]);
+        assert!(w.serves_scope("alpha"));
+        assert!(!w.serves_scope("beta"));
+        assert!(
+            !w.serves_scope(""),
+            "scoped worker never serves empty scope"
+        );
+
+        // register() (legacy path) = open worker: serves every scope.
+        reg.register(
+            "w-open".to_string(),
+            vec!["code".to_string()],
+            3,
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
+        let open = &reg.workers()["w-open"];
+        assert!(open.projects.is_empty());
+        assert!(open.serves_scope(""));
+        assert!(open.serves_scope("alpha"));
+        assert!(open.serves_scope("anything"));
+    }
+
+    #[test]
+    fn dispatch_gate_scope_hard_filter() {
+        let mut reg = WorkerRegistry::new();
+        let caps = |s: &str| vec![s.to_string()];
+
+        // Scoped worker, version-matched, serving only project "alpha".
+        reg.register_with_projects(
+            "w-alpha".to_string(),
+            caps("rust"),
+            3,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+            vec!["alpha".to_string()],
+        )
+        .unwrap();
+
+        // Same scope → dispatchable.
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust"), "alpha"),
+            WorkerDispatchGate::Dispatch
+        );
+        // Foreign scope → keep Pending, LOUDLY (scoped worker must never
+        // receive a foreign-scope node).
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust"), "beta"),
+            WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: vec!["w-alpha".to_string()]
+            }
+        );
+        // Empty scope (legacy task) → only open workers qualify; the scoped
+        // worker must not receive it.
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust"), ""),
+            WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: vec!["w-alpha".to_string()]
+            }
+        );
+
+        // An open worker (version-matched) serves every scope, including
+        // foreign and empty ones, even while the scoped worker is registered.
+        reg.register(
+            "w-open".to_string(),
+            caps("rust"),
+            3,
+            String::new(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust"), "beta"),
+            WorkerDispatchGate::Dispatch
+        );
+        assert_eq!(
+            reg.dispatch_gate(&caps("rust"), ""),
+            WorkerDispatchGate::Dispatch
+        );
+
+        // Empty registry + no required capabilities stays best-effort
+        // Dispatch (NATS-only deployments) regardless of scope.
+        let empty_reg = WorkerRegistry::new();
+        assert_eq!(
+            empty_reg.dispatch_gate(&[], "alpha"),
+            WorkerDispatchGate::Dispatch
+        );
+    }
+
+    #[test]
+    fn dispatch_gate_scope_filters_before_version_gate() {
+        let mut reg = WorkerRegistry::new();
+        // Legacy (empty contract_version) worker scoped to "alpha".
+        reg.register_with_projects(
+            "w-legacy-alpha".to_string(),
+            vec!["rust".to_string()],
+            3,
+            String::new(),
+            String::new(),
+            vec!["alpha".to_string()],
+        )
+        .unwrap();
+
+        // In-scope: capability + scope pass, version gate fires.
+        assert_eq!(
+            reg.dispatch_gate(&["rust".to_string()], "alpha"),
+            WorkerDispatchGate::NoVersionMatchedWorker {
+                workers: vec![("w-legacy-alpha".to_string(), String::new())]
+            }
+        );
+        // Out-of-scope: scope gate fires first (version never consulted).
+        assert_eq!(
+            reg.dispatch_gate(&["rust".to_string()], "beta"),
+            WorkerDispatchGate::NoScopeMatchedWorker {
+                workers: vec!["w-legacy-alpha".to_string()]
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn register_worker_rpc_carries_projects() {
+        let server = make_server();
+        let resp = server
+            .register_worker(Request::new(RegisterWorkerRequest {
+                worker_id: "w-scope-rpc".to_string(),
+                capabilities: vec!["code".to_string()],
+                max_capacity: 2,
+                metadata: String::new(),
+                contract_version: CONTRACT_VERSION.to_string(),
+                projects: vec!["alpha".to_string(), "  ".to_string()],
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.success, "{:?}", resp.error);
+
+        let reg = server.worker_registry().read().await;
+        let w = &reg.workers()["w-scope-rpc"];
+        // Blank entry dropped at the RPC boundary.
+        assert_eq!(w.projects, vec!["alpha".to_string()]);
     }
 }

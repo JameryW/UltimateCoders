@@ -195,6 +195,14 @@ pub struct CompletionRow {
     pub committed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// ExecutionScope validation (T8 #650 / D8 #645): a graph's scope must be a
+/// concrete, non-blank `project_id`. Pure so it is unit-testable without PG;
+/// the storage-side caller maps `false` to an `EngineError` on the live write
+/// path (`upsert_task_shadow`).
+pub fn graph_scope_is_valid(project_id: &str) -> bool {
+    !project_id.trim().is_empty()
+}
+
 /// A Task projected into the five-table shape. Produced identically from the
 /// Rust `Task` (live HashMap / PG `tasks` rows) and from the TS
 /// `PersistedTask` JSON — that convergence is what makes the import
@@ -1080,6 +1088,19 @@ impl GraphStore {
     /// DO UPDATE clause only sets status/project/updated_at), so an imported
     /// graph keeps its provenance marker.
     pub async fn upsert_task_shadow(&self, task: &Task) -> Result<BackfillStats, EngineError> {
+        // ExecutionScope (T8 #650 / D8 #645): the graph row must carry a
+        // concrete scope. Submit validation upstream guarantees non-empty
+        // project_id for every task created after D8; this is the last-line
+        // defense so an unscoped graph can never enter `execution_graphs`
+        // through the live write path (legacy backfill rows with '' are
+        // tolerated and handled by open-worker dispatch semantics).
+        if !graph_scope_is_valid(&task.project_id) {
+            return Err(EngineError::StorageError(
+                "graph project_id cannot be empty — every execution graph must declare a \
+                 project scope (D8 #645)"
+                    .to_string(),
+            ));
+        }
         let projection = project_task(task);
         self.write_projection(&projection, true, false).await
     }
@@ -2393,6 +2414,21 @@ impl GraphShadowSink for GraphStore {
 mod tests {
     use super::*;
     use uc_types::TaskId;
+
+    // ── ExecutionScope (T8 #650 / D8 #645) ──────────────────────────
+
+    #[test]
+    fn graph_scope_validation_rejects_empty_and_blank() {
+        assert!(!graph_scope_is_valid(""));
+        assert!(!graph_scope_is_valid("   "));
+        assert!(!graph_scope_is_valid("\t\n"));
+    }
+
+    #[test]
+    fn graph_scope_validation_accepts_concrete_scope() {
+        assert!(graph_scope_is_valid("ultimate-coders"));
+        assert!(graph_scope_is_valid(" p1 "), "non-blank passes");
+    }
 
     #[test]
     fn status_tokens_cover_documented_mapping() {

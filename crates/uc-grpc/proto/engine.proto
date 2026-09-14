@@ -788,6 +788,12 @@ message RegisterWorkerRequest {
     // pre-handshake worker: accepted for observability but never
     // dispatched to (mixed-version clusters fail loudly, not silently).
     string contract_version = 5;
+    // Execution scopes (T8 #650 / D8 #645): project_ids this worker serves.
+    // Empty = OPEN worker (accepts any scope). Non-empty = the worker only
+    // matches tasks whose project_id is listed here. Entries are trimmed;
+    // empty/whitespace entries are dropped (a scoped worker can never claim
+    // the empty scope). Scope changes take effect via re-registration.
+    repeated string projects = 6;
 }
 
 message RegisterWorkerResponse {
