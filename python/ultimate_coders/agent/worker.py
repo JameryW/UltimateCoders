@@ -33,6 +33,7 @@ from ultimate_coders.agent.sandbox import (
     AgentOutput,
     SandboxConfig,
     SandboxManager,
+    subtask_usage_from_token_usage,
 )
 from ultimate_coders.agent.state_sync import (
     ContextInjector,
@@ -1245,6 +1246,12 @@ class Worker:
                 error="" if output.success else output.summary[:2000],
                 stderr_tail=stderr_tail,
                 recent_tool_calls=output.tool_calls[-5:],
+                # T15 #660 / D13 #657: the adapters have parsed token/cost out
+                # of agent stdout since T5, but this constructor dropped it on
+                # the floor while passing every other AgentOutput field — one of
+                # the two hops that kept execution_events.cost/tokens NULL.
+                # `None` when the adapter reported nothing (stays NULL, never 0).
+                usage=subtask_usage_from_token_usage(output.token_usage),
             )
         finally:
             # Release edit intent after execution (success or failure)
@@ -1461,6 +1468,12 @@ class Worker:
                 file_changes=[],
                 success=False,
             )
+        # T15 #660 note: every return in this chain forwards ONE step's usage
+        # (`last_output` here, the failing step on the two abort paths below).
+        # It is deliberately NOT summed: a workflow can run several adapters, so
+        # a single collapsed block would make both the number and its `source`
+        # unattributable. Per-step usage belongs on per-step events; until that
+        # exists this is an under-report of a multi-step chain, not a total.
         return AgentOutput(
             summary=last_output.summary,
             file_changes=all_file_changes,

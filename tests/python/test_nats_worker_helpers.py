@@ -22,7 +22,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from ultimate_coders.agent.types import (
     Subtask,
+    SubtaskResult,
     SubtaskStatus,
+    SubtaskUsage,
     Task,
     TaskStatus,
     WorkflowStep,
@@ -1549,3 +1551,82 @@ def test_dispatch_remote_publishes_execution_envelope():
     assert (
         captured_headers.get("Nats-Msg-Id") == payload["idempotency_key"]
     ), "dispatch must carry the idempotency key as Nats-Msg-Id"
+
+
+# ── T15 #660: usage rides uc.task.update ────────────────────────
+
+
+def test_task_update_payload_emits_usage_with_rust_field_names():
+    """Cross-language golden: the Rust ``SubtaskUsage`` deserializes these exact
+    keys (crates/uc-types/src/agent.rs pins them from the other side).
+
+    ``serde`` ignores unknown keys, so renaming a field on one side only is a
+    *silent* drop rather than an error — this test and
+    ``subtask_result_omits_usage_key_when_absent_and_locks_field_names`` fail
+    together if either side drifts.
+    """
+    st = Subtask(
+        id="st-usage",
+        description="d",
+        status=SubtaskStatus.COMPLETED,
+        result=SubtaskResult(
+            subtask_id="st-usage",
+            worker_id="w1",
+            summary="ok",
+            success=True,
+            usage=SubtaskUsage(
+                input_tokens=120,
+                output_tokens=30,
+                total_cost_usd=0.5,
+                source="claude-code",
+            ),
+        ),
+    )
+    task = Task(
+        id="t-usage",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+    assert entry["usage"] == {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "total_cost_usd": 0.5,
+        "source": "claude-code",
+    }
+
+
+def test_task_update_payload_omits_usage_when_not_reported():
+    """An absent key means "not reported": the gateway keeps
+    ``execution_events.cost``/``tokens`` NULL instead of fabricating a zero,
+    which is the whole reason this change is additive (no contract_version
+    bump)."""
+    st = Subtask(
+        id="st-nousage",
+        description="d",
+        status=SubtaskStatus.COMPLETED,
+        result=SubtaskResult(
+            subtask_id="st-nousage",
+            worker_id="w1",
+            summary="ok",
+            success=True,
+        ),
+    )
+    task = Task(
+        id="t-nousage",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+
+    assert "usage" not in _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    # A block that is present but empty is still emitted verbatim: Python does
+    # not second-guess it, the gateway's own emptiness fold is what keeps the
+    # columns NULL (and withdraws the provenance claim).
+    st.result.usage = SubtaskUsage()
+    assert _make_task_update_payload(task, partial=True)["subtasks"][0]["usage"] == {}

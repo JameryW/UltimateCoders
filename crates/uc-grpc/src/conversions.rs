@@ -1298,6 +1298,7 @@ impl From<SubtaskProto> for Subtask {
                 success: true,
                 completed_at: chrono::Utc::now(),
                 result: Some(r),
+                usage: None,
             }),
             dispatch_mode: proto.dispatch_mode.as_deref().map_or_else(
                 uc_types::DispatchMode::default,
@@ -1518,6 +1519,7 @@ impl From<TaskEventProto> for AgentEvent {
                         summary,
                         success,
                         completed_at: timestamp,
+                        usage: None,
                         result: if output.is_empty() {
                             None
                         } else {

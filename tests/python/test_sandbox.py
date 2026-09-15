@@ -18,15 +18,17 @@ from ultimate_coders.agent.sandbox import (
     NetworkMode,
     SandboxConfig,
     SandboxManager,
+    TokenUsage,
     _codex_mcp_server_toml,
     _merge_agent_config,
     _resolve_mcp_configs,
     available_agents,
     create_adapter,
     parse_decomposition_output,
+    subtask_usage_from_token_usage,
     truncate_str,
 )
-from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, Task
+from ultimate_coders.agent.types import ChangeType, FileChange, Subtask, SubtaskUsage, Task
 
 # ── SandboxConfig tests ─────────────────────────────────────────
 
@@ -2724,3 +2726,100 @@ class TestNatsWorkerGatewayRegistrationRetry:
             assert register_called["n"] >= 1, "heartbeat did not retry registration"
 
         asyncio.run(run())
+
+
+# ── T15 #660: usage conversion + adapter provenance ──────────────
+
+
+def test_subtask_usage_from_token_usage_returns_none_when_absent():
+    """``None`` in → ``None`` out.
+
+    This is the property the gateway leans on to keep
+    ``execution_events.cost``/``tokens`` NULL: an adapter that reported nothing
+    must not become a zeroed block, because "no usage reported" and "cost 0"
+    are different facts.
+    """
+    assert subtask_usage_from_token_usage(None) is None
+
+
+def test_subtask_usage_from_token_usage_carries_numbers_and_source():
+    """The happy path: every number and the provenance survive the hop."""
+    usage = TokenUsage(
+        input_tokens=120,
+        output_tokens=30,
+        total_cost_usd=0.5,
+        source="grok-build",
+    )
+    assert subtask_usage_from_token_usage(usage) == SubtaskUsage(
+        input_tokens=120,
+        output_tokens=30,
+        total_cost_usd=0.5,
+        source="grok-build",
+    )
+    # An explicit argument overrides whatever the parse site stamped.
+    assert (
+        subtask_usage_from_token_usage(usage, source="claude-code").source
+        == "claude-code"
+    )
+
+
+def test_subtask_usage_from_token_usage_keeps_reported_zeroes():
+    """A present-but-zero block is still a measurement.
+
+    ``usage_reported`` will be true and ``tokens`` binds 0 — the correct
+    reading of "the adapter reported 0/0". Note the documented fidelity gap
+    that comes with it: ``TokenUsage`` defaults its token fields to ``0``
+    rather than ``None``, so a *partial* report is indistinguishable from a
+    zero one at this layer. The case the report contract has to get right —
+    an absent block — is cleanly ``None``.
+    """
+    converted = subtask_usage_from_token_usage(TokenUsage())
+    assert converted is not None
+    assert converted.input_tokens == 0
+    assert converted.output_tokens == 0
+    assert converted.total_cost_usd is None
+    assert not converted.is_empty(), "0/0 is a reported measurement, not silence"
+
+
+def test_grok_adapter_stamps_its_own_name_as_usage_source():
+    """Provenance is stamped where the adapter is statically known (T15 #660),
+    so a price can be attributed to the account that produced it."""
+    adapter = GrokBuildAdapter()
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": "Fixed.",
+                    "usage": {"input_tokens": 12, "output_tokens": 8},
+                }
+            ),
+        ]
+    )
+    output = adapter.parse_output(ExecResult(exit_code=0, stdout=stdout))
+    assert output.token_usage is not None
+    assert output.token_usage.source == "grok-build"
+
+
+def test_claude_adapter_stamps_its_own_name_on_both_parse_paths():
+    """Claude Code has two usage-extraction sites (stream-json and the legacy
+    single-JSON envelope); both must name the adapter."""
+    adapter = ClaudeCodeAdapter()
+    usage = {"input_tokens": 5, "output_tokens": 2, "total_cost_usd": 0.01}
+
+    streaming = (
+        json.dumps({"type": "assistant", "message": {"content": []}})
+        + "\n"
+        + json.dumps({"type": "result", "result": "done", "usage": usage})
+    )
+    streamed = adapter.parse_output(ExecResult(exit_code=0, stdout=streaming))
+    assert streamed.token_usage is not None
+    assert streamed.token_usage.input_tokens == 5
+    assert streamed.token_usage.source == "claude-code"
+
+    legacy = adapter.parse_output(
+        ExecResult(exit_code=0, stdout=json.dumps({"result": "done", "usage": usage}))
+    )
+    assert legacy.token_usage is not None
+    assert legacy.token_usage.input_tokens == 5
+    assert legacy.token_usage.source == "claude-code"

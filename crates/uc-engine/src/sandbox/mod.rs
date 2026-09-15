@@ -304,6 +304,38 @@ pub struct TokenUsage {
     pub total_cost_usd: Option<f64>,
 }
 
+/// Convert a sandbox [`TokenUsage`] into the shared report type (T15 #660).
+///
+/// The adapters have parsed token/cost out of agent stdout since T5, but
+/// nothing in `crates/` consumed `AgentOutput` afterwards — which is exactly
+/// why `execution_events.cost`/`tokens` stayed dead. This function is the
+/// **wiring point**: when the sandbox runtime lands (`SandboxExecutor` is a
+/// loud placeholder and `LocalNodeHandler` has no production impl today, so
+/// there is no live producer to call it from), the reporting site becomes one
+/// call to this helper.
+///
+/// `source` names the adapter (`"claude_code"` / `"grok"`). Pass `None` when
+/// it is not statically known rather than guessing: the gateway omits
+/// `usage_source` instead of inventing one.
+///
+/// NOTE on fidelity: the sandbox parsers default a *missing* usage sub-field
+/// to `0` (e.g. `u.get("input_tokens", 0)`), so a usage block that is present
+/// but partial cannot be distinguished from one that really reported zeros.
+/// An absent block, however, is `None` end to end — and that is the case the
+/// report contract has to get right. Making the parsers `Option`-preserving is
+/// sandbox-runtime work, not report-contract work.
+pub fn subtask_usage_from_token_usage(
+    usage: &TokenUsage,
+    source: Option<&str>,
+) -> uc_types::SubtaskUsage {
+    uc_types::SubtaskUsage {
+        input_tokens: Some(usage.input_tokens),
+        output_tokens: Some(usage.output_tokens),
+        total_cost_usd: usage.total_cost_usd,
+        source: source.map(str::to_string),
+    }
+}
+
 // ── Shared Utility Functions ──────────────────────────────────────
 
 /// Truncate a string to a maximum character boundary, respecting UTF-8.

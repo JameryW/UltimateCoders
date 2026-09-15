@@ -24,6 +24,7 @@ from ultimate_coders.agent.types import (
     Subtask,
     SubtaskResult,
     SubtaskStatus,
+    SubtaskUsage,
     Task,
     TaskStatus,
     WorkflowStep,
@@ -716,3 +717,104 @@ class TestJsonSerializable:
         restored_data = json.loads(s)
         assert restored_data["subtasks"][0]["result"]["success"] is False
         assert restored_data["subtasks"][0]["result"]["error"] == "Compilation failed"
+
+
+# ── SubtaskUsage (T15 #660) ──────────────────────────────────────
+
+
+def test_subtask_usage_to_dict_omits_absent_keys():
+    """The wire/checkpoint form drops absent keys instead of emitting nulls.
+
+    An absent key is how "not reported" travels: the Rust gateway reads a
+    missing key as ``None`` via ``serde(default)``, so omitting it keeps a
+    pre-T15 publisher byte-identical. Emitting explicit nulls would be
+    equivalent for the gateway but would break that property.
+    """
+    assert SubtaskUsage().to_dict() == {}
+    assert SubtaskUsage(input_tokens=0).to_dict() == {"input_tokens": 0}
+    assert SubtaskUsage(source="claude-code").to_dict() == {"source": "claude-code"}
+    assert SubtaskUsage(
+        input_tokens=120,
+        output_tokens=30,
+        total_cost_usd=0.5,
+        source="claude-code",
+    ).to_dict() == {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "total_cost_usd": 0.5,
+        "source": "claude-code",
+    }
+
+
+def test_subtask_usage_is_empty_ignores_source():
+    """A reported 0 is a measurement; a source alone is not.
+
+    Keeping those apart is what stops the gateway from setting
+    ``usage_reported`` over two NULL columns.
+    """
+    assert SubtaskUsage().is_empty()
+    assert SubtaskUsage(source="claude-code").is_empty()
+    assert not SubtaskUsage(input_tokens=0).is_empty()
+    assert not SubtaskUsage(output_tokens=0).is_empty()
+    assert not SubtaskUsage(total_cost_usd=0.0).is_empty()
+
+
+def test_subtask_usage_from_dict_tolerates_garbage():
+    """One malformed optional field degrades to None rather than aborting the
+    whole task snapshot."""
+    assert SubtaskUsage.from_dict({}) == SubtaskUsage()
+    assert SubtaskUsage.from_dict({"input_tokens": "12"}) == SubtaskUsage(input_tokens=12)
+    assert SubtaskUsage.from_dict({"input_tokens": "abc"}) == SubtaskUsage()
+    assert SubtaskUsage.from_dict({"total_cost_usd": None}) == SubtaskUsage()
+    assert SubtaskUsage.from_dict(
+        {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_cost_usd": 0.25,
+            "source": "grok-build",
+        }
+    ) == SubtaskUsage(
+        input_tokens=1, output_tokens=2, total_cost_usd=0.25, source="grok-build"
+    )
+
+
+def test_checkpoint_roundtrip_preserves_usage():
+    """A checkpoint is one more hop a collected number can die on.
+
+    Without the usage key in ``to_dict``/``from_dict``, a worker that restarts
+    and re-publishes a full snapshot would report the same subtask with its
+    usage silently gone (T15 #660).
+    """
+    task = _make_task(
+        subtasks=[
+            _make_subtask(
+                result=_make_result(
+                    usage=SubtaskUsage(
+                        input_tokens=120,
+                        output_tokens=30,
+                        total_cost_usd=0.5,
+                        source="claude-code",
+                    )
+                )
+            )
+        ]
+    )
+    restored = Task.from_dict(task.to_dict())
+    assert restored.subtasks[0].result.usage == SubtaskUsage(
+        input_tokens=120,
+        output_tokens=30,
+        total_cost_usd=0.5,
+        source="claude-code",
+    )
+
+
+def test_checkpoint_roundtrip_without_usage_stays_none():
+    """No usage reported must survive as ``None``, never as a zeroed block."""
+    task = _make_task()
+    data = task.to_dict()
+    assert data["subtasks"][0]["result"]["usage"] is None
+    assert Task.from_dict(data).subtasks[0].result.usage is None
+
+    # A checkpoint written before the field existed has no key at all.
+    del data["subtasks"][0]["result"]["usage"]
+    assert Task.from_dict(data).subtasks[0].result.usage is None

@@ -596,7 +596,17 @@ pub trait GraphShadowSink: Send + Sync {
     /// A node reached a terminal-success derivation (legacy `Completed`).
     /// Graph plane: commit-once into `node_completions`; only the winner
     /// moves the node to `SUCCEEDED` and recomputes downstream `READY`.
-    async fn on_commit(&self, _envelope: &ExecutionEnvelope, _result_ref: Option<&str>) {}
+    ///
+    /// `usage` (T15 #660) rides along so the winner can bind `cost`/`tokens`
+    /// on the same terminal event. `None` means "the reporter said nothing",
+    /// which is deliberately distinct from a reported zero.
+    async fn on_commit(
+        &self,
+        _envelope: &ExecutionEnvelope,
+        _result_ref: Option<&str>,
+        _usage: Option<&uc_types::SubtaskUsage>,
+    ) {
+    }
 
     /// A node reached a terminal-failure derivation (legacy `Failed` /
     /// `Conflicted` on the NATS update path). Graph plane: attempt `FAILED`
@@ -1578,6 +1588,7 @@ impl GraphStore {
         node_id: &str,
         winning_attempt_id: &str,
         result_ref: Option<&str>,
+        usage: Option<&uc_types::SubtaskUsage>,
     ) -> Result<bool, EngineError> {
         let mut tx = self.begin_tx("commit_once").await?;
         lock_graph_tx(&mut tx, graph_id).await?;
@@ -1634,9 +1645,16 @@ impl GraphStore {
         // the one to measure. `attempt_duration_ms` still gets to return `None`
         // (an attempt may legitimately have no `started_at`, and skew is real).
         let (_, attempt_started_at, db_now) = attempt_row.expect("fenced matched above");
+        // T15 (#660): a block that carries no number must not be reported as a
+        // measurement, so an all-empty block folds into the same `None` an
+        // absent field produces. `tokens` stays NULL unless at least one side
+        // was reported (`total_tokens`), and `cost` stays NULL unless the
+        // adapter actually priced the run — D13's "never treat missing as 0".
+        let reported = usage.filter(|u| !u.is_empty());
         let attempt_usage = EventUsage {
+            cost: reported.and_then(|u| u.total_cost_usd),
+            tokens: reported.and_then(|u| u.total_tokens()),
             duration_ms: attempt_duration_ms(attempt_started_at, db_now),
-            ..Default::default()
         };
 
         let res = sqlx::query(
@@ -1714,11 +1732,15 @@ impl GraphStore {
             "node_succeeded",
             serde_json::json!({
                 "result_ref": result_ref,
-                // T14 (#659): the event says what it carries. `duration_ms` is
-                // bound (it is derivable from rows we already hold); `cost` /
-                // `tokens` are not until the report contract carries them
-                // (T15 #660). A reader must never treat a NULL column as zero.
-                "usage_reported": false,
+                // T14 (#659) / T15 (#660): the event says exactly what it
+                // carries. `duration_ms` is always bound (it is derivable from
+                // rows we already hold). `cost`/`tokens` are bound only when the
+                // reporter supplied them, and `usage_reported` makes that
+                // explicit so no reader can mistake a NULL column for a zero.
+                // `usage_source` names the adapter when it is known and stays
+                // null otherwise — it is never inferred.
+                "usage_reported": reported.is_some(),
+                "usage_source": reported.and_then(|u| u.source.as_deref()),
             }),
             Some(attempt_usage),
         )
@@ -2384,8 +2406,9 @@ async fn append_event_with_usage_tx(
     // Postgres infer the parameter as NUMERIC, which contradicts the wire type
     // sqlx sends. Naming **both** types settles it: `$7` is inferred as
     // `float8` (the innermost cast target), and the value is an explicit
-    // `float8 → numeric` conversion. Today `cost` is always NULL; this keeps
-    // T15 (#660) from inheriting the problem the day it binds a real value.
+    // `float8 → numeric` conversion. This was written while `cost` was still
+    // always NULL, precisely so T15 (#660) would not have to rediscover it the
+    // day it bound a real price — and T15 does now bind real prices here.
     sqlx::query(
         "INSERT INTO execution_events \
              (graph_id, node_id, attempt_id, graph_version, event_type, payload, \
@@ -2801,7 +2824,12 @@ impl GraphShadowSink for GraphStore {
         }
     }
 
-    async fn on_commit(&self, envelope: &ExecutionEnvelope, result_ref: Option<&str>) {
+    async fn on_commit(
+        &self,
+        envelope: &ExecutionEnvelope,
+        result_ref: Option<&str>,
+        usage: Option<&uc_types::SubtaskUsage>,
+    ) {
         // The winning attempt is the node's current RUNNING attempt (the
         // graph plane's own numbering); a commit with nothing running is
         // already fenced and commit_once records it as a `late_result`.
@@ -2817,7 +2845,13 @@ impl GraphShadowSink for GraphStore {
             }
         };
         match self
-            .commit_once(&envelope.graph_id, &envelope.node_id, &attempt, result_ref)
+            .commit_once(
+                &envelope.graph_id,
+                &envelope.node_id,
+                &attempt,
+                result_ref,
+                usage,
+            )
             .await
         {
             Ok(true) => {}
@@ -3081,7 +3115,7 @@ mod tests {
         // no graph plane required to keep the gateway compiling).
         sink.on_schedule(&env, Some("w1")).await;
         sink.on_heartbeat(&env).await;
-        sink.on_commit(&env, Some("r")).await;
+        sink.on_commit(&env, Some("r"), None).await;
         sink.on_fail(&env, "boom").await;
         assert_eq!(*sink.persisted.lock().unwrap(), 0);
     }
@@ -3105,6 +3139,7 @@ mod tests {
                 success: true,
                 completed_at: chrono::DateTime::from_timestamp(1717171717, 0).unwrap(),
                 result: None,
+                usage: None,
             }),
             dispatch_mode: uc_types::DispatchMode::default(),
             effect_class: uc_types::EffectClass::default(),

@@ -64,6 +64,92 @@ class AdaptationStrategy(Enum):
 
 
 @dataclass
+class SubtaskUsage:
+    """Token / cost usage reported by an executor (T15 #660, D13 #657).
+
+    Mirror of the Rust ``uc_types::SubtaskUsage``. The field names are the
+    cross-language wire contract: ``_make_task_update_payload`` emits this dict
+    onto ``uc.task.update`` and the Rust gateway deserializes it with
+    ``serde_json``, which ignores unknown keys — so renaming a field on one
+    side only is a *silent* data loss, not an error. ``test_types.py`` pins the
+    names for that reason.
+
+    Every field is optional on purpose: adapters report different subsets (a
+    CLI adapter may report tokens but no price; others report neither), and a
+    missing field means "unknown", **not** zero. ``execution_events.cost`` /
+    ``tokens`` must stay NULL for an unreported measure — writing 0 would be
+    indistinguishable from a genuine zero (D13's hard requirement).
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_cost_usd: float | None = None
+    # Which adapter produced this usage. Provenance, not a measurement.
+    source: str | None = None
+
+    def is_empty(self) -> bool:
+        """Whether the block carries no usable number at all.
+
+        ``source`` is deliberately excluded: a block that names the adapter
+        but reports no number is *not* a measurement, and letting ``source``
+        make it look non-empty would have the gateway claim
+        ``usage_reported`` over two NULL columns.
+        """
+        return (
+            self.input_tokens is None
+            and self.output_tokens is None
+            and self.total_cost_usd is None
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Wire/checkpoint form — absent keys are omitted, never ``null``.
+
+        Emitting explicit nulls would be equivalent for the Rust side (both
+        parse to ``None``) but would defeat the "publisher stays byte-identical
+        to pre-T15" property this additive change relies on.
+        """
+        out: dict[str, Any] = {}
+        for key in ("input_tokens", "output_tokens", "total_cost_usd", "source"):
+            value = getattr(self, key)
+            if value is not None:
+                out[key] = value
+        return out
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SubtaskUsage:
+        """Parse the wire/checkpoint form.
+
+        Tolerant by design: one malformed optional field degrades to ``None``
+        ("unknown") rather than aborting the whole task snapshot.
+        """
+        def _int(key: str) -> int | None:
+            value = data.get(key)
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _float(key: str) -> float | None:
+            value = data.get(key)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        source = data.get("source")
+        return cls(
+            input_tokens=_int("input_tokens"),
+            output_tokens=_int("output_tokens"),
+            total_cost_usd=_float("total_cost_usd"),
+            source=str(source) if source else None,
+        )
+
+
+@dataclass
 class SubtaskResult:
     """Result from a completed subtask."""
     subtask_id: str = ""
@@ -78,6 +164,14 @@ class SubtaskResult:
     recent_tool_calls: list[str] = field(default_factory=list)  # last ~5 tool names
     retry_count: int = 0  # how many retries this subtask used
     error: str = ""  # error message on failure
+    # Token/cost usage reported by the executor (T15 #660).
+    #
+    # ``None`` means "not reported" and must stay that way: constructing a
+    # zeroed ``SubtaskUsage`` at an error/timeout site would fabricate a
+    # measurement (``execution_events.tokens = 0``), which is exactly what
+    # D13 forbids. Only a path that actually ran an agent and got usage from it
+    # may set this.
+    usage: SubtaskUsage | None = None
 
 
 @dataclass
@@ -278,6 +372,14 @@ class Task:
                         "recent_tool_calls": st.result.recent_tool_calls,
                         "retry_count": st.result.retry_count,
                         "error": st.result.error,
+                        # T15 #660: a checkpoint is one more hop a collected
+                        # number can die on. Without this, a worker that
+                        # restarts and re-publishes a full snapshot (`partial=
+                        # False`) would report the same subtask with its usage
+                        # silently gone.
+                        "usage": (
+                            st.result.usage.to_dict() if st.result.usage else None
+                        ),
                     } if st.result else None,
                 }
                 for st in self.subtasks
@@ -340,6 +442,13 @@ class Task:
                     recent_tool_calls=rd.get("recent_tool_calls", []),
                     retry_count=rd.get("retry_count", 0),
                     error=rd.get("error", ""),
+                    # Absent key (every checkpoint written before T15, and any
+                    # publisher that omits it) stays `None` — "not reported".
+                    usage=(
+                        SubtaskUsage.from_dict(rd["usage"])
+                        if rd.get("usage") is not None
+                        else None
+                    ),
                 )
                 if "modified_files" in rd:
                     for fc in rd["modified_files"]:

@@ -42,6 +42,7 @@ from ultimate_coders.agent.types import (
     Subtask,
     SubtaskResult,
     SubtaskStatus,
+    SubtaskUsage,
     Task,
     TaskStatus,
     WorkflowStep,
@@ -150,6 +151,14 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
                 entry["error"] = st.result.error[:500]
             if st.result.retry_count:
                 entry["retry_count"] = st.result.retry_count
+            # T15 #660: this is the ONLY place subtask entries are assembled, so
+            # emitting usage here covers every uc.task.update publisher (the
+            # incremental worker result, the periodic snapshot, and the final
+            # one) without touching a call site. Emitted only when a producer
+            # attached a block — an absent key means "not reported", and the
+            # gateway keeps execution_events.cost/tokens NULL rather than 0.
+            if st.result.usage is not None:
+                entry["usage"] = st.result.usage.to_dict()
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
@@ -2879,6 +2888,12 @@ class NatsWorker:
                         status,
                         summary,
                         dispatch_retry_count=subtask.dispatch_retry_count,
+                        # T15 #660: the executor's usage rides the same
+                        # uc.task.update as the status, so the gateway can bind
+                        # cost/tokens on the node_succeeded event it already
+                        # writes. `result.usage` is None when no adapter
+                        # reported one — never a zeroed block.
+                        usage=result.usage,
                     ),
                     partial=True,
                 )
@@ -2907,6 +2922,7 @@ class NatsWorker:
         status: str,
         summary: str,
         dispatch_retry_count: int = 0,
+        usage: SubtaskUsage | None = None,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -2919,9 +2935,11 @@ class NatsWorker:
         ``dispatch_retry_count`` (T4 #640) is the attempt the worker actually
         executed under — stamped onto the subtask so ``_make_task_update_payload``
         emits ``attempt_id`` and the gateway can fence late results.
-        """
-        from ultimate_coders.agent.types import SubtaskResult, SubtaskStatus
 
+        ``usage`` (T15 #660) is whatever the executor reported. It is a plain
+        pass-through: ``None`` stays ``None`` and the wire omits the key, so the
+        gateway records NULL rather than a fabricated zero.
+        """
         st_status = SubtaskStatus.COMPLETED if status == "Completed" else SubtaskStatus.FAILED
         st = Subtask(
             id=subtask_id,
@@ -2939,6 +2957,7 @@ class NatsWorker:
                 modified_files=[],
                 summary=summary,
                 success=status == "Completed",
+                usage=usage,
             )
             if summary
             else None,

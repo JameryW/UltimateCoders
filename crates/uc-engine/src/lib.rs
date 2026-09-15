@@ -63,8 +63,9 @@ pub use sandbox::file_tracker::FileTracker;
 pub use sandbox::pool::SandboxPool;
 pub use sandbox::subprocess::SubprocessSandbox;
 pub use sandbox::{
-    AgentOutput, ExecRequest, ExecResult, NetworkMode, ResourceLimits, Sandbox, SandboxConfig,
-    SandboxHandle, SandboxHealth, SandboxStatus, TokenUsage,
+    subtask_usage_from_token_usage, AgentOutput, ExecRequest, ExecResult, NetworkMode,
+    ResourceLimits, Sandbox, SandboxConfig, SandboxHandle, SandboxHealth, SandboxStatus,
+    TokenUsage,
 };
 
 // Scheduler module re-exports

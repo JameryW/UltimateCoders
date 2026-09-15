@@ -219,6 +219,69 @@ pub struct SubtaskResult {
     pub completed_at: chrono::DateTime<chrono::Utc>,
     /// Full result output (truncated to 50KB at source).
     pub result: Option<String>,
+    /// Token/cost usage reported by the executor (T15 #660, D13 #657).
+    ///
+    /// Additive and optional: **absent means "not reported", which is not the
+    /// same as zero**. Older publishers omit the key entirely, so this must
+    /// stay `serde(default)` and must not be serialized when absent — the
+    /// gateway tells "no usage" from "zero usage" by whether the field is
+    /// present, and any aggregate over `cost`/`tokens` has to keep reporting
+    /// "samples reported / samples total" rather than substituting 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<SubtaskUsage>,
+}
+
+/// Token / cost usage attached to a subtask result (T15 #660, D13 #657).
+///
+/// Every field is optional on purpose: adapters report different subsets (a
+/// CLI adapter may report tokens but no cost; others report neither), and a
+/// missing field means "unknown" rather than "zero".
+///
+/// This type doubles as the **wire** shape of the usage block carried on
+/// `uc.task.update` — the Python side mirrors the field names verbatim, so
+/// renaming anything here is a cross-language contract change.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubtaskUsage {
+    /// Prompt/input tokens consumed, if the adapter reported them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    /// Completion/output tokens produced, if the adapter reported them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Total cost in USD, if the adapter reported it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    /// Which adapter (hence which key/account) produced this usage —
+    /// `claude_code` / `grok` / … Set only where the adapter is statically
+    /// known at the parse site; when unknown it stays `None` and the gateway
+    /// omits `usage_source` instead of guessing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+impl SubtaskUsage {
+    /// `true` when the block carries no usable number at all.
+    ///
+    /// A struct that exists but holds nothing must **not** be reported as a
+    /// real measurement — the gateway uses this to choose between
+    /// `usage_reported: true` and `false`.
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens.is_none() && self.output_tokens.is_none() && self.total_cost_usd.is_none()
+    }
+
+    /// Sum of input+output tokens, or `None` when **both** sides are missing.
+    ///
+    /// `execution_events.tokens` is a single `BIGINT`, so the two values must
+    /// collapse here. A missing side contributes 0 to an otherwise real sum
+    /// (an adapter reporting only output tokens still has a real total), but
+    /// two missing sides stay `None`: writing 0 would be indistinguishable
+    /// from "this run genuinely used no tokens" (D13's hard requirement).
+    pub fn total_tokens(&self) -> Option<i64> {
+        match (self.input_tokens, self.output_tokens) {
+            (None, None) => None,
+            (input, output) => Some((input.unwrap_or(0) + output.unwrap_or(0)) as i64),
+        }
+    }
 }
 
 /// A file change produced by a worker.
@@ -594,5 +657,102 @@ mod tests {
         let json = r#"{"agent":"codex","prompt":"CR","abort_on_failure":true}"#;
         let step: WorkflowStep = serde_json::from_str(json).unwrap();
         assert!(step.parallel_group.is_none());
+    }
+
+    #[test]
+    fn subtask_usage_total_tokens_needs_at_least_one_side() {
+        // T15 #660 / D13 #657: `execution_events.tokens` is one BIGINT, so the
+        // two reported sides collapse here. The rule that matters is the last
+        // row — two missing sides stay `None`, because writing 0 would be
+        // indistinguishable from "this run genuinely used no tokens".
+        let case = |input, output| SubtaskUsage {
+            input_tokens: input,
+            output_tokens: output,
+            ..Default::default()
+        };
+        assert_eq!(case(None, None).total_tokens(), None, "nothing reported");
+        assert_eq!(case(Some(10), None).total_tokens(), Some(10));
+        assert_eq!(case(None, Some(4)).total_tokens(), Some(4));
+        assert_eq!(case(Some(10), Some(4)).total_tokens(), Some(14));
+    }
+
+    #[test]
+    fn subtask_usage_is_empty_ignores_source() {
+        // A `source` is provenance, not a measurement: a block that names the
+        // adapter but carries no number must still read as "not reported", or
+        // the gateway would set `usage_reported: true` over two NULL columns.
+        let provenance_only = SubtaskUsage {
+            source: Some("claude-code".to_string()),
+            ..Default::default()
+        };
+        assert!(provenance_only.is_empty());
+
+        // Any real number flips it, including a token count of exactly 0 —
+        // that is a reported zero, which is a measurement.
+        assert!(!SubtaskUsage {
+            input_tokens: Some(0),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!SubtaskUsage {
+            total_cost_usd: Some(0.0),
+            ..Default::default()
+        }
+        .is_empty());
+    }
+
+    #[test]
+    fn subtask_result_parses_legacy_payload_without_usage() {
+        // Additive change discipline (T15 #660): a publisher built before the
+        // field existed omits `usage` entirely. `serde(default)` must accept
+        // it, so no `contract_version` bump is needed.
+        let json = r#"{
+            "subtask_id": "t1",
+            "worker_id": "w1",
+            "modified_files": [],
+            "summary": "ok",
+            "success": true,
+            "completed_at": "2026-09-15T00:00:00Z",
+            "result": null
+        }"#;
+        let back: SubtaskResult = serde_json::from_str(json).unwrap();
+        assert!(back.usage.is_none());
+    }
+
+    #[test]
+    fn subtask_result_omits_usage_key_when_absent_and_locks_field_names() {
+        // Two halves of the same contract:
+        //  1. an unset `usage` must not appear in the serialized form, so a
+        //     T15 publisher stays byte-identical to a pre-T15 one;
+        //  2. the keys it *does* emit are the cross-language contract the
+        //     Python mirror must reproduce verbatim.
+        let mut result = SubtaskResult {
+            subtask_id: TaskId("t1".to_string()),
+            worker_id: WorkerId("w1".to_string()),
+            modified_files: Vec::new(),
+            summary: "ok".to_string(),
+            success: true,
+            completed_at: chrono::DateTime::from_timestamp(1_757_894_400, 0).unwrap(),
+            result: None,
+            usage: None,
+        };
+        let bare = serde_json::to_string(&result).unwrap();
+        assert!(
+            !bare.contains("usage"),
+            "absent usage must not be emitted, got {bare}"
+        );
+
+        result.usage = Some(SubtaskUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(4),
+            total_cost_usd: Some(0.5),
+            source: Some("claude-code".to_string()),
+        });
+        let with = serde_json::to_string(&result).unwrap();
+        for key in ["input_tokens", "output_tokens", "total_cost_usd", "source"] {
+            assert!(with.contains(key), "usage key `{key}` missing from {with}");
+        }
+        let back: SubtaskResult = serde_json::from_str(&with).unwrap();
+        assert_eq!(back.usage, result.usage);
     }
 }

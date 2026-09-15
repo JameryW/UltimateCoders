@@ -147,6 +147,14 @@ pub struct NatsSubtaskUpdate {
     pub depends_on: Option<Vec<String>>,
     #[serde(default)]
     pub result: Option<String>,
+    /// Token/cost usage reported by the worker (T15 #660).
+    ///
+    /// Additive and optional: absent means "not reported", **never** "zero".
+    /// The type is shared with `uc_types::SubtaskResult` so the wire key names
+    /// and the domain field names cannot drift apart — the Python publisher
+    /// mirrors them verbatim.
+    #[serde(default)]
+    pub usage: Option<uc_types::SubtaskUsage>,
     /// Attempt number the reporting worker executed under (T4 #640) — the
     /// worker echoes the `retry_count` from the dispatch envelope. Stamped
     /// only on worker-sourced partial updates; `None` = legacy publisher
@@ -176,6 +184,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
             success: !matches!(&status, uc_types::SubtaskStatus::Failed),
             completed_at: chrono::Utc::now(),
             result: Some(summary.clone()),
+            usage: update.usage.clone(),
         });
 
     uc_types::Subtask {
@@ -919,11 +928,13 @@ impl TaskStore {
         node_id: &str,
         attempt: u32,
         result_ref: Option<String>,
+        usage: Option<uc_types::SubtaskUsage>,
     ) {
         let (graph_id, node_id) = (graph_id.to_string(), node_id.to_string());
         self.graph_verb(move |sink| async move {
             let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
-            sink.on_commit(&env, result_ref.as_deref()).await;
+            sink.on_commit(&env, result_ref.as_deref(), usage.as_ref())
+                .await;
         });
     }
 
@@ -1507,7 +1518,9 @@ impl TaskStore {
         // = zero overhead; legacy behavior above and below untouched).
         enum PendingGraphVerb {
             Heartbeat,
-            Commit(Option<String>),
+            /// Terminal success: `(result_ref, usage)`. Both come from the same
+            /// subtask entry and both are needed by `on_commit` (T15 #660).
+            Commit(Option<String>, Option<uc_types::SubtaskUsage>),
             Fail(&'static str),
         }
         let mut graph_fanout: Vec<(String, u32, PendingGraphVerb)> = Vec::new();
@@ -1521,7 +1534,7 @@ impl TaskStore {
             }
             match status {
                 uc_types::SubtaskStatus::InProgress => Some(PendingGraphVerb::Heartbeat),
-                uc_types::SubtaskStatus::Completed => Some(PendingGraphVerb::Commit(None)),
+                uc_types::SubtaskStatus::Completed => Some(PendingGraphVerb::Commit(None, None)),
                 uc_types::SubtaskStatus::Failed => Some(PendingGraphVerb::Fail("worker_failed")),
                 uc_types::SubtaskStatus::Conflicted => Some(PendingGraphVerb::Fail("conflicted")),
                 _ => None,
@@ -1574,11 +1587,18 @@ impl TaskStore {
                     subtask.status = status;
                     if let Some(verb) = verb {
                         let verb = match verb {
-                            PendingGraphVerb::Commit(_) => PendingGraphVerb::Commit(
+                            PendingGraphVerb::Commit(..) => PendingGraphVerb::Commit(
                                 subtask_update
                                     .result
                                     .clone()
                                     .or_else(|| subtask.result.as_ref().map(|r| r.summary.clone())),
+                                // T15 (#660): the wire's usage is authoritative
+                                // for this report; otherwise keep whatever the
+                                // domain row already carries (a re-published
+                                // snapshot). Never synthesized.
+                                subtask_update.usage.clone().or_else(|| {
+                                    subtask.result.as_ref().and_then(|r| r.usage.clone())
+                                }),
                             ),
                             other => other,
                         };
@@ -1616,6 +1636,10 @@ impl TaskStore {
                         success,
                         completed_at: chrono::Utc::now(),
                         result: Some(result_str.clone()),
+                        // T15 (#660): the reporter's usage is what makes the
+                        // terminal event's cost/tokens non-NULL. Absent stays
+                        // absent — nothing is synthesized here.
+                        usage: subtask_update.usage.clone(),
                     });
                 }
             } else {
@@ -1722,8 +1746,8 @@ impl TaskStore {
                 PendingGraphVerb::Heartbeat => {
                     self.fanout_graph_heartbeat(&graph_id, &node_id, attempt);
                 }
-                PendingGraphVerb::Commit(result) => {
-                    self.fanout_graph_commit(&graph_id, &node_id, attempt, result);
+                PendingGraphVerb::Commit(result, usage) => {
+                    self.fanout_graph_commit(&graph_id, &node_id, attempt, result, usage);
                 }
                 PendingGraphVerb::Fail(reason) => {
                     self.fanout_graph_fail(&graph_id, &node_id, attempt, reason);
@@ -5650,6 +5674,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -5782,6 +5807,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -5868,6 +5894,7 @@ mod tests {
                 depends_on: None,
                 result: Some("done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -5982,6 +6009,7 @@ mod tests {
                 depends_on: None,
                 result: Some("Done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -6018,6 +6046,7 @@ mod tests {
                     depends_on: None,
                     result: None,
                     attempt_id: None,
+                    usage: None,
                 },
                 NatsSubtaskUpdate {
                     subtask_id: "st-b".to_string(),
@@ -6027,6 +6056,7 @@ mod tests {
                     depends_on: None,
                     result: None,
                     attempt_id: None,
+                    usage: None,
                 },
             ],
             result: None,
@@ -6045,6 +6075,7 @@ mod tests {
                 depends_on: None,
                 result: Some("first done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6066,6 +6097,7 @@ mod tests {
                 depends_on: None,
                 result: Some("second done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6094,6 +6126,7 @@ mod tests {
                 depends_on: None,
                 result: Some("boom".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6123,6 +6156,7 @@ mod tests {
                 depends_on: None,
                 result: Some("done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6158,6 +6192,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6177,6 +6212,7 @@ mod tests {
                 depends_on: None,
                 result: Some("stale attempt 0 result".to_string()),
                 attempt_id: Some(0),
+                usage: None,
             }],
             result: None,
         });
@@ -6214,6 +6250,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6232,6 +6269,7 @@ mod tests {
                 depends_on: None,
                 result: Some("current attempt result".to_string()),
                 attempt_id: Some(1),
+                usage: None,
             }],
             result: None,
         });
@@ -6269,6 +6307,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6288,6 +6327,7 @@ mod tests {
                 depends_on: None,
                 result: Some("legacy result".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -6315,6 +6355,7 @@ mod tests {
                 depends_on: None,
                 result: Some("snapshot result".to_string()),
                 attempt_id: Some(0),
+                usage: None,
             }],
             result: None,
         });
@@ -7255,6 +7296,7 @@ mod tests {
                     depends_on: None,
                     result: None,
                     attempt_id: None,
+                    usage: None,
                 }],
                 result: None,
             };
@@ -7346,6 +7388,7 @@ mod tests {
                     depends_on: None,
                     result: None,
                     attempt_id: None,
+                    usage: None,
                 }],
                 result: None,
             };
@@ -7669,6 +7712,7 @@ mod tests {
                 depends_on: Some(vec!["other-st".to_string()]),
                 result: Some("Work done".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -7705,6 +7749,7 @@ mod tests {
                 depends_on: Some(vec!["dep-1".to_string(), "dep-2".to_string()]),
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -7746,6 +7791,7 @@ mod tests {
                 depends_on: None,
                 result: Some("error: something broke".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -7792,6 +7838,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -7827,6 +7874,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -8526,13 +8574,31 @@ mod tests {
                 .unwrap()
                 .push(format!("heartbeat {}:{}", env.graph_id, env.node_id));
         }
-        async fn on_commit(&self, env: &uc_types::ExecutionEnvelope, result: Option<&str>) {
-            self.verbs.lock().unwrap().push(format!(
+        async fn on_commit(
+            &self,
+            env: &uc_types::ExecutionEnvelope,
+            result: Option<&str>,
+            usage: Option<&uc_types::SubtaskUsage>,
+        ) {
+            let mut entry = format!(
                 "commit {}:{}:{}",
                 env.graph_id,
                 env.node_id,
                 result.unwrap_or("-")
-            ));
+            );
+            // T15 (#660): annotate only when a usage block actually arrived, so
+            // the exact strings the pre-T15 assertions encode stay identical.
+            if let Some(usage) = usage {
+                entry.push_str(&format!(
+                    ":usage={}/{}",
+                    usage
+                        .total_tokens()
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    usage.source.clone().unwrap_or_else(|| "-".to_string())
+                ));
+            }
+            self.verbs.lock().unwrap().push(entry);
         }
         async fn on_fail(&self, env: &uc_types::ExecutionEnvelope, reason: &str) {
             self.verbs
@@ -8653,6 +8719,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         };
@@ -8693,6 +8760,7 @@ mod tests {
                 depends_on: None,
                 result: None,
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -8901,6 +8969,7 @@ mod tests {
                 depends_on: None,
                 result: Some("ok".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -8921,6 +8990,7 @@ mod tests {
                 depends_on: None,
                 result: Some("boom".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });
@@ -8973,6 +9043,7 @@ mod tests {
                 depends_on: None,
                 result: Some("r".to_string()),
                 attempt_id: None,
+                usage: None,
             }],
             result: None,
         });

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from ultimate_coders.agent.types import ChangeType, FileChange
+from ultimate_coders.agent.types import ChangeType, FileChange, SubtaskUsage
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +356,43 @@ class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_cost_usd: float | None = None
+    # Which adapter parsed this out of the agent's stdout. The adapter is the
+    # only party that statically knows its own identity at the parse site, so
+    # it stamps it there. (Rust's counterpart takes `source` as a parameter
+    # instead — its `TokenUsage` has no live producer left to fill a field.)
+    source: str | None = None
+
+
+def subtask_usage_from_token_usage(
+    usage: TokenUsage | None,
+    source: str | None = None,
+) -> SubtaskUsage | None:
+    """Convert adapter-side ``TokenUsage`` into the shared report type (T15 #660).
+
+    Mirror of ``uc_engine::sandbox::subtask_usage_from_token_usage``. This is
+    the **wiring point** between "the adapter parsed a number" and "the report
+    contract carries it": the two hops that kept ``execution_events.cost`` /
+    ``tokens`` NULL were (1) ``SubtaskResult`` having nowhere to put usage, and
+    (2) the only INSERT never binding the columns. T15 closed both.
+
+    Returns ``None`` for an absent block — "not reported", which the gateway
+    must keep distinct from zero. An all-zero block that *was* produced stays a
+    real measurement: ``TokenUsage`` defaults its sub-fields to ``0`` rather
+    than ``None``, so a partial report is indistinguishable from a zero one at
+    this layer (fidelity note also recorded on the Rust helper). What this
+    function must never do is invent a block no adapter produced.
+
+    ``source`` names the adapter; it falls back to whatever the parse site
+    stamped on ``usage.source``.
+    """
+    if usage is None:
+        return None
+    return SubtaskUsage(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_cost_usd=usage.total_cost_usd,
+        source=source or usage.source,
+    )
 
 
 def _kill_process_tree(proc: Any) -> None:
@@ -1241,8 +1278,13 @@ def _grok_text(value: Any, *, _depth: int = 0) -> str:
     return ""
 
 
-def _grok_usage(value: Any) -> TokenUsage | None:
-    """Extract token usage from a Grok result envelope."""
+def _grok_usage(value: Any, source: str | None = None) -> TokenUsage | None:
+    """Extract token usage from a Grok result envelope.
+
+    ``source`` names the adapter that produced the number (T15 #660) so the
+    gateway can populate ``usage_source`` instead of guessing; it stays ``None``
+    when the caller does not know.
+    """
     if not isinstance(value, dict):
         return None
     usage = value.get("usage", value.get("token_usage"))
@@ -1266,6 +1308,7 @@ def _grok_usage(value: Any) -> TokenUsage | None:
         input_tokens=_int("input_tokens", "prompt_tokens"),
         output_tokens=_int("output_tokens", "completion_tokens"),
         total_cost_usd=cost,
+        source=source,
     )
 
 
@@ -1452,7 +1495,7 @@ class GrokBuildAdapter(AgentAdapter):
             if tool_name and ("tool" in event_type or "call" in event_type):
                 tool_calls.append(tool_name)
 
-            usage = _grok_usage(event)
+            usage = _grok_usage(event, source=self.name())
             if usage is not None:
                 token_usage = usage
 
@@ -1587,6 +1630,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                             input_tokens=u.get("input_tokens", 0),
                             output_tokens=u.get("output_tokens", 0),
                             total_cost_usd=u.get("total_cost_usd"),
+                            source=self.name(),
                         )
                 elif evt_type == "assistant":
                     content = obj.get("message", {}).get("content", [])
@@ -1657,6 +1701,7 @@ class ClaudeCodeAdapter(AgentAdapter):
                     input_tokens=usage.get("input_tokens", 0),
                     output_tokens=usage.get("output_tokens", 0),
                     total_cost_usd=usage.get("total_cost_usd"),
+                    source=self.name(),
                 )
 
             return AgentOutput(

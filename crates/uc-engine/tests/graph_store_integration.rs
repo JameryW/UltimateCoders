@@ -32,7 +32,8 @@ use std::collections::HashMap;
 use sqlx::postgres::PgPoolOptions;
 use uc_engine::GraphStore;
 use uc_types::{
-    DispatchMode, Subtask, SubtaskResult, SubtaskStatus, Task, TaskId, TaskStatus, WorkerId,
+    DispatchMode, Subtask, SubtaskResult, SubtaskStatus, SubtaskUsage, Task, TaskId, TaskStatus,
+    WorkerId,
 };
 
 // ── Environment / gating helpers ─────────────────────────────────────
@@ -174,6 +175,7 @@ fn subtask(
             success: true,
             completed_at: ts(1_700_000_000),
             result: None,
+            usage: None,
         }),
         dispatch_mode: DispatchMode::default(),
         effect_class: uc_types::EffectClass::default(),
@@ -1233,8 +1235,8 @@ async fn graph_t3_concurrent_double_commits_have_exactly_one_winner() {
     // one (the dual-write race the PRD demands the graph plane kill TODAY).
     let store_b = GraphStore::with_pool(store.pool().clone());
     let (r0, r1) = tokio::join!(
-        store.commit_once(&g, &n, &a0, Some("result-a")),
-        store_b.commit_once(&g, &n, &a1, Some("result-b")),
+        store.commit_once(&g, &n, &a0, Some("result-a"), None),
+        store_b.commit_once(&g, &n, &a1, Some("result-b"), None),
     );
     let w0 = r0.expect("commit 0 runs");
     let w1 = r1.expect("commit 1 runs");
@@ -1290,7 +1292,7 @@ async fn graph_t3_late_fail_after_commit_is_fenced_with_late_result() {
         .unwrap()
         .expect("schedule");
     assert!(store
-        .commit_once(&g, &n, &a, Some("ok"))
+        .commit_once(&g, &n, &a, Some("ok"), None)
         .await
         .expect("commit"));
 
@@ -1352,7 +1354,7 @@ async fn graph_t3_diamond_downstream_readies_without_sibling() {
     seed_attempt_t3(&store, &g, &c, 0, "RUNNING").await;
 
     assert!(store
-        .commit_once(&g, &b, &b_attempt, Some("b-done"))
+        .commit_once(&g, &b, &b_attempt, Some("b-done"), None)
         .await
         .expect("commit B"));
     // B committed → D's only dependency is satisfied → D READY, without
@@ -1597,12 +1599,12 @@ async fn graph_t3_sink_verbs_drive_the_transitions_through_the_trait_object() {
         "on_heartbeat refreshes the running attempt"
     );
 
-    sink.on_commit(&env, Some("sink-result")).await;
+    sink.on_commit(&env, Some("sink-result"), None).await;
     let (state, _) = t3_node_state(&store, &g, &n).await;
     assert_eq!(state, "SUCCEEDED");
     assert!(
         !store
-            .commit_once(&g, &n, &a, Some("again"))
+            .commit_once(&g, &n, &a, Some("again"), None)
             .await
             .expect("duplicate commit"),
         "a second commit for the same node never wins again"
@@ -1617,7 +1619,7 @@ async fn graph_t3_sink_verbs_drive_the_transitions_through_the_trait_object() {
     let ghost = uc_types::ExecutionEnvelope::for_dispatch(&format!("{p}-ghost"), "n", 0);
     sink.on_schedule(&ghost, None).await;
     sink.on_heartbeat(&ghost).await;
-    sink.on_commit(&ghost, None).await;
+    sink.on_commit(&ghost, None, None).await;
     sink.on_fail(&ghost, "ghost").await;
 
     purge_t3(&store, &g).await;
@@ -1679,7 +1681,7 @@ async fn graph_t3_timeout_sweep_fences_and_rearms_on_a_probe_db() {
     // The swept attempt is permanently fenced: its late commit changes
     // nothing and lands as late_result.
     assert!(!store
-        .commit_once(&g, &n, &a0, Some("late-win"))
+        .commit_once(&g, &n, &a0, Some("late-win"), None)
         .await
         .expect("late commit"));
     let (state, _) = t3_node_state(&store, &g, &n).await;
@@ -1762,7 +1764,7 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
     t14_age_started_at(&store, &attempt, 5.0).await;
     assert!(
         store
-            .commit_once(&g, &n, &attempt, Some("r-ref"))
+            .commit_once(&g, &n, &attempt, Some("r-ref"), None)
             .await
             .expect("commit_once"),
         "the first commit for a RUNNING attempt wins"
@@ -1781,17 +1783,13 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
         (5_000..60_000).contains(&duration),
         "duration must be measured from the aged started_at, got {duration}ms"
     );
-    // T15 (#660) owns these two: the write point must leave them NULL rather
-    // than zero-fill, because "no usage reported" and "zero cost" are
-    // different facts and a reader cannot tell them apart after the fact.
-    assert!(
-        cost_is_null,
-        "cost stays NULL until the report contract carries it"
-    );
-    assert!(
-        tokens_is_null,
-        "tokens stays NULL until the report contract carries it"
-    );
+    // This commit passes no usage at all, so both columns must stay NULL rather
+    // than zero-fill: "no usage reported" and "zero cost" are different facts
+    // and a reader cannot tell them apart after the fact. T15 (#660) binds real
+    // values through this same write point only when a usage block arrives —
+    // see `graph_t15_commit_binds_reported_usage_and_keeps_unreported_null`.
+    assert!(cost_is_null, "an unreported cost stays NULL, never 0");
+    assert!(tokens_is_null, "unreported tokens stay NULL, never 0");
     assert_eq!(
         payload["usage_reported"],
         serde_json::json!(false),
@@ -1807,7 +1805,7 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
     // RUNNING), so retries cannot double-count a duration.
     assert!(
         !store
-            .commit_once(&g, &n, &attempt, Some("r-ref-again"))
+            .commit_once(&g, &n, &attempt, Some("r-ref-again"), None)
             .await
             .expect("second commit is refused"),
         "a second commit for a settled attempt loses"
@@ -1826,6 +1824,187 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
     assert!(
         late[0].0.is_none(),
         "a late result carries no duration — this attempt never finished the work"
+    );
+
+    purge_t3(&store, &g).await;
+}
+
+// ── T15 (#660): the reported usage reaches the columns ───────────────
+
+/// `(cost, tokens, payload)` for every terminal event of one node, oldest first.
+///
+/// `cost` is read through an explicit `::float8` cast because the column is
+/// `NUMERIC(18,6)` while sqlx decodes `Option<f64>` from `FLOAT8` — T14 could
+/// read only `cost IS NULL`, which sidestepped the mismatch, but T15 needs the
+/// value in hand.
+async fn t15_usage_columns(
+    store: &GraphStore,
+    gid: &str,
+    nid: &str,
+) -> Vec<(Option<f64>, Option<i64>, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT cost::float8, tokens, payload FROM execution_events \
+         WHERE graph_id = $1 AND node_id = $2 AND event_type = 'node_succeeded' ORDER BY seq",
+    )
+    .bind(gid)
+    .bind(nid)
+    .fetch_all(store.pool().as_ref())
+    .await
+    .expect("usage columns")
+}
+
+/// The one terminal event of one node (asserting there is exactly one).
+async fn t15_one_usage_row(
+    store: &GraphStore,
+    gid: &str,
+    nid: &str,
+) -> (Option<f64>, Option<i64>, serde_json::Value) {
+    let mut rows = t15_usage_columns(store, gid, nid).await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "exactly one terminal event per committed node: {rows:?}"
+    );
+    rows.remove(0)
+}
+
+/// Schedule one attempt for `nid` and commit it with `usage` attached.
+async fn t15_commit_with_usage(
+    store: &GraphStore,
+    g: &str,
+    nid: &str,
+    usage: Option<SubtaskUsage>,
+    result_ref: &str,
+) {
+    let attempt = store
+        .schedule_attempt(g, nid, Some("w1"))
+        .await
+        .expect("schedule_attempt")
+        .expect("READY node schedules");
+    assert!(
+        store
+            .commit_once(g, nid, &attempt, Some(result_ref), usage.as_ref())
+            .await
+            .expect("commit_once"),
+        "the first commit for a RUNNING attempt wins"
+    );
+}
+
+/// Three nodes in one graph, one per reporting shape. Running them through the
+/// *same* write point with the same transaction shape is the point: a
+/// difference in the columns can then only come from the usage passed in.
+#[tokio::test]
+#[ignore]
+async fn graph_t15_commit_binds_reported_usage_and_keeps_unreported_null() {
+    let Some(store) = connect_or_skip("t15_usage").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let full = format!("{p}-full");
+    let empty = format!("{p}-empty");
+    let partial = format!("{p}-partial");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(
+        &store,
+        &g,
+        &[
+            (&full, "READY", &[], false),
+            (&empty, "READY", &[], false),
+            (&partial, "READY", &[], false),
+        ],
+    )
+    .await;
+
+    // 1. A fully populated block: both numbers land, the two reported token
+    //    sides collapse into the single BIGINT column, and the event says so.
+    t15_commit_with_usage(
+        &store,
+        &g,
+        &full,
+        Some(SubtaskUsage {
+            input_tokens: Some(120),
+            output_tokens: Some(30),
+            total_cost_usd: Some(0.5),
+            source: Some("claude-code".to_string()),
+        }),
+        "r-full",
+    )
+    .await;
+
+    let (cost, tokens, payload) = t15_one_usage_row(&store, &g, &full).await;
+    assert_eq!(
+        tokens,
+        Some(150),
+        "input+output collapse into the one BIGINT column"
+    );
+    let cost = cost.expect("a reported price lands in the column");
+    assert!(
+        (cost - 0.5).abs() < 1e-9,
+        "cost survives the float8→NUMERIC(18,6) bind, got {cost}"
+    );
+    assert_eq!(
+        payload["usage_reported"],
+        serde_json::json!(true),
+        "{payload}"
+    );
+    assert_eq!(
+        payload["usage_source"],
+        serde_json::json!("claude-code"),
+        "the adapter is named when known, never inferred: {payload}"
+    );
+
+    // 2. A block that names the adapter but carries no number is NOT a
+    //    measurement. Both columns stay NULL (writing 0 would be
+    //    indistinguishable from a genuine zero), and the event withdraws the
+    //    provenance claim as well — there is nothing to attribute.
+    t15_commit_with_usage(
+        &store,
+        &g,
+        &empty,
+        Some(SubtaskUsage {
+            source: Some("grok-build".to_string()),
+            ..Default::default()
+        }),
+        "r-empty",
+    )
+    .await;
+
+    let (cost, tokens, payload) = t15_one_usage_row(&store, &g, &empty).await;
+    assert!(cost.is_none(), "an empty block must not be written as 0");
+    assert!(tokens.is_none(), "an empty block must not be written as 0");
+    assert_eq!(
+        payload["usage_reported"],
+        serde_json::json!(false),
+        "{payload}"
+    );
+    assert_eq!(
+        payload["usage_source"],
+        serde_json::json!(null),
+        "no number means no provenance claim: {payload}"
+    );
+
+    // 3. A partial block: one reported side is a real total (`tokens` binds),
+    //    while the price nobody reported stays NULL rather than 0.
+    t15_commit_with_usage(
+        &store,
+        &g,
+        &partial,
+        Some(SubtaskUsage {
+            output_tokens: Some(7),
+            ..Default::default()
+        }),
+        "r-partial",
+    )
+    .await;
+
+    let (cost, tokens, payload) = t15_one_usage_row(&store, &g, &partial).await;
+    assert_eq!(tokens, Some(7), "one reported side is still a real total");
+    assert!(cost.is_none(), "an unreported price stays NULL, not 0");
+    assert_eq!(
+        payload["usage_reported"],
+        serde_json::json!(true),
+        "{payload}"
     );
 
     purge_t3(&store, &g).await;
