@@ -75,3 +75,24 @@ jobs:
         run: |
           source .venv/bin/activate
           PYTHONPATH=python pytest tests/python/ -v
+      # The dispatch plane's other tests mock `js.add_consumer`, which is the
+      # one call a broker can refuse — and a work-queue stream refuses two
+      # shapes that look fine in a mock (a second unfiltered consumer, and a
+      # filtered consumer overlapping an existing one). T12 shipped inert
+      # because of exactly that, so run the live-broker file against a real
+      # JetStream server. It skips if the broker is missing rather than
+      # failing, but a broken download or a server that will not start is a
+      # loud step failure on purpose.
+      - name: Live NATS dispatch tests
+        if: matrix.python-version == '3.12'
+        run: |
+          source .venv/bin/activate
+          curl -sSL -o /tmp/nats.tar.gz \
+            https://github.com/nats-io/nats-server/releases/download/v2.14.6/nats-server-v2.14.6-linux-amd64.tar.gz
+          tar xzf /tmp/nats.tar.gz -C /tmp
+          /tmp/nats-server-v2.14.6-linux-amd64/nats-server -js -sd /tmp/nats-js -p 4222 > /tmp/nats.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8222/jsz > /dev/null && break
+            sleep 1
+          done
+          PYTHONPATH=python pytest tests/python/test_nats_live_dispatch.py --integration -v
