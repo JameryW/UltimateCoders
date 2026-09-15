@@ -1011,9 +1011,36 @@ class NatsWorker:
                 # Create-or-update the shared durable pull consumer. The
                 # stream itself is the gateway's responsibility (D4 Q1) —
                 # if it is missing this raises and we retry below.
+                #
+                # T12 #654: `filter_subject` is LOAD-BEARING, not tidiness.
+                # A work-queue stream admits exactly one unfiltered consumer
+                # and refuses any second one ("multiple non-filtered
+                # consumers not allowed on workqueue stream", err_code
+                # 10099); a filtered one is refused when it overlaps a
+                # consumer that is already there ("filtered consumer not
+                # unique on workqueue stream", err_code 10100). Left
+                # unfiltered, this consumer covers EVERY subject in
+                # UC_SUBTASKS, so the per-worker consumer bound below could
+                # never be created: `_bind_per_worker_consumer` swallows the
+                # refusal as best-effort (by design — see its docstring),
+                # `_per_worker_topic` stayed False forever, every heartbeat
+                # declared false, and `WorkerRegistry::placement_target`
+                # filtered on exactly that flag — so affinity placement never
+                # targeted anyone and the whole of T12 silently degraded to
+                # pre-T12 behaviour. Pinning the filter to the bare shared
+                # subject keeps the overflow path intact (it still receives
+                # every `uc.subtask.execute` message) and makes the two
+                # filters disjoint.
+                #
+                # Changing the filter of an existing durable is safe: it was
+                # verified against a live nats-server with un-acked messages
+                # in flight (the update is accepted, delivery continues).
+                # This is the same class of warning-swallowed JetStream
+                # misconfiguration as the push/pull bug noted just above.
                 await js.add_consumer(
                     stream=self._SUBTASK_STREAM_NAME,
                     durable_name=self._SUBTASK_CONSUMER_DURABLE,
+                    filter_subject=NATS_SUBJECT_SUBTASK_EXECUTE,
                     ack_policy="explicit",
                     max_deliver=self._SUBTASK_MAX_DELIVER,
                 )
