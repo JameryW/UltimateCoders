@@ -272,8 +272,13 @@ fn attempt_and_completion(
     started_at: Option<chrono::DateTime<chrono::Utc>>,
     finished_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> (Option<AttemptRow>, Option<CompletionRow>) {
-    // READY (pending) nodes have never been attempted — no rows.
-    if state == "READY" {
+    // Nodes that have never been attempted have no attempt or completion rows:
+    // READY (schedulable now) and CREATED ("declared, dependencies not yet
+    // satisfied"). Every other state implies a real attempt — and because the
+    // graph plane numbers attempts with `max(retry_no) + 1`, a fabricated
+    // `retry_no` 0 would shift every real attempt that follows it, and would
+    // surface as a phantom status in `attempt_states`.
+    if state == NodeStatus::Ready.as_str() || state == NodeStatus::Created.as_str() {
         return (None, None);
     }
     let retry_no = retry_count.min(i32::MAX as u32) as i32;
@@ -3028,6 +3033,21 @@ mod tests {
             "CREATED",
             "transitively unmet dependency too"
         );
+        // A never-attempted node must not fabricate attempt rows either. The
+        // graph plane numbers attempts with `max(retry_no) + 1`, so a phantom
+        // `retry_no` 0 would occupy the first slot of every dependant and shift
+        // its real attempts up by one — and it would show up as a bogus entry in
+        // `attempt_states` (this is exactly how the `CREATED` state leaked into
+        // the cancellation E2E's `["CREATED", "FAILED"]` expectation).
+        assert!(
+            p.attempts.is_empty(),
+            "READY/CREATED nodes have no attempt history, got {:?}",
+            p.attempts
+                .iter()
+                .map(|a| (a.node_id.as_str(), a.status.as_str()))
+                .collect::<Vec<_>>()
+        );
+        assert!(p.completions.is_empty(), "nothing has completed yet");
     }
 
     #[test]
