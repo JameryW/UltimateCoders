@@ -524,3 +524,64 @@ D10 #647 落地：uc-types ContextEntry/ContextBlock + compose（8KiB 贪心装�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: T11 sandbox env allowlist delivered (#653)
+
+**Date**: 2026-09-15
+**Task**: T11 sandbox env allowlist delivered (#653)
+**Branch**: `main`
+
+### Summary
+
+D11 #648 落地：_execute_subprocess 单点 deny-by-default 过滤（替换 dict(os.environ)+env_vars 全量透传）+ SandboxConfig 三级清单（base/shared/per-adapter，*=前缀通配、大小写无关）+ 插件驱动凭据并入（registry api_key_env）+ 覆盖层纪律（可加/覆盖但非旁路）+ UC_SANDBOX_ENV_EXTRA 逃生舱（启动即日志）+ agent 身份三序解析（adapter.name() → request[agent] → config.agent，decompose 走 claude 清单）。新增 pytest 69（真实子进程回读 os.environ：诱饵密钥全适配器不过闸、CLI 凭据过闸、decompose 得 ANTHROPIC 不得 XAI、逃生舱生效+日志、LC_*/UC_* 前缀）。pytest 1016+5 → 1085+5（44 文件逐文件全绿，sandbox 域 251 全过）；Rust 零改动，fmt + 5 组 clippy -D warnings 全绿。README 双语文档补 UC_SANDBOX_ENV_EXTRA。
+
+### Main Changes
+
+### Main Changes
+
+- `python/ultimate_coders/agent/sandbox.py`
+  - 新增模块级清单：`BASE_ENV_ALLOWLIST`（PATH/HOME/USER/SHELL/TERM/LANG/LC_*/TMPDIR/PWD + Windows SYSTEMROOT/SYSTEMDRIVE/COMSPEC/PATHEXT/USERPROFILE/APPDATA/LOCALAPPDATA/PROGRAMFILES/USERNAME/COMPUTERNAME）、`SHARED_ENV_ALLOWLIST`（UC_* + HTTP(S)_PROXY/NO_PROXY 大小写两形）、`ADAPTER_ENV_ALLOWLIST`（grok-build / claude-code / claude-code-decompose / codex / deepseek-harness / local-harness）、`ENV_EXTRA_ENV_VAR`。
+  - `SandboxConfig` 新方法：`env_extra_names()`、`child_env_allowlist(agent)`（别名经 registry 归一 + 并入 `api_key_env_for(agent)` 的插件凭据名）、`build_child_env(host_env, overlay, agent)`（精确名 + `*` 前缀，大小写无关；覆盖层在过滤后叠加）。
+  - `_execute_subprocess` 新增 `agent` 形参，解析序 `agent` → `request["agent"]` → `self.config.agent`；env 构造改为 `self.config.build_child_env(...)`。
+  - `execute()` 传 `adapter.name()`；`DecomposeAdapter.build_request` 自带 `"agent"`；`execute_decompose` 新增可选 `agent` 形参。
+  - `SandboxManager.__init__` 在 `UC_SANDBOX_ENV_EXTRA` 非空时 INFO 记录。
+- `tests/python/test_sandbox_env_allowlist.py`（新增 69 例）：清单构造 / 过滤器单元语义 / 逃生舱 / 真实子进程回读 / decompose 路径。
+- `README.md`、`README.zh-CN.md`：环境变量表补 `UC_SANDBOX_ENV_EXTRA`。
+
+### Testing
+
+- `.venv/Scripts/python.exe -m pytest tests/python/test_sandbox_env_allowlist.py -o addopts=""` → 69 passed。
+- `tests/python/test_sandbox_env_allowlist.py + test_sandbox.py` → 251 passed。
+- 全量按文件串行（44 文件，`-o addopts=""` 禁 coverage + per-file basetemp）→ 1078 passed / 5 skipped；其中 test_merge_arbiter、test_workspace 两文件在沙箱隔离下 git 子进程受阻（4+3 failed），单独重跑（无隔离）分别 5 passed / 6 passed → 归因为环境现象，非回归。修正后合计 **1085 passed / 5 skipped**（基线 1016+5，+69 即新文件）。
+- `cargo fmt --all --check` → exit 0；clippy `-D warnings`：uc-types / uc-engine / uc-engine --no-default-features / uc-grpc --all-features / uc-grpc-server 全部 Finished 无告警（Rust 零改动，基线不变）。
+- 实证澄清：`execute_in_sandbox` 引擎分支不可达（uc-python 无 sandbox pyo3 桥）⇒ `_execute_subprocess` 确为唯一 spawn 点；`execute_decompose` 全仓无调用者。
+
+### Known Limitations
+
+- `PYTHONPATH` 不在清单内（D11 未列且属注入面）——靠 PYTHONPATH 才能 import 的开发机需 `UC_SANDBOX_ENV_EXTRA=PYTHONPATH`；生产镜像 pip 安装无需。
+- `TEMP`/`TMP` 未列（票面未给）：实证 Windows 子进程无此二变量仍 exit 0。
+- Rust 侧 `to_engine_config().env_vars` 未过滤；该路径今日不可达，若接上需在 Rust 复刻策略。
+
+### Status
+
+[OK] **Completed** — P1 剩余：T12 #654（affinity placement）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c3689c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

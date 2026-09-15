@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-09-14
+- **Total Sessions**: 12
+- **Last Active**: 2026-09-15
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~526 | Active |
+| `journal-1.md` | ~587 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-09-15 | T11 sandbox env allowlist delivered (#653) | `4c3689c` | `main` |
 | 11 | 2026-09-14 | T10 context compiler delivered (#652) | `5a68a17` | `main` |
 | 10 | 2026-09-14 | T9 merge barrier delivered (#651) | `677b7bc` | `main` |
 | 9 | 2026-09-14 | T8 ExecutionScope delivered (#650) | `80714d3` | `main` |
