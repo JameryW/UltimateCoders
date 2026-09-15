@@ -967,3 +967,70 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - **T16（#661）**：首个动作仍是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）——D14 刻意留白。
 - **D15（#665）**：等裁决；裁决后无论选哪个选项，都要补一条能区分「写入被拒绝」与「根本没送达」的测试。
 - 环境层面未变：`target/` 仍在 C:（仅剩约 19G）；本地 live PG 在 `wsl.exe` 解禁前实质不可用。
+
+## Session 18: T15（#660）交付 —— usage 上报契约 + `cost`/`tokens` 落列
+
+**Date**: 2026-09-15
+**Task**: T15（#660）第二片：把适配器早已采集到的 token/cost 送到 `execution_events`
+**Branch**: `main`（提交 `dd3d2b3`）
+
+### Summary
+
+把 D13 那两列**打通**：契约上加性携带 usage（跨语言逐字一致）→ 网关在 commit-once 赢家分支绑
+`cost`/`tokens` → Python 侧两个丢弃点补齐。四道门禁全绿，Rust 基线只增不减。
+
+### Main Changes
+
+- **契约（`uc-types`）**：`SubtaskUsage` 四字段全 `Option` + `serde(default, skip_serializing_if)`
+  ⇒ 不设 usage 的发布者**字节不变**（无需动 `contract_version`）。`is_empty()` =
+  「没有数字的块不是测量」、`total_tokens()` = 「两侧都缺 ⇒ NULL，不是 0」—— 这两条是 D13 的硬要求，
+  写成单测而不是注释。
+- **同一类型同时承运 domain 与 wire**：`SubtaskResult.usage` 与 `NatsSubtaskUpdate.usage` 共用
+  一个类型 ⇒ 键名与字段不可能分叉。这比「两侧各自定义再祈祷一致」强。
+- **写入点**：`GraphShadowSink::on_commit` / `commit_once` 加参；赢家分支把 usage 折进
+  `cost`/`tokens`，**与 T14 的 `duration_ms` 同桌** ⇒ 恰好一次是结构性的（fenced / lost-insert
+  两条早退都到不了那一支）。payload 写 `usage_reported` + 已知时的 `usage_source`，不让 NULL 被读成 0。
+- **Python**：`SubtaskUsage` 镜像 + `_make_task_update_payload` 在**唯一收口点**发 `entry["usage"]`
+  （三处 publisher 一处未改）；`worker._execute_in_sandbox` 补上被丢的 `AgentOutput.token_usage`；
+  三个解析点用 `self.name()` 打来源。
+- **跨语言 golden 两半**：Python 侧钉「payload builder 发的键 == Rust 侧读的键」，Rust 侧钉
+  「不设 usage 时序列化里不出现 `usage` 子串」。任一侧改名会同时打红。
+- **票面三处偏差 + 两处实现偏离**逐条记入 `prd.md` 与 `implement.jsonl`，未静默扩张也未静默遗漏。
+
+### Testing
+
+- **Rust 基线（只增不减）**：uc-types **43 → 47**（+4 新单测）；nodefault **383+5** 不变；
+  default **443+5 / 209 / 8** 不变；uc-grpc `--all-features` **237**；uc-grpc-server **36**；
+  uc-engine `--features indexing` **443**。
+- **Python 本地**：**1118 passed / 10 skipped / 0 failed**。⚠️ 沙箱内逐文件跑会报 169 个 errors
+  —— **全部是沙箱产物**：error 集中的 11 个文件在非隔离上下文复跑后逐条转成 pass
+  （41+38+22+13+10+7+5+2+1+24+6 = **恰好 169**）⇒「有多少 errors」本身不是结论，必须归因。
+- **新增用例被定向证明**：Python 12 条、Rust 4 条 + 1 条 `#[ignore]` PG 集成；
+  用 `--collect-only` / `-k` 列出名单后实跑通过，不靠「总数涨了」推断。
+- **PG 实跑欠账（明确不声称已验）**：新 `graph_t15_commit_binds_reported_usage_and_keeps_unreported_null`
+  **未在真实 PG 上执行**（本地 `wsl.exe` 被程序黑名单拦住、Docker 引擎未起）。仅**编译验证**
+  （`--all-features --all-targets`）+ `-- --list` 确认被收集，交 CI 的 `storage integration tests`。
+
+### Status
+
+- T15 交付完成（`dd3d2b3`），四道门禁绿。
+- **抓到一个真漏并修掉**：`crates/uc-grpc/tests/{granular_cancel_e2e,pause_grace_diamond}.rs`
+  共 **5 处** `.commit_once(` 漏改。两文件顶部是 `#![cfg(feature = "storage")]` 而 uc-grpc
+  `default = []` ⇒ 默认特征下被编译成**空文件**，`cargo check --workspace --all-targets`
+  完全看不见；只有 `cargo test -p uc-grpc --all-features` 才报 `E0061`。
+  **这是「本地只跑子集必漏」的第三次实例**；已把
+  `cargo check --workspace --all-targets --all-features`（21s）写进 skill §4 当廉价全覆蓋探针。
+- **缩进只有 fmt 说了算**：机械补参脚本按「闭合括号所在行的缩进」插字段会**少 4 空格**
+  （字面量嵌在 `vec![...]` 里时两层缩进不同）；`cargo check` / `clippy` 都不看缩进。
+  ⇒ 交付前必跑 `cargo fmt --all`，再 `--check` 复核。
+- 两条**已知限制**（同时写进票面评论）：多步 workflow 只透传最后一步的 usage（少报不是错报；
+  聚合成一块会让数字与 `source` 同时不可归因）；worker→worker 的 `subtask_completed` 事件不带
+  usage（网关落列不受影响，本地编排器那份副本为空）。
+- **一条侦察判断被推翻**：原判「通用 JSON 解析路径没有 adapter 身份 ⇒ `source` 只能空着」；
+  实测三个解析点都在适配器方法内，`self.name()` 可用 ⇒ 三处全填，且未编造来源。
+
+### Next Steps
+
+- **T16（#661）**：首个动作仍是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）—— D14 刻意留白。
+- **D15（#665）**：等裁决；裁决后要补一条能区分「写入被拒绝」与「根本没送达」的测试。
+- 环境层面未变：本地 live PG 在 `wsl.exe` 解禁前实质不可用；`target/` 仍在 C:。
