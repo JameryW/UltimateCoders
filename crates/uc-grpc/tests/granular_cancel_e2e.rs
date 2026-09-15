@@ -125,6 +125,54 @@ async fn settle() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
+/// Wait (bounded) for the fire-and-forget shadow mirror to publish
+/// `expected`, then assert it.
+///
+/// `settle()` is not a synchronisation primitive: `persist_task` spawns
+/// `shadow_persist` and returns, so a fixed nap only *usually* covers the
+/// write. On a loaded runner it misses, the node row is still absent, and
+/// `schedule_attempt` fails with a misleading "st-a READY" panic even though
+/// the legacy upsert was fine. Polling removes the race; on timeout the panic
+/// reports what the mirror actually holds and retries the write synchronously,
+/// so the error `shadow_persist` swallows (warn-only by design) is visible.
+async fn expect_node_states(
+    graph: &GraphStore,
+    legacy: &Mutex<TaskStore>,
+    task_id: &str,
+    expected: &[(&str, &str)],
+) {
+    let mut last: Vec<(String, Option<String>)> = Vec::new();
+    for _ in 0..100 {
+        last.clear();
+        let mut all_ok = true;
+        for (node_id, want) in expected {
+            let got = graph
+                .node_state(task_id, node_id)
+                .await
+                .expect("node_state read");
+            if got.as_deref() != Some(*want) {
+                all_ok = false;
+            }
+            last.push(((*node_id).to_string(), got));
+        }
+        if all_ok {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Retry the write synchronously so the error the fire-and-forget path
+    // swallows (warn-only by design) shows up here. Never panic before this
+    // point: the diagnostic is the whole reason the wait is bounded.
+    let direct = match legacy.lock().await.get_task(task_id).cloned() {
+        Some(task) => format!("{:?}", graph.upsert_task_shadow(&task).await),
+        None => "task absent from the legacy store".to_string(),
+    };
+    panic!(
+        "shadow mirror never published {expected:?} for {task_id} within 5s; \
+         last read {last:?}; direct shadow write: {direct}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs PostgreSQL; run with --ignored (T7 #643 C5 cancel e2e)"]
 async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
@@ -155,7 +203,9 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
         )
         .expect("chain upsert");
     }
-    settle().await;
+    // Wait for the fire-and-forget mirror to publish the root as READY --
+    // the precondition `schedule_attempt` documents.
+    expect_node_states(&graph, &legacy, &task_id, &[("st-a", "READY")]).await;
 
     let a_attempt = graph
         .schedule_attempt(&task_id, "st-a", Some("w1"))
@@ -291,7 +341,9 @@ async fn node_cancel_closure_terminal_no_sibling_harm() {
         )
         .expect("diamond upsert");
     }
-    settle().await;
+    // Wait for the fire-and-forget mirror to publish the root as READY --
+    // the precondition `schedule_attempt` documents.
+    expect_node_states(&graph, &legacy, &task_id, &[("st-a", "READY")]).await;
 
     let a_attempt = graph
         .schedule_attempt(&task_id, "st-a", Some("w1"))
