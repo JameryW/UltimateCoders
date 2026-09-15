@@ -86,7 +86,9 @@
 //! T6 deletes the legacy side.
 
 use serde::Deserialize;
-use uc_types::{can_transition, ExecutionEnvelope, NodeStatus, Subtask, Task, TaskStatus};
+use uc_types::{
+    can_transition, ExecutionEnvelope, NodeStatus, Subtask, SubtaskStatus, Task, TaskStatus,
+};
 
 // ── Status token mapping (pure, always compiled) ─────────────────────
 
@@ -140,8 +142,46 @@ pub fn graph_status_of_task_status(status: &TaskStatus) -> String {
     graph_status_token(&format!("{status:?}"))
 }
 
-fn node_status_of_subtask(subtask: &Subtask) -> String {
-    node_state_token(&format!("{:?}", subtask.status))
+/// Dependency-aware node state for one legacy subtask.
+///
+/// Legacy [`SubtaskStatus::Pending`] is ambiguous in the graph vocabulary: it
+/// covers both "known, not runnable yet" (`CREATED`) and "runnable now"
+/// (`READY`), and only the dependency set can tell them apart. Mapping every
+/// `Pending` node to `READY` publishes the whole task as schedulable —
+/// including nodes whose dependencies have not run — and because the shadow
+/// projection writes node state unconditionally, every legacy upsert would
+/// clobber the graph's own dependency-derived states.
+///
+/// A `Pending` node is therefore `READY` only when all of its dependencies are
+/// already `Completed`; otherwise it is `CREATED`. Statuses that carry a
+/// definite graph meaning (`Assigned`/`InProgress` → `RUNNING`, `Completed` →
+/// `SUCCEEDED`, …) pass through unchanged.
+pub fn node_status_of_subtask(
+    subtask: &Subtask,
+    statuses: &std::collections::HashMap<&str, &SubtaskStatus>,
+) -> String {
+    let state = node_state_token(&format!("{:?}", subtask.status));
+    if state != "READY" {
+        return state;
+    }
+    let dependencies_met = subtask.depends_on.iter().all(|dep| {
+        statuses
+            .get(dep.0.as_str())
+            .is_some_and(|status| matches!(status, SubtaskStatus::Completed))
+    });
+    if dependencies_met {
+        "READY".to_string()
+    } else {
+        "CREATED".to_string()
+    }
+}
+
+/// Index a task's subtasks by id, for dependency-aware state projection.
+fn subtask_status_index(task: &Task) -> std::collections::HashMap<&str, &SubtaskStatus> {
+    task.subtasks
+        .iter()
+        .map(|st| (st.id.0.as_str(), &st.status))
+        .collect()
 }
 
 /// Whether a `from → to` move between raw state tokens is legal per the
@@ -264,12 +304,14 @@ fn attempt_and_completion(
 /// after serde).
 pub fn project_task(task: &Task) -> GraphProjection {
     let graph_id = task.id.0.clone();
+    // Dependency-aware states need every sibling's status, so index up front.
+    let statuses = subtask_status_index(task);
     let mut nodes = Vec::with_capacity(task.subtasks.len());
     let mut attempts = Vec::new();
     let mut completions = Vec::new();
     for st in &task.subtasks {
         let node_id = st.id.0.clone();
-        let state = node_status_of_subtask(st);
+        let state = node_status_of_subtask(st, &statuses);
         nodes.push(NodeRow {
             node_id: node_id.clone(),
             state: state.clone(),
@@ -1204,10 +1246,11 @@ impl GraphStore {
                 .map_err(|e| EngineError::StorageError(format!("shadow diff nodes: {}", e)))?;
         let mut db_states: Vec<(String, String)> = nodes;
         db_states.sort();
+        let statuses = subtask_status_index(task);
         let mut mem: Vec<(String, String)> = task
             .subtasks
             .iter()
-            .map(|st| (st.id.0.clone(), node_status_of_subtask(st)))
+            .map(|st| (st.id.0.clone(), node_status_of_subtask(st, &statuses)))
             .collect();
         mem.sort();
         for (id, state) in &mem {
@@ -2924,6 +2967,66 @@ mod tests {
         assert_eq!(
             p.completions[0].winning_attempt_id,
             attempt_id("uc-1-t1", "uc-1-t1-f1", 1)
+        );
+    }
+
+    #[test]
+    fn project_task_keeps_unmet_dependants_created() {
+        // A fresh orchestrator upsert leaves every subtask Pending. Only the
+        // dependency-free root is runnable; anything whose dependencies have
+        // not completed must project as CREATED, not READY — otherwise the
+        // mirror publishes the whole task as schedulable.
+        let now = chrono::Utc::now();
+        let mk = |id: &str, deps: Vec<&str>| Subtask {
+            id: TaskId(id.to_string()),
+            parent_id: TaskId("g-diamond".to_string()),
+            description: format!("step {id}"),
+            status: SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: deps.into_iter().map(|d| TaskId(d.to_string())).collect(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: Default::default(),
+            effect_class: Default::default(),
+            dispatch_retry_count: 0,
+            retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+        };
+        let task = Task {
+            id: TaskId("g-diamond".to_string()),
+            description: "diamond".to_string(),
+            project_id: "p1".to_string(),
+            status: TaskStatus::InProgress,
+            subtasks: vec![
+                mk("st-a", vec![]),
+                mk("st-b", vec!["st-a"]),
+                mk("st-d", vec!["st-b"]),
+            ],
+            created_at: now,
+            updated_at: now,
+        };
+        let p = project_task(&task);
+        let state = |id: &str| {
+            p.nodes
+                .iter()
+                .find(|n| n.node_id == id)
+                .unwrap()
+                .state
+                .clone()
+        };
+        assert_eq!(
+            state("st-a"),
+            "READY",
+            "dependency-free Pending node is runnable"
+        );
+        assert_eq!(state("st-b"), "CREATED", "unmet dependency is not runnable");
+        assert_eq!(
+            state("st-d"),
+            "CREATED",
+            "transitively unmet dependency too"
         );
     }
 
