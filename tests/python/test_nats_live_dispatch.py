@@ -55,7 +55,6 @@ STREAM = "UC_SUBTASKS"
 SHARED_SUBJECT = "uc.subtask.execute"
 PER_WORKER_WILDCARD = "uc.subtask.execute.w.>"
 SHARED_DURABLE = "subtask-workers"
-PER_WORKER_SUBJECT_PREFIX = "uc.subtask.execute.w."
 
 
 def per_worker_subject(worker_id: str) -> str:
@@ -102,9 +101,10 @@ async def _ensure_stream(js) -> None:
         "UC_SUBTASKS must carry BOTH the shared dispatch subject and the "
         "per-worker wildcard: `>` needs a further token, so it never covers "
         "the bare subject, and the gateway reaches targeted workers through "
-        "the wildcard. A pre-T12 stream is never upgraded in place — "
-        "`get_or_create_stream` leaves an existing stream untouched — so this "
-        "assertion is what turns a silent black hole into a failure."
+        "the wildcard. A stream provisioned before T12 is repaired by "
+        "`ensure_subtasks_stream`, which adds the missing wildcard in place — "
+        "`get_or_create_stream` alone would leave it untouched, and without "
+        "the wildcard every per-worker publish is a silent black hole."
     )
     assert str(info.config.retention).lower().endswith("workqueue"), (
         "exactly-once delivery between the shared queue and a per-worker "
@@ -154,18 +154,13 @@ async def _bound_worker(nc, worker_id: str):
 
     try:
         ok = await nw._ensure_subtask_transport()
-    except BaseException:
+    finally:
+        # Park the fetch loops BEFORE the caller publishes: an unparked loop
+        # would consume and ack the message first, and the server's count
+        # would then read 0 wherever the message had actually been routed.
         nw._running = False
         nw._stopping = True
-        _park_fetch_loops(nw)
-        raise
-
-    # Park the fetch loops BEFORE the caller publishes: an unparked loop
-    # would consume and ack the message, and the server's pending count would
-    # read 0 whether or not the message was routed where the test expects.
-    nw._running = False
-    nw._stopping = True
-    await _park_fetch_loops(nw)
+        await _park_fetch_loops(nw)
 
     try:
         yield nw, ok
