@@ -10,16 +10,20 @@
 //! rows to Failed (T4 mapping); siblings outside the closure and committed
 //! ancestors are untouched.
 //!
-//! Real PostgreSQL (graph plane) + in-memory legacy TaskStore wired to the
-//! real `GraphStore` as its shadow — the same dual-plane shape the gateway
-//! runs with storage enabled.
+//! Real PostgreSQL (graph plane) + an in-memory legacy TaskStore. The legacy
+//! store is **not** shadow-wired: `persist_task`'s graph fan-out is
+//! fire-and-forget, its effect here is unobservable (the graph already holds
+//! the same states, so there is nothing to await), and a late snapshot writes
+//! unconditionally — which let a stale `InProgress` row overwrite the `READY`
+//! a cancel had just decided (seen on a slow runner, 2026-09-15). The mirror is
+//! driven explicitly through `project_legacy_task`; the fan-out itself stays
+//! covered by the `uc-grpc` unit tests.
 //!
 //! Run explicitly: `cargo test -p uc-grpc --all-features --test granular_cancel_e2e -- --ignored`
 
 #![cfg(feature = "storage")]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::Mutex;
 use uc_engine::GraphStore;
@@ -117,13 +121,11 @@ fn subtask(id: &str, parent: &str, status: SubtaskStatus, depends: Vec<&str>) ->
     }
 }
 
-/// Let the async shadow fan-out settle (persist_task → shadow_persist).
-async fn settle() {
-    for _ in 0..30 {
-        tokio::task::yield_now().await;
-    }
-    tokio::time::sleep(Duration::from_millis(50)).await;
-}
+// There used to be a `settle()` helper here (30 yields + a 50 ms sleep) that
+// waited for the fire-and-forget shadow fan-out to land. It was removed: a
+// fixed sleep cannot make an unobservable channel deterministic, and a snapshot
+// arriving after the sleep still wrote unconditionally. Neither test needs it —
+// both drive the mirror explicitly via `project_legacy_task`, which is awaited.
 
 /// Project the legacy task into the graph plane, the way the gateway would.
 ///
@@ -160,9 +162,23 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
     let graph = Arc::new(graph);
 
     let sink: Arc<dyn uc_engine::GraphShadowSink> = graph.clone();
-    let mut legacy = TaskStore::new();
-    legacy.set_graph_shadow(sink.clone());
-    let legacy = Arc::new(Mutex::new(legacy));
+    // Deliberately NOT wired as the store's shadow (T14 #659 follow-up).
+    //
+    // The fan-out is fire-and-forget and, at this point in the scenario, its
+    // effect is *unobservable*: the graph already holds the same node states,
+    // so there is nothing to poll and nothing to await. A snapshot that lands
+    // late therefore cannot be waited on — and it lands *unconditionally*
+    // (`upsert_task_shadow` has no transition guard), so a stale `InProgress`
+    // row can claw a node back out of the state a graph-plane verb has just
+    // decided. That is exactly what made this test fail on a slow runner:
+    // `settle()` budgets 50 ms, the snapshot write needs multi-round-trip PG
+    // work, and the "after" was never guaranteed.
+    //
+    // These tests exist to exercise *graph-plane* verbs, so the mirror is
+    // driven explicitly (`project_legacy_task`) and the fan-out stays covered
+    // by the `uc-grpc` unit tests (`persist_task_fans_out_to_graph_shadow_sink`,
+    // `graph_all_four_verbs_fan_out_at_waypoints`).
+    let legacy = Arc::new(Mutex::new(TaskStore::new()));
 
     // Chain a → b: a committed, b in flight on a "slow worker".
     let task_id = "t7-cancel-attempt".to_string();
@@ -204,7 +220,9 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
         s.update_subtask_status(&task_id, "st-a", SubtaskStatus::Completed);
         s.update_subtask_status(&task_id, "st-b", SubtaskStatus::InProgress);
     }
-    settle().await;
+    // No mirror wait: the store is not shadow-wired, so this legacy update has
+    // no graph-side twin to settle (see the note at the store construction).
+    // The graph already knows st-b is RUNNING — `schedule_attempt` put it there.
 
     // ── Attempt-level cancel (cancel-attempt-keep-node) ──────────────
     let swept = sink
@@ -300,9 +318,8 @@ async fn node_cancel_closure_terminal_no_sibling_harm() {
     let graph = Arc::new(graph);
 
     let sink: Arc<dyn uc_engine::GraphShadowSink> = graph.clone();
-    let mut legacy = TaskStore::new();
-    legacy.set_graph_shadow(sink.clone());
-    let legacy = Arc::new(Mutex::new(legacy));
+    // Not shadow-wired either — same reason as the attempt-level test above.
+    let legacy = Arc::new(Mutex::new(TaskStore::new()));
 
     // Diamond a → (b, c) → d: a committed, b in flight, c READY-undispatched,
     // d CREATED. Cancelling b must take d (dependent) but NOT c (sibling).
@@ -352,7 +369,8 @@ async fn node_cancel_closure_terminal_no_sibling_harm() {
         s.update_subtask_status(&task_id, "st-a", SubtaskStatus::Completed);
         s.update_subtask_status(&task_id, "st-b", SubtaskStatus::InProgress);
     }
-    settle().await;
+    // No mirror wait — the store is not shadow-wired (`settle()` could never
+    // guarantee it anyway; see the note at the attempt-level store).
 
     // Closure of b: b itself + d (d depends on b AND c — it's a dependent).
     let closure = sink
