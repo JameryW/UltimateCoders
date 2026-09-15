@@ -84,7 +84,14 @@ def test_sqlite_connections_close_when_owner_is_collected(tmp_path, factory):
         gc.collect()
 
     resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
-    assert resource_warnings == []
+    # Surface the message/position when this trips. A bare `== []` diff prints
+    # only `<warnings.WarningMessage object at 0x...>`, which says nothing
+    # about *which* resource leaked — and this assertion fails for exactly one
+    # parametrization on Linux/py3.9, where that detail is the whole diagnosis.
+    assert resource_warnings == [], [
+        f"{w.category.__name__}: {w.message} (at {w.filename}:{w.lineno})"
+        for w in resource_warnings
+    ]
 
 
 def test_aggregator_closes_connection_created_by_worker_thread(tmp_path):
