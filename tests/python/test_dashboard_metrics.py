@@ -64,6 +64,26 @@ def _make_aggregator(tmp_path: str, alert_config: AlertConfig | None = None) -> 
     return agg
 
 
+def _sqlite_resource_warnings(caught) -> list[str]:
+    """ResourceWarnings about a leaked sqlite handle, as readable strings.
+
+    Scoped to sqlite on purpose. `gc.collect()` finalises whatever happens to
+    be unreachable at that moment, including objects the test under scrutiny
+    never created -- on Linux/py3.9 that is an event loop leaked by an
+    unrelated test, which used to be charged to `[alert-store]` here. That
+    leak is real, but it belongs to its owner: what the stores below owe us is
+    their own sqlite handles (`unclosed database in <sqlite3.Connection
+    object at 0x...>`). A bare `== []` diff prints only
+    `<warnings.WarningMessage object at 0x...>`, which says nothing about
+    *which* resource leaked, hence the rendered strings.
+    """
+    return [
+        f"{w.category.__name__}: {w.message} (at {w.filename}:{w.lineno})"
+        for w in caught
+        if issubclass(w.category, ResourceWarning) and "sqlite" in str(w.message).lower()
+    ]
+
+
 @pytest.mark.parametrize(
     "factory",
     [
@@ -77,26 +97,26 @@ def test_sqlite_connections_close_when_owner_is_collected(tmp_path, factory):
     """Best-effort cleanup prevents Python 3.14 sqlite ResourceWarnings."""
     db_path = str(tmp_path / f"{factory.__name__}.db")
 
+    # Flush foreign garbage *before* the measurement window opens. This test
+    # imports no asyncio, yet its `gc.collect()` is the first explicit
+    # collection in the suite, so on Linux/py3.9 it used to finalise an
+    # earlier test's leaked event loop and take the blame for it.
+    gc.collect()
+
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         owner = factory(db_path=db_path)
         del owner
         gc.collect()
 
-    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
-    # Surface the message/position when this trips. A bare `== []` diff prints
-    # only `<warnings.WarningMessage object at 0x...>`, which says nothing
-    # about *which* resource leaked — and this assertion fails for exactly one
-    # parametrization on Linux/py3.9, where that detail is the whole diagnosis.
-    assert resource_warnings == [], [
-        f"{w.category.__name__}: {w.message} (at {w.filename}:{w.lineno})"
-        for w in resource_warnings
-    ]
+    assert _sqlite_resource_warnings(caught) == []
 
 
 def test_aggregator_closes_connection_created_by_worker_thread(tmp_path):
     """Thread-local SQLite handles must remain owned until shutdown."""
     db_path = str(tmp_path / "threaded-metrics.db")
+
+    gc.collect()  # same reasoning: measure our own garbage, nobody else's
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
@@ -108,8 +128,7 @@ def test_aggregator_closes_connection_created_by_worker_thread(tmp_path):
         del aggregator
         gc.collect()
 
-    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
-    assert resource_warnings == []
+    assert _sqlite_resource_warnings(caught) == []
 
 
 # ── AlertConfig Tests ────────────────────────────────────────
