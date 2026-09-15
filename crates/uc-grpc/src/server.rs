@@ -6346,6 +6346,13 @@ mod tests {
 
     /// Worker-published `stale_dispatch_dropped` events map to a task-level
     /// TaskUpdated so the drop is user-visible in the event feed (T4/D7).
+    //
+    // T4 added this test without the gate its siblings carry: the
+    // `nats_event_to_agent_event` helper is `messaging`-gated while
+    // `NatsTaskEvent` is always compiled, so an un-gated caller breaks the lib
+    // test build whenever `messaging` is off — and uc-grpc is `default = []`,
+    // which is exactly what CI's `test-default` / `test-no-storage` jobs build.
+    #[cfg(feature = "messaging")]
     #[test]
     fn nats_event_to_agent_event_stale_dispatch_dropped() {
         let event = NatsTaskEvent {

@@ -1388,7 +1388,9 @@ class NatsWorker:
         # arbiter runs behind the merge barrier — grants are issued by the
         # gateway gated on graph quiescence. No endpoint → legacy un-gated.
         merge_gate = None
-        if merge_arbiter is not None and (self._grpc_endpoint or os.environ.get("UC_GRPC_ENDPOINT")):
+        if merge_arbiter is not None and (
+            self._grpc_endpoint or os.environ.get("UC_GRPC_ENDPOINT")
+        ):
             merge_gate = MergeGate(self._engine)
             logger.info("MergeGate wired (gRPC gateway) — merges require a grant")
 

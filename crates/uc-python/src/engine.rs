@@ -1232,6 +1232,7 @@ impl PyEngine {
     /// Raises:
     ///     RuntimeError: If not in gRPC mode or registration fails.
     #[pyo3(signature = (worker_id, capabilities, max_capacity, metadata=None, contract_version=None, projects=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn register_worker_async<'py>(
         &self,
         py: Python<'py>,

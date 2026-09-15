@@ -1184,7 +1184,6 @@ def test_registration_metadata_shape(monkeypatch):
     """Cross-host observability (#607 follow-up): the gateway registration
     metadata must be stable JSON with hostname+pid always present and
     compose_project only when running under a compose project."""
-    from ultimate_coders.nats_worker import NatsWorker
 
     monkeypatch.delenv("UC_COMPOSE_PROJECT", raising=False)
     # T5 #641: instance method now — reads _subtask_js_available state.
@@ -1205,7 +1204,7 @@ def test_registration_metadata_carries_contract_version():
     """The registration metadata (stable keys, additive) must echo the
     execution contract the worker speaks so ListWorkers consumers can see
     per-worker versions during a lockstep upgrade."""
-    from ultimate_coders.nats_worker import CONTRACT_VERSION, NatsWorker
+    from ultimate_coders.nats_worker import CONTRACT_VERSION
 
     assert CONTRACT_VERSION == "v1"  # mirrors uc_types::CONTRACT_VERSION
     meta = json.loads(_make_worker()._registration_metadata())

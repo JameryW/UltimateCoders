@@ -14,10 +14,9 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 from ultimate_coders.agent import sandbox as sandbox_mod
-from ultimate_coders.agent.sandbox import SandboxManager, SandboxConfig, _kill_process_tree
+from ultimate_coders.agent.sandbox import SandboxConfig, SandboxManager, _kill_process_tree
+from ultimate_coders.nats_worker import NatsWorker as _NatsWorker
 
 
 def _make_worker() -> _NatsWorker:
