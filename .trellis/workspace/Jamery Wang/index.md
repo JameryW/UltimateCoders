@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-09-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~711 | Active |
+| `journal-1.md` | ~834 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-09-15 | Verify the T12 dispatch plane on a live broker — affinity placement was never active | `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`, `db7c289` | `main` |
 | 13 | 2026-09-15 | T12 affinity placement delivered (#654) | `b3aa299` | `main` |
 | 12 | 2026-09-15 | T11 sandbox env allowlist delivered (#653) | `4c3689c` | `main` |
 | 11 | 2026-09-14 | T10 context compiler delivered (#652) | `5a68a17` | `main` |

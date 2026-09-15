@@ -709,3 +709,126 @@ Docker Desktop）。
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Verify the T12 dispatch plane on a live broker — affinity placement was never active
+
+**Date**: 2026-09-15
+**Task**: Verify the T12 dispatch plane on a live broker — affinity placement was never active
+**Branch**: `main`
+
+### Summary
+
+T12 affinity placement had never been run against a real NATS broker; mock-only coverage hid that the shared durable was unfiltered, which makes every per-worker consumer illegal on a work-queue stream (err_code 10100). Fixed by pinning the shared consumer to the bare shared subject; added a live-broker integration suite plus a CI step that runs it against a real JetStream server; also taught streaming provisioning to add the per-worker wildcard to a pre-existing stream, since get_or_create_stream has no update path.
+
+### Main Changes
+
+### Main Changes
+
+Post-delivery verification of T12 (#654, affinity placement), which had shipped
+with no live-broker test — as its own ticket notes.
+
+**T12 never worked on a real broker.** `NatsWorker._ensure_subtask_transport`
+created the shared durable `subtask-workers` with no `filter_subject`. On a
+JetStream work-queue stream an unfiltered consumer covers every subject in the
+stream, and JetStream allows exactly one such consumer (`err_code 10099`) while
+refusing any filtered consumer that overlaps an existing one (`err_code 10100`
+"filtered consumer not unique on workqueue stream"). So
+`_bind_per_worker_consumer` was refused 100% of the time, and it swallows that
+refusal by design (best-effort: a worker without a per-worker topic stays
+legacy). `_per_worker_topic` was false forever, every heartbeat declared false,
+and `WorkerRegistry::placement_target` — which filters on exactly that flag —
+never returned a target. Affinity placement was dead code in production, and the
+soft-placement semantics made "no affinity was warranted" and "affinity is dead"
+observationally identical.
+
+- `fix(python)` — pin the shared consumer to the bare shared subject. One
+  keyword; the overflow path is unaffected and the two filters become disjoint,
+  the only legal shape on a work-queue stream.
+- `test(python)` — `tests/python/test_nats_live_dispatch.py`, five cases against
+  a live `nats-server -js`, driving the real `_ensure_subtask_transport` /
+  `_bind_per_worker_consumer` and asserting via `consumer_info` / `stream_info`
+  rather than the worker's own memory.
+- `ci(python)` — run that file with `--integration` in the existing 3.12 leg,
+  against a JetStream server started by the job. A guard that only runs when a
+  developer happens to have a broker is the same blind spot one layer up.
+
+**A second route to the same inertness.** `get_or_create_stream` never writes
+the per-worker wildcard to a stream that already exists: async-nats sends
+`STREAM.INFO` and returns the existing stream on 200, reaching `STREAM.CREATE`
+only on 404 (context.rs:444-453). Every gateway that provisioned `UC_SUBTASKS`
+between T5 and T11 therefore keeps a one-subject stream — and the worker's
+per-worker bind needs its filter to be a subset of the stream's subjects, so the
+feature stays inert on every upgraded instance too.
+
+- `fix(uc-grpc-server)` — read the live config back and add the wildcard when
+  missing, taking every other field from the server so deployment tuning of
+  `max_age` / `duplicate_window` survives. Deleting and recreating the stream
+  would have dropped in-flight dispatch.
+- Also recorded the consumer-side half of the contract on
+  `PER_WORKER_SUBJECT_WILDCARD`, which documented only the stream half — the
+  half that was silently satisfied while the feature stayed dead.
+
+### Testing
+
+`nats-server 2.14.6` with JetStream, Windows-native (WSL has no sudo and no
+docker), verified through a protocol-level probe (INFO / PING / PONG and `/jsz`).
+
+- Live suite: 5 passed, against both a stream the file creates and one the real
+  gateway provisioned.
+- Mutation check on the fix: reverting the shared-consumer filter leaves all 39
+  existing mock tests green and turns 4 of the 5 live cases red with the server's
+  own wording (`err_code=10100`); the legacy-worker case stays green, correctly.
+- Upgrade hazard probed before committing, not assumed: re-adding an existing
+  unfiltered durable with a filter is accepted with three un-acked messages in
+  flight, delivery continues, and a repeat add is idempotent.
+- Real binary, both provisioning paths: a pre-T12 stream logs "upgraded in place:
+  added the per-worker subject wildcard" and the server then reports
+  `["uc.subtask.execute", "uc.subtask.execute.w.>"]` with retention and other
+  settings unchanged; no stream logs "provisioned" with a config byte-identical
+  to the Python golden.
+- Rust gates: `cargo fmt --all -- --check` clean; `clippy -p uc-grpc
+  --all-features -D warnings` and `clippy -p uc-grpc-server -D warnings` clean;
+  uc-grpc default 209 + 8 and all-features 237 + 8 pass.
+- Python gates: `ruff check python/ tests/` clean; py3.9 compatibility scan 82
+  files / 0 problems. Full serial file-by-file run: `passed=970 failed=0
+  error=136 skipped=10` — `failed=0`, and 970 + 136 = 1106 (the previous
+  baseline), the 136 being the sandbox bulk-delete guard reclassifying `tmp_path`
+  teardown as setup errors; re-running the affected files in isolation gives 31
+  passed. Skips went 5 → 10 for the new file's five cases.
+
+Self-corrected inside this session: the first CI step started the broker without
+`-m 8222`, and the HTTP monitor is off unless asked for — verified by the
+presence of the "Starting http monitor" log line. The readiness probe would have
+burned its budget and the step would have run the tests having confirmed nothing;
+it now starts the broker with `-m 8222` and fails the step with the server log
+when the endpoint never answers.
+
+### Status
+
+Complete. Commits `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`,
+`db7c289` on main.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `78c0d1d` | (see git log) |
+| `7f69e62` | (see git log) |
+| `080e747` | (see git log) |
+| `07064bf` | (see git log) |
+| `82ea112` | (see git log) |
+| `db7c289` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
