@@ -146,7 +146,7 @@ async fn diamond_pause_commit_branch_grace_hard_stop_resume_redispatch() {
         let mut s = legacy.lock().await;
         s.update_task(
             &task_id,
-            "in_progress",
+            "InProgress",
             vec![
                 subtask("st-a", &task_id, SubtaskStatus::Pending, vec![]),
                 subtask("st-b", &task_id, SubtaskStatus::Pending, vec!["st-a"]),

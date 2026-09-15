@@ -145,7 +145,7 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
         let mut s = legacy.lock().await;
         s.update_task(
             &task_id,
-            "in_progress",
+            "InProgress",
             vec![
                 subtask("st-a", &task_id, SubtaskStatus::Pending, vec![]),
                 subtask("st-b", &task_id, SubtaskStatus::Pending, vec!["st-a"]),
@@ -274,7 +274,7 @@ async fn node_cancel_closure_terminal_no_sibling_harm() {
         let mut s = legacy.lock().await;
         s.update_task(
             &task_id,
-            "in_progress",
+            "InProgress",
             vec![
                 subtask("st-a", &task_id, SubtaskStatus::Pending, vec![]),
                 subtask("st-b", &task_id, SubtaskStatus::Pending, vec!["st-a"]),
