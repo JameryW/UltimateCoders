@@ -27,6 +27,100 @@ logger = logging.getLogger(__name__)
 DEFAULT_CODING_AGENT = "grok-build"
 GROK_AGENT_ALIASES = ("grok-build", "grok")
 
+# ── T11 #653 (D11 #648) — deny-by-default environment allowlist ──────
+#
+# Every agent subprocess used to inherit the FULL host environment
+# (``env = dict(os.environ)``). Workers are deployed across hosts
+# (UC_SCALE_HOSTS), so the host env shape cannot be assumed trusted: any
+# unrelated secret sitting in the supervisor's environment leaked into
+# every coding-agent process.
+#
+# The lists below are the allowlist. A name ending in ``*`` is a prefix
+# match (``LC_*`` covers LC_ALL/LC_CTYPE/...); everything else is an exact
+# name, compared case-insensitively (Windows env is case-insensitive).
+
+#: Always-safe system variables needed for a process to start at all.
+BASE_ENV_ALLOWLIST: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "PWD",
+    "LANG",
+    "LC_*",
+    # Windows: without SYSTEMROOT/SYSTEMDRIVE/PATHEXT the loader and
+    # cmd.exe-based CLIs cannot start.
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "USERNAME",
+    "COMPUTERNAME",
+)
+
+#: Shared by every adapter: the UC_* control plane plus proxy routing.
+SHARED_ENV_ALLOWLIST: tuple[str, ...] = (
+    "UC_*",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+#: Per-adapter credential / endpoint extensions, keyed by CANONICAL agent
+#: name (aliases are normalised through the plugin registry first).
+ADAPTER_ENV_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "grok-build": ("XAI_API_KEY", "GROK_API_KEY"),
+    "claude-code": (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+    ),
+    # The decompose helper shells out to the same Claude CLI.
+    "claude-code-decompose": (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+    ),
+    "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL"),
+    # In-tree plugins: `dsh` reads its own key/base-url; the local litellm
+    # loop registers api_key_env=None but reads OPENAI_* inside the child,
+    # so only an explicit entry can cover it.
+    "deepseek-harness": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
+    "local-harness": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL"),
+}
+
+#: Escape hatch: comma-separated extra names/prefixes (`*` suffix allowed).
+ENV_EXTRA_ENV_VAR = "UC_SANDBOX_ENV_EXTRA"
+
+
+def _canonical_agent_name(agent: str) -> str:
+    """Map an agent alias to its registered canonical name.
+
+    Falls back to ``agent`` unchanged when the registry has no spec (unknown
+    or not-yet-discovered plugin) or when the registry is unavailable.
+    """
+    try:
+        from ultimate_coders.agent.registry import ensure_builtin_plugins, registry
+
+        ensure_builtin_plugins()
+        spec = registry.get_spec(agent)
+        if spec is not None:
+            return spec.name
+    except Exception:  # pragma: no cover - registry is always importable here
+        logger.debug("Agent name resolution failed for %s", agent, exc_info=True)
+    return agent
+
 
 class NetworkMode:
     """Network access modes for sandbox execution."""
@@ -62,6 +156,14 @@ class SandboxConfig:
         append_system_prompt: Extra rules/system prompt for the selected agent.
         agent_name: Custom agent name for --agent.
         agents_json: JSON string defining custom agents for --agents.
+
+    Agent subprocesses run with a deny-by-default environment allowlist
+    (T11 #653): only base system variables, ``UC_*``, proxy variables and
+    the selected agent's own credentials are inherited from the host — see
+    ``child_env_allowlist`` / ``build_child_env``. ``env_vars`` is layered
+    on top of the filtered base and may add or override child values; it is
+    not a way to re-widen the host set. Use ``UC_SANDBOX_ENV_EXTRA`` for
+    that (logged at SandboxManager construction).
     """
     agent: str = field(
         default_factory=lambda: os.environ.get("UC_CODING_AGENT", DEFAULT_CODING_AGENT)
@@ -130,6 +232,86 @@ class SandboxConfig:
             key_env = api_key_env_for(self.agent)
             if key_env:
                 env[key_env] = self.api_key
+        return env
+
+    def env_extra_names(self) -> tuple[str, ...]:
+        """Extra allowlist names from ``UC_SANDBOX_ENV_EXTRA`` (comma-separated).
+
+        ``*``-suffixed entries behave as prefix matches, exactly like the
+        built-in lists. Values are taken verbatim — this is an operator escape
+        hatch, not a place to validate anything.
+        """
+        raw = os.environ.get(ENV_EXTRA_ENV_VAR, "")
+        return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+    def child_env_allowlist(self, agent: str | None = None) -> tuple[str, ...]:
+        """Deny-by-default allowlist of env names for one agent.
+
+        Mirrors the plugin registry: aliases are normalised to the canonical
+        agent name, and the credential variable the registry maps for that
+        agent is always added — so an external plugin declaring
+        ``api_key_env`` keeps working without core-code changes.
+
+        Args:
+            agent: Agent name/alias. None = this config's ``agent``.
+
+        Returns:
+            Exact names and ``*``-suffixed prefixes.
+        """
+        canonical = _canonical_agent_name(agent or self.agent)
+        names: list[str] = [
+            *BASE_ENV_ALLOWLIST,
+            *SHARED_ENV_ALLOWLIST,
+            *ADAPTER_ENV_ALLOWLIST.get(canonical, ()),
+        ]
+        try:
+            from ultimate_coders.agent.registry import api_key_env_for
+
+            key_env = api_key_env_for(canonical)
+        except Exception:  # pragma: no cover - registry is always importable
+            key_env = None
+        if key_env and key_env not in names:
+            names.append(key_env)
+        names.extend(self.env_extra_names())
+        return tuple(names)
+
+    def build_child_env(
+        self,
+        host_env: Any,
+        overlay: Any = None,
+        agent: str | None = None,
+    ) -> dict[str, str]:
+        """Build the environment for one agent subprocess.
+
+        Only allowlisted names survive from ``host_env``; ``overlay`` (the
+        per-request ``env_vars`` built by the adapter) is applied on top and
+        may add or override child values.
+
+        The overlay is deliberately **not** a bypass: it can introduce names
+        the caller chose explicitly (an injected API key, a temp GROK_HOME),
+        but it can never make the rest of the host environment come along —
+        the base is already filtered.
+
+        Args:
+            host_env: Host environment mapping (``os.environ``).
+            overlay: Per-request env vars applied on top (may be None).
+            agent: Agent name/alias for the per-adapter extension list.
+
+        Returns:
+            The filtered child environment.
+        """
+        allow = self.child_env_allowlist(agent)
+        exact = {name.upper() for name in allow if not name.endswith("*")}
+        prefixes = tuple(name.upper()[:-1] for name in allow if name.endswith("*"))
+
+        env: dict[str, str] = {}
+        for key, value in dict(host_env).items():
+            upper = key.upper()
+            if upper in exact or (prefixes and upper.startswith(prefixes)):
+                env[key] = value
+        if overlay:
+            for key, value in dict(overlay).items():
+                env[key] = value
         return env
 
 
@@ -234,6 +416,16 @@ class SandboxManager:
         """
         self.config = config
         self.engine = engine
+        # T11 #653 — surface the env allowlist escape hatch at startup: an
+        # operator widening the list should see it in the logs every run
+        # (the widening is otherwise invisible and permanent).
+        extra_names = config.env_extra_names()
+        if extra_names:
+            logger.info(
+                "Sandbox env allowlist extended by %s: %s",
+                ENV_EXTRA_ENV_VAR,
+                ", ".join(extra_names),
+            )
         self._pool: list[SandboxHandle] = []
         self._active: dict[str, SandboxHandle] = {}
         self._adapter = self._create_adapter(config.agent)
@@ -358,9 +550,14 @@ class SandboxManager:
                     timed_out=result_dict.get("timed_out", False),
                 )
             else:
-                # Pure Python fallback: run subprocess with streaming
+                # Pure Python fallback: run subprocess with streaming.
+                # T11 #653 — the adapter that built the request is the
+                # authoritative agent identity (covers per-call overrides and
+                # alias normalisation).
                 result = await self._execute_subprocess(
-                    exec_request, on_stdout_line=on_stdout_line,
+                    exec_request,
+                    on_stdout_line=on_stdout_line,
+                    agent=adapter.name(),
                 )
 
             # Parse output
@@ -431,6 +628,7 @@ class SandboxManager:
     async def execute_decompose(
         self,
         request: dict[str, Any],
+        agent: str | None = None,
     ) -> ExecResult:
         """Execute a decomposition request as a subprocess.
 
@@ -442,16 +640,20 @@ class SandboxManager:
         Args:
             request: Execution request dict with command, args, etc.
                 Typically built by ``DecomposeAdapter.build_request()``.
+            agent: T11 #653 — optional agent identity for the env allowlist;
+                None falls back to ``request["agent"]`` (set by
+                DecomposeAdapter) and then to the configured agent.
 
         Returns:
             ExecResult with the process output.
         """
-        return await self._execute_subprocess(request)
+        return await self._execute_subprocess(request, agent=agent)
 
     async def _execute_subprocess(
         self,
         request: dict[str, Any],
         on_stdout_line: Any | None = None,
+        agent: str | None = None,
     ) -> ExecResult:
         """Execute a command as a subprocess with optional stdout streaming.
 
@@ -459,6 +661,10 @@ class SandboxManager:
             request: Execution request dict with command, args, etc.
             on_stdout_line: Optional async callback ``async (line: str) -> None``
                 called for each stdout line during execution.
+            agent: T11 #653 — agent identity selecting the env allowlist.
+                Resolution order: this argument, then ``request["agent"]``
+                (set by adapters reached without an adapter instance, e.g.
+                DecomposeAdapter), then ``self.config.agent``.
 
         Returns:
             ExecResult with the process output.
@@ -474,6 +680,8 @@ class SandboxManager:
         working_dir = request.get("working_dir", self.config.project_path)
         # T7 #643 — (task_id, node_id) identity for the cancel registry.
         cancel_key: tuple[str, str] | None = request.get("cancel_key")
+        # T11 #653 — agent identity for the env allowlist.
+        agent_name: str = agent or request.get("agent") or self.config.agent
 
         # Log the command being executed (truncate long prompts)
         display_args = []
@@ -487,9 +695,12 @@ class SandboxManager:
             command, " ".join(display_args), timeout_secs, working_dir,
         )
 
-        # Build environment
-        env = dict(os.environ)
-        env.update(env_vars)
+        # T11 #653 — deny-by-default allowlist. This is the single choke
+        # point for every agent subprocess (execute(), execute_decompose(),
+        # all adapters, streaming and non-streaming), so filtering here is
+        # enough: the adapter's env_vars overlay still adds/overrides child
+        # values, but the host environment outside the allowlist stays out.
+        env = self.config.build_child_env(os.environ, env_vars, agent=agent_name)
 
         proc = None
         try:
@@ -704,6 +915,12 @@ class DecomposeAdapter(AgentAdapter):
             "timeout_secs": timeout,
             "working_dir": working_dir,
             "env_vars": env_vars,
+            # T11 #653 — decomposition runs through _execute_subprocess only
+            # (never the engine branch), so the request can carry the agent
+            # identity itself: execute_decompose() holds no adapter instance
+            # and would otherwise fall back to the config's coding agent and
+            # pick the wrong env allowlist.
+            "agent": self.name(),
         }
 
     def parse_output(self, result: ExecResult) -> AgentOutput:

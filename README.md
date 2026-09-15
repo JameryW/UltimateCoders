@@ -421,6 +421,7 @@ Configuration is loaded from environment variables with sensible defaults. No co
 | `UC_CODEX_WEB_SEARCH` | `disabled` | Codex native web-search mode; keep `disabled` for `stealth/ox-alpha`, which rejects that OpenAI-specific tool |
 | `UC_OPENROUTER_REASONING_EFFORT` | `low` | Codex reasoning effort; `stealth/ox-alpha` requires reasoning to be enabled |
 | `OPENROUTER_API_KEY` | - | OpenRouter API key used by the opt-in Codex provider |
+| `UC_SANDBOX_ENV_EXTRA` | - | Extra env vars passed to agent subprocesses, comma-separated (`*` suffix = prefix match). Agent subprocesses get a deny-by-default allowlist — only base system vars, `UC_*`, proxy vars, and the per-agent credentials listed above are inherited from the host environment. Use this to widen the list; it is logged at worker startup. |
 
 Docker Compose default credentials:
 
