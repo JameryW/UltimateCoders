@@ -40,13 +40,13 @@
 //!   `persist_task` and the startup shadow-read diff. Default: off. Neither
 //!   ever changes a read path — diffs are warn-only.
 //!
-//! # Status mapping (import + shadow, single source of truth below)
+//! # Status mapping (every projection path — one implementation)
 //!
 //! Node states (`graph_nodes.state`):
 //!
 //! | input (Rust Debug / TS lowercase / camelCase) | state |
 //! |---|---|
-//! | `Pending` / `pending` | `READY` |
+//! | `Pending` / `pending` | `READY` **iff** every dependency is already done, else `CREATED` |
 //! | `Assigned` / `InProgress` / `in_progress` / `running` / `reviewing` | `RUNNING` |
 //! | `Completed` / `completed` | `SUCCEEDED` |
 //! | `Failed` / `failed` | `FAILED` |
@@ -56,6 +56,14 @@
 //!
 //! Graph states (`execution_graphs.status`) additionally map
 //! `Created → CREATED` and `Planning → PLANNING`.
+//!
+//! The `Pending` row is the only one that is not a pure function of the status
+//! string: legacy `Pending` covers both "known, not runnable yet" and "runnable
+//! now", and only the dependency set separates them. Every path — source-A PG
+//! backfill, source-B `.uc/tasks` import, and the live shadow write — resolves
+//! it through [`dependency_aware_state`], so all three agree byte-for-byte on a
+//! given graph. (T13 #655: source-B previously used the plain token map and
+//! disagreed with the other two.)
 //!
 //! Per the mapping, a `Completed` node also gets an attempt row
 //! (`SUCCEEDED`) **and** a `node_completions` row — written in the same
@@ -160,16 +168,44 @@ pub fn node_status_of_subtask(
     subtask: &Subtask,
     statuses: &std::collections::HashMap<&str, &SubtaskStatus>,
 ) -> String {
-    let state = node_state_token(&format!("{:?}", subtask.status));
+    dependency_aware_state(
+        &format!("{:?}", subtask.status),
+        subtask.depends_on.iter().map(|dep| dep.0.as_str()),
+        |dep| {
+            statuses
+                .get(dep)
+                .is_some_and(|status| matches!(status, SubtaskStatus::Completed))
+        },
+    )
+}
+
+/// The dependency-aware `Pending` rule — in ONE place, for every projection.
+///
+/// `project_task` (Rust shape), `project_ts_task` (TS shape) and the shadow
+/// write must agree byte-for-byte on the node states of one logical graph, so
+/// they all resolve the ambiguity through here instead of restating it per
+/// vocabulary. That sharing is deliberate — T13 (#655) *was* the failure mode
+/// of keeping a second copy: the TS path held the plain `pending → READY` map
+/// while the Rust path had already been refined, and the divergence stayed
+/// invisible because no test covered a `Pending` node whose dependencies were
+/// unmet (the TS unit test's fixture used `completed`/`assigned` only, and the
+/// source-A integration fixture's `Pending` node had an empty dependency set —
+/// which satisfies trivially, so both implementations agreed on it).
+///
+/// `is_satisfied` answers "is this dependency already done?" in the caller's
+/// own vocabulary; the rule itself stays vocabulary-free. An unknown/dangling
+/// dependency id is never satisfied, which is what keeps a node read as
+/// `CREATED` rather than runnable.
+fn dependency_aware_state<'a>(
+    raw_status: &str,
+    deps: impl Iterator<Item = &'a str>,
+    is_satisfied: impl Fn(&str) -> bool,
+) -> String {
+    let state = node_state_token(raw_status);
     if state != "READY" {
         return state;
     }
-    let dependencies_met = subtask.depends_on.iter().all(|dep| {
-        statuses
-            .get(dep.0.as_str())
-            .is_some_and(|status| matches!(status, SubtaskStatus::Completed))
-    });
-    if dependencies_met {
+    if deps.into_iter().all(is_satisfied) {
         "READY".to_string()
     } else {
         "CREATED".to_string()
@@ -421,9 +457,28 @@ pub fn project_ts_task(task: &TsPersistedTask) -> GraphProjection {
     let mut nodes = Vec::with_capacity(task.subtasks.len());
     let mut attempts = Vec::new();
     let mut completions = Vec::new();
+    // T13 (#655): the TS shape carries the same ambiguous `pending` as the Rust
+    // one — the planner's subtasks start there, dependencies unmet — so this
+    // projection must resolve it with the dependency set too, exactly like
+    // `project_task`. Left on the plain token map it published every blocked
+    // node as READY, i.e. seeded the durable plane with a fully-schedulable
+    // graph for any task imported before it started running.
+    let statuses: std::collections::HashMap<&str, &str> = task
+        .subtasks
+        .iter()
+        .map(|s| (s.id.as_str(), s.status.as_str()))
+        .collect();
     for st in &task.subtasks {
         let node_id = st.id.clone();
-        let state = node_state_token(&st.status);
+        let state = dependency_aware_state(
+            &st.status,
+            st.depends_on.iter().map(|d| d.as_str()),
+            |dep| {
+                statuses
+                    .get(dep)
+                    .is_some_and(|raw| node_state_token(raw) == "SUCCEEDED")
+            },
+        );
         nodes.push(NodeRow {
             node_id: node_id.clone(),
             state: state.clone(),
@@ -3111,7 +3166,13 @@ mod tests {
                  "dependsOn": [], "result": "did it", "retryCount": 1,
                  "completedAt": 1717171717000, "requiredCapabilities": ["rust"]},
                 {"id": "uc-1-t1-f2", "description": "review", "status": "assigned",
-                 "dependsOn": ["uc-1-t1-f1"], "startedAt": 1717171500000}
+                 "dependsOn": ["uc-1-t1-f1"], "startedAt": 1717171500000},
+                {"id": "uc-1-t1-f3", "description": "blocked", "status": "pending",
+                 "dependsOn": ["uc-1-t1-f2"]},
+                {"id": "uc-1-t1-f4", "description": "unblocked", "status": "pending",
+                 "dependsOn": ["uc-1-t1-f1"]},
+                {"id": "uc-1-t1-f5", "description": "root", "status": "pending",
+                 "dependsOn": []}
             ]
         }"#;
         let ts: TsPersistedTask = serde_json::from_str(json).unwrap();
@@ -3125,7 +3186,18 @@ mod tests {
             .collect();
         assert_eq!(
             states,
-            vec![("uc-1-t1-f1", "SUCCEEDED"), ("uc-1-t1-f2", "RUNNING"),]
+            vec![
+                ("uc-1-t1-f1", "SUCCEEDED"),
+                ("uc-1-t1-f2", "RUNNING"),
+                // T13 (#655): the branch this test used to skip. `pending` is
+                // the scheduler's initial status for EVERY subtask, so these
+                // three are the common case, not an exotic one — f3's
+                // dependency is still running (not runnable), f4's already
+                // `completed` (runnable), f5 has no dependencies at all.
+                ("uc-1-t1-f3", "CREATED"),
+                ("uc-1-t1-f4", "READY"),
+                ("uc-1-t1-f5", "READY"),
+            ]
         );
         assert_eq!(p.attempts.len(), 2);
         assert_eq!(
@@ -3137,6 +3209,107 @@ mod tests {
         assert_eq!(
             p.nodes[0].required_capabilities,
             serde_json::json!(["rust"])
+        );
+    }
+
+    /// T13 (#655): the invariant the test above *claims* in its comment —
+    /// identical node states for one logical graph across both shapes — asserted
+    /// directly, with the ambiguous `pending` case actually in the fixture.
+    ///
+    /// Before the fix the two projections disagreed right here (source-B said
+    /// `READY`, source-A/shadow said `CREATED`), and no existing test could see
+    /// it: the unit fixture above used `completed`/`assigned` only, and the
+    /// source-A integration fixture's `Pending` node had an *empty* dependency
+    /// set — which satisfies trivially, so both implementations agreed on it.
+    #[test]
+    fn ts_and_rust_projections_agree_on_pending_with_unmet_dependencies() {
+        let json = r#"{
+            "id": "g-x",
+            "status": "in_progress",
+            "projectId": "p1",
+            "createdAt": 1717171000000,
+            "savedAt": 1717171500000,
+            "subtasks": [
+                {"id": "n-done", "status": "completed", "dependsOn": []},
+                {"id": "n-blocked", "status": "pending", "dependsOn": ["n-open"]},
+                {"id": "n-open", "status": "pending", "dependsOn": []},
+                {"id": "n-after-done", "status": "pending", "dependsOn": ["n-done"]},
+                {"id": "n-dangling", "status": "pending", "dependsOn": ["n-missing"]}
+            ]
+        }"#;
+        let ts: TsPersistedTask = serde_json::from_str(json).unwrap();
+        let from_ts = project_ts_task(&ts);
+
+        let mk = |id: &str, status: uc_types::SubtaskStatus, deps: &[&str]| Subtask {
+            id: TaskId(id.to_string()),
+            parent_id: TaskId("g-x".to_string()),
+            description: id.to_string(),
+            status,
+            assigned_worker: None,
+            depends_on: deps.iter().map(|d| TaskId(d.to_string())).collect(),
+            file_constraints: Vec::new(),
+            expected_output: String::new(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            retry_count: 0,
+            required_capabilities: Vec::new(),
+            agent_config_json: None,
+            steps: Vec::new(),
+        };
+        let now = chrono::DateTime::from_timestamp(1717171500, 0).unwrap();
+        let rust = Task {
+            id: TaskId("g-x".to_string()),
+            description: "demo".into(),
+            project_id: "p1".into(),
+            status: TaskStatus::InProgress,
+            subtasks: vec![
+                mk("n-done", uc_types::SubtaskStatus::Completed, &[]),
+                mk("n-blocked", uc_types::SubtaskStatus::Pending, &["n-open"]),
+                mk("n-open", uc_types::SubtaskStatus::Pending, &[]),
+                mk(
+                    "n-after-done",
+                    uc_types::SubtaskStatus::Pending,
+                    &["n-done"],
+                ),
+                mk(
+                    "n-dangling",
+                    uc_types::SubtaskStatus::Pending,
+                    &["n-missing"],
+                ),
+            ],
+            created_at: now,
+            updated_at: now,
+        };
+        let from_rust = project_task(&rust);
+
+        let index = |p: &GraphProjection| {
+            let mut v: Vec<(String, String)> = p
+                .nodes
+                .iter()
+                .map(|n| (n.node_id.clone(), n.state.clone()))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            index(&from_ts),
+            index(&from_rust),
+            "source-B import must agree with the Rust projection on an identical graph"
+        );
+        // ... and the shared rule really fires: the blocked node is not
+        // runnable, the root and the dependency-satisfied one are, and a
+        // dangling dependency id is never treated as done.
+        assert_eq!(
+            index(&from_ts),
+            vec![
+                ("n-after-done".to_string(), "READY".to_string()),
+                ("n-blocked".to_string(), "CREATED".to_string()),
+                ("n-dangling".to_string(), "CREATED".to_string()),
+                ("n-done".to_string(), "SUCCEEDED".to_string()),
+                ("n-open".to_string(), "READY".to_string()),
+            ]
         );
     }
 
