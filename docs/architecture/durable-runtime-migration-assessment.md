@@ -113,3 +113,12 @@ P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity pl
 ## 六、执行状态
 
 评估件已批准（2026-09-11）。**P0 已全部交付并关闭（2026-09-14）**：T1–T7（#637–#643）逐票关闭并归档（journal session 1–8），D4–D7 四张决策票全闭环，map #632 已关。遗留：三笔 `#[ignore]` PG e2e 实跑（T4 graph_store_integration / T6 pause_grace_diamond / T7 granular_cancel_e2e，`-- --ignored`）待 Docker 恢复补跑。P1（Scope、Commit Barrier、Context Compiler、Sandbox 白名单、affinity placement）按上节另开地图；D5 裁决即 P1-2 的输入。
+
+**P1 已验收并关闭（2026-09-15）**：T8–T12（#650–#654）逐票关闭并归档，D8–D12 五张决策票全闭环，map #644 已关。**P0 那条遗留已清零**——三笔 `#[ignore]` PG e2e 已在 CI 实跑全绿（`graph_store_integration` **17 passed** / `granular_cancel_e2e` **2 passed** / `pause_grace_diamond` **1 passed**，见 `storage integration tests` job）。另修 T13（#655）：source-B 导入把阻塞的 `Pending` 节点发布成 `READY`，三条图投影路径现共用一份依赖感知规则。**本仓不再欠任何「只能由 CI 验」的分支。**
+
+**P2 地图已建（2026-09-15，#656）**：范围 = Execution Optimizer / Blackboard review / market scheduling（承 #644 的 out-of-scope 行）。开图前勘察核了 §四 两条「遗留风险」的实际形态，与原文措辞有出入，**本节据此更正 §90 的口径**：
+
+- **§90（指标采集点）**：原文称「需要在 P0-2 的 event 表里预留 `cost/tokens/duration` 字段」——**该前置已由 T2 满足**：`execution_events` 早就有 `cost` / `tokens` / `duration_ms`（`graph_store.rs:806-808`）。实际缺的是**两跳**：①**上报契约**——worker 上报的 `SubtaskResult` 没有 usage 字段（`python/ultimate_coders/agent/types.py:67-80`）；②**持久化写入点**——唯一 INSERT 不写这三列（`graph_store.rs:2290`），且全仓无读取（Rust 仅出现在 schema 定义，Python 完全不引用 `execution_events`）⇒ 今日是彻底死列。而适配器**两侧均已采集** token/cost（Rust `AgentOutput.token_usage`，extractors `sandbox/agents/claude_code.rs:221`、`grok.rs:280`；Python `sandbox.py:354` + `_grok_usage:1244` 连 `total_cost_usd` 一起解析），**duration 还可直接由 `task_attempts` 时间戳推导**（`graph_store.rs:777-779`）⇒ 真正缺的只有 cost/tokens，且缺在契约与写入点，**不在采集、也不在 schema**。
+- **§91（review 死代码）**：**已由 T6 处置**——TS review 流水线（`reviewSubtask` 等 + `parseReviewOutput` + 两个 prompt）已删除，原处注释同时写明前向口径「review semantics will be re-established by the Rust ready-node pipeline (out of scope here)」（`packages/uc-orchestrator/src/orchestrator/orchestrator.ts:1783-1790`），`SubtaskResult.review` 字段刻意保留给未来产出方。该项即 P2 的 Blackboard review，来源已锚定。
+
+决策票：**D13** metrics-collection-points **#657**（gates P2-1 Execution Optimizer）、**D14** review-plane-ownership **#658**（gates P2-2 Blackboard review）。⚠️ **market scheduling 的范围无法在仓内坐实**（全仓无任何 `market` 标识符，也没有独立 scheduler 模块），需外部「方案第 21 节」原文才能转成决策票；本图未臆造其内容。
