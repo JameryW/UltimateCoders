@@ -585,3 +585,127 @@ D11 #648 落地：_execute_subprocess 单点 deny-by-default 过滤（替换 dic
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: T12 affinity placement delivered (#654)
+
+**Date**: 2026-09-15
+**Task**: T12 affinity placement delivered (#654)
+**Branch**: `main`
+
+### Summary
+
+D12 #649 落地（P1 收尾）：网关侧软放置。硬闸（capability→scope→contract_version）后按 affinity desc→load asc→locality desc→worker_id asc 排序，命中 per-worker subject uc.subtask.execute.w.{worker_id}；零重叠/未声明/全过期→共享 overflow。新增 placement.rs（纯打分器+跨语言 subject golden）、WorkerRegistry.heartbeat_with_signals/dispatch_candidates/placement_target、两个发布嘴统一 resolve_dispatch_subject；proto 加性加 recent_files/per_worker_topic，UC_SUBTASKS 补通配。worker 自建 per-worker durable 并每次心跳声明（失败保持 legacy）。Rust 237 passed；pytest 1106+5 skip（+21）；fmt + 5 组 clippy 全绿。零搁死：定向不写 assigned_worker。
+
+### Main Changes
+
+## Session 13: T12 affinity placement delivered (#654) — P1 收尾
+
+**Date**: 2026-09-15
+**Task**: T12 affinity placement delivered (#654)
+**Branch**: `main`
+
+### Summary
+
+D12 #649 落地，P1 地图最后一票：网关侧**软**放置。节点发布前经 capability（硬）→
+scope（硬，T8）→ contract_version（硬）三道闸取候选，再按
+`affinity desc → load_percent asc → locality desc → worker_id asc` 排序，命中
+per-worker subject `uc.subtask.execute.w.{worker_id}`；零重叠/无声明/全员过期 → 回落共享
+`uc.subtask.execute`（overflow）。新增 `crates/uc-grpc/src/placement.rs`（纯打分器 + 跨语言
+subject golden），`WorkerRegistry` 新增 `heartbeat_with_signals` / `dispatch_candidates` /
+`worker_host` / `placement_target`；两个网关发布嘴统一经 `resolve_dispatch_subject` 解析
+subject。协议加性扩展 `WorkerHeartbeatRequest.recent_files` / `per_worker_topic`，
+`UC_SUBTASKS` stream 补 per-worker 通配。worker 侧在共享 durable 之后自建 per-worker
+durable 并在每次心跳声明；绑定失败保持 legacy（永不定向、仍走 overflow）。新增 pytest 21、
+Rust 单测 9（placement 10 + worker_service 8 + server 5）。**零搁死**：定向不写
+`assigned_worker`，`None` 是正常结果而非派发失败。
+
+### Main Changes
+
+- `crates/uc-grpc/src/placement.rs`（新增）
+  - 常量：`PER_WORKER_SUBJECT_PREFIX`/`PER_WORKER_SUBJECT_WILDCARD`/`MAX_RECENT_FILES=64`/
+    `MIN_AFFINITY_HITS=1`；`per_worker_subject()`、`normalize_path()`（`\`→`/`、剥前导 `./`）、
+    `normalize_recent_files()`（trim/丢空/去重/截断）、`affinity_hits()`（**去重后**计不同约束）、
+    `host_from_metadata()`（读稳定键 `hostname`）、`PlacementCandidate::load_percent()`、
+    `Placement{worker_id,subject,affinity_hits,load_percent,same_host}`、`place()`。
+- `crates/uc-grpc/src/worker_service.rs`
+  - `RegisteredWorker` 加 `recent_files` / `per_worker_topic`（注册时为空/False）。
+  - `heartbeat_with_signals()`；`heartbeat()` 降级为 delegating wrapper（**无信号心跳会清空
+    声明**——声明是"每次心跳"的，停声明即恢复不可定向）。
+  - `dispatch_candidates()`（把闸的三道过滤暴露为列表，供打分复用）、`worker_host()`、
+    `placement_target()`（= 闸 + `per_worker_topic` + 打分）。
+- `crates/uc-grpc/src/server.rs`
+  - 自由函数 `sibling_worker_hosts()`（locality 输入：本任务其他节点已指派 worker 的 host，
+    复用已持有的 `TaskStore` 锁）与 `resolve_dispatch_subject()`（定向 or 共享）。
+  - 两个发布嘴（`publish_ready_subtasks` / `dispatch_ready_subtasks`）改为
+    `dispatchable.push((st, subject))` 并发布到解析出的 subject。
+- `crates/uc-grpc/proto/engine.proto`：`WorkerHeartbeatRequest` 加 `recent_files=4` /
+  `per_worker_topic=5`（加性，旧 worker 不发、旧网关忽略）。
+- `crates/uc-grpc-server/src/main.rs`：`UC_SUBTASKS` subjects 补
+  `uc_grpc::placement::PER_WORKER_SUBJECT_WILDCARD`（NATS `>` 需再吃一个 token，**不会**
+  覆盖共享 subject，故两者都要列）。
+- `crates/uc-grpc/src/client.rs` + `crates/uc-python/src/engine.rs`：心跳签名透传两个新字段。
+- `python/ultimate_coders/nats_worker.py`：per-worker subject/durable 常量与
+  `_per_worker_subject()`/`_per_worker_durable()`（脏字符净化 + sha256 短摘要防碰撞，确定性）/
+  `_transport_worker_id()`；`_bind_per_worker_consumer()`（add_consumer+filter_subject →
+  pull_subscribe → 置 `_per_worker_topic=True` → 起第二条 fetch loop；**best-effort**，
+  失败仅 warn 并保持 legacy）；`_subtask_fetch_loop` 参数化为 `_subtask_fetch_loop_for(pull_sub, label)`；
+  `stop()` 先取消共享 loop、再取消 per-worker loop、最后清扫在飞执行；
+  心跳带 `recent_files` + `per_worker_topic`（仅 worker 模式，否则空/False）。
+- `python/ultimate_coders/engine.py`：`worker_heartbeat_async(..., recent_files=None,
+  per_worker_topic=False)` 透传（空列表归一为 None）。
+- `python/ultimate_coders/agent/worker.py`：`MAX_RECENT_FILES=64`、`_recent_files`、
+  `record_recent_files()`（移动插入式去重、有界、绝不抛）、`recent_files()`（返回副本）；
+  `_execute_in_sandbox` 完成处记录 `file_constraints ∪ [fc.file_path ...]`。
+- `tests/python/test_affinity_placement.py`（新增 21 例）+ `test_nats_jetstream_subtask.py`
+  （双 consumer 适配）。
+- `README.md` / `README.zh-CN.md`：多 Worker 分布式执行补 affinity placement 条目。
+
+### Testing
+
+- Rust：`cargo test -p uc-grpc --all-features --lib` → **237 passed / 0 failed**
+  （基线 206+8；新增 placement/worker_service/server 三层定向与 overflow 单测）。
+- pytest：43 文件**逐文件串行**（`-o addopts=""` 禁 coverage + per-file basetemp）→
+  **1106 passed / 5 skipped**（基线 1085+5，+21 即新文件）。test_merge_arbiter（5）与
+  test_workspace（6）本轮无隔离下全过。
+- `cargo fmt --all --check` → exit 0；clippy `-D warnings`：uc-types / uc-engine /
+  uc-engine --no-default-features / uc-grpc --all-features / uc-grpc-server **五组全绿**。
+- TS 无改动（本票纯 Rust + Python）。
+
+### Known Limitations
+
+- **server 层无 NATS mock 夹具**（`nats_client` 无 trait 注入点）：定向 vs 共享的判定在
+  自由函数 `resolve_dispatch_subject` + `registry.placement_target` 两层单测覆盖，而非
+  通过一次真实 publish 断言 subject。
+- **范围外仍硬编码共享 subject**：`uc-engine/src/scheduler/executor.rs::NatsExecutor`
+  与 `scheduler/dispatcher.rs`——均非 gateway dispatch mouth，票面只要求网关侧定向
+  （ExecutorSelector 路径留后续）。
+- **PG/NATS 实跑欠账仍为五笔**（T4/T6/T7/T9/T10 的 graph_store / merge_grant /
+  context_block / pause_grace_diamond / granular_cancel_e2e）——需 Docker Desktop。
+- per-worker durable 由 **worker 自建并声明**（非票面原文的"网关 provision"）：JetStream
+  durable 的 `filter_subject` 不可变，跨语言各写一份配置 + 无 live NATS 集成测试 =
+  运行时才暴露的静默失败；worker 侧"先绑定后注册"（T5/D4 Q1）已保证声明瞬间 consumer 存在。
+
+### Status
+
+[OK] **Completed** — P1 地图 #644 已全部交付（T8–T12）。剩余为 PG/NATS 实跑欠账（阻塞于
+Docker Desktop）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b3aa299` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
