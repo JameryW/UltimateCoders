@@ -1590,15 +1590,24 @@ impl GraphStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| EngineError::StorageError(format!("commit: node lock: {}", e)))?;
-        let attempt_status: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM task_attempts WHERE attempt_id = $1 FOR UPDATE")
-                .bind(winning_attempt_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| EngineError::StorageError(format!("commit: attempt lock: {}", e)))?;
+        // T14 (#659): fetch the start stamp and the **database's** now under the
+        // same lock. The duration is derived from those two, never from the
+        // process clock — app/PG skew would otherwise surface as nonsense
+        // durations, and `attempt_duration_ms` refuses to paper over it.
+        let attempt_row: Option<(
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::DateTime<chrono::Utc>,
+        )> = sqlx::query_as(
+            "SELECT status, started_at, NOW() FROM task_attempts WHERE attempt_id = $1 FOR UPDATE",
+        )
+        .bind(winning_attempt_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| EngineError::StorageError(format!("commit: attempt lock: {}", e)))?;
 
-        let fenced = match (&node, &attempt_status) {
-            (Some((state, _)), Some((attempt,))) => {
+        let fenced = match (&node, &attempt_row) {
+            (Some((state, _)), Some((attempt, _, _))) => {
                 state.as_str() == NodeStatus::Succeeded.as_str() || attempt.as_str() != "RUNNING"
             }
             _ => true, // node/attempt unknown to the graph plane
@@ -1620,6 +1629,15 @@ impl GraphStore {
             return Ok(false);
         }
         let (node_state, node_version) = node.expect("fenced matched above");
+        // Same reasoning: `fenced == false` means the attempt row was found and
+        // is still `RUNNING`, so the `started_at` / `NOW()` pair read above is
+        // the one to measure. `attempt_duration_ms` still gets to return `None`
+        // (an attempt may legitimately have no `started_at`, and skew is real).
+        let (_, attempt_started_at, db_now) = attempt_row.expect("fenced matched above");
+        let attempt_usage = EventUsage {
+            duration_ms: attempt_duration_ms(attempt_started_at, db_now),
+            ..Default::default()
+        };
 
         let res = sqlx::query(
             "INSERT INTO node_completions (node_id, graph_id, winning_attempt_id, result_ref) \
@@ -1687,14 +1705,22 @@ impl GraphStore {
                 "commit_once won with a node in a non-transitionable state — completion recorded, state untouched"
             );
         }
-        append_event_tx(
+        append_event_with_usage_tx(
             &mut tx,
             graph_id,
             Some(node_id),
             Some(winning_attempt_id),
             Some(gv),
             "node_succeeded",
-            serde_json::json!({ "result_ref": result_ref }),
+            serde_json::json!({
+                "result_ref": result_ref,
+                // T14 (#659): the event says what it carries. `duration_ms` is
+                // bound (it is derivable from rows we already hold); `cost` /
+                // `tokens` are not until the report contract carries them
+                // (T15 #660). A reader must never treat a NULL column as zero.
+                "usage_reported": false,
+            }),
+            Some(attempt_usage),
         )
         .await?;
         // Downstream dependency recompute rides the same transaction (the
@@ -2273,8 +2299,41 @@ async fn bump_graph_version_tx(
     Ok(version)
 }
 
-/// Append one `execution_events` row. `cost` / `tokens` / `duration_ms` are
-/// deliberately never bound — they stay NULL for their reserved writers.
+/// The reserved usage columns of `execution_events`, in one struct so the
+/// writer has a single shape to pass around.
+#[cfg(feature = "storage")]
+#[derive(Debug, Clone, Copy, Default)]
+struct EventUsage {
+    cost: Option<f64>,
+    tokens: Option<i64>,
+    duration_ms: Option<i64>,
+}
+
+/// Milliseconds between an attempt's `started_at` and the database's `now`.
+///
+/// `None` when there is no start stamp (an attempt that never began has no
+/// duration — recording 0 would invent one) and `None` when the two stamps
+/// disagree by a negative amount (clock skew must not be silently absolute-
+/// valued into a plausible number).
+///
+/// Gated with the writer it serves: without `storage` there is no
+/// `commit_once` to measure, and an ungated private helper would be dead code.
+#[cfg(feature = "storage")]
+fn attempt_duration_ms(
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    db_now: chrono::DateTime<chrono::Utc>,
+) -> Option<i64> {
+    let started = started_at?;
+    let elapsed = db_now.signed_duration_since(started);
+    (elapsed.num_milliseconds() >= 0).then(|| elapsed.num_milliseconds())
+}
+
+/// Append one `execution_events` row with **no** usage columns bound.
+///
+/// `cost` / `tokens` / `duration_ms` are reserved for [`append_event_with_usage_tx`]:
+/// before T14 (#659) *nothing* bound them; now the terminal success event binds
+/// `duration_ms`, while `cost`/`tokens` stay NULL until the report contract
+/// carries them (T15 #660). The reserved-writer doc on the schema still holds.
 #[cfg(feature = "storage")]
 #[allow(clippy::too_many_arguments)]
 async fn append_event_tx(
@@ -2286,9 +2345,52 @@ async fn append_event_tx(
     event_type: &str,
     payload: serde_json::Value,
 ) -> Result<(), EngineError> {
+    append_event_with_usage_tx(
+        tx,
+        graph_id,
+        node_id,
+        attempt_id,
+        graph_version,
+        event_type,
+        payload,
+        None,
+    )
+    .await
+}
+
+/// Append one `execution_events` row, binding the reserved usage columns.
+///
+/// Exactly one caller today — the terminal `node_succeeded` event inside
+/// `commit_once`'s transaction (`graph_store.rs` commit path). Writing there
+/// rather than in a separate pass is what makes the columns exactly-once: a
+/// fenced or late result never reaches this path, so retries cannot
+/// double-count usage.
+#[cfg(feature = "storage")]
+#[allow(clippy::too_many_arguments)]
+async fn append_event_with_usage_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+    node_id: Option<&str>,
+    attempt_id: Option<&str>,
+    graph_version: Option<i64>,
+    event_type: &str,
+    payload: serde_json::Value,
+    usage: Option<EventUsage>,
+) -> Result<(), EngineError> {
+    let usage = usage.unwrap_or_default();
+    // `cost` is `NUMERIC(18,6)` while sqlx carries `f64` as `FLOAT8`
+    // (`impl Type<Postgres> for f64` declares FLOAT8 and does not widen
+    // `compatible` to NUMERIC). A bare `$7` — or even `$7::numeric` — would let
+    // Postgres infer the parameter as NUMERIC, which contradicts the wire type
+    // sqlx sends. Naming **both** types settles it: `$7` is inferred as
+    // `float8` (the innermost cast target), and the value is an explicit
+    // `float8 → numeric` conversion. Today `cost` is always NULL; this keeps
+    // T15 (#660) from inheriting the problem the day it binds a real value.
     sqlx::query(
-        "INSERT INTO execution_events (graph_id, node_id, attempt_id, graph_version, event_type, payload) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO execution_events \
+             (graph_id, node_id, attempt_id, graph_version, event_type, payload, \
+              cost, tokens, duration_ms) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7::float8::numeric, $8, $9)",
     )
     .bind(graph_id)
     .bind(node_id)
@@ -2296,6 +2398,9 @@ async fn append_event_tx(
     .bind(graph_version)
     .bind(event_type)
     .bind(payload)
+    .bind(usage.cost)
+    .bind(usage.tokens)
+    .bind(usage.duration_ms)
     .execute(&mut **tx)
     .await
     .map_err(|e| EngineError::StorageError(format!("event append ({event_type}): {}", e)))?;
@@ -3384,5 +3489,40 @@ mod tests {
         assert_eq!(p.nodes[0].state, "READY");
         assert!(p.attempts.is_empty());
         assert!(p.completions.is_empty());
+    }
+
+    // ── T14 (#659): duration on the terminal event ───────────────────
+
+    /// The duration is measured between two **database** stamps, so there are
+    /// exactly two ways to have no honest answer: no start stamp at all, and
+    /// stamps that disagree backwards. Both must be `None` — recording `0`
+    /// would invent a duration, and absolute-valuing a skew would invent a
+    /// plausible one.
+    #[cfg(feature = "storage")]
+    #[test]
+    fn attempt_duration_ms_never_invents_a_duration() {
+        let now = chrono::Utc::now();
+        assert_eq!(attempt_duration_ms(None, now), None, "attempt never began");
+        assert_eq!(
+            attempt_duration_ms(Some(now + chrono::Duration::milliseconds(50)), now),
+            None,
+            "started_at ahead of the database clock — skew must not be abs()'d into a number"
+        );
+    }
+
+    /// The positive path, including the boundary: two stamps that agree are a
+    /// real `0` (the attempt did start and did finish), which is why `0` and
+    /// `None` must not be conflated downstream.
+    #[cfg(feature = "storage")]
+    #[test]
+    fn attempt_duration_ms_measures_the_elapsed_span() {
+        let started = chrono::Utc::now();
+        let db_now = started + chrono::Duration::milliseconds(1500);
+        assert_eq!(attempt_duration_ms(Some(started), db_now), Some(1500));
+        assert_eq!(
+            attempt_duration_ms(Some(started), started),
+            Some(0),
+            "stamps that agree measure zero milliseconds, not an absent value"
+        );
     }
 }

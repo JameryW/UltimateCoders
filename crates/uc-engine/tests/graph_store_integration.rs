@@ -1700,3 +1700,133 @@ async fn graph_t3_timeout_sweep_fences_and_rearms_on_a_probe_db() {
     drop(store);
     drop_force(&name).await;
 }
+
+// ── T14 (#659): the usage write point ────────────────────────────────
+
+/// Age an attempt's `started_at`. The derived duration is measured between
+/// that stamp and the database's own `NOW()`, so ageing the stamp is exactly
+/// equivalent to a task that ran for that long — and costs the test nothing.
+async fn t14_age_started_at(store: &GraphStore, aid: &str, seconds: f64) {
+    sqlx::query(
+        "UPDATE task_attempts SET started_at = NOW() - make_interval(secs => $2) \
+         WHERE attempt_id = $1",
+    )
+    .bind(aid)
+    .bind(seconds)
+    .execute(store.pool().as_ref())
+    .await
+    .expect("age started_at");
+}
+
+/// `(duration_ms, cost_is_null, tokens_is_null, payload)` for every event of
+/// one type, oldest first.
+///
+/// `cost` is `NUMERIC(18,6)` and `duration_ms` / `tokens` are `BIGINT`; the
+/// NULL-ness is read as a boolean rather than the value, because the test's
+/// question is "did the writer touch this column", not "what number is in it".
+async fn t14_usage_rows(
+    store: &GraphStore,
+    gid: &str,
+    event_type: &str,
+) -> Vec<(Option<i64>, bool, bool, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT duration_ms, cost IS NULL, tokens IS NULL, payload FROM execution_events \
+         WHERE graph_id = $1 AND event_type = $2 ORDER BY seq",
+    )
+    .bind(gid)
+    .bind(event_type)
+    .fetch_all(store.pool().as_ref())
+    .await
+    .expect("usage rows")
+}
+
+/// The terminal event of a committed node carries a duration derived from the
+/// attempt's own timestamps; a fenced retry can never add a second one.
+#[tokio::test]
+#[ignore]
+async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
+    let Some(store) = connect_or_skip("t14_usage").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let n = format!("{p}-n1");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(&store, &g, &[(&n, "READY", &[], false)]).await;
+
+    let attempt = store
+        .schedule_attempt(&g, &n, Some("w1"))
+        .await
+        .expect("schedule_attempt")
+        .expect("READY node schedules");
+    t14_age_started_at(&store, &attempt, 5.0).await;
+    assert!(
+        store
+            .commit_once(&g, &n, &attempt, Some("r-ref"))
+            .await
+            .expect("commit_once"),
+        "the first commit for a RUNNING attempt wins"
+    );
+
+    let rows = t14_usage_rows(&store, &g, "node_succeeded").await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "exactly one terminal event per committed node"
+    );
+    let (duration, cost_is_null, tokens_is_null, payload) =
+        rows.into_iter().next().expect("one terminal row");
+    let duration = duration.expect("a committed attempt carries a duration");
+    assert!(
+        (5_000..60_000).contains(&duration),
+        "duration must be measured from the aged started_at, got {duration}ms"
+    );
+    // T15 (#660) owns these two: the write point must leave them NULL rather
+    // than zero-fill, because "no usage reported" and "zero cost" are
+    // different facts and a reader cannot tell them apart after the fact.
+    assert!(
+        cost_is_null,
+        "cost stays NULL until the report contract carries it"
+    );
+    assert!(
+        tokens_is_null,
+        "tokens stays NULL until the report contract carries it"
+    );
+    assert_eq!(
+        payload["usage_reported"],
+        serde_json::json!(false),
+        "the event declares what it does and does not carry: {payload}"
+    );
+    assert_eq!(
+        payload["result_ref"],
+        serde_json::json!("r-ref"),
+        "{payload}"
+    );
+
+    // Exactly-once: re-committing the same attempt is fenced (it is no longer
+    // RUNNING), so retries cannot double-count a duration.
+    assert!(
+        !store
+            .commit_once(&g, &n, &attempt, Some("r-ref-again"))
+            .await
+            .expect("second commit is refused"),
+        "a second commit for a settled attempt loses"
+    );
+    assert_eq!(
+        t14_usage_rows(&store, &g, "node_succeeded").await.len(),
+        1,
+        "a fenced retry must not append a second terminal event"
+    );
+    let late = t14_usage_rows(&store, &g, "late_result").await;
+    assert_eq!(
+        late.len(),
+        1,
+        "the fenced retry lands as late_result: {late:?}"
+    );
+    assert!(
+        late[0].0.is_none(),
+        "a late result carries no duration — this attempt never finished the work"
+    );
+
+    purge_t3(&store, &g).await;
+}
