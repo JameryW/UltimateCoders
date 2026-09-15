@@ -928,3 +928,42 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - T15（#660）：`SubtaskResult` 加可选 usage 字段（Rust + Python 镜像）→ 绑 `cost` / `tokens`；未上报时保持 NULL + `usage_reported: false`，**绝不零填充**。
 - T16（#661）：review 作为图节点（`type='review'`）；首个动作是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）——D14 刻意留白。
 - 环境层面：`target/` 仍在 C: 盘（D: 余 270G）；本地 live PG 这条验证通路在 `wsl.exe` 解禁前实质不可用。
+
+
+## Session 17: 收口 T14 —— CI 8/8 绿 / #664 修复验收 / D15 立案 / 关票与账本
+
+**Date**: 2026-09-15
+**Task**: T14（#659）交付收口 + 缺陷 #664 修复验收 + 决策票 D15（#665）
+**Branch**: `main`
+
+### Summary
+
+把 T14 这条线**关到底**：CI 8/8 绿（含真 PG 上那笔「只能由 CI 验」的集成测试）、账本与地图落记、#659/#664 关闭、D15 立案，并把票面里只是文字的依赖改成原生边。
+
+### Main Changes
+
+- **CI 验收（`0c2604d`，Rust CI 8/8 success）**：`storage integration tests` job 内 `graph_store_integration` **18 passed / 2.22s**——含新增的 `graph_t14_commit_binds_duration_once_and_never_zero_fills_cost ... ok`（T14 唯一的「只能由 CI 验」分支由此落地）；`granular_cancel_e2e` **2 passed / 0.45s**；`merge_grant_integration` **4 passed / 0.61s**；`pause_grace_diamond` **1 passed / 0.86s**。`test (no storage feature)` 亦绿 ⇒ 门控正确性被 CI 独立复核，与本地 `443 / 383` 这对数字一致。
+- **0.45s 是证据，不只是绿色**：修复前同二进制 `4.17s / 1 failed`。修完后这两个用例**不再等待任何异步落点** ⇒ 耗时不再随 runner 的 DDL 速度浮动，而 50ms 预算正是被那次 5–6× 的 DDL 变慢冲垮的。⇒「时序敏感已移除」有可量化的落点，不是「看起来好了」。
+- **账本补记**（`docs/architecture/durable-runtime-migration-assessment.md` §六）：新增 4 段——T14 交付（含 `node_duration_ms` → `attempt_duration_ms` 的命名诚实记录）、#664 缺陷与「不是我的回归」判据、D15 立案、T14+#664 的 CI 验收数字。全文件 CRLF 一致（132 / 132），不是混行尾。
+- **地图 #656 更新**：Decision tickets 列表按序插入 D15（未裁）⇒ **本图现有 1 项开放决策**；追加进度块（T14 交付 / T15 阻塞解除 / #664 修复 / P2-3 仍无据）。
+- **原生依赖边 `#660 ← #659` 已补**：票面 `Blocked by: T14` 原先只是文字。补之前先做**方法自证**——拿已知为真的边对照（#638 / #640 / #641 / #642 / #643 都非空），确认不是 API 能力缺失；补之后**双向复核**（`#660 blocked_by #659` + `#659 blocking #660`）。⇒ 与 T1–T7 链的记法对齐。
+- **#659 / #664 关闭**（reason=completed），各附验收映射评论：#659 逐条对表（验收项 + CI 数字 + 三处诚实记录：函数改名、`append_event_tx` 签名未改而改为委托、payload 用显式 `usage_reported:false` 而非省略该键）；#664 表列 4 项门禁 + 「修的是测试不是产品」+ **后效写明**。
+- **#665（D15）保持 open 并加立案评论**：决策票未裁就不关（与 D13/D14「裁并关闭」的口径一致）。评论补两条裁决材料——#664 修复后该链路 e2e 覆盖消失（刻意为之）、以及「裁决前是否默认关掉 `UC_GRAPH_SHADOW`」。
+
+### Testing
+
+- **CI 权威**：见上，8 个 job 全绿；`0c2604d` 上没有其它 workflow 被触发（改动只落 `crates/**`）。
+- 本次收口提交只动 `docs/**` 与 `.trellis/**` ⇒ **不触发任何 CI**（有意的：账本与日志不应产生构建）。
+
+### Status
+
+- **T14 完全闭环**：实现 → 归档 → 账本 → 关票，无遗留待验证分支。
+- **一处诚实后效（已同时写进 #664 评论与地图）**：「legacy 写入 → 图镜像跟随」这条链路自此**没有 e2e 覆盖**，只剩 unit 级。这是刻意的——D15 未裁之前，不应有测试把当前写入语义钉成契约。
+- **口径纠正**：`RUNNING → READY` 是**合法边**（fence re-arm）⇒ D15 的选项 C（单用 `transition_ok` 守卫）**不足**，需与 B 或 D 组合。这条先钉在票面，免得裁决时按「非法边」的直觉选 C。
+
+### Next Steps
+
+- **T15（#660）已可开工**（阻塞已解除）：`SubtaskResult` 加加性可选 usage（Rust + Python 逐字一致）→ `cost` / `tokens` 绑真值；沿用 `$7::float8::numeric` 的绑定形状（`f64` 的 wire type 是 `FLOAT8` 而列是 `NUMERIC(18,6)`，裸 `$7` 会让 PG 把参数推成 numeric）。
+- **T16（#661）**：首个动作仍是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）——D14 刻意留白。
+- **D15（#665）**：等裁决；裁决后无论选哪个选项，都要补一条能区分「写入被拒绝」与「根本没送达」的测试。
+- 环境层面未变：`target/` 仍在 C:（仅剩约 19G）；本地 live PG 在 `wsl.exe` 解禁前实质不可用。
