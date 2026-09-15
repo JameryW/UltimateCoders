@@ -884,3 +884,47 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 ### Next Steps
 
 - None - task complete
+
+## Session 16: T14: 指标写入点 + duration_ms —— 终态事件带时长（#659）
+
+**Date**: 2026-09-15
+**Task**: T14: 指标写入点 + duration_ms（P2 地图 #656 的第一张实现票，决策 D13 #657）
+**Branch**: `main`
+
+### Summary
+
+`execution_events` 的三个预留指标列今天写上了第一个——`node_succeeded` 带上 `duration_ms`；写点与 commit-once 重合，用量天然 exactly-once
+
+### Main Changes
+
+- **定性**：`cost NUMERIC(18,6)` / `tokens BIGINT` / `duration_ms BIGINT` 三列自 T2（#638 / `28b66e9`）建表就在，建表注释自称 *"reserved billing columns … no writer exists in T2"*；唯一的 INSERT（`append_event_tx`）只绑六列，其 doc 注释写着 *"deliberately never bound"*。全仓盘读方：Rust 侧只读 `event_type` / `payload`，**Python 侧完全不引用 `execution_events`**，三列从未出现在任何 SELECT 里 ⇒ **死列**，缺的是写者而不是 schema。
+- **为什么先做 duration**：`task_attempts.started_at` 由 `schedule_attempt` 写入，而 `commit_once` 成功路径在同一事务里就 `UPDATE … finished_at = NOW()`——两个时间戳都在手边 ⇒ 零契约变更、不碰 `SubtaskResult`、不碰信封、不影响任何 worker。
+- **纯函数** `attempt_duration_ms(Option<DateTime<Utc>>, DateTime<Utc>) -> Option<i64>`：无起点 → `None`（不编一个 0）；elapsed 为负 → `None`（时钟倒挂**不取绝对值**）；否则毫秒，两戳相同 → `Some(0)`（那是真实的 0，不是缺失）。⇒ 下游能区分「零用量」与「无上报」。
+- **命名修正（诚实记录）**：issue 正文写的是 `node_duration_ms`，实现落为 `attempt_duration_ms`——量的是**某个 attempt** 的时长，一个 node 可有多个 attempt；行为与 issue 的三条判据完全一致。
+- **写点**：`append_event_tx` 拆两层（`EventUsage{cost,tokens,duration_ms}` + `append_event_with_usage_tx`），原签名保留为委托 ⇒ 其余 **11 个调用点一行未动**；`attempt_duration_ms` 与两个 helper 一样带 `#[cfg(feature = "storage")]`（否则 no-default-features 下 dead_code）。
+- **取 DB 时间**：`commit_once` 的 attempt 读从 `SELECT status` 扩成 `SELECT status, started_at, NOW() … FOR UPDATE`，时长由**数据库自己的 NOW()** 推出，绝不用进程时钟（应用/PG 时钟差会把时长污染成看似合理的错值）。CAS / commit-once / fence 语义一行未改。
+- **`usage_reported: false`** 写进 `node_succeeded` 的 payload——显式声明本次不含用量上报（D13 的硬性要求：别让缺失被读成 0）。
+
+### Testing
+
+- **单测（本地）**：`attempt_duration_ms_never_invents_a_duration`（无起点 / 起点晚于 DB 时钟，两条都 `None`）、`attempt_duration_ms_measures_the_elapsed_span`（+1500ms → `Some(1500)`；两戳相同 → `Some(0)`）。
+- **集成测试（PG）**：`graph_t14_commit_binds_duration_once_and_never_zero_fills_cost`——`schedule_attempt` → 把 `started_at` 往前拨 5s（等价于一个跑了 5s 的任务，测试零成本且时长确定非零）→ `commit_once` 为 true → 恰好一条 `node_succeeded`，`duration_ms ∈ [5000, 60000)`，`cost`/`tokens` 均 NULL，`payload.usage_reported == false`；再以同一 attempt 二次 commit → 返回 false、`node_succeeded` 仍 1 条（**重试不双计**）、`late_result` 恰 1 条且其 `duration_ms` 为 NULL（fenced 结果不携带用量）。
+- **门禁**：`cargo fmt -p uc-engine -- --check` ✅；`clippy -p uc-engine --all-targets -- -D warnings` ✅；uc-engine lib **441 → 443 passed / 0 failed**（**恰好 +2**，正是两条新单测）；`--no-default-features` lib **383 → 383**（**+0**，证明门控正确摘掉了两条单测且无 dead_code）。
+- ⚠️ **集成测试未获本地 live PG 验证——原因是环境而非代码，逐条留证**：
+  1. `wsl.exe` 被沙箱 **Program Blacklist 硬阻断**（`Permission denied` + `PROGRAM BLOCKED BY SECURITY POLICY`，明令不得绕过）⇒ 笔记里 `wsl -e bash -lc 'sleep 5400'` 的钉 VM 配方**跑不了**。
+  2. 实测替代通路可行但**不持续**：`ls "//wsl.localhost/Ubuntu-24.04/"`（走 wslservice，不启动 `wsl.exe`）能把 PG 探针从 `DEAD: TimeoutError` 唤醒成 `ALIVE`；然而保持 15s 循环触碰时，**探针 ALIVE 与 sqlx 报 pool timed out 出现在同一时刻**。
+  3. 自建裸协议探针 `.scratch/pg-startup-probe.py` 定位到断点：TCP connect 成功 → SSLRequest 得到 `'S'` → **StartupMessage 发出后 8s 无任何回应**，正是笔记所记的「中继楔住」。
+  4. 绕过方案 Docker 也不可用：CLI 在，但 `dockerDesktopLinuxEngine` 管道不存在，`docker desktop start` **挂 8m18s** 未起引擎（已 kill）。
+  5. **一次真实教训**：`--nocapture` 下跑满文件得到 `18 passed` 但**全部是 SKIP**、耗时 **231.14s**（= 18 × pool timeout）。若没有 `--nocapture` + 耗时判据，这就是一次完美的假绿——两条判据今天都真的救了场。
+
+### Status
+
+- **本地能验的都验了，不能验的明确标为未验**：集成测试**编译通过**、断言逻辑逐条对应「验收」列表，但**未在真实 PG 上执行过**，交由 CI 的 `storage integration tests` job（workspace 级 `cargo test --features storage -- --ignored`）落地验证。**我不声称它已通过。**
+- **顺带纠正一个类型层面的隐患**（离线核验、非凭记忆）：`sqlx-postgres-0.8.6/src/types/float.rs:38` 的 `impl Type<Postgres> for f64` 只声明 `FLOAT8`，**没有 `compatible` 覆盖** ⇒ 让 PG 把参数推断成 `NUMERIC` 是错的。INSERT 因此写作 `$7::float8::numeric`：`$7` 被推断为 float8（与 sqlx 送出的类型一致），再由 PG 显式转 numeric。今天 `cost` 恒 NULL，此改是为 T15 绑真值时不再继承该问题。
+- **测试隔离**：`late_result` 的 `duration_ms` 为 NULL 这条，不靠"额外加个判断"实现，而是写点放在 `commit_once` 成功分支的**自然结果**——两条早退路径（fenced / 丢掉 `node_completions` 插入）根本不进入该分支。
+
+### Next Steps
+
+- T15（#660）：`SubtaskResult` 加可选 usage 字段（Rust + Python 镜像）→ 绑 `cost` / `tokens`；未上报时保持 NULL + `usage_reported: false`，**绝不零填充**。
+- T16（#661）：review 作为图节点（`type='review'`）；首个动作是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）——D14 刻意留白。
+- 环境层面：`target/` 仍在 C: 盘（D: 余 270G）；本地 live PG 这条验证通路在 `wsl.exe` 解禁前实质不可用。

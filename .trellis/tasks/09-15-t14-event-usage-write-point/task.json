@@ -1,0 +1,29 @@
+{
+  "id": "t14-event-usage-write-point",
+  "name": "t14-event-usage-write-point",
+  "title": "T14: 指标写入点 + duration_ms —— 终态事件带时长（#659）",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-15",
+  "completedAt": "2026-09-15",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "ca67b20",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/uc-engine/src/graph_store.rs",
+    "crates/uc-engine/tests/graph_store_integration.rs"
+  ],
+  "notes": "本地已验：fmt / clippy(-D warnings) / uc-engine lib 441→443(+2) / --no-default-features lib 383→383(+0，门控正确) / 集成测试二进制编译绿。未验：集成测试未在真实 PG 上执行——本地 live PG 通路在本沙箱内不可用（wsl.exe 被 Program Blacklist 硬阻断；WSL 中继在 SSLRequest 之后楔住；Docker 引擎未运行）。该用例交由 CI 的 storage integration tests job 验证，本票不声称其已通过。",
+  "meta": {}
+}
