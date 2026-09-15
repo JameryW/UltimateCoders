@@ -832,3 +832,55 @@ Complete. Commits `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: T13: 统一两份图投影的依赖感知规则（#655）
+
+**Date**: 2026-09-15
+**Task**: T13: 统一两份图投影的依赖感知规则（#655）
+**Branch**: `main`
+
+### Summary
+
+source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径改为共用一份 dependency_aware_state
+
+### Main Changes
+
+### Main Changes
+
+- **发现**：`graph_nodes.state` 对 `Pending` 的判定在三条投影路径上不一致——`project_task`（source-A PG backfill / shadow）走依赖感知，`project_ts_task`（source-B `.uc/tasks` 导入）走纯 token 映射 `node_state_token`，而后者把 `"pending" | "ready"` 都映成 `READY`。
+- **判定为缺陷而非设计**：L145-158 的函数注释明说"把每个 Pending 映成 READY 会把整张图发布成可调度"是它存在要阻止的 bug；而模块头 L43-55 的映射表却自称 import+shadow 共用且列出 `pending → READY`——同一文件内两条矛盾表述，且该表对 shadow 的描述从写下那天起就是错的。git 证明三处同属 `28b66e9`（T2 #638），提交正文无任何刻意理由。
+- **可达性**：TS 的 subtask 状态联合含 `pending`（`orchestrator.ts:100`），`toPersisted`（L1807）原样写盘，而 subtask 的**初始**状态就是 `pending`（L554/644/1128）⇒ 一个"已提交未开始"的任务被导入时，每个阻塞节点都写 `READY`。仓库自己的 fixture 就这么用（`scheduler.test.ts:119`、`progress-widget.selfcheck.ts:532`）。
+- **修复**：抽出单一实现 `dependency_aware_state(raw_status, deps, is_satisfied)`，判据统一为"依赖的 status token 是否 `SUCCEEDED`"（词汇无关，避免第二份状态匹配表再漂移）；`node_status_of_subtask` 改为薄适配器（谓词保持 `matches!(status, Completed)`，source-A/shadow 行为逐字节不变），`project_ts_task` 建立 TS 侧 id→status 索引后走同一规则。修正模块头映射表的 `Pending` 行并补一段说明。
+
+### Testing
+
+- **新增单测** `ts_and_rust_projections_agree_on_pending_with_unmet_dependencies`：同一逻辑图分别经 `project_ts_task` 与 `project_task`，断言 node states **逐字节相同**（正是既有测试注释自称保证、却被 fixture 绕开的那条），fixture 含 blocked / unblocked / dangling 三种 pending。
+- **加强既有测试** `ts_task_projects_like_its_rust_equivalent`：fixture 补上三个 `pending` 子任务，覆盖此前零覆盖的 `CREATED` 分支。
+- **突变自检（决定性）**：撤掉修复（`project_ts_task` 改回 `node_state_token`）→ 新测试变红，`left: n-blocked=READY, n-dangling=READY` / `right: n-blocked=CREATED, n-dangling=CREATED`；恢复后全绿。
+- **门禁**：`cargo fmt --all -- --check` ✅；`clippy -p uc-engine -- -D warnings` ✅（首次跑抓到自己的 `redundant_closure`，已修）；`clippy -p uc-engine --all-targets -- -D warnings` ✅；uc-engine lib **440 → 441 passed / 0 failed**；`--no-default-features` lib **382 → 383 passed / 0 failed**（只增不减）。未动 Python/TS，pytest 与 TS 计数不变。
+
+### Status
+
+- **爆炸半径（诚实口径）**：今天**没有生产消费者**——`GraphStore::node_state` 的调用者全是测试；且导入路径 opt-in（`UC_GRAPH_IMPORT_DIR`）、insert-only（`shadow=false` → `DO NOTHING`）、`graph_exists` 命中即 skip。所以这是**给 durable 平面播种错值**（图平面正被做成权威，错种子会被继承），不是 T12 那种"功能整体死掉"的活故障。
+- 提交 `5bae604` 已推 main；票目录归档至 `.trellis/tasks/archive/2026-09/09-15-t13-unify-projection-states/`（status=completed, commit=5bae604）；issue #655 待关（贴验收映射）。
+- ⚠️ **本机 C: 盘一度 100% 满**（`target/` 44G，其中 `debug/incremental` 17G、`debug/deps` 24G），写文件与构建一度完全阻塞；已删 `debug/incremental`（`df` 实回收约 2.5G，说明与 `deps/` 共享块居多）。gate 全程复用既有 target 缓存以免再写满系统盘。仍建议把构建目录移出系统盘（D: 尚余 270G）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5bae604` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
