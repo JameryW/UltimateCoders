@@ -1300,7 +1300,11 @@ impl GraphStore {
     // `node_completions` PK via `INSERT … ON CONFLICT DO NOTHING` rows
     // affected. Lock order everywhere is graph → node → attempt
     // (`SELECT … FOR UPDATE`), so the mutation methods serialize per node
-    // instead of dead-locking against each other. The legacy HashMap paths
+    // instead of dead-locking against each other. Each verb below takes the
+    // graph row's lock first (`lock_graph_tx`), which is what keeps that
+    // order true: reaching `bump_graph_version_tx` only after locking nodes
+    // inverted it against `write_projection` (graph row, then nodes) and
+    // deadlocked the two. The legacy HashMap paths
     // are untouched: this is the graph plane growing the real logic beside
     // it (dual-plane ruling, research §3).
 
@@ -1319,6 +1323,7 @@ impl GraphStore {
         worker_id: Option<&str>,
     ) -> Result<Option<String>, EngineError> {
         let mut tx = self.begin_tx("schedule_attempt").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
 
         let node: Option<(String, i64)> = sqlx::query_as(
             "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
@@ -1520,6 +1525,7 @@ impl GraphStore {
         result_ref: Option<&str>,
     ) -> Result<bool, EngineError> {
         let mut tx = self.begin_tx("commit_once").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
 
         let node: Option<(String, i64)> = sqlx::query_as(
             "SELECT state, version FROM graph_nodes WHERE graph_id = $1 AND node_id = $2 FOR UPDATE",
@@ -1664,6 +1670,7 @@ impl GraphStore {
         reason: &str,
     ) -> Result<FailOutcome, EngineError> {
         let mut tx = self.begin_tx("fail_attempt").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
         let outcome =
             fail_attempt_tx(&mut tx, graph_id, node_id, attempt_id, max_attempts, reason).await?;
         tx.commit()
@@ -1727,6 +1734,7 @@ impl GraphStore {
     /// node ids.
     pub async fn recompute_ready(&self, graph_id: &str) -> Result<Vec<String>, EngineError> {
         let mut tx = self.begin_tx("recompute_ready").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
         let flipped = recompute_ready_tx(&mut tx, graph_id, None).await?;
         tx.commit()
             .await
@@ -1846,6 +1854,7 @@ impl GraphStore {
         node_ids: &[String],
     ) -> Result<Vec<String>, EngineError> {
         let mut tx = self.begin_tx("cancel_nodes").await?;
+        lock_graph_tx(&mut tx, graph_id).await?;
         let cancelled = cancel_nodes_tx(&mut tx, graph_id, node_ids).await?;
         tx.commit()
             .await
@@ -2151,6 +2160,40 @@ pub enum FailOutcome {
     RearmedToReady,
     /// Budget exhausted: attempt `FAILED` and the node itself `FAILED`.
     NodeFailed,
+}
+
+/// Take the graph row's lock before any node/attempt lock, per the lock order
+/// this module documents (`graph → node → attempt`).
+///
+/// The T3 verbs used to reach [`bump_graph_version_tx`] only *after* locking
+/// nodes, which inverted the order against `write_projection` — the shadow
+/// mirror writes the graph row first, nodes second. Two transactions taking the
+/// same pair in opposite orders deadlock, and PostgreSQL named the pair:
+///
+/// ```text
+/// Process 3611: INSERT INTO graph_nodes ... ON CONFLICT ... DO UPDATE SET state = ...
+/// Process 3613: INSERT INTO execution_graphs ... DO UPDATE SET version = version + 1 ...
+/// ```
+///
+/// Acquiring the lock here — before anything else in the transaction — makes the
+/// order uniform again; the later [`bump_graph_version_tx`] then finds it
+/// already held.
+///
+/// Lock only: a missing graph row is deliberately left missing, so
+/// [`bump_graph_version_tx`] keeps its materialize-with-version-1 behaviour. An
+/// unconditional insert here would shift every version the verbs report.
+#[cfg(feature = "storage")]
+async fn lock_graph_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    graph_id: &str,
+) -> Result<(), EngineError> {
+    let _locked: Option<(i64,)> =
+        sqlx::query_as("SELECT version FROM execution_graphs WHERE graph_id = $1 FOR UPDATE")
+            .bind(graph_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| EngineError::StorageError(format!("graph lock: {}", e)))?;
+    Ok(())
 }
 
 /// Bump (or lazily materialize) the graph row's version and return it. The
