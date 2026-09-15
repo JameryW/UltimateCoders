@@ -227,7 +227,19 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
         "the node is kept (READY), not terminal"
     );
 
-    // Legacy mirror: the in-flight row requeues to Pending.
+    // Legacy mirror: the in-flight row requeues to Pending. The bridge is
+    // the gateway's half of this verb — `cancel_task_attempt_granular` calls
+    // `TaskStore::revert_swept_subtask` right after the sink sweep
+    // (server.rs). This E2E drives the sink directly, so it has to perform
+    // that step itself; the sibling node-cancel test below does the same
+    // with `fail_subtasks`.
+    {
+        let mut s = legacy.lock().await;
+        assert!(
+            s.revert_swept_subtask(&task_id, "st-b", swept.rearmed),
+            "the InProgress row is bridged back to Pending"
+        );
+    }
     {
         let s = legacy.lock().await;
         let t = s.get_task(&task_id).expect("task present");
