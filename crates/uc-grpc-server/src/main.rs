@@ -455,9 +455,10 @@ async fn index_workspace_repos(engine: &LocalEngine) {
 /// Stream creation moved to the gateway provisioning side: workers fail
 /// fast on their durable consumer instead of creating the stream themselves
 /// (and silently falling back to a core-NATS at-most-once path). Idempotent
-/// get-or-create — an existing stream is left untouched. A failure does not
-/// abort startup, but it is logged as an error: the dispatch plane will
-/// report `TransportUnavailable` and the executor selector will hold
+/// get-or-create — an existing stream is left untouched, apart from the
+/// per-worker subject check below. A failure does not abort startup, but it
+/// is logged as an error: the dispatch plane will report
+/// `TransportUnavailable` and the executor selector will hold
 /// `requires_worker` nodes in READY until the stream exists.
 #[cfg(feature = "messaging")]
 async fn ensure_subtasks_stream(client: &async_nats::Client) {
@@ -479,15 +480,64 @@ async fn ensure_subtasks_stream(client: &async_nats::Client) {
         duplicate_window: std::time::Duration::from_secs(120),
         ..Default::default()
     };
-    match js.get_or_create_stream(config).await {
-        Ok(_) => tracing::info!(
+    let mut stream = match js.get_or_create_stream(config).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "Failed to provision UC_SUBTASKS stream — subtask dispatch will report \
+                 TransportUnavailable and requires_worker nodes stay READY until JetStream recovers"
+            );
+            return;
+        }
+    };
+
+    // `get_or_create_stream` creates on 404 and otherwise returns the
+    // EXISTING stream verbatim — it has no update path. A stream provisioned
+    // before T12 (#654) therefore lists the bare subject alone, and since `>`
+    // needs a further token nothing can ever land in a per-worker subject:
+    // the worker's per-worker consumer bind fails, the worker declares
+    // `per_worker_topic = false` forever, and affinity placement targets
+    // nobody — silently, because "no affinity was warranted" and "affinity
+    // is dead" look identical from the outside. Add the missing wildcard to
+    // the live config rather than deleting the stream, which would drop
+    // in-flight dispatch. Every other field is taken from the server, so
+    // deployment-specific tuning survives.
+    let live: Config = match stream.info().await {
+        Ok(info) => info.config.clone(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "UC_SUBTASKS is provisioned, but its live config could not be read to \
+                 confirm the per-worker subject wildcard"
+            );
+            return;
+        }
+    };
+    let wildcard = uc_grpc::placement::PER_WORKER_SUBJECT_WILDCARD;
+    if live.subjects.iter().any(|s| s == wildcard) {
+        tracing::info!(
             "JetStream stream UC_SUBTASKS provisioned \
              (work-queue retention, 7d max_age, 120s dedup window)"
+        );
+        return;
+    }
+    let mut upgraded = live;
+    upgraded.subjects.push(wildcard.to_string());
+    match js.update_stream(&upgraded).await {
+        Ok(_) => tracing::info!(
+            subject = %wildcard,
+            "JetStream stream UC_SUBTASKS upgraded in place: added the per-worker subject \
+             wildcard to a pre-T12 stream — without it, no worker can bind a per-worker \
+             consumer and affinity placement is inert"
         ),
         Err(e) => tracing::error!(
             error = %e,
-            "Failed to provision UC_SUBTASKS stream — subtask dispatch will report \
-             TransportUnavailable and requires_worker nodes stay READY until JetStream recovers"
+            subject = %wildcard,
+            "Failed to add the per-worker subject wildcard to the existing UC_SUBTASKS \
+             stream — add it manually (the stream's subjects must list both \
+             `uc.subtask.execute` and `uc.subtask.execute.w.>`); affinity placement stays \
+             inactive for every worker until then"
         ),
     }
 }

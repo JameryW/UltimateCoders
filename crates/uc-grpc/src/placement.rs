@@ -44,6 +44,17 @@ pub const PER_WORKER_SUBJECT_PREFIX: &str = "uc.subtask.execute.w.";
 /// The `UC_SUBTASKS` stream must list this **in addition to** the bare
 /// `uc.subtask.execute`: `.>` requires at least one further token, so it
 /// never matches the shared subject itself.
+///
+/// The consumer side of the same contract lives in the worker
+/// (`NatsWorker._ensure_subtask_transport`): on a work-queue stream JetStream
+/// admits exactly one unfiltered consumer and refuses a filtered consumer
+/// that overlaps one already present, so the shared overflow consumer must
+/// be pinned to the bare `uc.subtask.execute`. Left unfiltered it covers
+/// this wildcard too — which both makes every per-worker consumer illegal
+/// and lets the overflow queue take targeted messages. Getting that wrong is
+/// silent: the worker logs a warning, declares `per_worker_topic = false`
+/// forever, and [`crate::worker_service::WorkerRegistry::placement_target`]
+/// then finds no candidate, degrading every dispatch to the shared subject.
 pub const PER_WORKER_SUBJECT_WILDCARD: &str = "uc.subtask.execute.w.>";
 
 /// Upper bound applied to a worker's advertised recent-files list.
