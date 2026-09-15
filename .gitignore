@@ -127,3 +127,9 @@ uc.repos.yml
 # Local docker overrides (machine-specific workspace mount); template tracked as docker-compose.override.example.yml
 docker/docker-compose.override.yml
 docker/docker-compose.override.yaml
+
+# Local agent scratch (WorkBuddy project data + ad-hoc probes/logs). Neither is
+# build input or source: `.scratch/` alone holds 400+ untracked files, so a bare
+# `git add -A` would stage the whole lot into whatever commit came next.
+.workbuddy/
+.scratch/
