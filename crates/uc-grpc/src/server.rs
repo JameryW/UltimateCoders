@@ -397,6 +397,72 @@ async fn compose_context_block(
     uc_types::ContextBlock::compose(entries)
 }
 
+/// T12 #654 / D12 #649 — hosts already running this task's other nodes.
+///
+/// The locality dimension of the placement score prefers a worker that
+/// shares a host with a sibling node's worker (same checkout, warm caches,
+/// no cross-host churn). Only workers assigned to *this* task count, and
+/// only hosts the registry actually knows (a worker that sent no
+/// `hostname` in its registration metadata contributes nothing).
+///
+/// Takes the already-locked store + registry: `TaskStore` is behind a
+/// `tokio::sync::Mutex`, so re-locking here would deadlock.
+#[cfg(feature = "messaging")]
+fn sibling_worker_hosts(
+    store: &TaskStore,
+    registry: &crate::worker_service::WorkerRegistry,
+    task_id: &str,
+) -> std::collections::HashSet<String> {
+    let mut hosts = std::collections::HashSet::new();
+    if let Some(task) = store.get_task(task_id) {
+        for st in &task.subtasks {
+            if let Some(worker_id) = &st.assigned_worker {
+                if let Some(host) = registry.worker_host(&worker_id.0) {
+                    hosts.insert(host);
+                }
+            }
+        }
+    }
+    hosts
+}
+
+/// T12 #654 / D12 #649 — the subject a ready node is published to.
+///
+/// Affinity placement returns the target worker's per-worker subject when a
+/// candidate clears the threshold; otherwise (no overlap, no declared
+/// per-worker topic, nothing available, everything stale) the node goes to
+/// the shared subject. Placement is a **soft preference**: a `None` score is
+/// a normal outcome and never a dispatch failure — every node stays
+/// dispatchable through the shared overflow.
+#[cfg(feature = "messaging")]
+fn resolve_dispatch_subject(
+    registry: &crate::worker_service::WorkerRegistry,
+    subtask: &uc_types::Subtask,
+    project_id: &str,
+    sibling_hosts: &std::collections::HashSet<String>,
+) -> String {
+    match registry.placement_target(
+        &subtask.required_capabilities,
+        project_id,
+        &subtask.file_constraints,
+        sibling_hosts,
+    ) {
+        Some(placement) => {
+            tracing::info!(
+                subtask_id = %subtask.id.0,
+                target_worker = %placement.worker_id,
+                subject = %placement.subject,
+                affinity_hits = placement.affinity_hits,
+                load_percent = placement.load_percent,
+                same_host = placement.same_host,
+                "Affinity placement: targeting a worker's per-worker subject (T12 #654)"
+            );
+            placement.subject
+        }
+        None => NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
+    }
+}
+
 /// JetStream dedup headers for one dispatch (T4 #640).
 ///
 /// `Nats-Msg-Id` is set to the deterministic `idempotency_key`, so
@@ -2672,6 +2738,11 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
             // Check WorkerRegistry for capability-aware dispatch:
             // Only mark as Assigned if a matching worker exists (or no capabilities required).
             let registry = self.inner.worker_registry.read().await;
+            // T12 #654 / D12 #649: locality input — the hosts already running
+            // this task's other nodes. Computed once per mouth invocation
+            // (inside the existing lock block: `TaskStore` is a tokio Mutex
+            // and must not be re-locked here).
+            let sibling_hosts = sibling_worker_hosts(&store, &registry, task_id);
             let mut dispatchable = Vec::new();
             for st in &subtasks {
                 // Cap dispatch retries (mirrors dispatch_ready_subtasks): if a
@@ -2726,7 +2797,10 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                     }
                 }
                 store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
-                dispatchable.push(st.clone());
+                // T12 #654: pick WHERE it goes first (soft preference — the
+                // shared subject is the overflow default).
+                let subject = resolve_dispatch_subject(&registry, st, &project_id, &sibling_hosts);
+                dispatchable.push((st.clone(), subject));
             }
             drop(registry);
             (dispatchable, project_id)
@@ -2737,7 +2811,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
         }
 
         if let Some(nats_client) = &self.inner.nats_client {
-            for st in ready {
+            for (st, subject) in ready {
                 // T10 #652: compose the dependency context from committed
                 // graph outputs before publishing (None when no deps / no
                 // graph plane — never a failed dispatch).
@@ -2750,11 +2824,7 @@ impl<E: EngineApi + Send + Sync + 'static> GrpcServer<E> {
                 match serde_json::to_vec(&execute) {
                     Ok(bytes) => {
                         if let Err(e) = nats_client
-                            .publish_with_headers(
-                                NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
-                                dedup,
-                                bytes.into(),
-                            )
+                            .publish_with_headers(subject.clone(), dedup, bytes.into())
                             .await
                         {
                             tracing::warn!(
@@ -3725,6 +3795,9 @@ async fn dispatch_ready_subtasks(
         // worker rejected it — but it stayed Assigned forever (get_ready_subtasks
         // only returns Pending), stalling the task.
         let registry = worker_registry.read().await;
+        // T12 #654: same locality input as publish_ready_subtasks (the store
+        // is already locked here — sibling_worker_hosts only reads it).
+        let sibling_hosts = sibling_worker_hosts(&store, &registry, task_id);
         let mut dispatchable = Vec::new();
         for st in &subtasks {
             // Cap dispatch retries: if a subtask has been reverted to Pending
@@ -3777,12 +3850,14 @@ async fn dispatch_ready_subtasks(
                 }
             }
             store.update_subtask_status(task_id, &st.id.0, uc_types::SubtaskStatus::Assigned);
-            dispatchable.push(st.clone());
+            // T12 #654: affinity placement target (shared subject = overflow).
+            let subject = resolve_dispatch_subject(&registry, st, &project_id, &sibling_hosts);
+            dispatchable.push((st.clone(), subject));
         }
         (dispatchable, project_id)
     };
 
-    for st in ready {
+    for (st, subject) in ready {
         // Propagate expected_output so the worker's prompt includes the
         // actual success criteria (not the generic fallback). Matches the
         // gRPC upsert path. Propagate file_constraints so the worker can do
@@ -3806,11 +3881,7 @@ async fn dispatch_ready_subtasks(
         match serde_json::to_vec(&execute) {
             Ok(bytes) => {
                 if let Err(e) = nats_client
-                    .publish_with_headers(
-                        NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
-                        dedup,
-                        bytes.into(),
-                    )
+                    .publish_with_headers(subject.clone(), dedup, bytes.into())
                     .await
                 {
                     tracing::warn!(
@@ -7959,6 +8030,140 @@ mod tests {
             "a new attempt must NOT be deduped against the previous one — \
              that would break T3's fence → READY → re-dispatch"
         );
+    }
+
+    // ── T12 #654 — affinity placement: targeted vs overflow subject ──
+
+    /// A registry holding one signalled worker. `topic == false` models a
+    /// legacy worker (shared consumer only).
+    #[cfg(feature = "messaging")]
+    fn registry_with(
+        id: &str,
+        host: &str,
+        load: u32,
+        recent: &[&str],
+        topic: bool,
+    ) -> crate::worker_service::WorkerRegistry {
+        let mut reg = crate::worker_service::WorkerRegistry::new();
+        reg.register(
+            id.to_string(),
+            vec!["code".to_string()],
+            4,
+            format!(r#"{{"hostname":"{host}"}}"#),
+            uc_types::CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        let files: Vec<String> = recent.iter().map(|s| s.to_string()).collect();
+        reg.heartbeat_with_signals(id, load, &files, topic).unwrap();
+        reg
+    }
+
+    #[cfg(feature = "messaging")]
+    fn subtask_with_files(files: &[&str]) -> uc_types::Subtask {
+        uc_types::Subtask {
+            id: uc_types::TaskId("st-1".into()),
+            parent_id: uc_types::TaskId("t-1".into()),
+            description: "d".into(),
+            status: uc_types::SubtaskStatus::Pending,
+            assigned_worker: None,
+            depends_on: vec![],
+            file_constraints: files.iter().map(|s| s.to_string()).collect(),
+            expected_output: "out".into(),
+            result: None,
+            dispatch_mode: uc_types::DispatchMode::default(),
+            effect_class: uc_types::EffectClass::default(),
+            dispatch_retry_count: 0,
+            required_capabilities: vec!["code".into()],
+            agent_config_json: None,
+            steps: vec![],
+            retry_count: 0,
+        }
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn placement_targets_the_overlapping_workers_subject_not_the_shared_queue() {
+        // Acceptance (#654): a node whose file_constraints overlap worker A's
+        // recent files lands on A's per-worker subject, not the shared queue.
+        let reg = registry_with("w-a", "box-a", 1, &["src/auth.rs"], true);
+        let subject = resolve_dispatch_subject(
+            &reg,
+            &subtask_with_files(&["src/auth.rs"]),
+            "",
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(subject, "uc.subtask.execute.w.w-a");
+        assert_ne!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn placement_falls_back_to_shared_when_nothing_overlaps() {
+        // No overlap → no scoring reason to target, and overflow is strictly
+        // better (any worker may claim it). Still dispatched, never dropped.
+        let reg = registry_with("w-a", "box-a", 0, &["src/auth.rs"], true);
+        let subject = resolve_dispatch_subject(
+            &reg,
+            &subtask_with_files(&["src/unrelated.rs"]),
+            "",
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn legacy_worker_still_receives_via_overflow() {
+        // A worker that never bound a per-worker consumer is never targeted —
+        // it could not consume the targeted publish, so the node would be
+        // stranded until redelivery. It still gets work from the shared queue.
+        let reg = registry_with("w-legacy", "box-a", 0, &["src/auth.rs"], false);
+        let subject = resolve_dispatch_subject(
+            &reg,
+            &subtask_with_files(&["src/auth.rs"]),
+            "",
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn placement_prefers_the_host_already_running_a_sibling_node() {
+        let mut reg = registry_with("w-remote", "box-x", 1, &["src/auth.rs"], true);
+        // Identical affinity and load — locality is the only separating signal.
+        reg.register(
+            "w-local".to_string(),
+            vec!["code".to_string()],
+            4,
+            r#"{"hostname":"box-y"}"#.to_string(),
+            uc_types::CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        reg.heartbeat_with_signals("w-local", 1, &["src/auth.rs".to_string()], true)
+            .unwrap();
+
+        let sibling_hosts: std::collections::HashSet<String> =
+            ["box-y".to_string()].into_iter().collect();
+        let subject = resolve_dispatch_subject(
+            &reg,
+            &subtask_with_files(&["src/auth.rs"]),
+            "",
+            &sibling_hosts,
+        );
+        assert_eq!(subject, "uc.subtask.execute.w.w-local");
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn placement_never_targets_across_the_capability_gate() {
+        // A worker with no overlap AND a capability the node requires that it
+        // lacks is not a candidate — the hard gate runs before scoring.
+        let reg = registry_with("w-a", "box-a", 0, &["src/auth.rs"], true);
+        let mut st = subtask_with_files(&["src/auth.rs"]);
+        st.required_capabilities = vec!["rust".into()];
+        let subject = resolve_dispatch_subject(&reg, &st, "", &std::collections::HashSet::new());
+        assert_eq!(subject, NATS_SUBJECT_SUBTASK_EXECUTE);
     }
 
     // ── T10 #652 — context block: payload presence + composition ────

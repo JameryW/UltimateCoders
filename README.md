@@ -246,6 +246,7 @@ deployment needs one of the compatibility adapters.
 Multiple NATS Worker processes can collaborate on a single task:
 
 - **NATS queue group** — each subtask delivered to exactly one worker via `uc.subtask.execute`
+- **Affinity placement** — a worker that binds its own per-worker subject (`uc.subtask.execute.w.<worker_id>`) and reports its recently-touched files on the gateway heartbeat is targeted first when a subtask's `file_constraints` overlap that recent work. The shared subject stays bound as overflow, so placement can never strand a node
 - **Worker discovery** — default-mode NatsWorker monitors `uc.heartbeat` for remote workers
 - **Conditional dispatch** — remote workers available → dispatch to NATS; no remote workers → local execution (zero-config compat)
 - **File conflict detection** — `ConflictDetector` blocks subtasks with overlapping file constraints

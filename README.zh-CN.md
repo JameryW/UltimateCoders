@@ -237,6 +237,7 @@ Worker 默认执行 `grok -p ... --output-format streaming-json`。如果部署�
 多个 NATS Worker 可以协作完成一个任务：
 
 - **NATS queue group**：每个子任务只投递给一个 Worker。
+- **Affinity placement（亲和放置）**：Worker 绑定自身的 per-worker subject（`uc.subtask.execute.w.<worker_id>`）并在网关心跳里上报最近改动的文件后，子任务的 `file_constraints` 与其近期工作重叠时会被优先定向投递。共享 subject 始终保留为 overflow，因此放置永远不会把节点搁死。
 - **Worker discovery**：默认模式的 NatsWorker 通过 `uc.heartbeat` 发现远端 Worker。
 - **条件分发**：有远端 Worker 时发送到 NATS，没有时使用本地执行，保持零配置兼容。
 - **文件冲突检测**：`ConflictDetector` 阻止文件约束重叠的子任务同时执行。

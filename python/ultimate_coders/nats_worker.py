@@ -20,11 +20,13 @@ Environment variables::
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import itertools
 import json
 import logging
 import os
+import re
 import signal
 import uuid
 from datetime import datetime, timezone
@@ -507,6 +509,14 @@ class NatsWorker:
         self._subtask_pull_sub: Any | None = None  # nats.js.PullSubscription
         self._subtask_fetch_task: asyncio.Task[None] | None = None
         self._subtask_transport_task: asyncio.Task[bool] | None = None
+        # T12 #654 / D12 #649 — affinity placement: this worker's OWN durable
+        # consumer on its per-worker subject, and the declaration sent on
+        # every heartbeat. Binding is best-effort: without it the worker is a
+        # legacy worker (shared consumer only) and the gateway never targets
+        # its per-worker subject, so nothing is lost.
+        self._per_worker_topic: bool = False
+        self._per_worker_pull_sub: Any | None = None
+        self._per_worker_fetch_task: asyncio.Task[None] | None = None
         # Set by stop() so background startup loops (the subtask transport
         # bind loop) can exit even before start() has flipped _running.
         self._stopping = False
@@ -518,6 +528,46 @@ class NatsWorker:
     # T5 #641: how often the transport bind loop retries while JetStream is
     # unavailable (the worker refuses gateway registration in the meantime).
     _SUBTASK_TRANSPORT_RETRY_SECONDS: float = 5.0
+    # T12 #654 / D12 #649 — per-worker dispatch subject. The shared consumer
+    # above stays bound as the OVERFLOW path: a node whose affinity score
+    # declines still reaches a worker through it, so placement can never
+    # strand a node. The prefix is a cross-language contract — the Rust
+    # gateway builds the identical string (see uc_grpc::placement, whose unit
+    # test pins the same golden).
+    _SUBTASK_PER_WORKER_SUBJECT_PREFIX: str = "uc.subtask.execute.w."
+    _SUBTASK_PER_WORKER_DURABLE_PREFIX: str = "subtask-worker-"
+
+    @classmethod
+    def _per_worker_subject(cls, worker_id: str) -> str:
+        """Dispatch subject reserved for ``worker_id`` (T12 #654)."""
+        return f"{cls._SUBTASK_PER_WORKER_SUBJECT_PREFIX}{worker_id}"
+
+    @classmethod
+    def _per_worker_durable(cls, worker_id: str) -> str:
+        """Durable consumer name for a worker's per-worker subject.
+
+        JetStream durable names reject whitespace, ``.``, ``*`` and ``>``,
+        but a worker_id may legitimately contain them, so the id is
+        sanitized. Sanitization can map two ids onto one name (``a.b`` and
+        ``a_b``), so a short digest is appended whenever anything changed —
+        the name is deterministic and collision-free.
+        """
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", worker_id)
+        if safe != worker_id or not safe:
+            digest = hashlib.sha256(worker_id.encode("utf-8")).hexdigest()[:8]
+            safe = f"{safe or 'w'}-{digest}"
+        return f"{cls._SUBTASK_PER_WORKER_DURABLE_PREFIX}{safe}"
+
+    def _transport_worker_id(self) -> str:
+        """The worker identity the gateway knows (registration/heartbeat id).
+
+        Must match what ``_register_with_gateway`` sends, otherwise the
+        per-worker subject this worker binds would not be the one the gateway
+        targets.
+        """
+        if self._worker is not None:
+            return self._worker.get_info().id
+        return self._consumer_id
 
     async def start(self) -> None:
         """Connect to NATS, initialize components, and subscribe.
@@ -766,6 +816,19 @@ class NatsWorker:
                 pass
             self._subtask_fetch_task = None
 
+        # T12 #654: the per-worker fetch loop holds its own subscription and
+        # must be cancelled the same way, BEFORE the in-flight execution
+        # snapshot below, or it could dispatch new bg tasks after the sweep.
+        if self._per_worker_fetch_task is not None:
+            self._per_worker_fetch_task.cancel()
+            try:
+                await self._per_worker_fetch_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._per_worker_fetch_task = None
+        self._per_worker_pull_sub = None
+        self._per_worker_topic = False
+
         # Cancel in-flight subtask execution tasks
         for bg in list(self._bg_tasks):
             bg.cancel()
@@ -982,6 +1045,13 @@ class NatsWorker:
             self._subtask_fetch_task = asyncio.create_task(
                 self._subtask_fetch_loop()
             )
+            # T12 #654: bind the per-worker consumer too. Best-effort by
+            # design — the shared consumer above is what makes the worker
+            # dispatchable at all, and a per-worker bind can legitimately fail
+            # while the gateway's stream config predates T12. A worker without
+            # it simply stays legacy (never targeted, still served by
+            # overflow).
+            await self._bind_per_worker_consumer(js)
             logger.info(
                 "Subtask transport ready: %s via JetStream durable consumer "
                 "'%s' (ack-after-execution, redelivery on crash, "
@@ -1001,24 +1071,90 @@ class NatsWorker:
         logger.info("Subtask transport bind aborted (worker stopping)")
         return False
 
+    async def _bind_per_worker_consumer(self, js: Any) -> bool:
+        """Bind this worker's own durable consumer on its per-worker subject.
+
+        T12 #654 / D12 #649 — affinity placement. The gateway targets
+        ``uc.subtask.execute.w.{worker_id}`` for a worker ONLY after it
+        declared ``per_worker_topic`` on a heartbeat, so binding here is
+        exactly what makes this worker *targetable*. The shared consumer
+        bound by the caller stays in place as the OVERFLOW path.
+
+        Best-effort by design: the caller has already established the shared
+        transport (a hard dependency), so a failure here must not fail the
+        worker — it merely stays legacy (never targeted by affinity, still
+        served by overflow). The failure is logged and swallowed, and
+        ``_per_worker_topic`` stays False, which is precisely what the
+        gateway is told.
+
+        Returns True once the consumer is bound and its fetch loop runs.
+        """
+        worker_id = self._transport_worker_id()
+        subject = self._per_worker_subject(worker_id)
+        durable = self._per_worker_durable(worker_id)
+        try:
+            await js.add_consumer(
+                stream=self._SUBTASK_STREAM_NAME,
+                durable_name=durable,
+                filter_subject=subject,
+                ack_policy="explicit",
+                max_deliver=self._SUBTASK_MAX_DELIVER,
+            )
+            self._per_worker_pull_sub = await js.pull_subscribe(
+                subject,
+                durable=durable,
+                stream=self._SUBTASK_STREAM_NAME,
+            )
+        except Exception as e:
+            self._per_worker_pull_sub = None
+            self._per_worker_topic = False
+            logger.warning(
+                "Per-worker subtask consumer unavailable — worker stays "
+                "shared-only (no affinity targeting; overflow still serves "
+                "it): %s",
+                e,
+            )
+            return False
+        self._per_worker_topic = True
+        self._per_worker_fetch_task = asyncio.create_task(
+            self._subtask_fetch_loop_for(self._per_worker_pull_sub, "per-worker")
+        )
+        logger.info(
+            "Per-worker subtask transport ready: %s via durable consumer "
+            "'%s' — the gateway may now target this worker by affinity",
+            subject,
+            durable,
+        )
+        return True
+
     async def _subtask_fetch_loop(self) -> None:
-        """Pull-fetch loop for JetStream subtask delivery.
+        """Pull-fetch loop for the SHARED JetStream subtask consumer."""
+        await self._subtask_fetch_loop_for(self._subtask_pull_sub, "shared")
 
-        Continuously fetches batches of messages from the durable consumer
-        and dispatches each to _handle_subtask_execute_js. The loop exits
-        when _running is False or the task is cancelled.
+    async def _subtask_fetch_loop_for(
+        self, pull_sub: Any, label: str
+    ) -> None:
+        """Pull-fetch loop over one durable consumer.
 
-        Each message is dispatched as a background task so the fetch loop
-        can continue pulling while execution runs concurrently (bounded by
-        the _exec_semaphore inside _execute_and_report).
+        Continuously fetches batches of messages and dispatches each to
+        _handle_subtask_execute_js. The loop exits when _running is False or
+        the task is cancelled.
+
+        Each message is dispatched as a background task so the fetch loop can
+        continue pulling while execution runs concurrently (bounded by the
+        _exec_semaphore inside _execute_and_report).
+
+        T12 #654: the same loop serves both the shared (overflow) consumer
+        and this worker's per-worker consumer; ``label`` only distinguishes
+        them in logs and warnings.
         """
         batch_size = max(1, self._worker.max_capacity if self._worker else 1)
         while self._running:
             try:
-                if self._subtask_pull_sub is None:
+                if pull_sub is None:
                     break
                 # Fetch a batch — timeout so we can re-check _running
-                msgs = await self._subtask_pull_sub.fetch(
+                msgs = await pull_sub.fetch(
                     batch=batch_size,
                     timeout=5.0,
                 )
@@ -1031,7 +1167,8 @@ class NatsWorker:
                 break
             except Exception:
                 logger.warning(
-                    "Subtask fetch loop error",
+                    "Subtask fetch loop error (%s)",
+                    label,
                     exc_info=True,
                 )
                 await asyncio.sleep(1.0)  # back off on repeated errors
@@ -2057,6 +2194,10 @@ class NatsWorker:
                                 "jetstream" if self._subtask_js_available
                                 else "unavailable"
                             )
+                            # T12 #654 / D12 #649: whether this worker bound
+                            # its per-worker subject, i.e. whether affinity
+                            # placement can target it at all.
+                            w_info["per_worker_topic"] = self._per_worker_topic
                         w_info["pending_subtask_count"] = info.current_load
                     # Include orchestrator pending count if available
                     if self._orchestrator is not None:
@@ -2082,8 +2223,24 @@ class NatsWorker:
                     # Send gRPC WorkerService heartbeat if registered
                     if self._grpc_reg_engine is not None and self._worker is not None:
                         load = self._worker.get_info().current_load if self._worker else 0
+                        # T12 #654 / D12 #649: carry the affinity inputs —
+                        # the worker's bounded recent-files summary and
+                        # whether it bound its per-worker subject. Both are
+                        # advisory: the gateway only ever targets a worker
+                        # that declared per_worker_topic, and a stale/empty
+                        # file list merely scores 0 (falls back to overflow).
+                        if self._mode == "worker":
+                            recent_files = self._worker.recent_files()
+                            per_worker_topic = self._per_worker_topic
+                        else:
+                            recent_files = []
+                            per_worker_topic = False
                         hb_ok = await self._grpc_reg_engine.worker_heartbeat_async(
-                            self._worker.worker_id, load, CONTRACT_VERSION
+                            self._worker.worker_id,
+                            load,
+                            CONTRACT_VERSION,
+                            recent_files,
+                            per_worker_topic,
                         )
                         # ponytail: F53 — worker_heartbeat_async swallows errors
                         # (debug-logged inside the engine) and returns False. The

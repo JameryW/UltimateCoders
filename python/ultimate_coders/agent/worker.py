@@ -277,6 +277,12 @@ class Worker:
         result = await worker.execute_subtask(subtask)
     """
 
+    # T12 #654 / D12 #649 — bound on the affinity recent-files summary this
+    # worker advertises on every heartbeat. Twin of the gateway's
+    # ``uc_grpc::placement::MAX_RECENT_FILES``; both sides bound defensively
+    # because the wire is untrusted in each direction.
+    MAX_RECENT_FILES: int = 64
+
     def __init__(
         self,
         worker_id: str = "",
@@ -366,6 +372,13 @@ class Worker:
         # Self-heartbeat monitoring — track last heartbeat timestamp
         # so stale_worker_cleanup can detect local worker stalls
         self._last_heartbeat_at: datetime = datetime.now(timezone.utc)
+
+        # T12 #654 / D12 #649 — bounded, newest-first summary of the files
+        # this worker has recently touched. Advertised on every heartbeat as
+        # the affinity-placement input: the gateway scores a node's declared
+        # file_constraints against it to pick WHERE a node goes first. Pure
+        # advisory state — never used to gate execution.
+        self._recent_files: list[str] = []
 
         # Search cache — LRU + TTL to reduce gRPC round-trips
         from ultimate_coders.agent.search_cache import get_default_cache
@@ -627,6 +640,46 @@ class Worker:
             current_load=self._active_count,
             max_capacity=self.max_capacity,
         )
+
+    def record_recent_files(self, paths: Any) -> None:
+        """Record the files a finished subtask touched (T12 #654).
+
+        Newest-first, de-duplicated, capped at :attr:`MAX_RECENT_FILES`.
+        Re-touching an older path moves it back to the front, so the list is
+        a recency ordering rather than an insertion log — exactly what the
+        affinity score wants. Within a single call the first entry is treated
+        as the most recent, which is why callers pass their primary signal
+        first (a node's declared ``file_constraints`` ahead of its diff).
+
+        Blank/whitespace-only entries are dropped. Never raises: this is
+        advisory metadata, and a malformed path must not fail an execution
+        that otherwise succeeded.
+        """
+        try:
+            incoming = [
+                str(p).strip()
+                for p in (paths or [])
+                if p is not None and str(p).strip()
+            ]
+        except Exception:
+            logger.debug("recent-files recording skipped", exc_info=True)
+            return
+        if not incoming:
+            return
+        # Move-to-front de-duplication, preserving first occurrence order.
+        fresh: list[str] = []
+        seen: set[str] = set()
+        for path in incoming:
+            if path in seen:
+                continue
+            seen.add(path)
+            fresh.append(path)
+        kept = [p for p in self._recent_files if p not in seen]
+        self._recent_files = (fresh + kept)[: self.MAX_RECENT_FILES]
+
+    def recent_files(self) -> list[str]:
+        """Snapshot of the recent-files summary (newest first, bounded)."""
+        return list(self._recent_files)
 
     async def _publish_event(
         self,
@@ -1175,6 +1228,14 @@ class Worker:
             stderr_tail = output.stderr_tail
             if not stderr_tail and hasattr(output, "raw_stderr") and output.raw_stderr:
                 stderr_tail = "\n".join(output.raw_stderr.strip().splitlines()[-10:])
+            # T12 #654 / D12 #649: feed the affinity summary. Both what the
+            # node DECLARED and what it actually CHANGED count as evidence of
+            # where this worker's expertise lies — the declared set is often
+            # the only signal for a read-only node.
+            self.record_recent_files(
+                list(subtask.file_constraints)
+                + [fc.file_path for fc in output.file_changes]
+            )
             return SubtaskResult(
                 subtask_id=subtask.id,
                 worker_id=self.worker_id,

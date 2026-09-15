@@ -342,16 +342,26 @@ impl GrpcEngineClient {
     ///
     /// `contract_version` re-asserts the handshake each tick (T1 #637);
     /// legacy callers may pass `None` (wire default empty).
+    ///
+    /// `recent_files` / `per_worker_topic` are the placement signals
+    /// (T12 #654 / D12 #649): the bounded recent-files summary that feeds
+    /// the file-affinity dimension, and whether this worker bound its own
+    /// durable consumer on `uc.subtask.execute.w.{worker_id}`. Callers that
+    /// predate T12 pass nothing and are never targeted by affinity.
     pub async fn worker_heartbeat(
         &self,
         worker_id: &str,
         current_load: u32,
         contract_version: Option<&str>,
+        recent_files: &[String],
+        per_worker_topic: bool,
     ) -> Result<bool, EngineError> {
         let request = tonic::Request::new(WorkerHeartbeatRequest {
             worker_id: worker_id.to_string(),
             current_load,
             contract_version: contract_version.unwrap_or_default().to_string(),
+            recent_files: recent_files.to_vec(),
+            per_worker_topic,
         });
         match self.worker_client.clone().worker_heartbeat(request).await {
             Ok(response) => Ok(response.into_inner().accepted),

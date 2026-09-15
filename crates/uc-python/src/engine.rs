@@ -1275,21 +1275,33 @@ impl PyEngine {
     ///
     /// Raises:
     ///     RuntimeError: If not in gRPC mode or heartbeat fails.
-    #[pyo3(signature = (worker_id, current_load, contract_version=None))]
+    #[pyo3(signature = (worker_id, current_load, contract_version=None, recent_files=None, per_worker_topic=false))]
     pub fn worker_heartbeat_async<'py>(
         &self,
         py: Python<'py>,
         worker_id: String,
         current_load: u32,
         contract_version: Option<String>,
+        recent_files: Option<Vec<String>>,
+        per_worker_topic: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let grpc_client = self.grpc_client.clone();
         let client = grpc_client.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("worker_heartbeat requires gRPC mode")
         })?;
+        // T12 #654 / D12 #649 — placement signals: bounded recent files
+        // (affinity input) and the per-worker-topic declaration. Omitted by
+        // legacy callers → empty / false → never targeted by affinity.
+        let recent_files = recent_files.unwrap_or_default();
         future_into_py::<_, bool>(py, async move {
             client
-                .worker_heartbeat(&worker_id, current_load, contract_version.as_deref())
+                .worker_heartbeat(
+                    &worker_id,
+                    current_load,
+                    contract_version.as_deref(),
+                    &recent_files,
+                    per_worker_topic,
+                )
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })

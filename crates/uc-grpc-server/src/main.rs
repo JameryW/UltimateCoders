@@ -465,7 +465,15 @@ async fn ensure_subtasks_stream(client: &async_nats::Client) {
     let js = async_nats::jetstream::new(client.clone());
     let config = Config {
         name: "UC_SUBTASKS".to_string(),
-        subjects: vec![uc_grpc::server::NATS_SUBJECT_SUBTASK_EXECUTE.to_string()],
+        // Two subjects, deliberately (T12 #654): the shared dispatch subject
+        // (overflow — every node remains dispatchable without a score) and
+        // the per-worker wildcard used by affinity placement. `>` requires a
+        // further token, so the wildcard does NOT cover the bare subject —
+        // both entries are required.
+        subjects: vec![
+            uc_grpc::server::NATS_SUBJECT_SUBTASK_EXECUTE.to_string(),
+            uc_grpc::placement::PER_WORKER_SUBJECT_WILDCARD.to_string(),
+        ],
         retention: RetentionPolicy::WorkQueue,
         max_age: std::time::Duration::from_secs(7 * 24 * 3600),
         duplicate_window: std::time::Duration::from_secs(120),

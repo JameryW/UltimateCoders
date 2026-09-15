@@ -11,11 +11,13 @@ pub mod auth;
 pub mod client;
 pub mod conversions;
 pub mod dashboard_service;
+pub mod placement;
 pub mod scheduler_dispatch;
 pub mod server;
 pub mod worker_service;
 
 pub use auth::AuthInterceptor;
+pub use placement::{per_worker_subject, Placement, PlacementCandidate};
 pub use scheduler_dispatch::{NatsKvLockProvider, NatsSubmitDispatcher};
 pub use server::TaskStore;
 pub use server::{

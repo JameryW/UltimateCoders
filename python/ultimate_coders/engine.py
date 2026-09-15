@@ -1130,6 +1130,8 @@ class Engine:
         worker_id: str,
         current_load: int = 0,
         contract_version: str | None = None,
+        recent_files: list[str] | None = None,
+        per_worker_topic: bool = False,
     ) -> bool:
         """Send a heartbeat to the gateway via WorkerService RPC.
 
@@ -1139,6 +1141,12 @@ class Engine:
             contract_version: Optional handshake re-assertion (T1 #637);
                 non-empty mismatch is refused by the gateway, ``None``
                 preserves legacy behavior.
+            recent_files: Optional bounded recent-files summary — the file
+                affinity input for placement (T12 #654 / D12 #649). ``None``
+                is sent as an empty list (no affinity signal).
+            per_worker_topic: Whether this worker bound its per-worker
+                subject (T12 #654); a worker that declares True becomes
+                targetable by affinity placement, False keeps it legacy.
 
         Returns:
             True if heartbeat was accepted.
@@ -1147,7 +1155,11 @@ class Engine:
             return False
         try:
             return await self._grpc_engine.worker_heartbeat_async(
-                worker_id, current_load, contract_version
+                worker_id,
+                current_load,
+                contract_version,
+                list(recent_files) if recent_files else None,
+                per_worker_topic,
             )
         except Exception as exc:
             logger.debug("worker_heartbeat failed: %s", exc)

@@ -853,6 +853,17 @@ message WorkerHeartbeatRequest {
     // Contract re-assertion (T1 #637): non-empty mismatch → heartbeat
     // refused. Empty preserves legacy behavior.
     string contract_version = 3;
+    // Affinity input (T12 #654 / D12 #649): the files this worker worked on
+    // recently, newest first, bounded by the sender (the gateway re-bounds
+    // and de-duplicates). Feeds the file-affinity placement dimension
+    // (node file_constraints ∩ this list). Empty = no signal — the worker
+    // is never targeted by affinity.
+    repeated string recent_files = 4;
+    // Whether this worker has bound its OWN per-worker durable consumer on
+    // `uc.subtask.execute.w.{worker_id}` (T12 #654). False = legacy worker
+    // (shared consumer only): the gateway never publishes to its per-worker
+    // subject, it only ever receives work through the shared overflow.
+    bool per_worker_topic = 5;
 }
 
 message WorkerHeartbeatResponse {

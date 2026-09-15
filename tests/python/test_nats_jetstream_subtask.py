@@ -73,20 +73,27 @@ def _make_subtask_payload(
 
 async def test_ensure_subtask_transport_binds_and_starts_fetch_loop():
     """JetStream usable → durable consumer asserted, pull sub bound, fetch
-    loop started, transport flagged available, registration triggered."""
+    loop started, transport flagged available, registration triggered.
+
+    T12 #654: the shared (overflow) consumer is joined by this worker's
+    PER-WORKER consumer, which is what makes the worker targetable by
+    affinity placement. Two add_consumer + two pull_subscribe calls.
+    """
     nw = _make_worker()
     nw._running = True
 
     pull_sub = MagicMock()
+    per_worker_pull_sub = MagicMock()
     js = MagicMock()
     js.add_consumer = AsyncMock()
-    js.pull_subscribe = AsyncMock(return_value=pull_sub)
+    js.pull_subscribe = AsyncMock(side_effect=[pull_sub, per_worker_pull_sub])
     nw._nc = MagicMock()
     nw._nc.jetstream = MagicMock(return_value=js)
     nw._register_with_gateway = AsyncMock()
 
     worker = MagicMock()
     worker.max_capacity = 3
+    worker.get_info = MagicMock(return_value=MagicMock(id="w-1"))
     nw._worker = worker
 
     result = await nw._ensure_subtask_transport()
@@ -95,27 +102,39 @@ async def test_ensure_subtask_transport_binds_and_starts_fetch_loop():
     assert nw._subtask_js_available is True
     assert nw._subtask_pull_sub is pull_sub
     assert nw._subtask_fetch_task is not None
+    # Per-worker side (T12 #654).
+    assert nw._per_worker_topic is True
+    assert nw._per_worker_pull_sub is per_worker_pull_sub
+    assert nw._per_worker_fetch_task is not None
 
     # D4 Q1: the durable consumer is asserted explicitly (ack policy +
     # max_deliver poison guard live server-side) before the pull
-    # subscription binds.
-    js.add_consumer.assert_awaited_once()
-    call_kwargs = js.add_consumer.call_args.kwargs
-    assert call_kwargs["stream"] == "UC_SUBTASKS"
-    assert call_kwargs["durable_name"] == "subtask-workers"
-    assert call_kwargs["ack_policy"] == "explicit"
-    assert call_kwargs["max_deliver"] == 5
-    js.pull_subscribe.assert_awaited_once()
+    # subscription binds. Shared (overflow) first, then per-worker.
+    assert js.add_consumer.await_count == 2
+    shared_kwargs = js.add_consumer.await_args_list[0].kwargs
+    assert shared_kwargs["stream"] == "UC_SUBTASKS"
+    assert shared_kwargs["durable_name"] == "subtask-workers"
+    assert shared_kwargs["ack_policy"] == "explicit"
+    assert shared_kwargs["max_deliver"] == 5
+    per_worker_kwargs = js.add_consumer.await_args_list[1].kwargs
+    assert per_worker_kwargs["stream"] == "UC_SUBTASKS"
+    assert per_worker_kwargs["durable_name"] == "subtask-worker-w-1"
+    assert per_worker_kwargs["filter_subject"] == "uc.subtask.execute.w.w-1"
+    assert per_worker_kwargs["ack_policy"] == "explicit"
+    assert per_worker_kwargs["max_deliver"] == 5
+
+    assert js.pull_subscribe.await_count == 2
     # Transport became usable → (re-)register with the gateway immediately
     # instead of waiting for the next heartbeat tick.
     nw._register_with_gateway.assert_awaited_once()
 
     # Cleanup
-    nw._subtask_fetch_task.cancel()
-    try:
-        await nw._subtask_fetch_task
-    except asyncio.CancelledError:
-        pass
+    for task in (nw._subtask_fetch_task, nw._per_worker_fetch_task):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def test_ensure_subtask_transport_retries_while_js_unavailable():
@@ -143,6 +162,10 @@ async def test_ensure_subtask_transport_retries_while_js_unavailable():
         assert nw._subtask_js_available is False
         assert nw._subtask_pull_sub is None
         assert nw._subtask_fetch_task is None
+        # T12 #654: nothing per-worker either — the shared bind never
+        # succeeded, so the additive bind was never reached.
+        assert nw._per_worker_topic is False
+        assert nw._per_worker_fetch_task is None
         # Refused registration: never attempted while the transport is down.
         nw._register_with_gateway.assert_not_awaited()
     finally:

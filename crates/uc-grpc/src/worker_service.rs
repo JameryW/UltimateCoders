@@ -39,6 +39,15 @@ pub struct RegisteredWorker {
     /// Execution scopes (T8 #650 / D8 #645): normalized project_ids the
     /// worker serves. Empty = OPEN worker (accepts any scope).
     pub projects: Vec<String>,
+    /// Files this worker worked on recently, newest first (T12 #654 /
+    /// D12 #649). Normalized + bounded by [`normalize_recent_files`]; the
+    /// affinity dimension of the placement score. Empty = no signal.
+    pub recent_files: Vec<String>,
+    /// Whether the worker bound its own durable consumer on
+    /// `uc.subtask.execute.w.{worker_id}` (T12 #654). False = legacy worker:
+    /// the gateway never targets its per-worker subject, so it is only ever
+    /// reached through the shared overflow.
+    pub per_worker_topic: bool,
     pub registered_at: chrono::DateTime<chrono::Utc>,
     pub last_heartbeat: chrono::DateTime<chrono::Utc>,
 }
@@ -142,6 +151,11 @@ impl WorkerRegistry {
             metadata,
             contract_version,
             projects: normalize_projects(projects),
+            // Placement signals arrive on the heartbeat (T12 #654): a worker
+            // is never targeted by affinity until it reports both a
+            // per-worker topic and its recent files.
+            recent_files: Vec::new(),
+            per_worker_topic: false,
             registered_at: now,
             last_heartbeat: now,
         };
@@ -156,7 +170,28 @@ impl WorkerRegistry {
     }
 
     /// Process a heartbeat from a worker.
+    ///
+    /// Legacy shape (no placement signals) — delegates to
+    /// [`Self::heartbeat_with_signals`] with empty signals, which preserves
+    /// pre-T12 behavior exactly: no recent files, no per-worker topic.
     pub fn heartbeat(&mut self, worker_id: &str, current_load: u32) -> Result<(), String> {
+        self.heartbeat_with_signals(worker_id, current_load, &[], false)
+    }
+
+    /// Process a heartbeat carrying the placement signals (T12 #654 / D12 #649).
+    ///
+    /// `recent_files` is normalized and bounded here — the wire is untrusted
+    /// (an unbounded list would make every dispatch O(files × candidates)).
+    /// `per_worker_topic` is the worker's declaration that it bound its own
+    /// durable consumer on `uc.subtask.execute.w.{worker_id}`; it is stored
+    /// as-is because only the worker can know.
+    pub fn heartbeat_with_signals(
+        &mut self,
+        worker_id: &str,
+        current_load: u32,
+        recent_files: &[String],
+        per_worker_topic: bool,
+    ) -> Result<(), String> {
         let worker = self.workers.get_mut(worker_id).ok_or_else(|| {
             format!(
                 "Worker '{}' not registered — call RegisterWorker first",
@@ -165,6 +200,8 @@ impl WorkerRegistry {
         })?;
         worker.last_heartbeat = chrono::Utc::now();
         worker.current_load = current_load;
+        worker.recent_files = crate::placement::normalize_recent_files(recent_files);
+        worker.per_worker_topic = per_worker_topic;
         Ok(())
     }
 
@@ -259,6 +296,66 @@ impl WorkerRegistry {
             };
         }
         WorkerDispatchGate::Dispatch
+    }
+
+    /// Workers eligible to receive this node: capability match (hard) →
+    /// scope hard filter (T8 #650) → contract-version check (T1 #637).
+    ///
+    /// Empty means the hard gate denies dispatch — the same three filters
+    /// [`Self::dispatch_gate`] classifies, exposed as a list because affinity
+    /// scoring (T12 #654) needs the candidates themselves, not just the
+    /// verdict. Scoring must never see a worker the gate would reject.
+    pub fn dispatch_candidates(
+        &self,
+        required: &[String],
+        project_id: &str,
+    ) -> Vec<&RegisteredWorker> {
+        self.workers_with_capabilities(required)
+            .into_iter()
+            .filter(|w| w.serves_scope(project_id))
+            .filter(|w| w.contract_version == CONTRACT_VERSION)
+            .collect()
+    }
+
+    /// Host a worker registered on — the stable `hostname` key of its
+    /// registration metadata (#607). `None` when unknown.
+    pub fn worker_host(&self, worker_id: &str) -> Option<String> {
+        self.workers
+            .get(worker_id)
+            .and_then(|w| crate::placement::host_from_metadata(&w.metadata))
+    }
+
+    /// Affinity placement target for one node (T12 #654 / D12 #649).
+    ///
+    /// Candidates pass the same hard gates as [`Self::dispatch_gate`], plus a
+    /// **per-worker-topic requirement**: a worker that never declared its own
+    /// durable consumer is never targeted, because a targeted publish it
+    /// cannot consume would strand the node until redelivery. A legacy worker
+    /// therefore keeps receiving work through the shared overflow.
+    ///
+    /// `None` (no candidate clears the affinity threshold, or none declared a
+    /// per-worker topic) means "publish to the shared subject" — placement is
+    /// a soft preference, never a gate.
+    pub fn placement_target(
+        &self,
+        required: &[String],
+        project_id: &str,
+        file_constraints: &[String],
+        sibling_hosts: &std::collections::HashSet<String>,
+    ) -> Option<crate::placement::Placement> {
+        let candidates: Vec<crate::placement::PlacementCandidate<'_>> = self
+            .dispatch_candidates(required, project_id)
+            .into_iter()
+            .filter(|w| w.per_worker_topic)
+            .map(|w| crate::placement::PlacementCandidate {
+                worker_id: w.id.as_str(),
+                metadata: w.metadata.as_str(),
+                recent_files: w.recent_files.as_slice(),
+                current_load: w.current_load,
+                max_capacity: w.max_capacity,
+            })
+            .collect();
+        crate::placement::place(&candidates, file_constraints, sibling_hosts)
     }
 
     /// Mark workers with stale heartbeats as unavailable (returns stale worker IDs).
@@ -409,7 +506,15 @@ impl<E: EngineApi + Send + Sync + 'static> WorkerService for GrpcServer<E> {
             }));
         }
         let mut registry = self.worker_registry().write().await;
-        match registry.heartbeat(&req.worker_id, req.current_load) {
+        // T12 #654 / D12 #649: the heartbeat carries the placement signals —
+        // a bounded recent-files summary (affinity input) and the worker's
+        // per-worker-topic declaration. Legacy workers simply omit both.
+        match registry.heartbeat_with_signals(
+            &req.worker_id,
+            req.current_load,
+            &req.recent_files,
+            req.per_worker_topic,
+        ) {
             Ok(()) => Ok(Response::new(WorkerHeartbeatResponse {
                 accepted: true,
                 error: None,
@@ -1159,6 +1264,8 @@ mod tests {
                 worker_id: "w-hb".to_string(),
                 current_load: 1,
                 contract_version: "v9".to_string(),
+                recent_files: vec![],
+                per_worker_topic: false,
             }))
             .await
             .unwrap()
@@ -1172,6 +1279,8 @@ mod tests {
                 worker_id: "w-hb".to_string(),
                 current_load: 1,
                 contract_version: CONTRACT_VERSION.to_string(),
+                recent_files: vec![],
+                per_worker_topic: false,
             }))
             .await
             .unwrap()
@@ -1188,6 +1297,8 @@ mod tests {
                 worker_id: "w-hb".to_string(),
                 current_load: 0,
                 contract_version: String::new(),
+                recent_files: vec![],
+                per_worker_topic: false,
             }))
             .await
             .unwrap()
@@ -1665,5 +1776,278 @@ mod tests {
         let w = &reg.workers()["w-scope-rpc"];
         // Blank entry dropped at the RPC boundary.
         assert_eq!(w.projects, vec!["alpha".to_string()]);
+    }
+
+    // ── T12 #654 / D12 #649 — affinity placement signals ────────────
+
+    /// Register a worker and immediately give it placement signals.
+    fn signalled(
+        reg: &mut WorkerRegistry,
+        id: &str,
+        host: &str,
+        load: u32,
+        capacity: u32,
+        recent: &[&str],
+        topic: bool,
+    ) {
+        reg.register(
+            id.to_string(),
+            vec!["code".to_string()],
+            capacity,
+            format!(r#"{{"hostname":"{host}"}}"#),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        let files: Vec<String> = recent.iter().map(|s| s.to_string()).collect();
+        reg.heartbeat_with_signals(id, load, &files, topic).unwrap();
+    }
+
+    fn no_hosts() -> std::collections::HashSet<String> {
+        std::collections::HashSet::new()
+    }
+
+    #[test]
+    fn heartbeat_with_signals_bounds_and_normalizes_recent_files() {
+        let mut reg = WorkerRegistry::new();
+        reg.register(
+            "w-sig".to_string(),
+            vec!["code".to_string()],
+            4,
+            r#"{"hostname":"box-a"}"#.to_string(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        // Blank + duplicate entries, plus far more files than the bound: the
+        // registry normalizes and truncates, because the wire is untrusted.
+        let mut files = vec![
+            "src/a.rs".to_string(),
+            "  ".to_string(),
+            "src/a.rs".to_string(),
+        ];
+        for i in 0..(crate::placement::MAX_RECENT_FILES + 10) {
+            files.push(format!("src/f{i}.rs"));
+        }
+        reg.heartbeat_with_signals("w-sig", 2, &files, true)
+            .unwrap();
+
+        let w = &reg.workers()["w-sig"];
+        assert_eq!(w.current_load, 2);
+        assert!(w.per_worker_topic);
+        assert_eq!(w.recent_files.len(), crate::placement::MAX_RECENT_FILES);
+        assert_eq!(w.recent_files[0], "src/a.rs");
+        assert_eq!(
+            w.recent_files
+                .iter()
+                .filter(|f| f.as_str() == "src/a.rs")
+                .count(),
+            1,
+            "de-duplicated at the boundary"
+        );
+    }
+
+    #[test]
+    fn legacy_heartbeat_clears_placement_signals() {
+        let mut reg = WorkerRegistry::new();
+        signalled(&mut reg, "w-leg", "box-a", 1, 4, &["src/a.rs"], true);
+        assert!(reg.workers()["w-leg"].per_worker_topic);
+
+        // The declaration is per-heartbeat: a worker that stops declaring its
+        // topic becomes untargetable again (and falls back to overflow) rather
+        // than being grandfathered in as permanently targetable.
+        reg.heartbeat("w-leg", 1).unwrap();
+        let w = &reg.workers()["w-leg"];
+        assert!(w.recent_files.is_empty());
+        assert!(!w.per_worker_topic);
+    }
+
+    #[test]
+    fn placement_target_skips_workers_that_never_declared_a_topic() {
+        let mut reg = WorkerRegistry::new();
+        // Identical affinity — only the declaration distinguishes them.
+        signalled(&mut reg, "w-legacy", "box-a", 0, 4, &["src/a.rs"], false);
+        signalled(&mut reg, "w-topic", "box-b", 0, 4, &["src/a.rs"], true);
+
+        let picked = reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .expect("the declared worker is targetable");
+        assert_eq!(picked.worker_id, "w-topic");
+        assert_eq!(picked.subject, "uc.subtask.execute.w.w-topic");
+    }
+
+    #[test]
+    fn placement_target_returns_none_when_no_affinity() {
+        let mut reg = WorkerRegistry::new();
+        signalled(&mut reg, "w-topic", "box-a", 0, 4, &["src/a.rs"], true);
+
+        // No overlap → None, i.e. publish to the shared subject. Placement is
+        // a soft preference; a miss must never strand the node.
+        assert!(reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/unrelated.rs".to_string()],
+                &no_hosts(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn placement_target_prefers_affinity_then_lower_load() {
+        let mut reg = WorkerRegistry::new();
+        // Equal affinity, different load → the lighter worker wins.
+        signalled(&mut reg, "w-heavy", "box-a", 3, 4, &["src/a.rs"], true);
+        signalled(&mut reg, "w-light", "box-b", 1, 4, &["src/a.rs"], true);
+        let picked = reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .unwrap();
+        assert_eq!(picked.worker_id, "w-light");
+
+        // More overlapping files outranks load — a heavier but specialised
+        // worker still wins on the signal that matters.
+        signalled(
+            &mut reg,
+            "w-overlap",
+            "box-c",
+            2,
+            4,
+            &["src/a.rs", "src/b.rs"],
+            true,
+        );
+        let picked = reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string(), "src/b.rs".to_string()],
+                &no_hosts(),
+            )
+            .unwrap();
+        assert_eq!(picked.worker_id, "w-overlap");
+        assert_eq!(picked.affinity_hits, 2);
+    }
+
+    #[test]
+    fn placement_target_respects_the_hard_gate() {
+        let mut reg = WorkerRegistry::new();
+
+        // Capability mismatch: an equally affine worker without `code` is
+        // invisible to placement, exactly as it is to dispatch_gate.
+        reg.register(
+            "w-nocap".to_string(),
+            vec!["search".to_string()],
+            4,
+            r#"{"hostname":"box-a"}"#.to_string(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        reg.heartbeat_with_signals("w-nocap", 0, &["src/a.rs".to_string()], true)
+            .unwrap();
+        assert!(reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .is_none());
+
+        // Scope mismatch: a scoped worker only serves its own project, so the
+        // same node escapes it for a different scope.
+        reg.register_with_projects(
+            "w-scope".to_string(),
+            vec!["code".to_string()],
+            4,
+            r#"{"hostname":"box-b"}"#.to_string(),
+            CONTRACT_VERSION.to_string(),
+            vec!["alpha".to_string()],
+        )
+        .unwrap();
+        reg.heartbeat_with_signals("w-scope", 0, &["src/a.rs".to_string()], true)
+            .unwrap();
+        assert!(reg
+            .placement_target(
+                &["code".to_string()],
+                "beta",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .is_none());
+        assert!(reg
+            .placement_target(
+                &["code".to_string()],
+                "alpha",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .is_some());
+
+        // Version mismatch: a legacy pre-handshake worker is never targeted.
+        reg.register(
+            "w-legacy".to_string(),
+            vec!["code".to_string()],
+            4,
+            r#"{"hostname":"box-c"}"#.to_string(),
+            String::new(),
+        )
+        .unwrap();
+        reg.heartbeat_with_signals("w-legacy", 0, &["src/a.rs".to_string()], true)
+            .unwrap();
+        assert!(reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string()],
+                &no_hosts(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn placement_target_prefers_a_sibling_workers_host() {
+        let mut reg = WorkerRegistry::new();
+        // Identical affinity and load → locality decides. This is the
+        // "same machine, warm cache" case: prefer where the task already runs.
+        signalled(&mut reg, "w-remote", "box-x", 1, 4, &["src/a.rs"], true);
+        signalled(&mut reg, "w-local", "box-y", 1, 4, &["src/a.rs"], true);
+
+        let sibling_hosts: std::collections::HashSet<String> =
+            ["box-y".to_string()].into_iter().collect();
+        let picked = reg
+            .placement_target(
+                &["code".to_string()],
+                "",
+                &["src/a.rs".to_string()],
+                &sibling_hosts,
+            )
+            .unwrap();
+        assert_eq!(picked.worker_id, "w-local");
+        assert!(picked.same_host);
+    }
+
+    #[test]
+    fn worker_host_reads_the_stable_metadata_key() {
+        let mut reg = WorkerRegistry::new();
+        signalled(&mut reg, "w-host", "box-z", 0, 4, &[], false);
+        assert_eq!(reg.worker_host("w-host").as_deref(), Some("box-z"));
+        // Unknown worker / unparsable metadata degrade to None, never panic.
+        assert_eq!(reg.worker_host("nobody"), None);
+        reg.register(
+            "w-nometa".to_string(),
+            vec![],
+            1,
+            "not json".to_string(),
+            CONTRACT_VERSION.to_string(),
+        )
+        .unwrap();
+        assert_eq!(reg.worker_host("w-nometa"), None);
     }
 }
