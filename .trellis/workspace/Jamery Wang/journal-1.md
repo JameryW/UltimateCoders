@@ -1111,7 +1111,7 @@ S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「�
 
 ## 局限（如实记账）
 
-- **TS 那一跳本地零覆盖**：`bun test` 在本机稳定段错误（Bun 1.3.14，`Segmentation fault at address 0x5`，两次复现同形，Bun 自报「this indicates a bug in Bun, not your code」），且 `grpc-bridge.ts` 没有既有测试文件。⇒ 该跳由 CI 的 **TypeScript CI** 验证，不声明本地已验证。
+- **TS 那一跳本地可验证（本节已更正）**：初版写的是「`bun test` 在本机稳定段错误（Bun 1.3.14，`Segmentation fault at address 0x5`），故该跳只能由 CI 验证」——**错的**。真因是我把 `parseReviewJson` 写成**类体内的 `function` 声明**（TS 类方法不允许 `function` 关键字），Bun 撞上该语法错误后直接崩溃（SIGTRAP / exit 133），并用那句 *"a bug in Bun, not your code"* 把责任推给了上游；真正的解析错误就打印在它上面几行（`Expected ";" but found "parseReviewJson"`，`grpc-bridge.ts:1054:11`）——本地与 CI 一字不差。改成 `private` 后本地 `bun test` **156 passed / 0 failed / 16 files**，CI 的 `bun test (uc-orchestrator)` 由红转绿（`04372b8`）。⚠️ **这是本票第二次同类错误**：第一次是拿 `which protoc`（一个 PATH 事实）断定「不能编译」，这次是拿工具的自辩（"not your code"）断定「不是我的代码」——**两次都是把间接信号当事实，而一手证据（`build.rs` / 崩溃前的解析错误）就在旁边**。
 - **独立性有残余缺口**：显式双重 opt-in 的 worker 仍可自审（见上）。
 - 票面验收「同一 epoch 不得自审」按语义实现为「产出者不得认领其 review」。
 
