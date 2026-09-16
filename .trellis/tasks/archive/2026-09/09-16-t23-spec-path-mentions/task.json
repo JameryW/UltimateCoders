@@ -1,0 +1,36 @@
+{
+  "id": "09-16-t23-spec-path-mentions",
+  "name": "t23-spec-path-mentions",
+  "title": "T23: 守卫新增「无行号路径提及」类 —— 让 47 处悬空路径提及可见（并把 #673 的可去行号从 84 修正到 52）",
+  "description": "实施 #675 的切片 A：`check-spec-refs.py` 只扫 `path:line`，无行号的路径提及完全不可见 —— 而「文件已不存在」与行号无关。新增提及类（advisory，不门禁）后实测 171 处提及、47 处悬空；同时用唯一性检验把 #673 的「84 条可去行号」修正为 52。本票是 #673 切片 B（符号优先重写）的硬前置：重写会把 52 处引用变成无行号形态，若不先补视野就会静默移出守卫视野。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Jamery Wang",
+  "assignee": "Jamery Wang",
+  "createdAt": "2026-09-16",
+  "completedAt": "2026-09-16",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "848b1c7",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "scripts/check-spec-refs.py",
+    ".trellis/tasks/09-16-t23-spec-path-mentions/research/notes.md"
+  ],
+  "notes": "",
+  "meta": {},
+  "issue": 675,
+  "map": null,
+  "decision": null,
+  "summary": "守卫盲区：`REF_RE` 要求 `:(\\d+)` ⇒ 同一个路径**不写行号就完全不扫**，而「文件已不存在」与行号无关。实测（反引号 + 路径形状 + 代码围栏之外 + 无行号）**171** 处提及，其中**47 处解析不到任何文件**、22 处 basename 歧义。新增提及类，**advisory、永不门禁**（47 处含运行时配置 `uc.scheduler.yaml`、文档举例 `new_module/impl.rs`、命名规范示例 `rate_limiter.py`、**仓外项目** `tui/**`；朴素门禁 = 47 红而多数非缺陷，同 T21 的 63 报/61 误报）。形状规则与内容锚用的 `PATH_SPAN_RE` **刻意不同**：含 `.md`（跨 spec 链接会失效）、**禁**前导 `.`/`/`（运行时/容器侧路径）、禁 `:`（从形状上保证 `path:line` 不会双算）。这条分割是**测出来的**：首版复用 `PATH_SPAN_RE` 与独立探针差 15 处（少 8 条 `.md`、多 7 条前导 `.`/`/`）。两路复算：键集 169/169、双向差异 0、verdict 分歧 0；**既有数字零搅动**（148 refs / 113 ok / 27 stale / 8 ambiguous / 0 structural / 0 content-mismatch）。消融 **8/8**：M6 关键 —— 坏引用仍 exit 1（新增 advisory 类未放松门禁）；M1+M2 成对 —— 只做一条各只能证一半。顺带**修正 #673 的数字**：加唯一性检验后内容锚 32/41 的字面量在目标文件出现 >1 次（`abort_on_failure` 14 次 / `retry_count` 15 / `parallel_group` 20）⇒ 安全可去行号 = **43 + 9 = 52**，不是 84。47 处的主分布：`tui-grpc-spec.md` 独占 **27**（对象在仓外）；已实证的真过期含 `agent/scheduler.py`（scheduler 已落在 Rust）、`local_worker.py/.rs`（子系统移除）、`tests/python/test_agent.py`。**#675 与 #673 均保持开放**（分类处置 = 切片 B，门禁化/接 CI = 切片 C）。",
+  "commits": [
+    "848b1c7"
+  ]
+}

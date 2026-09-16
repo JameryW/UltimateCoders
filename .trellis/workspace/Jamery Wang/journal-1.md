@@ -1899,3 +1899,102 @@ Worker._emit_step_event  -> worker.py    同上
 - **待沉淀（技能）**：① 新检查器落地前**先验它的 FAIL 真伪**（本轮 17 处「失败」里 13 处是假阳性）；
   ② **新能力要靠「双跑」自证** —— 只证明「新代码会报」不足以排除旧路径也能报；
   ③ 同级 advisory **不得共用 verdict 字段**（T21 的优先级 bug 在 advisory 层同样成立）。
+
+
+## Session 26: T23: 守卫新增「无行号路径提及」类 —— 让 47 处悬空提及可见（并把 #673 的可去行号从 84 修正到 52）
+
+**Date**: 2026-09-16
+**Task**: T23: 守卫新增「无行号路径提及」类 —— 让 47 处悬空提及可见（并把 #673 的可去行号从 84 修正到 52）
+**Branch**: `main`
+
+### Summary
+
+T23 #675 切片 A：守卫此前只扫 path:line ⇒ 无行号的路径提及完全不可见（而「文件已不在」与行号无关）。新增提及类（advisory，永不门禁）后实测 171 处提及 / 47 处悬空 / 22 处歧义，两路复算键集 169/169 零差异，既有 148 处引用的判定与 exit code 零搅动。顺带用唯一性检验把 #673 的「84 条可去行号」修正为 52 —— 这也决定了切片的先后顺序（先补视野、再重写）。
+
+### Main Changes
+
+**起点：一个数字被自己的测量推翻。** #673 的下一步是「按符号优先重写 148 处引用」，T22 量出的边界是
+「**84** 条今天就能去行号」。加一道**唯一性**检验后不成立了：41 条内容锚里 **32 条**的匹配字面量在目标
+文件里出现 **>1** 次（`abort_on_failure` 在 `agent.rs` **14** 次 / `retry_count` **15** 次 /
+`parallel_group` **20** 次 / `agent_config_json` 12 / `retry_delay_ms` 9）⇒ 去掉行号后就无法区分
+「指的是哪一处」。**安全可去行号 = 43（符号锚）+ 9（唯一内容锚）= 52**，不是 84；余 96 = 32 内容歧义 + 64 无锚。
+
+**然后是真正决定切片顺序的发现：重写的目标形态正好落进守卫的盲区。** `REF_RE` 要求 `:(\d+)`
+⇒ **同一个路径不写行号就完全不扫**。若先重写、后补视野，那 52 处会在守卫里**静默消失**
+（`148 refs` 变 `96 refs`，无任何提示）。⇒ 新建 **#675**，本票做它的**切片 A（诊断）**。
+
+**量出的盲区**：反引号 + 路径形状 + **代码围栏之外** + 无行号 = **171** 处提及；其中
+**47 处解析不到任何文件**、22 处 basename 歧义。围栏必须排除 —— 围栏内另有 **73** 个路径形状 token
+（`directory-structure.md` 用围栏画整棵树）。
+
+**47 处不是「47 个缺陷」**，而是两个**正交且会重叠**的轴：**按文件主轴** —— `tui-grpc-spec.md`
+独占 **27**（它描述的对象**根本不在本仓**）、`scheduler-spec.md` 5、`directory-structure.md` 3、
+`cross-layer-thinking-guide.md` 3、另四个各 2；**按前缀副轴** —— 裸 basename 26 / `tui/` 12 /
+`tests/` 4 / `python/` 3 / `new_module/` 1 / `crates/` 1。
+⚠️ 两轴**不能相加**（`tui-grpc-spec.md` 的 27 处里 15 处写作裸名）—— 本票**首版就是这么写错的**，
+已在 issue #675 与 `prd.md` 更正并回读校验。已**实证**的真过期：`python/ultimate_coders/agent/scheduler.py`
+（`agent/` 下已无此文件；scheduler 现落在 Rust）、`local_worker.py` 与 `crates/uc-grpc/src/local_worker.rs`
+（子系统已移除，`local-worker-bridge-spec.md` 整篇在描述它）、`tests/python/test_agent.py`（无同名文件）。
+
+**提及定为 advisory、永不门禁**：47 里含运行时由用户提供的配置（`uc.scheduler.yaml`）、文档**举例**
+（`new_module/impl.rs`）、命名规范**示例**（`rate_limiter.py`）、**仓外项目**（`tui/**`）——
+朴素门禁会当场红 47 处而多数非缺陷（同 T21 的 63 报 / 61 误报）。形状规则**刻意不同于** `PATH_SPAN_RE`：
+**含 `.md`**（跨 spec 链接会失效）、**禁前导 `.`/`/`**（运行时/容器侧路径）、**禁 `:`**（从形状上保证
+`path:line` 不会双算）。这条分割是**测出来的**，不是设计的：首版复用 `PATH_SPAN_RE`，与独立探针一对账
+差 **15** 处（少 8 条 `.md`、多 7 条前导 `.`/`/`）。
+
+**两路复算**：键集 **169/169**、双向差异 **0**、verdict 分歧 **0**（169 是去重后键数，171 是行数）。
+**既有数字零搅动**：`148 refs / 113 ok / 27 stale / 8 ambiguous / 0 structural / 0 content-mismatch`、exit 0
+—— 与 T22 收口时**逐字相同**（新正则 + 新 verdict 名 + 在 `main()` 里切分后统计）。
+
+**消融 8/8**（探针走真 CLI 子进程，每例后按字节恢复、校 sha256 `f87d1f6a3e56e640`）：M0 基线；
+M1 悬空提及 +1 且 **exit 仍 0**；M2 放进围栏 ⇒ **完全不计**；M3 存在路径 ⇒ resolved +1；
+M4 `path:行号` ⇒ refs +1 而 **mentions 不变**；M5a `.md` 计入 / M5b 前导 `.` 不计入；
+**M6 坏引用仍 exit 1**；M7 恢复后逐字段等于基线。
+**M1 与 M2 必须成对**（各自只证一半：一个证「会报」、一个证「围栏外才报」）；
+**M6 是本票关键一条** —— 它证明新增的 advisory 类**没有放松既有引用门禁**。
+
+**两次自我纠错，都照实记：** ① M5a 首跑 FAIL，是**我的期望值漏了一项**（`.md` 目标存在 ⇒ resolved
+也 +1），不是代码缺陷 —— 同 T22 那次「探针把 heading 写到非行首」，**先怀疑自己的断言**；
+② 首版把两个重叠轴**相加**（见上）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `848b1c7` | (see git log) |
+
+### Testing
+
+- **消融 8/8**：`python .scratch/t23-ablation.py`（探针走真 CLI 子进程；每例后按字节恢复并校 sha256
+  `f87d1f6a3e56e640`，最后一例再复跑确认逐字段等于基线）。基线
+  `refs=148 mentions=171 dangling=47 ambiguous=22 resolved=102 exit=0`；M6 另证「坏引用仍 exit 1」。
+- **两路复算**：`python .scratch/t23-reconcile.py` ⇒ 守卫与独立探针键集 **169/169**、双向差异 **0**、
+  verdict 分歧 **0**。
+- **既有面不变**：`148 refs / 113 ok / 27 stale / 8 ambiguous / 0 structural`、
+  `0 of 148 have no matching quoted content`、**exit 0** —— 与 T22 收口逐字相同。
+- **lint**：`ruff check scripts/check-spec-refs.py` → `All checks passed!`。
+  ⚠️ `ruff format --check` 在**改动前**就不通过（`git stash` 实测确认为既有状况）⇒ **不做全文件重排**，
+  以免混入百行噪声（且 `scripts/` 不在 CI 的 lint 面内）。
+- ⚠️ **未跑本仓既有测试**，**也未新增自动化测试** —— 本票只改 `scripts/` 下一个独立 CLI，
+  没有任何测试导入它、三条链（Rust / pytest / bun）均不涉。**照实记**：本票证据 = 上列消融与两路复算，
+  不是测试套件。给守卫补合成语料的单测已列入 Next Steps（与本票刻意不做）。
+- **行尾**：守卫 502/502 CRLF（`git diff --numstat` 为小改动 113/9）；`prd.md` / `notes.md` /
+  `implement.jsonl` 纯 LF。顺带实测：`.trellis/tasks/**/task.json` **行尾不统一**（T20 是 LF，
+  T19/T21/T22 是 CRLF），`implement.jsonl` 则一律 LF
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- **#675 切片 B**：47 处逐条分类并处置 —— 真过期的改 spec（`agent/scheduler.py` / `local_worker.py`
+  与 `.rs` / `test_agent.py` 需先决定「改指向新位置」还是「标注已移除」，**不臆造**），
+  仓外 / 运行时 / 示例的引入**带理由的豁免标记**。
+- **#675 切片 C**：分类干净后再决定门禁化与接 CI，并顺带决定**要不要给守卫加 pytest 单测**
+  （要加就针对**合成语料**，别断言本仓计数 —— 否则任何 spec 改动都会打红）。
+- **#673 切片 B**：**现在才可开工**（视野已补）—— 52 处去行号（43 符号锚 + 9 唯一内容锚）；
+  另 32 条内容歧义需先消歧，64 条无锚需基线兜底。
+- **#674**（仍开放）：journal 账本欠账 —— 14 个 session 的 Testing 段仍是骨架、Session 13 重复残块。
