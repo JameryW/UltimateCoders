@@ -176,6 +176,8 @@ fn subtask(
             completed_at: ts(1_700_000_000),
             result: None,
             usage: None,
+
+            review: None,
         }),
         dispatch_mode: DispatchMode::default(),
         effect_class: uc_types::EffectClass::default(),

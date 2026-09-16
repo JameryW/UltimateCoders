@@ -41,6 +41,7 @@ from ultimate_coders.agent.types import (
     DispatchMode,
     Subtask,
     SubtaskResult,
+    SubtaskReview,
     SubtaskStatus,
     SubtaskUsage,
     Task,
@@ -159,6 +160,10 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
             # gateway keeps execution_events.cost/tokens NULL rather than 0.
             if st.result.usage is not None:
                 entry["usage"] = st.result.usage.to_dict()
+            # T16 #661: same chokepoint argument as usage above — a verdict is
+            # emitted only when a review node actually produced one.
+            if st.result.review is not None:
+                entry["review"] = st.result.review.to_dict()
         subtasks.append(entry)
 
     payload: dict[str, Any] = {
@@ -2894,6 +2899,7 @@ class NatsWorker:
                         # writes. `result.usage` is None when no adapter
                         # reported one — never a zeroed block.
                         usage=result.usage,
+                        review=result.review,
                     ),
                     partial=True,
                 )
@@ -2923,6 +2929,7 @@ class NatsWorker:
         summary: str,
         dispatch_retry_count: int = 0,
         usage: SubtaskUsage | None = None,
+        review: SubtaskReview | None = None,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -2958,6 +2965,7 @@ class NatsWorker:
                 summary=summary,
                 success=status == "Completed",
                 usage=usage,
+                review=review,
             )
             if summary
             else None,

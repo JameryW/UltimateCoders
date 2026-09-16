@@ -887,6 +887,13 @@ impl From<Task> for TaskProto {
 
 impl From<Subtask> for SubtaskProto {
     fn from(st: Subtask) -> Self {
+        // T16 (#661): read the verdict *before* `st.result` is moved into the
+        // proto's `result` field below.
+        let review_json = st
+            .result
+            .as_ref()
+            .and_then(|r| r.review.as_ref())
+            .and_then(|v| serde_json::to_string(v).ok());
         Self {
             id: st.id.0,
             description: st.description,
@@ -916,6 +923,7 @@ impl From<Subtask> for SubtaskProto {
             required_capabilities: st.required_capabilities,
             agent_config_json: st.agent_config_json,
             steps: st.steps.iter().map(step_to_proto).collect(),
+            review_json,
         }
     }
 }
@@ -1299,6 +1307,12 @@ impl From<SubtaskProto> for Subtask {
                 completed_at: chrono::Utc::now(),
                 result: Some(r),
                 usage: None,
+                // T16 (#661): unparseable JSON means "no verdict", not "rejected".
+                // Fail-soft here: this feeds a display surface, not a gate.
+                review: proto
+                    .review_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<uc_types::SubtaskReview>(s).ok()),
             }),
             dispatch_mode: proto.dispatch_mode.as_deref().map_or_else(
                 uc_types::DispatchMode::default,
@@ -1525,6 +1539,8 @@ impl From<TaskEventProto> for AgentEvent {
                         } else {
                             Some(output)
                         },
+
+                        review: None,
                     },
                 }
             }
@@ -1709,6 +1725,7 @@ mod tests {
                 required_capabilities: vec![],
                 agent_config_json: None,
                 steps: vec![],
+                review_json: None,
             }],
         };
         let task: Task = proto.into();
@@ -2048,5 +2065,35 @@ mod tests {
                 "{event_type} must preserve the parent task_id"
             );
         }
+    }
+
+    /// T16 (#661): the verdict's **wire key names** are a cross-language
+    /// contract. The TS side reads `approved` / `issues` / `suggestions` off
+    /// `SubtaskDef.review`, which T6 deliberately kept for exactly this
+    /// producer — a rename here would silently blank the verdict in the TUI
+    /// without breaking any Rust test.
+    #[test]
+    fn review_json_uses_the_ts_field_names() {
+        let wire = serde_json::json!({
+            "approved": true,
+            "issues": ["missing tests"],
+            "suggestions": ["add fixture"],
+        });
+        let parsed: uc_types::SubtaskReview = serde_json::from_str(&wire.to_string()).unwrap();
+        assert!(parsed.approved);
+        assert_eq!(parsed.issues, vec!["missing tests".to_string()]);
+        assert_eq!(parsed.suggestions, vec!["add fixture".to_string()]);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), wire);
+
+        // Terser producers: a block carrying only the verdict is still valid,
+        // and the arrays default to empty rather than failing the parse.
+        let minimal: uc_types::SubtaskReview =
+            serde_json::from_str(r#"{"approved": false}"#).unwrap();
+        assert!(!minimal.approved);
+        assert!(minimal.issues.is_empty() && minimal.suggestions.is_empty());
+
+        // An empty object is not a verdict: `approved` is required, so this
+        // must fail rather than default to "rejected".
+        assert!(serde_json::from_str::<uc_types::SubtaskReview>("{}").is_err());
     }
 }

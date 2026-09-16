@@ -86,6 +86,9 @@ export interface TaskSync {
 		files?: string[];
 		dispatchMode?: string;
 		requiredCapabilities?: string[];
+		/** T16 #661 — review verdict, rendered by the TUI as-is. Absent = not
+		 *  reviewed (no verdict line), which is not the same as rejected. */
+		review?: { approved: boolean; issues: string[]; suggestions: string[] };
 		steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }>;
 	}>;
 }
@@ -1033,7 +1036,37 @@ export class GrpcBridge {
 
 	// ── Internal ───────────────────────────────────────────────
 
-	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; fileConstraints?: string[]; dispatchMode?: string; requiredCapabilities?: string[]; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
+	/**
+	 * Parse the review verdict carried on the gateway's `review_json`
+	 * (T16 #661, D14 #658).
+	 *
+	 * The TUI renders `SubtaskDef.review` directly; that field survived T6's
+	 * deletion of the TS review pipeline precisely so a future producer could
+	 * repopulate it (`orchestrator.ts:106-110`). Garbage → `undefined`
+	 * ("not reviewed"), **never** `{approved:false}` — a parse failure must not
+	 * put a ✗ on a subtask nobody reviewed.
+	 *
+	 * Takes `unknown` and narrows it here rather than trusting the generated
+	 * proto type: the TS stubs are produced by `protoc-gen-es` at build time
+	 * and are not committed, so a field added to `engine.proto` is not visible
+	 * to this file's type-checker until that step re-runs.
+	 */
+	function parseReviewJson(raw: unknown): { approved: boolean; issues: string[]; suggestions: string[] } | undefined {
+		if (typeof raw !== "string" || !raw) return undefined;
+		try {
+			const v = JSON.parse(raw);
+			if (!v || typeof v.approved !== "boolean") return undefined;
+			return {
+				approved: v.approved,
+				issues: Array.isArray(v.issues) ? v.issues.map(String) : [],
+				suggestions: Array.isArray(v.suggestions) ? v.suggestions.map(String) : [],
+			};
+		} catch {
+			return undefined;
+		}
+	}
+
+	private parseTaskFromProto(task: { id: string; description: string; status: string; projectId: string; subtasks: Array<{ id: string; description: string; status: string; dependsOn: string[]; assignedWorker?: string; result?: string; retryCount?: number; fileConstraints?: string[]; dispatchMode?: string; requiredCapabilities?: string[]; reviewJson?: string; steps?: Array<{ agent: string; prompt: string; agentConfigJson?: string; abortOnFailure?: boolean; retryCount?: number; retryDelayMs?: bigint; condition?: string; parallelGroup?: string }> }> }): TaskSync {
 		return {
 			taskId: task.id,
 			description: task.description,
@@ -1050,6 +1083,8 @@ export class GrpcBridge {
 				dependsOn: (st.dependsOn ?? []).map((d: string) => String(d).trim()).filter(Boolean),
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				// T16 #661: no verdict key ⇒ the UI shows no verdict line.
+				review: parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
 				retryCount: st.retryCount,
 				files: st.fileConstraints,
 				dispatchMode: st.dispatchMode,
@@ -1087,6 +1122,8 @@ export class GrpcBridge {
 				dependsOn: (st.dependsOn ?? []).map((d: string) => String(d).trim()).filter(Boolean),
 				assignedWorker: st.assignedWorker,
 				result: st.result,
+				// T16 #661: no verdict key ⇒ the UI shows no verdict line.
+				review: parseReviewJson((st as { reviewJson?: unknown }).reviewJson),
 				retryCount: st.retryCount,
 				files: st.fileConstraints,
 				dispatchMode: st.dispatchMode,

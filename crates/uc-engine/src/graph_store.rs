@@ -3184,6 +3184,8 @@ mod tests {
                 completed_at: chrono::DateTime::from_timestamp(1717171717, 0).unwrap(),
                 result: None,
                 usage: None,
+
+                review: None,
             }),
             dispatch_mode: uc_types::DispatchMode::default(),
             effect_class: uc_types::EffectClass::default(),

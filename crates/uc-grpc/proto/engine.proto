@@ -486,6 +486,13 @@ message SubtaskProto {
     // Distinct from dispatch_retry_count (dispatch-level). Populated by worker
     // (worker.py sets result.retry_count) and surfaced to TUI for retry×N display.
     optional uint32 retry_count = 15;
+    // Review verdict from a review node, as a JSON string (T16 #661, D14 #658).
+    // Shape mirrors the TS `SubtaskDef.review` the TUI already renders:
+    //   {"approved": bool, "issues": string[], "suggestions": string[]}
+    // A JSON string (not a nested message) keeps this additive and lets the TS
+    // bridge reject garbage as "no verdict" instead of half-populating a
+    // record. Absent = not reviewed, which is NOT the same as rejected.
+    optional string review_json = 16;
 }
 
 // A single step in a subtask's multi-agent workflow.

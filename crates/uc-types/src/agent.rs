@@ -229,6 +229,15 @@ pub struct SubtaskResult {
     /// "samples reported / samples total" rather than substituting 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<SubtaskUsage>,
+    /// Review verdict, when this result came from a review node (T16 #661).
+    ///
+    /// Additive and optional for the same reason as `usage`: nothing produced
+    /// a verdict between T6's deletion and now. **Absent means "not
+    /// reviewed", which is not the same as "reviewed and approved"** — the UI
+    /// must render no verdict line when the key is missing rather than
+    /// defaulting `approved` to `false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<SubtaskReview>,
 }
 
 /// Token / cost usage attached to a subtask result (T15 #660, D13 #657).
@@ -282,6 +291,27 @@ impl SubtaskUsage {
             (input, output) => Some((input.unwrap_or(0) + output.unwrap_or(0)) as i64),
         }
     }
+}
+
+/// A review verdict attached to a subtask result (T16 #661, D14 #658).
+///
+/// Field names mirror the TS `SubtaskDef.review`
+/// (`packages/uc-orchestrator/src/orchestrator/orchestrator.ts:110`)
+/// **verbatim**: T6 (#642) deleted the TS review pipeline but deliberately kept
+/// that field "for the future Rust-side pipeline to repopulate", and the UI
+/// already renders it. Renaming anything here is a cross-language contract
+/// change that silently blanks the verdict in the TUI.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SubtaskReview {
+    /// Whether the reviewer approved the work under review.
+    pub approved: bool,
+    /// Problems the reviewer found. Absent in older records — the TS side
+    /// reads them with `?? []` for exactly that reason.
+    #[serde(default)]
+    pub issues: Vec<String>,
+    /// Non-blocking improvements. Approved reviews can carry these too.
+    #[serde(default)]
+    pub suggestions: Vec<String>,
 }
 
 /// A file change produced by a worker.
@@ -735,6 +765,8 @@ mod tests {
             completed_at: chrono::DateTime::from_timestamp(1_757_894_400, 0).unwrap(),
             result: None,
             usage: None,
+
+            review: None,
         };
         let bare = serde_json::to_string(&result).unwrap();
         assert!(

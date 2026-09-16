@@ -155,6 +155,15 @@ pub struct NatsSubtaskUpdate {
     /// mirrors them verbatim.
     #[serde(default)]
     pub usage: Option<uc_types::SubtaskUsage>,
+    /// Review verdict reported by a reviewer worker (T16 #661).
+    ///
+    /// Same additive discipline as `usage`: absent means "no verdict", and a
+    /// verdict is only ever produced by a node that actually ran a review.
+    /// Shares `uc_types::SubtaskReview` with the domain type so the wire keys
+    /// (which mirror the TS `SubtaskDef.review`) cannot drift from the field
+    /// names the gateway carries.
+    #[serde(default)]
+    pub review: Option<uc_types::SubtaskReview>,
     /// Attempt number the reporting worker executed under (T4 #640) — the
     /// worker echoes the `retry_count` from the dispatch envelope. Stamped
     /// only on worker-sourced partial updates; `None` = legacy publisher
@@ -185,6 +194,7 @@ fn nats_subtask_to_domain(task_id: &str, update: &NatsSubtaskUpdate) -> uc_types
             completed_at: chrono::Utc::now(),
             result: Some(summary.clone()),
             usage: update.usage.clone(),
+            review: update.review.clone(),
         });
 
     uc_types::Subtask {
@@ -1640,6 +1650,8 @@ impl TaskStore {
                         // terminal event's cost/tokens non-NULL. Absent stays
                         // absent — nothing is synthesized here.
                         usage: subtask_update.usage.clone(),
+
+                        review: None,
                     });
                 }
             } else {
@@ -5675,6 +5687,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -5808,6 +5822,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -5895,6 +5911,8 @@ mod tests {
                 result: Some("done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -6010,6 +6028,8 @@ mod tests {
                 result: Some("Done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -6047,6 +6067,8 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+
+                    review: None,
                 },
                 NatsSubtaskUpdate {
                     subtask_id: "st-b".to_string(),
@@ -6057,6 +6079,8 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+
+                    review: None,
                 },
             ],
             result: None,
@@ -6076,6 +6100,8 @@ mod tests {
                 result: Some("first done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6098,6 +6124,8 @@ mod tests {
                 result: Some("second done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6127,6 +6155,8 @@ mod tests {
                 result: Some("boom".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6157,6 +6187,8 @@ mod tests {
                 result: Some("done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6193,6 +6225,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6213,6 +6247,8 @@ mod tests {
                 result: Some("stale attempt 0 result".to_string()),
                 attempt_id: Some(0),
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6251,6 +6287,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6270,6 +6308,8 @@ mod tests {
                 result: Some("current attempt result".to_string()),
                 attempt_id: Some(1),
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6308,6 +6348,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6328,6 +6370,8 @@ mod tests {
                 result: Some("legacy result".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -6356,6 +6400,8 @@ mod tests {
                 result: Some("snapshot result".to_string()),
                 attempt_id: Some(0),
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -7297,6 +7343,8 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+
+                    review: None,
                 }],
                 result: None,
             };
@@ -7389,6 +7437,8 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+
+                    review: None,
                 }],
                 result: None,
             };
@@ -7713,6 +7763,8 @@ mod tests {
                 result: Some("Work done".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -7750,6 +7802,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -7792,6 +7846,8 @@ mod tests {
                 result: Some("error: something broke".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -7839,6 +7895,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -7875,6 +7933,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -8720,6 +8780,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         };
@@ -8761,6 +8823,8 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -8970,6 +9034,8 @@ mod tests {
                 result: Some("ok".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -8991,6 +9057,8 @@ mod tests {
                 result: Some("boom".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });
@@ -9044,6 +9112,8 @@ mod tests {
                 result: Some("r".to_string()),
                 attempt_id: None,
                 usage: None,
+
+                review: None,
             }],
             result: None,
         });

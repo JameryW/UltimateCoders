@@ -23,6 +23,7 @@ from ultimate_coders.agent.types import (
     FileChange,
     Subtask,
     SubtaskResult,
+    SubtaskReview,
     SubtaskStatus,
     SubtaskUsage,
     Task,
@@ -818,3 +819,66 @@ def test_checkpoint_roundtrip_without_usage_stays_none():
     # A checkpoint written before the field existed has no key at all.
     del data["subtasks"][0]["result"]["usage"]
     assert Task.from_dict(data).subtasks[0].result.usage is None
+
+
+# ── T16 (#661): the review verdict ─────────────────────────────────────────
+
+
+def test_subtask_review_round_trips_and_absent_is_not_rejected() -> None:
+    """A verdict is a value; a missing verdict is NOT `approved=False`.
+
+    The UI renders a ✗ for `approved=False`, so turning a parse failure or an
+    absent key into that would accuse a subtask nobody reviewed.
+    """
+    r = SubtaskReview(
+        approved=True, issues=["missing tests"], suggestions=["add fixture"]
+    )
+    assert r.to_dict() == {
+        "approved": True,
+        "issues": ["missing tests"],
+        "suggestions": ["add fixture"],
+    }
+    assert SubtaskReview.from_dict(r.to_dict()) == r
+
+    # Garbage and partial blocks are "no verdict", never a fabricated one.
+    assert SubtaskReview.from_dict("nope") is None
+    assert SubtaskReview.from_dict({"approved": "yes"}) is None
+    assert SubtaskReview.from_dict({}) is None
+
+    # Only the verdict is required; the arrays default to empty.
+    partial = SubtaskReview.from_dict({"approved": False})
+    assert partial is not None
+    assert partial.approved is False
+    assert partial.issues == [] and partial.suggestions == []
+
+
+def test_task_checkpoint_carries_the_review_verdict() -> None:
+    """The checkpoint hop, same argument as T15's usage block.
+
+    A worker that restarts and re-publishes a full snapshot would otherwise
+    drop the verdict it had already collected.
+    """
+    task = Task(
+        id="t1",
+        subtasks=[
+            Subtask(
+                id="s1",
+                result=SubtaskResult(
+                    subtask_id="s1",
+                    review=SubtaskReview(approved=False, issues=["x"]),
+                ),
+            )
+        ],
+    )
+    data = task.to_dict()
+    assert data["subtasks"][0]["result"]["review"] == {
+        "approved": False,
+        "issues": ["x"],
+        "suggestions": [],
+    }
+    back = Task.from_dict(data)
+    assert back.subtasks[0].result.review == SubtaskReview(approved=False, issues=["x"])
+
+    # A checkpoint written before the field existed has no key at all.
+    del data["subtasks"][0]["result"]["review"]
+    assert Task.from_dict(data).subtasks[0].result.review is None

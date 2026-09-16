@@ -863,6 +863,11 @@ fn json_to_subtask_proto(v: &serde_json::Value) -> SubtaskProto {
             .get("retry_count")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32),
+        // T16 (#661): the dashboard snapshot carries the verdict as the same
+        // nested object the TUI renders; re-encode it so both the gRPC and the
+        // dashboard paths hand the bridge an identical shape. Absent = not
+        // reviewed (never synthesized).
+        review_json: v.get("review").map(|r| r.to_string()),
         required_capabilities: v
             .get("required_capabilities")
             .and_then(|v| v.as_array())

@@ -150,6 +150,55 @@ class SubtaskUsage:
 
 
 @dataclass
+class SubtaskReview:
+    """A review verdict attached to a subtask result (T16 #661, D14 #658).
+
+    Field names mirror the TS ``SubtaskDef.review`` **verbatim**: T6 #642
+    deleted the TS review pipeline but deliberately kept that field so a future
+    producer could repopulate it, and the TUI already renders it. Renaming
+    anything here blanks the verdict in the UI.
+
+    ``None`` on ``SubtaskResult.review`` means "not reviewed", which is **not**
+    the same as ``approved=False`` — an unreviewed subtask must render no
+    verdict line at all.
+    """
+
+    approved: bool = False
+    issues: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "approved": self.approved,
+            "issues": list(self.issues),
+            "suggestions": list(self.suggestions),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> SubtaskReview | None:
+        """Tolerant of garbage: a malformed block is "no verdict".
+
+        Returns ``None`` (not ``approved=False``) when the block is unusable —
+        inventing a rejection out of a parse failure would put a ✗ on a
+        subtask nobody ever reviewed.
+        """
+        if not isinstance(data, dict):
+            return None
+        approved = data.get("approved")
+        if not isinstance(approved, bool):
+            return None
+        issues = data.get("issues")
+        suggestions = data.get("suggestions")
+        return cls(
+            approved=approved,
+            issues=[str(i) for i in issues] if isinstance(issues, list) else [],
+            suggestions=(
+                [str(s) for s in suggestions] if isinstance(suggestions, list) else []
+            ),
+        )
+
+
+@dataclass
 class SubtaskResult:
     """Result from a completed subtask."""
     subtask_id: str = ""
@@ -172,6 +221,12 @@ class SubtaskResult:
     # D13 forbids. Only a path that actually ran an agent and got usage from it
     # may set this.
     usage: SubtaskUsage | None = None
+    # Review verdict from a review node (T16 #661).
+    #
+    # ``None`` means "not reviewed" — never fabricate a verdict, for the same
+    # reason D13 forbids a zeroed usage block: the UI would render a ✗ that
+    # nobody issued.
+    review: SubtaskReview | None = None
 
 
 @dataclass
@@ -380,6 +435,11 @@ class Task:
                         "usage": (
                             st.result.usage.to_dict() if st.result.usage else None
                         ),
+                        # T16 #661: same hop, same reason as the block above —
+                        # a checkpoint is a place a collected verdict can die.
+                        "review": (
+                            st.result.review.to_dict() if st.result.review else None
+                        ),
                     } if st.result else None,
                 }
                 for st in self.subtasks
@@ -447,6 +507,11 @@ class Task:
                     usage=(
                         SubtaskUsage.from_dict(rd["usage"])
                         if rd.get("usage") is not None
+                        else None
+                    ),
+                    review=(
+                        SubtaskReview.from_dict(rd["review"])
+                        if rd.get("review") is not None
                         else None
                     ),
                 )

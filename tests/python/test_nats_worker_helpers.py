@@ -1630,3 +1630,33 @@ def test_task_update_payload_omits_usage_when_not_reported():
     # columns NULL (and withdraws the provenance claim).
     st.result.usage = SubtaskUsage()
     assert _make_task_update_payload(task, partial=True)["subtasks"][0]["usage"] == {}
+
+def test_task_update_payload_emits_review_only_when_a_verdict_exists() -> None:
+    """T16 #661: the verdict rides the same single chokepoint as T15's usage.
+
+    The key names are the TS `SubtaskDef.review` ones, and an absent verdict
+    must produce NO key — the UI distinguishes "not reviewed" from "rejected"
+    by presence, exactly like `usage_reported` does for cost/tokens.
+    """
+    from ultimate_coders.agent.types import SubtaskReview
+
+    reviewed = Task(
+        id="t-review",
+        subtasks=[
+            Subtask(
+                id="s1",
+                result=SubtaskResult(
+                    subtask_id="s1",
+                    review=SubtaskReview(approved=True, suggestions=["nice"]),
+                ),
+            )
+        ],
+    )
+    entry = _make_task_update_payload(reviewed, partial=True)["subtasks"][0]
+    assert entry["review"] == {"approved": True, "issues": [], "suggestions": ["nice"]}
+
+    unreviewed = Task(
+        id="t-plain",
+        subtasks=[Subtask(id="s1", result=SubtaskResult(subtask_id="s1"))],
+    )
+    assert "review" not in _make_task_update_payload(unreviewed, partial=True)["subtasks"][0]
