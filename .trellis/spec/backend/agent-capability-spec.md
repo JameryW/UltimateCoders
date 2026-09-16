@@ -717,7 +717,7 @@ Step events are published as `subtask_progress` events (see [Contract: subtask_p
 - `step_agent`: the agent name (`"claude-code"` or `"codex"`)
 - `worker_id`: the executing worker's ID
 
-**Rust routing** (`uc-engine/src/events.rs:56-72`): `AgentEventType::SubtaskProgress` carries `step_index`, `step_total`, `step_agent`, `step_status`, `step_summary` as `Option` fields. The `nats_event_to_agent_event` match arm in `uc-grpc/server.rs` deserializes these from the NATS payload. `apply_event_to_snapshot` (checkpoint.rs) treats `SubtaskProgress` as a no-op (transient — does not mutate subtask lifecycle state).
+**Rust routing** (`crates/uc-engine/src/events.rs:56-72`): `AgentEventType::SubtaskProgress` carries `step_index`, `step_total`, `step_agent`, `step_status`, `step_summary` as `Option` fields. The `nats_event_to_agent_event` match arm in `uc-grpc/server.rs` deserializes these from the NATS payload. `apply_event_to_snapshot` (checkpoint.rs) treats `SubtaskProgress` as a no-op (transient — does not mutate subtask lifecycle state).
 
 > **Gotcha**: `step_index` in the Python payload is 0-based (`worker.py:1321`), but the Rust `AgentEventType::SubtaskProgress` doc comment says "1-based" (`events.rs:62`). The proto serialization passes the value through unchanged — the TUI/dashboard should treat it as the Python worker emits it (0-based). This is a known doc-comment discrepancy.
 
