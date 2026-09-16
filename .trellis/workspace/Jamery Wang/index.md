@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-09-15
+- **Total Sessions**: 16
+- **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~886 | Active |
+| `journal-1.md` | ~1137 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-09-16 | T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路 | `90f756d`, `f5ef707`, `89a9178` | `main` |
 | 15 | 2026-09-15 | T13: 统一两份图投影的依赖感知规则（#655） | `5bae604` | `main` |
 | 14 | 2026-09-15 | Verify the T12 dispatch plane on a live broker — affinity placement was never active | `78c0d1d`, `7f69e62`, `080e747`, `07064bf`, `82ea112`, `db7c289` | `main` |
 | 13 | 2026-09-15 | T12 affinity placement delivered (#654) | `b3aa299` | `main` |

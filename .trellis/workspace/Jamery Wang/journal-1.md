@@ -1034,3 +1034,104 @@ source-B 导入把阻塞的 Pending 节点发布成 READY；三条投影路径�
 - **T16（#661）**：首个动作仍是决定「谁插入 review 节点」（拆解期 vs 显式依赖边）—— D14 刻意留白。
 - **D15（#665）**：等裁决；裁决后要补一条能区分「写入被拒绝」与「根本没送达」的测试。
 - 环境层面未变：本地 live PG 在 `wsl.exe` 解禁前实质不可用；`target/` 仍在 C:。
+
+
+## Session 16: T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路
+
+**Date**: 2026-09-16
+**Task**: T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路
+**Branch**: `main`
+
+### Summary
+
+修 T16(#661)：graph_nodes.type 补写者；review 能力门 fail-closed（UC_CAP_REVIEW opt-in）表达独立性；review 结论经 SubtaskResult.review 跨 Rust/proto/Python/TS 送达 TUI。顺带自我更正上轮「本机无 protoc」的误判。
+
+### Main Changes
+
+## 背景与侦察结论
+
+T16（#661）是 D14（#658，「review 是图上节点」）的实现票。开工前的侦察推翻/修正了票面与决议的**三处**陈述，这些更正是本票最值钱的产出：
+
+1. **`SubtaskResult.review` 并非「已刻意保留」** —— 只有 TS 侧 `SubtaskDef.review`（`orchestrator.ts:106-110`）在 T6（#642）后存活；Rust `SubtaskResult`（`uc-types/src/agent.rs:210-232`）与 Python `SubtaskResult`（`types.py:153-174`）**都没有**任何 review 字段。D14 说「刻意保留」对 TS 成立，对 Rust/Python 不成立。⇒ S4 从「填充一个已有字段」变成「造一条跨四语言的通路」。
+2. **`graph_nodes.type` 有列、有 DEFAULT、无写者** —— 唯一 INSERT 点（`graph_store.rs:1030/1038`，shadow 与非 shadow 两个变体）的列清单里**没有 `type`**，于是所有行恒为 `'subtask'`。D14 的「零迁移」成立，「零工作量」不成立：得先给它一个写者。
+3. **`worker_epoch` 不是 worker 身份** —— 它是 per-attempt 单调栅栏计数器（`SELECT COALESCE(MAX(worker_epoch),0)+1`，`graph_store.rs:1411`），且 Python 侧恒发 `""`。票面验收里「同一 epoch 不得自审」**字面上不可实现**，只能按语义读作「产出被审结果的 worker 不得认领它的 review」。
+
+## 决定性发现：独立性无法用「能力 + affinity」表达
+
+票面希望靠既有 placement 机制表达「review 必须由产出者之外的 worker 执行」。实测三条证据否掉了这条路：
+
+- `placement.rs:7` 明写 affinity 是 **preference, never a gate**（偏好，永不作门禁）；
+- `dispatch_gate`（`worker_service.rs:262`）只按 capability + scope 过滤，**没有任何排除参数**；
+- 更关键的是 `worker.py:399` 把 `"review"` 放进了**每一个** worker 的默认能力表 —— 于是「每个 worker 都能审」，「独立」无从谈起。
+
+票面同时禁止给 `dispatch_gate` 加排除原语（要求先回开 D14）。在不新增机制的前提下，选择的落法是 **能力门 fail-closed**：
+
+- 把 `review` 从默认能力表里摘掉，改为 `UC_CAP_REVIEW` 显式 opt-in；
+- 于是**未 opt-in 的产出者**根本过不了 review 节点的 gate，节点停在 `PENDING`；
+- 节点标签由能力**推导**（`node_type_for(caps)`）而非声明，保证「自称 review 节点」与「必须要求路由到 reviewer 的能力」不能脱钩。
+
+**残余缺口如实记账**：显式同时 opt-in 两种角色的 worker 仍可自审。这个洞不隐瞒。
+
+## S1–S4 落点
+
+**S1 图平面**（`crates/uc-engine/src/graph_store.rs`，+124/-5）：新增 `NODE_TYPE_SUBTASK` / `NODE_TYPE_REVIEW` / `REVIEW_CAPABILITY` 常量与 `node_type_for()`；`NodeRow` 增 `node_type`；`project_task`、`project_ts_task` 两条投影路径与两个 INSERT 变体（shadow 侧加 `type = EXCLUDED.type`）都补上 `type`，bind 链加 `.bind(&node.node_type)`。uc-engine lib 443 → 446（+3 单测）。
+
+**S3 独立性**（`python/ultimate_coders/agent/worker.py`）：`review` 移出默认能力表，改 `UC_CAP_REVIEW` opt-in，与 `UC_CAP_BROWSER` / `UC_CAP_DEBUG` 同形。pytest 1118 → 1120。
+
+**S4 结论通路**（跨 5 个文件面）：
+- `uc-types`：新 `SubtaskReview { approved, issues, suggestions }` + `SubtaskResult.review: Option<SubtaskReview>`（`skip_serializing_if` 缺省不序列化）+ `lib.rs` 根 re-export（本仓铁律）。uc-types 43 → 47。
+- wire：`NatsSubtaskUpdate.review`（与 T15 的 usage 同一条**加性**纪律，不 bump `contract_version`）。
+- proto：`optional string review_json = 16` —— 裁决走 JSON 字符串而非嵌套 message，保持加性，且让消费者能把「垃圾」判成「无裁决」而不是半填充记录。
+- `conversions.rs` 双向；读侧注释写明「unparseable JSON 意味着无裁决，不是被否决」。
+- `dashboard_service.rs` 快照补 `review_json`。
+- Python `SubtaskReview`（`from_dict` **容错**：非 dict / `approved` 非 bool / `{}` 一律回 `None`）+ checkpoint 往返 + `nats_worker.py` payload **单一收口点**（仅在非 None 时发键）。
+- TS `grpc-bridge.ts`：`parseReviewJson()` 私有助手 + `SubtaskDef.review`，两个对称映射点都接。UI **无需改动**即可显示。
+
+**「缺席不是否决」贯穿每一跳**：Rust `Option` / proto `optional` / Python 容错 `from_dict` / TS `parseReviewJson`，任何一跳拿不到裁决就是**没有裁决行**，绝不写 `approved: false`。这与 D13 对 usage 的口径同源。
+
+## 测试
+
+- Rust golden 测试钉住 `review_json` 的**跨语言 key 名**（`approved` / `issues` / `suggestions`）—— 因为改名会让 TUI 裁决行**静默变空**而不打红任何 Rust 测试；并断言缺 `approved` 的 JSON **必须解析失败**。
+- Python 3 条：verdict 往返、垃圾/部分块容错、checkpoint 往返 + payload 仅在存在时发键。
+
+## 门禁
+
+`cargo fmt` clean；`uc-types` clippy `--all-targets` clean；`uc-engine` clippy `--lib` clean；`cargo check -p uc-engine --all-targets` clean；uc-engine lib **446**；uc-types **47**；uc-grpc `--all-features` **238**；pytest **1123 / 10 skipped**；ruff clean。CI：`f5ef707` 的 **Rust CI 8/8 绿**。
+
+## 两次归因（都不是本票引入）
+
+- `cargo clippy -p uc-engine --all-targets` 在 `graph_store_integration` 上报 `can't find crate`：**把文件取出、`git checkout --` 复原、在干净基线上跑同一命令，同样失败**，再复原。属本机既有环境问题。
+- `cargo check --workspace --all-targets --all-features` 报 `worker_service_server` 缺失 + `rustc` `STATUS_STACK_BUFFER_OVERRUN (0xc0000409)`：读 `build.rs` 后归因到既有的 `--all-targets` 破损，非本票。
+
+## Correction：自我推翻的一个错误结论
+
+S1–S3 交付后，我曾在提交信息、#661 评论与长期记忆里写「本机无 protoc ⇒ uc-grpc / `--all-features` 不可编译 ⇒ S4 只能押后到 CI」。**这是错的**：`crates/uc-grpc/build.rs` 在 `PROTOC` 未设时会回落到 `protoc-bin-vendored::protoc_bin_path()`，而 `protoc-bin-vendored-win32-3.2.0` 就在本地 registry 里；`cargo check -p uc-grpc` 实测 **50.14s 编过**。
+
+错因：我拿 `which protoc`（PATH 事实）当成了构建事实。**教训：不要把间接信号升级成事实 —— 读 `build.rs`，或者干脆跑一次构建。** 更正已落到 follow-up 提交信息、#661 评论和长期记忆三处，不只留在对话里。
+
+## 局限（如实记账）
+
+- **TS 那一跳本地零覆盖**：`bun test` 在本机稳定段错误（Bun 1.3.14，`Segmentation fault at address 0x5`，两次复现同形，Bun 自报「this indicates a bug in Bun, not your code」），且 `grpc-bridge.ts` 没有既有测试文件。⇒ 该跳由 CI 的 **TypeScript CI** 验证，不声明本地已验证。
+- **独立性有残余缺口**：显式双重 opt-in 的 worker 仍可自审（见上）。
+- 票面验收「同一 epoch 不得自审」按语义实现为「产出者不得认领其 review」。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `90f756d` | (see git log) |
+| `f5ef707` | (see git log) |
+| `89a9178` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
