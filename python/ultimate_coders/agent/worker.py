@@ -396,7 +396,17 @@ class Worker:
 
         ponytail: simple string matching — upgrade path is tool introspection.
         """
-        caps = ["code", "search", "memory", "test", "decompose", "review"]
+        # T16 (#661): "review" is deliberately NOT a default capability.
+        #
+        # D14 requires that the worker which produced a result must not also
+        # review it. The dispatch side has no exclusion primitive (see
+        # research/notes.md §3), so independence is enforced by the capability
+        # gate instead: a review node requires the "review" capability, and a
+        # worker that never opted in cannot pass that gate. Advertising it by
+        # default would let every producing worker claim its own review, i.e.
+        # turn review into self-assessment with no code change anywhere else.
+        # Opt in with UC_CAP_REVIEW (same pattern as UC_CAP_BROWSER/DEBUG).
+        caps = ["code", "search", "memory", "test", "decompose"]
         cfg = self._sandbox_config
         if cfg.mcp_configs:
             caps.append("mcp")
@@ -438,7 +448,13 @@ class Worker:
         # Opt-in capability flags for tools whose server bodies aren't implemented here.
         # ponytail: declare-only extension point — set UC_CAP_BROWSER/UC_CAP_DEBUG to advertise
         # the capability when an external MCP server provides it.
-        for flag, cap in (("UC_CAP_BROWSER", "browser"), ("UC_CAP_DEBUG", "debug")):
+        for flag, cap in (
+            ("UC_CAP_BROWSER", "browser"),
+            ("UC_CAP_DEBUG", "debug"),
+            # T16 (#661): reviewer designation is opt-in — see the note on the
+            # default capability list above.
+            ("UC_CAP_REVIEW", "review"),
+        ):
             if os.environ.get(flag):
                 caps.append(cap)
         if cfg.agent_name:

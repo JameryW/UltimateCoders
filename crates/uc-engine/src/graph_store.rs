@@ -249,6 +249,10 @@ pub struct NodeRow {
     /// D4 #633 Q2: governs local-execution eligibility on transport loss.
     /// Legacy projections default to 'requires_worker'.
     pub effect_class: String,
+    /// T16 #661: the `graph_nodes.type` label. Written, never read — see
+    /// [`node_type_for`]. Both projections derive it the same way so the two
+    /// seeding paths cannot disagree about what a node is.
+    pub node_type: String,
 }
 
 #[derive(Debug, Clone)]
@@ -277,6 +281,41 @@ pub struct CompletionRow {
 /// path (`upsert_task_shadow`).
 pub fn graph_scope_is_valid(project_id: &str) -> bool {
     !project_id.trim().is_empty()
+}
+
+/// Node type labels written to `graph_nodes.type` (T16 #661, D14 #658).
+///
+/// D14 decided review is a *node*; this label is the whole of that
+/// modelling. ⚠️ Honest premise carried over from D14: **the column is
+/// write-only today** — nothing SELECTs it and no branch keys off it — so
+/// writing `review` changes no behaviour by itself. The behaviour (ordering,
+/// routing, fencing) comes from the dependency edges and the capability gate.
+pub const NODE_TYPE_SUBTASK: &str = "subtask";
+pub const NODE_TYPE_REVIEW: &str = "review";
+
+/// Capability that marks a node as a review node (T16 #661).
+///
+/// Shared with the Python side by convention, not by code: the worker must
+/// advertise this capability to be gated onto a review node. Removing it from
+/// the worker's *default* capability list is what keeps the producing worker
+/// from claiming its own review (see research/notes.md §3).
+pub const REVIEW_CAPABILITY: &str = "review";
+
+/// Derive the `graph_nodes.type` label from a node's required capabilities.
+///
+/// This is T16's answer to the question D14 left open — "who inserts review
+/// nodes" — resolved as option (b): whoever wants a review writes a node
+/// carrying the `review` capability plus a dependency edge on the node under
+/// review. Deriving the label from the capability, rather than adding a
+/// declared `type` field to every subtask shape, keeps **one** source of
+/// truth: a node cannot claim to be a review node while failing to require
+/// the capability that routes it to a reviewer.
+pub fn node_type_for(required_capabilities: &[String]) -> &'static str {
+    if required_capabilities.iter().any(|c| c == REVIEW_CAPABILITY) {
+        NODE_TYPE_REVIEW
+    } else {
+        NODE_TYPE_SUBTASK
+    }
 }
 
 /// A Task projected into the five-table shape. Produced identically from the
@@ -364,6 +403,7 @@ pub fn project_task(task: &Task) -> GraphProjection {
             ),
             required_capabilities: serde_json::json!(st.required_capabilities),
             effect_class: st.effect_class.as_str().to_string(),
+            node_type: node_type_for(&st.required_capabilities).to_string(),
         });
         let worker_id = st
             .result
@@ -498,6 +538,8 @@ pub fn project_ts_task(task: &TsPersistedTask) -> GraphProjection {
                 .effect_class
                 .clone()
                 .unwrap_or_else(|| "requires_worker".to_string()),
+            node_type: node_type_for(&st.required_capabilities.clone().unwrap_or_default())
+                .to_string(),
         });
         let (attempt, completion) = attempt_and_completion(
             &graph_id,
@@ -1027,16 +1069,17 @@ impl GraphStore {
         stats.graphs = res.rows_affected();
 
         let node_sql = if shadow {
-            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class)
-               VALUES ($1, $2, $3, $4, $5, $6)
+            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class, type)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                ON CONFLICT (node_id, graph_id) DO UPDATE SET
                    state = EXCLUDED.state,
                    dependencies = EXCLUDED.dependencies,
                    required_capabilities = EXCLUDED.required_capabilities,
-                   effect_class = EXCLUDED.effect_class"#
+                   effect_class = EXCLUDED.effect_class,
+                   type = EXCLUDED.type"#
         } else {
-            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class)
-               VALUES ($1, $2, $3, $4, $5, $6)
+            r#"INSERT INTO graph_nodes (graph_id, node_id, state, dependencies, required_capabilities, effect_class, type)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                ON CONFLICT (node_id, graph_id) DO NOTHING"#
         };
         for node in &p.nodes {
@@ -1047,6 +1090,7 @@ impl GraphStore {
                 .bind(&node.dependencies)
                 .bind(&node.required_capabilities)
                 .bind(&node.effect_class)
+                .bind(&node.node_type)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| EngineError::StorageError(format!("node insert: {}", e)))?;
@@ -3353,6 +3397,81 @@ mod tests {
     }
 
     /// T13 (#655): the invariant the test above *claims* in its comment —
+
+    // ── T16 (#661): review is a node — `graph_nodes.type` gets its writer ──
+    //
+    // Reminder carried from D14: the `type` column is **write-only**. These
+    // tests pin the label, not a behaviour — the behaviour (ordering, routing,
+    // fencing) comes from dependency edges + the capability gate and is covered
+    // elsewhere.
+
+    #[test]
+    fn node_type_is_review_only_when_the_review_capability_is_required() {
+        // The (b) convention: a node is a review node iff it *requires* the
+        // capability that routes it to a reviewer. Anything else is a plain
+        // subtask — including a node merely *named* "review" (see
+        // `sample_task`, whose f2 is described as "review" but requires
+        // nothing, which is exactly the "forgot to declare" case that (b)
+        // leaves to convention).
+        let caps = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        assert_eq!(node_type_for(&caps(&["review"])), NODE_TYPE_REVIEW);
+        assert_eq!(node_type_for(&caps(&["code", "review"])), NODE_TYPE_REVIEW);
+        assert_eq!(node_type_for(&caps(&["code"])), NODE_TYPE_SUBTASK);
+        assert_eq!(node_type_for(&caps(&["rust"])), NODE_TYPE_SUBTASK);
+        assert_eq!(node_type_for(&[]), NODE_TYPE_SUBTASK);
+        // Exact match, not substring / case-insensitive: a capability named
+        // "code-review" must not silently turn a coding node into a review one.
+        assert_eq!(node_type_for(&caps(&["code-review"])), NODE_TYPE_SUBTASK);
+        assert_eq!(node_type_for(&caps(&["Review"])), NODE_TYPE_SUBTASK);
+    }
+
+    #[test]
+    fn rust_projection_labels_a_review_capability_node_as_review() {
+        let mut task = sample_task();
+        // f2 is *described* as "review" but declares no capability; declaring
+        // it is what makes it a review node under (b).
+        task.subtasks[1].required_capabilities = vec![REVIEW_CAPABILITY.to_string()];
+        let p = project_task(&task);
+        assert_eq!(p.nodes[0].node_type, NODE_TYPE_SUBTASK);
+        assert_eq!(p.nodes[1].node_type, NODE_TYPE_REVIEW);
+        // The label is derived, never declared ⇒ it cannot drift from the
+        // capability that actually routes the node. Asserting both in one test
+        // is the point: a node must not be able to claim to be a review node
+        // while failing to require the reviewer capability.
+        assert_eq!(
+            p.nodes[1].required_capabilities,
+            serde_json::json!([REVIEW_CAPABILITY])
+        );
+    }
+
+    #[test]
+    fn both_projections_label_review_nodes_the_same_way() {
+        // T13's lesson applied to the label: two seeding paths, one rule. A
+        // TS-authored review node and a Rust-authored one must agree, or the
+        // durable plane inherits a graph whose annotation depends on which
+        // door it came in.
+        let json = r#"{
+            "id": "uc-1-t1",
+            "status": "in_progress",
+            "projectId": "p1",
+            "savedAt": 1717171500000,
+            "subtasks": [
+                {"id": "f1", "status": "completed", "dependsOn": [],
+                 "requiredCapabilities": ["rust"]},
+                {"id": "f2", "status": "pending", "dependsOn": ["f1"],
+                 "requiredCapabilities": ["review"]},
+                {"id": "f3", "status": "pending", "dependsOn": ["f1"]}
+            ]
+        }"#;
+        let ts: TsPersistedTask = serde_json::from_str(json).unwrap();
+        let p = project_ts_task(&ts);
+        assert_eq!(p.nodes[0].node_type, NODE_TYPE_SUBTASK);
+        assert_eq!(p.nodes[1].node_type, NODE_TYPE_REVIEW);
+        // Legacy TS snapshots carry no requiredCapabilities at all ⇒ subtask,
+        // never review. Same discipline as D13's "absent ≠ zero": a `None`
+        // default must not masquerade as a declared intent.
+        assert_eq!(p.nodes[2].node_type, NODE_TYPE_SUBTASK);
+    }
     /// identical node states for one logical graph across both shapes — asserted
     /// directly, with the ambiguous `pending` case actually in the fixture.
     ///

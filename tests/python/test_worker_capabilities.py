@@ -121,7 +121,7 @@ class TestDeriveCapabilities:
 
     def test_default_caps_include_core(self, stub_engine) -> None:
         caps = self._worker(stub_engine).capabilities
-        for c in ("code", "search", "memory", "test", "decompose", "review"):
+        for c in ("code", "search", "memory", "test", "decompose"):
             assert c in caps, f"{c} missing"
 
     def test_uc_fs_auto_registered_derives_file_edit(self, stub_engine) -> None:
@@ -145,6 +145,24 @@ class TestDeriveCapabilities:
         caps = self._worker(stub_engine).capabilities
         assert "browser" not in caps
         assert "debug" not in caps
+
+    # ── T16 (#661): "review" is opt-in, not a default capability ──
+
+    def test_review_capability_absent_by_default(self, stub_engine) -> None:
+        """T16: a producing worker must NOT advertise the review capability.
+
+        D14 requires that the worker which produced a result must not also
+        review it. The dispatch side has no exclusion primitive
+        (research/notes.md §3), so independence rides on the capability gate:
+        a review node requires "review", and a worker that never opted in
+        cannot pass that gate. Advertising it by default would let every
+        producer claim its own review.
+        """
+        assert "review" not in self._worker(stub_engine).capabilities
+
+    def test_review_capability_opt_in_via_env(self, stub_engine, monkeypatch) -> None:
+        monkeypatch.setenv("UC_CAP_REVIEW", "1")
+        assert "review" in self._worker(stub_engine).capabilities
 
     def test_custom_mcp_configs_keep_uc_fs(self, stub_engine) -> None:
         # Caller supplies own mcp_configs — uc-fs should still be appended
@@ -217,7 +235,7 @@ class TestDeriveCapabilities:
         assert "grok-build" not in caps
         assert "grok" not in caps
         # Core caps still present
-        for c in ("code", "search", "memory", "test", "decompose", "review"):
+        for c in ("code", "search", "memory", "test", "decompose"):
             assert c in caps, f"{c} missing"
 
     def test_agent_caps_deduped(self, stub_engine, monkeypatch) -> None:
