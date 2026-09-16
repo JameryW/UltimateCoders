@@ -21,7 +21,7 @@ All data types use `@dataclass` with `field(default_factory=...)` for mutable de
 
 ### Examples
 
-**Task** (`python/ultimate_coders/agent/types.py:88-98`):
+**Task** (`python/ultimate_coders/agent/types.py`):
 ```python
 @dataclass
 class Task:
@@ -35,7 +35,7 @@ class Task:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 ```
 
-**OrchestratorConfig** (`python/ultimate_coders/agent/types.py:142-147`):
+**OrchestratorConfig** (`python/ultimate_coders/agent/types.py`):
 ```python
 @dataclass
 class OrchestratorConfig:
@@ -44,7 +44,7 @@ class OrchestratorConfig:
     heartbeat_timeout_seconds: int = 60
 ```
 
-**MemoryEntry** (`python/ultimate_coders/memory/memory.py:46-59`):
+**MemoryEntry** (`python/ultimate_coders/memory/memory.py`):
 ```python
 @dataclass
 class MemoryEntry:
@@ -59,7 +59,7 @@ class MemoryEntry:
     updated_at: Optional[datetime] = None
 ```
 
-**Config** (`python/ultimate_coders/config.py:49-54`):
+**Config** (`python/ultimate_coders/config.py`):
 ```python
 @dataclass
 class Config:
@@ -85,7 +85,7 @@ Status and type enums use `Enum` with string values. This allows JSON serializat
 
 ### Examples
 
-**TaskStatus** (`python/ultimate_coders/agent/types.py:12-19`):
+**TaskStatus** (`python/ultimate_coders/agent/types.py`):
 ```python
 class TaskStatus(Enum):
     CREATED = "created"
@@ -96,7 +96,7 @@ class TaskStatus(Enum):
     PAUSED = "paused"
 ```
 
-**SubtaskStatus** (`python/ultimate_coders/agent/types.py:22-29`):
+**SubtaskStatus** (`python/ultimate_coders/agent/types.py`):
 ```python
 class SubtaskStatus(Enum):
     PENDING = "pending"
@@ -107,7 +107,7 @@ class SubtaskStatus(Enum):
     CONFLICTED = "conflicted"
 ```
 
-**ChangeType** (`python/ultimate_coders/agent/types.py:32-36`):
+**ChangeType** (`python/ultimate_coders/agent/types.py`):
 ```python
 class ChangeType(Enum):
     CREATED = "created"
@@ -181,7 +181,7 @@ query = (SearchQuery("authentication logic")
 
 ### Engine Adapter
 
-The `Engine` class (`python/ultimate_coders/engine.py:18-55`) wraps `PyEngine` from the Rust extension:
+The `Engine` class (`python/ultimate_coders/engine.py`) wraps `PyEngine` from the Rust extension:
 
 ```python
 class Engine:
@@ -196,7 +196,7 @@ The Engine converts between Python types and Rust types (e.g., `SearchQuery` -> 
 
 ### Memory Wrappers
 
-`ShortTermMemory` and `LongTermMemory` (`python/ultimate_coders/memory/memory.py:147-415`) delegate to the Engine and convert results via `_to_entry()`:
+`ShortTermMemory` and `LongTermMemory` (`python/ultimate_coders/memory/memory.py`) delegate to the Engine and convert results via `_to_entry()`:
 
 ```python
 class ShortTermMemory:
@@ -212,7 +212,7 @@ class ShortTermMemory:
 
 ### from_rust / from_dict Dual Construction
 
-`MemoryEntry` supports construction from both Rust extension objects and plain dicts (`python/ultimate_coders/memory/memory.py:62-144`):
+`MemoryEntry` supports construction from both Rust extension objects and plain dicts (`python/ultimate_coders/memory/memory.py`):
 
 ```python
 @classmethod
@@ -246,7 +246,7 @@ def _to_entry(self, raw: Any) -> MemoryEntry:
 
 Dataclasses use `@property` for derived state (not methods):
 
-**Task** (`python/ultimate_coders/agent/types.py:103-123`):
+**Task** (`python/ultimate_coders/agent/types.py`):
 ```python
 @property
 def is_complete(self) -> bool:
@@ -262,7 +262,7 @@ def ready_subtasks(self) -> List[Subtask]:
     return [st for st in self.subtasks if st.is_ready and all(dep in completed_ids for dep in st.depends_on)]
 ```
 
-**SearchResultItem** (`python/ultimate_coders/search/result.py:23-25`):
+**SearchResultItem** (`python/ultimate_coders/search/result.py`):
 ```python
 @property
 def location(self) -> str:
@@ -290,6 +290,6 @@ def location(self) -> str:
    // label/header: append [controlState] when not running (mirror formatTaskList)
    const ctrl = task.controlState !== "running" ? ` [${task.controlState}]` : "";
    ```
-   `cancelTask` sets BOTH `controlState` and `status` to `cancelled`, so cancelled needs no override (the `[cancelled]` suffix mirrors `formatTaskList`; the resulting `cancelled [cancelled]` is pre-existing, consistent, and intentionally not special-cased). `ControlState = "running" | "paused" | "cancelled"` (`orchestrator.ts:69`).
+   `cancelTask` sets BOTH `controlState` and `status` to `cancelled`, so cancelled needs no override (the `[cancelled]` suffix mirrors `formatTaskList`; the resulting `cancelled [cancelled]` is pre-existing, consistent, and intentionally not special-cased). `ControlState = "running" | "paused" | "cancelled"` (`orchestrator.ts`).
 
    **Selfcheck must assert rendered output** (`comp.render(w)` / `formatTaskDetail(...)` return value), not just state — the codebase has a history of state-only selfchecks that miss render-layer regressions.

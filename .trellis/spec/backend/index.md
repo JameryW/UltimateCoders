@@ -12,7 +12,7 @@ The backend is a **Rust + Python hybrid** architecture:
 - **Python agent layer**: Orchestrator + Worker with LLM tool-calling
 - **Bridging**: PyO3 FFI (local) + gRPC (distributed), runtime switchable
 
-The `EngineApi` trait (`crates/uc-types/src/engine.rs:25`) is the unified contract. Both `LocalEngine` (uc-engine) and `GrpcEngineClient` (uc-grpc) implement it. The Python `Engine` class delegates to whichever is active.
+The `EngineApi` trait (`crates/uc-types/src/engine.rs`) is the unified contract. Both `LocalEngine` (uc-engine) and `GrpcEngineClient` (uc-grpc) implement it. The Python `Engine` class delegates to whichever is active.
 
 ---
 

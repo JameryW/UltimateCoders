@@ -19,7 +19,7 @@ State in the Python layer is managed through:
 
 ### TaskStatus
 
-`TaskStatus` (`python/ultimate_coders/agent/types.py:12-19`):
+`TaskStatus` (`python/ultimate_coders/agent/types.py`):
 
 ```
 CREATED --> PLANNING --> IN_PROGRESS --> COMPLETED
@@ -39,7 +39,7 @@ Transition triggers:
 
 ### SubtaskStatus
 
-`SubtaskStatus` (`python/ultimate_coders/agent/types.py:22-29`):
+`SubtaskStatus` (`python/ultimate_coders/agent/types.py`):
 
 ```
 PENDING --> ASSIGNED --> IN_PROGRESS --> COMPLETED
@@ -86,7 +86,7 @@ self.tasks: Dict[str, Task] = {}
 
 Derived state is computed on-the-fly via `@property` on dataclasses:
 
-### Task Properties (`python/ultimate_coders/agent/types.py:103-123`)
+### Task Properties (`python/ultimate_coders/agent/types.py`)
 
 ```python
 @property
@@ -106,7 +106,7 @@ def ready_subtasks(self) -> List[Subtask]:
     return [st for st in self.subtasks if st.is_ready and all(dep in completed_ids for dep in st.depends_on)]
 ```
 
-### Subtask Properties (`python/ultimate_coders/agent/types.py:71-84`)
+### Subtask Properties (`python/ultimate_coders/agent/types.py`)
 
 ```python
 @property
@@ -122,7 +122,7 @@ def is_failed(self) -> bool:
     return self.status == SubtaskStatus.FAILED
 ```
 
-### WorkerInfo Properties (`python/ultimate_coders/agent/types.py:135-138`)
+### WorkerInfo Properties (`python/ultimate_coders/agent/types.py`)
 
 ```python
 @property

@@ -50,7 +50,7 @@ pub trait EventStore: Send + Sync {
 
 ## Checkpoint/Resume Pattern
 
-The `CheckpointManager` (`crates/uc-engine/src/checkpoint.rs:44-50`) combines event sourcing with periodic snapshots:
+The `CheckpointManager` (`crates/uc-engine/src/checkpoint.rs`) combines event sourcing with periodic snapshots:
 
 ```rust
 pub struct CheckpointManager {
@@ -144,7 +144,7 @@ The `ConflictDetector` tracks active edit intents and detects overlapping region
 
 ## LineRange Overlap Detection
 
-`LineRange` (`crates/uc-engine/src/events.rs:14-28`) uses inclusive-start, exclusive-end ranges with overlap detection:
+`LineRange` (`crates/uc-engine/src/events.rs`) uses inclusive-start, exclusive-end ranges with overlap detection:
 
 ```rust
 pub struct LineRange {

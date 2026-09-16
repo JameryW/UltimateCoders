@@ -79,7 +79,7 @@ pub enum EngineError {
 
 ## Helper Methods
 
-`EngineError` provides three classification methods (`crates/uc-types/src/error.rs:54-80`):
+`EngineError` provides three classification methods (`crates/uc-types/src/error.rs`):
 
 ```rust
 impl EngineError {

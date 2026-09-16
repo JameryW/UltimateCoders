@@ -53,8 +53,8 @@ The `engine` parameter is typed as `Any` throughout the codebase because it can 
 - `None` (when engine is unavailable)
 
 **Real examples**:
-- `python/ultimate_coders/memory/memory.py:149`: `class ShortTermMemory:` -- `engine: Any`
-- `python/ultimate_coders/memory/memory.py:257`: `class LongTermMemory:` -- `engine: Any`
+- `python/ultimate_coders/memory/memory.py`: `class ShortTermMemory:` -- `engine: Any`
+- `python/ultimate_coders/memory/memory.py`: `class LongTermMemory:` -- `engine: Any`
 - `python/ultimate_coders/agent/orchestrator.py:95`: `engine: Optional[Any]`
 
 The alternative of using a Protocol/ABC was considered but not adopted because the Rust extension object does not implement Python ABCs, and the mock would need to be cast.

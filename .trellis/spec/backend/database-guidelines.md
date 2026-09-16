@@ -30,7 +30,7 @@ pub struct Store {
 }
 ```
 
-**Real example** -- `ShortTermMemory` (`crates/uc-engine/src/memory/short_term.rs:28-35`):
+**Real example** -- `ShortTermMemory` (`crates/uc-engine/src/memory/short_term.rs`):
 
 ```rust
 pub struct ShortTermMemory {
@@ -41,7 +41,7 @@ pub struct ShortTermMemory {
 }
 ```
 
-**Real example** -- `PostgresMetadataStore` (`crates/uc-engine/src/metadata/postgres.rs:23-28`):
+**Real example** -- `PostgresMetadataStore` (`crates/uc-engine/src/metadata/postgres.rs`):
 
 ```rust
 pub struct PostgresMetadataStore {
@@ -156,7 +156,7 @@ pub fn scope_prefix(key: &MemoryKey) -> String {
 
 ## PostgreSQL Migrations
 
-Migrations run at startup via `run_migrations()` (`crates/uc-engine/src/metadata/postgres.rs:134-244`).
+Migrations run at startup via `run_migrations()` (`crates/uc-engine/src/metadata/postgres.rs`).
 
 **Tables**:
 

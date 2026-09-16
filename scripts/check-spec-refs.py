@@ -81,8 +81,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC_DIR = ROOT / ".trellis" / "spec"
 
 # Directories never scanned as *targets* of a reference.
-EXCLUDE_DIRS = {".git", "target", "node_modules", "vendor", ".venv", "__pycache__",
-                "dist", "build", ".pytest_cache"}
+#
+# `.scratch/` is this repo's gitignored scratch space (test harnesses, temp trees,
+# rollback copies).  The walk below uses `os.walk`, not git, so leaving it in makes
+# verdicts depend on whatever local scratch state happens to exist.  Measured
+# (2026-09-16, T24 slice B): a rollback copy parked in `.scratch/` turned a unique
+# mention AMBIGUOUS mid-run, and `.scratch/pt-test_*/**/lib.rs` inflated `lib.rs`
+# from 4 candidates to 79.  Excluding it changes exactly one verdict in the whole
+# corpus (`event-pipeline-spec.md:153` `dashboard/app.py`: ambiguous -> resolved)
+# and no reference verdict at all.
+EXCLUDE_DIRS = {".git", ".scratch", "target", "node_modules", "vendor", ".venv",
+                "__pycache__", "dist", "build", ".pytest_cache"}
 
 CODE_EXT = {".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".proto", ".toml",
             ".yml", ".yaml", ".json", ".sql", ".sh", ".md"}
@@ -196,9 +205,22 @@ def _symbols_on(spec_line: str) -> list[str]:
     (``### Task Properties``).  Scanning only inline code -- the first version --
     silently reported every bold/heading symbol as "no symbol on this line",
     which downgraded 13 real anchors to unjudgeable.
+
+    A bold span counts only when it *is* an identifier: prose that merely
+    contains such a word is not an anchor.  Measured (T24): the first version
+    took ``**Mapping `MemoryWriteError` for delete operations**`` as naming the
+    symbol ``delete``, which made ``error-handling.md:307`` report a *false*
+    STALE off a prose word -- the reference points at a location, not at
+    anything called `delete`.  Tightening it changes exactly one row in the
+    whole corpus (STALE 27 -> 26, OK 113 -> 114) and drops that row out of the
+    slice-B rewrite worklist -- measured, and correct rather than a loss: the
+    prose word was the row's *only* anchor, so its line number was never safe
+    to drop (line 307 leaves 52 eligible references at 51).  Headings stay
+    prose-tolerant on purpose: ``### Task Properties`` is one of the restored
+    13, and the heading carries no other syntax to key off.
     """
     spans: list[str] = TICK_RE.findall(spec_line)
-    spans += BOLD_RE.findall(spec_line)
+    spans += [b for b in BOLD_RE.findall(spec_line) if IDENT_RE.fullmatch(b.strip())]
     heading = HEADING_RE.match(spec_line)
     if heading:
         spans.append(heading.group(1))

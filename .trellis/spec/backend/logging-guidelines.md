@@ -67,8 +67,8 @@ logger = logging.getLogger(__name__)
 ```
 
 **Real examples**:
-- `python/ultimate_coders/agent/orchestrator.py:42`: `logger = logging.getLogger(__name__)`
-- `python/ultimate_coders/agent/worker.py:55`: `logger = logging.getLogger(__name__)`
+- `python/ultimate_coders/agent/orchestrator.py`: `logger = logging.getLogger(__name__)`
+- `python/ultimate_coders/agent/worker.py`: `logger = logging.getLogger(__name__)`
 - `python/ultimate_coders/agent/llm.py:18`
 - `python/ultimate_coders/agent/conflict.py:19`
 - `python/ultimate_coders/agent/sandbox.py:25`

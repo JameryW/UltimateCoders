@@ -22,7 +22,7 @@
 This spec covers the capability layer and its consumers. **Dispatch-side mechanics live in
 [`worker-service-spec.md`](./worker-service-spec.md)** — one rule, one home.
 
-- **Derive** — `Worker._derive_capabilities` (`worker.py:433`), specified in full under
+- **Derive** — `Worker._derive_capabilities` (`worker.py`), specified in full under
   *Sandbox Agent Customization* below.
 - **Advertise** — the resulting `Worker.capabilities` list (see section 2).
 - **Route on them** — the Rust gateway's roster lookup. `workers_with_capabilities_excluding`,
@@ -41,7 +41,7 @@ Conflating them is how this spec previously went wrong, so they are stated separ
 
 | Layer | Content | Stable? |
 |---|---|---|
-| **base seed** | `["code", "search", "memory", "test", "decompose"]` (`worker.py:451`) | yes — absolute-assertable |
+| **base seed** | `["code", "search", "memory", "test", "decompose"]` (`worker.py`) | yes — absolute-assertable |
 | **advertised set** | seed plus MCP/tool-derived, `UC_CAP_*` opt-ins, and plugin-registry-derived names | **no — environment-dependent** |
 
 The advertised set is what `Worker.capabilities` actually holds. **Measured, not read:**
@@ -90,7 +90,7 @@ not as a TODO.
 ## 4. Advertising is not authorization
 
 Advertising a capability only makes a worker *eligible* for the gateway's roster. The
-worker-side check (`_check_capabilities`, `nats_worker.py:2652`) is a **set difference
+worker-side check (`_check_capabilities`, `nats_worker.py`) is a **set difference
 evaluated by the worker itself**, which is why independence cannot be enforced there at all —
 the position is wrong, not the implementation. Routing decisions belong to the gateway; see
 `worker-service-spec.md`.
@@ -302,7 +302,7 @@ Merges SandboxConfig agent fields with per-subtask overrides. Subtask-level valu
 def _derive_capabilities(self) -> list[str]
 ```
 
-Base: `["code", "search", "memory", "test", "decompose"]` — **`"review"` is deliberately NOT a default** (T16 #661/D14: a worker that produced a result must not also review it). Opt in with the `UC_CAP_REVIEW` env var (`worker.py:498`), same pattern as `UC_CAP_BROWSER`/`UC_CAP_DEBUG`. Enhanced:
+Base: `["code", "search", "memory", "test", "decompose"]` — **`"review"` is deliberately NOT a default** (T16 #661/D14: a worker that produced a result must not also review it). Opt in with the `UC_CAP_REVIEW` env var (`worker.py`), same pattern as `UC_CAP_BROWSER`/`UC_CAP_DEBUG`. Enhanced:
 - `mcp_configs` → `"mcp"` + per-server `"mcp:<server>"` (extracted from dict keys or file path basename)
 - `tools` with `"mcp__<server>__*"` pattern → `"mcp:<server>"` per prefix
 - `agent_name` → `"agent:<name>"`
@@ -567,7 +567,7 @@ lines.append(f'command = "{_toml_escape(cfg["command"])}"')
 
 ### Template Variables
 
-Prompt templates (`step.prompt`) support these variables, rendered by `Worker._render_step_prompt` (`worker.py:1426`):
+Prompt templates (`step.prompt`) support these variables, rendered by `Worker._render_step_prompt` (`worker.py`):
 
 | Variable | Expands to | Source |
 |----------|------------|--------|
@@ -582,7 +582,7 @@ Prompt templates (`step.prompt`) support these variables, rendered by `Worker._r
 
 **`{{prev_*}}` is shorthand for `{{step(N-1).*}}`** — it references the immediately preceding step. Step 0 has no predecessor, so `{{prev_summary}}` / `{{prev_files}}` resolve to empty strings and `{{prev_outputs_json}}` resolves to `"{}"`.
 
-**`{{prev_outputs_json}}` / `{{stepN.outputs_json}}` shape** (serialized by `Worker._output_to_json`, `worker.py:1394`):
+**`{{prev_outputs_json}}` / `{{stepN.outputs_json}}` shape** (serialized by `Worker._output_to_json`, `worker.py`):
 
 ```json
 {
@@ -600,7 +600,7 @@ Truncation limits (`worker.py:1388-1391`): `_ARTIFACT_SUMMARY_MAX=2000`, `_ARTIF
 
 ### Execution Semantics
 
-Source: `Worker._execute_steps` (`worker.py:1053`) + `Worker._run_single_step` (`worker.py:1246`).
+Source: `Worker._execute_steps` (`worker.py`) + `Worker._run_single_step` (`worker.py`).
 
 **Overall flow** (`_execute_steps`):
 
@@ -613,7 +613,7 @@ Source: `Worker._execute_steps` (`worker.py:1053`) + `Worker._run_single_step` (
    e. If step failed AND `abort_on_failure=False` → log warning, continue to next step.
 3. After all steps → return last step's `AgentOutput` with `file_changes` merged across all successful steps.
 
-**Per-step flow** (`_run_single_step`, `worker.py:1246-1384`):
+**Per-step flow** (`_run_single_step`, `worker.py`):
 
 1. **Render prompt** — `_render_step_prompt` substitutes template variables using `step_outputs` and `prev`.
 2. **Merge agent config** — `{**base_cfg, **step.agent_config}` (step overrides subtask-level config).
@@ -636,7 +636,7 @@ Source: `Worker._execute_steps` (`worker.py:1053`) + `Worker._run_single_step` (
 
 ### Parallel Groups
 
-Source: `_execute_steps` parallel-group path (`worker.py:1137-1225`).
+Source: `_execute_steps` parallel-group path (`worker.py`).
 
 - Steps with a **non-empty** `parallel_group` run concurrently via `asyncio.gather`.
 - Only **consecutive** steps with the **same** `parallel_group` value form one group. Non-consecutive same-group steps are separate groups.
@@ -691,23 +691,23 @@ atom       := "prev.success"
 **Semantics**:
 - **Step 0 (no previous step)**: `prev` is `None` → `prev.success` = `False`, `prev.files.contains(x)` = `False`, `prev.summary.contains(x)` = `False`. Use `!prev.success` to run a step only when there is no predecessor.
 - **Empty/whitespace-only condition** = always run (returns `True`, no evaluation). `step_condition.py:284-285`.
-- **Parse error** → raises `ConditionError` → caller (`_run_single_step`) returns `AgentOutput(success=False)` → subtask fails. Never silently runs or skips. `worker.py:1299-1309`.
+- **Parse error** → raises `ConditionError` → caller (`_run_single_step`) returns `AgentOutput(success=False)` → subtask fails. Never silently runs or skips. `worker.py`.
 - **`==` / `!=`** only apply to `prev.success` vs `true`/`false` (boolean comparison). `step_condition.py:218-229`.
 - Whitespace tolerant.
 
 ### Step Events
 
-Source: `Worker._emit_step_event` (`worker.py:1035`) + `Worker._run_single_step` event emissions.
+Source: `Worker._emit_step_event` (`worker.py`) + `Worker._run_single_step` event emissions.
 
 Step events are published as `subtask_progress` events (see [Contract: subtask_progress event](#contract-subtask_progress-event-transient-telemetry) in event-pipeline-spec.md). The `data` payload includes workflow-step metadata:
 
 | `step_status` | When emitted | Extra fields | Source |
 |---------------|--------------|--------------|--------|
-| `"started"` | Before the retry loop begins | — | `worker.py:1329-1337` |
+| `"started"` | Before the retry loop begins | — | `worker.py` |
 | `"retrying"` | Before each retry sleep (after a failed attempt, retries remaining) | `retry_attempt` (1-indexed int), `step_summary` (failed output summary, ≤200 chars) | `worker.py:1355-1365` |
-| `"completed"` | After step succeeds | `step_summary` (output summary, ≤200 chars) | `worker.py:1374-1383` |
-| `"failed"` | After step fails (all retries exhausted) | `step_summary` (output summary, ≤200 chars) | `worker.py:1374-1383` |
-| `"skipped"` | When condition evaluates to false | `step_summary` (condition expression, ≤200 chars) | `worker.py:1317-1326` |
+| `"completed"` | After step succeeds | `step_summary` (output summary, ≤200 chars) | `worker.py` |
+| `"failed"` | After step fails (all retries exhausted) | `step_summary` (output summary, ≤200 chars) | `worker.py` |
+| `"skipped"` | When condition evaluates to false | `step_summary` (condition expression, ≤200 chars) | `worker.py` |
 
 **Common fields** (all step events):
 - `phase`: `f"step {idx+1}/{total}: {step.agent}"` (or `"... (skipped)"` for skipped)
@@ -717,16 +717,16 @@ Step events are published as `subtask_progress` events (see [Contract: subtask_p
 - `step_agent`: the agent name (`"claude-code"` or `"codex"`)
 - `worker_id`: the executing worker's ID
 
-**Rust routing** (`crates/uc-engine/src/events.rs:56-72`): `AgentEventType::SubtaskProgress` carries `step_index`, `step_total`, `step_agent`, `step_status`, `step_summary` as `Option` fields. The `nats_event_to_agent_event` match arm in `uc-grpc/server.rs` deserializes these from the NATS payload. `apply_event_to_snapshot` (checkpoint.rs) treats `SubtaskProgress` as a no-op (transient — does not mutate subtask lifecycle state).
+**Rust routing** (`crates/uc-engine/src/events.rs`): `AgentEventType::SubtaskProgress` carries `step_index`, `step_total`, `step_agent`, `step_status`, `step_summary` as `Option` fields. The `nats_event_to_agent_event` match arm in `uc-grpc/server.rs` deserializes these from the NATS payload. `apply_event_to_snapshot` (checkpoint.rs) treats `SubtaskProgress` as a no-op (transient — does not mutate subtask lifecycle state).
 
-> **Gotcha**: `step_index` in the Python payload is 0-based (`worker.py:1321`), but the Rust `AgentEventType::SubtaskProgress` doc comment says "1-based" (`events.rs:62`). The proto serialization passes the value through unchanged — the TUI/dashboard should treat it as the Python worker emits it (0-based). This is a known doc-comment discrepancy.
+> **Gotcha**: `step_index` in the Python payload is 0-based (`worker.py:1321`), but the Rust `AgentEventType::SubtaskProgress` doc comment says "1-based" (`events.rs`). The proto serialization passes the value through unchanged — the TUI/dashboard should treat it as the Python worker emits it (0-based). This is a known doc-comment discrepancy.
 
 ### Validation & Error Matrix
 
 | Condition | Behavior | Source |
 |-----------|----------|--------|
-| Empty `steps` list | Single-agent execution via `_execute_in_sandbox` (backward compatible) | `worker.py:994` |
-| Step 0 with `{{prev_*}}` template vars | Resolve to empty string / `"{}"` | `worker.py:1454-1456` |
+| Empty `steps` list | Single-agent execution via `_execute_in_sandbox` (backward compatible) | `worker.py` |
+| Step 0 with `{{prev_*}}` template vars | Resolve to empty string / `"{}"` | `worker.py` |
 | Step 0 with `condition` referencing `prev.*` | `prev` is `None` → `prev.*` = `False` | `step_condition.py:247,257,263` |
 | Condition parse error | Subtask fails with `[step N condition parse error]` summary | `worker.py:1299-1309` |
 | Step fails + `abort_on_failure=True` | Chain aborts, subtask fails | `worker.py:1113-1127` |
@@ -735,7 +735,7 @@ Step events are published as `subtask_progress` events (see [Contract: subtask_p
 | `retry_count=0` (default) | No retry, single attempt | `worker.py:1342` |
 | `retry_count=N` | Up to `1+N` attempts; only `output.success == False` triggers retry | `worker.py:1342-1352` |
 | `retry_delay_ms=0` | Retry immediately (no sleep) | `worker.py:1366-1367` |
-| `_emit_step_event` NATS publish failure | Swallowed (best-effort), step chain continues | `worker.py:1043-1051` |
+| `_emit_step_event` NATS publish failure | Swallowed (best-effort), step chain continues | `worker.py` |
 | Empty/absent `condition` | Always run (no evaluation) | `step_condition.py:284-285` |
 
 ### Good / Base / Bad Cases
