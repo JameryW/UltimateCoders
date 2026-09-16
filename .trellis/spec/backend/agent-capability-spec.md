@@ -1,254 +1,99 @@
 # Agent Capability Spec
 
-> Contracts for Worker self-reflection, adaptive retry, concurrent scheduling, and worker selection.
+> Contracts for the agent **capability** layer: how a worker derives and advertises
+> capabilities, and how the gateway routes subtasks on them.
+
+> **History — a removed layer used to live here.** The first ~250 lines of this file
+> documented Worker self-reflection (`_self_evaluate`), adaptive retry
+> (`_classify_error` / `_adaptive_retry`), `Orchestrator._select_worker`,
+> `Orchestrator.schedule_subtasks`, and experience recording/recall
+> (`_record_experience` / `_gather_prior_context`). That layer was **deleted** in
+> `ad931ec` (2026-06-21, #111) and `05ccb56` (2026-06-26, #161, *remove Python
+> Orchestrator*), and **none of those symbols exist in the tree**: `git grep` over
+> `python/`, `packages/`, `crates/` returns zero hits for all six, and the two tests it
+> required (`test_select_worker_capability_match`, `test_select_worker_fallback_load`) were
+> never written. The contracts were removed with the code (T20 #671); the design rationale,
+> if ever needed, is in git history.
 
 ---
 
 ## 1. Scope / Trigger
 
-This spec covers the agent capability layer in `python/ultimate_coders/agent/`:
-- Worker self-evaluation (`_self_evaluate`)
-- Adaptive retry with error classification (`_classify_error`, `_adaptive_retry`)
-- Worker selection with capability matching (`_select_worker`)
-- Concurrent subtask scheduling (`schedule_subtasks`)
-- Experience recording and recall (`_record_experience`, `_gather_prior_context`)
+This spec covers the capability layer and its consumers. **Dispatch-side mechanics live in
+[`worker-service-spec.md`](./worker-service-spec.md)** — one rule, one home.
 
-Trigger: any change to worker execution, retry logic, scheduling, or orchestrator-worker interaction.
+- **Derive** — `Worker._derive_capabilities` (`worker.py:433`), specified in full under
+  *Sandbox Agent Customization* below.
+- **Advertise** — the resulting `Worker.capabilities` list (see section 2).
+- **Route on them** — the Rust gateway's roster lookup. `workers_with_capabilities_excluding`,
+  the review exclusion set, and the two fail-closed verdicts are specified in
+  `worker-service-spec.md`, **not restated here**.
+- **`review` is opt-in** — see section 3.
 
----
-
-## 2. Signatures
-
-### Worker._self_evaluate
-
-```python
-async def _self_evaluate(
-    self,
-    subtask: Subtask,
-    summary: str,
-    modified_files: list[FileChange],
-    tool_log: list[dict[str, Any]] | None = None,
-) -> float  # 0.0–1.0
-```
-
-Scoring table:
-
-| Condition | Delta |
-|-----------|-------|
-| Baseline | +0.5 |
-| Files modified | +0.2 |
-| Expected output keyword overlap (proportional) | +0.0–0.2 |
-| `run_command` used in tool_log | +0.1 |
-| Error keywords in summary ("error", "failed", "exception", "traceback", "not found") | -0.15 |
-| Empty result (no files + summary < 50 chars) | -0.1 |
-
-Clamped to [0.0, 1.0].
-
-### Worker._classify_error
-
-```python
-@staticmethod
-def _classify_error(error: Exception) -> AdaptationStrategy
-```
-
-| Error Pattern | Strategy |
-|---------------|----------|
-| `asyncio.TimeoutError` or "timeout"/"timed out" in message | `SHRINK_SCOPE` |
-| "no module"/"importerror" in type or "no engine"/"module" in message | `PURE_LLM` |
-| "not found"/"not available" (without "engine"/"module") | `FALLBACK_TOOL` |
-| "conflict"/"conflicted" in message | `WAIT_RETRY` |
-| Default (unknown) | `PURE_LLM` |
-
-### Worker._adaptive_retry
-
-```python
-async def _adaptive_retry(
-    self, subtask: Subtask, error: Exception,
-) -> SubtaskResult  # with .adaptation_strategy set
-```
-
-| Strategy | Behavior |
-|----------|----------|
-| `SHRINK_SCOPE` | Halve timeout (min 60s), `max_tokens=2048`, retry via `_execute_with_llm` |
-| `PURE_LLM` | Skip all tools, call `llm_client.complete()` directly with `max_tokens=2048` |
-| `FALLBACK_TOOL` | Temporarily remove codegraph tools (`symbol_search`, `find_callers`, `find_callees`, `impact_analysis`, `explore_code`), retry, restore tools |
-| `WAIT_RETRY` | `asyncio.sleep(2)`, then retry via `_execute_with_llm` |
-
-### Orchestrator._select_worker
-
-```python
-def _select_worker(self, subtask: Subtask) -> str | None
-```
-
-Sort: `(-capability_match_count, current_load, -max_capacity)`.
-
-Capability matching: count how many worker capability strings appear in `subtask.description.lower()`. Workers with more matches are preferred; ties broken by lowest load.
-
-### Orchestrator.schedule_subtasks
-
-```python
-async def schedule_subtasks(
-    self, task: Task, worker_execute: Any, max_concurrent: int = 4,
-) -> list[SubtaskResult]
-```
-
-**Stuck detection**: Track `completed_before` count. After each round, compute `new_progress = completed_now - completed_before`. If `new_progress == 0` for 2 consecutive rounds, break and log warning.
-
-**Events**: Each round emits `scheduling_round_complete` with `{round_count, new_progress, total_completed, total_failed}`.
-
-### Worker._gather_prior_context
-
-```python
-async def _gather_prior_context(self, subtask: Subtask) -> str
-```
-
-Sources (in order):
-1. Dependency results: `engine.read_memory(key_scope="task", key=f"result_{dep_id}")`
-2. Past experience: `engine.search_memory(query=subtask.description, scope_type="all")`, filter keys starting with `experience_`, take top 3
-3. Codegraph: `self._codegraph.explore(subtask.description)`
+Trigger: any change to capability derivation, the advertised list, capability-gated routing,
+or the `review` opt-in.
 
 ---
 
-## 3. Contracts
+## 2. "Default capabilities" is two different things
 
-### Self-evaluate confidence thresholds
+Conflating them is how this spec previously went wrong, so they are stated separately:
 
-| Confidence | Action |
-|------------|--------|
-| < 0.5 | Mark result as `success=False` (triggers Orchestrator re-decompose) |
-| 0.5–0.7 | Append `[~ confidence: X%, verify recommended]` to summary |
-| ≥ 0.7 | Normal success |
+| Layer | Content | Stable? |
+|---|---|---|
+| **base seed** | `["code", "search", "memory", "test", "decompose"]` (`worker.py:451`) | yes — absolute-assertable |
+| **advertised set** | seed plus MCP/tool-derived, `UC_CAP_*` opt-ins, and plugin-registry-derived names | **no — environment-dependent** |
 
-### FALLBACK_TOOL tool reduction
+The advertised set is what `Worker.capabilities` actually holds. **Measured, not read:**
 
-Removed tools (temporarily): `symbol_search`, `find_callers`, `find_callees`, `impact_analysis`, `explore_code`.
-
-Remaining tools: `search`, `read_memory`, `write_memory`, `edit_file`, `search_memory`, `read_file`, `list_files`, `run_command`, `apply_diff`.
-
-Tools are restored via try/finally after the adapted execution.
-
-### Experience memory key schema
-
+```python
+Worker(worker_id="probe-default").capabilities == [
+    "code", "search", "memory", "test", "decompose",
+    "grok-build", "grok", "claude-code", "codex",
+    "deepseek-harness", "deepseek", "local-harness", "local-llm",
+]   # 13 entries — NOT the 5-element seed
 ```
-key_scope: "task"
-key: "experience_{subtask_id}"
-content: JSON {subtask_id, description, confidence, files_modified, summary}
-importance: 0.6 (confidence ≥ 0.5) or 0.8 (confidence < 0.5)
-```
+
+The extras come from `worker.py:524`,
+`agent_registry.registry.capability_names(shutil.which)`. The code comments it: *"CLI agents
+advertise only when their binary is on PATH; API-backed harnesses (e.g. deepseek-harness)
+always advertise. New agents registered as plugins show up here without touching this
+method."*
+
+Therefore: **never assert equality on the advertised set.** Assert on the base seed (fixed)
+and on non-membership (what must *not* be advertised by default).
 
 ---
 
-## 4. Validation & Error Matrix
+## 3. The `review` capability is opt-in
 
-| Condition | Behavior |
-|-----------|----------|
-| No LLM client + `PURE_LLM` strategy | Return `success=False`, adaptation_strategy set |
-| No engine + `_record_experience` | No-op (silently skip) |
-| No engine + `_gather_prior_context` experience recall | No-op (silently skip) |
-| Codegraph unavailable + `_gather_prior_context` | Skip codegraph section |
-| `tool_log=None` + `_self_evaluate` | Skip run_command check (backward compat) |
-| FALLBACK_TOOL + tools restored after exception | try/finally guarantees restoration |
+`"review"` is deliberately **not** in the base seed. It requires the `UC_CAP_REVIEW`
+environment variable (`worker.py:498`) — the same pattern as `UC_CAP_BROWSER` /
+`UC_CAP_DEBUG`.
 
----
+Why: D14 requires that the worker which produced a result must not also review it.
+Advertising `review` by default would let every producing worker claim its own review, i.e.
+turn review into self-assessment with no code change anywhere else. The opt-in is the
+*cheaper* of the two enforcement points — a worker that never opted in cannot even become a
+candidate — so the dispatch-side exclusion set (T19 #670) only has to reason about workers
+that *did* opt in.
 
-## 5. Good / Base / Bad Cases
-
-### Self-evaluate
-
-- **Good**: Files modified + keywords matched + run_command used → confidence ≥ 0.8
-- **Base**: Files modified, no keyword match, no run_command → confidence 0.7
-- **Bad**: No files + error keywords in summary → confidence < 0.5 → marked failed
-
-### Worker selection
-
-- **Good**: "search for auth code" → worker with `["search"]` capability selected over `["code"]`
-- **Base**: "do something" (no capability match) → lowest-load worker selected
-- **Bad**: No available workers → returns None, subtask skipped this round
-
-### Scheduling
-
-- **Good**: DAG with 3 levels, all succeed → 3 rounds, all subtasks complete
-- **Base**: One subtask fails → Orchestrator auto-retries (up to max_retries)
-- **Bad**: All subtasks keep failing → stuck detection triggers after 2 zero-progress rounds
+**Known limit**, specified in `worker-service-spec.md` and repeated here because this spec is
+easy to over-read: the gateway's gate is a **roster check, not a delivery guarantee**.
+Delivery is a shared durable work-queue, so with two or more candidates including the
+producer, the queue may still deliver to it. T19 closed the worst shape (producer is the
+*only* capability holder, hence silent self-review) and left the residual — deliberately,
+not as a TODO.
 
 ---
 
-## 6. Tests Required
+## 4. Advertising is not authorization
 
-| Test | Assertion Point |
-|------|-----------------|
-| `test_classify_error` (×7) | Each error pattern maps to correct AdaptationStrategy |
-| `test_self_evaluate_high_confidence` | Files + keywords + run_command → ≥ 0.8 |
-| `test_self_evaluate_error_in_summary` | Error keywords → < 0.5 |
-| `test_self_evaluate_empty_result` | No files + short summary → < 0.5 |
-| `test_self_evaluate_no_tool_log` | Backward compat, no crash |
-| `test_record_experience_writes` | engine.write_memory called with correct key |
-| `test_record_experience_no_engine` | No-op, no exception |
-| `test_select_worker_capability_match` | Matching worker preferred |
-| `test_select_worker_fallback_load` | No match → lowest load |
-| `test_adaptive_retry_fallback_tool` | Tools reduced then restored |
-| `test_adaptive_retry_shrink_scope` | Timeout halved, max_tokens reduced |
-| `test_adaptive_retry_pure_llm` | No tools in call |
-| `test_schedule_concurrent_dag` | Execution order respects dependencies |
-| `test_schedule_stuck_detection` | Breaks after 2 zero-progress rounds |
-
----
-
-## 7. Wrong vs Correct
-
-### Wrong: FALLBACK_TOOL does nothing
-
-```python
-if strategy == AdaptationStrategy.FALLBACK_TOOL:
-    result = await self._execute_with_llm(subtask)  # same tools!
-    result.adaptation_strategy = strategy
-    return result
-```
-
-### Correct: FALLBACK_TOOL actually reduces tool set
-
-```python
-if strategy == AdaptationStrategy.FALLBACK_TOOL:
-    codegraph_tools = {"symbol_search", "find_callers", ...}
-    original_tools = self.tools
-    original_defs = self._tool_definitions
-    self.tools = {k: v for k, v in self.tools.items() if k not in codegraph_tools}
-    self._tool_definitions = [d for d in self._tool_definitions if d.name not in codegraph_tools]
-    try:
-        result = await self._execute_with_llm(subtask)
-    finally:
-        self.tools = original_tools
-        self._tool_definitions = original_defs
-    result.adaptation_strategy = strategy
-    return result
-```
-
-### Wrong: _select_worker ignores capabilities
-
-```python
-candidates.sort(key=lambda w: (w.current_load, -w.max_capacity))
-```
-
-### Correct: _select_worker matches capabilities first
-
-```python
-cap_matches = {w.id: sum(1 for c in w.capabilities if c in desc_lower) for w in candidates}
-candidates.sort(key=lambda w: (-cap_matches[w.id], w.current_load, -w.max_capacity))
-```
-
-### Wrong: Experience written but never read
-
-```python
-# _record_experience writes experience_*
-# _gather_prior_context only reads result_*
-```
-
-### Correct: _gather_prior_context recalls experience
-
-```python
-results = self.engine.search_memory(query=subtask.description, scope_type="all", max_results=3)
-experience_parts = [r.text[:200] for r in results if r.key.startswith("experience_")]
-```
+Advertising a capability only makes a worker *eligible* for the gateway's roster. The
+worker-side check (`_check_capabilities`, `nats_worker.py:2652`) is a **set difference
+evaluated by the worker itself**, which is why independence cannot be enforced there at all —
+the position is wrong, not the implementation. Routing decisions belong to the gateway; see
+`worker-service-spec.md`.
 
 ---
 
@@ -457,7 +302,7 @@ Merges SandboxConfig agent fields with per-subtask overrides. Subtask-level valu
 def _derive_capabilities(self) -> list[str]
 ```
 
-Base: `["code", "search", "memory", "test", "decompose"]` — **`"review"` is deliberately NOT a default** (T16 #661/D14: a worker that produced a result must not also review it). Opt in with the `UC_CAP_REVIEW` env var (`worker.py:495`), same pattern as `UC_CAP_BROWSER`/`UC_CAP_DEBUG`. Enhanced:
+Base: `["code", "search", "memory", "test", "decompose"]` — **`"review"` is deliberately NOT a default** (T16 #661/D14: a worker that produced a result must not also review it). Opt in with the `UC_CAP_REVIEW` env var (`worker.py:498`), same pattern as `UC_CAP_BROWSER`/`UC_CAP_DEBUG`. Enhanced:
 - `mcp_configs` → `"mcp"` + per-server `"mcp:<server>"` (extracted from dict keys or file path basename)
 - `tools` with `"mcp__<server>__*"` pattern → `"mcp:<server>"` per prefix
 - `agent_name` → `"agent:<name>"`
@@ -603,7 +448,7 @@ All new fields default to `None` / `{}`. When all are unset, `ClaudeCodeAdapter.
 | `test_agents_json_flag` | `--agents` with JSON in args |
 | `test_subtask_config_overrides` | Subtask config takes precedence in build_request |
 | `test_all_flags_together` | All flags present in args |
-| `test_default_capabilities` | Base caps: code, search, memory, test |
+| `test_default_capabilities` | Base seed contains code, search, memory, test, decompose (see section 2) |
 | `test_mcp_capability_when_mcp_configs_set` | "mcp" added |
 | `test_codegraph_capability_when_tool_present` | "codegraph" added |
 | `test_agent_name_capability` | "agent:<name>" added |
@@ -642,7 +487,7 @@ result["tools"] = subtask_config["tools"]  # full replacement
 #### Wrong: Hardcoded capabilities ignore config
 
 ```python
-self.capabilities = capabilities or ["code", "search", "memory", "test"]
+self.capabilities = capabilities or ["code", "search", "memory", "test", "decompose"]
 ```
 
 #### Correct: Derive from config

@@ -152,10 +152,11 @@ class TestDeriveCapabilities:
         """T16: a producing worker must NOT advertise the review capability.
 
         D14 requires that the worker which produced a result must not also
-        review it. The dispatch side has no exclusion primitive
-        (research/notes.md §3), so independence rides on the capability gate:
-        a review node requires "review", and a worker that never opted in
-        cannot pass that gate. Advertising it by default would let every
+        review it. Independence rides on two things. The cheaper one is the
+        capability gate: a review node requires "review", and a worker that
+        never opted in cannot pass that gate. Since T19 (#670) there is also a
+        dispatch-side exclusion set that keeps the producer out of the
+        candidate roster. Advertising "review" by default would let every
         producer claim its own review.
         """
         assert "review" not in self._worker(stub_engine).capabilities

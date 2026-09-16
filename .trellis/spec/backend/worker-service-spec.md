@@ -199,7 +199,7 @@ preference to gate — rejected as structurally impossible for legacy workers
 (no per-worker subject) and as colliding with D12.
 
 ⚠️ **`"review"` is not a default worker capability** (`UC_CAP_REVIEW` opts in,
-`worker.py:495`), so the fail-closed paths are reachable only in clusters that
+`worker.py:498`), so the fail-closed paths are reachable only in clusters that
 actually contain a reviewer-capable worker. Ordinary (`NoCapableWorker`) refusal
 still comes first for the rest.
 

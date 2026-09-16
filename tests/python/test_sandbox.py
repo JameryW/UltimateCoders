@@ -687,12 +687,28 @@ class TestWorkerDeriveCapabilitiesLegacy:
     """Tests for Worker._derive_capabilities from SandboxConfig (legacy baseline)."""
 
     def test_default_capabilities(self):
+        """The base seed is fixed; the advertised set is seed + derived (T20 #671).
+
+        `Worker.capabilities` is NOT the base seed. Plugin-registry probe results
+        are appended after it (`worker.py:524`), so the full list is environment
+        dependent and must never be asserted by equality. What IS fixed is the
+        seed, and dedup preserves order, so the seed stays at the front. See
+        .trellis/spec/backend/agent-capability-spec.md section 2.
+        """
         from ultimate_coders.agent.worker import Worker
+
+        seed = ["code", "search", "memory", "test", "decompose"]
         worker = Worker(worker_id="w-caps-default")
-        assert "code" in worker.capabilities
-        assert "search" in worker.capabilities
-        assert "memory" in worker.capabilities
-        assert "test" in worker.capabilities
+
+        # Absolute pin: exactly this seed, in this order, at the front. A membership
+        # check would not catch dropping "decompose" or smuggling "review" in.
+        # Deliberately NOT `== worker.capabilities`: that also carries
+        # registry-derived names (e.g. "claude-code") which vary by environment.
+        assert worker.capabilities[: len(seed)] == seed
+
+        # And the capability that must never become a default: a producing worker
+        # advertising "review" could review its own output (D14 / T16).
+        assert "review" not in worker.capabilities
 
     def test_mcp_capability_when_mcp_configs_set(self):
         from ultimate_coders.agent.worker import Worker
