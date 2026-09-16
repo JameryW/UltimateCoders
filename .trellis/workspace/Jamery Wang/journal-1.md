@@ -1508,3 +1508,133 @@ T16 自己留了注释解释为什么排除 `review`：*"Advertising it by defau
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死
+
+**Date**: 2026-09-16
+**Task**: T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死
+**Branch**: `main`
+
+### Summary
+
+删掉 agent-capability-spec.md 里描述已删除层（#111/#161）的前 253 行，换成活的四个接触点；修正默认能力的两层事实（漏 decompose + 混淆 base seed 与 advertised set，实跑 13 项）；补 T19 收口的四处同源遗漏（含两处它自己引入的过期行号）；把 test_default_capabilities 升级为绝对钉（消融证明 decompose 此前无人守）。
+
+### Main Changes
+
+## 为什么会有这一票：规范在描述一层**已经不存在的代码**
+
+本票起点是上一票（T19）留下的一条铁律 —— **过期规范比没有规范更危险，因为它自带权威感**。T19 就在同一份文件里吃过一次：规范写着 worker 默认能力集**包含** `review`，读码才发现 `review` 要 `UC_CAP_REVIEW` 显式 opt-in。照那份规范推理，会得出「T19 让单 worker 部署永久卡住 review 节点」这个耸动而**错误**的结论。
+
+T19 当时修好了那份规范的**一处**。本轮在「下一票做什么」的自检里回头核了一遍，发现**同一份文件的前 253 行整体在描述一层已删除的代码**。
+
+## 一手取证：六个符号零命中，两个「必需测试」从未存在
+
+方法：`git grep` 覆盖 `python/` `packages/` `crates/` 三棵树，逐符号计数。
+
+| 规范 §1/§2 的签名 | 命中数 | 移除于 |
+|---|---|---|
+| `Worker._self_evaluate` | **0** | `ad931ec` 2026-06-21 (#111) |
+| `Worker._classify_error` | **0** | 同批 |
+| `Worker._adaptive_retry` | **0** | 同批 |
+| `Orchestrator._select_worker` | **0** | `05ccb56` 2026-06-26 (#161, *remove Python Orchestrator*) |
+| `Orchestrator.schedule_subtasks` | **0** | 同批 |
+| `Worker._gather_prior_context` | **0** | 同批 |
+
+`_select_worker` 全仓唯一命中就是**该规范自己**。§3 的契约同样建在死码上：`_record_experience`（只在规范与一份已归档 prd 里）、`confidence_threshold` 与 `experience_key`（全仓 0）、`FALLBACK_TOOL`（只剩 `types.py:61` 一个**枚举成员**，**零消费者** ⇒ 定义即孤岛；这比「函数被删」更隐蔽，因为符号查找会命中）。§6 点名的两个测试 `test_select_worker_capability_match` / `test_select_worker_fallback_load` **从未存在**（全仓唯一命中就是那张表）。
+
+为防 grep 单点失误，`_select_worker` 用了**三种**互不相同的方法复核，结论一致。⚠️ 第四种（裸 `grep -rn` 全仓）**被放弃**：它会扫 `target/`，5 分钟不收敛 —— 记下来是因为它看着「更彻底」，实际只是错。
+
+**处置**：死契约**删除**，不保留为「历史设计」（依据本仓既有口径「留着一个指向不存在事实的路标，等于给下一个人埋雷」），但顶部留 6 行 History 块记录移除提交与证据，便于溯源。§1–§7 换成活的四个接触点（derive / advertise / route / opt-in），并明写**派发侧细节归 `worker-service-spec.md`** —— 同一条规则不设两个家。
+
+**规模**：987 → 832 行。写盘走**字节级 CRLF 脚本 + assert-first**（尾部 byte-identical 才落盘），`git diff --numstat` 复核为 70/225（若整文件重写会是 ~987/832）。
+
+## 默认能力：一个「被规范写反了两次」的事实
+
+规范把它写成一个**四元素列表**。实际是**两层**，且两层都被写错了：
+
+| 层 | 内容 | 可钉性 |
+|---|---|---|
+| **base seed** | `["code","search","memory","test","decompose"]`（`worker.py:451`） | 固定，可绝对钉 |
+| **advertised set** | seed ∪ MCP/工具派生 ∪ `UC_CAP_*` ∪ **插件注册表派生** | **环境相关，不可等值钉** |
+
+**实跑（不是读码）**得 13 项：
+
+```
+['code','search','memory','test','decompose','grok-build','grok','claude-code','codex',
+ 'deepseek-harness','deepseek','local-harness','local-llm']
+```
+
+多出的项来自 `worker.py:524` 的 `agent_registry.registry.capability_names(shutil.which)`（注释自陈：CLI agent 只在 binary 在 PATH 上时广告、API-backed harness 恒广告）。
+
+⇒ 规范的两处修正：§6 的 `test_default_capabilities` 行补上 `decompose`；§7 的反例字面量补上 `decompose`。**且明确写下「永不advertised set 做等值断言」**。
+
+## 一次自我更正（本票最有价值的副产品）
+
+侦察早期我从源码 `worker.py:451` 读到 `caps = [...5 项...]`，**推断**默认能力就是这 5 项，并打算据此写**等值断言**。**实跑推翻**（13 项）。
+
+⇒ 若按推断落笔，那条测试会当场变红，**而我会去修一个没坏的东西**。与 T19 同源、方向相反：T19 是信了过期规范，本票差点是信了**源码片段当运行时事实** —— 两者都是**把间接信号当事实**。判据不变：读一手来源，或直接跑一次。
+
+## T19 收口的四处遗漏（同一根因：改了一处，漏了同源的其余）
+
+1. `tests/python/test_worker_capabilities.py:151` 的 docstring 仍写 *"The dispatch side has no exclusion primitive"* —— 自 T19 起为假。T19 改了 `worker.py` 里的同源注释，**漏了这处**。正是 T19 自己写下的铁律（推翻结论时要更正**所有**已落盘的记录）的反例。
+2. `agent-capability-spec.md` 与 3. `worker-service-spec.md` 各引 `worker.py:495` —— **T19 自己引入的过期行号**：它在 seed 上方插了 9 行注释（净 +3），却仍引用**改前**的行号。实际是 `:498`。
+4. `index.md:37` 仍以已删除的能力（self-reflection / adaptive retry / experience recall）描述该文件并标 `Filled`。
+
+四条全部更正。⚠️ 顺带发现**更大范围**的问题：该规范的行号引用**系统性过期且偏移不一致**（`_execute_steps` 实为 1365 规范写 1053 = +312；`_run_single_step` +374；`_render_step_prompt` +391；`_execute_in_sandbox` +208）⇒ **无法机械 +N 修正**。本票**只修** T19 自己引入的 `495`→`498`（+3 类），其余**另开 #672** 跟踪 —— 不静默吸收、也不在本票里改票面。
+
+## 钉法：把「被描述」升级为「被钉住」，且用绝对钉
+
+`test_default_capabilities` 原为**成员资格断言**（`"code" in caps` 等四条）。升级为**绝对钉**：
+
+```python
+seed = ["code", "search", "memory", "test", "decompose"]
+assert worker.capabilities[: len(seed)] == seed   # 去重保序 ⇒ seed 恒在最前
+assert "review" not in worker.capabilities
+```
+
+**刻意不做** `== worker.capabilities`：那会带上环境相关的注册表派生项 ⇒ 假红。docstring 写明两层结构与理由。
+
+**消融自检**（一次一条，实测非推断）：
+
+| 突变 | 结果 |
+|---|---|
+| 基线（不改） | GREEN |
+| 从 seed 删 `decompose` | **RED** |
+| 把 `review` 塞进 seed | **RED** |
+
+**关键收获**：突变①在**旧测试下是绿的** —— 旧断言只查 code/search/memory/test，`decompose` 此前**无人守**。⇒ 这条钉是**新增覆盖**，不是装饰。跑完 `worker.py` 按字节恢复、sha256 与改前一致。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d7653c` | docs(spec): drop the removed capability layer and pin the base seed (T20 #671) |
+| `d2f4f49` | docs(spec): flag the dead pre-processing layer in codegraph-integration.md (T20 #671) |
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6d7653c` | docs(spec): drop the removed capability layer and pin the base seed (T20 #671) |
+
+### Testing
+
+- `pytest tests/python/test_worker_capabilities.py` -> **28 passed**（含改动后的 docstring 所在用例）
+- `pytest tests/python/test_sandbox.py` -> **187 passed**（含升级后的 `test_default_capabilities`）
+- `ruff check python/ tests/` -> **All checks passed**
+- **逐文件串行收集数 = 1149**（44 个文件、零条目文件 0 个），与 T18/T19 基线**逐项相同** ⇒ 只改断言、未增删用例（Rust/Python 计数应**逐项不变**，这本身是一条回归证据）
+- 消融：2 个突变各自打红，恢复后 worker.py sha256 一致（`55eb36def193…`）
+- **CI**：`6d7653c` 上 **Python CI 4/4 绿**（ruff lint / test 3.9 / test 3.12 / dashboard checks）；**Rust CI 与 TypeScript CI 未被触发**（diff 不含 `crates/**`、`packages/**`）—— 与「零 Rust/TS 改动」自洽，且是**可核对的**证据
+- **真跑判据**：CI 日志逐字出现 `test_default_capabilities PASSED`（两个 Python job 各一次）与 `test_review_capability_absent_by_default PASSED`；**全日志 0 条 `SKIP:`**；`1141 passed, 8 skipped` ⇒ 收集面 1149 与本地一致
+
+### Status
+
+[OK] **Completed** — T20 #671 已交付并归档（`6d7653c`）。**本票不属 P2 地图范围**（非 Execution Optimizer / Blackboard review / market scheduling，也非其前置），是仓级文档卫生的独立维护票；唯一关联是 #670（范围 1 处 docstring 是 T19 收口的补漏）。
+
+### Next Steps
+
+- **#672**（本票新开）：规范里的 `文件:行号` 引用系统性过期、偏移 +208~+391 不等 ⇒ 先普查出清单，再定口径（改符号引用 / 加校验器 / 标注基线）。
+- **P2 本体**：仍卡在外部「方案第 21 节」原文，不臆造。
+- 待沉淀：本票 `implement.jsonl` 的追加曾落两份（已按整行去重修回 20 行）⇒ 追加脚本必须幂等或事后可去重。
+- 已发现但**故意未处理**（预先存在，不属本票）：journal 里有两个 `## Session 13`，HEAD 上即如此。

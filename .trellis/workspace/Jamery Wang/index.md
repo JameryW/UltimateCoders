@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
+- **Total Sessions**: 23
 - **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1504 | Active |
+| `journal-1.md` | ~1637 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-09-16 | T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死 | `6d7653c`, `d2f4f49` | `main` |
 | 22 | 2026-09-16 | T19: 派发硬门排除产出者 —— review 节点不得由自己审（#669 裁决 A 实现） | `322a571` | `main` |
 | 21 | 2026-09-16 | T18: 逐步用量落到 payload.steps[]（#666 实现） | `9a8203f`, `8a0645d` | `main` |
 | 20 | 2026-09-16 | T17: 图镜像不再移动权威 node state —— D15 的 B + C 落地（#667） | `fdef55a`, `1e61318`, `c6dfd20` | `main` |

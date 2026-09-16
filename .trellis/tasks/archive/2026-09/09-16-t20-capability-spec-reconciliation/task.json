@@ -1,0 +1,18 @@
+{
+  "id": "09-16-t20-capability-spec-reconciliation",
+  "title": "T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 671,
+  "map": null,
+  "decision": null,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "把 agent-capability-spec.md 前约 250 行里描述「已被删除的层」的契约纠正为代码事实：六个幽灵签名（_self_evaluate/_classify_error/_adaptive_retry/_select_worker/schedule_subtasks/_gather_prior_context，命中数全 0，死于 #111/#161 且已约三个月）与其上的 §3 死契约（_record_experience/confidence_threshold/experience_key/FALLBACK_TOOL）、§6 两个不存在的测试名，均删除并留 2 行留痕 + 指向现行收口点。修正两处默认能力事实错误（漏 decompose + 混淆 base seed 与 advertised set，后者实跑为 13 项）。补 T19 收口遗漏的一处同源假话（test_worker_capabilities.py docstring 称派发侧无排除原语）。把 test_default_capabilities 由成员资格断言升级为绝对钉。不删除孤儿枚举成员、不做全仓 spec 普查、零运行时行为变更。",
+  "completedAt": "2026-09-16",
+  "commit": "6d7653c",
+  "commits": [
+    "6d7653c",
+    "d2f4f49"
+  ]
+}
