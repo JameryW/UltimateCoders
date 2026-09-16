@@ -2027,6 +2027,20 @@ async fn t17_node_row(store: &GraphStore, gid: &str, nid: &str) -> (String, serd
     .expect("t17 node row")
 }
 
+/// How many completion rows exist for one node (`node_completions` is keyed by
+/// `node_id`, so this is 0 or 1).
+async fn t17_completion_count(store: &GraphStore, gid: &str, nid: &str) -> u64 {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM node_completions WHERE graph_id = $1 AND node_id = $2",
+    )
+    .bind(gid)
+    .bind(nid)
+    .fetch_one(store.pool().as_ref())
+    .await
+    .expect("t17 completion count");
+    u64::try_from(count).expect("non-negative count")
+}
+
 /// Seed the **authority** side: the graph row plus one node row sitting in a
 /// state the graph plane itself decided.
 ///
@@ -2080,23 +2094,33 @@ fn t17_snapshot(gid: &str, nid: &str, status: SubtaskStatus) -> Task {
 /// | 1 | `READY` | `RUNNING` | refused | `mirror_rejected` | without C the write lands (`nodes: 1`) and `dependencies` is overwritten — `state` still holds, because B is unconditional |
 /// | 2 | `SUCCEEDED` | `RUNNING` | refused | `mirror_rejected` | same as 1 |
 /// | 3 | `RUNNING` | `READY` | admitted | `mirror_state_dropped` | **without B `state` rolls back to `READY`** — the load-bearing row |
-/// | 4 | `READY` | `READY` | admitted | *(neither)* | — |
+/// | 4 | `RUNNING` | `SUCCEEDED` | admitted | `mirror_state_dropped` | same as 3 |
+/// | 5 | `READY` | `READY` | admitted | *(neither)* | — |
 ///
 /// Shape 1 is #664's own reproducing shape (`cancel_running_attempt` left the
 /// authority at `READY`; a snapshot captured earlier still said `RUNNING`).
 ///
-/// Shape 3 is what makes clause B load-bearing: `RUNNING → READY` *is* a legal
-/// edge (the fence re-arm), so clause C admits the write — the only thing
-/// keeping the authority in place is that `state` is no longer in the
-/// `DO UPDATE SET` list. Both rows in this table were **measured** by ablating
-/// one clause at a time and re-running this test, not reasoned about: dropping
-/// B alone fails here (shape 3), dropping C alone fails only shape 1/2's
-/// counters. That is the precise sense in which D15's "B + C" is two clauses
-/// doing two different jobs — B guarantees `state`, C refuses incoherent
-/// snapshots outright and makes them countable.
+/// Shapes 3 and 4 are what make clause B load-bearing — both are **legal**
+/// edges, so clause C admits the write, and the only thing keeping the
+/// authority in place is that `state` is no longer in the `DO UPDATE SET`
+/// list. They are not the same edge: 3 is the fence re-arm (`RUNNING →
+/// READY`, the one case where a stale snapshot's direction is also a real
+/// transition), while 4 is a plain forward completion and is the shape #667's
+/// own acceptance criterion names.
 ///
-/// Scope: the guard governs the node row's `state`. Attempt/completion rows
-/// stay append-only and are untouched by this ticket.
+/// The ablation column was **measured**, not reasoned about: one clause was
+/// deleted at a time and this test re-run against live PostgreSQL. Dropping B
+/// alone fails here (shape 3); dropping C alone fails only shape 1/2's
+/// counters while their `state` assertions still pass. That is the precise
+/// sense in which D15's "B + C" is two clauses doing two different jobs — B
+/// guarantees `state`, C refuses incoherent snapshots outright and makes them
+/// countable.
+///
+/// Scope: the guard governs the node row's `state` only. Attempt/completion
+/// rows stay append-only and are untouched by this ticket — which is
+/// observable below (a `Completed` snapshot still appends a completion row
+/// while clause B pins `state`), and is why the graph plane's `state` remains
+/// the single thing readers may trust.
 #[tokio::test]
 #[ignore]
 async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
@@ -2106,7 +2130,7 @@ async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
     let p = unique_prefix();
 
     // (label, authority state, snapshot subtask status, rejected?, dropped?)
-    let cases: [(&str, &str, SubtaskStatus, u64, u64); 4] = [
+    let cases: [(&str, &str, SubtaskStatus, u64, u64); 5] = [
         (
             "#664's shape: late RUNNING against READY",
             "READY",
@@ -2125,6 +2149,13 @@ async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
             "fence re-arm edge: late READY against RUNNING",
             "RUNNING",
             SubtaskStatus::Pending,
+            0,
+            1,
+        ),
+        (
+            "forward completion: late SUCCEEDED against RUNNING",
+            "RUNNING",
+            SubtaskStatus::Completed,
             0,
             1,
         ),
@@ -2200,6 +2231,17 @@ async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
                 "{label}: an admitted write still refreshes the non-state columns"
             );
         }
+
+        // Boundary, pinned on purpose: the guard governs `state` only. The
+        // mirror's completion rows are append-only and remain so, so a
+        // `Completed` snapshot does add one even while clause B holds the
+        // authority at `RUNNING`. That asymmetry is why the graph plane's
+        // `state` is the only thing a reader may treat as decided.
+        assert_eq!(
+            t17_completion_count(&store, &g, &n).await,
+            u64::from(*status == SubtaskStatus::Completed),
+            "{label}: a completion row is appended iff the snapshot claims Completed"
+        );
 
         graphs.push(g);
     }
