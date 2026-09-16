@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from ultimate_coders.agent.types import (
+    StepUsage,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -1630,6 +1631,141 @@ def test_task_update_payload_omits_usage_when_not_reported():
     # columns NULL (and withdraws the provenance claim).
     st.result.usage = SubtaskUsage()
     assert _make_task_update_payload(task, partial=True)["subtasks"][0]["usage"] == {}
+
+
+# ── T18 #668: per-step usage rides the same chokepoint ──────────
+
+
+def _subtask_with_step_usages(step_usages: list[StepUsage]) -> Task:
+    st = Subtask(
+        id="st-steps",
+        description="d",
+        status=SubtaskStatus.COMPLETED,
+        result=SubtaskResult(
+            subtask_id="st-steps",
+            worker_id="w1",
+            summary="ok",
+            success=True,
+            step_usages=step_usages,
+        ),
+    )
+    return Task(
+        id="t-steps",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+
+
+def test_task_update_payload_emits_steps_with_rust_field_names() -> None:
+    """Cross-language golden: the Rust ``StepUsage`` deserializes these keys.
+
+    ``serde`` ignores unknown keys, so a rename on one side only is a silent
+    drop; this test and the Rust ``step_usage_wire_shape_is_locked`` fail
+    together if either side drifts.
+    """
+    task = _subtask_with_step_usages([
+        StepUsage(
+            step_index=0,
+            parallel_group="",
+            usage=SubtaskUsage(input_tokens=10, output_tokens=4, source="grok-build"),
+            source="grok-build",
+        ),
+        # Ran, adapter reported nothing: `null`, and still named.
+        StepUsage(step_index=1, parallel_group="", usage=None, source="codex"),
+        StepUsage(
+            step_index=2,
+            parallel_group="review",
+            usage=SubtaskUsage(input_tokens=7, source="codex"),
+            source="codex",
+        ),
+    ])
+
+    entry = _make_task_update_payload(task, partial=True)["subtasks"][0]
+    assert entry["steps"] == [
+        {
+            "step_index": 0,
+            "parallel_group": "",
+            "usage": {"input_tokens": 10, "output_tokens": 4, "source": "grok-build"},
+            "source": "grok-build",
+        },
+        {
+            "step_index": 1,
+            "parallel_group": "",
+            "usage": None,
+            "source": "codex",
+        },
+        {
+            "step_index": 2,
+            "parallel_group": "review",
+            "usage": {"input_tokens": 7, "source": "codex"},
+            "source": "codex",
+        },
+    ]
+
+
+def test_task_update_payload_omits_steps_when_no_records() -> None:
+    """An absent key means "no step records" — the pre-T18 publisher shape.
+
+    Same additive discipline as T15's ``usage``: a result that collected
+    nothing emits no ``steps`` key, so the pre-T18 wire stays byte-identical
+    for every subtask this field has nothing to say about. This is what keeps
+    acceptance 6 (no ``contract_version`` bump) honest.
+    """
+    task = _subtask_with_step_usages([])
+    assert "steps" not in _make_task_update_payload(task, partial=True)["subtasks"][0]
+
+    # And a result that never set the field at all behaves identically.
+    st = Subtask(
+        id="st-plain",
+        description="d",
+        status=SubtaskStatus.COMPLETED,
+        result=SubtaskResult(subtask_id="st-plain", summary="ok", success=True),
+    )
+    plain = Task(
+        id="t-plain",
+        description="d",
+        project_id="p",
+        status=TaskStatus.IN_PROGRESS,
+        subtasks=[st],
+    )
+    assert "steps" not in _make_task_update_payload(plain, partial=True)["subtasks"][0]
+
+
+def test_make_subtask_result_task_carries_step_usages_through() -> None:
+    """The worker→publisher hop, same argument T15 made for ``usage``.
+
+    ``_make_subtask_result_task`` rebuilds a fresh ``SubtaskResult``; every
+    field it does not copy is a field the terminal event loses.
+    """
+    w = _make_worker()
+    steps = [
+        StepUsage(
+            step_index=0,
+            parallel_group="",
+            usage=SubtaskUsage(input_tokens=5, source="grok-build"),
+            source="grok-build",
+        )
+    ]
+    task = w._make_subtask_result_task(
+        "t-1",
+        "st-1",
+        "Completed",
+        "done",
+        usage=SubtaskUsage(input_tokens=5, source="grok-build"),
+        step_usages=steps,
+    )
+    carried = task.subtasks[0].result
+    assert carried is not None
+    assert carried.step_usages == steps
+    assert carried.usage == SubtaskUsage(input_tokens=5, source="grok-build")
+
+    # Absent stays absent (never a fabricated one-entry list).
+    bare = w._make_subtask_result_task("t-1", "st-1", "Completed", "done")
+    assert bare.subtasks[0].result is not None
+    assert bare.subtasks[0].result.step_usages == []
+
 
 def test_task_update_payload_emits_review_only_when_a_verdict_exists() -> None:
     """T16 #661: the verdict rides the same single chokepoint as T15's usage.

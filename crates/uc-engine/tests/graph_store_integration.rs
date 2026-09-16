@@ -32,8 +32,8 @@ use std::collections::HashMap;
 use sqlx::postgres::PgPoolOptions;
 use uc_engine::GraphStore;
 use uc_types::{
-    DispatchMode, Subtask, SubtaskResult, SubtaskStatus, SubtaskUsage, Task, TaskId, TaskStatus,
-    WorkerId,
+    DispatchMode, StepUsage, Subtask, SubtaskResult, SubtaskStatus, SubtaskUsage, Task, TaskId,
+    TaskStatus, WorkerId,
 };
 
 // ── Environment / gating helpers ─────────────────────────────────────
@@ -1237,8 +1237,8 @@ async fn graph_t3_concurrent_double_commits_have_exactly_one_winner() {
     // one (the dual-write race the PRD demands the graph plane kill TODAY).
     let store_b = GraphStore::with_pool(store.pool().clone());
     let (r0, r1) = tokio::join!(
-        store.commit_once(&g, &n, &a0, Some("result-a"), None),
-        store_b.commit_once(&g, &n, &a1, Some("result-b"), None),
+        store.commit_once(&g, &n, &a0, Some("result-a"), None, None),
+        store_b.commit_once(&g, &n, &a1, Some("result-b"), None, None),
     );
     let w0 = r0.expect("commit 0 runs");
     let w1 = r1.expect("commit 1 runs");
@@ -1294,7 +1294,7 @@ async fn graph_t3_late_fail_after_commit_is_fenced_with_late_result() {
         .unwrap()
         .expect("schedule");
     assert!(store
-        .commit_once(&g, &n, &a, Some("ok"), None)
+        .commit_once(&g, &n, &a, Some("ok"), None, None)
         .await
         .expect("commit"));
 
@@ -1356,7 +1356,7 @@ async fn graph_t3_diamond_downstream_readies_without_sibling() {
     seed_attempt_t3(&store, &g, &c, 0, "RUNNING").await;
 
     assert!(store
-        .commit_once(&g, &b, &b_attempt, Some("b-done"), None)
+        .commit_once(&g, &b, &b_attempt, Some("b-done"), None, None)
         .await
         .expect("commit B"));
     // B committed → D's only dependency is satisfied → D READY, without
@@ -1601,12 +1601,12 @@ async fn graph_t3_sink_verbs_drive_the_transitions_through_the_trait_object() {
         "on_heartbeat refreshes the running attempt"
     );
 
-    sink.on_commit(&env, Some("sink-result"), None).await;
+    sink.on_commit(&env, Some("sink-result"), None, None).await;
     let (state, _) = t3_node_state(&store, &g, &n).await;
     assert_eq!(state, "SUCCEEDED");
     assert!(
         !store
-            .commit_once(&g, &n, &a, Some("again"), None)
+            .commit_once(&g, &n, &a, Some("again"), None, None)
             .await
             .expect("duplicate commit"),
         "a second commit for the same node never wins again"
@@ -1621,7 +1621,7 @@ async fn graph_t3_sink_verbs_drive_the_transitions_through_the_trait_object() {
     let ghost = uc_types::ExecutionEnvelope::for_dispatch(&format!("{p}-ghost"), "n", 0);
     sink.on_schedule(&ghost, None).await;
     sink.on_heartbeat(&ghost).await;
-    sink.on_commit(&ghost, None, None).await;
+    sink.on_commit(&ghost, None, None, None).await;
     sink.on_fail(&ghost, "ghost").await;
 
     purge_t3(&store, &g).await;
@@ -1683,7 +1683,7 @@ async fn graph_t3_timeout_sweep_fences_and_rearms_on_a_probe_db() {
     // The swept attempt is permanently fenced: its late commit changes
     // nothing and lands as late_result.
     assert!(!store
-        .commit_once(&g, &n, &a0, Some("late-win"), None)
+        .commit_once(&g, &n, &a0, Some("late-win"), None, None)
         .await
         .expect("late commit"));
     let (state, _) = t3_node_state(&store, &g, &n).await;
@@ -1766,7 +1766,7 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
     t14_age_started_at(&store, &attempt, 5.0).await;
     assert!(
         store
-            .commit_once(&g, &n, &attempt, Some("r-ref"), None)
+            .commit_once(&g, &n, &attempt, Some("r-ref"), None, None)
             .await
             .expect("commit_once"),
         "the first commit for a RUNNING attempt wins"
@@ -1807,7 +1807,7 @@ async fn graph_t14_commit_binds_duration_once_and_never_zero_fills_cost() {
     // RUNNING), so retries cannot double-count a duration.
     assert!(
         !store
-            .commit_once(&g, &n, &attempt, Some("r-ref-again"), None)
+            .commit_once(&g, &n, &attempt, Some("r-ref-again"), None, None)
             .await
             .expect("second commit is refused"),
         "a second commit for a settled attempt loses"
@@ -1885,7 +1885,7 @@ async fn t15_commit_with_usage(
         .expect("READY node schedules");
     assert!(
         store
-            .commit_once(g, nid, &attempt, Some(result_ref), usage.as_ref())
+            .commit_once(g, nid, &attempt, Some(result_ref), usage.as_ref(), None)
             .await
             .expect("commit_once"),
         "the first commit for a RUNNING attempt wins"
@@ -2247,4 +2247,206 @@ async fn graph_t17_mirror_never_rolls_authority_back_or_resurrects() {
     }
 
     purge_graphs(&store, &graphs).await;
+}
+
+// ── T18 (#668): per-step usage reaches the terminal payload ──────────
+
+/// Schedule one attempt for `nid` and commit it with BOTH the node-level
+/// `usage` and the per-step `steps` attached.
+///
+/// Kept separate from `t15_commit_with_usage` on purpose: that helper's three
+/// call sites are T15's regression evidence, and widening its signature would
+/// churn them for no gain here.
+async fn t18_commit_with_steps(
+    store: &GraphStore,
+    g: &str,
+    nid: &str,
+    usage: Option<SubtaskUsage>,
+    steps: Option<Vec<StepUsage>>,
+    result_ref: &str,
+) {
+    let attempt = store
+        .schedule_attempt(g, nid, Some("w1"))
+        .await
+        .expect("schedule_attempt")
+        .expect("READY node schedules");
+    assert!(
+        store
+            .commit_once(
+                g,
+                nid,
+                &attempt,
+                Some(result_ref),
+                usage.as_ref(),
+                steps.as_deref(),
+            )
+            .await
+            .expect("commit_once"),
+        "the first commit for a RUNNING attempt wins"
+    );
+}
+
+fn t18_step(
+    index: u32,
+    group: &str,
+    usage: Option<SubtaskUsage>,
+    source: Option<&str>,
+) -> StepUsage {
+    StepUsage {
+        step_index: index,
+        parallel_group: group.to_string(),
+        usage,
+        source: source.map(str::to_string),
+    }
+}
+
+/// The end-to-end claim: the per-step records reach `execution_events.payload`,
+/// and the node-level columns beside them are untouched.
+///
+/// The pure unit tests already pin the array's *shape*; what only a real
+/// database can show is that the value survives `commit_once`'s transaction
+/// into the row a consumer actually reads — and that adding it left the columns
+/// acceptance 4 freezes exactly where they were.
+#[tokio::test]
+#[ignore]
+async fn graph_t18_commit_carries_per_step_usage_into_the_terminal_payload() {
+    let Some(store) = connect_or_skip("t18_steps").await else {
+        return;
+    };
+    let p = unique_prefix();
+    let g = format!("{p}-g");
+    let multi = format!("{p}-multi");
+    let single = format!("{p}-single");
+    purge_t3(&store, &g).await;
+    seed_graph_t3(
+        &store,
+        &g,
+        &[
+            (&multi, "READY", &[], false),
+            (&single, "READY", &[], false),
+        ],
+    )
+    .await;
+
+    // 1. Three executed units, one of them silent — the multi-adapter shape
+    //    #666's evidence came from. Distinct numbers throughout, so a single
+    //    collapsed block cannot satisfy the assertions by accident.
+    t18_commit_with_steps(
+        &store,
+        &g,
+        &multi,
+        Some(SubtaskUsage {
+            input_tokens: Some(30),
+            output_tokens: Some(6),
+            total_cost_usd: Some(0.9),
+            source: Some("claude-code".to_string()),
+        }),
+        Some(vec![
+            t18_step(
+                0,
+                "",
+                Some(SubtaskUsage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(4),
+                    source: Some("grok-build".to_string()),
+                    ..Default::default()
+                }),
+                Some("grok-build"),
+            ),
+            // Ran, but its adapter reported nothing: `null`, and still named.
+            t18_step(1, "", None, Some("codex")),
+            // A parallel member gets its own record — never a group total.
+            t18_step(
+                2,
+                "review",
+                Some(SubtaskUsage {
+                    input_tokens: Some(7),
+                    source: Some("codex".to_string()),
+                    ..Default::default()
+                }),
+                Some("codex"),
+            ),
+        ]),
+        "r-multi",
+    )
+    .await;
+
+    let (cost, tokens, payload) = t15_one_usage_row(&store, &g, &multi).await;
+    let steps = payload["steps"]
+        .as_array()
+        .unwrap_or_else(|| panic!("steps missing from the terminal payload: {payload}"));
+    assert_eq!(steps.len(), 3, "one record per executed unit: {payload}");
+    assert_eq!(steps[0]["step_index"], serde_json::json!(0));
+    assert_eq!(steps[0]["parallel_group"], serde_json::json!(""));
+    assert_eq!(
+        steps[0]["usage"],
+        serde_json::json!({
+            "input_tokens": 10,
+            "output_tokens": 4,
+            // T15's provenance field travels inside the block — omitting it
+            // here would assert a shape the pipeline never produces.
+            "source": "grok-build"
+        }),
+        "the step's own numbers, not the node's: {payload}"
+    );
+    assert_eq!(steps[0]["source"], serde_json::json!("grok-build"));
+    // The silent step: an explicit null rather than a fabricated zero, and the
+    // adapter is still named (that is the only naming left once usage is null).
+    assert_eq!(steps[1]["usage"], serde_json::json!(null), "{payload}");
+    assert_eq!(steps[1]["source"], serde_json::json!("codex"));
+    // The parallel member is its own record: 7, not 7 merged with anything.
+    assert_eq!(steps[2]["parallel_group"], serde_json::json!("review"));
+    assert_eq!(
+        steps[2]["usage"],
+        serde_json::json!({"input_tokens": 7, "source": "codex"})
+    );
+
+    // Acceptance 4: the columns still describe the NODE (the last step's
+    // numbers as the executor reported them), never a sum over the records.
+    // 10+4 + 0 + 7 = 21 tokens would be the wrong answer here, and pinning the
+    // wrong answer is the point of the assertion.
+    assert_eq!(
+        tokens,
+        Some(36),
+        "cost/tokens stay the node-level report, not a sum over steps: {payload}"
+    );
+    let cost = cost.expect("a reported price lands in the column");
+    assert!((cost - 0.9).abs() < 1e-9, "got {cost}");
+    assert_eq!(payload["usage_reported"], serde_json::json!(true));
+    assert_eq!(
+        payload["usage_source"],
+        serde_json::json!("claude-code"),
+        "{payload}"
+    );
+
+    // 2. No records ⇒ no key at all. The additive contract, asserted on the row
+    //    rather than on a serialized intermediate: a pre-T18 publisher's event
+    //    must be byte-identical, which is what keeps acceptance 6 (no
+    //    `contract_version` bump) honest.
+    t18_commit_with_steps(
+        &store,
+        &g,
+        &single,
+        Some(SubtaskUsage {
+            input_tokens: Some(5),
+            source: Some("grok-build".to_string()),
+            ..Default::default()
+        }),
+        None,
+        "r-single",
+    )
+    .await;
+
+    let (_, tokens, payload) = t15_one_usage_row(&store, &g, &single).await;
+    assert!(
+        payload.get("steps").is_none(),
+        "an event with no step records must not carry the key at all: {payload}"
+    );
+    assert_eq!(
+        tokens,
+        Some(5),
+        "the node-level block is unaffected: {payload}"
+    );
+
+    purge_t3(&store, &g).await;
 }

@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from ultimate_coders.agent.sandbox import AgentOutput
+from ultimate_coders.agent.sandbox import AgentOutput, TokenUsage
 from ultimate_coders.agent.types import (
     Subtask,
     SubtaskStatus,
@@ -19,7 +19,7 @@ from ultimate_coders.agent.types import (
     WorkflowStep,
     _resolve_agent_config_field,
 )
-from ultimate_coders.agent.worker import Worker
+from ultimate_coders.agent.worker import Worker, _step_usage
 from ultimate_coders.nats_worker import _dispatch_mode_from_payload
 
 
@@ -1224,5 +1224,401 @@ async def test_execute_steps_empty_parallel_group_sequential():
     assert w._sandbox_manager.execute.await_count == 2
     assert out.success is True
     assert out.summary == "s1"
+
+
+# ── T18 (#668): per-step usage records ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_records_one_usage_record_per_step():
+    """Acceptance 1: a three-adapter chain yields three records, in order.
+
+    Distinct numbers per step on purpose — a single collapsed block (the
+    pre-T18 behaviour) would satisfy "one record" but not this test.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="wrote",
+                success=True,
+                token_usage=TokenUsage(
+                    input_tokens=10, output_tokens=4, source="grok-build"
+                ),
+            ),
+            AgentOutput(
+                summary="cr",
+                success=True,
+                token_usage=TokenUsage(
+                    input_tokens=20,
+                    output_tokens=5,
+                    total_cost_usd=0.25,
+                    source="codex",
+                ),
+            ),
+            AgentOutput(
+                summary="revised",
+                success=True,
+                token_usage=TokenUsage(
+                    input_tokens=30, output_tokens=6, source="claude-code"
+                ),
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="grok-build", prompt="write"),
+            WorkflowStep(agent="codex", prompt="cr {{prev_summary}}"),
+            WorkflowStep(agent="claude-code", prompt="revise {{prev_summary}}"),
+        ],
+    )
+    out = await w._execute_steps(
+        subtask, working_dir=None, on_stdout_line=None, context_block=""
+    )
+
+    assert [s.step_index for s in out.step_usages] == [0, 1, 2]
+    assert [s.parallel_group for s in out.step_usages] == ["", "", ""]
+    assert [s.source for s in out.step_usages] == [
+        "grok-build",
+        "codex",
+        "claude-code",
+    ]
+    assert [s.usage.input_tokens for s in out.step_usages] == [10, 20, 30]
+    assert [s.usage.output_tokens for s in out.step_usages] == [4, 5, 6]
+    assert out.step_usages[1].usage.total_cost_usd == 0.25
+
+    # Acceptance 4: the node-level block is untouched — it is still ONE step's
+    # numbers (the last), not the sum. 10+20+30 = 60 would be the wrong answer
+    # here, and pinning the wrong answer is the point.
+    assert out.token_usage.input_tokens == 30
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_silent_step_keeps_usage_none_and_names_its_adapter():
+    """Acceptance 2: a step whose adapter reported nothing reads as ``None``.
+
+    Never a zeroed block: ``usage: null`` is the only honest statement, and the
+    step must still name which adapter ran — that is what ``source``'s fallback
+    to the declared ``agent`` is for.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="a",
+                success=True,
+                token_usage=TokenUsage(input_tokens=10, source="grok-build"),
+            ),
+            # No token_usage at all — the adapter parsed no usage block.
+            AgentOutput(summary="b", success=True),
+            AgentOutput(
+                summary="c",
+                success=True,
+                token_usage=TokenUsage(input_tokens=30, source="claude-code"),
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="grok-build", prompt="s0"),
+            WorkflowStep(agent="codex", prompt="s1 {{prev_summary}}"),
+            WorkflowStep(agent="claude-code", prompt="s2 {{prev_summary}}"),
+        ],
+    )
+    out = await w._execute_steps(
+        subtask, working_dir=None, on_stdout_line=None, context_block=""
+    )
+
+    assert out.step_usages[1].usage is None
+    assert out.step_usages[1].parallel_group == ""
+    assert out.step_usages[1].source == "codex"
+    # The other two are unharmed — one silent step does not blank the array.
+    assert out.step_usages[0].usage.input_tokens == 10
+    assert out.step_usages[2].usage.input_tokens == 30
+    assert [s.step_index for s in out.step_usages] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_parallel_group_records_each_member_separately():
+    """Acceptance 3: a group of N members yields N records and no group total.
+
+    Members get DISTINCT numbers so a single aggregated block cannot satisfy
+    the assertion by accident.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="cr-a",
+                success=True,
+                token_usage=TokenUsage(input_tokens=11, source="codex"),
+            ),
+            AgentOutput(
+                summary="cr-b",
+                success=True,
+                token_usage=TokenUsage(input_tokens=22, source="codex"),
+            ),
+            AgentOutput(
+                summary="cr-c",
+                success=True,
+                token_usage=TokenUsage(input_tokens=33, source="codex"),
+            ),
+        ]
+    )
+    readonly_cfg = {"disallowed_tools": ["Edit", "Write", "Bash"]}
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(
+                agent="codex",
+                prompt=f"CR concern {n}",
+                parallel_group="review",
+                agent_config=readonly_cfg,
+            )
+            for n in ("a", "b", "c")
+        ],
+    )
+    out = await w._execute_steps(
+        subtask, working_dir=None, on_stdout_line=None, context_block=""
+    )
+
+    assert len(out.step_usages) == 3, "one record per group member, not one per group"
+    assert [s.step_index for s in out.step_usages] == [0, 1, 2]
+    assert {s.parallel_group for s in out.step_usages} == {"review"}
+    assert [s.usage.input_tokens for s in out.step_usages] == [11, 22, 33]
+    # 11+22+33 = 66 must NOT appear anywhere: no group-level total exists.
+    assert not any(
+        getattr(s.usage, "input_tokens", None) == 66 for s in out.step_usages
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_skipped_step_leaves_no_record_but_a_gap():
+    """Acceptance-adjacent (D1): a skipped step produces NO record.
+
+    The gap in ``step_index`` is the encoding of "that step did not run". An
+    entry with ``usage: None`` there would collapse two different facts
+    ("skipped" vs "ran but silent") into one value, which is exactly what
+    acceptance 2 requires to stay readable.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="wrote",
+                success=True,
+                token_usage=TokenUsage(input_tokens=10, source="grok-build"),
+            ),
+            AgentOutput(
+                summary="finalized",
+                success=True,
+                token_usage=TokenUsage(input_tokens=30, source="claude-code"),
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="grok-build", prompt="write"),
+            WorkflowStep(
+                agent="codex",
+                prompt="CR (skipped)",
+                condition='prev.files.contains("nonexistent/")',
+            ),
+            WorkflowStep(agent="claude-code", prompt="finalize {{prev_summary}}"),
+        ],
+    )
+    out = await w._execute_steps(
+        subtask, working_dir=None, on_stdout_line=None, context_block=""
+    )
+
+    assert w._sandbox_manager.execute.await_count == 2
+    assert [s.step_index for s in out.step_usages] == [0, 2], (
+        "the skipped step must leave a gap, not a null-usage entry"
+    )
+    assert [s.source for s in out.step_usages] == ["grok-build", "claude-code"]
+    assert all(s.usage is not None for s in out.step_usages)
+
+
+@pytest.mark.asyncio
+async def test_execute_steps_aborting_failure_still_records_what_ran():
+    """The abort path must not drop what the node already spent.
+
+    Fixing the success path only would leave the under-report alive on the
+    failure path — the same defect wearing a different hat.
+    """
+    w = _make_worker()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="ok0",
+                success=True,
+                token_usage=TokenUsage(input_tokens=10, source="grok-build"),
+            ),
+            AgentOutput(
+                summary="boom",
+                success=False,
+                token_usage=TokenUsage(input_tokens=20, source="codex"),
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        status=SubtaskStatus.PENDING,
+        steps=[
+            WorkflowStep(agent="grok-build", prompt="s0"),
+            WorkflowStep(agent="codex", prompt="s1 {{prev_summary}}"),
+        ],
+    )
+    out = await w._execute_steps(
+        subtask, working_dir=None, on_stdout_line=None, context_block=""
+    )
+
+    assert out.success is False
+    assert w._sandbox_manager.execute.await_count == 2
+    assert [s.step_index for s in out.step_usages] == [0, 1]
+    assert [s.usage.input_tokens for s in out.step_usages] == [10, 20]
+    assert out.step_usages[1].source == "codex"
+
+
+def test_step_usage_source_prefers_measured_stamp_then_declared_agent():
+    """D2: measured provenance wins; the declared adapter is the fallback.
+
+    The ordering matters because the fallback is the ONLY naming left when a
+    step's adapter reported nothing.
+    """
+    measured = AgentOutput(
+        token_usage=TokenUsage(input_tokens=1, source="claude_code")
+    )
+    assert _step_usage(0, "", "claude-code", measured).source == "claude_code"
+
+    silent = AgentOutput()
+    assert _step_usage(0, "", "claude-code", silent).source == "claude-code"
+    assert _step_usage(0, "", "claude-code", silent).usage is None
+    # Neither known ⇒ `null`, per the ticket ("缺失则 null").
+    assert _step_usage(0, "", "", silent).source is None
+    assert _step_usage(0, "", "", silent).step_index == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_in_sandbox_legacy_records_one_implicit_step():
+    """Acceptance 5: the single-agent path still yields a length-1 ``steps[]``.
+
+    A subtask with no declared steps is the majority shape (the decomposer
+    omits ``steps`` for simple subtasks), so leaving it without a record would
+    make ``steps`` absent precisely where consumers most need a readable
+    payload. It is recorded at index 0, with the adapter taken from the usage
+    block's own stamp — the legacy form declares no step to name.
+    """
+    w = _make_worker()
+    w.record_recent_files = MagicMock()
+    w._sandbox_manager.execute = AsyncMock(
+        return_value=AgentOutput(
+            summary="done",
+            success=True,
+            token_usage=TokenUsage(input_tokens=9, output_tokens=3, source="grok-build"),
+        )
+    )
+    subtask = Subtask(id="st-1", parent_id="t-1", description="d")
+
+    result = await w._execute_in_sandbox(subtask, context_block="")
+
+    assert len(result.step_usages) == 1
+    only = result.step_usages[0]
+    assert only.step_index == 0
+    assert only.parallel_group == ""
+    assert only.source == "grok-build"
+    assert only.usage.input_tokens == 9
+    assert only.usage.output_tokens == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_in_sandbox_does_not_invent_a_step_when_all_were_skipped():
+    """The legacy fallback keys off ``subtask.steps``, never off "list is empty".
+
+    A workflow whose every step was skipped legitimately collects nothing —
+    nothing ran. Driving the "no records ⇒ synthesise index 0" rule off the
+    collected list would report a unit that never ran, which is the same
+    species of error as writing ``tokens: 0`` for an unmeasured run.
+    """
+    w = _make_worker()
+    w.record_recent_files = MagicMock()
+    w._sandbox_manager.execute = AsyncMock()
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        steps=[WorkflowStep(agent="codex", prompt="maybe", condition="false")],
+    )
+
+    result = await w._execute_in_sandbox(subtask, context_block="")
+
+    assert w._sandbox_manager.execute.await_count == 0
+    assert result.step_usages == []
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_execute_in_sandbox_workflow_forwards_the_chain_records():
+    """The workflow branch passes ``_execute_steps``' records through untouched.
+
+    This is the hop T15 had to close for ``usage``: every other AgentOutput
+    field was forwarded, and the one that was not simply vanished by the time
+    the terminal event was written.
+    """
+    w = _make_worker()
+    w.record_recent_files = MagicMock()
+    w._publish_event = AsyncMock()
+    w._sandbox_manager.execute = AsyncMock(
+        side_effect=[
+            AgentOutput(
+                summary="s0",
+                success=True,
+                token_usage=TokenUsage(input_tokens=7, source="grok-build"),
+            ),
+            AgentOutput(
+                summary="s1",
+                success=True,
+                token_usage=TokenUsage(input_tokens=8, source="codex"),
+            ),
+        ]
+    )
+    subtask = Subtask(
+        id="st-1",
+        parent_id="t-1",
+        description="d",
+        steps=[
+            WorkflowStep(agent="grok-build", prompt="s0"),
+            WorkflowStep(agent="codex", prompt="s1 {{prev_summary}}"),
+        ],
+    )
+
+    result = await w._execute_in_sandbox(subtask, context_block="")
+
+    assert [s.step_index for s in result.step_usages] == [0, 1]
+    assert [s.usage.input_tokens for s in result.step_usages] == [7, 8]
+    # The node-level block still carries the last step's numbers (acceptance 4).
+    assert result.usage.input_tokens == 8
 
 

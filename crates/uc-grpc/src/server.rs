@@ -155,6 +155,16 @@ pub struct NatsSubtaskUpdate {
     /// mirrors them verbatim.
     #[serde(default)]
     pub usage: Option<uc_types::SubtaskUsage>,
+    /// Per-step usage reported by the worker (T18 #668).
+    ///
+    /// The disaggregation of `usage` above: the executor forwards ONE step's
+    /// usage, so a multi-step chain's node-level `cost`/`tokens` are the LAST
+    /// step's numbers. Additive and optional in exactly the same way —
+    /// absent/empty means "no per-step records", never a placeholder entry.
+    /// Shares `uc_types::StepUsage` with the event payload's `steps[]` so the
+    /// wire keys and the payload keys cannot drift apart.
+    #[serde(default)]
+    pub steps: Option<Vec<uc_types::StepUsage>>,
     /// Review verdict reported by a reviewer worker (T16 #661).
     ///
     /// Same additive discipline as `usage`: absent means "no verdict", and a
@@ -932,6 +942,12 @@ impl TaskStore {
     }
 
     /// Terminal-success derivation → commit-once for the node.
+    ///
+    /// `usage` (T15 #660) and `steps` (T18 #668) both ride down to `on_commit`:
+    /// the first binds the terminal event's `cost`/`tokens`, the second is the
+    /// disaggregation of that same report. Dropping either at this hop is
+    /// invisible — the commit still succeeds, only the event quietly loses the
+    /// data.
     fn fanout_graph_commit(
         &self,
         graph_id: &str,
@@ -939,12 +955,18 @@ impl TaskStore {
         attempt: u32,
         result_ref: Option<String>,
         usage: Option<uc_types::SubtaskUsage>,
+        steps: Option<Vec<uc_types::StepUsage>>,
     ) {
         let (graph_id, node_id) = (graph_id.to_string(), node_id.to_string());
         self.graph_verb(move |sink| async move {
             let env = uc_types::ExecutionEnvelope::new(&graph_id, &node_id, &attempt.to_string());
-            sink.on_commit(&env, result_ref.as_deref(), usage.as_ref())
-                .await;
+            sink.on_commit(
+                &env,
+                result_ref.as_deref(),
+                usage.as_ref(),
+                steps.as_deref(),
+            )
+            .await;
         });
     }
 
@@ -1528,9 +1550,15 @@ impl TaskStore {
         // = zero overhead; legacy behavior above and below untouched).
         enum PendingGraphVerb {
             Heartbeat,
-            /// Terminal success: `(result_ref, usage)`. Both come from the same
-            /// subtask entry and both are needed by `on_commit` (T15 #660).
-            Commit(Option<String>, Option<uc_types::SubtaskUsage>),
+            /// Terminal success: `(result_ref, usage, steps)`. All three come
+            /// from the same subtask entry and all three are needed by
+            /// `on_commit` — `usage` since T15 #660, `steps` since T18 #668
+            /// (the per-step disaggregation of the same report).
+            Commit(
+                Option<String>,
+                Option<uc_types::SubtaskUsage>,
+                Option<Vec<uc_types::StepUsage>>,
+            ),
             Fail(&'static str),
         }
         let mut graph_fanout: Vec<(String, u32, PendingGraphVerb)> = Vec::new();
@@ -1544,7 +1572,9 @@ impl TaskStore {
             }
             match status {
                 uc_types::SubtaskStatus::InProgress => Some(PendingGraphVerb::Heartbeat),
-                uc_types::SubtaskStatus::Completed => Some(PendingGraphVerb::Commit(None, None)),
+                uc_types::SubtaskStatus::Completed => {
+                    Some(PendingGraphVerb::Commit(None, None, None))
+                }
                 uc_types::SubtaskStatus::Failed => Some(PendingGraphVerb::Fail("worker_failed")),
                 uc_types::SubtaskStatus::Conflicted => Some(PendingGraphVerb::Fail("conflicted")),
                 _ => None,
@@ -1609,6 +1639,15 @@ impl TaskStore {
                                 subtask_update.usage.clone().or_else(|| {
                                     subtask.result.as_ref().and_then(|r| r.usage.clone())
                                 }),
+                                // T18 #668: the per-step records travel
+                                // alongside the block they disaggregate, with
+                                // the same "wire first, else what we already
+                                // hold" precedence. The domain `SubtaskResult`
+                                // does not carry them (nothing reads them from
+                                // there — the graph verb consumes the wire
+                                // directly), so `subtask.result` has nothing to
+                                // fall back to and this stays a pass-through.
+                                subtask_update.steps.clone(),
                             ),
                             other => other,
                         };
@@ -1758,8 +1797,8 @@ impl TaskStore {
                 PendingGraphVerb::Heartbeat => {
                     self.fanout_graph_heartbeat(&graph_id, &node_id, attempt);
                 }
-                PendingGraphVerb::Commit(result, usage) => {
-                    self.fanout_graph_commit(&graph_id, &node_id, attempt, result, usage);
+                PendingGraphVerb::Commit(result, usage, steps) => {
+                    self.fanout_graph_commit(&graph_id, &node_id, attempt, result, usage, steps);
                 }
                 PendingGraphVerb::Fail(reason) => {
                     self.fanout_graph_fail(&graph_id, &node_id, attempt, reason);
@@ -5687,6 +5726,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -5822,6 +5862,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -5911,6 +5952,7 @@ mod tests {
                 result: Some("done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6028,6 +6070,7 @@ mod tests {
                 result: Some("Done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6067,6 +6110,7 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+                    steps: None,
 
                     review: None,
                 },
@@ -6079,6 +6123,7 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+                    steps: None,
 
                     review: None,
                 },
@@ -6100,6 +6145,7 @@ mod tests {
                 result: Some("first done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6124,6 +6170,7 @@ mod tests {
                 result: Some("second done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6155,6 +6202,7 @@ mod tests {
                 result: Some("boom".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6187,6 +6235,7 @@ mod tests {
                 result: Some("done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6225,6 +6274,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6247,6 +6297,7 @@ mod tests {
                 result: Some("stale attempt 0 result".to_string()),
                 attempt_id: Some(0),
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6287,6 +6338,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6308,6 +6360,7 @@ mod tests {
                 result: Some("current attempt result".to_string()),
                 attempt_id: Some(1),
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6348,6 +6401,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6370,6 +6424,7 @@ mod tests {
                 result: Some("legacy result".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -6400,6 +6455,7 @@ mod tests {
                 result: Some("snapshot result".to_string()),
                 attempt_id: Some(0),
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -7343,6 +7399,7 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+                    steps: None,
 
                     review: None,
                 }],
@@ -7437,6 +7494,7 @@ mod tests {
                     result: None,
                     attempt_id: None,
                     usage: None,
+                    steps: None,
 
                     review: None,
                 }],
@@ -7763,6 +7821,7 @@ mod tests {
                 result: Some("Work done".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -7802,6 +7861,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -7846,6 +7906,7 @@ mod tests {
                 result: Some("error: something broke".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -7895,6 +7956,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -7933,6 +7995,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -8639,6 +8702,7 @@ mod tests {
             env: &uc_types::ExecutionEnvelope,
             result: Option<&str>,
             usage: Option<&uc_types::SubtaskUsage>,
+            steps: Option<&[uc_types::StepUsage]>,
         ) {
             let mut entry = format!(
                 "commit {}:{}:{}",
@@ -8648,6 +8712,11 @@ mod tests {
             );
             // T15 (#660): annotate only when a usage block actually arrived, so
             // the exact strings the pre-T15 assertions encode stay identical.
+            // T18 (#668) follows the same rule for the per-step records: the
+            // assertion strings are the contract these tests check, and adding
+            // a suffix unconditionally would make every pre-T18 expectation
+            // fail for a reason that has nothing to do with the behaviour under
+            // test.
             if let Some(usage) = usage {
                 entry.push_str(&format!(
                     ":usage={}/{}",
@@ -8657,6 +8726,9 @@ mod tests {
                         .unwrap_or_else(|| "-".to_string()),
                     usage.source.clone().unwrap_or_else(|| "-".to_string())
                 ));
+            }
+            if let Some(steps) = steps {
+                entry.push_str(&format!(":steps={}", steps.len()));
             }
             self.verbs.lock().unwrap().push(entry);
         }
@@ -8780,6 +8852,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -8823,6 +8896,7 @@ mod tests {
                 result: None,
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -9034,6 +9108,7 @@ mod tests {
                 result: Some("ok".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -9057,6 +9132,7 @@ mod tests {
                 result: Some("boom".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],
@@ -9072,6 +9148,17 @@ mod tests {
         assert!(kinds.contains(&"schedule"), "verbs: {verbs:?}");
         assert!(kinds.contains(&"commit"), "verbs: {verbs:?}");
         assert!(kinds.contains(&"fail"), "verbs: {verbs:?}");
+        // T18 (#668): this update carries no per-step records, so the commit
+        // verb must be the pre-T18 string exactly — additive means
+        // bit-for-bit unchanged here, not merely "still parses".
+        let commit = verbs
+            .iter()
+            .find(|v| v.starts_with("commit "))
+            .expect("a commit verb");
+        assert!(
+            !commit.contains(":steps="),
+            "an update with no step records must not fabricate the annotation: {commit}"
+        );
         // heartbeat already exercised separately; here InProgress was never
         // reported, so assert the three that must exist and that every verb
         // string is well-formed.
@@ -9086,6 +9173,118 @@ mod tests {
             !sink.seen.lock().unwrap().is_empty(),
             "shadow_persist must keep fanning out beside the verbs"
         );
+    }
+
+    /// T18 (#668): the per-step records ride the same waypoint as `usage`, all
+    /// the way to the sink verb.
+    ///
+    /// This is the hop a dropped parameter hides in: the commit still succeeds,
+    /// the node still goes SUCCEEDED, and the only symptom is a terminal event
+    /// that quietly lost the disaggregation of its own usage. Asserting on the
+    /// verb string the fake composes from what actually arrived is what makes
+    /// that drop visible without a database.
+    #[tokio::test]
+    async fn graph_commit_verb_carries_the_per_step_records() {
+        let (mut store, sink) = wired_store();
+        let task = store.submit_task("Test".to_string(), "p1".to_string());
+        let task_id = task.id.0.clone();
+        let st_id = task.subtasks[0].id.0.clone();
+
+        store.update_subtask_status(&task_id, &st_id, uc_types::SubtaskStatus::Assigned);
+        store.apply_update(&NatsTaskUpdate {
+            message_id: None,
+            task_id: task_id.clone(),
+            status: "InProgress".to_string(),
+            partial: false,
+            subtasks: vec![NatsSubtaskUpdate {
+                subtask_id: st_id.clone(),
+                status: "completed".to_string(),
+                assigned_worker: Some("w1".to_string()),
+                description: None,
+                depends_on: None,
+                result: Some("ok".to_string()),
+                attempt_id: None,
+                usage: Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(30),
+                    output_tokens: Some(6),
+                    source: Some("claude-code".to_string()),
+                    ..Default::default()
+                }),
+                steps: Some(vec![
+                    uc_types::StepUsage {
+                        step_index: 0,
+                        parallel_group: String::new(),
+                        usage: Some(uc_types::SubtaskUsage {
+                            input_tokens: Some(10),
+                            source: Some("grok-build".to_string()),
+                            ..Default::default()
+                        }),
+                        source: Some("grok-build".to_string()),
+                    },
+                    // Ran, adapter reported nothing — stays silent AND named.
+                    uc_types::StepUsage {
+                        step_index: 1,
+                        parallel_group: String::new(),
+                        usage: None,
+                        source: Some("codex".to_string()),
+                    },
+                ]),
+                review: None,
+            }],
+            result: None,
+        });
+        yielded().await;
+
+        let verbs = sink.take_verbs();
+        let commit = verbs
+            .iter()
+            .find(|v| v.starts_with("commit "))
+            .unwrap_or_else(|| panic!("no commit verb: {verbs:?}"));
+        assert!(
+            commit.contains(":steps=2"),
+            "the per-step records must reach the sink — otherwise this \
+             parameter was dropped somewhere between the wire and the verb: {commit}"
+        );
+        // Acceptance 4: the node-level block beside it is unchanged — still the
+        // one step's numbers (30+6 = 36), not a sum over the records.
+        assert!(
+            commit.contains(":usage=36/claude-code"),
+            "usage=<total>/<source> still describes the node itself: {commit}"
+        );
+    }
+
+    /// T18 (#668): the Python publisher's `steps` key deserializes into the
+    /// wire struct, and a pre-T18 publisher that omits it still parses.
+    ///
+    /// Every other test here builds `NatsSubtaskUpdate` in Rust, which proves
+    /// the *shape* but never exercises `Deserialize` — a rename or a missing
+    /// `#[serde(default)]` would sail straight through and only fail at
+    /// runtime, where the failure mode is a silently dropped whole
+    /// `uc.task.update`.
+    #[test]
+    fn nats_subtask_update_parses_python_step_records() {
+        let json = r#"{
+            "subtask_id": "st-1",
+            "status": "Completed",
+            "steps": [
+                {"step_index": 0, "parallel_group": "",
+                 "usage": {"input_tokens": 10, "source": "grok-build"},
+                 "source": "grok-build"},
+                {"step_index": 1, "parallel_group": "", "usage": null, "source": "codex"}
+            ]
+        }"#;
+        let update: NatsSubtaskUpdate = serde_json::from_str(json).unwrap();
+        let steps = update.steps.expect("the `steps` key must parse");
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].step_index, 0);
+        assert_eq!(steps[0].source.as_deref(), Some("grok-build"));
+        assert!(steps[1].usage.is_none());
+        assert_eq!(steps[1].source.as_deref(), Some("codex"));
+
+        // A pre-T18 publisher omits the key entirely: absent, not an error.
+        let legacy: NatsSubtaskUpdate =
+            serde_json::from_str(r#"{"subtask_id": "st-1", "status": "Completed"}"#).unwrap();
+        assert!(legacy.steps.is_none());
     }
 
     /// With no sink wired, every T3 hook site must be structurally inert
@@ -9112,6 +9311,7 @@ mod tests {
                 result: Some("r".to_string()),
                 attempt_id: None,
                 usage: None,
+                steps: None,
 
                 review: None,
             }],

@@ -293,6 +293,59 @@ impl SubtaskUsage {
     }
 }
 
+/// One workflow step's usage, as recorded on the terminal event's
+/// `payload.steps[]` (T18 #668, ruling #666 C).
+///
+/// Additive by construction — no new column, no new event type, and
+/// `contract_version` does not move. It exists because the executor forwards
+/// ONE step's usage on every one of its return paths, so a multi-step chain's
+/// node-level `cost`/`tokens` only ever held the **last** step's numbers while
+/// the event still declared `usage_reported: true`: a systematically low
+/// reading that no coverage mechanism could detect, because the node *did*
+/// report something.
+///
+/// This type doubles as the **wire** shape carried on `uc.task.update` inside
+/// the subtask entry's `steps` array — the Python side mirrors the field names
+/// verbatim, so renaming anything here is a cross-language contract change
+/// (`serde` ignores unknown keys, which makes a one-sided rename a silent drop
+/// rather than an error).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StepUsage {
+    /// Position of the executed unit within the subtask's execution sequence.
+    ///
+    /// Workflow form: the index into the subtask's declared steps. Legacy
+    /// single-agent form (no declared steps): always 0 — that one execution is
+    /// the subtask's only unit. A *gap* means that step was skipped (its
+    /// condition was false); a skipped step produces no entry at all, so a gap
+    /// is the encoding of "did not run" rather than lost data.
+    #[serde(default)]
+    pub step_index: u32,
+    /// The step's parallel group, verbatim from the orchestration. Empty for a
+    /// sequential step — the same encoding the step definitions themselves use,
+    /// so the two representations agree without a translation table.
+    #[serde(default)]
+    pub parallel_group: String,
+    /// The step's usage, or `None` when its adapter reported nothing.
+    ///
+    /// `None` means "unknown", never zero (D13 #657). It serializes as an
+    /// explicit `null` — deliberately **not** `skip_serializing_if`, unlike
+    /// every field of [`SubtaskUsage`]: this is a positional element of an
+    /// array, where an explicit null keeps `steps[i].usage` indexable without
+    /// an existence check. The two disciplines cannot collide because the
+    /// payload is written once into `execution_events.payload` and never parsed
+    /// back into this type.
+    #[serde(default)]
+    pub usage: Option<SubtaskUsage>,
+    /// Which adapter ran this step: the usage block's own `source` when it
+    /// reported one, else the step's declared agent; `None` when neither is
+    /// known.
+    ///
+    /// It exists so that a step whose adapter reported no numbers still names
+    /// who ran it — the only naming left once `usage` is `None`.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
 /// A review verdict attached to a subtask result (T16 #661, D14 #658).
 ///
 /// Field names mirror the TS `SubtaskDef.review`
@@ -786,5 +839,87 @@ mod tests {
         }
         let back: SubtaskResult = serde_json::from_str(&with).unwrap();
         assert_eq!(back.usage, result.usage);
+    }
+
+    // ── StepUsage (T18 #668) ────────────────────────────────────────────
+
+    /// Golden JSON produced by the Python mirror, byte for byte.
+    ///
+    /// `tests/python/test_nats_worker_helpers.py::
+    /// test_task_update_payload_emits_steps_with_rust_field_names` pins the
+    /// same literal from the other side. `serde` ignores unknown keys, so a
+    /// one-sided rename is a *silent* drop — these two fail together.
+    #[test]
+    fn step_usage_wire_shape_is_locked() {
+        let json = r#"[
+            {"step_index": 0, "parallel_group": "",
+             "usage": {"input_tokens": 10, "output_tokens": 4, "source": "grok-build"},
+             "source": "grok-build"},
+            {"step_index": 1, "parallel_group": "", "usage": null, "source": "codex"},
+            {"step_index": 2, "parallel_group": "review",
+             "usage": {"input_tokens": 7, "source": "codex"}, "source": "codex"}
+        ]"#;
+        let steps: Vec<StepUsage> = serde_json::from_str(json).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].step_index, 0);
+        assert_eq!(steps[0].source.as_deref(), Some("grok-build"));
+        assert_eq!(steps[0].usage.as_ref().unwrap().input_tokens, Some(10));
+        // The silent step stays silent AND stays named.
+        assert!(steps[1].usage.is_none());
+        assert_eq!(steps[1].source.as_deref(), Some("codex"));
+        assert_eq!(steps[2].parallel_group, "review");
+    }
+
+    /// An element must round-trip to the same explicit-null shape it was read
+    /// from — this is what keeps `steps[i].usage` indexable on both sides.
+    #[test]
+    fn step_usage_serializes_explicit_nulls_unlike_subtask_usage() {
+        let silent = StepUsage {
+            step_index: 1,
+            parallel_group: String::new(),
+            usage: None,
+            source: Some("codex".to_string()),
+        };
+        let json = serde_json::to_string(&silent).unwrap();
+        assert!(
+            json.contains("\"usage\":null"),
+            "a positional record keeps the key with an explicit null, got {json}"
+        );
+        assert!(json.contains("\"source\":\"codex\""), "got {json}");
+
+        // Contrast: SubtaskUsage is a wire delta and omits absent keys, which
+        // is exactly what makes a pre-T15 publisher byte-identical.
+        assert_eq!(
+            serde_json::to_string(&SubtaskUsage::default()).unwrap(),
+            "{}"
+        );
+
+        // And the round trip is exact in both directions.
+        let back: StepUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, silent);
+    }
+
+    /// Every field carries `#[serde(default)]`, so a malformed element degrades
+    /// to a default instead of failing the WHOLE `uc.task.update`.
+    ///
+    /// That failure mode is the dangerous one: a deserialization error drops
+    /// the entire task snapshot for every subtask in it, not just the bad step.
+    #[test]
+    fn step_usage_tolerates_partial_and_unknown_keys() {
+        let partial: StepUsage = serde_json::from_str(r#"{"step_index": 3}"#).unwrap();
+        assert_eq!(partial.step_index, 3);
+        assert_eq!(partial.parallel_group, "");
+        assert!(partial.usage.is_none() && partial.source.is_none());
+
+        let empty: StepUsage = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty, StepUsage::default());
+
+        let extra: StepUsage =
+            serde_json::from_str(r#"{"step_index": 1, "something_new": [1, 2]}"#).unwrap();
+        assert_eq!(extra.step_index, 1);
+
+        // A null `usage` is the normal silent-step shape, not an error.
+        let nulls: StepUsage = serde_json::from_str(r#"{"usage": null, "source": null}"#).unwrap();
+        assert!(nulls.usage.is_none() && nulls.source.is_none());
     }
 }

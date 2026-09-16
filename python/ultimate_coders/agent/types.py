@@ -150,6 +150,101 @@ class SubtaskUsage:
 
 
 @dataclass
+class StepUsage:
+    """One workflow step's usage, as recorded on the terminal event (T18 #668).
+
+    Mirror of the Rust ``uc_types::StepUsage``. The field names are the
+    cross-language wire contract: ``_make_task_update_payload`` emits this dict
+    inside the subtask entry's ``steps`` array and the Rust gateway deserializes
+    it with ``serde_json``, which ignores unknown keys — so renaming a field on
+    one side only is a *silent* data loss, not an error.
+
+    **Why this exists** (T15 #660 left it out): ``_execute_steps`` forwards ONE
+    step's usage on every one of its return paths, so a multi-step chain's
+    node-level ``cost``/``tokens`` only ever held the LAST step's numbers while
+    the event still declared ``usage_reported: true``. This block is the
+    disaggregation that makes the shortfall readable.
+
+    It is deliberately **not** summed into the node-level columns: a workflow
+    can chain several adapters (``claude-code`` → ``codex`` → ``grok-build``),
+    so a single collapsed block would make both the number and its ``source``
+    unattributable — the same reason ``_execute_steps`` refuses to merge the
+    per-step usage in the first place.
+    """
+
+    #: Position of the executed unit within the subtask's execution sequence.
+    #:
+    #: Workflow form: the index into ``Subtask.steps``. Legacy single-agent
+    #: form (``Subtask.steps`` empty): always ``0`` — that one execution is the
+    #: subtask's only unit. A *gap* means the step was skipped (its condition
+    #: was false): a skipped step produces no entry at all, so a gap is the
+    #: encoding of "did not run" and not lost data.
+    step_index: int = 0
+    #: The step's ``parallel_group`` verbatim from the orchestration. Empty
+    #: string for a sequential step — the same encoding ``WorkflowStep.to_dict``
+    #: uses, so the two agree without a translation table.
+    parallel_group: str = ""
+    #: This step's usage, or ``None`` when its adapter reported nothing.
+    #:
+    #: ``None`` means "unknown", never zero (D13 #657's hard requirement).
+    usage: SubtaskUsage | None = None
+    #: Which adapter ran this step: ``usage.source`` (the adapter's own stamp at
+    #: its parse site) when the step reported one, else the step's declared
+    #: ``agent``; ``None`` when neither is known.
+    #:
+    #: It exists because a step whose adapter reported no numbers would
+    #: otherwise be anonymous — ``usage`` is ``None`` there, so this field is
+    #: the only thing left naming who ran it.
+    source: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Wire form — ``usage`` / ``source`` are explicit ``null``, never omitted.
+
+        Deliberately the **opposite** discipline from ``SubtaskUsage.to_dict``.
+        That one is a wire *delta*, where an absent key means "not reported"
+        and staying byte-identical to the pre-T15 publisher is the point. This
+        one is a *positional record* inside an array, where an explicit ``null``
+        keeps ``steps[i].usage`` indexable without an existence check. The two
+        cannot collide: ``payload`` is written once into
+        ``execution_events.payload`` and never parsed back into a domain type.
+        """
+        return {
+            "step_index": self.step_index,
+            "parallel_group": self.parallel_group,
+            "usage": self.usage.to_dict() if self.usage is not None else None,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> StepUsage | None:
+        """Parse the checkpoint form. Tolerant: garbage degrades, never raises.
+
+        Used by ``Task.from_dict`` — a checkpoint is one more hop this detail
+        can die on (the same argument T15 made for ``usage``), so the
+        round-trip has to exist or a worker restart would drop it.
+        """
+        if not isinstance(data, dict):
+            return None
+        try:
+            index = int(data.get("step_index", 0))
+        except (TypeError, ValueError):
+            index = 0
+        group = data.get("parallel_group")
+        source = data.get("source")
+        raw_usage = data.get("usage")
+        return cls(
+            step_index=index,
+            parallel_group=str(group) if group is not None else "",
+            usage=(
+                SubtaskUsage.from_dict(raw_usage)
+                if isinstance(raw_usage, dict)
+                else None
+            ),
+            source=str(source) if source else None,
+        )
+
+
+@dataclass
 class SubtaskReview:
     """A review verdict attached to a subtask result (T16 #661, D14 #658).
 
@@ -221,6 +316,16 @@ class SubtaskResult:
     # D13 forbids. Only a path that actually ran an agent and got usage from it
     # may set this.
     usage: SubtaskUsage | None = None
+    # Per-step usage of a multi-agent workflow (T18 #668).
+    #
+    # One entry per executed unit, in execution order, with ``step_index`` the
+    # position within that sequence (see ``StepUsage.step_index`` for what the
+    # index means in the legacy single-agent form, and why a *gap* means
+    # "skipped"). Stays empty on the constructors that build a result for a
+    # failure that happened *before* any agent ran (timeout, dispatch error):
+    # no unit executed, so there is nothing to report — the same "don't invent
+    # a measurement" rule that keeps ``usage`` at ``None`` there.
+    step_usages: list[StepUsage] = field(default_factory=list)
     # Review verdict from a review node (T16 #661).
     #
     # ``None`` means "not reviewed" — never fabricate a verdict, for the same
@@ -435,6 +540,15 @@ class Task:
                         "usage": (
                             st.result.usage.to_dict() if st.result.usage else None
                         ),
+                        # T18 #668: the same hop, for the same reason — a
+                        # checkpoint is one more place the per-step detail can
+                        # die. Without this, a worker that restarts and
+                        # re-publishes a full snapshot would report the node's
+                        # terminal event with `steps` gone, i.e. back to the
+                        # silent under-report this ticket exists to remove.
+                        "step_usages": [
+                            s.to_dict() for s in st.result.step_usages
+                        ],
                         # T16 #661: same hop, same reason as the block above —
                         # a checkpoint is a place a collected verdict can die.
                         "review": (
@@ -509,6 +623,17 @@ class Task:
                         if rd.get("usage") is not None
                         else None
                     ),
+                    # T18 #668: absent key (every checkpoint written before
+                    # T18) stays an empty list — "this result carries no
+                    # per-step record", never a fabricated one-entry list.
+                    step_usages=[
+                        parsed
+                        for parsed in (
+                            StepUsage.from_dict(s)
+                            for s in rd.get("step_usages") or []
+                        )
+                        if parsed is not None
+                    ],
                     review=(
                         SubtaskReview.from_dict(rd["review"])
                         if rd.get("review") is not None

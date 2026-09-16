@@ -681,11 +681,17 @@ pub trait GraphShadowSink: Send + Sync {
     /// `usage` (T15 #660) rides along so the winner can bind `cost`/`tokens`
     /// on the same terminal event. `None` means "the reporter said nothing",
     /// which is deliberately distinct from a reported zero.
+    ///
+    /// `steps` (T18 #668) rides the same call for the same reason: it is the
+    /// per-step disaggregation of that report, and a verb that dropped it would
+    /// leave the terminal event with the under-report this ticket removes.
+    /// Empty/`None` means "no per-step records" — never a placeholder entry.
     async fn on_commit(
         &self,
         _envelope: &ExecutionEnvelope,
         _result_ref: Option<&str>,
         _usage: Option<&uc_types::SubtaskUsage>,
+        _steps: Option<&[uc_types::StepUsage]>,
     ) {
     }
 
@@ -1732,6 +1738,15 @@ impl GraphStore {
     /// already owns the completion — node state is NOT touched and only a
     /// `late_result` event is appended. The dual-write race this closes:
     /// two concurrent commits for one node can never both win.
+    ///
+    /// `steps` (T18 #668) rides the terminal event's payload as
+    /// [`steps_payload`] shapes it. It exists because the executor forwards
+    /// ONE step's usage, so the node-level columns above are the *last* step's
+    /// numbers — this is the disaggregation that makes that shortfall readable
+    /// instead of invisible. It does **not** change those columns: summing them
+    /// would break comparability with historical rows and re-open the
+    /// "exactly once" argument this function settles structurally. `None` or an
+    /// empty slice emits no `steps` key at all.
     pub async fn commit_once(
         &self,
         graph_id: &str,
@@ -1739,6 +1754,7 @@ impl GraphStore {
         winning_attempt_id: &str,
         result_ref: Option<&str>,
         usage: Option<&uc_types::SubtaskUsage>,
+        steps: Option<&[uc_types::StepUsage]>,
     ) -> Result<bool, EngineError> {
         let mut tx = self.begin_tx("commit_once").await?;
         lock_graph_tx(&mut tx, graph_id).await?;
@@ -1873,6 +1889,28 @@ impl GraphStore {
                 "commit_once won with a node in a non-transitionable state — completion recorded, state untouched"
             );
         }
+        let mut event_payload = serde_json::json!({
+            "result_ref": result_ref,
+            // T14 (#659) / T15 (#660): the event says exactly what it
+            // carries. `duration_ms` is always bound (it is derivable from
+            // rows we already hold). `cost`/`tokens` are bound only when the
+            // reporter supplied them, and `usage_reported` makes that
+            // explicit so no reader can mistake a NULL column for a zero.
+            // `usage_source` names the adapter when it is known and stays
+            // null otherwise — it is never inferred.
+            "usage_reported": reported.is_some(),
+            "usage_source": reported.and_then(|u| u.source.as_deref()),
+        });
+        // T18 (#668): added only when there are records, so an event with none
+        // keeps the pre-T18 payload shape exactly — the same additive
+        // discipline the two keys above follow. Note that `usage_reported` is
+        // deliberately NOT recomputed from this array: it answers "did the
+        // node report anything at all", and the per-step records are a
+        // disaggregation of that same report rather than a second measurement
+        // (which is why acceptance 4 keeps the node-level columns untouched).
+        if let Some(steps) = steps_payload(steps) {
+            event_payload["steps"] = steps;
+        }
         append_event_with_usage_tx(
             &mut tx,
             graph_id,
@@ -1880,18 +1918,7 @@ impl GraphStore {
             Some(winning_attempt_id),
             Some(gv),
             "node_succeeded",
-            serde_json::json!({
-                "result_ref": result_ref,
-                // T14 (#659) / T15 (#660): the event says exactly what it
-                // carries. `duration_ms` is always bound (it is derivable from
-                // rows we already hold). `cost`/`tokens` are bound only when the
-                // reporter supplied them, and `usage_reported` makes that
-                // explicit so no reader can mistake a NULL column for a zero.
-                // `usage_source` names the adapter when it is known and stays
-                // null otherwise — it is never inferred.
-                "usage_reported": reported.is_some(),
-                "usage_source": reported.and_then(|u| u.source.as_deref()),
-            }),
+            event_payload,
             Some(attempt_usage),
         )
         .await?;
@@ -2580,6 +2607,48 @@ async fn append_event_with_usage_tx(
     Ok(())
 }
 
+/// Shape a run's per-step usage records into the `payload.steps[]` value
+/// (T18 #668, ruling #666 C), or `None` when there is nothing to record.
+///
+/// Returns `None` — never an empty array — so an event with no step records
+/// keeps the pre-T18 payload byte for byte. That is the whole reason this
+/// change ships without a `contract_version` bump: an absent `steps` key means
+/// "no per-step records", exactly as an absent `usage` key means "not
+/// reported". The Python mirror applies the identical rule at its own
+/// chokepoint (`if st.result.step_usages:`), so both sides omit rather than
+/// emit a placeholder.
+///
+/// The value is produced by serializing [`uc_types::StepUsage`] rather than
+/// hand-building JSON, so the payload shape and the wire shape cannot drift —
+/// a reader that deserializes `uc.task.update`'s `steps` and a reader that
+/// parses `execution_events.payload.steps` see the same field names by
+/// construction.
+///
+/// # Why a free function
+///
+/// The only caller (`commit_once`) is `storage`-gated, but the shape contract
+/// deserves a unit test that runs in **both** feature configurations — a
+/// gated-only test would be invisible to `--no-default-features`, which is
+/// exactly the configuration where a signature or shape regression is easiest
+/// to miss. `pub` for the same reason `mirror_write_allowed` is: reachable
+/// from an ungated `#[cfg(test)]` module.
+pub fn steps_payload(steps: Option<&[uc_types::StepUsage]>) -> Option<serde_json::Value> {
+    let steps = steps?;
+    if steps.is_empty() {
+        return None;
+    }
+    // `StepUsage` is primitives plus nested optional primitives, so serde_json
+    // has no reachable failure mode here (a NaN cost serializes to `null`
+    // rather than erroring). `.ok()` and not `unwrap()`: this runs inside a
+    // commit transaction, where a panic would abort the whole write.
+    let value = serde_json::to_value(steps).ok();
+    debug_assert!(
+        value.is_some(),
+        "StepUsage must always be serializable — if this fires, the payload would silently drop steps"
+    );
+    value
+}
+
 /// Version-CAS node state move: succeeds only while the row still carries
 /// the expected state AND version (the caller holds the row lock, so a miss
 /// means a concurrent writer — the loser returns without mutating).
@@ -2979,6 +3048,7 @@ impl GraphShadowSink for GraphStore {
         envelope: &ExecutionEnvelope,
         result_ref: Option<&str>,
         usage: Option<&uc_types::SubtaskUsage>,
+        steps: Option<&[uc_types::StepUsage]>,
     ) {
         // The winning attempt is the node's current RUNNING attempt (the
         // graph plane's own numbering); a commit with nothing running is
@@ -3001,6 +3071,7 @@ impl GraphShadowSink for GraphStore {
                 &attempt,
                 result_ref,
                 usage,
+                steps,
             )
             .await
         {
@@ -3283,6 +3354,188 @@ mod tests {
         assert!(!mirror_write_allowed("READY", "WEIRD_STATE"));
     }
 
+    // ── steps_payload (T18 #668) ────────────────────────────────────
+
+    fn step(
+        index: u32,
+        group: &str,
+        usage: Option<uc_types::SubtaskUsage>,
+        source: Option<&str>,
+    ) -> uc_types::StepUsage {
+        uc_types::StepUsage {
+            step_index: index,
+            parallel_group: group.to_string(),
+            usage,
+            source: source.map(str::to_string),
+        }
+    }
+
+    /// The additive contract: nothing to record must mean **no key**, not an
+    /// empty array.
+    ///
+    /// This is what keeps the change shippable without a `contract_version`
+    /// bump — a reader that never learned about `steps` sees the pre-T18
+    /// payload unchanged, which is also why acceptance 5 calls the single-step
+    /// payload the main compatibility surface.
+    #[test]
+    fn steps_payload_is_absent_when_there_is_nothing_to_record() {
+        assert!(steps_payload(None).is_none(), "None ⇒ no key");
+        assert!(steps_payload(Some(&[])).is_none(), "empty ⇒ no key, not []");
+    }
+
+    /// The shape contract, asserted on the exact value a reader will parse.
+    #[test]
+    fn steps_payload_keeps_explicit_nulls_and_order() {
+        let steps = vec![
+            step(
+                0,
+                "",
+                Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(4),
+                    ..Default::default()
+                }),
+                Some("grok-build"),
+            ),
+            // Ran, adapter reported nothing.
+            step(1, "", None, Some("codex")),
+            step(
+                2,
+                "review",
+                Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(7),
+                    ..Default::default()
+                }),
+                Some("codex"),
+            ),
+        ];
+        let value = steps_payload(Some(&steps)).expect("three records ⇒ a key");
+
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {"step_index": 0, "parallel_group": "",
+                 "usage": {"input_tokens": 10, "output_tokens": 4},
+                 "source": "grok-build"},
+                {"step_index": 1, "parallel_group": "", "usage": null, "source": "codex"},
+                {"step_index": 2, "parallel_group": "review",
+                 "usage": {"input_tokens": 7}, "source": "codex"}
+            ]),
+            "the payload must carry an explicit null for a silent step"
+        );
+
+        // Order is the input order — a consumer reads the array positionally,
+        // so a re-sort would silently re-attribute every number.
+        let indices: Vec<u64> = value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["step_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(indices, vec![0, 1, 2]);
+    }
+
+    /// A gap is legal: the skipped-step encoding must survive shaping.
+    ///
+    /// The skipped step produces no record at all, so `step_index` jumps. If a
+    /// later refactor ever renumbered the array into `0..n`, that gap would
+    /// vanish and every step's index would silently point at the wrong step —
+    /// hence the assertion on the sparse sequence rather than just the length.
+    #[test]
+    fn steps_payload_preserves_the_skipped_step_gap() {
+        let steps = vec![
+            step(0, "", None, Some("grok-build")),
+            step(2, "", None, Some("claude-code")),
+        ];
+        let value = steps_payload(Some(&steps)).expect("two records ⇒ a key");
+        let arr = value.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["step_index"], serde_json::json!(0));
+        assert_eq!(arr[1]["step_index"], serde_json::json!(2));
+    }
+
+    /// The payload shape and the wire shape are the same shape, by
+    /// construction — the value is produced by serializing the type the
+    /// gateway deserializes, so the two cannot drift apart.
+    #[test]
+    fn steps_payload_round_trips_through_the_wire_type() {
+        let steps = vec![
+            step(
+                0,
+                "review",
+                Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(3),
+                    source: Some("codex".to_string()),
+                    ..Default::default()
+                }),
+                Some("codex"),
+            ),
+            step(1, "review", None, None),
+        ];
+        let value = steps_payload(Some(&steps)).expect("two records ⇒ a key");
+        let back: Vec<uc_types::StepUsage> = serde_json::from_value(value).unwrap();
+        assert_eq!(back, steps);
+    }
+
+    /// The exact fixture the PG integration test commits, asserted locally.
+    ///
+    /// `graph_t18_commit_carries_per_step_usage_into_the_terminal_payload`
+    /// needs a live database, so its expected JSON would otherwise go
+    /// unverified until CI. Pinning the same literals here turns a shape
+    /// mistake into a seconds-long local failure — the DB test then only has to
+    /// prove the value reaches the row.
+    ///
+    /// Note the `source` inside each usage block: T15's provenance field is
+    /// part of the block, so an expectation that omits it asserts a shape the
+    /// pipeline never produces (this test was written after exactly that
+    /// mistake was found by hand in the DB test's literal).
+    #[test]
+    fn steps_payload_matches_the_pg_fixture_literals() {
+        let steps = vec![
+            step(
+                0,
+                "",
+                Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(4),
+                    source: Some("grok-build".to_string()),
+                    ..Default::default()
+                }),
+                Some("grok-build"),
+            ),
+            // Ran, adapter reported nothing.
+            step(1, "", None, Some("codex")),
+            // A parallel member: its own record, never a group total.
+            step(
+                2,
+                "review",
+                Some(uc_types::SubtaskUsage {
+                    input_tokens: Some(7),
+                    source: Some("codex".to_string()),
+                    ..Default::default()
+                }),
+                Some("codex"),
+            ),
+        ];
+        let value = steps_payload(Some(&steps)).expect("three records ⇒ a key");
+        assert_eq!(
+            value[0]["usage"],
+            serde_json::json!({
+                "input_tokens": 10,
+                "output_tokens": 4,
+                "source": "grok-build"
+            })
+        );
+        assert_eq!(value[1]["usage"], serde_json::json!(null));
+        assert_eq!(
+            value[2]["usage"],
+            serde_json::json!({"input_tokens": 7, "source": "codex"})
+        );
+        assert_eq!(value[2]["parallel_group"], serde_json::json!("review"));
+        assert_eq!(value[0]["source"], serde_json::json!("grok-build"));
+        assert_eq!(value[1]["source"], serde_json::json!("codex"));
+    }
+
     /// The T3 sink verbs are default no-ops: a shadow-only implementation
     /// (every T2 fake) keeps compiling and running unchanged, and calling
     /// the verbs is structurally incapable of failing the legacy path.
@@ -3307,7 +3560,7 @@ mod tests {
         // no graph plane required to keep the gateway compiling).
         sink.on_schedule(&env, Some("w1")).await;
         sink.on_heartbeat(&env).await;
-        sink.on_commit(&env, Some("r"), None).await;
+        sink.on_commit(&env, Some("r"), None, None).await;
         sink.on_fail(&env, "boom").await;
         assert_eq!(*sink.persisted.lock().unwrap(), 0);
     }

@@ -21,6 +21,7 @@ from ultimate_coders.agent.types import (
     ChangeType,
     DispatchMode,
     FileChange,
+    StepUsage,
     Subtask,
     SubtaskResult,
     SubtaskReview,
@@ -882,3 +883,117 @@ def test_task_checkpoint_carries_the_review_verdict() -> None:
     # A checkpoint written before the field existed has no key at all.
     del data["subtasks"][0]["result"]["review"]
     assert Task.from_dict(data).subtasks[0].result.review is None
+
+
+# ── T18 (#668): per-step usage records ────────────────────────────
+
+
+def test_step_usage_to_dict_uses_explicit_nulls() -> None:
+    """The opposite discipline from ``SubtaskUsage``, on purpose.
+
+    ``SubtaskUsage.to_dict`` drops absent keys because it is a wire *delta* and
+    staying byte-identical to the pre-T15 publisher is the point. A step
+    record is a *positional element* of an array instead: an explicit ``null``
+    keeps ``steps[i].usage`` indexable without an existence check. Pinning both
+    halves here so neither discipline gets "unified" by a later refactor.
+    """
+    assert StepUsage(step_index=1).to_dict() == {
+        "step_index": 1,
+        "parallel_group": "",
+        "usage": None,
+        "source": None,
+    }
+    # SubtaskUsage's own omission discipline still applies *inside* the block.
+    assert StepUsage(
+        step_index=0,
+        parallel_group="cr",
+        usage=SubtaskUsage(input_tokens=120),
+        source="codex",
+    ).to_dict() == {
+        "step_index": 0,
+        "parallel_group": "cr",
+        "usage": {"input_tokens": 120},
+        "source": "codex",
+    }
+
+
+def test_step_usage_from_dict_tolerates_garbage() -> None:
+    """A malformed element degrades to defaults; a non-dict is dropped outright.
+
+    ``Task.from_dict`` filters the ``None`` returns out, so one bad element
+    cannot abort a whole task snapshot.
+    """
+    assert StepUsage.from_dict("nope") is None
+    assert StepUsage.from_dict(None) is None
+    assert StepUsage.from_dict({}) == StepUsage()
+    assert StepUsage.from_dict({"step_index": "3"}) == StepUsage(step_index=3)
+    assert StepUsage.from_dict({"step_index": "abc"}) == StepUsage()
+    assert StepUsage.from_dict({"parallel_group": "cr"}) == StepUsage(
+        parallel_group="cr"
+    )
+    assert StepUsage.from_dict({"source": ""}) == StepUsage()
+    assert StepUsage.from_dict({"usage": "not-a-dict"}) == StepUsage()
+    full = StepUsage(
+        step_index=2,
+        parallel_group="cr",
+        usage=SubtaskUsage(input_tokens=1, source="codex"),
+        source="codex",
+    )
+    assert StepUsage.from_dict(full.to_dict()) == full
+
+
+def test_checkpoint_roundtrip_preserves_step_usages() -> None:
+    """The checkpoint hop, the same argument T15 made for ``usage``.
+
+    A worker that restarts and re-publishes a full snapshot would otherwise
+    report the node's terminal event with ``steps`` gone — i.e. back to the
+    silent under-report this ticket removes.
+    """
+    steps = [
+        StepUsage(
+            step_index=0,
+            parallel_group="",
+            usage=SubtaskUsage(input_tokens=10, output_tokens=4, source="grok-build"),
+            source="grok-build",
+        ),
+        # Ran, but its adapter reported nothing: must survive as `None`, not as
+        # a zeroed block (D13 #657).
+        StepUsage(step_index=1, parallel_group="", usage=None, source="codex"),
+    ]
+    task = _make_task(subtasks=[_make_subtask(result=_make_result(step_usages=steps))])
+    data = task.to_dict()
+    assert data["subtasks"][0]["result"]["step_usages"] == [
+        {
+            "step_index": 0,
+            "parallel_group": "",
+            "usage": {"input_tokens": 10, "output_tokens": 4, "source": "grok-build"},
+            "source": "grok-build",
+        },
+        {
+            "step_index": 1,
+            "parallel_group": "",
+            "usage": None,
+            "source": "codex",
+        },
+    ]
+    assert Task.from_dict(data).subtasks[0].result.step_usages == steps
+
+
+def test_checkpoint_without_step_usages_stays_empty() -> None:
+    """Absent must read as "no records", never as one fabricated record."""
+    task = _make_task()
+    data = task.to_dict()
+    assert data["subtasks"][0]["result"]["step_usages"] == []
+    assert Task.from_dict(data).subtasks[0].result.step_usages == []
+
+    # A checkpoint written before the field existed has no key at all.
+    del data["subtasks"][0]["result"]["step_usages"]
+    assert Task.from_dict(data).subtasks[0].result.step_usages == []
+
+    # A malformed element is dropped, and the valid ones are kept.
+    data["subtasks"][0]["result"]["step_usages"] = [
+        "garbage",
+        {"step_index": 7, "parallel_group": "cr"},
+    ]
+    kept = Task.from_dict(data).subtasks[0].result.step_usages
+    assert [s.step_index for s in kept] == [7]

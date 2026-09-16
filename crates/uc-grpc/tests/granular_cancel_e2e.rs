@@ -205,7 +205,7 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
         .expect("st-a READY after the mirror");
     assert!(
         graph
-            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None)
+            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None, None)
             .await
             .expect("commit a"),
         "first commit must win"
@@ -269,7 +269,14 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
     // ── Late result from the killed worker stays fenced ──────────────
     assert!(
         !graph
-            .commit_once(&task_id, "st-b", &b_attempt, Some("late result"), None)
+            .commit_once(
+                &task_id,
+                "st-b",
+                &b_attempt,
+                Some("late result"),
+                None,
+                None
+            )
             .await
             .expect("late commit_once"),
         "the cancelled attempt must never commit"
@@ -293,7 +300,7 @@ async fn attempt_cancel_rearms_node_late_result_fenced_fresh_attempt_commits() {
     );
     assert!(
         graph
-            .commit_once(&task_id, "st-b", &b2, Some("done-b"), None)
+            .commit_once(&task_id, "st-b", &b2, Some("done-b"), None, None)
             .await
             .expect("commit b2"),
         "the fresh attempt commits"
@@ -354,7 +361,7 @@ async fn node_cancel_closure_terminal_no_sibling_harm() {
         .expect("st-a READY");
     assert!(
         graph
-            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None)
+            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None, None)
             .await
             .expect("commit a"),
         "first commit must win"

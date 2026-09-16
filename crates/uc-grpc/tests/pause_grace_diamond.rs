@@ -199,7 +199,7 @@ async fn diamond_pause_commit_branch_grace_hard_stop_resume_redispatch() {
         .expect("st-a must be READY after the mirror");
     assert!(
         graph
-            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None)
+            .commit_once(&task_id, "st-a", &a_attempt, Some("done-a"), None, None)
             .await
             .expect("commit a"),
         "the first commit on a fresh attempt must win"

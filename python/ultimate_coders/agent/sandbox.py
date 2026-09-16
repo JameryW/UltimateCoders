@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from ultimate_coders.agent.types import ChangeType, FileChange, SubtaskUsage
+from ultimate_coders.agent.types import ChangeType, FileChange, StepUsage, SubtaskUsage
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +348,15 @@ class AgentOutput:
     stderr_tail: str = ""  # last ~10 lines of stderr (for diagnostics)
     # List of tool call names extracted from the agent output
     tool_calls: list[str] = field(default_factory=list)
+    # Per-step usage records for a multi-agent workflow (T18 #668).
+    #
+    # An adapter never sets this: it describes the *chain*, not one adapter's
+    # output, so only ``Worker._execute_steps`` populates it — and it does so
+    # on the AgentOutput it returns, next to the `file_changes` it already
+    # accumulates across the chain for the same reason ("the SubtaskResult
+    # reflects every file touched"). Empty on every adapter-produced output and
+    # on an output whose caller collected nothing.
+    step_usages: list[StepUsage] = field(default_factory=list)
 
 
 @dataclass

@@ -43,6 +43,7 @@ from ultimate_coders.agent.state_sync import (
 from ultimate_coders.agent.step_condition import ConditionError, evaluate
 from ultimate_coders.agent.types import (
     FileChange,
+    StepUsage,
     Subtask,
     SubtaskResult,
     SubtaskStatus,
@@ -268,6 +269,44 @@ def _render_gateway_context_block(block: dict) -> str:
     if block.get("truncated"):
         parts.append("... (context truncated by gateway)\n")
     return "\n".join(parts)
+
+
+def _step_usage(
+    step_index: int,
+    parallel_group: str,
+    agent: str,
+    output: AgentOutput,
+) -> StepUsage:
+    """Build one step's usage record from its identity and its output (T18 #668).
+
+    The single construction point for ``payload.steps[]`` entries, so the three
+    invariants that make that array trustworthy live in one place:
+
+    * ``step_index`` is the **caller's** — the position in the subtask's
+      execution sequence, never a re-count of the collected list. Re-counting
+      would erase the gap that is how a skipped step (condition false) shows
+      up; a skipped step produces no entry at all.
+    * ``usage`` is ``None`` when the adapter reported nothing. It is never a
+      zeroed block: ``subtask_usage_from_token_usage`` already returns ``None``
+      for an absent block, and synthesising one here would put a real
+      measurement where the adapter said nothing (D13 #657).
+    * ``source`` prefers the adapter's own stamp (``usage.source``, set at its
+      parse site) and falls back to the step's declared ``agent`` — so a step
+      that reported no numbers still names who ran it, which is the only thing
+      left to name it by once ``usage`` is ``None``.
+    """
+    usage = subtask_usage_from_token_usage(output.token_usage)
+    source: str | None = None
+    if usage is not None and usage.source:
+        source = usage.source
+    elif agent:
+        source = agent
+    return StepUsage(
+        step_index=step_index,
+        parallel_group=parallel_group,
+        usage=usage,
+        source=source,
+    )
 
 
 class Worker:
@@ -1241,6 +1280,27 @@ class Worker:
                     subtask_config=self._resolve_agent_config(subtask) or None,
                     cancel_key=cancel_key,
                 )
+            # T18 #668: the workflow path collected one record per executed step
+            # as it went; the legacy single-agent path declares no step yet still
+            # executed exactly one unit. Record that unit at index 0, so a
+            # single-step subtask's terminal event is as readable as a chain's
+            # first step (`payload.steps[]` length 1) and no consumer has to
+            # special-case the majority path.
+            #
+            # Branching on `subtask.steps` rather than on "the collected list is
+            # empty" is load-bearing: a workflow whose every step was skipped by
+            # its condition legitimately collects nothing (nothing ran), and
+            # synthesising an entry there would invent a unit that never ran.
+            #
+            # The empty `agent` is deliberate: the legacy form names no adapter,
+            # so `source` falls back to the stamp the adapter put on its own
+            # usage block, and stays `null` when it reported nothing at all.
+            # That is the honest answer — there is no declared step to name.
+            step_usages = (
+                output.step_usages
+                if subtask.steps
+                else [_step_usage(0, "", "", output)]
+            )
             # ponytail: extract stderr_tail and recent tool calls for failure context
             stderr_tail = output.stderr_tail
             if not stderr_tail and hasattr(output, "raw_stderr") and output.raw_stderr:
@@ -1268,6 +1328,13 @@ class Worker:
                 # the two hops that kept execution_events.cost/tokens NULL.
                 # `None` when the adapter reported nothing (stays NULL, never 0).
                 usage=subtask_usage_from_token_usage(output.token_usage),
+                # T18 #668: the per-step disaggregation of the block above. It
+                # rides the same constructor for the same reason T15 gave for
+                # `usage` — every other AgentOutput field is forwarded here, and
+                # a field dropped at this hop is exactly how the original
+                # under-report survived: nothing errors, the number is simply
+                # gone by the time the terminal event is written.
+                step_usages=step_usages,
             )
         finally:
             # Release edit intent after execution (success or failure)
@@ -1322,6 +1389,11 @@ class Worker:
         """
         step_outputs: list[AgentOutput] = []
         all_file_changes: list[FileChange] = []
+        # T18 #668: one record per *executed* unit, in execution order. A step
+        # skipped by its condition contributes nothing here (see
+        # `_step_usage`), which is what makes a gap in `step_index` readable as
+        # "that step did not run".
+        step_usages: list[StepUsage] = []
         last_output: AgentOutput | None = None
         file_constraints_str = ", ".join(subtask.file_constraints) or "none"
 
@@ -1352,6 +1424,12 @@ class Worker:
                     idx += 1
                     continue
                 step_outputs.append(output)
+                # T18 #668: collected here — *before* the abort check below —
+                # so a step that failed and aborted the chain is still
+                # attributed. It ran, so it spent.
+                step_usages.append(
+                    _step_usage(idx, step.parallel_group or "", step.agent, output)
+                )
                 if output.success:
                     all_file_changes.extend(output.file_changes)
                 last_output = output
@@ -1370,6 +1448,12 @@ class Worker:
                         success=False,
                         stderr_tail=output.stderr_tail,
                         tool_calls=output.tool_calls,
+                        # T18 #668: the chain stopped early, but the units that
+                        # DID run are still what this node spent — dropping them
+                        # here would recreate the under-report on the failure
+                        # path. Includes the failing step (collected above the
+                        # abort check).
+                        step_usages=step_usages,
                     )
                 # abort_on_failure=False: log and continue to next step.
                 if not output.success:
@@ -1448,6 +1532,13 @@ class Worker:
                 if output is None:
                     continue
                 step_outputs.append(output)
+                # T18 #668: one record per group MEMBER — a parallel group of N
+                # produces N entries and deliberately no group-level total,
+                # because a sum would make the members mutually unattributable
+                # (same reason the chain's own usage is never collapsed).
+                # Collected before the abort check so a failing member is
+                # attributed too.
+                step_usages.append(_step_usage(si, group, gs.agent, output))
                 if output.success:
                     all_file_changes.extend(output.file_changes)
                 last_output = output
@@ -1472,6 +1563,12 @@ class Worker:
                     success=False,
                     stderr_tail=failed_output.stderr_tail,
                     tool_calls=failed_output.tool_calls,
+                    # T18 #668: same as the sequential abort — the members that
+                    # ran before the failing one keep their records. Members of
+                    # this group that the `break` skipped over were never
+                    # collected, exactly as they were never appended to
+                    # `step_outputs` (pre-existing behaviour, not new here).
+                    step_usages=step_usages,
                 )
 
         # All steps completed (or non-aborting failures). Return the last
@@ -1483,13 +1580,30 @@ class Worker:
                 summary="Workflow had no steps",
                 file_changes=[],
                 success=False,
+                # T18 #668: deliberately left empty rather than filled with a
+                # synthetic entry — no unit ran, so there is nothing to
+                # attribute (the same rule that keeps `usage` at `None` when
+                # nothing was reported).
+                step_usages=[],
             )
         # T15 #660 note: every return in this chain forwards ONE step's usage
-        # (`last_output` here, the failing step on the two abort paths below).
+        # (`last_output` here, the failing step on the two abort paths above).
         # It is deliberately NOT summed: a workflow can run several adapters, so
         # a single collapsed block would make both the number and its `source`
-        # unattributable. Per-step usage belongs on per-step events; until that
-        # exists this is an under-report of a multi-step chain, not a total.
+        # unattributable.
+        #
+        # T18 #668 superseded the tail of that note. It used to read: "Per-step
+        # usage belongs on per-step events; until that exists this is an
+        # under-report of a multi-step chain, not a total." The under-report was
+        # real, and `step_usages` below is where the per-step detail now lives —
+        # on the terminal event's `payload.steps[]`, not on separate events (#666
+        # ruled out the N-events / new-event-type shapes precisely because both
+        # would have to re-answer whether a fenced late result refuses them too).
+        # The node-level fields still carry one step's numbers: that is
+        # deliberate and unchanged, because making them the sum would break
+        # comparability with historical rows and re-open the "exactly once"
+        # argument `commit_once` settles structurally. `payload.steps[]` is what
+        # makes the shortfall readable instead.
         return AgentOutput(
             summary=last_output.summary,
             file_changes=all_file_changes,
@@ -1497,6 +1611,7 @@ class Worker:
             success=last_output.success,
             stderr_tail=last_output.stderr_tail,
             tool_calls=last_output.tool_calls,
+            step_usages=step_usages,
         )
 
     async def _run_single_step(

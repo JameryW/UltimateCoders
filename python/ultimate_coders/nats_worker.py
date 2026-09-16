@@ -39,6 +39,7 @@ from nats.aio.subscription import Subscription
 from ultimate_coders.agent.orchestrator import Orchestrator
 from ultimate_coders.agent.types import (
     DispatchMode,
+    StepUsage,
     Subtask,
     SubtaskResult,
     SubtaskReview,
@@ -160,6 +161,15 @@ def _make_task_update_payload(task: Task, *, partial: bool = False) -> dict[str,
             # gateway keeps execution_events.cost/tokens NULL rather than 0.
             if st.result.usage is not None:
                 entry["usage"] = st.result.usage.to_dict()
+            # T18 #668: same chokepoint, same argument as `usage` above — this
+            # is the ONLY place subtask entries are assembled, so emitting the
+            # per-step disaggregation here reaches every publisher (the
+            # incremental worker result, the periodic snapshot, and the final
+            # one) without touching a call site. Omitted when empty, which
+            # keeps the pre-T18 publisher byte-identical for a result that
+            # carries no step records.
+            if st.result.step_usages:
+                entry["steps"] = [s.to_dict() for s in st.result.step_usages]
             # T16 #661: same chokepoint argument as usage above — a verdict is
             # emitted only when a review node actually produced one.
             if st.result.review is not None:
@@ -2900,6 +2910,10 @@ class NatsWorker:
                         # reported one — never a zeroed block.
                         usage=result.usage,
                         review=result.review,
+                        # T18 #668: the per-step break-down of `usage`, which
+                        # would otherwise be lost at this hop — the same hop
+                        # T15 had to close for `usage`.
+                        step_usages=result.step_usages,
                     ),
                     partial=True,
                 )
@@ -2930,6 +2944,7 @@ class NatsWorker:
         dispatch_retry_count: int = 0,
         usage: SubtaskUsage | None = None,
         review: SubtaskReview | None = None,
+        step_usages: list[StepUsage] | None = None,
     ) -> Task:
         """Build a minimal Task object for publishing subtask result via NatsPublisher.
 
@@ -2946,6 +2961,10 @@ class NatsWorker:
         ``usage`` (T15 #660) is whatever the executor reported. It is a plain
         pass-through: ``None`` stays ``None`` and the wire omits the key, so the
         gateway records NULL rather than a fabricated zero.
+
+        ``step_usages`` (T18 #668) is the per-step disaggregation of that block,
+        carried the same way. An absent/empty list stays empty, so a result with
+        no step records emits no ``steps`` key at all.
         """
         st_status = SubtaskStatus.COMPLETED if status == "Completed" else SubtaskStatus.FAILED
         st = Subtask(
@@ -2966,6 +2985,7 @@ class NatsWorker:
                 success=status == "Completed",
                 usage=usage,
                 review=review,
+                step_usages=list(step_usages or []),
             )
             if summary
             else None,
