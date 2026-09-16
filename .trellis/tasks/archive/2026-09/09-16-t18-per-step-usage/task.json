@@ -1,0 +1,18 @@
+{
+  "id": "09-16-t18-per-step-usage",
+  "title": "T18: 逐步用量落到 payload.steps[]（#666 实现）",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 668,
+  "map": 656,
+  "decision": 666,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "多步 workflow 的逐步用量落到终态事件 node_succeeded 的 payload.steps[]：一条 = 一个已执行的单元（跳过的步留空号），usage 允许显式 null（跑了但适配器没报），并行组成员各自一条不做组级合计，legacy 单 agent 路径也发一条。纯加性：不新增列、不新增事件类型、contract_version 未动，没有 steps 键即「无可记录」。",
+  "completedAt": "2026-09-16",
+  "commit": "8a0645d",
+  "commits": [
+    "9a8203f",
+    "8a0645d"
+  ]
+}

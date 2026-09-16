@@ -1289,3 +1289,97 @@ ON CONFLICT (node_id, graph_id) DO UPDATE SET state = EXCLUDED.state, ...
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: T18: 逐步用量落到 payload.steps[]（#666 实现）
+
+**Date**: 2026-09-16
+**Task**: T18: 逐步用量落到 payload.steps[]（#666 实现）
+**Branch**: `main`
+
+### Summary
+
+执行 #666 裁决 C：多步 workflow 的逐步用量落到终态事件 payload.steps[]，纯加性（无新列/新事件类型、contract_version 未动）。D1 一条=一个已执行单元、D2 source 取值链、D3 显式 null 与 SubtaskUsage 省略键相反、D4 legacy 也发一条。消融实测两条子句各自守卫；顺带更正了记忆里错误的 Python 基线（本地 1120→实为 1123）。
+
+### Main Changes
+
+## 背景：一处静默少报
+
+`Worker._execute_steps` 的**每一条** `return` 都只透传**一步**的 usage（源码自陈 *"an under-report of a multi-step chain, not a total"*），而终态事件仍以 `usage_reported: true` 声明「有测量」。下游据此算 Useful Work Ratio / Coordination Ratio 会**系统性偏低、而且看不出来偏低** —— D13 的覆盖率机制只能发现「完全没上报」的节点，**发现不了这种失真**。
+
+#666 已裁 **裁决 C**：逐步明细落在终态 payload 的 `steps[]`。否掉 A（N 步 → N 行）与 B（新事件类型）的是**同一条**理由 —— 两者都必须重新回答「被 fence 的迟到结果要不要把这 N 行一起拒」，而落在 payload 里则「一次 commit = 一行事件」这条结构性性质**原样保留**。本片是纯加性：不新增列、不新增事件类型、零迁移、`contract_version` 未动，**没有 `steps` 键即「无可记录」**。
+
+## 侦察：决定设计的五条一手事实
+
+| 事实 | 一手来源 |
+|---|---|
+| 4 条 return（顺序失败 abort / 并行组失败 abort / 无步骤 / 正常结束）各只透传一步；同函数内 `all_file_changes` **累积**而 `token_usage` **不** ⇒ 「不累积」是**刻意**的 | `worker.py::_execute_steps` 的 4 条 return + 自陈注释 |
+| 唯一 subtask 条目集结口 ⇒ 在此发 `steps` 可覆盖**全部三个** publisher（增量结果 / 周期快照 / 终态） | `nats_worker.py::_make_task_update_payload` |
+| 终态 payload 只能由 Rust 写（`commit_once` 事务内）⇒ 必须贯通 Rust 侧 | `graph_store.rs` 的 `node_succeeded` 唯一写入点 |
+| `steps` 为空是**常见形状而非边缘**：decomposer 指令明写「简单 subtask 省略 `steps`（单 agent）」 | `orchestrator.ts:2093-2099` |
+| 「某步适配器没上报」**可达**：`token_usage` 初值是 `None`，仅当流里出现 usage 事件才赋值 | `sandbox.py` |
+
+第 4 条把「legacy 单 agent 路径也要发一条」从**体贴**变成**验收**（验收 5 点名的正是它）；第 5 条把「`usage: null`」从猜测变成**可达状态**。这两条都是先读代码再设计，而不是先设计再找理由。
+
+## 设计：D1–D4
+
+- **D1 一条 = 一个已执行的单元。** 被条件跳过的步**不留条目** ⇒ `step_index` 的**跳号**就是「那一步没执行」的编码。若给跳过的步发 `usage: null`，则同一个值同时表示「跳过」与「跑了但没报」两种事实，而验收 2 要的恰是后者**可读**。宁可让读者按跳号推断「没跑」，也不让两种事实共用一个值。
+- **D2 `source` 取值链：`usage.source`（T15 的实测戳，在适配器解析点自盖）→ 回落 `step.agent`（该步声明的适配器）→ `null`。** 回落是**唯一**还能点名的地方 —— 某步报不出数字时，适配器身份只剩声明这一条来路。
+- **D3 步条目用显式 `null`，而 `SubtaskUsage` 沿用省略键 —— 两套相反纪律是刻意的。** 步条目是**数组的位置元素**，显式 `null` 让 `steps[i].usage` 恒可索引、不必先判存在；`SubtaskUsage` 是**线格式的增量**，缺键 = 未上报，且 T15 的 `skip_serializing_if` 是「不设 usage 的发布者序列化结果字节不变」这一承诺的实现手段。两者**不会撞车**，因为 `payload` 只写一次、**不会被反序列化回领域类型**（这一前提已单记进 `implement.jsonl` 的 `boundary:D3-precondition`）。
+- **D4 legacy 单 agent 路径也发一条**（`step_index: 0` / `parallel_group: ""`）。键取 `subtask.steps` 是否为空，**不是**取「收集到的列表为空」—— 一个所有步都被跳过的 workflow **合法地**什么都不收集，在那里合成会**凭空造出一个从未执行的单元**。
+
+抽出一个**未门控**纯函数 `steps_payload`，因为它唯一的调用者 `commit_once` 是 `storage` 门控的：只挂在门控里测，形状契约在 `--no-default-features` 下**完全不可见**，而那正是形状回归最难被发现的地方。这个选择**当场回本**：`--all-features --all-targets` 抓到了两处 `on_commit` 调用点的 arity 破窗 —— 它们所在文件顶部带 `storage` 门控，默认特征下被编译成**空文件**，`cargo check --workspace`（不带 `--all-features`）**看不见**。
+
+## 消融：两条子句各自的守卫（实测，非推断）
+
+一次只删一条、重跑：
+
+| 注入的突变 | 实测结果 |
+|---|---|
+| 删掉 `steps_payload` 的空切片早返回 | **只有** `steps_payload_is_absent_when_there_is_nothing_to_record` 打红，另 4 条仍绿 ⇒ 该行是「无记录 ⇒ 无键」这条加性契约的**唯一**守卫 |
+| 给 `StepUsage.usage` 加 `skip_serializing_if = "Option::is_none"` | **两个 crate 各打红一条**：uc-engine 的 `steps_payload_keeps_explicit_nulls_and_order` 与 uc-types 的 `step_usage_serializes_explicit_nulls_unlike_subtask_usage`；diff 逐字显示缺失的 `"usage": Null` ⇒ D3 在两侧被**互不依赖**地钉住 |
+
+第二条消融的价值在于**它证明了两条断言真的分处两个 crate**（各自的编译单元），而不是同一断言抄了两遍 —— 若只在一个 crate 里钉，跨语言那一侧改坏了不会有任何东西打红。消融 B 已复原并复跑确认（uc-types 50 / uc-engine 默认 452 全绿），源码内 `ABLATION` 标记已清扫干净。
+
+## 门禁与一次账目更正
+
+本地全绿（2026-09-16）：`fmt --check`；`clippy --workspace --all-targets --all-features -D warnings`；`clippy --workspace -D warnings`（CI 原样命令）；`cargo check --workspace --all-features --all-targets`；`cargo test -p uc-engine -p uc-grpc` 默认 / `--no-default-features` / `-p uc-engine --features indexing` 四组 exit 0。Rust 基线**只增不减**：uc-engine lib **447→452**（默认）、**387→392**（no default）、**467**（all-features）；uc-grpc lib **210→212**、**238→240**（all-features）；uc-types **47→50**；`graph_store_integration` 的 ignored 计 **20→21**。Python 本地 **1123→1139 passed / 10 skipped**；`ruff check python/ tests/` clean；dashboard 导入检查 OK。
+
+**一次账目更正（本轮的方法论收获）**：记忆里写着「本地 1120 passed / 10 skipped」，我按 +16 新测估算却对不上总数，于是**没有**把它当噪声放过。做法是**在 HEAD 上建 `git worktree` 复跑**，得到 HEAD 的真实本地数 **1123 passed / 10 skipped**（1133 收集）。⇒ 旧数字是**错的**（1120 更像 T15/T16 期数字的混合），HEAD 起算的增量恰好 **+16**，与新增测试函数数**逐一对齐**。更硬的判据是**总收集数对账**：本地 `1139+10 = 1149` 与 CI `1141+8 = 1149` **完全一致**，差的 2 条是 POSIX-only（`skipif(win32)`）；再退一步，我导出了 HEAD 与当前的**全量测试 ID 集**做 `comm`：**removed = 0，added = 16**，逐条都是本票新增 ⇒ 「没有测试被静默丢掉」是**测出来**的，不是推出来的。
+
+**CI（`8a0645d`）：Rust CI 8/8 绿、Python CI 4/4 绿**；TypeScript CI **未被触发**（本 diff 不含 `packages/**`，符合其路径过滤）。判**真跑**的两条判据都过：storage job 日志逐字出现 `test graph_t18_commit_carries_per_step_usage_into_the_terminal_payload ... ok`，同文件 `test result: ok. 21 passed; 0 failed`（2.13s），且**全日志 0 条 `SKIP:`**。CI 日志里 `467 / 240 / 50 / 36 filtered out` 四行还**独立复核**了我的本地 all-features 计数（uc-engine 467、uc-grpc 240、uc-types 50、uc-grpc-server 36），等于给本地数字配了一份外部对照。
+
+## 环境：本机 PG 本轮不可用（口径已收窄）
+
+探针 `timeout 5 bash -c '</dev/tcp/127.0.0.1/5432'` 拒绝连接；PowerShell 侧确认**无** postgres 服务、**无** 5432 监听、`C:\Program Files\PostgreSQL` 不存在 ⇒ provider 是 **Docker Desktop**，而其引擎在本沙箱**起不来**（`docker desktop start` 报 starting，随后 `docker info` 以 30×5s 轮询始终失败）—— 与 WSL2 属**同类**沙箱阻断。
+
+于是 T18 的 PG 集成测试**本地未跑**，唯一一次证据来自 CI。这同时更正了上一轮的记忆口径：T17 那次「本地 live PG 可用」**当时为真**，但**不能跨轮沿用**（provider 是 Docker，引擎停掉即消失）；正确表述是「本机无原生 PG，live PG 取决于 Docker Desktop 是否在跑」。为降低「只能靠 CI」的赌注，把该测试用到的 payload 字面量**同时**用一个纯函数测试（`steps_payload_matches_the_pg_fixture_literals`）在本地钉住 —— 这个本地替身本身是**一次手读事故的产物**：手读时发现 PG 断言里的 `usage` 块漏了 T15 的 `source`，那是**管道永不产出的形状**，若等到 CI 打红，排查成本会高一个数量级。
+
+另一条可复用坑：用 `git worktree add` 复检时，**新工作树里没有 `_uc_core*.pyd`**（未跟踪的构建产物，不进 git）⇒ `test_async_engine.py` 全 25 条 setup ERROR（报 *"Rust extension not built"*），且必须按 venv 的 Python 版本拷对应 ABI（本机 venv 是 **3.14.3** ⇒ 要 `cp314`，先误拷 `cp312` 报的是同一个错）。
+
+## 残余与边界
+
+- **节点的三列保持不动**是**刻意**的（验收 4）：改为各步之和会让历史数据与新增数据**不可比**，还要重新论证「恰好一次」的 fence 语义 —— 属独立决策，票面已列 out of scope。`payload.steps[]` 是**拆解视图**而非新口径。
+- `payload.steps[]`（用量记录）与 `uc.subtask.execute` 的 `steps`（步骤定义）**同名不同物**；本票只动前者，且**不要求**两者位置一致（D4 的直接后果：legacy 形态 `subtask.steps` 为空而 `steps[]` 长度为 1）。
+- **D3 依赖一个前提**：payload 只写一次、不被反序列化回领域类型。将来若有代码把 payload 读回 `StepUsage`，D3 的两套 null 纪律必须重新论证（已单记进 `implement.jsonl`，避免它将来变成一个隐形陷阱）。
+- 本片**不覆盖** review / 其他事件的 payload 形状（票面 out of scope）。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a8203f` | (see git log) |
+| `8a0645d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

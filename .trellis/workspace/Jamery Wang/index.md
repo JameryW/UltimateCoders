@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1291 | Active |
+| `journal-1.md` | ~1385 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-09-16 | T18: 逐步用量落到 payload.steps[]（#666 实现） | `9a8203f`, `8a0645d` | `main` |
 | 20 | 2026-09-16 | T17: 图镜像不再移动权威 node state —— D15 的 B + C 落地（#667） | `fdef55a`, `1e61318`, `c6dfd20` | `main` |
 | 19 | 2026-09-16 | T16: review 作为图上节点 —— type 写者 + 能力门独立性 + 跨语言结论通路 | `90f756d`, `f5ef707`, `89a9178` | `main` |
 | 18 | 2026-09-15 | T15（#660）交付 —— usage 上报契约 + `cost`/`tokens` 落列 | `dd3d2b3`, `d942fa9` | `main` |
