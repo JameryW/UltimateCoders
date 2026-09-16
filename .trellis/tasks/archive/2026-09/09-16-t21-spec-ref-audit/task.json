@@ -1,0 +1,17 @@
+{
+  "id": "09-16-t21-spec-ref-audit",
+  "title": "T21: .trellis/spec 的 文件:行号 引用普查与口径 —— 定「符号优先」并落地结构性回归守卫",
+  "status": "completed",
+  "priority": "P2",
+  "issue": 672,
+  "map": null,
+  "decision": null,
+  "createdAt": "2026-09-16",
+  "branch": "main",
+  "summary": "对 .trellis/spec/** 的 148 处 `文件:行号` 引用做全量普查（12 个规范 / 33 个目标文件），得出决定性否证：0/148 越界 ⇒ 过期引用的形态是「行号合法、内容错误」，结构性检查（存在性+范围）对其价值≈0。新增 scripts/check-spec-refs.py 做三层判定（结构性 fail-closed / advisory 歧义 / advisory 符号漂移），并用 T20 的手工真值 6/6 交叉校验。修掉它找到的 2 处结构缺陷（agent-capability-spec.md:720 漏 crates/ 前缀；logging-guidelines.md 引用已死于 #560 的 rate_limiter.py，另 5 个示例行号逐个回读后修正），使守卫落地即绿。口径：符号引用优先（11 处大幅漂移全是符号引用，去行号即一次全消），校验器只采纳确定性部分，基线标注仅作兜底。消融 5/5（含阴性对照与优先级回归）。不做 148 处重写、不接 CI（scripts/** 与 .trellis/** 不在任何 workflow paths 内，本提交实测零 CI 触发）。",
+  "completedAt": "2026-09-16",
+  "commit": "d6dbba4",
+  "commits": [
+    "d6dbba4"
+  ]
+}

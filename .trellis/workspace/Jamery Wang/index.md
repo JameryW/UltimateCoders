@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1637 | Active |
+| `journal-1.md` | ~1739 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-09-16 | T21: .trellis/spec 的 文件:行号 引用普查与口径 —— 定「符号优先」并落地结构性回归守卫 | `d6dbba4` | `main` |
 | 23 | 2026-09-16 | T20: 能力层规范与代码脱节 —— 纠正 #111/#161 遗留的幽灵 API，并把默认能力事实钉死 | `6d7653c`, `d2f4f49` | `main` |
 | 22 | 2026-09-16 | T19: 派发硬门排除产出者 —— review 节点不得由自己审（#669 裁决 A 实现） | `322a571` | `main` |
 | 21 | 2026-09-16 | T18: 逐步用量落到 payload.steps[]（#666 实现） | `9a8203f`, `8a0645d` | `main` |
